@@ -194,6 +194,13 @@ Additional guarantees:
 ### First‑time setup
 
 ```bash
+# Option A — one command (recommended). Idempotent; safe to re-run anytime.
+pnpm setup          # deps -> Supabase up -> sync .env -> migrate -> generate -> seed
+pnpm dev            # web :3000 · api :3001
+
+# ---------------------------------------------------------------------------
+# Option B — manual, step by step:
+
 # 1. Install dependencies
 pnpm install
 
@@ -224,12 +231,27 @@ pnpm dev            # web -> http://localhost:3000   api -> http://localhost:300
 
 ---
 
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `Docker daemon is not running` | Start Docker Desktop, wait until ready, re‑run `pnpm setup`. |
+| `supabase: command not found` | Install the Supabase CLI (`brew install supabase/tap/supabase`). |
+| Port `3000` / `3001` / `54321` already in use | Stop the other process (or `supabase stop`) and re‑run. |
+| `401 Invalid or expired token` after restarting Supabase | Keys rotated — re‑run `pnpm setup` to re‑sync the `.env` files. |
+| Login works but no data shows | Make sure the DB was seeded (`pnpm db:seed`); or `pnpm db:reset`. |
+| Stale schema / weird data | `pnpm db:reset` (drops, re‑migrates, re‑seeds). |
+| `pnpm: command not found` | `npm i -g pnpm` (or enable via Corepack). |
+
+---
+
 ## Scripts
 
 Run from the repo root (Turborepo fans out to each package):
 
 | Script | Description |
 | --- | --- |
+| `pnpm setup` | One‑command local bootstrap (deps, Supabase, `.env` sync, migrate, seed) |
 | `pnpm dev` | Run web + api in watch mode |
 | `pnpm build` | Build all packages |
 | `pnpm typecheck` | Type‑check the whole repo |

@@ -5,6 +5,7 @@
   "description": "TonyAI — Enterprise carbon accounting / ESG SaaS (monorepo)",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
+    "setup": "bash scripts/bootstrap.sh",
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
@@ -14,6 +15,7 @@
     "e2e:ui": "playwright test --ui",
     "db:generate": "pnpm --filter @tonyai/db run generate",
     "db:migrate": "pnpm --filter @tonyai/db run migrate",
+    "db:deploy": "pnpm --filter @tonyai/db run deploy",
     "db:seed": "pnpm --filter @tonyai/db run seed",
     "db:reset": "pnpm --filter @tonyai/db run reset"
   },
