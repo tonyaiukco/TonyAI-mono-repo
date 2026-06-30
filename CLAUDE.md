@@ -8,6 +8,9 @@ TonyAI — multi-tenant carbon accounting / ESG SaaS for holding companies.
 Headless architecture: **Next.js** web + **NestJS** api + **Supabase** (Postgres/Auth/Storage),
 in a **Turborepo** monorepo with shared types. Full picture in `README.md`; specs in `docs/`.
 
+## Language (strict)
+**Everything created inside this project MUST be in English** — code, identifiers, variable/function/file names, comments, documentation, commit messages, UI copy, seed data, and any generated artifact. **Never produce Turkish content in the repo.** Chatting with the user happens in Turkish, but that never leaks into the project.
+
 ## Where things live
 - `apps/web` — Next.js 16 frontend (App Router, Tailwind v4, shadcn/ui, Zustand)
 - `apps/api` — NestJS 11 API (Prisma, Supabase JWT auth)
