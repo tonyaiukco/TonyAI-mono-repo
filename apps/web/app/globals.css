@@ -1,0 +1,206 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* TonyAI Enterprise - Climate-Focused Light Theme */
+:root {
+  /* Neutral Base - Slightly warmer off-white for comfort */
+  --background: #FAFAFA;
+  --foreground: #1D1D1F;
+  --card: #FFFFFF;
+  --card-foreground: #1D1D1F;
+  --popover: #FFFFFF;
+  --popover-foreground: #1D1D1F;
+  
+  /* Climate Green Accent - Dark forest green */
+  --primary: #1B5E3B;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F2F2F5;
+  --secondary-foreground: #1D1D1F;
+  --muted: #F2F2F5;
+  --muted-foreground: #6E6E73;
+  --accent: #E5F0E8;
+  --accent-foreground: #1B5E3B;
+  
+  /* Destructive */
+  --destructive: #FF3B30;
+  --destructive-foreground: #FFFFFF;
+  
+  /* Borders and Inputs - Subtle but visible */
+  --border: #D2D2D7;
+  --input: #FFFFFF;
+  --ring: #1B5E3B;
+  
+  /* Status Colors - Apple-style vibrant but accessible */
+  --status-complete-bg: #D1F2EB;
+  --status-complete-text: #1D7A5F;
+  --status-incomplete-bg: #FEF3C7;
+  --status-incomplete-text: #92400E;
+  --status-missing-bg: #FEE2E2;
+  --status-missing-text: #B91C1C;
+  
+  /* Scope/Chart Colors - Vibrant and distinct */
+  --scope-1: #34C759;
+  --scope-2: #007AFF;
+  --scope-3: #AF52DE;
+  --chart-highlight: #5856D6;
+  --chart-neutral: #8E8E93;
+  
+  /* Chart series - Apple system colors */
+  --chart-1: #34C759;
+  --chart-2: #007AFF;
+  --chart-3: #AF52DE;
+  --chart-4: #FF9500;
+  --chart-5: #5AC8FA;
+  
+  --radius: 0.75rem;
+  
+  /* Sidebar - Slightly darker for tab area (3 levels darker) */
+  --sidebar: #EBEBF0;
+  --sidebar-foreground: #1D1D1F;
+  --sidebar-primary: #1B5E3B;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #E5F0E8;
+  --sidebar-accent-foreground: #1B5E3B;
+  --sidebar-border: #D8D8DC;
+  --sidebar-ring: #1B5E3B;
+  --sidebar-muted: #6E6E73;
+}
+
+.dark {
+  /* Keep light theme for TonyAI - Climate Green */
+  --background: #FAFAFA;
+  --foreground: #1D1D1F;
+  --card: #FFFFFF;
+  --card-foreground: #1D1D1F;
+  --popover: #FFFFFF;
+  --popover-foreground: #1D1D1F;
+  --primary: #1B5E3B;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F2F2F5;
+  --secondary-foreground: #1D1D1F;
+  --muted: #F2F2F5;
+  --muted-foreground: #6E6E73;
+  --accent: #E5F0E8;
+  --accent-foreground: #1B5E3B;
+  --destructive: #FF3B30;
+  --destructive-foreground: #FFFFFF;
+  --border: #D2D2D7;
+  --input: #FFFFFF;
+  --ring: #1B5E3B;
+  --chart-1: #1B5E3B;
+  --chart-2: #007AFF;
+  --chart-3: #AF52DE;
+  --chart-4: #FF9500;
+  --chart-5: #5AC8FA;
+  --sidebar: #EBEBF0;
+  --sidebar-foreground: #1D1D1F;
+  --sidebar-primary: #1B5E3B;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #E5F0E8;
+  --sidebar-accent-foreground: #1B5E3B;
+  --sidebar-border: #D8D8DC;
+  --sidebar-ring: #1B5E3B;
+}
+
+@theme inline {
+  --font-sans: var(--font-inter), 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), 'SF Mono', 'Menlo', monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-status-complete-bg: var(--status-complete-bg);
+  --color-status-complete-text: var(--status-complete-text);
+  --color-status-incomplete-bg: var(--status-incomplete-bg);
+  --color-status-incomplete-text: var(--status-incomplete-text);
+  --color-status-missing-bg: var(--status-missing-bg);
+  --color-status-missing-text: var(--status-missing-text);
+  --color-scope-1: var(--scope-1);
+  --color-scope-2: var(--scope-2);
+  --color-scope-3: var(--scope-3);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Stronger text rendering */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight text-foreground;
+  }
+}
+
+/* Apple-style scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #C7C7CC;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8E8E93;
+}
+
+/* Card styling - Apple-like with subtle shadow */
+.card-premium {
+  @apply bg-card border border-border rounded-xl;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* Focus states - Apple blue ring */
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 focus:ring-offset-background;
+}
+
+/* Transition defaults */
+.transition-soft {
+  transition: all 200ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}

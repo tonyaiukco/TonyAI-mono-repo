@@ -1,0 +1,119 @@
+// TonyAI — Prisma schema (Milestone 1 vertical slice)
+// Tables live in the Postgres `public` schema; Supabase Auth owns `auth.users`.
+// Profile.id mirrors auth.users.id (no cross-schema FK in Prisma).
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  super_admin
+  consultant
+  data_entry
+  executive_viewer
+}
+
+enum SubsidiaryStatus {
+  active
+  inactive
+  pending
+}
+
+model Profile {
+  id               String                 @id @db.Uuid // = auth.users.id
+  email            String                 @unique
+  fullName         String                 @map("full_name")
+  role             UserRole               @default(data_entry)
+  language         String                 @default("en")
+  theme            String                 @default("light")
+  organisationId   String?                @map("organisation_id") @db.Uuid
+  organisation     Organisation?          @relation(fields: [organisationId], references: [id])
+  subsidiaryAccess UserSubsidiaryAccess[]
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+
+  @@map("profiles")
+}
+
+model Organisation {
+  id                String       @id @default(uuid()) @db.Uuid
+  legalName         String       @map("legal_name")
+  tradingName       String?      @map("trading_name")
+  country           String
+  geographyCode     String       @map("geography_code")
+  sector            String?
+  reportingCurrency String       @default("EUR") @map("reporting_currency")
+  subsidiaries      Subsidiary[]
+  profiles          Profile[]
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  @@map("organisations")
+}
+
+model Subsidiary {
+  id               String                 @id @default(uuid()) @db.Uuid
+  organisationId   String                 @map("organisation_id") @db.Uuid
+  organisation     Organisation           @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  legalName        String                 @map("legal_name")
+  tradingName      String?                @map("trading_name")
+  location         String?
+  geographyCode    String                 @map("geography_code")
+  businessArea     String?                @map("business_area")
+  sector           String?
+  designatedPerson String?                @map("designated_person")
+  reportingStatus  SubsidiaryStatus       @default(pending) @map("reporting_status")
+  includedScopes   Int[]                  @default([1, 2]) @map("included_scopes")
+  locations        Location[]
+  access           UserSubsidiaryAccess[]
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+
+  @@index([organisationId])
+  @@map("subsidiaries")
+}
+
+model Location {
+  id               String     @id @default(uuid()) @db.Uuid
+  subsidiaryId     String     @map("subsidiary_id") @db.Uuid
+  subsidiary       Subsidiary @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  name             String
+  address          String?
+  authorizedPerson String?    @map("authorized_person")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  @@index([subsidiaryId])
+  @@map("locations")
+}
+
+model UserSubsidiaryAccess {
+  userId       String     @map("user_id") @db.Uuid
+  subsidiaryId String     @map("subsidiary_id") @db.Uuid
+  profile      Profile    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subsidiary   Subsidiary @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  @@id([userId, subsidiaryId])
+  @@map("user_subsidiary_access")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  action    String // create | update | delete
+  entity    String // e.g. "subsidiary"
+  entityId  String?  @map("entity_id")
+  diff      Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([entity, entityId])
+  @@map("audit_log")
+}
