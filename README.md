@@ -61,7 +61,8 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
 | Automated tests (21 unit + 2 E2E) | ✅ |
-| 7 specialised AI subagents defined | ✅ |
+| One-command local bootstrap (`pnpm setup`) | ✅ |
+| 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry, calculation engine, factor library, reports | ⏳ Phase 1/2 |
 
 **What's proven by tests today:** an `admin` sees all 5 seeded subsidiaries, a `data_entry` user sees only their 2, non‑admins are blocked from writes (HTTP 403), unauthenticated requests are rejected (HTTP 401), and every mutation writes an immutable `audit_log` row — verified at the API layer **and** the database (RLS) layer.
@@ -132,8 +133,12 @@ TonyAI-mono-repo/
 │   └── db/                  # Prisma schema, migrations, seed
 ├── e2e/                     # Playwright smoke tests
 ├── docs/                    # product + technical specs (md_docs, tech_docs)
-├── .claude/agents/          # the 7-subagent development team
-└── .github/workflows/       # CI
+├── .claude/
+│   ├── agents/              # the 7-subagent development team
+│   └── skills/              # reusable procedures (tenant-api-module, rls-for-table)
+├── .github/workflows/       # CI
+├── CLAUDE.md                # project rules, auto-loaded by Claude Code
+└── README.md
 ```
 
 ---
@@ -153,6 +158,17 @@ TonyAI is built by a **simulated software team of specialised AI subagents**, ea
 | **devops-cloud** | Monorepo, Supabase, Docker, CI/CD, cloud deploy | repo root, `supabase/`, `.github/` |
 
 > Each definition encodes the agent's scope, principles, a Definition of Done, and explicit "don't do without asking" boundaries — e.g. `security-rls` must never weaken a policy, `frontend-engineer` must never re‑enable `ignoreBuildErrors`.
+
+### Skills
+
+Recurring procedures are packaged as **skills** in [`.claude/skills/`](.claude/skills) — progressively disclosed playbooks that capture the canonical "right way" so it never has to be re-derived:
+
+| Skill | What it does |
+| --- | --- |
+| **tenant-api-module** | Scaffold a new tenant-scoped, RBAC-guarded, audit-logged NestJS resource (+ DTOs, shared types, Vitest spec) |
+| **rls-for-table** | Add Supabase RLS to a new table (enable-not-force, `auth.uid()` policies, shadow-DB shim, verification) |
+
+The relevant subagents (`backend-integrator`, `architect`, `security-rls`) have `Skill` access and invoke these automatically.
 
 ---
 
@@ -258,6 +274,7 @@ Run from the repo root (Turborepo fans out to each package):
 | `pnpm test` | Unit tests (Vitest) |
 | `pnpm e2e` | Playwright smoke tests (requires Supabase running) |
 | `pnpm db:migrate` | `prisma migrate dev` |
+| `pnpm db:deploy` | Apply committed migrations (`prisma migrate deploy`) |
 | `pnpm db:seed` | Seed demo data |
 | `pnpm db:reset` | Drop, re‑migrate and re‑seed |
 
@@ -340,7 +357,8 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 - **Types:** never duplicate a domain type — add it to `@tonyai/shared-types` and import from there (`@/lib/types` on the web side re‑exports it).
 - **Type safety:** `typescript.ignoreBuildErrors` stays **off**; fix types rather than suppress them.
 - **Data access:** pages call the API only through `apps/web/lib/api.ts`; the backend persists only via Prisma (`@tonyai/db`).
-- **Branching:** feature branches → PR into `main`; CI must be green.
+- **Project rules:** [`CLAUDE.md`](CLAUDE.md) (auto-loaded by Claude Code) is the source of truth for architecture, security and workflow rules — including that **all project artifacts are written in English** and that this README is kept current with every change.
+- **Branching & commits:** feature branches → PR into `main`; CI must be green; conventional-commit messages.
 
 ---
 
