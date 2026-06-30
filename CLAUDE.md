@@ -44,6 +44,7 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 
 ## Workflow
 - Use the specialised subagents in `.claude/agents/` for their domains: `architect`, `backend-integrator`, `frontend-engineer`, `security-rls`, `data-factors`, `qa-auditor`, `devops-cloud`.
+- Reusable procedures live in `.claude/skills/` (e.g. `tenant-api-module`, `rls-for-table`) — invoke the skill instead of re-deriving the recipe.
 - **Tests must stay green** — `pnpm test` gates CI. Add tests for new behaviour; cover negative/security cases, not just the happy path.
 - **Git:** branch off `main`; **commit & push only when asked**; do **not** pass a hardcoded `-c user.*` identity (the repo's git config is already set). Conventional-commit style messages.
 - **Verify before declaring done:** typecheck + build + relevant tests; for behaviour, exercise it against the running app — don't claim a fix works without checking.
