@@ -16,7 +16,7 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 - `apps/api` — NestJS 11 API (Prisma, Supabase JWT auth)
 - `packages/shared-types` — canonical domain + API types (single source of truth)
 - `packages/db` — Prisma schema, migrations, seed
-- `e2e/` — Playwright · `docs/` — specs · `.claude/agents/` — the 7-subagent team
+- `e2e/` — Playwright · `docs/` — specs · `.claude/agents/` — 7-subagent team · `.claude/skills/` — reusable procedures
 
 ## Commands (pnpm, from repo root)
 - `pnpm setup` — one-command local bootstrap (Supabase up → sync `.env` → migrate → seed)
@@ -36,7 +36,7 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 - **`audit_log` is append-only:** write one row on every mutation; never add UPDATE/DELETE paths to it.
 - **Canonical `user_role`:** `super_admin | consultant | data_entry | executive_viewer` — keep web, shared-types and Prisma in sync.
 - **No secrets in git:** `.env*` is ignored; only `.env.example` is committed.
-- **Emission factors:** never invent values; cite source + version; historic calculations are immutable (factor versioning).
+- **Emission factors / data integrity:** never invent factor values; cite source + version; historic calculations are immutable (factor versioning). **Never present demo/prototype values as authoritative** — label placeholders explicitly. This is a compliance product; wrong numbers are a liability.
 
 ## Frontend conventions
 - Match the existing design system: Tailwind v4 + shadcn/ui, Inter / JetBrains Mono, emerald primary. No generic AI look.
@@ -48,10 +48,11 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 - **Keep `README.md` current:** after any change that affects setup, commands, architecture, structure, API, conventions or status, update `README.md` in the same change. The README must never go stale.
 - **Tests must stay green** — `pnpm test` gates CI. Add tests for new behaviour; cover negative/security cases, not just the happy path.
 - **Git:** **never push to `main` directly** — every change lands via a feature branch (`feat/` · `chore/` · `fix/`) and a **pull request with green CI**. **Commit & push only when asked**; do **not** pass a hardcoded `-c user.*` identity (the repo's git config is already set). Conventional-commit style messages; delete the branch after merge.
+- **Pull requests:** open PRs for review — **the user merges; never self-merge.** Keep each PR small and focused. CI runs on **Node 22**; never commit `dist/`, `generated/`, or `*.tsbuildinfo` (all gitignored).
 - **Verify before declaring done:** typecheck + build + relevant tests; for behaviour, exercise it against the running app — don't claim a fix works without checking.
 
 ## Status & roadmap
-- Done: M0 foundation + M1 vertical slice (auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, 21 unit + 2 e2e tests).
-- Next: **Phase 1** (Data Entry, calculation engine, factor seeding) and **Phase 2** (cloud + CI/CD). See README "Roadmap".
+- Done: M0 + M1 vertical slice; Phase-1 emission-factor library + Scope 1&2 calculation engine + activity-records API & review workflow.
+- Next (Phase 1): Data Entry UI + Emissions analytics wiring, then hardening; then **Phase 2** (cloud + CI/CD). See README "Roadmap".
 
 <!-- Add your own recurring rules/preferences below this line -->
