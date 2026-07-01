@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { SupabaseAuthGuard } from './auth/auth.guard';
 import { SubsidiariesModule } from './subsidiaries/subsidiaries.module';
 import { KpiModule } from './kpi/kpi.module';
+import { CalculationsModule } from './calculations/calculations.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -15,6 +16,7 @@ import { HealthController } from './health.controller';
     AuthModule,
     SubsidiariesModule,
     KpiModule,
+    CalculationsModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: SupabaseAuthGuard }],

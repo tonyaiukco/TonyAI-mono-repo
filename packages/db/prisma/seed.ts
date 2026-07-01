@@ -25,6 +25,64 @@ const SUBSIDIARIES = [
   { id: '22222222-2222-2222-2222-222222220005', legalName: 'TonyAI Trading Ltd.', tradingName: 'TonyAI Trading', location: 'Manchester, UK', geographyCode: 'UK', sector: 'Wholesale Trade', businessArea: 'Commodity Trading', status: SubsidiaryStatus.inactive },
 ];
 
+// ---------------------------------------------------------------------------
+// Emission factors (reference data, not tenant-scoped).
+//
+// Values are sourced from docs/md_docs/calculation_logic.md (§3 Regional
+// Emission Factors). Scope 1 = direct combustion, Scope 2 = purchased energy.
+// Electricity, natural gas and liquid fuels normalise to a base unit before the
+// factor is applied (see the calculation engine's normalize()): electricity and
+// natural gas -> kWh, liquid fuels -> litres.
+//
+// The doc gives a single demo factor set (treated here as reporting year 2024).
+// To demonstrate factor VERSIONING we additionally seed a 2023 variant for UK
+// electricity, explicitly marked as a demo placeholder — the doc does not give a
+// 2023 number, so it must NOT be treated as an authoritative DEFRA 2023 value.
+// The `source`/`version` fields carry provenance so a calculation can snapshot
+// exactly which factor it used.
+const DEMO_SOURCE = 'docs/md_docs/calculation_logic.md §3 (prototype demo factors)';
+
+interface SeedFactor {
+  category: string;
+  geographyCode: string;
+  reportingYear: number;
+  scope: number;
+  factorValue: number;
+  factorUnit: string;
+  normalizedUnit: string;
+  methodology: string;
+  source: string;
+  version: string;
+}
+
+const EMISSION_FACTORS: SeedFactor[] = [
+  // --- Scope 2: purchased electricity (kgCO2e/kWh) — 2024 ---
+  { category: 'Electricity', geographyCode: 'UK', reportingYear: 2024, scope: 2, factorValue: 0.2071, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_SOURCE, version: '2024.1' },
+  { category: 'Electricity', geographyCode: 'TR', reportingYear: 2024, scope: 2, factorValue: 0.4400, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_SOURCE, version: '2024.1' },
+  { category: 'Electricity', geographyCode: 'EU', reportingYear: 2024, scope: 2, factorValue: 0.2310, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'residual-mix', source: DEMO_SOURCE, version: '2024.1' },
+
+  // --- Scope 2: purchased electricity — 2023 versioning demo (UK) ---
+  // Placeholder value (doc gives no 2023 number); present only to prove that
+  // (category, geography, year) resolves to a DIFFERENT factor than 2024.
+  { category: 'Electricity', geographyCode: 'UK', reportingYear: 2023, scope: 2, factorValue: 0.2123, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: `${DEMO_SOURCE} — 2023 demo placeholder, NOT an authoritative value`, version: '2023.1' },
+
+  // --- Scope 1: natural gas (kgCO2e/kWh) — 2024 ---
+  // Geography-agnostic demo factor; seeded per supported geography so a lookup by
+  // the reporting entity's geographyCode always resolves.
+  { category: 'Natural Gas', geographyCode: 'UK', reportingYear: 2024, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: '2024.1' },
+  { category: 'Natural Gas', geographyCode: 'TR', reportingYear: 2024, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: '2024.1' },
+  { category: 'Natural Gas', geographyCode: 'EU', reportingYear: 2024, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: '2024.1' },
+
+  // --- Scope 1: liquid fuels (kgCO2e/litre) — 2024 ---
+  // Doc §3.1 gives Diesel 2.6841 and Petrol 2.3111; both fall under the
+  // canonical "Fuel" category, differentiated by geography-agnostic demo values.
+  // Seeded per geography so a lookup always resolves; Diesel is used as the
+  // representative "Fuel" factor here.
+  { category: 'Fuel', geographyCode: 'UK', reportingYear: 2024, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: '2024.1' },
+  { category: 'Fuel', geographyCode: 'TR', reportingYear: 2024, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: '2024.1' },
+  { category: 'Fuel', geographyCode: 'EU', reportingYear: 2024, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: '2024.1' },
+];
+
 async function ensureAuthUser(email: string, password: string, fullName: string): Promise<string> {
   const { data, error } = await admin.auth.admin.createUser({
     email,
@@ -76,6 +134,29 @@ async function main() {
         reportingStatus: s.status,
         includedScopes: [1, 2],
       },
+    });
+  }
+
+  console.log('Seeding emission factors (reference data)...');
+  for (const f of EMISSION_FACTORS) {
+    await prisma.emissionFactor.upsert({
+      where: {
+        category_geographyCode_reportingYear_version: {
+          category: f.category,
+          geographyCode: f.geographyCode,
+          reportingYear: f.reportingYear,
+          version: f.version,
+        },
+      },
+      update: {
+        scope: f.scope,
+        factorValue: f.factorValue,
+        factorUnit: f.factorUnit,
+        normalizedUnit: f.normalizedUnit,
+        methodology: f.methodology,
+        source: f.source,
+      },
+      create: f,
     });
   }
 

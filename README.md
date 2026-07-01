@@ -294,6 +294,8 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `PATCH` | `/subsidiaries/:id` | Update | `super_admin` |
 | `DELETE` | `/subsidiaries/:id` | Delete | `super_admin` |
 | `GET` | `/kpi` | Dashboard summary (totals + geography breakdown) | any |
+| `POST` | `/calculations/preview` | Live emissions preview: normalises the unit, applies the matching factor, returns `tCo2e` + factor snapshot | any |
+| `GET` | `/factors` | List emission factors (optional `?category=&geographyCode=&year=`) | any |
 
 ---
 
@@ -309,6 +311,7 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | `locations` | Facilities within a subsidiary |
 | `user_subsidiary_access` | Which subsidiaries a `data_entry` user may access (tenant‑isolation source) |
 | `audit_log` | Append‑only record of every mutation (`action`, `entity`, `entityId`, `diff`) |
+| `emission_factors` | Reference data (not tenant‑scoped): Scope 1 & 2 factors by category / geography / reporting year / version, with `source` + `methodology` for traceability |
 
 ---
 
