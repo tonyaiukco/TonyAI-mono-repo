@@ -26,6 +26,15 @@ enum SubsidiaryStatus {
   pending
 }
 
+enum ActivityRecordStatus {
+  draft
+  submitted
+  under_review
+  approved
+  rejected
+  locked
+}
+
 model Profile {
   id               String                 @id @db.Uuid // = auth.users.id
   email            String                 @unique
@@ -73,6 +82,7 @@ model Subsidiary {
   includedScopes   Int[]                  @default([1, 2]) @map("included_scopes")
   locations        Location[]
   access           UserSubsidiaryAccess[]
+  activityRecords  ActivityRecord[]
   createdAt        DateTime               @default(now()) @map("created_at")
   updatedAt        DateTime               @updatedAt @map("updated_at")
 
@@ -92,6 +102,38 @@ model Location {
 
   @@index([subsidiaryId])
   @@map("locations")
+}
+
+// An activity record is the core data-entry unit: a single activity input for a
+// (subsidiary, reporting period, category), plus an IMMUTABLE calculation
+// snapshot produced by the calc engine at create/update time (never recomputed
+// on read, so historic results survive factor-library changes). It moves through
+// a status workflow (draft -> submitted -> under_review -> approved/rejected;
+// approved/locked are terminal & immutable). Child of `subsidiaries`, so it is
+// tenant-scoped by `subsidiary_id`.
+model ActivityRecord {
+  id             String               @id @default(uuid()) @db.Uuid
+  subsidiaryId   String               @map("subsidiary_id") @db.Uuid
+  subsidiary     Subsidiary           @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  reportingYear  Int                  @map("reporting_year")
+  reportingPeriod String              @map("reporting_period") // 'monthly' | 'quarterly' | 'annual'
+  periodValue    String               @map("period_value") // e.g. "Q1", "January", "Annual"
+  category       String // canonical category key, e.g. "Electricity"
+  scope          Int // derived from CATEGORY_SCOPE_MAP
+  status         ActivityRecordStatus @default(draft)
+  activityValue  Float                @map("activity_value")
+  activityUnit   String               @map("activity_unit")
+  input          Json? // raw structured input as submitted (optional)
+  calculation    Json // immutable calc-engine snapshot (tCo2e + factor traceability)
+  createdBy      String               @map("created_by") @db.Uuid
+  anomalyFlag    Boolean              @default(false) @map("anomaly_flag")
+  varianceReason String?              @map("variance_reason")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  @@unique([subsidiaryId, reportingYear, reportingPeriod, periodValue, category])
+  @@index([subsidiaryId])
+  @@map("activity_records")
 }
 
 model UserSubsidiaryAccess {

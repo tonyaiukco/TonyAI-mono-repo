@@ -296,6 +296,16 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `GET` | `/kpi` | Dashboard summary (totals + geography breakdown) | any |
 | `POST` | `/calculations/preview` | Live emissions preview: normalises the unit, applies the matching factor, returns `tCo2e` + factor snapshot | any |
 | `GET` | `/factors` | List emission factors (optional `?category=&geographyCode=&year=`) | any |
+| `GET` | `/activity-records` | List (tenant‑scoped; filters `?subsidiaryId=&year=&period=&category=&status=`) | any |
+| `GET` | `/activity-records/:id` | Get one (404 if outside access set) | any |
+| `POST` | `/activity-records` | Create (status `draft`; stores an immutable calc snapshot) | `data_entry` / `consultant` / `super_admin` |
+| `PATCH` | `/activity-records/:id` | Update (only while `draft`/`rejected`; recomputes the snapshot; author‑or‑`super_admin`) | `data_entry` / `consultant` / `super_admin` |
+| `DELETE` | `/activity-records/:id` | Delete (only while `draft`/`rejected`; author‑or‑`super_admin`) | `data_entry` / `consultant` / `super_admin` |
+| `POST` | `/activity-records/:id/submit` | `draft` → `submitted` | any accessor |
+| `POST` | `/activity-records/:id/approve` | `submitted`/`under_review` → `approved` | `consultant` / `super_admin` |
+| `POST` | `/activity-records/:id/reject` | `submitted`/`under_review` → `rejected` (body `{ varianceReason }`) | `consultant` / `super_admin` |
+
+Activity-record workflow: `draft → submitted → under_review → approved | rejected`. `approved` and `locked` records are immutable; `rejected` records can be edited and re‑submitted. The `calculation` snapshot is written at create/update time and never recomputed on read, so historic results survive factor-library changes. Every transition writes an `audit_log` row (`entity: 'activity_record'`).
 
 ---
 
@@ -312,6 +322,7 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | `user_subsidiary_access` | Which subsidiaries a `data_entry` user may access (tenant‑isolation source) |
 | `audit_log` | Append‑only record of every mutation (`action`, `entity`, `entityId`, `diff`) |
 | `emission_factors` | Reference data (not tenant‑scoped): Scope 1 & 2 factors by category / geography / reporting year / version, with `source` + `methodology` for traceability |
+| `activity_records` | Core data‑entry unit (child of `subsidiaries`): one activity input per (subsidiary, period, category) with a derived `scope`, an immutable `calculation` snapshot, and a `status` workflow (`draft` → `submitted` → `under_review` → `approved`/`rejected`/`locked`) |
 
 ---
 
