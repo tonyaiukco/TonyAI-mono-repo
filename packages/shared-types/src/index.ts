@@ -582,3 +582,68 @@ export interface CalculationResult {
   source: string;
   version: string;
 }
+
+// ---------------------------------------------------------------------------
+// Activity records + review workflow (Phase 1, PR2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Lifecycle of an activity record:
+ *   draft -> submitted -> under_review -> approved | rejected
+ * `approved` and `locked` are terminal & immutable; `rejected` records can be
+ * edited (back to draft-like behaviour) and re-submitted.
+ */
+export type ActivityRecordStatus =
+  | 'draft'
+  | 'submitted'
+  | 'under_review'
+  | 'approved'
+  | 'rejected'
+  | 'locked';
+
+/**
+ * An activity record as returned/accepted by the API (DB-shaped). `calculation`
+ * is the immutable snapshot produced by the calc engine at write time — the same
+ * shape as a preview `CalculationResult`.
+ */
+export interface ActivityRecordDTO {
+  id: string;
+  subsidiaryId: string;
+  reportingYear: number;
+  reportingPeriod: ReportingPeriod;
+  periodValue: string;
+  category: Category;
+  scope: number;
+  status: ActivityRecordStatus;
+  activityValue: number;
+  activityUnit: string;
+  input: Record<string, unknown> | null;
+  calculation: CalculationResult;
+  createdBy: string;
+  anomalyFlag: boolean;
+  varianceReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateActivityRecordInput {
+  subsidiaryId: string;
+  reportingYear: number;
+  reportingPeriod: ReportingPeriod;
+  periodValue: string;
+  category: Category;
+  activityValue: number;
+  activityUnit: string;
+  input?: Record<string, unknown> | null;
+  varianceReason?: string | null;
+}
+
+/** All fields optional; `subsidiaryId` is immutable and cannot be changed here. */
+export type UpdateActivityRecordInput = Partial<
+  Omit<CreateActivityRecordInput, 'subsidiaryId'>
+>;
+
+/** Body of POST /activity-records/:id/reject — the reviewer's variance reason. */
+export interface RejectInput {
+  varianceReason: string;
+}
