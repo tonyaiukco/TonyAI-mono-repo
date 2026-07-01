@@ -524,3 +524,61 @@ export interface DashboardKpi {
 }
 
 export type GeographyCode = 'UK' | 'TR' | 'EU';
+
+// ---------------------------------------------------------------------------
+// Emission-factor library + calculation engine (Phase 1, PR1)
+// ---------------------------------------------------------------------------
+
+/** A single emission factor as returned by GET /api/v1/factors. Reference data. */
+export interface EmissionFactorDTO {
+  id: string;
+  category: string;
+  geographyCode: string;
+  reportingYear: number;
+  scope: number;
+  factorValue: number;
+  factorUnit: string;
+  normalizedUnit: string;
+  methodology: string;
+  source: string;
+  version: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Body of POST /api/v1/calculations/preview. */
+export interface CalculationInput {
+  category: string;
+  geographyCode: string;
+  reportingYear: number;
+  value: number;
+  unit: string;
+}
+
+/**
+ * Result of a preview calculation. Carries the full factor snapshot so the
+ * historic result is reproducible even after a newer factor version is added.
+ */
+export interface CalculationResult {
+  category: string;
+  geographyCode: string;
+  reportingYear: number;
+  scope: number;
+  /** Raw activity input as submitted. */
+  inputValue: number;
+  inputUnit: string;
+  /** Value after unit normalization (e.g. m³ -> kWh). */
+  normalizedValue: number;
+  normalizedUnit: string;
+  /** true when a unit conversion was applied during normalization. */
+  conversionApplied: boolean;
+  kgCo2e: number;
+  tCo2e: number;
+  // Factor traceability snapshot (see calculation_logic.md §5).
+  factorId: string;
+  factorValue: number;
+  factorUnit: string;
+  methodology: string;
+  source: string;
+  version: string;
+}

@@ -105,6 +105,30 @@ model UserSubsidiaryAccess {
   @@map("user_subsidiary_access")
 }
 
+// Emission factors are REFERENCE DATA, not tenant-scoped: every authenticated
+// user may read them (RLS SELECT policy has no tenant predicate). Writes stay on
+// the owner/service-role backend (seed). A calculation snapshots the factor it
+// used so historic results never change even if a newer version is added later.
+model EmissionFactor {
+  id             String   @id @default(uuid()) @db.Uuid
+  category       String // canonical category key, e.g. "Electricity", "Natural Gas"
+  geographyCode  String   @map("geography_code") // UK | TR | EU
+  reportingYear  Int      @map("reporting_year")
+  scope          Int // 1 (direct) | 2 (purchased energy)
+  factorValue    Float    @map("factor_value") // kgCO2e per normalized unit
+  factorUnit     String   @map("factor_unit") // e.g. "kgCO2e/kWh"
+  normalizedUnit String   @map("normalized_unit") // target unit after normalization, e.g. "kWh"
+  methodology    String // e.g. "location-based"
+  source         String // provenance, e.g. "DEFRA 2024 GHG Conversion Factors"
+  version        String // factor-library version, e.g. "2024.1"
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([category, geographyCode, reportingYear, version])
+  @@index([category, geographyCode, reportingYear])
+  @@map("emission_factors")
+}
+
 model AuditLog {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String?  @map("user_id") @db.Uuid
