@@ -5,11 +5,15 @@ description: Wire a Next.js page in apps/web to the live TonyAI API — replace 
 
 # wire-page
 
-Connect a page in `apps/web` to the live API, following the pattern already used in
-`apps/web/app/subsidiaries/page.tsx` (the canonical reference — read it first).
+Connect a page in `apps/web` to the live API. Three **canonical references** — read the one closest
+to your page type first and mirror it:
+
+- `apps/web/app/subsidiaries/page.tsx` — simple CRUD list + dialog forms
+- `apps/web/app/data-entry/page.tsx` — form workspace with live calculation preview + mutations
+- `apps/web/app/emissions/page.tsx` — read-only analytics over an aggregation endpoint (tabs, filters, charts)
 
 ## When to use
-Turning a mock-driven page/section into a live one (Data Entry, Emissions, Reports, dashboard widgets).
+Turning a mock-driven page/section into a live one (dashboard widgets, Reports, new modules).
 
 ## Rules (must hold)
 - Data goes through **`@/lib/api`** (the typed `api` client) — never raw `fetch` or a hardcoded URL in a page.
@@ -21,9 +25,11 @@ Turning a mock-driven page/section into a live one (Data Entry, Emissions, Repor
 ## Steps
 1. **API methods:** add any missing calls to `apps/web/lib/api.ts` (typed with shared-types DTOs). Keep the `apiFetch` wrapper — it attaches the Supabase bearer token and surfaces the API's `message` on error.
 2. **Current user:** on mount, `api.me()` → `useAuthStore().setUser`; show the user's name/role + a Sign-out button (mirror the subsidiaries page: `getSupabaseBrowserClient().auth.signOut()` then `router.push('/login')`).
-3. **Fetch + state:** load data in a `useEffect`; keep `loading`, empty, and error states. Surface every failure with `sonner` `toast.error(err.message)` — this includes 401 (invalid/expired token) and 403 (RBAC), which the API returns with a message.
+3. **Fetch + state:** load data in a `useEffect`; keep `loading`, empty, and error states. Surface every failure with `sonner` `toast.error` — branch on `ApiError.status` for friendly 401 (session expired) / 403 (no access) / 5xx (service unavailable) messages (see the `errMessage` helper in the emissions page).
 4. **Mutations:** call the `api.*` method, then refresh; `toast.success` on success; disable buttons while saving.
-5. **Honesty:** if part of the screen has no backend yet, keep it but label it clearly (e.g. a "Demo data" badge) — never imply mock data is live.
+5. **Honesty (compliance-critical):** if part of the screen has no backend yet, choose one of two labels and never imply mock data is live:
+   - **"Demo data" badge** — when illustrative mock content stays visible (e.g. a dashboard section awaiting wiring).
+   - **"Not yet available" empty state** — preferred for emissions/target *numbers*: show an explicit placeholder card with no figures at all, so nothing can be mistaken for a real value (see the Targets tab + locked Intensity toggle on the emissions page).
 
 ## Skeleton
 ```tsx

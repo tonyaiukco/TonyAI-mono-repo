@@ -1,21 +1,29 @@
 ---
 name: tenant-api-module
-description: Scaffold a new tenant-scoped NestJS resource in apps/api (module + controller + service + DTOs) for TonyAI — reads filtered by accessibleSubsidiaryIds, super_admin-only writes, audit-logged mutations, shared DTO types in @tonyai/shared-types, and a DB-free Vitest spec. Use when adding a new API entity/resource to the backend.
+description: Scaffold a new tenant-scoped NestJS resource in apps/api (module + controller + service + DTOs) for TonyAI — reads filtered by accessibleSubsidiaryIds, role-gated writes (admin-managed or author-based workflow), audit-logged mutations, shared DTO types in @tonyai/shared-types, and a DB-free Vitest spec. Use when adding a new API entity/resource to the backend.
 ---
 
 # tenant-api-module
 
-Create a new backend resource that follows TonyAI's conventions. The **canonical reference** is
-`apps/api/src/subsidiaries/` — read it first and mirror its structure.
+Create a new backend resource that follows TonyAI's conventions. Two **canonical references** — pick the
+one matching your resource type and mirror its structure:
+
+- `apps/api/src/subsidiaries/` — **admin-managed** resource (org structure; `super_admin`-only writes)
+- `apps/api/src/activity-records/` — **workflow** resource (user-generated rows with a status lifecycle)
 
 ## When to use
-Adding any new tenant-owned entity to the API (e.g. locations, data submissions, suppliers, emission records).
+Adding any new tenant-owned entity to the API (e.g. locations, evidence, suppliers, targets).
 
 ## Rules (must hold)
 - **Tenant scope every read.** The owning subsidiary id must be in `RequestUser.accessibleSubsidiaryIds`
   (set by `SupabaseAuthGuard`). For the subsidiary itself that's its own id; for a child entity use
   `where: { subsidiaryId: { in: user.accessibleSubsidiaryIds } }`. Ids outside the set → `NotFoundException`.
-- **Writes require `super_admin`** via an `assertCanWrite(user)` guard; others get `ForbiddenException`.
+- **Gate writes by resource type** (both patterns throw `ForbiddenException` on failure):
+  - *Admin-managed* (subsidiaries, locations): writes require `super_admin` via `assertCanWrite(user)`.
+  - *Workflow* (activity records, evidence): writes allowed to a `WRITE_ROLES` set
+    (`data_entry` / `consultant` / `super_admin`); rows carry `createdBy`; edits/deletes restricted to
+    **author-or-`super_admin`** and to editable statuses only (e.g. `draft`/`rejected`) — mirror
+    `assertCanMutate` in the activity-records service.
 - **Audit every mutation** — create/update/delete each write one `audit_log` row through Prisma.
 - **Validate input** with `class-validator` DTOs (the global `ValidationPipe` uses `whitelist` + `forbidNonWhitelisted`).
 - **Response types live in `@tonyai/shared-types`** (a `XxxDTO` interface) — never inline a duplicate type.
