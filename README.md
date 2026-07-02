@@ -135,7 +135,7 @@ TonyAI-mono-repo/
 │   ├── shared-types/        # single source of truth for TS types
 │   └── db/                  # Prisma schema, migrations, seed
 ├── e2e/                     # Playwright smoke tests
-├── docs/                    # product + technical specs (md_docs, tech_docs)
+├── docs/                    # product + technical specs (md_docs, tech_docs) + status log (roadmap_docs)
 ├── .claude/
 │   ├── agents/              # the 7-subagent development team
 │   └── skills/              # reusable procedures (tenant-api-module, rls-for-table)
@@ -364,9 +364,13 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 
 ## Roadmap
 
-- **Milestone 1 — vertical slice** ✅ *(this release)*: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
-- **Phase 1 — Core MVP (Scope 1 & 2):** Data Entry workspace, calculation engine + emission‑factor seeding (DEFRA/Türkiye), draft→submit workflow, evidence upload (Supabase Storage), period locking, anomaly detection, Emissions Analytics; cloud staging deploy.
-- **Phase 2 — Advanced:** Scope 3 + supplier management, report generation (PDF/Excel), bulk upload, email notifications (Resend), Sentry, i18n (TR/EN), and a Python/FastAPI analytics microservice.
+- **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
+- **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅; remaining — dashboard emissions wiring, locations level, evidence upload, period locking, anomaly detection, E2E coverage.
+- **Phase 2 — Staging cloud & CI/CD:** Supabase cloud environments, Docker + GitHub Actions deploy (GCP/Azure), KVKK/GDPR data residency, Sentry/monitoring.
+- **Phase 3 — Advanced:** Scope 3 + supplier management, targets & intensity, reports (PDF/Excel) + Resend, bulk upload, i18n (TR/EN), dark mode, Python/FastAPI analytics microservice.
+- **Phase 4 — Production launch:** authoritative emission-factor data, security/pen-test + load test, backup/DR, user lifecycle, legal (KVKK/GDPR), go-live.
+
+The detailed, checkbox-level plan lives in [`docs/roadmap_docs/project-status.md`](docs/roadmap_docs/project-status.md).
 
 ---
 

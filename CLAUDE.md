@@ -52,7 +52,8 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 - **Verify before declaring done:** typecheck + build + relevant tests; for behaviour, exercise it against the running app — don't claim a fix works without checking.
 
 ## Status & roadmap
-- Done: M0 + M1 vertical slice; Phase-1 emission-factor library + Scope 1&2 calculation engine + activity-records API & review workflow.
-- Next (Phase 1): Data Entry UI + Emissions analytics wiring, then hardening; then **Phase 2** (cloud + CI/CD). See README "Roadmap".
+- **Session memory lives in `docs/roadmap_docs/project-status.md`** — read it at session start to see where work left off; update it (status, decisions, next steps) in the same change whenever a PR merges or the roadmap shifts. It must never go stale.
+- Done: M0 + M1 vertical slice; Phase-1 emission-factor library + Scope 1&2 calc engine + activity-records API & review workflow + Data Entry UI + Emissions Analytics wiring.
+- Next (Phase 1): dashboard `/` wiring, locations level, evidence upload, period locking, anomaly detection, hardening; then **Phase 2** (staging cloud + CI/CD). Full phased plan (0–4 + post-launch) in the status log above.
 
 <!-- Add your own recurring rules/preferences below this line -->
