@@ -135,7 +135,7 @@ TonyAI-mono-repo/
 │   ├── shared-types/        # single source of truth for TS types
 │   └── db/                  # Prisma schema, migrations, seed
 ├── e2e/                     # Playwright smoke tests
-├── docs/                    # product + technical specs (md_docs, tech_docs)
+├── docs/                    # product + technical specs (md_docs, tech_docs) + status log (roadmap_docs)
 ├── .claude/
 │   ├── agents/              # the 7-subagent development team
 │   └── skills/              # reusable procedures (tenant-api-module, rls-for-table)
