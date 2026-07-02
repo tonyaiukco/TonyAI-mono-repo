@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { ActivityRecordStatus, type ActivityRecord, type Subsidiary } from '@tonyai/db';
+import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
 import type { CalculationResult } from '@tonyai/shared-types';
 import { ActivityRecordsService } from './activity-records.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -238,6 +239,22 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
         }),
       }),
     );
+  });
+
+  it('maps a duplicate (Prisma P2002) to 409 Conflict, not 500', async () => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(
+      makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
+    );
+    prisma.activityRecord.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      }),
+    );
+    await expect(
+      service.create(dataEntry(), CREATE_DTO),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('cannot create against an inaccessible subsidiary (NotFound, no compute)', async () => {
