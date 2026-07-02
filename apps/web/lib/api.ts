@@ -8,6 +8,7 @@ import type {
   CreateActivityRecordInput,
   CreateSubsidiaryInput,
   DashboardKpi,
+  EmissionsSummary,
   ReportingPeriod,
   SubsidiaryDTO,
   UpdateActivityRecordInput,
@@ -22,6 +23,14 @@ export interface ListActivityRecordsParams {
   period?: ReportingPeriod;
   category?: Category;
   status?: ActivityRecordStatus;
+}
+
+/** Optional filters for GET /emissions/summary (all AND-combined). */
+export interface EmissionsSummaryParams {
+  subsidiaryId?: string;
+  year?: number;
+  scope?: 1 | 2 | 3;
+  category?: Category;
 }
 
 const BASE_URL =
@@ -126,4 +135,17 @@ export const api = {
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/submit`, {
       method: "POST",
     }),
+
+  // --- Emissions analytics ---
+  emissionsSummary: (params: EmissionsSummaryParams = {}) => {
+    const search = new URLSearchParams();
+    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
+    if (params.year !== undefined) search.set("year", String(params.year));
+    if (params.scope !== undefined) search.set("scope", String(params.scope));
+    if (params.category) search.set("category", params.category);
+    const qs = search.toString();
+    return apiFetch<EmissionsSummary>(
+      `/emissions/summary${qs ? `?${qs}` : ""}`,
+    );
+  },
 };

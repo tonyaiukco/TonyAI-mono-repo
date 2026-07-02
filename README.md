@@ -60,10 +60,12 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (21 unit + 2 E2E) | ✅ |
+| Automated tests (61 unit + 2 E2E) | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
+| Emissions Analytics wired to a live aggregation endpoint (scope totals, category/subsidiary breakdown, trends) | ✅ |
+| Targets & intensity metrics | ⏳ Phase 1 (labelled "not yet available") |
 | Reports | ⏳ Phase 1/2 |
 
 **What's proven by tests today:** an `admin` sees all 5 seeded subsidiaries, a `data_entry` user sees only their 2, non‑admins are blocked from writes (HTTP 403), unauthenticated requests are rejected (HTTP 401), and every mutation writes an immutable `audit_log` row — verified at the API layer **and** the database (RLS) layer.
@@ -233,7 +235,7 @@ supabase start
 
 # 4. Create the schema and seed demo data
 pnpm db:migrate     # applies Prisma migrations (incl. RLS policies)
-pnpm db:seed        # 1 org, 5 subsidiaries, 2 users
+pnpm db:seed        # 1 org, 5 subsidiaries, 2 users, factors + 96 demo Scope 1&2 activity records
 
 # 5. Run everything
 pnpm dev            # web -> http://localhost:3000   api -> http://localhost:3001/api/v1
@@ -305,6 +307,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `POST` | `/activity-records/:id/submit` | `draft` → `submitted` | any accessor |
 | `POST` | `/activity-records/:id/approve` | `submitted`/`under_review` → `approved` | `consultant` / `super_admin` |
 | `POST` | `/activity-records/:id/reject` | `submitted`/`under_review` → `rejected` (body `{ varianceReason }`) | `consultant` / `super_admin` |
+| `GET` | `/emissions/summary` | Tenant‑scoped analytics aggregation from committed records: scope totals, category & subsidiary breakdown, monthly/quarterly/yearly trends (filters `?subsidiaryId=&year=&scope=&category=`) | any |
 
 Activity-record workflow: `draft → submitted → under_review → approved | rejected`. `approved` and `locked` records are immutable; `rejected` records can be edited and re‑submitted. The `calculation` snapshot is written at create/update time and never recomputed on read, so historic results survive factor-library changes. Every transition writes an `audit_log` row (`entity: 'activity_record'`).
 

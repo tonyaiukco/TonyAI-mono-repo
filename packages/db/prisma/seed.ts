@@ -1,6 +1,11 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
-import { PrismaClient, UserRole, SubsidiaryStatus } from '../generated/client';
+import {
+  PrismaClient,
+  UserRole,
+  SubsidiaryStatus,
+  ActivityRecordStatus,
+} from '../generated/client';
 
 const prisma = new PrismaClient();
 
@@ -82,6 +87,83 @@ const EMISSION_FACTORS: SeedFactor[] = [
   { category: 'Fuel', geographyCode: 'TR', reportingYear: 2024, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: '2024.1' },
   { category: 'Fuel', geographyCode: 'EU', reportingYear: 2024, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: '2024.1' },
 ];
+
+// ---------------------------------------------------------------------------
+// Demo activity records so the Emissions Analytics workspace renders with data.
+//
+// These are PROTOTYPE values, NOT real operational data — they exist so the
+// analytics/trend views are demoable out of the box. They reuse the demo
+// emission factors above (already labelled as prototype/DEMO_SOURCE), so every
+// calculation snapshot carries that same non-authoritative provenance.
+//
+// Only Scope 1 & 2 categories are seeded (Electricity, Natural Gas, Fuel) —
+// the only ones with seeded factors, and exactly the Phase 1 Scope 1 & 2
+// boundary. Records are seeded MONTHLY across 2024 so the monthly, quarterly
+// and yearly trend views all populate. Records are `approved` (committed), so
+// they feed the inventory the same way real reviewed data would.
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+const ACTIVITY_YEAR = 2024;
+
+interface ActivitySpec {
+  subsidiaryIndex: number; // index into SUBSIDIARIES
+  category: string; // must have a seeded factor for the subsidiary's geography
+  unit: string; // base unit matching the factor's normalizedUnit (no conversion)
+  baseMonthly: number; // typical monthly activity amount
+  amplitude: number; // seasonal swing as a fraction of base (0–1)
+  peakMonth: number; // month index (0=Jan) where activity peaks
+  anomaly?: { month: number; multiplier: number }; // optional one-off spike
+}
+
+// Chosen so both data_entry-visible subsidiaries (index 0 and 3) have data,
+// and both scopes are represented (Scope 1: Natural Gas + Fuel, Scope 2:
+// Electricity). Gas peaks in winter, fuel/electricity in summer.
+const ACTIVITY_SPECS: ActivitySpec[] = [
+  { subsidiaryIndex: 0, category: 'Electricity', unit: 'kWh', baseMonthly: 145000, amplitude: 0.12, peakMonth: 6 },
+  { subsidiaryIndex: 0, category: 'Natural Gas', unit: 'kWh', baseMonthly: 90000, amplitude: 0.35, peakMonth: 0 },
+  { subsidiaryIndex: 1, category: 'Electricity', unit: 'kWh', baseMonthly: 78000, amplitude: 0.1, peakMonth: 7 },
+  { subsidiaryIndex: 1, category: 'Natural Gas', unit: 'kWh', baseMonthly: 120000, amplitude: 0.4, peakMonth: 0 },
+  { subsidiaryIndex: 1, category: 'Fuel', unit: 'litres', baseMonthly: 8000, amplitude: 0.2, peakMonth: 6 },
+  { subsidiaryIndex: 2, category: 'Electricity', unit: 'kWh', baseMonthly: 210000, amplitude: 0.08, peakMonth: 6 },
+  { subsidiaryIndex: 3, category: 'Fuel', unit: 'litres', baseMonthly: 15000, amplitude: 0.22, peakMonth: 7, anomaly: { month: 6, multiplier: 2.2 } },
+  { subsidiaryIndex: 3, category: 'Electricity', unit: 'kWh', baseMonthly: 52000, amplitude: 0.1, peakMonth: 6 },
+];
+
+/** Deterministic seasonal activity value for a given month (0=Jan). */
+function monthlyActivity(spec: ActivitySpec, month: number): number {
+  const seasonal =
+    spec.baseMonthly *
+    (1 + spec.amplitude * Math.cos((2 * Math.PI * (month - spec.peakMonth)) / 12));
+  const spike =
+    spec.anomaly && spec.anomaly.month === month ? spec.anomaly.multiplier : 1;
+  return Math.round(seasonal * spike);
+}
+
+/** Resolve the latest-version factor for (category, geography, year), mirroring
+ * the calc engine's resolution so seeded snapshots match runtime output. */
+async function resolveFactor(
+  category: string,
+  geographyCode: string,
+  reportingYear: number,
+) {
+  return prisma.emissionFactor.findFirst({
+    where: { category, geographyCode, reportingYear },
+    orderBy: { version: 'desc' },
+  });
+}
 
 async function ensureAuthUser(email: string, password: string, fullName: string): Promise<string> {
   const { data, error } = await admin.auth.admin.createUser({
@@ -185,6 +267,89 @@ async function main() {
       create: { userId: entryId, subsidiaryId },
     });
   }
+
+  console.log('Seeding demo activity records (prototype data, Scope 1 & 2)...');
+  let activityCount = 0;
+  for (const spec of ACTIVITY_SPECS) {
+    const subsidiary = SUBSIDIARIES[spec.subsidiaryIndex];
+    const factor = await resolveFactor(
+      spec.category,
+      subsidiary.geographyCode,
+      ACTIVITY_YEAR,
+    );
+    if (!factor) {
+      console.warn(
+        `  ! no factor for ${spec.category}/${subsidiary.geographyCode}/${ACTIVITY_YEAR} — skipping ${subsidiary.tradingName}`,
+      );
+      continue;
+    }
+    if (spec.unit !== factor.normalizedUnit) {
+      throw new Error(
+        `Seed activity unit "${spec.unit}" != factor normalizedUnit "${factor.normalizedUnit}" for ${spec.category}`,
+      );
+    }
+
+    for (let month = 0; month < MONTHS.length; month++) {
+      const activityValue = monthlyActivity(spec, month);
+      const kgCo2e = activityValue * factor.factorValue;
+      const tCo2e = kgCo2e / 1000;
+      const isAnomaly = spec.anomaly?.month === month;
+
+      // Immutable calc snapshot — same shape the calc engine produces at write
+      // time (no unit conversion here: activity is already in the base unit).
+      const calculation = {
+        category: spec.category,
+        geographyCode: subsidiary.geographyCode,
+        reportingYear: ACTIVITY_YEAR,
+        scope: factor.scope,
+        inputValue: activityValue,
+        inputUnit: spec.unit,
+        normalizedValue: activityValue,
+        normalizedUnit: factor.normalizedUnit,
+        conversionApplied: false,
+        kgCo2e,
+        tCo2e,
+        factorId: factor.id,
+        factorValue: factor.factorValue,
+        factorUnit: factor.factorUnit,
+        methodology: factor.methodology,
+        source: factor.source,
+        version: factor.version,
+      };
+
+      await prisma.activityRecord.upsert({
+        where: {
+          subsidiaryId_reportingYear_reportingPeriod_periodValue_category: {
+            subsidiaryId: subsidiary.id,
+            reportingYear: ACTIVITY_YEAR,
+            reportingPeriod: 'monthly',
+            periodValue: MONTHS[month],
+            category: spec.category,
+          },
+        },
+        update: {},
+        create: {
+          subsidiaryId: subsidiary.id,
+          reportingYear: ACTIVITY_YEAR,
+          reportingPeriod: 'monthly',
+          periodValue: MONTHS[month],
+          category: spec.category,
+          scope: factor.scope,
+          status: ActivityRecordStatus.approved,
+          activityValue,
+          activityUnit: spec.unit,
+          calculation,
+          createdBy: adminId,
+          anomalyFlag: isAnomaly,
+          varianceReason: isAnomaly
+            ? 'Prototype anomaly: unusually high activity vs seasonal baseline.'
+            : null,
+        },
+      });
+      activityCount++;
+    }
+  }
+  console.log(`  seeded ${activityCount} monthly activity records (approved).`);
 
   console.log('\nSeed complete.');
   console.log('  super_admin -> admin@tonyai.local / TonyAI!2026 (sees all 5 subsidiaries)');
