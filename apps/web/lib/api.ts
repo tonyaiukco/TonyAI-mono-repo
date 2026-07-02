@@ -1,11 +1,28 @@
 import type {
+  ActivityRecordDTO,
+  ActivityRecordStatus,
   AuthUser,
+  CalculationInput,
+  CalculationResult,
+  Category,
+  CreateActivityRecordInput,
   CreateSubsidiaryInput,
   DashboardKpi,
+  ReportingPeriod,
   SubsidiaryDTO,
+  UpdateActivityRecordInput,
   UpdateSubsidiaryInput,
 } from "@tonyai/shared-types";
 import { getSupabaseBrowserClient } from "./supabase";
+
+/** Optional filters for GET /activity-records (all AND-combined). */
+export interface ListActivityRecordsParams {
+  subsidiaryId?: string;
+  year?: number;
+  period?: ReportingPeriod;
+  category?: Category;
+  status?: ActivityRecordStatus;
+}
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api/v1";
@@ -15,6 +32,18 @@ async function authHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/** Error thrown by the API client; carries the HTTP status for callers that
+ * need to branch on it (e.g. a 404 "no emission factor" preview). */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
 }
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -32,7 +61,10 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     } catch {
       /* ignore */
     }
-    throw new Error(Array.isArray(message) ? message.join(", ") : message);
+    throw new ApiError(
+      Array.isArray(message) ? message.join(", ") : message,
+      res.status,
+    );
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -57,4 +89,41 @@ export const api = {
       method: "DELETE",
     }),
   kpi: () => apiFetch<DashboardKpi>("/kpi"),
+
+  // --- Calculation engine ---
+  previewCalculation: (input: CalculationInput) =>
+    apiFetch<CalculationResult>("/calculations/preview", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  // --- Activity records ---
+  listActivityRecords: (params: ListActivityRecordsParams = {}) => {
+    const search = new URLSearchParams();
+    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
+    if (params.year !== undefined) search.set("year", String(params.year));
+    if (params.period) search.set("period", params.period);
+    if (params.category) search.set("category", params.category);
+    if (params.status) search.set("status", params.status);
+    const qs = search.toString();
+    return apiFetch<ActivityRecordDTO[]>(
+      `/activity-records${qs ? `?${qs}` : ""}`,
+    );
+  },
+  getActivityRecord: (id: string) =>
+    apiFetch<ActivityRecordDTO>(`/activity-records/${id}`),
+  createActivityRecord: (body: CreateActivityRecordInput) =>
+    apiFetch<ActivityRecordDTO>("/activity-records", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateActivityRecord: (id: string, body: UpdateActivityRecordInput) =>
+    apiFetch<ActivityRecordDTO>(`/activity-records/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  submitActivityRecord: (id: string) =>
+    apiFetch<ActivityRecordDTO>(`/activity-records/${id}/submit`, {
+      method: "POST",
+    }),
 };

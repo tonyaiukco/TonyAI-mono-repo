@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -181,23 +182,38 @@ export class ActivityRecordsService {
       dto.activityUnit,
     );
 
-    const created = await this.prisma.activityRecord.create({
-      data: {
-        subsidiaryId: dto.subsidiaryId,
-        reportingYear: dto.reportingYear,
-        reportingPeriod: dto.reportingPeriod,
-        periodValue: dto.periodValue,
-        category: dto.category,
-        scope,
-        status: ActivityRecordStatus.draft,
-        activityValue: dto.activityValue,
-        activityUnit: dto.activityUnit,
-        input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
-        calculation: calculation as unknown as Prisma.InputJsonValue,
-        createdBy: user.id,
-        varianceReason: dto.varianceReason ?? null,
-      },
-    });
+    let created: ActivityRecord;
+    try {
+      created = await this.prisma.activityRecord.create({
+        data: {
+          subsidiaryId: dto.subsidiaryId,
+          reportingYear: dto.reportingYear,
+          reportingPeriod: dto.reportingPeriod,
+          periodValue: dto.periodValue,
+          category: dto.category,
+          scope,
+          status: ActivityRecordStatus.draft,
+          activityValue: dto.activityValue,
+          activityUnit: dto.activityUnit,
+          input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
+          calculation: calculation as unknown as Prisma.InputJsonValue,
+          createdBy: user.id,
+          varianceReason: dto.varianceReason ?? null,
+        },
+      });
+    } catch (e) {
+      // Unique constraint (subsidiary, year, period, periodValue, category)
+      // is a user-actionable conflict, not a server error.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'An activity record already exists for this subsidiary, reporting period and category.',
+        );
+      }
+      throw e;
+    }
     await this.audit(user.id, 'create', created.id, {
       after: this.toDTO(created),
     });

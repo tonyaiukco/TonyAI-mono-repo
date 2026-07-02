@@ -63,7 +63,8 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | Automated tests (21 unit + 2 E2E) | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
-| Data Entry, calculation engine, factor library, reports | ⏳ Phase 1/2 |
+| Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
+| Reports | ⏳ Phase 1/2 |
 
 **What's proven by tests today:** an `admin` sees all 5 seeded subsidiaries, a `data_entry` user sees only their 2, non‑admins are blocked from writes (HTTP 403), unauthenticated requests are rejected (HTTP 401), and every mutation writes an immutable `audit_log` row — verified at the API layer **and** the database (RLS) layer.
 
