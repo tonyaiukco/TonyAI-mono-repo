@@ -647,3 +647,66 @@ export type UpdateActivityRecordInput = Partial<
 export interface RejectInput {
   varianceReason: string;
 }
+
+// ---------------------------------------------------------------------------
+// Emissions analytics summary (Phase 1) — aggregation of activity records.
+// Computed server-side (tenant-scoped) from the immutable `calculation`
+// snapshots, so the numbers are the single source of truth and reproducible.
+// ---------------------------------------------------------------------------
+
+/** tCO₂e split by GHG Protocol scope, plus the combined total. */
+export interface EmissionsScopeTotals {
+  scope1: number;
+  scope2: number;
+  scope3: number;
+  total: number;
+}
+
+/** One category's contribution to the total inventory. */
+export interface EmissionsByCategory {
+  category: Category;
+  scope: number;
+  tCo2e: number;
+  recordCount: number;
+  /** Share of the (filtered) grand total, 0–100. */
+  percentOfTotal: number;
+}
+
+/** One subsidiary's contribution — used for the "top contributors" view. */
+export interface EmissionsBySubsidiary {
+  subsidiaryId: string;
+  subsidiaryName: string;
+  tCo2e: number;
+  recordCount: number;
+  /** Share of the (filtered) grand total, 0–100. */
+  percentOfTotal: number;
+}
+
+/** One point on a time-series trend, split by scope. */
+export interface EmissionsTrendPoint {
+  /** Bucket label, e.g. "2024", "2024-Q1" or "January 2024". */
+  period: string;
+  scope1: number;
+  scope2: number;
+  scope3: number;
+  total: number;
+}
+
+/**
+ * Aggregated emissions inventory for the caller's accessible subsidiaries,
+ * after any requested filters. Trends are pre-bucketed at three granularities.
+ */
+export interface EmissionsSummary {
+  totals: EmissionsScopeTotals;
+  byCategory: EmissionsByCategory[];
+  bySubsidiary: EmissionsBySubsidiary[];
+  trend: {
+    monthly: EmissionsTrendPoint[];
+    quarterly: EmissionsTrendPoint[];
+    yearly: EmissionsTrendPoint[];
+  };
+  /** Number of activity records counted into this summary. */
+  recordCount: number;
+  /** Statuses included in the aggregation (drafts/rejected are excluded). */
+  statusesIncluded: ActivityRecordStatus[];
+}
