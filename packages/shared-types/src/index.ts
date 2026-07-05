@@ -26,15 +26,17 @@ export interface ScopeEmissions {
   scope2: number;
   scope3: number;
   total: number;
-  scope1Trend: number; // percentage change vs prior period
-  scope2Trend: number;
-  scope3Trend: number;
-  totalTrend: number;
+  /** Percentage change vs prior period; null when no prior-period data exists. */
+  scope1Trend: number | null;
+  scope2Trend: number | null;
+  scope3Trend: number | null;
+  totalTrend: number | null;
 }
 
 export interface KPIData {
   totalSubsidiaries: number;
-  totalLocations: number;
+  /** null until the locations backend ships (Phase 1). */
+  totalLocations: number | null;
   completedCategories: number;
   incompleteCategories: number;
   missingCategories: number;
@@ -709,4 +711,51 @@ export interface EmissionsSummary {
   recordCount: number;
   /** Statuses included in the aggregation (drafts/rejected are excluded). */
   statusesIncluded: ActivityRecordStatus[];
+}
+
+// ---------------------------------------------------------------------------
+// Tracking matrix (Phase 1) — subsidiary × category completeness per FR §2.
+// Status semantics (functional_requirements.md §2.2):
+//   missing    — no activity record exists for the cell
+//   incomplete — a record exists but is draft/rejected, or flagged as anomaly
+//   complete   — all records are committed (submitted/under_review/approved/
+//                locked) and none are flagged
+// NOTE: the FR "required evidence attached" condition for `complete` is
+// deferred until the evidence backend ships (tracked in the roadmap).
+// ---------------------------------------------------------------------------
+
+/** One subsidiary × category cell of the tracking matrix. */
+export interface TrackingMatrixCell {
+  category: Category;
+  scope: number;
+  status: DataStatus;
+  /** Sum of committed records' tCO₂e in this cell (drafts excluded). */
+  tCo2e: number;
+  /** All records touching this cell, any status. */
+  recordCount: number;
+  /** ISO timestamp of the most recent record update, or null when missing. */
+  lastUpdate: string | null;
+  /** true when any record in the cell carries an anomaly flag. */
+  anomaly: boolean;
+}
+
+/** One subsidiary row of the tracking matrix (cells ordered as CATEGORIES). */
+export interface TrackingMatrixRow {
+  subsidiaryId: string;
+  subsidiaryName: string;
+  sector: string | null;
+  designatedPerson: string | null;
+  /** Sum of committed tCO₂e across the row. */
+  totalTCo2e: number;
+  completeCount: number;
+  categoryCount: number;
+  cells: TrackingMatrixCell[];
+}
+
+/** Tenant-scoped tracking matrix for the caller's accessible subsidiaries. */
+export interface TrackingMatrixDTO {
+  reportingYear: number | null;
+  rows: TrackingMatrixRow[];
+  /** Cell-status counts across the whole matrix. */
+  totals: { complete: number; incomplete: number; missing: number };
 }

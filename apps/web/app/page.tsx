@@ -27,14 +27,23 @@ import {
   Globe,
   LogOut,
   Search,
-  FlaskConical,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
-import { subsidiaries as demoSubsidiaries, calculateKPIs, alerts } from '@/lib/data';
-import type { Subsidiary, DashboardKpi, SubsidiaryDTO } from '@/lib/types';
+import {
+  buildKpiData,
+  matrixToAlerts,
+  matrixToSubsidiaries,
+} from '@/lib/dashboard-view';
+import type {
+  DashboardKpi,
+  EmissionsSummary,
+  Subsidiary,
+  SubsidiaryDTO,
+  TrackingMatrixDTO,
+} from '@/lib/types';
 
 const statusClass: Record<string, string> = {
   active: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30',
@@ -46,13 +55,15 @@ export default function CarbonDashboard() {
   const router = useRouter();
   const { user, setUser } = useAuthStore();
 
-  // Live data (API: /me, /kpi, /subsidiaries)
+  // Live data (API: /me, /kpi, /subsidiaries, /emissions/summary, /emissions/tracking-matrix)
   const [kpi, setKpi] = useState<DashboardKpi | null>(null);
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
+  const [summary, setSummary] = useState<EmissionsSummary | null>(null);
+  const [matrix, setMatrix] = useState<TrackingMatrixDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Demo-only detail sheet (mock view model, no backend yet)
+  // Drill-down detail sheet (view model mapped from the live tracking matrix)
   const [selectedSubsidiary, setSelectedSubsidiary] = useState<Subsidiary | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
@@ -63,10 +74,17 @@ export default function CarbonDashboard() {
       .catch((e) => toast.error((e as Error).message));
 
     setLoading(true);
-    Promise.all([api.kpi(), api.listSubsidiaries()])
-      .then(([kpiData, list]) => {
+    Promise.all([
+      api.kpi(),
+      api.listSubsidiaries(),
+      api.emissionsSummary(),
+      api.trackingMatrix(),
+    ])
+      .then(([kpiData, list, summaryData, matrixData]) => {
         setKpi(kpiData);
         setSubsidiaries(list);
+        setSummary(summaryData);
+        setMatrix(matrixData);
       })
       .catch((e) => toast.error((e as Error).message))
       .finally(() => setLoading(false));
@@ -83,10 +101,18 @@ export default function CarbonDashboard() {
     );
   }, [subsidiaries, searchQuery]);
 
-  // Demo KPIs/charts keep using the mock dataset (no emissions backend yet).
-  const demoKpiData = useMemo(() => calculateKPIs(demoSubsidiaries), []);
+  // Live Emissions Overview view models, mapped from the aggregation endpoints.
+  const matrixSubsidiaries = useMemo(
+    () => (matrix ? matrixToSubsidiaries(matrix) : []),
+    [matrix],
+  );
+  const emissionsKpiData = useMemo(
+    () => (summary && matrix ? buildKpiData(summary, matrix) : null),
+    [summary, matrix],
+  );
+  const liveAlerts = useMemo(() => (matrix ? matrixToAlerts(matrix) : []), [matrix]);
 
-  const handleDemoSubsidiaryClick = (subsidiary: Subsidiary) => {
+  const handleMatrixSubsidiaryClick = (subsidiary: Subsidiary) => {
     setSelectedSubsidiary(subsidiary);
     setDetailOpen(true);
   };
@@ -220,33 +246,53 @@ export default function CarbonDashboard() {
             </CardContent>
           </Card>
 
-          {/* DEMO: emissions / scopes — no backend yet */}
-          <DemoSection
-            title="Emissions Overview"
-            note="Scope 1–3 emissions, category tracking and alerts are not wired to the API yet (no emissions endpoint). Showing illustrative sample data."
-          >
-            <div className="space-y-6">
-              <KPICards data={demoKpiData} />
+          {/* LIVE: Emissions Overview from /emissions/summary + /emissions/tracking-matrix */}
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-[#1D1D1F]">Emissions Overview</h2>
+              <Badge
+                variant="outline"
+                className="gap-1.5 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
+              >
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                Live data
+              </Badge>
+            </div>
+            <p className="-mt-2 text-sm text-muted-foreground">
+              Committed Scope 1 &amp; 2 activity records. Year-over-year trends and
+              locations arrive in upcoming Phase 1 steps.
+            </p>
 
-              <TrackingMatrix
-                subsidiaries={demoSubsidiaries}
-                onSubsidiaryClick={handleDemoSubsidiaryClick}
-              />
+            {loading ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">Loading…</p>
+            ) : !emissionsKpiData || !matrix ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">
+                Emissions data could not be loaded.
+              </p>
+            ) : (
+              <div className="space-y-6">
+                <KPICards data={emissionsKpiData} />
 
-              <div className="grid gap-6 lg:grid-cols-3">
-                <div className="lg:col-span-1">
-                  <AlertsPanel alerts={alerts} />
-                </div>
-                <div className="lg:col-span-2">
-                  <EmissionsCharts subsidiaries={demoSubsidiaries} />
+                <TrackingMatrix
+                  subsidiaries={matrixSubsidiaries}
+                  onSubsidiaryClick={handleMatrixSubsidiaryClick}
+                />
+
+                <div className="grid gap-6 lg:grid-cols-3">
+                  <div className="lg:col-span-1">
+                    <AlertsPanel alerts={liveAlerts} />
+                  </div>
+                  <div className="lg:col-span-2">
+                    <EmissionsCharts subsidiaries={matrixSubsidiaries} />
+                  </div>
                 </div>
               </div>
-            </div>
-          </DemoSection>
+            )}
+          </section>
         </div>
       </main>
 
-      {/* Demo detail sheet (mock view model) */}
+      {/* Drill-down detail sheet (live matrix view model) */}
       <SubsidiaryDetail
         subsidiary={selectedSubsidiary}
         open={detailOpen}
@@ -331,29 +377,3 @@ function LiveKpiStrip({ kpi, loading }: { kpi: DashboardKpi | null; loading: boo
   );
 }
 
-function DemoSection({
-  title,
-  note,
-  children,
-}: {
-  title: string;
-  note: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-[#1D1D1F]">{title}</h2>
-        <Badge
-          variant="outline"
-          className="gap-1.5 rounded-lg border-amber-500/40 bg-amber-500/10 text-amber-700"
-        >
-          <FlaskConical className="h-3.5 w-3.5" />
-          Demo data
-        </Badge>
-      </div>
-      <p className="-mt-2 text-sm text-muted-foreground">{note}</p>
-      {children}
-    </section>
-  );
-}

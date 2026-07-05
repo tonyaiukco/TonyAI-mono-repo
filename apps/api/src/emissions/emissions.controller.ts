@@ -3,6 +3,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { EmissionsService } from './emissions.service';
 import { EmissionsSummaryQueryDto } from './dto/emissions-summary-query.dto';
+import { TrackingMatrixQueryDto } from './dto/tracking-matrix-query.dto';
 
 @Controller('emissions')
 export class EmissionsController {
@@ -15,5 +16,14 @@ export class EmissionsController {
     @Query() query: EmissionsSummaryQueryDto,
   ) {
     return this.service.summary(user, query);
+  }
+
+  /** Subsidiary × category completeness matrix for the dashboard (FR §2). */
+  @Get('tracking-matrix')
+  trackingMatrix(
+    @CurrentUser() user: RequestUser,
+    @Query() query: TrackingMatrixQueryDto,
+  ) {
+    return this.service.trackingMatrix(user, query);
   }
 }

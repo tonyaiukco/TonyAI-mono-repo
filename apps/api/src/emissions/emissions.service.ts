@@ -1,16 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
-import type {
-  CalculationResult,
-  EmissionsByCategory,
-  EmissionsBySubsidiary,
-  EmissionsSummary,
-  EmissionsTrendPoint,
-  Category,
+import {
+  CATEGORIES,
+  CATEGORY_SCOPE_MAP,
+  type CalculationResult,
+  type Category,
+  type DataStatus,
+  type EmissionsByCategory,
+  type EmissionsBySubsidiary,
+  type EmissionsSummary,
+  type EmissionsTrendPoint,
+  type TrackingMatrixCell,
+  type TrackingMatrixDTO,
+  type TrackingMatrixRow,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { EmissionsSummaryQueryDto } from './dto/emissions-summary-query.dto';
+import { TrackingMatrixQueryDto } from './dto/tracking-matrix-query.dto';
 
 /**
  * Only "committed" records feed the emissions inventory. Drafts are
@@ -23,6 +30,14 @@ const COUNTED_STATUSES: ActivityRecordStatus[] = [
   ActivityRecordStatus.approved,
   ActivityRecordStatus.locked,
 ];
+
+/** Statuses that make a tracking-matrix cell "incomplete" (FR §2.2 yellow):
+ * the record exists but is not (yet) valid committed data. */
+const PENDING_STATUSES = new Set<ActivityRecordStatus>([
+  ActivityRecordStatus.draft,
+  ActivityRecordStatus.rejected,
+]);
+const COUNTED_SET = new Set<ActivityRecordStatus>(COUNTED_STATUSES);
 
 const MONTH_INDEX: Record<string, number> = {
   january: 0,
@@ -265,5 +280,114 @@ export class EmissionsService {
       recordCount: rows.length,
       statusesIncluded: COUNTED_STATUSES,
     };
+  }
+
+  /**
+   * Subsidiary × category completeness matrix (FR §2.2). Every accessible
+   * subsidiary gets a row; every canonical category gets a cell — cells with
+   * no records are "missing". The "required evidence" condition for
+   * `complete` is deferred until the evidence backend ships.
+   */
+  async trackingMatrix(
+    user: RequestUser,
+    query: TrackingMatrixQueryDto,
+  ): Promise<TrackingMatrixDTO> {
+    const empty: TrackingMatrixDTO = {
+      reportingYear: query.year ?? null,
+      rows: [],
+      totals: { complete: 0, incomplete: 0, missing: 0 },
+    };
+    if (user.accessibleSubsidiaryIds.length === 0) return empty;
+
+    const [records, subs] = await Promise.all([
+      // All statuses on purpose: drafts/rejected make a cell "incomplete".
+      this.prisma.activityRecord.findMany({
+        where: {
+          subsidiaryId: { in: user.accessibleSubsidiaryIds },
+          reportingYear: query.year,
+        },
+      }),
+      this.prisma.subsidiary.findMany({
+        where: { id: { in: user.accessibleSubsidiaryIds } },
+        select: {
+          id: true,
+          tradingName: true,
+          legalName: true,
+          sector: true,
+          designatedPerson: true,
+        },
+        orderBy: { legalName: 'asc' },
+      }),
+    ]);
+
+    // Group records by subsidiary + category.
+    const byCell = new Map<string, ActivityRecord[]>();
+    for (const r of records) {
+      const key = `${r.subsidiaryId} ${r.category}`;
+      const bucket = byCell.get(key);
+      if (bucket) bucket.push(r);
+      else byCell.set(key, [r]);
+    }
+
+    const totals = { complete: 0, incomplete: 0, missing: 0 };
+    const matrixRows: TrackingMatrixRow[] = subs.map((sub) => {
+      let totalTCo2e = 0;
+      let completeCount = 0;
+
+      const cells: TrackingMatrixCell[] = CATEGORIES.map((category) => {
+        const recs = byCell.get(`${sub.id} ${category}`) ?? [];
+
+        let status: DataStatus;
+        let tCo2e = 0;
+        let lastUpdate: string | null = null;
+        let anomaly = false;
+
+        if (recs.length === 0) {
+          status = 'missing';
+        } else {
+          let hasPending = false;
+          let latest = 0;
+          for (const r of recs) {
+            if (PENDING_STATUSES.has(r.status)) hasPending = true;
+            if (r.anomalyFlag) anomaly = true;
+            if (COUNTED_SET.has(r.status)) {
+              const calc = r.calculation as unknown as CalculationResult | null;
+              if (calc && Number.isFinite(calc.tCo2e)) tCo2e += calc.tCo2e;
+            }
+            const t = r.updatedAt.getTime();
+            if (t > latest) latest = t;
+          }
+          lastUpdate = new Date(latest).toISOString();
+          status = hasPending || anomaly ? 'incomplete' : 'complete';
+        }
+
+        totals[status] += 1;
+        if (status === 'complete') completeCount += 1;
+        totalTCo2e += tCo2e;
+
+        return {
+          category: category as Category,
+          scope: CATEGORY_SCOPE_MAP[category as Category],
+          status,
+          tCo2e,
+          recordCount: recs.length,
+          lastUpdate,
+          anomaly,
+        };
+      });
+
+      return {
+        subsidiaryId: sub.id,
+        subsidiaryName: sub.tradingName || sub.legalName,
+        sector: sub.sector,
+        designatedPerson: sub.designatedPerson,
+        totalTCo2e,
+        completeCount,
+        categoryCount: CATEGORIES.length,
+        cells,
+      };
+    });
+
+    return { reportingYear: query.year ?? null, rows: matrixRows, totals };
   }
 }

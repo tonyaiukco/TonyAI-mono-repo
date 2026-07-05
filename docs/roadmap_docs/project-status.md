@@ -6,11 +6,11 @@
 > we leave off?"). Keep entries short — link to code/PRs instead of restating them.
 > README stays the public-facing summary; this file is the granular working log.
 
-## Current status — as of 2026-07-03
+## Current status — as of 2026-07-04
 
 - **Phase:** Phase 1 — Core MVP (Scope 1 & 2)
-- **main:** `573c814` (PR #6 merged)
-- **Tests:** 61 unit (Vitest, API) + 2 E2E (Playwright) — green
+- **Latest merged:** PR #8 (`7a13ca4`); PR #9 (dashboard wiring) in review
+- **Tests:** 65 unit (Vitest, API) + 2 E2E (Playwright) — green
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)
@@ -23,6 +23,9 @@
 | #4 | tooling | `wire-page` skill + tooling/process rules |
 | #5 | frontend | Data Entry page wired to live API (tCO₂e preview, draft → submit), 409 on duplicate record |
 | #6 | full-stack | Emissions Analytics wired to live `GET /emissions/summary` aggregation; demo seed records; Targets/intensity labelled "not yet available" |
+| #7 | docs | This status log + full phased roadmap to production (Phases 0–4 + post-launch) |
+| #8 | tooling | Agent/skill review: two write patterns in `tenant-api-module`, richer `wire-page`, launch.json |
+| #9 | full-stack | Dashboard Emissions Overview wired: `GET /emissions/tracking-matrix` (FR §2 statuses), live KPI cards (null-safe trends/locations), real anomaly alerts; `aggregation-endpoint` skill extracted |
 
 ## What works today
 
@@ -31,12 +34,13 @@
 - Subsidiaries CRUD (RBAC: writes `super_admin` only) + dashboard KPIs endpoint
 - Calc engine: `POST /calculations/preview`, `GET /factors` — factor versioning, unit normalization
 - Activity records: CRUD + submit/approve/reject, immutable calc snapshots, append-only audit log
-- Data Entry UI (`/data-entry`) and Emissions Analytics UI (`/emissions`) fully on live data
+- Data Entry UI (`/data-entry`), Emissions Analytics UI (`/emissions`) and the home dashboard Emissions Overview (`/`) fully on live data
 - Seed: 1 org, 5 subsidiaries, 2 users, demo factors, **96 approved monthly Scope 1 & 2 activity records for 2024** (prototype values, explicitly labelled)
 
 ## Known gaps / placeholders
 
-- **Home dashboard `/`** and **Reports page** still render mock "demo data"
+- **Reports page** still renders mock "demo data"
+- Dashboard trend badges and the Locations count show "—" until prior-year data / the locations backend exist
 - **Targets tab + intensity toggle** on `/emissions`: no backend yet — shown as "not yet available" (no placeholder numbers, compliance rule)
 - **Scope 3:** no factors seeded; intentionally empty (Phase 2)
 - Pending Phase 1 items: evidence upload (Supabase Storage), period locking, real anomaly detection (seed only sets a demo flag), Emissions e2e coverage
@@ -63,7 +67,7 @@
 - [x] Activity records + review workflow (`draft → submitted → under_review → approved/rejected`) + audit rows
 - [x] Data Entry UI on live API (tCO₂e preview, draft → submit, 409 on duplicate)
 - [x] Emissions Analytics: `GET /emissions/summary` + live Summary/Breakdown/History/Trends tabs
-- [ ] **Dashboard `/` wiring** — Emissions Overview cards + tracking matrix (red/yellow/green cell rules, FR §2) from live `kpi` + `emissions/summary`; remove the "Demo data" badge
+- [x] **Dashboard `/` wiring** — Emissions Overview cards + tracking matrix (red/yellow/green cell rules, FR §2) from live `emissions/summary` + `emissions/tracking-matrix`; "Demo data" badge removed (PR #9)
 - [ ] **Locations level** — Holding > Subsidiary > **Location** hierarchy (FR §1.1): schema + migration + RLS, tenant-scoped API, UI (subsidiary detail)
 - [ ] **Evidence upload** — Supabase Storage; ≥1 evidence file required at submit (FR §4.1); pdf/image/spreadsheet types; evidence listed on record detail
 - [ ] **Period locking** — lock approved periods (FR §4.2): `locked` transitions + guards; `super_admin`-only unlock with audit row; locked periods block new/edited records
@@ -126,7 +130,7 @@
 - Depth of `executive_viewer` / `consultant` UX flows
 - Mobile/responsive support targets
 
-**Next up:** Dashboard `/` wiring (first unchecked item of Phase 1).
+**Next up:** Locations level (first unchecked item of Phase 1).
 
 ## Decisions log
 
@@ -135,9 +139,11 @@
 - **2026-07-02** — Demo activity records are seeded (approved, monthly 2024, Scope 1 & 2 only) so analytics is demoable; provenance labelled prototype/DEMO_SOURCE everywhere.
 - **2026-07-02** — Features without a real backend (targets, intensity) show an explicit "not yet available" state instead of mock numbers.
 - **2026-07-03** — Agent/skill review before resuming Phase 1: the 7 subagents cover everything through Phase 2 (no additions/removals); revisit at Phase 3 for a `python-analytics` agent (FastAPI microservice). Skills updated: `tenant-api-module` now documents both write patterns (admin-managed vs. author-based workflow), `wire-page` gained the data-entry/emissions references and the two-label honesty rule. A `supabase-storage` skill will be extracted in the same PR that first implements evidence upload.
+- **2026-07-04** — Tracking-matrix statuses (FR §2.2 interpretation): `under_review` counts as committed/green (it is submitted data in review); the anomaly flag makes a cell yellow ("flagged for review"); the "required evidence" green-condition is deferred until the evidence backend ships. Matrix status math lives server-side in `GET /emissions/tracking-matrix`; the recurring rollup recipe is now the `aggregation-endpoint` skill.
 
 ## Session log
 
 - **2026-07-02 → 03** — Built + verified PR #6 (typecheck, 61 tests, live browser check of all 5 analytics tabs, tenant-isolation probes). Merged; branch deleted; `main` synced. Created this roadmap log.
 - **2026-07-03** — Expanded the roadmap into a full phased plan to production (Phases 0–4 + post-launch), derived from `technical_analysis.md` §5 + `functional_requirements.md`; added launch-readiness items the specs didn't cover. Renumbered README roadmap to match.
 - **2026-07-03** — Reviewed the agent team + skills against the phased roadmap before resuming Phase 1 (see decisions log). Committed `.claude/launch.json` (preview tooling config).
+- **2026-07-04** — Dashboard wiring (PR #9): built `GET /emissions/tracking-matrix` + 4 specs (65 total), mapped DTOs onto the existing dashboard components via `lib/dashboard-view.ts`, null-safe trend/locations badges, real anomaly alerts, drill-down verified live (sheet total 1,003 tCO₂e = endpoint value). Extracted the `aggregation-endpoint` skill in the same PR.
