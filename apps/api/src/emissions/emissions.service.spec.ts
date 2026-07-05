@@ -223,3 +223,99 @@ describe('EmissionsService.summary', () => {
     expect(s.trend.yearly.map((p) => [p.period, p.total])).toEqual([['2024', 40]]);
   });
 });
+
+describe('EmissionsService.trackingMatrix', () => {
+  let prisma: PrismaMock;
+  let service: EmissionsService;
+
+  beforeEach(() => {
+    seq = 0;
+    prisma = createPrismaMock();
+    service = new EmissionsService(prisma as unknown as PrismaService);
+  });
+
+  it('returns an empty matrix for an empty accessible set without hitting the DB', async () => {
+    const user = dataEntry({ accessibleSubsidiaryIds: [] });
+
+    const m = await service.trackingMatrix(user, {});
+
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+    expect(m).toEqual({
+      reportingYear: null,
+      rows: [],
+      totals: { complete: 0, incomplete: 0, missing: 0 },
+    });
+  });
+
+  it('scopes both queries to the accessible set and fetches ALL statuses', async () => {
+    const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.subsidiary.findMany.mockResolvedValue([]);
+
+    await service.trackingMatrix(user, { year: 2024 });
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.subsidiaryId).toEqual({ in: ['sub-1', 'sub-2'] });
+    expect(where.reportingYear).toBe(2024);
+    expect(where.status).toBeUndefined(); // drafts must be visible (yellow cells)
+  });
+
+  it('derives FR §2.2 cell statuses: missing / incomplete / complete', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', tradingName: 'Energy Co' }),
+    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      // Electricity: one approved record -> complete, tCo2e counted
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', status: ActivityRecordStatus.approved, calculation: { tCo2e: 12 } }),
+      // Natural Gas: approved + a draft -> incomplete; only approved tCo2e counted
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Natural Gas', status: ActivityRecordStatus.approved, calculation: { tCo2e: 5 } }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Natural Gas', status: ActivityRecordStatus.draft, calculation: { tCo2e: 999 } }),
+      // Fuel: submitted but anomaly-flagged -> incomplete, tCo2e still counted
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Fuel', status: ActivityRecordStatus.submitted, anomalyFlag: true, calculation: { tCo2e: 7 } }),
+    ]);
+
+    const m = await service.trackingMatrix(user, {});
+    const row = m.rows[0];
+    const cell = (cat: string) => row.cells.find((c) => c.category === cat)!;
+
+    expect(cell('Electricity').status).toBe('complete');
+    expect(cell('Electricity').tCo2e).toBe(12);
+
+    expect(cell('Natural Gas').status).toBe('incomplete');
+    expect(cell('Natural Gas').tCo2e).toBe(5); // draft's 999 excluded
+    expect(cell('Natural Gas').recordCount).toBe(2);
+
+    expect(cell('Fuel').status).toBe('incomplete');
+    expect(cell('Fuel').anomaly).toBe(true);
+    expect(cell('Fuel').tCo2e).toBe(7);
+
+    // Untouched category -> missing, no timestamp
+    expect(cell('Waste').status).toBe('missing');
+    expect(cell('Waste').lastUpdate).toBeNull();
+
+    // Row rollups: 1 complete, 11 categories, total = 12 + 5 + 7
+    expect(row.completeCount).toBe(1);
+    expect(row.categoryCount).toBe(11);
+    expect(row.totalTCo2e).toBe(24);
+
+    // Matrix totals: 1 complete + 2 incomplete + 8 missing
+    expect(m.totals).toEqual({ complete: 1, incomplete: 2, missing: 8 });
+  });
+
+  it('gives every accessible subsidiary a row even with zero records', async () => {
+    const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', tradingName: 'Energy Co' }),
+      makeSubsidiary({ id: 'sub-2', tradingName: null, legalName: 'Gas Legal Ltd.' }),
+    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+
+    const m = await service.trackingMatrix(user, {});
+
+    expect(m.rows).toHaveLength(2);
+    expect(m.rows[1].subsidiaryName).toBe('Gas Legal Ltd.'); // legalName fallback
+    expect(m.rows.every((r) => r.cells.every((c) => c.status === 'missing'))).toBe(true);
+    expect(m.totals).toEqual({ complete: 0, incomplete: 0, missing: 22 });
+  });
+});

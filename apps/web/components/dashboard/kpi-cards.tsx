@@ -21,16 +21,17 @@ function formatEmissions(value: number): string {
 interface EmissionsCardProps {
   label: string;
   value: number;
-  trend: number;
+  /** null = no prior-period data yet; the trend badge shows "—". */
+  trend: number | null;
   description: string;
   highlight?: boolean;
   scopeColor?: string;
 }
 
 function EmissionsCard({ label, value, trend, description, highlight = false, scopeColor }: EmissionsCardProps) {
-  const isPositiveTrend = trend > 0;
+  const isPositiveTrend = (trend ?? 0) > 0;
   const TrendIcon = isPositiveTrend ? ArrowUpRight : ArrowDownRight;
-  
+
   return (
     <div className={cn(
       'rounded-xl border p-5 transition-all duration-200',
@@ -57,15 +58,24 @@ function EmissionsCard({ label, value, trend, description, highlight = false, sc
           </div>
           <p className="text-sm text-[#6E6E73] mt-2 font-medium">{description}</p>
         </div>
-        <div className={cn(
-          'flex items-center gap-1 rounded-full px-3 py-1.5 text-sm font-semibold',
-          isPositiveTrend 
-            ? 'bg-[#FEE2E2] text-[#B91C1C]' 
-            : 'bg-[#D1F2EB] text-[#1D7A5F]'
-        )}>
-          <TrendIcon className="h-4 w-4" />
-          <span>{Math.abs(trend).toFixed(1)}%</span>
-        </div>
+        {trend === null ? (
+          <div
+            className="flex items-center gap-1 rounded-full bg-[#F5F5F7] px-3 py-1.5 text-sm font-semibold text-[#8E8E93]"
+            title="Year-over-year trend needs prior-year data"
+          >
+            <span>—</span>
+          </div>
+        ) : (
+          <div className={cn(
+            'flex items-center gap-1 rounded-full px-3 py-1.5 text-sm font-semibold',
+            isPositiveTrend
+              ? 'bg-[#FEE2E2] text-[#B91C1C]'
+              : 'bg-[#D1F2EB] text-[#1D7A5F]'
+          )}>
+            <TrendIcon className="h-4 w-4" />
+            <span>{Math.abs(trend).toFixed(1)}%</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -76,7 +86,8 @@ interface DataStatusCardProps {
   partial: number;
   missing: number;
   subsidiaries: number;
-  locations: number;
+  /** null until the locations backend ships (Phase 1). */
+  locations: number | null;
   completionRate: number;
 }
 
@@ -141,10 +152,10 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
             <p className="text-sm font-medium text-[#6E6E73]">Companies</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" title={locations === null ? 'Locations arrive in an upcoming Phase 1 step' : undefined}>
           <MapPin className="h-5 w-5 text-[#6E6E73]" />
           <div>
-            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{locations}</span>
+            <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{locations ?? '—'}</span>
             <p className="text-sm font-medium text-[#6E6E73]">Locations</p>
           </div>
         </div>

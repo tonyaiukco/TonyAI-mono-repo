@@ -78,6 +78,11 @@ export function AlertsPanel({ alerts }: AlertsPanelProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-2 px-5 pb-5">
+        {alerts.length === 0 && (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            No action items — all clear.
+          </p>
+        )}
         {alerts.slice(0, 5).map((alert) => {
           const config = alertConfig[alert.type];
           const Icon = config.icon;

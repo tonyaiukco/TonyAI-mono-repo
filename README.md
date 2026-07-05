@@ -60,11 +60,12 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (61 unit + 2 E2E) | ✅ |
+| Automated tests (65 unit + 2 E2E) | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
 | Emissions Analytics wired to a live aggregation endpoint (scope totals, category/subsidiary breakdown, trends) | ✅ |
+| Home dashboard Emissions Overview + tracking matrix (FR §2 red/yellow/green) on live data | ✅ |
 | Targets & intensity metrics | ⏳ Phase 1 (labelled "not yet available") |
 | Reports | ⏳ Phase 1/2 |
 
@@ -308,6 +309,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `POST` | `/activity-records/:id/approve` | `submitted`/`under_review` → `approved` | `consultant` / `super_admin` |
 | `POST` | `/activity-records/:id/reject` | `submitted`/`under_review` → `rejected` (body `{ varianceReason }`) | `consultant` / `super_admin` |
 | `GET` | `/emissions/summary` | Tenant‑scoped analytics aggregation from committed records: scope totals, category & subsidiary breakdown, monthly/quarterly/yearly trends (filters `?subsidiaryId=&year=&scope=&category=`) | any |
+| `GET` | `/emissions/tracking-matrix` | Subsidiary × category completeness matrix (FR §2: missing/incomplete/complete) with committed tCO₂e per cell (filter `?year=`) | any |
 
 Activity-record workflow: `draft → submitted → under_review → approved | rejected`. `approved` and `locked` records are immutable; `rejected` records can be edited and re‑submitted. The `calculation` snapshot is written at create/update time and never recomputed on read, so historic results survive factor-library changes. Every transition writes an `audit_log` row (`entity: 'activity_record'`).
 
@@ -365,7 +367,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 ## Roadmap
 
 - **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
-- **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅; remaining — dashboard emissions wiring, locations level, evidence upload, period locking, anomaly detection, E2E coverage.
+- **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅; remaining — locations level, evidence upload, period locking, anomaly detection, E2E coverage.
 - **Phase 2 — Staging cloud & CI/CD:** Supabase cloud environments, Docker + GitHub Actions deploy (GCP/Azure), KVKK/GDPR data residency, Sentry/monitoring.
 - **Phase 3 — Advanced:** Scope 3 + supplier management, targets & intensity, reports (PDF/Excel) + Resend, bulk upload, i18n (TR/EN), dark mode, Python/FastAPI analytics microservice.
 - **Phase 4 — Production launch:** authoritative emission-factor data, security/pen-test + load test, backup/DR, user lifecycle, legal (KVKK/GDPR), go-live.

@@ -9,6 +9,7 @@ import type {
   CreateSubsidiaryInput,
   DashboardKpi,
   EmissionsSummary,
+  TrackingMatrixDTO,
   ReportingPeriod,
   SubsidiaryDTO,
   UpdateActivityRecordInput,
@@ -146,6 +147,14 @@ export const api = {
     const qs = search.toString();
     return apiFetch<EmissionsSummary>(
       `/emissions/summary${qs ? `?${qs}` : ""}`,
+    );
+  },
+  trackingMatrix: (params: { year?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.year !== undefined) search.set("year", String(params.year));
+    const qs = search.toString();
+    return apiFetch<TrackingMatrixDTO>(
+      `/emissions/tracking-matrix${qs ? `?${qs}` : ""}`,
     );
   },
 };
