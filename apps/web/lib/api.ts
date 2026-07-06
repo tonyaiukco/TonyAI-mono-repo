@@ -6,13 +6,16 @@ import type {
   CalculationResult,
   Category,
   CreateActivityRecordInput,
+  CreateLocationInput,
   CreateSubsidiaryInput,
   DashboardKpi,
+  LocationDTO,
   EmissionsSummary,
   TrackingMatrixDTO,
   ReportingPeriod,
   SubsidiaryDTO,
   UpdateActivityRecordInput,
+  UpdateLocationInput,
   UpdateSubsidiaryInput,
 } from "@tonyai/shared-types";
 import { getSupabaseBrowserClient } from "./supabase";
@@ -99,6 +102,26 @@ export const api = {
       method: "DELETE",
     }),
   kpi: () => apiFetch<DashboardKpi>("/kpi"),
+
+  // --- Operational locations ---
+  listLocations: (subsidiaryId?: string) =>
+    apiFetch<LocationDTO[]>(
+      `/locations${subsidiaryId ? `?subsidiaryId=${encodeURIComponent(subsidiaryId)}` : ""}`,
+    ),
+  createLocation: (body: CreateLocationInput) =>
+    apiFetch<LocationDTO>("/locations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateLocation: (id: string, body: UpdateLocationInput) =>
+    apiFetch<LocationDTO>(`/locations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteLocation: (id: string) =>
+    apiFetch<{ id: string; deleted: true }>(`/locations/${id}`, {
+      method: "DELETE",
+    }),
 
   // --- Calculation engine ---
   previewCalculation: (input: CalculationInput) =>

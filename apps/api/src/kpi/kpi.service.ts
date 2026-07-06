@@ -8,10 +8,15 @@ export class KpiService {
   constructor(private readonly prisma: PrismaService) {}
 
   async summary(user: RequestUser): Promise<DashboardKpi> {
-    const subs = await this.prisma.subsidiary.findMany({
-      where: { id: { in: user.accessibleSubsidiaryIds } },
-      select: { reportingStatus: true, geographyCode: true },
-    });
+    const [subs, totalLocations] = await Promise.all([
+      this.prisma.subsidiary.findMany({
+        where: { id: { in: user.accessibleSubsidiaryIds } },
+        select: { reportingStatus: true, geographyCode: true },
+      }),
+      this.prisma.location.count({
+        where: { subsidiaryId: { in: user.accessibleSubsidiaryIds } },
+      }),
+    ]);
 
     const geoCounts = new Map<string, number>();
     for (const s of subs) {
@@ -22,6 +27,7 @@ export class KpiService {
       totalSubsidiaries: subs.length,
       activeSubsidiaries: subs.filter((s) => s.reportingStatus === 'active').length,
       pendingSubsidiaries: subs.filter((s) => s.reportingStatus === 'pending').length,
+      totalLocations,
       geographyBreakdown: Array.from(geoCounts.entries()).map(([geographyCode, count]) => ({
         geographyCode,
         count,

@@ -107,8 +107,11 @@ export default function CarbonDashboard() {
     [matrix],
   );
   const emissionsKpiData = useMemo(
-    () => (summary && matrix ? buildKpiData(summary, matrix) : null),
-    [summary, matrix],
+    () =>
+      summary && matrix
+        ? buildKpiData(summary, matrix, kpi?.totalLocations ?? null)
+        : null,
+    [summary, matrix, kpi],
   );
   const liveAlerts = useMemo(() => (matrix ? matrixToAlerts(matrix) : []), [matrix]);
 
@@ -259,8 +262,8 @@ export default function CarbonDashboard() {
               </Badge>
             </div>
             <p className="-mt-2 text-sm text-muted-foreground">
-              Committed Scope 1 &amp; 2 activity records. Year-over-year trends and
-              locations arrive in upcoming Phase 1 steps.
+              Committed Scope 1 &amp; 2 activity records. Year-over-year trends
+              arrive once prior-year data exists.
             </p>
 
             {loading ? (

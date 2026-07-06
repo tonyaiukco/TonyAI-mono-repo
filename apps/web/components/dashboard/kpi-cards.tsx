@@ -86,7 +86,7 @@ interface DataStatusCardProps {
   partial: number;
   missing: number;
   subsidiaries: number;
-  /** null until the locations backend ships (Phase 1). */
+  /** null while the KPI endpoint hasn't loaded yet. */
   locations: number | null;
   completionRate: number;
 }
@@ -152,7 +152,7 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
             <p className="text-sm font-medium text-[#6E6E73]">Companies</p>
           </div>
         </div>
-        <div className="flex items-center gap-3" title={locations === null ? 'Locations arrive in an upcoming Phase 1 step' : undefined}>
+        <div className="flex items-center gap-3">
           <MapPin className="h-5 w-5 text-[#6E6E73]" />
           <div>
             <span className="text-2xl font-bold text-[#1D1D1F] tabular-nums">{locations ?? '—'}</span>
