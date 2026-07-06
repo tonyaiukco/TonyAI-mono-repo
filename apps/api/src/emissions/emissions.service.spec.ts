@@ -42,6 +42,9 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     createdBy: 'user-entry',
     anomalyFlag: false,
     varianceReason: null,
+    // Prisma `_count` from the matrix query's evidence include. Default 1
+    // ("has evidence") so committed records satisfy the FR §2.2 evidence rule.
+    _count: { evidence: 1 },
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -301,6 +304,24 @@ describe('EmissionsService.trackingMatrix', () => {
 
     // Matrix totals: 1 complete + 2 incomplete + 8 missing
     expect(m.totals).toEqual({ complete: 1, incomplete: 2, missing: 8 });
+  });
+
+  it('keeps an evidence-required cell incomplete until a file is attached (FR §2.2)', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      // Approved Electricity (evidence-required) with NO evidence -> incomplete.
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', status: ActivityRecordStatus.approved, calculation: { tCo2e: 12 }, _count: { evidence: 0 } } as Partial<ActivityRecord>),
+      // Approved Water (NOT evidence-required) with no evidence -> still complete.
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Water', scope: 3, status: ActivityRecordStatus.approved, calculation: { tCo2e: 4 }, _count: { evidence: 0 } } as Partial<ActivityRecord>),
+    ]);
+
+    const m = await service.trackingMatrix(user, {});
+    const cell = (cat: string) => m.rows[0].cells.find((c) => c.category === cat)!;
+
+    expect(cell('Electricity').status).toBe('incomplete'); // evidence required, none attached
+    expect(cell('Electricity').tCo2e).toBe(12); // tCo2e still counted
+    expect(cell('Water').status).toBe('complete'); // evidence not required
   });
 
   it('gives every accessible subsidiary a row even with zero records', async () => {

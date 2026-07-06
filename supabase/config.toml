@@ -112,6 +112,19 @@ file_size_limit = "50MiB"
 # allowed_mime_types = ["image/png", "image/jpeg"]
 # objects_path = "./images"
 
+# Private bucket for activity-record evidence (invoices, meter records, …).
+# Never public — files are served through short-lived signed URLs via the API.
+[storage.buckets.evidence]
+public = false
+file_size_limit = "10MiB"
+allowed_mime_types = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/csv",
+]
+
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true

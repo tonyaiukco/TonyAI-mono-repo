@@ -3,6 +3,7 @@ import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import {
   CATEGORIES,
   CATEGORY_SCOPE_MAP,
+  isEvidenceRequired,
   type CalculationResult,
   type Category,
   type DataStatus,
@@ -301,11 +302,13 @@ export class EmissionsService {
 
     const [records, subs] = await Promise.all([
       // All statuses on purpose: drafts/rejected make a cell "incomplete".
+      // Evidence count feeds the FR §2.2 rule (green needs evidence where required).
       this.prisma.activityRecord.findMany({
         where: {
           subsidiaryId: { in: user.accessibleSubsidiaryIds },
           reportingYear: query.year,
         },
+        include: { _count: { select: { evidence: true } } },
       }),
       this.prisma.subsidiary.findMany({
         where: { id: { in: user.accessibleSubsidiaryIds } },
@@ -321,7 +324,8 @@ export class EmissionsService {
     ]);
 
     // Group records by subsidiary + category.
-    const byCell = new Map<string, ActivityRecord[]>();
+    type RecordWithEvidence = ActivityRecord & { _count: { evidence: number } };
+    const byCell = new Map<string, RecordWithEvidence[]>();
     for (const r of records) {
       const key = `${r.subsidiaryId} ${r.category}`;
       const bucket = byCell.get(key);
@@ -347,18 +351,26 @@ export class EmissionsService {
         } else {
           let hasPending = false;
           let latest = 0;
+          // Evidence gate: for an evidence-required category, any committed
+          // record lacking a file leaves the cell short of "complete" (FR §2.2).
+          const evidenceRequired = isEvidenceRequired(category);
+          let evidenceMissing = false;
           for (const r of recs) {
             if (PENDING_STATUSES.has(r.status)) hasPending = true;
             if (r.anomalyFlag) anomaly = true;
             if (COUNTED_SET.has(r.status)) {
               const calc = r.calculation as unknown as CalculationResult | null;
               if (calc && Number.isFinite(calc.tCo2e)) tCo2e += calc.tCo2e;
+              if (evidenceRequired && r._count.evidence === 0) {
+                evidenceMissing = true;
+              }
             }
             const t = r.updatedAt.getTime();
             if (t > latest) latest = t;
           }
           lastUpdate = new Date(latest).toISOString();
-          status = hasPending || anomaly ? 'incomplete' : 'complete';
+          status =
+            hasPending || anomaly || evidenceMissing ? 'incomplete' : 'complete';
         }
 
         totals[status] += 1;

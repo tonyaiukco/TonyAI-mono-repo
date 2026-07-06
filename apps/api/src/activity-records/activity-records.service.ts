@@ -12,6 +12,7 @@ import {
 } from '@tonyai/db';
 import {
   CATEGORY_SCOPE_MAP,
+  isEvidenceRequired,
   type ActivityRecordDTO,
   type CalculationResult,
   type Category,
@@ -41,7 +42,7 @@ export class ActivityRecordsService {
     private readonly calculations: CalculationsService,
   ) {}
 
-  private toDTO(r: ActivityRecord): ActivityRecordDTO {
+  private toDTO(r: ActivityRecord, evidenceCount = 0): ActivityRecordDTO {
     return {
       id: r.id,
       subsidiaryId: r.subsidiaryId,
@@ -58,6 +59,7 @@ export class ActivityRecordsService {
       createdBy: r.createdBy,
       anomalyFlag: r.anomalyFlag,
       varianceReason: r.varianceReason,
+      evidenceCount,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };
@@ -154,13 +156,17 @@ export class ActivityRecordsService {
         status: query.status,
       },
       orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { evidence: true } } },
     });
-    return rows.map((r) => this.toDTO(r));
+    return rows.map((r) => this.toDTO(r, r._count.evidence));
   }
 
   async get(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
-    return this.toDTO(record);
+    const evidenceCount = await this.prisma.evidence.count({
+      where: { activityRecordId: id },
+    });
+    return this.toDTO(record, evidenceCount);
   }
 
   async create(
@@ -261,12 +267,13 @@ export class ActivityRecordsService {
     const updated = await this.prisma.activityRecord.update({
       where: { id },
       data,
+      include: { _count: { select: { evidence: true } } },
     });
     await this.audit(user.id, 'update', id, {
       before: this.toDTO(existing),
-      after: this.toDTO(updated),
+      after: this.toDTO(updated, updated._count.evidence),
     });
-    return this.toDTO(updated);
+    return this.toDTO(updated, updated._count.evidence);
   }
 
   async remove(
@@ -291,6 +298,18 @@ export class ActivityRecordsService {
       throw new BadRequestException(
         `Only a draft record can be submitted (current status "${record.status}")`,
       );
+    }
+    // Evidence gate (FR §4.1 / §5.4): categories configured as evidence-required
+    // cannot be submitted without at least one supporting file.
+    if (isEvidenceRequired(record.category)) {
+      const evidenceCount = await this.prisma.evidence.count({
+        where: { activityRecordId: id },
+      });
+      if (evidenceCount === 0) {
+        throw new BadRequestException(
+          `Category "${record.category}" requires at least one evidence file before submitting.`,
+        );
+      }
     }
     return this.transition(user, record, ActivityRecordStatus.submitted);
   }
@@ -352,6 +371,7 @@ export class ActivityRecordsService {
           ? { varianceReason: extra.varianceReason }
           : {}),
       },
+      include: { _count: { select: { evidence: true } } },
     });
     await this.audit(user.id, 'update', record.id, {
       transition: { from: record.status, to: status },
@@ -359,7 +379,7 @@ export class ActivityRecordsService {
         ? { varianceReason: extra.varianceReason }
         : {}),
     });
-    return this.toDTO(updated);
+    return this.toDTO(updated, updated._count.evidence);
   }
 
   private async audit(

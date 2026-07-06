@@ -9,8 +9,8 @@
 ## Current status — as of 2026-07-06
 
 - **Phase:** Phase 1 — Core MVP (Scope 1 & 2)
-- **Latest merged:** PR #9 (`dffb7ac`, dashboard wiring); Locations work on `feat/locations` (uncommitted)
-- **Tests:** 77 unit (Vitest, API) + 2 E2E (Playwright) — green
+- **Latest merged:** PR #10 (`680a6a3`, locations); Evidence upload on `feat/evidence-upload` (uncommitted)
+- **Tests:** 88 unit (Vitest, API) + 2 E2E (Playwright) — green
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)
@@ -36,7 +36,8 @@
 - Activity records: CRUD + submit/approve/reject, immutable calc snapshots, append-only audit log
 - Data Entry UI (`/data-entry`), Emissions Analytics UI (`/emissions`) and the home dashboard Emissions Overview (`/`) fully on live data
 - Operational locations: tenant-scoped CRUD API (`/locations`, `super_admin` writes, audit-logged) + management drawer on the subsidiaries page; `/kpi` counts real locations
-- Seed: 1 org, 5 subsidiaries, **8 operational locations**, 2 users, demo factors, **96 approved monthly Scope 1 & 2 activity records for 2024** (prototype values, explicitly labelled)
+- Evidence: private `evidence` bucket, upload-through-API + signed-URL downloads, `Evidence` table + RLS, Data Entry vault; evidence-required categories gate submit + matrix "green"
+- Seed: 1 org, 5 subsidiaries, **8 operational locations**, 2 users, demo factors, **96 approved monthly Scope 1 & 2 activity records for 2024** each with a demo evidence file (prototype values, explicitly labelled)
 
 ## Known gaps / placeholders
 
@@ -71,14 +72,14 @@
 - [x] **Dashboard `/` wiring** — Emissions Overview cards + tracking matrix (red/yellow/green cell rules, FR §2) from live `emissions/summary` + `emissions/tracking-matrix`; "Demo data" badge removed (PR #9)
 - [x] **Locations level** — Holding > Subsidiary > **Location** hierarchy (FR §1.1): tenant-scoped CRUD API + management drawer + live `/kpi` location count (RLS already existed on the `locations` table from the init migration). *(Record↔location linkage deferred — see below.)*
 - [ ] **Activity-record ↔ location linkage** — let entries target a location (not just a subsidiary): add `geographyCode` to `Location`, `locationId` to `ActivityRecord`, revise the uniqueness constraint, resolve factor geography from the location, and add a location picker to Data Entry (FR §5.2). Deferred out of the locations PR because it touches the calc path + a migration.
-- [ ] **Evidence upload** — Supabase Storage; ≥1 evidence file required at submit (FR §4.1); pdf/image/spreadsheet types; evidence listed on record detail
+- [x] **Evidence upload** — private Supabase Storage bucket, upload-through-API (service-role) + signed-URL downloads; `Evidence` table + RLS; Data Entry vault; evidence-required categories (Electricity/Natural Gas/Fuel) gate submit + the matrix "green" (FR §4.1 / §2.2); 96 demo files seeded. `supabase-storage` skill extracted.
 - [ ] **Period locking** — lock approved periods (FR §4.2): `locked` transitions + guards; `super_admin`-only unlock with audit row; locked periods block new/edited records
 - [ ] **Anomaly detection v1** — server-side check at save/submit: >±50% deviation vs. previous-period baseline (VAR §4) → `anomalyFlag` + mandatory `varianceReason`
 - [ ] **Submit validation levels** — lenient draft-save vs. strict submit validation (VAR §2–3)
 
 **Hardening (exit gate)**
 - [ ] E2E coverage: data-entry and analytics happy paths + RBAC/tenant negative cases
-- [ ] RLS for new tables (`evidence`) via the `rls-for-table` skill (`locations` already covered)
+- [x] RLS for new tables — `locations` (init migration) and `evidence` (`rls_evidence` migration) both covered
 
 *Exit criteria:* every Phase-1 row in the README status table is ✅ and the full demo flow (enter → submit → approve → analytics) runs end-to-end locally.
 
@@ -142,6 +143,7 @@
 - **2026-07-02** — Features without a real backend (targets, intensity) show an explicit "not yet available" state instead of mock numbers.
 - **2026-07-03** — Agent/skill review before resuming Phase 1: the 7 subagents cover everything through Phase 2 (no additions/removals); revisit at Phase 3 for a `python-analytics` agent (FastAPI microservice). Skills updated: `tenant-api-module` now documents both write patterns (admin-managed vs. author-based workflow), `wire-page` gained the data-entry/emissions references and the two-label honesty rule. A `supabase-storage` skill will be extracted in the same PR that first implements evidence upload.
 - **2026-07-04** — Tracking-matrix statuses (FR §2.2 interpretation): `under_review` counts as committed/green (it is submitted data in review); the anomaly flag makes a cell yellow ("flagged for review"); the "required evidence" green-condition is deferred until the evidence backend ships. Matrix status math lives server-side in `GET /emissions/tracking-matrix`; the recurring rollup recipe is now the `aggregation-endpoint` skill.
+- **2026-07-06** — Evidence upload scope + architecture (both confirmed with the user): full scope = **capability + enforcement** (matrix green + submit-gate need evidence, so 96 committed records get a seeded demo file so the dashboard doesn't regress); **upload-through-API** (browser → NestJS → service-role Storage), not browser→Storage, to keep enforcement in the guard layer. Evidence-required set = `Electricity`, `Natural Gas`, `Fuel` (billed, invoice/meter-backed); the earlier deferred matrix "green needs evidence" condition (2026-07-04) is now wired.
 
 ## Session log
 
@@ -150,3 +152,4 @@
 - **2026-07-03** — Reviewed the agent team + skills against the phased roadmap before resuming Phase 1 (see decisions log). Committed `.claude/launch.json` (preview tooling config).
 - **2026-07-04** — Dashboard wiring (PR #9): built `GET /emissions/tracking-matrix` + 4 specs (65 total), mapped DTOs onto the existing dashboard components via `lib/dashboard-view.ts`, null-safe trend/locations badges, real anomaly alerts, drill-down verified live (sheet total 1,003 tCO₂e = endpoint value). Extracted the `aggregation-endpoint` skill in the same PR.
 - **2026-07-06** — Locations level (`feat/locations`): tenant-scoped `/locations` CRUD (`tenant-api-module` admin-managed pattern) + 11 specs (77 total), `LocationsDrawer` on the subsidiaries page, `/kpi` location count, 8 seeded locations. `locations` table + RLS already existed (init migration) so no new migration. Deleted two orphan mock components (`subsidiary-form.tsx`, `entry-header.tsx`). Record↔location linkage deferred to its own item. Decisions: hierarchy-only scope + orphan deletion (both confirmed with the user).
+- **2026-07-06** — Evidence upload (`feat/evidence-upload`): `Evidence` table + `rls_evidence` migration, `StorageService` (service-role) + `evidence` module (upload/list/signed-url/delete), submit-gate + matrix green now require evidence, Data Entry `EvidenceVault` (drag-drop), 96 seeded demo files. 88 tests (11 new). Extracted the `supabase-storage` skill. Verified live: 13/13 API checks (upload, submit-gate 400/OK, signed URL, tenant 404, delete-frozen, matrix green) + browser (vault renders, submit-gate toast blocks, no console errors).

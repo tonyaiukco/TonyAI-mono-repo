@@ -654,6 +654,8 @@ export interface ActivityRecordDTO {
   createdBy: string;
   anomalyFlag: boolean;
   varianceReason: string | null;
+  /** Number of evidence files linked to this record (FR §4.1). */
+  evidenceCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -678,6 +680,56 @@ export type UpdateActivityRecordInput = Partial<
 /** Body of POST /activity-records/:id/reject — the reviewer's variance reason. */
 export interface RejectInput {
   varianceReason: string;
+}
+
+// ---------------------------------------------------------------------------
+// Evidence (Phase 1, FR §4.1 / §6) — supporting files linked to a record.
+// ---------------------------------------------------------------------------
+
+/**
+ * Categories that require at least one evidence file before a record may be
+ * submitted / counted as "complete" (FR §4.1 "categories configured as evidence
+ * required"). Scope 1 & 2 billed inputs are invoice/meter/fuel-log backed.
+ */
+export const EVIDENCE_REQUIRED_CATEGORIES: Category[] = [
+  'Electricity',
+  'Natural Gas',
+  'Fuel',
+];
+
+/** True when the given category must have evidence attached to be complete. */
+export function isEvidenceRequired(category: string): boolean {
+  return (EVIDENCE_REQUIRED_CATEGORIES as string[]).includes(category);
+}
+
+/** Allowed evidence file MIME types (mirrors the `evidence` bucket config). */
+export const EVIDENCE_ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/csv',
+] as const;
+
+/** Max evidence file size in bytes (mirrors the bucket's 10 MiB limit). */
+export const EVIDENCE_MAX_SIZE_BYTES = 10 * 1024 * 1024;
+
+/** An evidence file's metadata as returned by the API (never the binary). */
+export interface EvidenceDTO {
+  id: string;
+  activityRecordId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedBy: string;
+  createdAt: string;
+}
+
+/** Response of GET /evidence/:id/url — a short-lived signed download link. */
+export interface EvidenceUrlDTO {
+  url: string;
+  /** Seconds until the signed URL expires. */
+  expiresIn: number;
 }
 
 // ---------------------------------------------------------------------------

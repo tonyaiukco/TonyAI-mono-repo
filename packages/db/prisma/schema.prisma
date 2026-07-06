@@ -128,12 +128,33 @@ model ActivityRecord {
   createdBy      String               @map("created_by") @db.Uuid
   anomalyFlag    Boolean              @default(false) @map("anomaly_flag")
   varianceReason String?              @map("variance_reason")
+  evidence       Evidence[]
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
 
   @@unique([subsidiaryId, reportingYear, reportingPeriod, periodValue, category])
   @@index([subsidiaryId])
   @@map("activity_records")
+}
+
+// A supporting file (invoice, meter record, fuel log, …) linked to an activity
+// record (FR §4.1). The binary lives in the private Supabase Storage `evidence`
+// bucket; this row is the metadata + pointer (`storagePath`). Tenant-scoped
+// through its parent activity record's subsidiary. Uploaded/removed only via the
+// owner/service-role backend, which also enforces access + type/size validation.
+model Evidence {
+  id               String         @id @default(uuid()) @db.Uuid
+  activityRecordId String         @map("activity_record_id") @db.Uuid
+  activityRecord   ActivityRecord @relation(fields: [activityRecordId], references: [id], onDelete: Cascade)
+  storagePath      String         @map("storage_path") // object key in the `evidence` bucket
+  fileName         String         @map("file_name")
+  mimeType         String         @map("mime_type")
+  sizeBytes        Int            @map("size_bytes")
+  uploadedBy       String         @map("uploaded_by") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at")
+
+  @@index([activityRecordId])
+  @@map("evidence")
 }
 
 model UserSubsidiaryAccess {
