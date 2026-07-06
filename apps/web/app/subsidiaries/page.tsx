@@ -40,12 +40,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Building2, CheckCircle2, Clock, Globe, LogOut, Plus, Trash2 } from "lucide-react";
+import { Building2, CheckCircle2, Clock, Globe, LogOut, MapPin, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
-import type { SubsidiaryDTO } from "@/lib/types";
+import { LocationsDrawer } from "@/components/subsidiaries/locations-drawer";
+import type { LocationDTO, SubsidiaryDTO } from "@/lib/types";
 
 const GEOGRAPHIES = ["UK", "TR", "EU"] as const;
 const STATUSES = ["pending", "active", "inactive"] as const;
@@ -69,17 +70,23 @@ export default function SubsidiariesPage() {
   const router = useRouter();
   const { user, setUser } = useAuthStore();
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
+  const [locations, setLocations] = useState<LocationDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [locSubsidiaryId, setLocSubsidiaryId] = useState<string | null>(null);
 
   async function refresh() {
     setLoading(true);
     try {
-      const list = await api.listSubsidiaries();
+      const [list, locs] = await Promise.all([
+        api.listSubsidiaries(),
+        api.listLocations(),
+      ]);
       setSubsidiaries(list);
+      setLocations(locs);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -100,6 +107,11 @@ export default function SubsidiariesPage() {
   const active = subsidiaries.filter((s) => s.reportingStatus === "active").length;
   const pending = subsidiaries.filter((s) => s.reportingStatus === "pending").length;
   const geographies = new Set(subsidiaries.map((s) => s.geographyCode)).size;
+
+  const canManageLocations = user?.role === "super_admin";
+  const locSubsidiary = subsidiaries.find((s) => s.id === locSubsidiaryId) ?? null;
+  const locCount = (subsidiaryId: string) =>
+    locations.filter((l) => l.subsidiaryId === subsidiaryId).length;
 
   async function handleCreate() {
     if (form.legalName.trim().length < 2) {
@@ -198,6 +210,7 @@ export default function SubsidiariesPage() {
                       <TableHead>Location</TableHead>
                       <TableHead>Geo</TableHead>
                       <TableHead>Sector</TableHead>
+                      <TableHead>Locations</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="w-10" />
                     </TableRow>
@@ -210,6 +223,18 @@ export default function SubsidiariesPage() {
                         <TableCell className="text-muted-foreground">{s.location ?? "—"}</TableCell>
                         <TableCell>{s.geographyCode}</TableCell>
                         <TableCell className="text-muted-foreground">{s.sector ?? "—"}</TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setLocSubsidiaryId(s.id)}
+                            className="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+                            aria-label="Manage locations"
+                          >
+                            <MapPin className="h-3.5 w-3.5" />
+                            {locCount(s.id)}
+                          </Button>
+                        </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={statusClass[s.reportingStatus]}>
                             {s.reportingStatus}
@@ -317,6 +342,14 @@ export default function SubsidiariesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <LocationsDrawer
+        subsidiary={locSubsidiary}
+        locations={locations.filter((l) => l.subsidiaryId === locSubsidiaryId)}
+        canManage={canManageLocations}
+        onClose={() => setLocSubsidiaryId(null)}
+        onChanged={refresh}
+      />
 
       <AlertDialog open={!!deletingId} onOpenChange={() => setDeletingId(null)}>
         <AlertDialogContent>

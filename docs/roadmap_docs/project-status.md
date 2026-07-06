@@ -6,11 +6,11 @@
 > we leave off?"). Keep entries short — link to code/PRs instead of restating them.
 > README stays the public-facing summary; this file is the granular working log.
 
-## Current status — as of 2026-07-04
+## Current status — as of 2026-07-06
 
 - **Phase:** Phase 1 — Core MVP (Scope 1 & 2)
-- **Latest merged:** PR #8 (`7a13ca4`); PR #9 (dashboard wiring) in review
-- **Tests:** 65 unit (Vitest, API) + 2 E2E (Playwright) — green
+- **Latest merged:** PR #9 (`dffb7ac`, dashboard wiring); Locations work on `feat/locations` (uncommitted)
+- **Tests:** 77 unit (Vitest, API) + 2 E2E (Playwright) — green
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)
@@ -35,7 +35,8 @@
 - Calc engine: `POST /calculations/preview`, `GET /factors` — factor versioning, unit normalization
 - Activity records: CRUD + submit/approve/reject, immutable calc snapshots, append-only audit log
 - Data Entry UI (`/data-entry`), Emissions Analytics UI (`/emissions`) and the home dashboard Emissions Overview (`/`) fully on live data
-- Seed: 1 org, 5 subsidiaries, 2 users, demo factors, **96 approved monthly Scope 1 & 2 activity records for 2024** (prototype values, explicitly labelled)
+- Operational locations: tenant-scoped CRUD API (`/locations`, `super_admin` writes, audit-logged) + management drawer on the subsidiaries page; `/kpi` counts real locations
+- Seed: 1 org, 5 subsidiaries, **8 operational locations**, 2 users, demo factors, **96 approved monthly Scope 1 & 2 activity records for 2024** (prototype values, explicitly labelled)
 
 ## Known gaps / placeholders
 
@@ -68,7 +69,8 @@
 - [x] Data Entry UI on live API (tCO₂e preview, draft → submit, 409 on duplicate)
 - [x] Emissions Analytics: `GET /emissions/summary` + live Summary/Breakdown/History/Trends tabs
 - [x] **Dashboard `/` wiring** — Emissions Overview cards + tracking matrix (red/yellow/green cell rules, FR §2) from live `emissions/summary` + `emissions/tracking-matrix`; "Demo data" badge removed (PR #9)
-- [ ] **Locations level** — Holding > Subsidiary > **Location** hierarchy (FR §1.1): schema + migration + RLS, tenant-scoped API, UI (subsidiary detail)
+- [x] **Locations level** — Holding > Subsidiary > **Location** hierarchy (FR §1.1): tenant-scoped CRUD API + management drawer + live `/kpi` location count (RLS already existed on the `locations` table from the init migration). *(Record↔location linkage deferred — see below.)*
+- [ ] **Activity-record ↔ location linkage** — let entries target a location (not just a subsidiary): add `geographyCode` to `Location`, `locationId` to `ActivityRecord`, revise the uniqueness constraint, resolve factor geography from the location, and add a location picker to Data Entry (FR §5.2). Deferred out of the locations PR because it touches the calc path + a migration.
 - [ ] **Evidence upload** — Supabase Storage; ≥1 evidence file required at submit (FR §4.1); pdf/image/spreadsheet types; evidence listed on record detail
 - [ ] **Period locking** — lock approved periods (FR §4.2): `locked` transitions + guards; `super_admin`-only unlock with audit row; locked periods block new/edited records
 - [ ] **Anomaly detection v1** — server-side check at save/submit: >±50% deviation vs. previous-period baseline (VAR §4) → `anomalyFlag` + mandatory `varianceReason`
@@ -76,7 +78,7 @@
 
 **Hardening (exit gate)**
 - [ ] E2E coverage: data-entry and analytics happy paths + RBAC/tenant negative cases
-- [ ] RLS for new tables (`locations`, `evidence`) via the `rls-for-table` skill
+- [ ] RLS for new tables (`evidence`) via the `rls-for-table` skill (`locations` already covered)
 
 *Exit criteria:* every Phase-1 row in the README status table is ✅ and the full demo flow (enter → submit → approve → analytics) runs end-to-end locally.
 
@@ -147,3 +149,4 @@
 - **2026-07-03** — Expanded the roadmap into a full phased plan to production (Phases 0–4 + post-launch), derived from `technical_analysis.md` §5 + `functional_requirements.md`; added launch-readiness items the specs didn't cover. Renumbered README roadmap to match.
 - **2026-07-03** — Reviewed the agent team + skills against the phased roadmap before resuming Phase 1 (see decisions log). Committed `.claude/launch.json` (preview tooling config).
 - **2026-07-04** — Dashboard wiring (PR #9): built `GET /emissions/tracking-matrix` + 4 specs (65 total), mapped DTOs onto the existing dashboard components via `lib/dashboard-view.ts`, null-safe trend/locations badges, real anomaly alerts, drill-down verified live (sheet total 1,003 tCO₂e = endpoint value). Extracted the `aggregation-endpoint` skill in the same PR.
+- **2026-07-06** — Locations level (`feat/locations`): tenant-scoped `/locations` CRUD (`tenant-api-module` admin-managed pattern) + 11 specs (77 total), `LocationsDrawer` on the subsidiaries page, `/kpi` location count, 8 seeded locations. `locations` table + RLS already existed (init migration) so no new migration. Deleted two orphan mock components (`subsidiary-form.tsx`, `entry-header.tsx`). Record↔location linkage deferred to its own item. Decisions: hierarchy-only scope + orphan deletion (both confirmed with the user).

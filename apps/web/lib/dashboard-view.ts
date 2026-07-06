@@ -41,18 +41,19 @@ export function matrixToSubsidiaries(matrix: TrackingMatrixDTO): Subsidiary[] {
 
 /**
  * Live KPIData for the Emissions Overview cards.
- * Trends are null (no prior-year data yet) and locations is null (locations
- * backend is the next Phase 1 step) — the cards render "—" for both.
+ * Trends are null (no prior-year data yet) — the cards render "—" for them.
+ * `totalLocations` comes from GET /kpi (null while it hasn't loaded).
  */
 export function buildKpiData(
   summary: EmissionsSummary,
   matrix: TrackingMatrixDTO,
+  totalLocations: number | null,
 ): KPIData {
   const { complete, incomplete, missing } = matrix.totals;
   const cellCount = complete + incomplete + missing;
   return {
     totalSubsidiaries: matrix.rows.length,
-    totalLocations: null,
+    totalLocations,
     completedCategories: complete,
     incompleteCategories: incomplete,
     missingCategories: missing,

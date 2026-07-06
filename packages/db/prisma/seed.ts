@@ -30,6 +30,19 @@ const SUBSIDIARIES = [
   { id: '22222222-2222-2222-2222-222222220005', legalName: 'TonyAI Trading Ltd.', tradingName: 'TonyAI Trading', location: 'Manchester, UK', geographyCode: 'UK', sector: 'Wholesale Trade', businessArea: 'Commodity Trading', status: SubsidiaryStatus.inactive },
 ];
 
+// Operational locations (FR §1.1 third tier). Fixed ids keep the seed
+// idempotent; names/addresses are demo values.
+const LOCATIONS = [
+  { id: '33333333-3333-3333-3333-333333330001', subsidiaryId: SUBSIDIARIES[0].id, name: 'Istanbul HQ', address: 'Levent, Istanbul', authorizedPerson: 'Aylin Demir' },
+  { id: '33333333-3333-3333-3333-333333330002', subsidiaryId: SUBSIDIARIES[0].id, name: 'Ankara Power Plant', address: 'Sincan OSB, Ankara', authorizedPerson: 'Murat Aksoy' },
+  { id: '33333333-3333-3333-3333-333333330003', subsidiaryId: SUBSIDIARIES[1].id, name: 'London Distribution Centre', address: 'Canary Wharf, London', authorizedPerson: 'James Carter' },
+  { id: '33333333-3333-3333-3333-333333330004', subsidiaryId: SUBSIDIARIES[1].id, name: 'Leeds Depot', address: 'Holbeck, Leeds', authorizedPerson: 'Sophie Hall' },
+  { id: '33333333-3333-3333-3333-333333330005', subsidiaryId: SUBSIDIARIES[2].id, name: 'Munich Factory', address: 'Werksviertel, Munich', authorizedPerson: 'Lukas Weber' },
+  { id: '33333333-3333-3333-3333-333333330006', subsidiaryId: SUBSIDIARIES[3].id, name: 'Izmir Freight Hub', address: 'Alsancak Port, Izmir', authorizedPerson: 'Deniz Kaya' },
+  { id: '33333333-3333-3333-3333-333333330007', subsidiaryId: SUBSIDIARIES[3].id, name: 'Istanbul Transfer Station', address: 'Tuzla, Istanbul', authorizedPerson: 'Deniz Kaya' },
+  { id: '33333333-3333-3333-3333-333333330008', subsidiaryId: SUBSIDIARIES[4].id, name: 'Manchester Office', address: 'Spinningfields, Manchester', authorizedPerson: 'Oliver Grant' },
+];
+
 // ---------------------------------------------------------------------------
 // Emission factors (reference data, not tenant-scoped).
 //
@@ -216,6 +229,15 @@ async function main() {
         reportingStatus: s.status,
         includedScopes: [1, 2],
       },
+    });
+  }
+
+  console.log('Seeding operational locations...');
+  for (const l of LOCATIONS) {
+    await prisma.location.upsert({
+      where: { id: l.id },
+      update: {},
+      create: l,
     });
   }
 

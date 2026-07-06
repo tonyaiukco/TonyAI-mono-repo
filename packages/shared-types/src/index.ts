@@ -35,7 +35,7 @@ export interface ScopeEmissions {
 
 export interface KPIData {
   totalSubsidiaries: number;
-  /** null until the locations backend ships (Phase 1). */
+  /** null while the KPI endpoint hasn't loaded yet. */
   totalLocations: number | null;
   completedCategories: number;
   incompleteCategories: number;
@@ -517,11 +517,41 @@ export interface CreateSubsidiaryInput {
 
 export type UpdateSubsidiaryInput = Partial<CreateSubsidiaryInput>;
 
+// ---------------------------------------------------------------------------
+// Operational locations (FR §1.1: Holding > Subsidiary > Location).
+// DB-shaped API types — distinct from the legacy mock `Location` view model.
+// Activity records still attach to subsidiaries; binding them to locations
+// (incl. per-location geographyCode) is a separate roadmap item.
+// ---------------------------------------------------------------------------
+
+/** An operational location as returned/accepted by the API. */
+export interface LocationDTO {
+  id: string;
+  subsidiaryId: string;
+  name: string;
+  address: string | null;
+  authorizedPerson: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateLocationInput {
+  subsidiaryId: string;
+  name: string;
+  address?: string | null;
+  authorizedPerson?: string | null;
+}
+
+/** `subsidiaryId` is immutable — a location cannot move between subsidiaries. */
+export type UpdateLocationInput = Partial<Omit<CreateLocationInput, 'subsidiaryId'>>;
+
 /** Dashboard KPI summary returned by GET /api/v1/kpi */
 export interface DashboardKpi {
   totalSubsidiaries: number;
   activeSubsidiaries: number;
   pendingSubsidiaries: number;
+  /** Operational locations across the caller's accessible subsidiaries. */
+  totalLocations: number;
   geographyBreakdown: { geographyCode: string; count: number }[];
 }
 

@@ -16,6 +16,14 @@ export function createPrismaMock() {
       update: vi.fn(),
       delete: vi.fn(),
     },
+    location: {
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      count: vi.fn(),
+    },
     auditLog: {
       create: vi.fn(),
     },
@@ -46,6 +54,24 @@ export function makeSubsidiary(overrides: Partial<Subsidiary> = {}): Subsidiary 
     updatedAt: now,
     ...overrides,
   } as Subsidiary;
+}
+
+/** Build a fully-shaped Location DB row, overridable per-field. */
+export function makeLocation(
+  overrides: Partial<import('@tonyai/db').Location> = {},
+): import('@tonyai/db').Location {
+  seq += 1;
+  const now = new Date('2026-01-01T00:00:00.000Z');
+  return {
+    id: `loc-${seq}`,
+    subsidiaryId: 'sub-1',
+    name: `Location ${seq}`,
+    address: null,
+    authorizedPerson: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  } as import('@tonyai/db').Location;
 }
 
 export function makeSuperAdmin(overrides: Partial<RequestUser> = {}): RequestUser {

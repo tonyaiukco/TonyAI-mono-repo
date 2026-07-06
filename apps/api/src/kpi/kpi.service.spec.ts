@@ -15,10 +15,11 @@ describe('KpiService.summary', () => {
 
   beforeEach(() => {
     prisma = createPrismaMock();
+    prisma.location.count.mockResolvedValue(0);
     service = new KpiService(prisma as unknown as PrismaService);
   });
 
-  it('scopes the query to the caller\'s accessible subsidiary ids', async () => {
+  it('scopes the queries to the caller\'s accessible subsidiary ids', async () => {
     const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
     prisma.subsidiary.findMany.mockResolvedValue([]);
 
@@ -28,6 +29,19 @@ describe('KpiService.summary', () => {
       where: { id: { in: ['sub-1', 'sub-2'] } },
       select: { reportingStatus: true, geographyCode: true },
     });
+    expect(prisma.location.count).toHaveBeenCalledWith({
+      where: { subsidiaryId: { in: ['sub-1', 'sub-2'] } },
+    });
+  });
+
+  it('counts locations across the accessible subsidiaries', async () => {
+    const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+    prisma.subsidiary.findMany.mockResolvedValue([]);
+    prisma.location.count.mockResolvedValue(7);
+
+    const kpi = await service.summary(user);
+
+    expect(kpi.totalLocations).toBe(7);
   });
 
   it('counts total/active/pending and breaks down geography (known input -> known output)', async () => {
@@ -64,6 +78,7 @@ describe('KpiService.summary', () => {
       totalSubsidiaries: 0,
       activeSubsidiaries: 0,
       pendingSubsidiaries: 0,
+      totalLocations: 0,
       geographyBreakdown: [],
     });
   });
