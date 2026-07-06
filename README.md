@@ -58,10 +58,11 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | NestJS API with JWT auth guard + **tenant isolation** | ✅ |
 | Subsidiaries CRUD + dashboard KPIs wired to live data | ✅ |
 | Operational locations (Holding › Subsidiary › Location) — tenant‑scoped CRUD + subsidiary drawer | ✅ |
+| Evidence upload (Supabase Storage) — files linked to records, required before submit for billed categories (FR §4.1) | ✅ |
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (77 unit + 2 E2E) | ✅ |
+| Automated tests (88 unit + 2 E2E) | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
@@ -237,7 +238,7 @@ supabase start
 
 # 4. Create the schema and seed demo data
 pnpm db:migrate     # applies Prisma migrations (incl. RLS policies)
-pnpm db:seed        # 1 org, 5 subsidiaries, 8 locations, 2 users, factors + 96 demo Scope 1&2 activity records
+pnpm db:seed        # 1 org, 5 subsidiaries, 8 locations, 2 users, factors + 96 Scope 1&2 records (+ 96 demo evidence files)
 
 # 5. Run everything
 pnpm dev            # web -> http://localhost:3000   api -> http://localhost:3001/api/v1
@@ -316,8 +317,14 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `POST` | `/activity-records/:id/reject` | `submitted`/`under_review` → `rejected` (body `{ varianceReason }`) | `consultant` / `super_admin` |
 | `GET` | `/emissions/summary` | Tenant‑scoped analytics aggregation from committed records: scope totals, category & subsidiary breakdown, monthly/quarterly/yearly trends (filters `?subsidiaryId=&year=&scope=&category=`) | any |
 | `GET` | `/emissions/tracking-matrix` | Subsidiary × category completeness matrix (FR §2: missing/incomplete/complete) with committed tCO₂e per cell (filter `?year=`) | any |
+| `GET` | `/activity-records/:id/evidence` | List evidence files linked to a record | any |
+| `POST` | `/activity-records/:id/evidence` | Upload evidence (multipart `file`; PDF/JPG/PNG/XLSX/CSV, ≤10 MB) — author‑or‑`super_admin`, record editable | `data_entry` / `consultant` / `super_admin` |
+| `GET` | `/evidence/:id/url` | Short‑lived signed download URL for a private file | any |
+| `DELETE` | `/evidence/:id` | Remove an evidence file (while the record is editable) | `data_entry` / `consultant` / `super_admin` |
 
 Activity-record workflow: `draft → submitted → under_review → approved | rejected`. `approved` and `locked` records are immutable; `rejected` records can be edited and re‑submitted. The `calculation` snapshot is written at create/update time and never recomputed on read, so historic results survive factor-library changes. Every transition writes an `audit_log` row (`entity: 'activity_record'`).
+
+Evidence: files are uploaded **through the API** (validated, then stored via the service‑role in a private `evidence` bucket) — binaries never touch the browser, downloads use short‑lived signed URLs. Categories configured as *evidence‑required* (`Electricity`, `Natural Gas`, `Fuel`) cannot be submitted without at least one file, and a cell only turns green in the tracking matrix once its evidence is attached (FR §2.2 / §4.1).
 
 ---
 

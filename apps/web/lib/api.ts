@@ -9,6 +9,8 @@ import type {
   CreateLocationInput,
   CreateSubsidiaryInput,
   DashboardKpi,
+  EvidenceDTO,
+  EvidenceUrlDTO,
   LocationDTO,
   EmissionsSummary,
   TrackingMatrixDTO,
@@ -158,6 +160,40 @@ export const api = {
   submitActivityRecord: (id: string) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/submit`, {
       method: "POST",
+    }),
+
+  // --- Evidence (files linked to an activity record) ---
+  listEvidence: (recordId: string) =>
+    apiFetch<EvidenceDTO[]>(`/activity-records/${recordId}/evidence`),
+  uploadEvidence: async (recordId: string, file: File) => {
+    // Multipart: let the browser set Content-Type (with boundary), so this
+    // bypasses the JSON apiFetch wrapper but keeps the same auth + error shape.
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(
+      `${BASE_URL}/activity-records/${recordId}/evidence`,
+      { method: "POST", headers: await authHeaders(), body: form },
+    );
+    if (!res.ok) {
+      let message = `API ${res.status}`;
+      try {
+        const body = await res.json();
+        message = body.message ?? message;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(
+        Array.isArray(message) ? message.join(", ") : message,
+        res.status,
+      );
+    }
+    return (await res.json()) as EvidenceDTO;
+  },
+  getEvidenceUrl: (id: string) =>
+    apiFetch<EvidenceUrlDTO>(`/evidence/${id}/url`),
+  deleteEvidence: (id: string) =>
+    apiFetch<{ id: string; deleted: true }>(`/evidence/${id}`, {
+      method: "DELETE",
     }),
 
   // --- Emissions analytics ---

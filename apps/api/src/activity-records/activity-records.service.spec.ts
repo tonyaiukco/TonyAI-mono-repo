@@ -26,6 +26,10 @@ function createPrismaMock() {
     subsidiary: {
       findUnique: vi.fn(),
     },
+    evidence: {
+      // Default: records have evidence, so evidence-required submits pass.
+      count: vi.fn().mockResolvedValue(1),
+    },
     auditLog: {
       create: vi.fn(),
     },
@@ -80,6 +84,8 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     createdBy: 'user-entry',
     anomalyFlag: false,
     varianceReason: null,
+    // Prisma `_count` shape returned when the service includes evidence counts.
+    _count: { evidence: 0 },
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -396,6 +402,19 @@ describe('ActivityRecordsService — transition rules', () => {
     const dto = await service.submit(dataEntry(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.auditLog.create).toHaveBeenCalled();
+  });
+
+  it('blocks submit of an evidence-required category with no evidence (FR §4.1)', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-e', category: 'Electricity', status: ActivityRecordStatus.draft }),
+    );
+    prisma.evidence.count.mockResolvedValue(0); // no evidence attached
+
+    await expect(service.submit(dataEntry(), 'rec-e')).rejects.toThrow(
+      /requires at least one evidence file/,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
   it('reject moves submitted -> rejected and stores the varianceReason', async () => {

@@ -178,6 +178,56 @@ async function resolveFactor(
   });
 }
 
+// --- Demo evidence ---------------------------------------------------------
+// The seeded records are all evidence-required categories (Electricity, Natural
+// Gas, Fuel), so without a linked file they would show as "incomplete" (FR §2.2)
+// on the dashboard. We attach one tiny placeholder CSV per record — clearly a
+// demo artefact, not a real invoice.
+const EVIDENCE_BUCKET = 'evidence';
+const DEMO_EVIDENCE_CSV =
+  'field,value\nnote,"DEMO placeholder evidence — not a real document"\n';
+
+/** Create the private `evidence` bucket if it does not already exist. */
+async function ensureEvidenceBucket(): Promise<void> {
+  const { error } = await admin.storage.createBucket(EVIDENCE_BUCKET, {
+    public: false,
+  });
+  // "already exists" is fine; anything else is a real failure.
+  if (error && !/exist/i.test(error.message)) throw error;
+}
+
+/** Attach one placeholder evidence file to a record, idempotently. */
+async function ensureSeedEvidence(
+  recordId: string,
+  uploadedBy: string,
+): Promise<boolean> {
+  const existing = await prisma.evidence.count({
+    where: { activityRecordId: recordId },
+  });
+  if (existing > 0) return false;
+
+  const storagePath = `${recordId}/seed-evidence.csv`;
+  const { error } = await admin.storage
+    .from(EVIDENCE_BUCKET)
+    .upload(storagePath, Buffer.from(DEMO_EVIDENCE_CSV), {
+      contentType: 'text/csv',
+      upsert: true,
+    });
+  if (error) throw error;
+
+  await prisma.evidence.create({
+    data: {
+      activityRecordId: recordId,
+      storagePath,
+      fileName: 'demo-evidence.csv',
+      mimeType: 'text/csv',
+      sizeBytes: Buffer.byteLength(DEMO_EVIDENCE_CSV),
+      uploadedBy,
+    },
+  });
+  return true;
+}
+
 async function ensureAuthUser(email: string, password: string, fullName: string): Promise<string> {
   const { data, error } = await admin.auth.admin.createUser({
     email,
@@ -291,7 +341,9 @@ async function main() {
   }
 
   console.log('Seeding demo activity records (prototype data, Scope 1 & 2)...');
+  await ensureEvidenceBucket();
   let activityCount = 0;
+  let evidenceCount = 0;
   for (const spec of ACTIVITY_SPECS) {
     const subsidiary = SUBSIDIARIES[spec.subsidiaryIndex];
     const factor = await resolveFactor(
@@ -339,7 +391,7 @@ async function main() {
         version: factor.version,
       };
 
-      await prisma.activityRecord.upsert({
+      const record = await prisma.activityRecord.upsert({
         where: {
           subsidiaryId_reportingYear_reportingPeriod_periodValue_category: {
             subsidiaryId: subsidiary.id,
@@ -369,9 +421,13 @@ async function main() {
         },
       });
       activityCount++;
+      // Evidence-required categories need a linked file to count as complete.
+      if (await ensureSeedEvidence(record.id, adminId)) evidenceCount++;
     }
   }
-  console.log(`  seeded ${activityCount} monthly activity records (approved).`);
+  console.log(
+    `  seeded ${activityCount} monthly activity records (approved) + ${evidenceCount} placeholder evidence files.`,
+  );
 
   console.log('\nSeed complete.');
   console.log('  super_admin -> admin@tonyai.local / TonyAI!2026 (sees all 5 subsidiaries)');

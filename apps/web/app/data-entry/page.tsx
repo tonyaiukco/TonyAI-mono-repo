@@ -34,6 +34,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
+import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import { CATEGORIES } from "@/lib/types";
 import type {
   ActivityRecordDTO,
@@ -370,6 +371,9 @@ export default function DataEntryPage() {
     try {
       const rec = await persist();
       if (!rec) return;
+      // Keep the saved record "current" so that if submit is blocked (e.g. the
+      // evidence gate), the Evidence vault stays visible to fix it and retry.
+      setEditingId(rec.id);
       await api.submitActivityRecord(rec.id);
       toast.success("Submitted for review");
       resetForm();
@@ -635,6 +639,21 @@ export default function DataEntryPage() {
                     ))}
                 </CardContent>
               </Card>
+
+              {/* Evidence vault — appears once the record is saved (needs an id).
+                  For evidence-required categories, a file must be attached here
+                  before the record can be submitted (FR §4.1). */}
+              {editingId && (
+                <EvidenceVault
+                  key={editingId}
+                  recordId={editingId}
+                  category={category}
+                  canManage={
+                    !!user &&
+                    ["data_entry", "consultant", "super_admin"].includes(user.role)
+                  }
+                />
+              )}
 
               {/* Actions */}
               <div className="flex items-center justify-end gap-2">
