@@ -55,6 +55,7 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 Keep the main thread's context small; the biggest cost is accumulated context (whole-file reads, big diffs, verification output), not writing code.
 - **Investigate/plan via a read-only subagent.** The "read many files → produce a plan" step at the start of a work package goes to the `Explore` agent, so file dumps stay out of the main context and only the plan returns. This is standing authorization — spawn it without re-asking. Do the **implementation** in the main thread (following the skills), not in a subagent.
 - **Risk-based verification.** Security / compliance / data-model / migration changes → full proof (typecheck + tests + live API, and browser if visual). Low-risk changes → typecheck + tests; skip live/browser unless the change is observable in the app. Never weaken correctness claims — just match verification depth to risk.
+- **Fresh-eyes review pass before a risky PR.** When a change touches the calc path, factor immutability, RLS/auth, tenant isolation, or the record lifecycle (locking/approval), spawn `security-rls` and/or `qa-auditor` to review the diff before opening the PR — a reviewer that starts fresh catches what the implementer missed. This is about quality, not tokens.
 - **One work package per session**, fed by the status log below. Read surgically (`grep` + `offset`/`limit`, not whole files) and batch independent tool calls.
 
 ## Status & roadmap
