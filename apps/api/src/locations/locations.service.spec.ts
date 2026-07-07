@@ -75,7 +75,7 @@ describe('LocationsService', () => {
       const user = makeDataEntry();
 
       await expect(
-        service.create(user, { subsidiaryId: 'sub-1', name: 'HQ' }),
+        service.create(user, { subsidiaryId: 'sub-1', name: 'HQ', geographyCode: 'TR' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.location.create).not.toHaveBeenCalled();
     });
@@ -84,7 +84,7 @@ describe('LocationsService', () => {
       const user = makeSuperAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
 
       await expect(
-        service.create(user, { subsidiaryId: 'sub-999', name: 'HQ' }),
+        service.create(user, { subsidiaryId: 'sub-999', name: 'HQ', geographyCode: 'TR' }),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.location.create).not.toHaveBeenCalled();
     });
@@ -94,7 +94,7 @@ describe('LocationsService', () => {
       const created = makeLocation({ subsidiaryId: 'sub-1', name: 'HQ' });
       prisma.location.create.mockResolvedValue(created);
 
-      const dto = await service.create(user, { subsidiaryId: 'sub-1', name: 'HQ' });
+      const dto = await service.create(user, { subsidiaryId: 'sub-1', name: 'HQ', geographyCode: 'TR' });
 
       expect(dto).toMatchObject({ subsidiaryId: 'sub-1', name: 'HQ' });
       expect(prisma.auditLog.create).toHaveBeenCalledWith(

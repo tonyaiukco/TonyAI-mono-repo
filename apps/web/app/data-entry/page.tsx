@@ -41,6 +41,7 @@ import type {
   ActivityRecordStatus,
   CalculationResult,
   Category,
+  LocationDTO,
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
@@ -156,6 +157,9 @@ export default function DataEntryPage() {
   // Controls
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
   const [subsidiaryId, setSubsidiaryId] = useState("");
+  const [locations, setLocations] = useState<LocationDTO[]>([]);
+  // "" = whole subsidiary; otherwise the operational location id.
+  const [locationId, setLocationId] = useState("");
   const [reportingYear, setReportingYear] = useState<number>(2024);
   const [reportingPeriod, setReportingPeriod] =
     useState<ReportingPeriod>("quarterly");
@@ -185,6 +189,18 @@ export default function DataEntryPage() {
     () => subsidiaries.find((s) => s.id === subsidiaryId) ?? null,
     [subsidiaries, subsidiaryId],
   );
+
+  const availableLocations = useMemo(
+    () => locations.filter((l) => l.subsidiaryId === subsidiaryId),
+    [locations, subsidiaryId],
+  );
+  const selectedLocation = useMemo(
+    () => availableLocations.find((l) => l.id === locationId) ?? null,
+    [availableLocations, locationId],
+  );
+  // The location (when chosen) drives the factor geography; else the subsidiary.
+  const effectiveGeography =
+    selectedLocation?.geographyCode ?? selectedSubsidiary?.geographyCode ?? null;
 
   const numericValue = activityValue.trim() === "" ? NaN : Number(activityValue);
   const hasValidInput =
@@ -226,8 +242,12 @@ export default function DataEntryPage() {
     (async () => {
       setSubsLoading(true);
       try {
-        const list = await api.listSubsidiaries();
+        const [list, locs] = await Promise.all([
+          api.listSubsidiaries(),
+          api.listLocations(),
+        ]);
         setSubsidiaries(list);
+        setLocations(locs);
         if (list.length > 0) {
           setSubsidiaryId(list[0].id);
         }
@@ -263,7 +283,7 @@ export default function DataEntryPage() {
       try {
         const result = await api.previewCalculation({
           category,
-          geographyCode: selectedSubsidiary.geographyCode,
+          geographyCode: effectiveGeography ?? selectedSubsidiary.geographyCode,
           reportingYear,
           value: numericValue,
           unit: activityUnit,
@@ -297,6 +317,7 @@ export default function DataEntryPage() {
     numericValue,
     activityUnit,
     subsidiaryId,
+    effectiveGeography,
   ]);
 
   // --- Handlers -------------------------------------------------------------
@@ -312,6 +333,7 @@ export default function DataEntryPage() {
     setPreview(null);
     setPreviewError(null);
     setEditingId(null);
+    setLocationId("");
   }
 
   function buildInputPayload(): Record<string, unknown> | null {
@@ -328,8 +350,11 @@ export default function DataEntryPage() {
       return null;
     }
     const inputPayload = buildInputPayload();
+    // "" means "whole subsidiary" → null; otherwise the chosen location id.
+    const effectiveLocationId = locationId || null;
     if (editingId) {
       return api.updateActivityRecord(editingId, {
+        locationId: effectiveLocationId,
         reportingYear,
         reportingPeriod,
         periodValue,
@@ -341,6 +366,7 @@ export default function DataEntryPage() {
     }
     return api.createActivityRecord({
       subsidiaryId: selectedSubsidiary.id,
+      locationId: effectiveLocationId,
       reportingYear,
       reportingPeriod,
       periodValue,
@@ -439,6 +465,7 @@ export default function DataEntryPage() {
                         value={subsidiaryId}
                         onValueChange={(v) => {
                           setSubsidiaryId(v);
+                          setLocationId("");
                           resetForm();
                         }}
                       >
@@ -454,6 +481,28 @@ export default function DataEntryPage() {
                         </SelectContent>
                       </Select>
                     )}
+                  </Field>
+
+                  {/* Reporting entity: whole subsidiary or one of its locations.
+                      The chosen entity drives the factor geography (FR §5.2). */}
+                  <Field label="Location">
+                    <Select
+                      value={locationId || "__whole__"}
+                      onValueChange={(v) => setLocationId(v === "__whole__" ? "" : v)}
+                      disabled={subsLoading || !subsidiaryId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__whole__">Whole subsidiary</SelectItem>
+                        {availableLocations.map((l) => (
+                          <SelectItem key={l.id} value={l.id}>
+                            {l.name} ({l.geographyCode})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </Field>
 
                   <Field label="Category">
@@ -689,7 +738,7 @@ export default function DataEntryPage() {
                 preview={preview}
                 error={previewError}
                 hasValidInput={hasValidInput}
-                geographyCode={selectedSubsidiary?.geographyCode ?? null}
+                geographyCode={effectiveGeography}
               />
 
               <Card>

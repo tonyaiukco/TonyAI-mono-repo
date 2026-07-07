@@ -19,6 +19,7 @@ export class LocationsService {
       id: l.id,
       subsidiaryId: l.subsidiaryId,
       name: l.name,
+      geographyCode: l.geographyCode,
       address: l.address,
       authorizedPerson: l.authorizedPerson,
       createdAt: l.createdAt.toISOString(),
@@ -85,6 +86,7 @@ export class LocationsService {
       data: {
         subsidiaryId: dto.subsidiaryId,
         name: dto.name,
+        geographyCode: dto.geographyCode,
         address: dto.address ?? null,
         authorizedPerson: dto.authorizedPerson ?? null,
       },
@@ -105,6 +107,7 @@ export class LocationsService {
 
     const data: Prisma.LocationUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
+    if (dto.geographyCode !== undefined) data.geographyCode = dto.geographyCode;
     if (dto.address !== undefined) data.address = dto.address;
     if (dto.authorizedPerson !== undefined) {
       data.authorizedPerson = dto.authorizedPerson;

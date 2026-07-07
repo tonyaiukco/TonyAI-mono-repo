@@ -26,6 +26,9 @@ function createPrismaMock() {
     subsidiary: {
       findUnique: vi.fn(),
     },
+    location: {
+      findUnique: vi.fn(),
+    },
     evidence: {
       // Default: records have evidence, so evidence-required submits pass.
       count: vi.fn().mockResolvedValue(1),
@@ -245,6 +248,48 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
         }),
       }),
     );
+  });
+
+  it('resolves the factor geography from the LOCATION when a locationId is given (FR §5.2)', async () => {
+    const { prisma, calc, service } = build(2);
+    // Subsidiary is TR, but the targeted location is UK -> UK must win.
+    prisma.subsidiary.findUnique.mockResolvedValue(
+      makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
+    );
+    prisma.location.findUnique.mockResolvedValue({
+      id: 'loc-1',
+      subsidiaryId: 'sub-1',
+      geographyCode: 'UK',
+    });
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    await service.create(dataEntry(), { ...CREATE_DTO, locationId: 'loc-1' });
+
+    expect(calc.compute).toHaveBeenCalledWith(
+      expect.objectContaining({ geographyCode: 'UK' }),
+    );
+    const createArg = prisma.activityRecord.create.mock.calls[0][0];
+    expect(createArg.data.locationId).toBe('loc-1');
+  });
+
+  it('rejects a location that belongs to another subsidiary (NotFound, no compute)', async () => {
+    const { prisma, calc, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(
+      makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
+    );
+    prisma.location.findUnique.mockResolvedValue({
+      id: 'loc-x',
+      subsidiaryId: 'sub-OTHER', // not the record's subsidiary
+      geographyCode: 'UK',
+    });
+
+    await expect(
+      service.create(dataEntry(), { ...CREATE_DTO, locationId: 'loc-x' }),
+    ).rejects.toThrow(/Location not found/);
+    expect(calc.compute).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
   });
 
   it('maps a duplicate (Prisma P2002) to 409 Conflict, not 500', async () => {

@@ -12,6 +12,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { GEOGRAPHY_CODES } from '@/lib/types';
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -36,7 +44,7 @@ interface LocationsDrawerProps {
   onChanged: () => Promise<void> | void;
 }
 
-const emptyForm = { name: '', address: '', authorizedPerson: '' };
+const emptyForm = { name: '', geographyCode: '', address: '', authorizedPerson: '' };
 
 /** Operational locations of one subsidiary (FR §1.1 third tier): list + CRUD. */
 export function LocationsDrawer({
@@ -51,16 +59,24 @@ export function LocationsDrawer({
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // A new location defaults to its parent subsidiary's geography (editable).
+  const freshForm = () => ({
+    ...emptyForm,
+    geographyCode: subsidiary?.geographyCode ?? '',
+  });
+
   // Reset the form whenever the drawer targets another subsidiary.
   useEffect(() => {
-    setForm(emptyForm);
+    setForm(freshForm());
     setEditingId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subsidiary?.id]);
 
   function startEdit(loc: LocationDTO) {
     setEditingId(loc.id);
     setForm({
       name: loc.name,
+      geographyCode: loc.geographyCode,
       address: loc.address ?? '',
       authorizedPerson: loc.authorizedPerson ?? '',
     });
@@ -68,7 +84,7 @@ export function LocationsDrawer({
 
   function cancelEdit() {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm(freshForm());
   }
 
   async function handleSave() {
@@ -79,9 +95,14 @@ export function LocationsDrawer({
     }
     setSaving(true);
     try {
+      if (!form.geographyCode) {
+        toast.error('Geography is required');
+        return;
+      }
       if (editingId) {
         await api.updateLocation(editingId, {
           name: form.name.trim(),
+          geographyCode: form.geographyCode,
           address: form.address || null,
           authorizedPerson: form.authorizedPerson || null,
         });
@@ -90,6 +111,7 @@ export function LocationsDrawer({
         await api.createLocation({
           subsidiaryId: subsidiary.id,
           name: form.name.trim(),
+          geographyCode: form.geographyCode,
           address: form.address || null,
           authorizedPerson: form.authorizedPerson || null,
         });
@@ -210,6 +232,27 @@ export function LocationsDrawer({
                         onChange={(e) => setForm({ ...form, name: e.target.value })}
                         placeholder="Istanbul HQ"
                       />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Geography *</Label>
+                      <Select
+                        value={form.geographyCode}
+                        onValueChange={(v) => setForm({ ...form, geographyCode: v })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select geography" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {GEOGRAPHY_CODES.map((g) => (
+                            <SelectItem key={g} value={g}>
+                              {g}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Drives the emission factor for records at this location.
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <Label>Address</Label>

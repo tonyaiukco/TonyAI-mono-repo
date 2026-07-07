@@ -21,6 +21,14 @@ const REPORTING_PERIODS: ReportingPeriod[] = ['monthly', 'quarterly', 'annual'];
  * geography). `scope`/`calculation` are re-derived server-side on any change.
  */
 export class UpdateActivityRecordDto {
+  // Re-target the reporting entity while the record is editable. `null` detaches
+  // it back to subsidiary-level; omitted leaves it unchanged. (The service
+  // checks the location belongs to the record's subsidiary.)
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  locationId?: string | null;
+
   @IsOptional()
   @IsInt()
   @Min(2000)

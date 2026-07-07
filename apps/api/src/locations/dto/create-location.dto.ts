@@ -1,4 +1,5 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
 
 /**
  * Body of POST /api/v1/locations.
@@ -14,6 +15,10 @@ export class CreateLocationDto {
   @IsString()
   @MinLength(1)
   name!: string;
+
+  @IsString()
+  @IsIn(GEOGRAPHY_CODES as readonly string[])
+  geographyCode!: string;
 
   @IsOptional()
   @IsString()
