@@ -51,6 +51,13 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 - **Pull requests:** open PRs for review — **the user merges; never self-merge.** Keep each PR small and focused. CI runs on **Node 22**; never commit `dist/`, `generated/`, or `*.tsbuildinfo` (all gitignored).
 - **Verify before declaring done:** typecheck + build + relevant tests; for behaviour, exercise it against the running app — don't claim a fix works without checking.
 
+## Working mode (token-efficient — standing preference, 2026-07-07)
+Keep the main thread's context small; the biggest cost is accumulated context (whole-file reads, big diffs, verification output), not writing code.
+- **Investigate/plan via a read-only subagent.** The "read many files → produce a plan" step at the start of a work package goes to the `Explore` agent, so file dumps stay out of the main context and only the plan returns. This is standing authorization — spawn it without re-asking. Do the **implementation** in the main thread (following the skills), not in a subagent.
+- **Risk-based verification.** Security / compliance / data-model / migration changes → full proof (typecheck + tests + live API, and browser if visual). Low-risk changes → typecheck + tests; skip live/browser unless the change is observable in the app. Never weaken correctness claims — just match verification depth to risk.
+- **Fresh-eyes review pass before a risky PR.** When a change touches the calc path, factor immutability, RLS/auth, tenant isolation, or the record lifecycle (locking/approval), spawn `security-rls` and/or `qa-auditor` to review the diff before opening the PR — a reviewer that starts fresh catches what the implementer missed. This is about quality, not tokens.
+- **One work package per session**, fed by the status log below. Read surgically (`grep` + `offset`/`limit`, not whole files) and batch independent tool calls.
+
 ## Status & roadmap
 - **Session memory lives in `docs/roadmap_docs/project-status.md`** — read it at session start to see where work left off; update it (status, decisions, next steps) in the same change whenever a PR merges or the roadmap shifts. It must never go stale.
 - Done: M0 + M1 vertical slice; Phase-1 emission-factor library + Scope 1&2 calc engine + activity-records API & review workflow + Data Entry UI + Emissions Analytics wiring.
