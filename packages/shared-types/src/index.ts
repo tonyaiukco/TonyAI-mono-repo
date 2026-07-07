@@ -529,6 +529,8 @@ export interface LocationDTO {
   id: string;
   subsidiaryId: string;
   name: string;
+  /** Determines the emission factor when a record targets this location (FR §5.2). */
+  geographyCode: string;
   address: string | null;
   authorizedPerson: string | null;
   createdAt: string;
@@ -538,6 +540,7 @@ export interface LocationDTO {
 export interface CreateLocationInput {
   subsidiaryId: string;
   name: string;
+  geographyCode: string;
   address?: string | null;
   authorizedPerson?: string | null;
 }
@@ -555,7 +558,8 @@ export interface DashboardKpi {
   geographyBreakdown: { geographyCode: string; count: number }[];
 }
 
-export type GeographyCode = 'UK' | 'TR' | 'EU';
+export const GEOGRAPHY_CODES = ['UK', 'TR', 'EU'] as const;
+export type GeographyCode = typeof GEOGRAPHY_CODES[number];
 
 // ---------------------------------------------------------------------------
 // Emission-factor library + calculation engine (Phase 1, PR1)
@@ -641,6 +645,9 @@ export type ActivityRecordStatus =
 export interface ActivityRecordDTO {
   id: string;
   subsidiaryId: string;
+  /** Optional operational location this entry is attributed to (FR §5.2). When
+   * set, it drives the emission-factor geography instead of the subsidiary's. */
+  locationId: string | null;
   reportingYear: number;
   reportingPeriod: ReportingPeriod;
   periodValue: string;
@@ -662,6 +669,8 @@ export interface ActivityRecordDTO {
 
 export interface CreateActivityRecordInput {
   subsidiaryId: string;
+  /** Optional location within the subsidiary; drives factor geography when set. */
+  locationId?: string | null;
   reportingYear: number;
   reportingPeriod: ReportingPeriod;
   periodValue: string;

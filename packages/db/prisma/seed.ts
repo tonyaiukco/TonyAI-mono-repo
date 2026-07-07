@@ -32,15 +32,17 @@ const SUBSIDIARIES = [
 
 // Operational locations (FR §1.1 third tier). Fixed ids keep the seed
 // idempotent; names/addresses are demo values.
+// geographyCode defaults to the parent subsidiary's (a location determines the
+// factor geography for records attributed to it, FR §5.2).
 const LOCATIONS = [
-  { id: '33333333-3333-3333-3333-333333330001', subsidiaryId: SUBSIDIARIES[0].id, name: 'Istanbul HQ', address: 'Levent, Istanbul', authorizedPerson: 'Aylin Demir' },
-  { id: '33333333-3333-3333-3333-333333330002', subsidiaryId: SUBSIDIARIES[0].id, name: 'Ankara Power Plant', address: 'Sincan OSB, Ankara', authorizedPerson: 'Murat Aksoy' },
-  { id: '33333333-3333-3333-3333-333333330003', subsidiaryId: SUBSIDIARIES[1].id, name: 'London Distribution Centre', address: 'Canary Wharf, London', authorizedPerson: 'James Carter' },
-  { id: '33333333-3333-3333-3333-333333330004', subsidiaryId: SUBSIDIARIES[1].id, name: 'Leeds Depot', address: 'Holbeck, Leeds', authorizedPerson: 'Sophie Hall' },
-  { id: '33333333-3333-3333-3333-333333330005', subsidiaryId: SUBSIDIARIES[2].id, name: 'Munich Factory', address: 'Werksviertel, Munich', authorizedPerson: 'Lukas Weber' },
-  { id: '33333333-3333-3333-3333-333333330006', subsidiaryId: SUBSIDIARIES[3].id, name: 'Izmir Freight Hub', address: 'Alsancak Port, Izmir', authorizedPerson: 'Deniz Kaya' },
-  { id: '33333333-3333-3333-3333-333333330007', subsidiaryId: SUBSIDIARIES[3].id, name: 'Istanbul Transfer Station', address: 'Tuzla, Istanbul', authorizedPerson: 'Deniz Kaya' },
-  { id: '33333333-3333-3333-3333-333333330008', subsidiaryId: SUBSIDIARIES[4].id, name: 'Manchester Office', address: 'Spinningfields, Manchester', authorizedPerson: 'Oliver Grant' },
+  { id: '33333333-3333-3333-3333-333333330001', subsidiaryId: SUBSIDIARIES[0].id, name: 'Istanbul HQ', geographyCode: SUBSIDIARIES[0].geographyCode, address: 'Levent, Istanbul', authorizedPerson: 'Aylin Demir' },
+  { id: '33333333-3333-3333-3333-333333330002', subsidiaryId: SUBSIDIARIES[0].id, name: 'Ankara Power Plant', geographyCode: SUBSIDIARIES[0].geographyCode, address: 'Sincan OSB, Ankara', authorizedPerson: 'Murat Aksoy' },
+  { id: '33333333-3333-3333-3333-333333330003', subsidiaryId: SUBSIDIARIES[1].id, name: 'London Distribution Centre', geographyCode: SUBSIDIARIES[1].geographyCode, address: 'Canary Wharf, London', authorizedPerson: 'James Carter' },
+  { id: '33333333-3333-3333-3333-333333330004', subsidiaryId: SUBSIDIARIES[1].id, name: 'Leeds Depot', geographyCode: SUBSIDIARIES[1].geographyCode, address: 'Holbeck, Leeds', authorizedPerson: 'Sophie Hall' },
+  { id: '33333333-3333-3333-3333-333333330005', subsidiaryId: SUBSIDIARIES[2].id, name: 'Munich Factory', geographyCode: SUBSIDIARIES[2].geographyCode, address: 'Werksviertel, Munich', authorizedPerson: 'Lukas Weber' },
+  { id: '33333333-3333-3333-3333-333333330006', subsidiaryId: SUBSIDIARIES[3].id, name: 'Izmir Freight Hub', geographyCode: SUBSIDIARIES[3].geographyCode, address: 'Alsancak Port, Izmir', authorizedPerson: 'Deniz Kaya' },
+  { id: '33333333-3333-3333-3333-333333330007', subsidiaryId: SUBSIDIARIES[3].id, name: 'Istanbul Transfer Station', geographyCode: SUBSIDIARIES[3].geographyCode, address: 'Tuzla, Istanbul', authorizedPerson: 'Deniz Kaya' },
+  { id: '33333333-3333-3333-3333-333333330008', subsidiaryId: SUBSIDIARIES[4].id, name: 'Manchester Office', geographyCode: SUBSIDIARIES[4].geographyCode, address: 'Spinningfields, Manchester', authorizedPerson: 'Oliver Grant' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -228,6 +230,47 @@ async function ensureSeedEvidence(
   return true;
 }
 
+interface SeedRecordInput {
+  subsidiaryId: string;
+  locationId: string | null;
+  reportingYear: number;
+  reportingPeriod: string;
+  periodValue: string;
+  category: string;
+  scope: number;
+  activityValue: number;
+  activityUnit: string;
+  calculation: Record<string, unknown>;
+  createdBy: string;
+  anomalyFlag: boolean;
+  varianceReason: string | null;
+}
+
+/**
+ * Idempotent create by the natural reporting-entity key. Uniqueness is enforced
+ * by a raw NULLS NOT DISTINCT index (no Prisma compound-unique input), so we
+ * find-or-create rather than upsert. `location_id` is part of the key.
+ */
+async function findOrCreateRecord(
+  data: SeedRecordInput,
+): Promise<{ id: string; created: boolean }> {
+  const existing = await prisma.activityRecord.findFirst({
+    where: {
+      subsidiaryId: data.subsidiaryId,
+      locationId: data.locationId,
+      reportingYear: data.reportingYear,
+      reportingPeriod: data.reportingPeriod,
+      periodValue: data.periodValue,
+      category: data.category,
+    },
+  });
+  if (existing) return { id: existing.id, created: false };
+  const record = await prisma.activityRecord.create({
+    data: { ...data, status: ActivityRecordStatus.approved },
+  });
+  return { id: record.id, created: true };
+}
+
 async function ensureAuthUser(email: string, password: string, fullName: string): Promise<string> {
   const { data, error } = await admin.auth.admin.createUser({
     email,
@@ -286,7 +329,7 @@ async function main() {
   for (const l of LOCATIONS) {
     await prisma.location.upsert({
       where: { id: l.id },
-      update: {},
+      update: { geographyCode: l.geographyCode },
       create: l,
     });
   }
@@ -391,42 +434,72 @@ async function main() {
         version: factor.version,
       };
 
-      const record = await prisma.activityRecord.upsert({
-        where: {
-          subsidiaryId_reportingYear_reportingPeriod_periodValue_category: {
-            subsidiaryId: subsidiary.id,
-            reportingYear: ACTIVITY_YEAR,
-            reportingPeriod: 'monthly',
-            periodValue: MONTHS[month],
-            category: spec.category,
-          },
-        },
-        update: {},
-        create: {
-          subsidiaryId: subsidiary.id,
-          reportingYear: ACTIVITY_YEAR,
-          reportingPeriod: 'monthly',
-          periodValue: MONTHS[month],
-          category: spec.category,
-          scope: factor.scope,
-          status: ActivityRecordStatus.approved,
-          activityValue,
-          activityUnit: spec.unit,
-          calculation,
-          createdBy: adminId,
-          anomalyFlag: isAnomaly,
-          varianceReason: isAnomaly
-            ? 'Prototype anomaly: unusually high activity vs seasonal baseline.'
-            : null,
-        },
+      const { id: recordId } = await findOrCreateRecord({
+        subsidiaryId: subsidiary.id,
+        locationId: null,
+        reportingYear: ACTIVITY_YEAR,
+        reportingPeriod: 'monthly',
+        periodValue: MONTHS[month],
+        category: spec.category,
+        scope: factor.scope,
+        activityValue,
+        activityUnit: spec.unit,
+        calculation,
+        createdBy: adminId,
+        anomalyFlag: isAnomaly,
+        varianceReason: isAnomaly
+          ? 'Prototype anomaly: unusually high activity vs seasonal baseline.'
+          : null,
       });
       activityCount++;
       // Evidence-required categories need a linked file to count as complete.
-      if (await ensureSeedEvidence(record.id, adminId)) evidenceCount++;
+      if (await ensureSeedEvidence(recordId, adminId)) evidenceCount++;
     }
   }
+
+  // A few LOCATION-level records (attributed to a specific location, not just the
+  // subsidiary) to exercise the reporting-entity dimension (FR §5.2). Same
+  // subsidiary+category can coexist at subsidiary-level and per-location.
+  const LOCATION_ACTIVITY = [
+    { locationId: LOCATIONS[0].id, subsidiaryId: SUBSIDIARIES[0].id, geographyCode: SUBSIDIARIES[0].geographyCode, category: 'Electricity', unit: 'kWh', base: 40000 },
+    { locationId: LOCATIONS[5].id, subsidiaryId: SUBSIDIARIES[3].id, geographyCode: SUBSIDIARIES[3].geographyCode, category: 'Fuel', unit: 'litres', base: 6000 },
+  ];
+  const LOCATION_MONTHS = ['January', 'February', 'March'];
+  for (const spec of LOCATION_ACTIVITY) {
+    const factor = await resolveFactor(spec.category, spec.geographyCode, ACTIVITY_YEAR);
+    if (!factor) continue;
+    for (const periodValue of LOCATION_MONTHS) {
+      const activityValue = spec.base;
+      const kgCo2e = activityValue * factor.factorValue;
+      const calculation = {
+        category: spec.category, geographyCode: spec.geographyCode, reportingYear: ACTIVITY_YEAR,
+        scope: factor.scope, inputValue: activityValue, inputUnit: spec.unit,
+        normalizedValue: activityValue, normalizedUnit: factor.normalizedUnit, conversionApplied: false,
+        kgCo2e, tCo2e: kgCo2e / 1000, factorId: factor.id, factorValue: factor.factorValue,
+        factorUnit: factor.factorUnit, methodology: factor.methodology, source: factor.source, version: factor.version,
+      };
+      const { id: recordId } = await findOrCreateRecord({
+        subsidiaryId: spec.subsidiaryId,
+        locationId: spec.locationId,
+        reportingYear: ACTIVITY_YEAR,
+        reportingPeriod: 'monthly',
+        periodValue,
+        category: spec.category,
+        scope: factor.scope,
+        activityValue,
+        activityUnit: spec.unit,
+        calculation,
+        createdBy: adminId,
+        anomalyFlag: false,
+        varianceReason: null,
+      });
+      activityCount++;
+      if (await ensureSeedEvidence(recordId, adminId)) evidenceCount++;
+    }
+  }
+
   console.log(
-    `  seeded ${activityCount} monthly activity records (approved) + ${evidenceCount} placeholder evidence files.`,
+    `  seeded ${activityCount} monthly activity records (approved, incl. ${LOCATION_ACTIVITY.length * LOCATION_MONTHS.length} location-level) + ${evidenceCount} placeholder evidence files.`,
   );
 
   console.log('\nSeed complete.');

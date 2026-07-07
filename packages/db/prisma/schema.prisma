@@ -91,14 +91,16 @@ model Subsidiary {
 }
 
 model Location {
-  id               String     @id @default(uuid()) @db.Uuid
-  subsidiaryId     String     @map("subsidiary_id") @db.Uuid
-  subsidiary       Subsidiary @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  id               String           @id @default(uuid()) @db.Uuid
+  subsidiaryId     String           @map("subsidiary_id") @db.Uuid
+  subsidiary       Subsidiary       @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
   name             String
+  geographyCode    String           @map("geography_code") // drives factor selection for records at this location
   address          String?
-  authorizedPerson String?    @map("authorized_person")
-  createdAt        DateTime   @default(now()) @map("created_at")
-  updatedAt        DateTime   @updatedAt @map("updated_at")
+  authorizedPerson String?          @map("authorized_person")
+  activityRecords  ActivityRecord[]
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
   @@index([subsidiaryId])
   @@map("locations")
@@ -115,6 +117,8 @@ model ActivityRecord {
   id             String               @id @default(uuid()) @db.Uuid
   subsidiaryId   String               @map("subsidiary_id") @db.Uuid
   subsidiary     Subsidiary           @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  locationId     String?              @map("location_id") @db.Uuid
+  location       Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
   reportingYear  Int                  @map("reporting_year")
   reportingPeriod String              @map("reporting_period") // 'monthly' | 'quarterly' | 'annual'
   periodValue    String               @map("period_value") // e.g. "Q1", "January", "Annual"
@@ -132,8 +136,13 @@ model ActivityRecord {
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
 
-  @@unique([subsidiaryId, reportingYear, reportingPeriod, periodValue, category])
+  // Uniqueness is enforced by a raw NULLS NOT DISTINCT unique index (see the
+  // record_location_linkage migration): one record per (subsidiary, location,
+  // year, period, periodValue, category) — NULL location_id (subsidiary-level)
+  // rows are deduplicated too. Prisma's @@unique can't express NULLS NOT
+  // DISTINCT, so it lives in raw SQL like the RLS policies.
   @@index([subsidiaryId])
+  @@index([locationId])
   @@map("activity_records")
 }
 

@@ -46,6 +46,7 @@ export class ActivityRecordsService {
     return {
       id: r.id,
       subsidiaryId: r.subsidiaryId,
+      locationId: r.locationId,
       reportingYear: r.reportingYear,
       reportingPeriod: r.reportingPeriod as ReportingPeriod,
       periodValue: r.periodValue,
@@ -111,6 +112,7 @@ export class ActivityRecordsService {
     reportingYear: number,
     activityValue: number,
     activityUnit: string,
+    locationId?: string | null,
   ): Promise<{ calculation: CalculationResult; scope: number }> {
     if (!accessibleSubsidiaryIds.includes(subsidiaryId)) {
       // Tenant isolation: cannot attach a record to an inaccessible subsidiary.
@@ -121,10 +123,24 @@ export class ActivityRecordsService {
     });
     if (!subsidiary) throw new NotFoundException('Subsidiary not found');
 
+    // Reporting entity (FR §5.2): when a location is targeted, it drives the
+    // factor geography; otherwise the subsidiary does. A location must belong to
+    // the same (accessible) subsidiary, else it is treated as not found.
+    let geographyCode = subsidiary.geographyCode;
+    if (locationId) {
+      const location = await this.prisma.location.findUnique({
+        where: { id: locationId },
+      });
+      if (!location || location.subsidiaryId !== subsidiaryId) {
+        throw new NotFoundException('Location not found');
+      }
+      geographyCode = location.geographyCode;
+    }
+
     const scope = CATEGORY_SCOPE_MAP[category];
     const calculation = await this.calculations.compute({
       category,
-      geographyCode: subsidiary.geographyCode,
+      geographyCode,
       reportingYear,
       value: activityValue,
       unit: activityUnit,
@@ -186,6 +202,7 @@ export class ActivityRecordsService {
       dto.reportingYear,
       dto.activityValue,
       dto.activityUnit,
+      dto.locationId,
     );
 
     let created: ActivityRecord;
@@ -193,6 +210,7 @@ export class ActivityRecordsService {
       created = await this.prisma.activityRecord.create({
         data: {
           subsidiaryId: dto.subsidiaryId,
+          locationId: dto.locationId ?? null,
           reportingYear: dto.reportingYear,
           reportingPeriod: dto.reportingPeriod,
           periodValue: dto.periodValue,
@@ -208,14 +226,14 @@ export class ActivityRecordsService {
         },
       });
     } catch (e) {
-      // Unique constraint (subsidiary, year, period, periodValue, category)
-      // is a user-actionable conflict, not a server error.
+      // Unique constraint (subsidiary, location, year, period, periodValue,
+      // category) is a user-actionable conflict, not a server error.
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === 'P2002'
       ) {
         throw new ConflictException(
-          'An activity record already exists for this subsidiary, reporting period and category.',
+          'An activity record already exists for this reporting entity, period and category.',
         );
       }
       throw e;
@@ -239,6 +257,10 @@ export class ActivityRecordsService {
     const reportingYear = dto.reportingYear ?? existing.reportingYear;
     const activityValue = dto.activityValue ?? existing.activityValue;
     const activityUnit = dto.activityUnit ?? existing.activityUnit;
+    // `locationId` may be re-targeted (string), detached (null), or left as-is
+    // (undefined) — distinguish "not provided" from an explicit null.
+    const locationId =
+      dto.locationId !== undefined ? dto.locationId : existing.locationId;
 
     const { calculation, scope } = await this.computeSnapshot(
       existing.subsidiaryId,
@@ -247,6 +269,7 @@ export class ActivityRecordsService {
       reportingYear,
       activityValue,
       activityUnit,
+      locationId,
     );
 
     const data: Prisma.ActivityRecordUpdateInput = {
@@ -257,6 +280,11 @@ export class ActivityRecordsService {
       activityUnit,
       calculation: calculation as unknown as Prisma.InputJsonValue,
     };
+    if (dto.locationId !== undefined) {
+      data.location = dto.locationId
+        ? { connect: { id: dto.locationId } }
+        : { disconnect: true };
+    }
     if (dto.reportingPeriod !== undefined) data.reportingPeriod = dto.reportingPeriod;
     if (dto.periodValue !== undefined) data.periodValue = dto.periodValue;
     if (dto.input !== undefined) {
@@ -264,11 +292,25 @@ export class ActivityRecordsService {
     }
     if (dto.varianceReason !== undefined) data.varianceReason = dto.varianceReason;
 
-    const updated = await this.prisma.activityRecord.update({
-      where: { id },
-      data,
-      include: { _count: { select: { evidence: true } } },
-    });
+    let updated: ActivityRecord & { _count: { evidence: number } };
+    try {
+      updated = await this.prisma.activityRecord.update({
+        where: { id },
+        data,
+        include: { _count: { select: { evidence: true } } },
+      });
+    } catch (e) {
+      // Re-targeting can collide with an existing record for the new entity.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'An activity record already exists for this reporting entity, period and category.',
+        );
+      }
+      throw e;
+    }
     await this.audit(user.id, 'update', id, {
       before: this.toDTO(existing),
       after: this.toDTO(updated, updated._count.evidence),

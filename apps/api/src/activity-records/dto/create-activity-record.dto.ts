@@ -30,6 +30,13 @@ export class CreateActivityRecordDto {
   @MinLength(1)
   subsidiaryId!: string;
 
+  // Optional operational location within the subsidiary; drives factor geography
+  // when set. The service verifies it belongs to `subsidiaryId`.
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  locationId?: string | null;
+
   @IsInt()
   @Min(2000)
   @Max(2100)

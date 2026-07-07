@@ -66,6 +66,7 @@ export function makeLocation(
     id: `loc-${seq}`,
     subsidiaryId: 'sub-1',
     name: `Location ${seq}`,
+    geographyCode: 'UK',
     address: null,
     authorizedPerson: null,
     createdAt: now,

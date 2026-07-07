@@ -57,12 +57,12 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | Supabase Auth login + route‑protecting middleware | ✅ |
 | NestJS API with JWT auth guard + **tenant isolation** | ✅ |
 | Subsidiaries CRUD + dashboard KPIs wired to live data | ✅ |
-| Operational locations (Holding › Subsidiary › Location) — tenant‑scoped CRUD + subsidiary drawer | ✅ |
+| Operational locations (Holding › Subsidiary › Location) — tenant‑scoped CRUD + subsidiary drawer; records can target a location, which drives the factor geography (FR §5.2) | ✅ |
 | Evidence upload (Supabase Storage) — files linked to records, required before submit for billed categories (FR §4.1) | ✅ |
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (88 unit + 2 E2E) | ✅ |
+| Automated tests (90 unit + 2 E2E) | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
@@ -238,7 +238,7 @@ supabase start
 
 # 4. Create the schema and seed demo data
 pnpm db:migrate     # applies Prisma migrations (incl. RLS policies)
-pnpm db:seed        # 1 org, 5 subsidiaries, 8 locations, 2 users, factors + 96 Scope 1&2 records (+ 96 demo evidence files)
+pnpm db:seed        # 1 org, 5 subsidiaries, 8 locations, 2 users, factors + 102 Scope 1&2 records (incl. 6 location-level) + demo evidence
 
 # 5. Run everything
 pnpm dev            # web -> http://localhost:3000   api -> http://localhost:3001/api/v1
@@ -301,7 +301,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `DELETE` | `/subsidiaries/:id` | Delete | `super_admin` |
 | `GET` | `/locations` | List operational locations (tenant‑scoped; filter `?subsidiaryId=`) | any |
 | `GET` | `/locations/:id` | Get one (404 if outside access set) | any |
-| `POST` | `/locations` | Create (child of a subsidiary) | `super_admin` |
+| `POST` | `/locations` | Create (child of a subsidiary; `geographyCode` required) | `super_admin` |
 | `PATCH` | `/locations/:id` | Update (`subsidiaryId` immutable) | `super_admin` |
 | `DELETE` | `/locations/:id` | Delete | `super_admin` |
 | `GET` | `/kpi` | Dashboard summary (subsidiary totals + geography breakdown + operational location count) | any |
@@ -309,7 +309,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `GET` | `/factors` | List emission factors (optional `?category=&geographyCode=&year=`) | any |
 | `GET` | `/activity-records` | List (tenant‑scoped; filters `?subsidiaryId=&year=&period=&category=&status=`) | any |
 | `GET` | `/activity-records/:id` | Get one (404 if outside access set) | any |
-| `POST` | `/activity-records` | Create (status `draft`; stores an immutable calc snapshot) | `data_entry` / `consultant` / `super_admin` |
+| `POST` | `/activity-records` | Create (status `draft`; optional `locationId` targets a location; stores an immutable calc snapshot) | `data_entry` / `consultant` / `super_admin` |
 | `PATCH` | `/activity-records/:id` | Update (only while `draft`/`rejected`; recomputes the snapshot; author‑or‑`super_admin`) | `data_entry` / `consultant` / `super_admin` |
 | `DELETE` | `/activity-records/:id` | Delete (only while `draft`/`rejected`; author‑or‑`super_admin`) | `data_entry` / `consultant` / `super_admin` |
 | `POST` | `/activity-records/:id/submit` | `draft` → `submitted` | any accessor |
@@ -325,6 +325,8 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 Activity-record workflow: `draft → submitted → under_review → approved | rejected`. `approved` and `locked` records are immutable; `rejected` records can be edited and re‑submitted. The `calculation` snapshot is written at create/update time and never recomputed on read, so historic results survive factor-library changes. Every transition writes an `audit_log` row (`entity: 'activity_record'`).
 
 Evidence: files are uploaded **through the API** (validated, then stored via the service‑role in a private `evidence` bucket) — binaries never touch the browser, downloads use short‑lived signed URLs. Categories configured as *evidence‑required* (`Electricity`, `Natural Gas`, `Fuel`) cannot be submitted without at least one file, and a cell only turns green in the tracking matrix once its evidence is attached (FR §2.2 / §4.1).
+
+Reporting entity: a record targets either the whole subsidiary or one of its **operational locations** (`locationId`); the chosen entity's `geographyCode` selects the emission factor (FR §5.2). Uniqueness is one record per `(subsidiary, location, year, period, periodValue, category)`, enforced by a `NULLS NOT DISTINCT` index so subsidiary‑level rows (no location) are deduplicated too — the same period+category can coexist at subsidiary level and per location.
 
 ---
 
