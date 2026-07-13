@@ -178,6 +178,11 @@ export default function DataEntryPage() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
+  // Anomaly (VAR §4): server flags a value that deviates >±50% from the
+  // baseline; a variance comment is then mandatory before submit.
+  const [anomalyFlag, setAnomalyFlag] = useState(false);
+  const [varianceReason, setVarianceReason] = useState("");
+
   // Records + saving
   const [records, setRecords] = useState<ActivityRecordDTO[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
@@ -334,6 +339,8 @@ export default function DataEntryPage() {
     setPreviewError(null);
     setEditingId(null);
     setLocationId("");
+    setAnomalyFlag(false);
+    setVarianceReason("");
   }
 
   function buildInputPayload(): Record<string, unknown> | null {
@@ -352,6 +359,7 @@ export default function DataEntryPage() {
     const inputPayload = buildInputPayload();
     // "" means "whole subsidiary" → null; otherwise the chosen location id.
     const effectiveLocationId = locationId || null;
+    const variance = varianceReason.trim() || null;
     if (editingId) {
       return api.updateActivityRecord(editingId, {
         locationId: effectiveLocationId,
@@ -361,6 +369,7 @@ export default function DataEntryPage() {
         category,
         activityValue: numericValue,
         activityUnit,
+        varianceReason: variance,
         input: inputPayload,
       });
     }
@@ -373,6 +382,7 @@ export default function DataEntryPage() {
       category,
       activityValue: numericValue,
       activityUnit,
+      varianceReason: variance,
       input: inputPayload,
     });
   }
@@ -383,7 +393,12 @@ export default function DataEntryPage() {
       const rec = await persist();
       if (!rec) return;
       setEditingId(rec.id);
-      toast.success("Draft saved");
+      setAnomalyFlag(rec.anomalyFlag);
+      toast.success(
+        rec.anomalyFlag
+          ? "Draft saved — value flagged as anomalous, add a variance comment"
+          : "Draft saved",
+      );
       await refreshRecords(subsidiaryId);
     } catch (e) {
       toast.error(saveErrorMessage(e));
@@ -397,9 +412,18 @@ export default function DataEntryPage() {
     try {
       const rec = await persist();
       if (!rec) return;
-      // Keep the saved record "current" so that if submit is blocked (e.g. the
-      // evidence gate), the Evidence vault stays visible to fix it and retry.
+      // Keep the saved record "current" so that if submit is blocked (evidence
+      // or anomaly gate), the vault + variance field stay visible to fix + retry.
       setEditingId(rec.id);
+      setAnomalyFlag(rec.anomalyFlag);
+      // Mirror the server anomaly gate (VAR §2.2 / §4.3): a flagged value needs
+      // a variance comment before it can be submitted.
+      if (rec.anomalyFlag && !varianceReason.trim()) {
+        toast.error(
+          "This value looks anomalous — add a variance comment before submitting.",
+        );
+        return;
+      }
       await api.submitActivityRecord(rec.id);
       toast.success("Submitted for review");
       resetForm();
@@ -702,6 +726,33 @@ export default function DataEntryPage() {
                     ["data_entry", "consultant", "super_admin"].includes(user.role)
                   }
                 />
+              )}
+
+              {/* Anomaly warning + mandatory variance comment (VAR §4.3). Shown
+                  once a save flags the value as deviating >±50% from history. */}
+              {anomalyFlag && (
+                <Card className="border-amber-300 bg-amber-50/60">
+                  <CardContent className="space-y-3 pt-5">
+                    <div className="flex items-start gap-2 text-sm text-amber-800">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        This value deviates significantly from the historical
+                        average for this reporting entity. Please verify it and
+                        explain the variance before submitting.
+                      </span>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="variance-reason">Reason for variance *</Label>
+                      <Textarea
+                        id="variance-reason"
+                        value={varianceReason}
+                        onChange={(e) => setVarianceReason(e.target.value)}
+                        placeholder="e.g. new production line commissioned this period"
+                        rows={2}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
               )}
 
               {/* Actions */}

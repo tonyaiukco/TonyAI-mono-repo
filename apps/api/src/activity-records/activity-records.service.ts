@@ -35,6 +35,52 @@ const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
   ActivityRecordStatus.rejected,
 ]);
 
+// --- Anomaly detection (VAR §4) --------------------------------------------
+// A value is anomalous when it deviates > ±50% from the rolling average of the
+// previous (up to) 3 comparable periods for the same reporting entity, measured
+// on calculated tCO₂e. Only committed rows feed the baseline (unreviewed drafts
+// would add noise). Warning-based, never auto-rejection (VAR §8).
+const ANOMALY_THRESHOLD = 0.5;
+const BASELINE_MAX_PERIODS = 3;
+const BASELINE_STATUSES: ActivityRecordStatus[] = [
+  ActivityRecordStatus.submitted,
+  ActivityRecordStatus.under_review,
+  ActivityRecordStatus.approved,
+  ActivityRecordStatus.locked,
+];
+
+const MONTHS = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+
+/** Position of a period within its year, so records can be ordered despite
+ * `periodValue` being a free string. Only compared within the same granularity
+ * (monthly 0–11, quarterly 1–4, annual single). */
+function periodOrdinal(reportingPeriod: string, periodValue: string): number {
+  const v = periodValue.trim().toLowerCase();
+  if (reportingPeriod === 'monthly') {
+    const i = MONTHS.indexOf(v);
+    return i < 0 ? 0 : i;
+  }
+  if (reportingPeriod === 'quarterly') {
+    const m = /^q([1-4])$/.exec(v);
+    return m ? Number(m[1]) : 0;
+  }
+  return 0; // annual: one period per year
+}
+
+/** True when `periodValue` is a canonical token for its granularity. Guards the
+ * baseline ordering (periodOrdinal) against silent miscalculation from a
+ * non-web client sending e.g. "Mar" or "2024-03". */
+function isValidPeriodValue(reportingPeriod: string, periodValue: string): boolean {
+  const v = periodValue.trim().toLowerCase();
+  if (reportingPeriod === 'monthly') return MONTHS.includes(v);
+  if (reportingPeriod === 'quarterly') return /^q[1-4]$/.test(v);
+  if (reportingPeriod === 'annual') return v === 'annual';
+  return false;
+}
+
 @Injectable()
 export class ActivityRecordsService {
   constructor(
@@ -148,6 +194,56 @@ export class ActivityRecordsService {
     return { calculation, scope };
   }
 
+  /**
+   * Anomaly check (VAR §4): true when `currentTCo2e` deviates > ±50% from the
+   * rolling average of the previous (up to 3) committed periods for the same
+   * reporting entity (subsidiary + location + category) at the same granularity.
+   * No prior periods (or a zero baseline) → not anomalous. Warning-only.
+   */
+  private async detectAnomaly(params: {
+    subsidiaryId: string;
+    locationId: string | null;
+    category: string;
+    reportingPeriod: string;
+    reportingYear: number;
+    periodValue: string;
+    currentTCo2e: number;
+    excludeId?: string;
+  }): Promise<boolean> {
+    const rows = await this.prisma.activityRecord.findMany({
+      where: {
+        subsidiaryId: params.subsidiaryId,
+        locationId: params.locationId,
+        category: params.category,
+        reportingPeriod: params.reportingPeriod,
+        status: { in: BASELINE_STATUSES },
+        ...(params.excludeId ? { id: { not: params.excludeId } } : {}),
+      },
+    });
+
+    const currentKey =
+      params.reportingYear * 100 +
+      periodOrdinal(params.reportingPeriod, params.periodValue);
+    const priorValues = rows
+      .map((r) => ({
+        key: r.reportingYear * 100 + periodOrdinal(r.reportingPeriod, r.periodValue),
+        calc: r.calculation as unknown as CalculationResult | null,
+      }))
+      .filter((x) => x.key < currentKey) // strictly earlier periods only
+      .sort((a, b) => b.key - a.key)
+      .slice(0, BASELINE_MAX_PERIODS)
+      .map((x) => (x.calc && Number.isFinite(x.calc.tCo2e) ? x.calc.tCo2e : null))
+      // Drop (rather than zero-fill) priors without a usable tCO₂e so they don't
+      // deflate the average and manufacture false anomalies.
+      .filter((v): v is number => v !== null);
+
+    if (priorValues.length === 0) return false; // no baseline to deviate from
+    const baseline =
+      priorValues.reduce((sum, v) => sum + v, 0) / priorValues.length;
+    if (baseline === 0) return false;
+    return Math.abs(params.currentTCo2e - baseline) / baseline > ANOMALY_THRESHOLD;
+  }
+
   async list(
     user: RequestUser,
     query: ListActivityRecordsQueryDto,
@@ -194,6 +290,11 @@ export class ActivityRecordsService {
         'Your role may not create activity records',
       );
     }
+    if (!isValidPeriodValue(dto.reportingPeriod, dto.periodValue)) {
+      throw new BadRequestException(
+        `"${dto.periodValue}" is not a valid period for a ${dto.reportingPeriod} record.`,
+      );
+    }
 
     const { calculation, scope } = await this.computeSnapshot(
       dto.subsidiaryId,
@@ -204,6 +305,16 @@ export class ActivityRecordsService {
       dto.activityUnit,
       dto.locationId,
     );
+
+    const anomalyFlag = await this.detectAnomaly({
+      subsidiaryId: dto.subsidiaryId,
+      locationId: dto.locationId ?? null,
+      category: dto.category,
+      reportingPeriod: dto.reportingPeriod,
+      reportingYear: dto.reportingYear,
+      periodValue: dto.periodValue,
+      currentTCo2e: calculation.tCo2e,
+    });
 
     let created: ActivityRecord;
     try {
@@ -217,6 +328,7 @@ export class ActivityRecordsService {
           category: dto.category,
           scope,
           status: ActivityRecordStatus.draft,
+          anomalyFlag,
           activityValue: dto.activityValue,
           activityUnit: dto.activityUnit,
           input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
@@ -262,6 +374,14 @@ export class ActivityRecordsService {
     const locationId =
       dto.locationId !== undefined ? dto.locationId : existing.locationId;
 
+    const reportingPeriod = dto.reportingPeriod ?? existing.reportingPeriod;
+    const periodValue = dto.periodValue ?? existing.periodValue;
+    if (!isValidPeriodValue(reportingPeriod, periodValue)) {
+      throw new BadRequestException(
+        `"${periodValue}" is not a valid period for a ${reportingPeriod} record.`,
+      );
+    }
+
     const { calculation, scope } = await this.computeSnapshot(
       existing.subsidiaryId,
       user.accessibleSubsidiaryIds,
@@ -272,12 +392,24 @@ export class ActivityRecordsService {
       locationId,
     );
 
+    const anomalyFlag = await this.detectAnomaly({
+      subsidiaryId: existing.subsidiaryId,
+      locationId,
+      category,
+      reportingPeriod,
+      reportingYear,
+      periodValue,
+      currentTCo2e: calculation.tCo2e,
+      excludeId: id, // the record's own row must not seed its baseline
+    });
+
     const data: Prisma.ActivityRecordUpdateInput = {
       reportingYear,
       category,
       scope,
       activityValue,
       activityUnit,
+      anomalyFlag,
       calculation: calculation as unknown as Prisma.InputJsonValue,
     };
     if (dto.locationId !== undefined) {
@@ -353,7 +485,29 @@ export class ActivityRecordsService {
         );
       }
     }
-    return this.transition(user, record, ActivityRecordStatus.submitted);
+    // Anomaly gate (VAR §2.2 / §4.3 / §8): re-evaluate against the baseline as of
+    // submit time — a comparable period may have been committed since the draft
+    // was saved. The API is the final enforcement layer, so it recomputes rather
+    // than trusting the write-time flag, and persists the fresh value.
+    const calc = record.calculation as unknown as CalculationResult | null;
+    const anomalous = await this.detectAnomaly({
+      subsidiaryId: record.subsidiaryId,
+      locationId: record.locationId,
+      category: record.category,
+      reportingPeriod: record.reportingPeriod,
+      reportingYear: record.reportingYear,
+      periodValue: record.periodValue,
+      currentTCo2e: calc && Number.isFinite(calc.tCo2e) ? calc.tCo2e : 0,
+      excludeId: record.id,
+    });
+    if (anomalous && !record.varianceReason?.trim()) {
+      throw new BadRequestException(
+        'This value deviates significantly from the historical average — add a variance comment before submitting.',
+      );
+    }
+    return this.transition(user, record, ActivityRecordStatus.submitted, {
+      anomalyFlag: anomalous,
+    });
   }
 
   async approve(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
@@ -403,7 +557,7 @@ export class ActivityRecordsService {
     user: RequestUser,
     record: ActivityRecord,
     status: ActivityRecordStatus,
-    extra: { varianceReason?: string } = {},
+    extra: { varianceReason?: string; anomalyFlag?: boolean } = {},
   ): Promise<ActivityRecordDTO> {
     const updated = await this.prisma.activityRecord.update({
       where: { id: record.id },
@@ -411,6 +565,9 @@ export class ActivityRecordsService {
         status,
         ...(extra.varianceReason !== undefined
           ? { varianceReason: extra.varianceReason }
+          : {}),
+        ...(extra.anomalyFlag !== undefined
+          ? { anomalyFlag: extra.anomalyFlag }
           : {}),
       },
       include: { _count: { select: { evidence: true } } },
