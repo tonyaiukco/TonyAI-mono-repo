@@ -6,11 +6,11 @@
 > we leave off?"). Keep entries short — link to code/PRs instead of restating them.
 > README stays the public-facing summary; this file is the granular working log.
 
-## Current status — as of 2026-07-07
+## Current status — as of 2026-07-08
 
-- **Phase:** Phase 1 — Core MVP (Scope 1 & 2) — WP1 done; WP2–WP4 remain (see roadmap)
-- **Latest merged:** PR #12 (`de223a7`, plan review); WP1 record↔location linkage on `feat/record-location-linkage` (uncommitted)
-- **Tests:** 90 unit (Vitest, API) + 2 E2E (Playwright) — green
+- **Phase:** Phase 1 — Core MVP (Scope 1 & 2) — WP1 + WP2 done; WP3–WP4 remain (see roadmap)
+- **Latest merged:** PR #13 (WP1 linkage), #14 (working mode), #15 (CI Node 24); WP2 anomaly detection on `feat/anomaly-detection` (uncommitted)
+- **Tests:** 102 unit (Vitest, API) + 2 E2E (Playwright) — green
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)
@@ -81,7 +81,7 @@
 **Remaining work packages (ordered — reviewed 2026-07-06, see decisions log)**
 
 - [x] **WP1 — Activity-record ↔ location linkage** — records target the whole subsidiary or a location (`locationId`); the entity's `geographyCode` drives the factor (FR §5.2). `Location.geographyCode` (backfilled), the 5-col unique constraint replaced by a single **`NULLS NOT DISTINCT`** index (subsidiary-level rows still deduplicated), reporting-entity picker on Data Entry + geography field on the locations drawer, 6 location-level demo records. 90 tests. Verified live: 10/10 (location geography drives factor, coexistence, 409/404 paths, detach).
-- [ ] **WP2 — Anomaly detection v1 + submit validation levels** *(one PR — VAR §2–4 is a single spec: the anomaly rule feeds the submit rules)* — server-side baseline check at save/submit (> ±50% vs. previous-period baseline per reporting entity, VAR §4) → `anomalyFlag` + mandatory `varianceReason`; lenient draft-save vs. strict submit validation (VAR §2–3). Baselines keyed per reporting entity (subsidiary or location — hence after WP1).
+- [x] **WP2 — Anomaly detection v1 + submit validation levels** — server-side check on create/update: tCO₂e vs. the rolling average of the previous 3 committed periods for the same reporting entity + category; > ±50% → `anomalyFlag` (VAR §4). Submit gate re-evaluates the baseline as of submit time (never trusts a stale flag) and requires a `varianceReason` when anomalous; `periodValue` validated per granularity; Data Entry warning banner + mandatory variance field. 102 tests. `qa-auditor` review pass done (4 findings fixed). Verified live: 7/7 API + browser banner. *(Hard-validation §3 rules with no backing fields — e.g. start/end date range — scoped out; unit-for-category is already enforced by the calc engine.)*
 - [ ] **WP3 — Period locking** — lock approved periods (FR §4.2): `locked` transitions + guards; `super_admin`-only unlock with audit row; locked periods block new/edited records. *Third lifecycle gate (after evidence + anomaly/validation) → extract the `workflow-gate` skill in this PR.*
 - [ ] **WP4 — E2E & hardening (exit gate)** — Playwright coverage: data-entry (incl. evidence + gates) and analytics happy paths + RBAC/tenant negative cases; **live RLS containment probes via PostgREST** (anon/authenticated clients against `activity_records`/`locations`/`evidence`); extract an `e2e-flow` skill if the fixture pattern repeats.
 
@@ -137,7 +137,7 @@
 - Depth of `executive_viewer` / `consultant` UX flows
 - Mobile/responsive support targets
 
-**Next up:** WP2 — Anomaly detection v1 + submit validation levels (one PR).
+**Next up:** WP3 — Period locking (FR §4.2); extract the `workflow-gate` skill in that PR.
 
 ## Decisions log
 
@@ -149,6 +149,7 @@
 - **2026-07-04** — Tracking-matrix statuses (FR §2.2 interpretation): `under_review` counts as committed/green (it is submitted data in review); the anomaly flag makes a cell yellow ("flagged for review"); the "required evidence" green-condition is deferred until the evidence backend ships. Matrix status math lives server-side in `GET /emissions/tracking-matrix`; the recurring rollup recipe is now the `aggregation-endpoint` skill.
 - **2026-07-06** — Evidence upload scope + architecture (both confirmed with the user): full scope = **capability + enforcement** (matrix green + submit-gate need evidence, so 96 committed records get a seeded demo file so the dashboard doesn't regress); **upload-through-API** (browser → NestJS → service-role Storage), not browser→Storage, to keep enforcement in the guard layer. Evidence-required set = `Electricity`, `Natural Gas`, `Fuel` (billed, invoice/meter-backed); the earlier deferred matrix "green needs evidence" condition (2026-07-04) is now wired.
 - **2026-07-07** — WP1 uniqueness design (confirmed with the user): a single **`NULLS NOT DISTINCT`** unique index over `(subsidiary, location, year, period, periodValue, category)` — chosen over two partial indexes (simpler, PG17 supports it). Prisma's `@@unique` can't express it, so it lives in raw SQL (like the RLS policies) and the seed switched from upsert-by-compound-key to find-or-create. Also confirmed: seed a few location-level demo records; `locationId` is editable while the record is a draft (re-target or detach), `subsidiaryId` stays immutable.
+- **2026-07-08** — WP2 anomaly semantics follow VAR §4 over the looser brief (confirmed with the user): baseline = rolling average of up to 3 prior committed periods (not a single previous period); deviation measured on **calculated tCO₂e** (not raw activity value); threshold strict `> ±50%`. First entry / zero baseline → not anomalous. Baseline keyed on `(subsidiaryId, locationId, category, reportingPeriod)` — spec's `organisationId`/`subCategoryKey` omitted (no such fields; subsidiary implies org), `locationId` + granularity added (both improvements). `anomalyFlag` computed on every write; the mandatory-variance gate fires only at submit and **recomputes** the baseline (API is the final enforcement layer, per the qa-auditor review). Field kept as `varianceReason` (existing column), not the spec's `varianceComment`.
 - **2026-07-06** — Post-#11 plan review (all three confirmed with the user): **(1) Remaining Phase 1 reordered** into 4 work packages — linkage first (data model finalises before features; anomaly baselines get the right key from day one), anomaly + submit validation **merged into one PR** (VAR §2–4 is one spec, same code path), then period locking, then E2E/hardening. **(2) Skills:** no additions/deletions now; `workflow-gate` to be extracted in the period-locking PR (third lifecycle gate), `e2e-flow` a candidate during WP4. **(3) Subagents:** all 7 unchanged; `python-analytics` still deferred to Phase 3; extend `backend-integrator` with report generation at Phase 3 start; `data-factors` retained (critical for Phase 3 Scope-3 factors + Phase 4 authoritative data). Also surfaced a hardening gap: live PostgREST RLS containment probes were never run → added to WP4.
 
 ## Session log
@@ -161,3 +162,4 @@
 - **2026-07-06** — Evidence upload (`feat/evidence-upload`): `Evidence` table + `rls_evidence` migration, `StorageService` (service-role) + `evidence` module (upload/list/signed-url/delete), submit-gate + matrix green now require evidence, Data Entry `EvidenceVault` (drag-drop), 96 seeded demo files. 88 tests (11 new). Extracted the `supabase-storage` skill. Verified live: 13/13 API checks (upload, submit-gate 400/OK, signed URL, tenant 404, delete-frozen, matrix green) + browser (vault renders, submit-gate toast blocks, no console errors).
 - **2026-07-06** — PR #11 merged; `main` synced, branch deleted. Full plan/skills/agents review before continuing (see decisions log): Phase 1 remainder reordered into WP1–WP4, stale status-log sections refreshed (PR history #10–11, known gaps, next-up pointer), PostgREST containment probes added to hardening.
 - **2026-07-07** — WP1 record↔location linkage (`feat/record-location-linkage`): `Location.geographyCode` + `ActivityRecord.locationId` (migration backfills geography, drops the old unique, adds a `NULLS NOT DISTINCT` index), factor geography resolves from the location, reporting-entity picker on Data Entry + geography on the locations drawer, seed find-or-create + 6 location-level records. 90 tests (+2). Verified live: DB dedup proof + 10/10 linkage script + browser (Location select populated with geo-tagged options, no console errors).
+- **2026-07-08** — WP2 anomaly detection + validation (`feat/anomaly-detection`), first work package under the new working mode: `Explore` produced the plan (spec+code investigation stayed out of the main context); implemented in the main thread; `qa-auditor` review pass before the PR caught 4 real issues — all fixed: **(1)** submit now re-evaluates the baseline instead of trusting the write-time flag (baseline-drift gap); **(2)** `periodValue` validated per granularity (silent wrong-baseline from non-canonical tokens); **(3)** test coverage hardened (query-scope assertion, update-path/excludeId, 3-period cap, quarterly ordinal); **(4)** non-finite priors dropped from the average. 102 tests. Live verify was blocked while Docker was down; once up: 7/7 API (flag ↑↓, invalid period, submit gate block+pass) + browser banner + variance field, no console errors.
