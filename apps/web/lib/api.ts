@@ -7,11 +7,13 @@ import type {
   Category,
   CreateActivityRecordInput,
   CreateLocationInput,
+  CreatePeriodLockInput,
   CreateSubsidiaryInput,
   DashboardKpi,
   EvidenceDTO,
   EvidenceUrlDTO,
   LocationDTO,
+  PeriodLockDTO,
   EmissionsSummary,
   TrackingMatrixDTO,
   ReportingPeriod,
@@ -193,6 +195,24 @@ export const api = {
     apiFetch<EvidenceUrlDTO>(`/evidence/${id}/url`),
   deleteEvidence: (id: string) =>
     apiFetch<{ id: string; deleted: true }>(`/evidence/${id}`, {
+      method: "DELETE",
+    }),
+
+  // --- Period locks (FR §4.2) ---
+  listPeriodLocks: (params: { subsidiaryId?: string; year?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
+    if (params.year !== undefined) search.set("year", String(params.year));
+    const qs = search.toString();
+    return apiFetch<PeriodLockDTO[]>(`/period-locks${qs ? `?${qs}` : ""}`);
+  },
+  lockPeriod: (body: CreatePeriodLockInput) =>
+    apiFetch<PeriodLockDTO>("/period-locks", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  unlockPeriod: (id: string) =>
+    apiFetch<{ id: string; deleted: true }>(`/period-locks/${id}`, {
       method: "DELETE",
     }),
 

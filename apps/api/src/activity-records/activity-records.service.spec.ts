@@ -35,6 +35,10 @@ function createPrismaMock() {
       // Default: records have evidence, so evidence-required submits pass.
       count: vi.fn().mockResolvedValue(1),
     },
+    periodLock: {
+      // Default: period open (no lock row), so existing tests pass unchanged.
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
     auditLog: {
       create: vi.fn(),
     },
@@ -716,5 +720,92 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     const dto = await service.submit(dataEntry(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(false);
+  });
+});
+
+describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
+  const LOCK_ROW = { id: 'lock-1', subsidiaryId: 'sub-1' };
+
+  it('blocks creating a record in a locked period (409, nothing persisted)', async () => {
+    const { prisma, service } = build(2);
+    prisma.periodLock.findFirst.mockResolvedValue(LOCK_ROW);
+
+    await expect(service.create(dataEntry(), CREATE_DTO)).rejects.toThrow(
+      /period .* is locked/i,
+    );
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+  });
+
+  it('blocks updating a record whose period is locked', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-l', createdBy: 'user-entry' }),
+    );
+    prisma.periodLock.findFirst.mockResolvedValue(LOCK_ROW);
+
+    await expect(
+      service.update(dataEntry(), 'rec-l', { activityValue: 1 }),
+    ).rejects.toThrow(/period .* is locked/i);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('blocks re-targeting a record INTO a locked period', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-m', reportingPeriod: 'monthly', periodValue: 'March', createdBy: 'user-entry' }),
+    );
+    // Current period (March) open, target period (April) locked.
+    prisma.periodLock.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(LOCK_ROW);
+
+    await expect(
+      service.update(dataEntry(), 'rec-m', { periodValue: 'April' }),
+    ).rejects.toThrow(/period .* is locked/i);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('blocks deleting a record in a locked period', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-d', createdBy: 'user-entry' }),
+    );
+    prisma.periodLock.findFirst.mockResolvedValue(LOCK_ROW);
+
+    await expect(service.remove(dataEntry(), 'rec-d')).rejects.toThrow(
+      /period .* is locked/i,
+    );
+    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+  });
+
+  it('blocks submitting a draft in a locked period', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-s', status: ActivityRecordStatus.draft }),
+    );
+    prisma.periodLock.findFirst.mockResolvedValue(LOCK_ROW);
+
+    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toThrow(
+      /period .* is locked/i,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('queries the lock with the record period tuple', async () => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    await service.create(dataEntry(), CREATE_DTO);
+    expect(prisma.periodLock.findFirst).toHaveBeenCalledWith({
+      where: {
+        subsidiaryId: 'sub-1',
+        reportingYear: 2024,
+        reportingPeriod: 'annual',
+        periodValue: 'Annual',
+      },
+    });
   });
 });

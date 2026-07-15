@@ -29,6 +29,7 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 - **Frontend → backend only through `apps/web/lib/api.ts`** — no raw `fetch` or hardcoded URLs in pages. Backend persists **only** via Prisma (`@tonyai/db`).
 - **Type-checking stays ON.** Never set `typescript.ignoreBuildErrors`; fix types instead of suppressing.
 - API is versioned under `/api/v1`; validate input with `class-validator` DTOs.
+- **Prisma migrations vs raw SQL:** the `activity_records` uniqueness lives in a raw `NULLS NOT DISTINCT` index Prisma can't express — every `prisma migrate dev` generation sees it as drift and emits a spurious `DROP INDEX activity_records_reporting_entity_period_category_key`. **Always inspect generated migrations and delete that DROP** before applying.
 
 ## Security & data rules (non-negotiable)
 - **Tenant isolation is two-layer:** NestJS guard (primary, `accessibleSubsidiaryIds`) + Supabase **RLS** (defense-in-depth). Never weaken either. Never `FORCE` RLS (it would break the owner/Prisma path).
@@ -44,7 +45,7 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 
 ## Workflow
 - Use the specialised subagents in `.claude/agents/` for their domains: `architect`, `backend-integrator`, `frontend-engineer`, `security-rls`, `data-factors`, `qa-auditor`, `devops-cloud`.
-- Reusable procedures live in `.claude/skills/` (`tenant-api-module`, `aggregation-endpoint`, `rls-for-table`, `wire-page`, `supabase-storage`) — invoke the skill instead of re-deriving the recipe. When a new recurring pattern emerges, extract it into a skill in the same PR that first implements it.
+- Reusable procedures live in `.claude/skills/` (`tenant-api-module`, `aggregation-endpoint`, `rls-for-table`, `wire-page`, `supabase-storage`, `workflow-gate`) — invoke the skill instead of re-deriving the recipe. When a new recurring pattern emerges, extract it into a skill in the same PR that first implements it.
 - **Keep `README.md` current:** after any change that affects setup, commands, architecture, structure, API, conventions or status, update `README.md` in the same change. The README must never go stale.
 - **Tests must stay green** — `pnpm test` gates CI. Add tests for new behaviour; cover negative/security cases, not just the happy path.
 - **Git:** **never push to `main` directly** — every change lands via a feature branch (`feat/` · `chore/` · `fix/`) and a **pull request with green CI**. **Commit & push only when asked**; do **not** pass a hardcoded `-c user.*` identity (the repo's git config is already set). Conventional-commit style messages; delete the branch after merge.

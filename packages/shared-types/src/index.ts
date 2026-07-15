@@ -692,6 +692,30 @@ export interface RejectInput {
 }
 
 // ---------------------------------------------------------------------------
+// Period locking (Phase 1, FR §4.2) — closing a reporting period.
+// A lock freezes one subsidiary's specific reporting period (e.g. 2024/Q1):
+// no new records, no edits/deletes/submits; committed records flip to `locked`
+// status (and back to `approved` on unlock). super_admin only.
+// ---------------------------------------------------------------------------
+
+export interface PeriodLockDTO {
+  id: string;
+  subsidiaryId: string;
+  reportingYear: number;
+  reportingPeriod: ReportingPeriod;
+  periodValue: string;
+  lockedBy: string;
+  createdAt: string;
+}
+
+export interface CreatePeriodLockInput {
+  subsidiaryId: string;
+  reportingYear: number;
+  reportingPeriod: ReportingPeriod;
+  periodValue: string;
+}
+
+// ---------------------------------------------------------------------------
 // Evidence (Phase 1, FR §4.1 / §6) — supporting files linked to a record.
 // ---------------------------------------------------------------------------
 
