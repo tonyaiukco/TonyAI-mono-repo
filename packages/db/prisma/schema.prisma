@@ -83,6 +83,7 @@ model Subsidiary {
   locations        Location[]
   access           UserSubsidiaryAccess[]
   activityRecords  ActivityRecord[]
+  periodLocks      PeriodLock[]
   createdAt        DateTime               @default(now()) @map("created_at")
   updatedAt        DateTime               @updatedAt @map("updated_at")
 
@@ -164,6 +165,27 @@ model Evidence {
 
   @@index([activityRecordId])
   @@map("evidence")
+}
+
+// A closed reporting period for one subsidiary (FR §4.2): while a row exists,
+// NO records may be created, edited, deleted or submitted for that
+// (subsidiary, year, period, periodValue) — enforced as a gate in the
+// activity-records service. Locking also flips committed records to `locked`
+// status (unlock reverts them to `approved`). super_admin only; every
+// lock/unlock writes an audit row.
+model PeriodLock {
+  id              String     @id @default(uuid()) @db.Uuid
+  subsidiaryId    String     @map("subsidiary_id") @db.Uuid
+  subsidiary      Subsidiary @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  reportingYear   Int        @map("reporting_year")
+  reportingPeriod String     @map("reporting_period") // 'monthly' | 'quarterly' | 'annual'
+  periodValue     String     @map("period_value") // e.g. "Q1", "January", "Annual"
+  lockedBy        String     @map("locked_by") @db.Uuid
+  createdAt       DateTime   @default(now()) @map("created_at")
+
+  @@unique([subsidiaryId, reportingYear, reportingPeriod, periodValue])
+  @@index([subsidiaryId])
+  @@map("period_locks")
 }
 
 model UserSubsidiaryAccess {

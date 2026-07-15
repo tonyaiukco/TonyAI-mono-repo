@@ -72,8 +72,9 @@ function periodOrdinal(reportingPeriod: string, periodValue: string): number {
 
 /** True when `periodValue` is a canonical token for its granularity. Guards the
  * baseline ordering (periodOrdinal) against silent miscalculation from a
- * non-web client sending e.g. "Mar" or "2024-03". */
-function isValidPeriodValue(reportingPeriod: string, periodValue: string): boolean {
+ * non-web client sending e.g. "Mar" or "2024-03". Exported for period locks,
+ * which share the same period vocabulary. */
+export function isValidPeriodValue(reportingPeriod: string, periodValue: string): boolean {
   const v = periodValue.trim().toLowerCase();
   if (reportingPeriod === 'monthly') return MONTHS.includes(v);
   if (reportingPeriod === 'quarterly') return /^q[1-4]$/.test(v);
@@ -195,6 +196,27 @@ export class ActivityRecordsService {
   }
 
   /**
+   * Period-lock gate (FR §4.2): while a `period_locks` row exists for the
+   * record's (subsidiary, year, period, periodValue), NO create/update/delete/
+   * submit is allowed — the period is closed. super_admin must unlock first.
+   */
+  private async assertPeriodNotLocked(
+    subsidiaryId: string,
+    reportingYear: number,
+    reportingPeriod: string,
+    periodValue: string,
+  ): Promise<void> {
+    const lock = await this.prisma.periodLock.findFirst({
+      where: { subsidiaryId, reportingYear, reportingPeriod, periodValue },
+    });
+    if (lock) {
+      throw new ConflictException(
+        `Reporting period ${periodValue} ${reportingYear} is locked — a super_admin must unlock it before records can change.`,
+      );
+    }
+  }
+
+  /**
    * Anomaly check (VAR §4): true when `currentTCo2e` deviates > ±50% from the
    * rolling average of the previous (up to 3) committed periods for the same
    * reporting entity (subsidiary + location + category) at the same granularity.
@@ -295,6 +317,13 @@ export class ActivityRecordsService {
         `"${dto.periodValue}" is not a valid period for a ${dto.reportingPeriod} record.`,
       );
     }
+    // Period-lock gate (FR §4.2): no new records in a closed period.
+    await this.assertPeriodNotLocked(
+      dto.subsidiaryId,
+      dto.reportingYear,
+      dto.reportingPeriod,
+      dto.periodValue,
+    );
 
     const { calculation, scope } = await this.computeSnapshot(
       dto.subsidiaryId,
@@ -381,6 +410,26 @@ export class ActivityRecordsService {
         `"${periodValue}" is not a valid period for a ${reportingPeriod} record.`,
       );
     }
+    // Period-lock gate (FR §4.2): the record's current period must be open, and
+    // it cannot be re-targeted INTO a locked period either.
+    await this.assertPeriodNotLocked(
+      existing.subsidiaryId,
+      existing.reportingYear,
+      existing.reportingPeriod,
+      existing.periodValue,
+    );
+    if (
+      reportingYear !== existing.reportingYear ||
+      reportingPeriod !== existing.reportingPeriod ||
+      periodValue !== existing.periodValue
+    ) {
+      await this.assertPeriodNotLocked(
+        existing.subsidiaryId,
+        reportingYear,
+        reportingPeriod,
+        periodValue,
+      );
+    }
 
     const { calculation, scope } = await this.computeSnapshot(
       existing.subsidiaryId,
@@ -456,6 +505,13 @@ export class ActivityRecordsService {
   ): Promise<{ id: string; deleted: true }> {
     const existing = await this.loadScoped(user, id);
     this.assertCanMutate(user, existing);
+    // Period-lock gate (FR §4.2): no deletions in a closed period.
+    await this.assertPeriodNotLocked(
+      existing.subsidiaryId,
+      existing.reportingYear,
+      existing.reportingPeriod,
+      existing.periodValue,
+    );
     await this.prisma.activityRecord.delete({ where: { id } });
     await this.audit(user.id, 'delete', id, { before: this.toDTO(existing) });
     return { id, deleted: true };
@@ -473,6 +529,13 @@ export class ActivityRecordsService {
         `Only a draft record can be submitted (current status "${record.status}")`,
       );
     }
+    // Period-lock gate (FR §4.2): no submissions into a closed period.
+    await this.assertPeriodNotLocked(
+      record.subsidiaryId,
+      record.reportingYear,
+      record.reportingPeriod,
+      record.periodValue,
+    );
     // Evidence gate (FR §4.1 / §5.4): categories configured as evidence-required
     // cannot be submitted without at least one supporting file.
     if (isEvidenceRequired(record.category)) {
@@ -525,6 +588,14 @@ export class ActivityRecordsService {
         `Only a submitted or under_review record can be approved (current status "${record.status}")`,
       );
     }
+    // Period-lock gate (defense-in-depth): no review transitions in a closed
+    // period, even for a record that slipped in around the lock (race).
+    await this.assertPeriodNotLocked(
+      record.subsidiaryId,
+      record.reportingYear,
+      record.reportingPeriod,
+      record.periodValue,
+    );
     return this.transition(user, record, ActivityRecordStatus.approved);
   }
 
@@ -547,6 +618,13 @@ export class ActivityRecordsService {
         `Only a submitted or under_review record can be rejected (current status "${record.status}")`,
       );
     }
+    // Period-lock gate (defense-in-depth): symmetric with approve.
+    await this.assertPeriodNotLocked(
+      record.subsidiaryId,
+      record.reportingYear,
+      record.reportingPeriod,
+      record.periodValue,
+    );
     return this.transition(user, record, ActivityRecordStatus.rejected, {
       varianceReason,
     });

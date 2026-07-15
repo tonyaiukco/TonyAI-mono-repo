@@ -40,12 +40,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Building2, CheckCircle2, Clock, Globe, LogOut, MapPin, Plus, Trash2 } from "lucide-react";
+import { Building2, CheckCircle2, Clock, Globe, Lock, LogOut, MapPin, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { LocationsDrawer } from "@/components/subsidiaries/locations-drawer";
+import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
 import type { LocationDTO, SubsidiaryDTO } from "@/lib/types";
 
 const GEOGRAPHIES = ["UK", "TR", "EU"] as const;
@@ -77,6 +78,7 @@ export default function SubsidiariesPage() {
   const [form, setForm] = useState(emptyForm);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [locSubsidiaryId, setLocSubsidiaryId] = useState<string | null>(null);
+  const [lockSubsidiaryId, setLockSubsidiaryId] = useState<string | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -110,6 +112,7 @@ export default function SubsidiariesPage() {
 
   const canManageLocations = user?.role === "super_admin";
   const locSubsidiary = subsidiaries.find((s) => s.id === locSubsidiaryId) ?? null;
+  const lockSubsidiary = subsidiaries.find((s) => s.id === lockSubsidiaryId) ?? null;
   const locCount = (subsidiaryId: string) =>
     locations.filter((l) => l.subsidiaryId === subsidiaryId).length;
 
@@ -234,6 +237,15 @@ export default function SubsidiariesPage() {
                             <MapPin className="h-3.5 w-3.5" />
                             {locCount(s.id)}
                           </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setLockSubsidiaryId(s.id)}
+                            className="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+                            aria-label="Manage period locks"
+                          >
+                            <Lock className="h-3.5 w-3.5" />
+                          </Button>
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={statusClass[s.reportingStatus]}>
@@ -349,6 +361,12 @@ export default function SubsidiariesPage() {
         canManage={canManageLocations}
         onClose={() => setLocSubsidiaryId(null)}
         onChanged={refresh}
+      />
+
+      <PeriodLocksDrawer
+        subsidiary={lockSubsidiary}
+        canManage={canManageLocations}
+        onClose={() => setLockSubsidiaryId(null)}
       />
 
       <AlertDialog open={!!deletingId} onOpenChange={() => setDeletingId(null)}>

@@ -59,10 +59,11 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | Subsidiaries CRUD + dashboard KPIs wired to live data | ✅ |
 | Operational locations (Holding › Subsidiary › Location) — tenant‑scoped CRUD + subsidiary drawer; records can target a location, which drives the factor geography (FR §5.2) | ✅ |
 | Evidence upload (Supabase Storage) — files linked to records, required before submit for billed categories (FR §4.1) | ✅ |
+| Period locking (FR §4.2) — super_admin closes a reporting period; locked periods reject new/edited/submitted records | ✅ |
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (102 unit + 2 E2E) | ✅ |
+| Automated tests (118 unit + 2 E2E) | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
@@ -321,6 +322,9 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `POST` | `/activity-records/:id/evidence` | Upload evidence (multipart `file`; PDF/JPG/PNG/XLSX/CSV, ≤10 MB) — author‑or‑`super_admin`, record editable | `data_entry` / `consultant` / `super_admin` |
 | `GET` | `/evidence/:id/url` | Short‑lived signed download URL for a private file | any |
 | `DELETE` | `/evidence/:id` | Remove an evidence file (while the record is editable) | `data_entry` / `consultant` / `super_admin` |
+| `GET` | `/period-locks` | List locked periods (tenant‑scoped; filters `?subsidiaryId=&year=`) | any |
+| `POST` | `/period-locks` | Close a reporting period (blocked while records await review) | `super_admin` |
+| `DELETE` | `/period-locks/:id` | Reopen a period (locked records revert to `approved`) | `super_admin` |
 
 Activity-record workflow: `draft → submitted → under_review → approved | rejected`. `approved` and `locked` records are immutable; `rejected` records can be edited and re‑submitted. The `calculation` snapshot is written at create/update time and never recomputed on read, so historic results survive factor-library changes. Every transition writes an `audit_log` row (`entity: 'activity_record'`).
 
@@ -329,6 +333,8 @@ Evidence: files are uploaded **through the API** (validated, then stored via the
 Reporting entity: a record targets either the whole subsidiary or one of its **operational locations** (`locationId`); the chosen entity's `geographyCode` selects the emission factor (FR §5.2). Uniqueness is one record per `(subsidiary, location, year, period, periodValue, category)`, enforced by a `NULLS NOT DISTINCT` index so subsidiary‑level rows (no location) are deduplicated too — the same period+category can coexist at subsidiary level and per location.
 
 Anomaly detection (VAR §4): on every create/update the server compares the record's tCO₂e to the **rolling average of the previous 3 committed periods** for the same reporting entity + category; a deviation **> ±50%** sets `anomalyFlag`. It's warning‑based — at submit, a flagged record must carry a `varianceReason` (the gate re‑evaluates the baseline as of submit time, so it never trusts a stale flag). The Data Entry page surfaces a warning banner + a mandatory variance field.
+
+Period locking (FR §4.2): a `super_admin` closes one subsidiary's reporting period (e.g. `2024/Q1`) from the subsidiaries page. While locked, **no record in that period can be created, edited, deleted, submitted, approved or rejected** (409). Locking requires every record in the period to be reviewed first (no `submitted`/`under_review` left), flips `approved` records to `locked`, and unlocking reverts them — both bulk flips are audited inside the same transaction (`entity: 'period_lock'`).
 
 ---
 
