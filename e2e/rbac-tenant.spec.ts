@@ -22,8 +22,14 @@ test('data_entry: scoped reads + period-lock write gated in the UI', async ({ pa
   // Sees exactly the 2 subsidiaries it has access to (Energy + Logistics).
   await expect(subsidiaryRows(page)).toHaveCount(2);
 
-  // The period-locks drawer opens (read view) but the lock/unlock form is gated:
-  // no "Lock period" button, and an explicit super_admin-only message.
+  // super_admin-only write controls are hidden for data_entry (the API also 403s).
+  // Admin visibility of these is covered by smoke.spec's create/delete flow.
+  await expect(page.getByRole('button', { name: 'Add Subsidiary' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Delete subsidiary' })).toHaveCount(0);
+
+  // The read-only drawers stay available: the period-locks drawer opens (locked
+  // list) but the lock/unlock form is gated — no "Lock period" button, and an
+  // explicit super_admin-only message.
   await page.getByRole('button', { name: 'Manage period locks' }).first().click();
   await expect(page.getByText(/only a super_admin can lock or unlock/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Lock period' })).toHaveCount(0);
