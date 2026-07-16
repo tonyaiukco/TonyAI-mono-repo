@@ -54,7 +54,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | Area | Status |
 | --- | --- |
 | Turborepo monorepo (web + api + shared packages) | ✅ |
-| Supabase Auth login + route‑protecting middleware | ✅ |
+| Supabase Auth login + route‑protecting proxy (Next.js `proxy` convention) | ✅ |
 | NestJS API with JWT auth guard + **tenant isolation** | ✅ |
 | Subsidiaries CRUD + dashboard KPIs wired to live data | ✅ |
 | Operational locations (Holding › Subsidiary › Location) — tenant‑scoped CRUD + subsidiary drawer; records can target a location, which drives the factor geography (FR §5.2) | ✅ |
@@ -182,7 +182,7 @@ The relevant subagents (`backend-integrator`, `architect`, `security-rls`) have 
 ## How it works (request lifecycle)
 
 1. The user signs in on **`/login`**; `@supabase/ssr` stores the session (a JWT) in cookies.
-2. **`middleware.ts`** protects every route — unauthenticated users are redirected to `/login`.
+2. **`proxy.ts`** protects every route — unauthenticated users are redirected to `/login`. (Next.js 16 renamed the `middleware` file convention to `proxy`; same behaviour.)
 3. The frontend calls the API through **`apps/web/lib/api.ts`**, attaching `Authorization: Bearer <access_token>`.
 4. The NestJS **`SupabaseAuthGuard`** verifies the JWT (HS256, `SUPABASE_JWT_SECRET`), loads the user's `Profile`, and computes **`accessibleSubsidiaryIds`** (a `data_entry` user is limited to explicit access rows; other roles get organisation‑wide visibility).
 5. Services scope **every query** to that set; only `super_admin` may create/update/delete; each mutation writes an `audit_log` row.

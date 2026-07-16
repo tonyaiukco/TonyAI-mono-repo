@@ -15,9 +15,6 @@
     "lint": "echo \"(db) no lint\" && exit 0",
     "typecheck": "echo \"(db) typecheck handled by consumers\" && exit 0"
   },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
-  },
   "dependencies": {
     "@prisma/client": "^6.1.0"
   },
