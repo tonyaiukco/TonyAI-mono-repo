@@ -47,7 +47,14 @@ if (!URL_ || !ANON || !SERVICE) {
 
 const ENTRY_EMAIL = 'entry@tonyai.local';
 const PASSWORD = 'TonyAI!2026';
-const TENANT_TABLES = ['activity_records', 'locations', 'evidence', 'period_locks'];
+const TENANT_TABLES = [
+  'activity_records',
+  'locations',
+  'evidence',
+  'period_locks',
+  'targets',
+  'subsidiary_denominators',
+];
 
 // The two subsidiaries entry@tonyai.local has access to (Energy + Logistics).
 const ENERGY = '22222222-2222-2222-2222-222222220001';
@@ -62,6 +69,8 @@ const ACCESSIBLE_QUERY = {
   locations: `select=id&subsidiary_id=in.${ACC}`,
   evidence: `select=id,activity_records!inner(subsidiary_id)&activity_records.subsidiary_id=in.${ACC}`,
   period_locks: `select=id&subsidiary_id=in.${ACC}`,
+  targets: `select=id&subsidiary_id=in.${ACC}`,
+  subsidiary_denominators: `select=id&subsidiary_id=in.${ACC}`,
 };
 
 // --- PostgREST helpers -------------------------------------------------------

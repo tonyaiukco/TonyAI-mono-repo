@@ -12,6 +12,8 @@ import { EmissionsModule } from './emissions/emissions.module';
 import { LocationsModule } from './locations/locations.module';
 import { EvidenceModule } from './evidence/evidence.module';
 import { PeriodLocksModule } from './period-locks/period-locks.module';
+import { TargetsModule } from './targets/targets.module';
+import { IntensityModule } from './intensity/intensity.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -27,6 +29,8 @@ import { HealthController } from './health.controller';
     LocationsModule,
     EvidenceModule,
     PeriodLocksModule,
+    TargetsModule,
+    IntensityModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: SupabaseAuthGuard }],

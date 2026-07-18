@@ -84,6 +84,8 @@ model Subsidiary {
   access           UserSubsidiaryAccess[]
   activityRecords  ActivityRecord[]
   periodLocks      PeriodLock[]
+  targets          Target[]
+  denominators     SubsidiaryDenominator[]
   createdAt        DateTime               @default(now()) @map("created_at")
   updatedAt        DateTime               @updatedAt @map("updated_at")
 
@@ -186,6 +188,54 @@ model PeriodLock {
   @@unique([subsidiaryId, reportingYear, reportingPeriod, periodValue])
   @@index([subsidiaryId])
   @@map("period_locks")
+}
+
+// An emission-reduction target for one subsidiary (WP5, Targets & intensity).
+// A named goal with a baseline year + absolute baseline tCO₂e and a target year
+// + absolute target tCO₂e; the reduction % is derived, never stored. `scope`
+// filters which emissions count ('all' | 'scope1' | 'scope2' | 'scope3'), `basis`
+// records the target type. Progress is computed live from committed activity
+// records (never a stored snapshot). super_admin only; every write is audited.
+model Target {
+  id            String     @id @default(uuid()) @db.Uuid
+  subsidiaryId  String     @map("subsidiary_id") @db.Uuid
+  subsidiary    Subsidiary @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  name          String
+  basis         String // 'science_based' | 'internal_annual' | 'baseline_reduction'
+  scope         String // 'all' | 'scope1' | 'scope2' | 'scope3'
+  baselineYear  Int        @map("baseline_year")
+  baselineTCo2e Float      @map("baseline_tco2e")
+  targetYear    Int        @map("target_year")
+  targetTCo2e   Float      @map("target_tco2e")
+  createdBy     String     @map("created_by") @db.Uuid
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  @@index([subsidiaryId])
+  @@map("targets")
+}
+
+// A configured intensity denominator for one subsidiary + year + metric (WP5).
+// Intensity = emissions / denominator (e.g. tCO₂e per M EUR revenue). Kept
+// per-year so intensity over time stays honest. Metric is one of the spec's four
+// (emissions_page.md §2): 'area' | 'revenue' | 'headcount' | 'production_output'.
+// super_admin only; every write is audited. The Intensity toggle only offers
+// metrics that have a configured value for the year in view.
+model SubsidiaryDenominator {
+  id           String     @id @default(uuid()) @db.Uuid
+  subsidiaryId String     @map("subsidiary_id") @db.Uuid
+  subsidiary   Subsidiary @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  year         Int
+  metric       String // 'area' | 'revenue' | 'headcount' | 'production_output'
+  value        Float
+  unit         String
+  createdBy    String     @map("created_by") @db.Uuid
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  @@unique([subsidiaryId, year, metric])
+  @@index([subsidiaryId])
+  @@map("subsidiary_denominators")
 }
 
 model UserSubsidiaryAccess {

@@ -5,5 +5,6 @@ import { EmissionsService } from './emissions.service';
 @Module({
   controllers: [EmissionsController],
   providers: [EmissionsService],
+  exports: [EmissionsService], // reused by TargetsModule for progress computation
 })
 export class EmissionsModule {}

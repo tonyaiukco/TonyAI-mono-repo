@@ -6,21 +6,29 @@ import type {
   CalculationResult,
   Category,
   CreateActivityRecordInput,
+  CreateDenominatorInput,
   CreateLocationInput,
   CreatePeriodLockInput,
   CreateSubsidiaryInput,
+  CreateTargetInput,
   DashboardKpi,
+  DenominatorDTO,
   EvidenceDTO,
   EvidenceUrlDTO,
+  IntensityResponseDTO,
   LocationDTO,
   PeriodLockDTO,
   EmissionsSummary,
+  TargetDTO,
+  TargetProgressDTO,
   TrackingMatrixDTO,
   ReportingPeriod,
   SubsidiaryDTO,
   UpdateActivityRecordInput,
+  UpdateDenominatorInput,
   UpdateLocationInput,
   UpdateSubsidiaryInput,
+  UpdateTargetInput,
 } from "@tonyai/shared-types";
 import { getSupabaseBrowserClient } from "./supabase";
 
@@ -215,6 +223,58 @@ export const api = {
     apiFetch<{ id: string; deleted: true }>(`/period-locks/${id}`, {
       method: "DELETE",
     }),
+
+  // --- Targets & intensity (WP5) ---
+  listTargets: (params: { subsidiaryId?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
+    const qs = search.toString();
+    return apiFetch<TargetDTO[]>(`/targets${qs ? `?${qs}` : ""}`);
+  },
+  targetProgress: (params: { subsidiaryId?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
+    const qs = search.toString();
+    return apiFetch<TargetProgressDTO[]>(`/targets/progress${qs ? `?${qs}` : ""}`);
+  },
+  createTarget: (body: CreateTargetInput) =>
+    apiFetch<TargetDTO>("/targets", { method: "POST", body: JSON.stringify(body) }),
+  updateTarget: (id: string, body: UpdateTargetInput) =>
+    apiFetch<TargetDTO>(`/targets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteTarget: (id: string) =>
+    apiFetch<{ id: string; deleted: true }>(`/targets/${id}`, { method: "DELETE" }),
+
+  listDenominators: (params: { subsidiaryId?: string; year?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
+    if (params.year !== undefined) search.set("year", String(params.year));
+    const qs = search.toString();
+    return apiFetch<DenominatorDTO[]>(`/denominators${qs ? `?${qs}` : ""}`);
+  },
+  createDenominator: (body: CreateDenominatorInput) =>
+    apiFetch<DenominatorDTO>("/denominators", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateDenominator: (id: string, body: UpdateDenominatorInput) =>
+    apiFetch<DenominatorDTO>(`/denominators/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteDenominator: (id: string) =>
+    apiFetch<{ id: string; deleted: true }>(`/denominators/${id}`, {
+      method: "DELETE",
+    }),
+  intensity: (params: { year?: number; subsidiaryId?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.year !== undefined) search.set("year", String(params.year));
+    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
+    const qs = search.toString();
+    return apiFetch<IntensityResponseDTO>(`/intensity${qs ? `?${qs}` : ""}`);
+  },
 
   // --- Emissions analytics ---
   emissionsSummary: (params: EmissionsSummaryParams = {}) => {
