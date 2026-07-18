@@ -65,10 +65,15 @@ export class SupabaseAuthGuard implements CanActivate {
     let accessibleSubsidiaryIds: string[];
     if (profile.role === 'data_entry') {
       accessibleSubsidiaryIds = profile.subsidiaryAccess.map((a) => a.subsidiaryId);
+    } else if (!profile.organisationId) {
+      // super_admin / consultant / executive_viewer WITHOUT an organisation →
+      // default-deny. Otherwise a null `organisationId` would make the query below
+      // an unfiltered `findMany` and expose EVERY subsidiary across all tenants.
+      accessibleSubsidiaryIds = [];
     } else {
-      // super_admin / consultant / executive_viewer get organisation-wide visibility
+      // super_admin / consultant / executive_viewer get organisation-wide visibility.
       const subs = await this.prisma.subsidiary.findMany({
-        where: profile.organisationId ? { organisationId: profile.organisationId } : undefined,
+        where: { organisationId: profile.organisationId },
         select: { id: true },
       });
       accessibleSubsidiaryIds = subs.map((s) => s.id);
