@@ -54,10 +54,14 @@ import { CATEGORIES } from '@/lib/types';
 import type {
   ActivityRecordDTO,
   ActivityRecordStatus,
+  DataViewMode,
   EmissionsSummary,
+  IntensityResponseDTO,
   SubsidiaryDTO,
 } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { TargetsPanel } from '@/components/emissions/targets-panel';
+import { IntensityPanel } from '@/components/emissions/intensity-panel';
 
 // Scope colours (aligned with the rest of the design system).
 const SCOPE_COLORS = {
@@ -137,6 +141,8 @@ export default function EmissionsAnalysisPage() {
   const [contributorBasis, setContributorBasis] = useState<'subsidiary' | 'category'>('subsidiary');
   const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>('monthly');
   const [historyCategory, setHistoryCategory] = useState<string>('all');
+  const [dataViewMode, setDataViewMode] = useState<DataViewMode>('absolute');
+  const [intensity, setIntensity] = useState<IntensityResponseDTO | null>(null);
 
   // Live data
   const [summary, setSummary] = useState<EmissionsSummary | null>(null);
@@ -200,6 +206,22 @@ export default function EmissionsAnalysisPage() {
   useEffect(() => {
     void loadSummary();
   }, [loadSummary]);
+
+  const isSuperAdmin = user?.role === 'super_admin';
+  // The most recent year with data drives the intensity denominators in view.
+  const dataYear = useMemo(
+    () => records.reduce((max, r) => Math.max(max, r.reportingYear), 2024),
+    [records],
+  );
+  const intensityAvailable = (intensity?.metrics.length ?? 0) > 0;
+  // super_admin can always open the panel (to configure the first denominator);
+  // viewers only when configured metrics exist ("only valid configured metrics").
+  const intensityEnabled = intensityAvailable || isSuperAdmin;
+
+  // Intensity availability + values (drives the Absolute/Intensity toggle).
+  useEffect(() => {
+    api.intensity({ year: dataYear }).then(setIntensity).catch(() => {});
+  }, [dataYear]);
 
   async function handleLogout() {
     await getSupabaseBrowserClient().auth.signOut();
@@ -357,22 +379,44 @@ export default function EmissionsAnalysisPage() {
                 </SelectContent>
               </Select>
 
-              {/* Absolute / Intensity — intensity not yet available */}
+              {/* Absolute / Intensity view toggle (WP5) */}
               <div className="flex items-center rounded-lg border border-border bg-card p-1">
-                <span className="px-3 py-1.5 text-sm font-medium rounded-md bg-primary text-primary-foreground">
+                <button
+                  onClick={() => setDataViewMode('absolute')}
+                  className={cn(
+                    'px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+                    dataViewMode === 'absolute'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
                   Absolute
-                </span>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="flex cursor-not-allowed items-center gap-1 px-3 py-1.5 text-sm font-medium text-muted-foreground/60">
-                        <Lock className="h-3 w-3" />
-                        Intensity
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>Intensity metrics arrive in a later phase</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                </button>
+                {intensityEnabled ? (
+                  <button
+                    onClick={() => setDataViewMode('intensity')}
+                    className={cn(
+                      'px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+                      dataViewMode === 'intensity'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    Intensity
+                  </button>
+                ) : (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="flex cursor-not-allowed items-center gap-1 px-3 py-1.5 text-sm font-medium text-muted-foreground/60">
+                          <Lock className="h-3 w-3" />
+                          Intensity
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>Configure an intensity denominator to enable this</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
               </div>
 
               <Button
@@ -400,7 +444,15 @@ export default function EmissionsAnalysisPage() {
             </span>
           </div>
 
-          {/* Tab Navigation */}
+          {/* Absolute view = the tabbed analytics; Intensity view = the panel (WP5) */}
+          {dataViewMode === 'intensity' ? (
+            <IntensityPanel
+              canManage={isSuperAdmin}
+              subsidiaries={subsidiaries}
+              nameById={nameById}
+              year={dataYear}
+            />
+          ) : (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <TabsList className="bg-card border border-border">
               <TabsTrigger value="summary" className="gap-2">
@@ -795,22 +847,9 @@ export default function EmissionsAnalysisPage() {
               </Card>
             </TabsContent>
 
-            {/* Targets Tab — not yet available */}
+            {/* Targets Tab — live reduction targets + progress (WP5) */}
             <TabsContent value="targets" className="space-y-6">
-              <Card className="border-border bg-card">
-                <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                  <Target className="h-10 w-10 text-muted-foreground/50" />
-                  <div>
-                    <h3 className="text-base font-semibold text-foreground">Reduction targets are coming soon</h3>
-                    <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                      Science-based targets and pathway tracking aren&apos;t wired to live data yet. This
-                      arrives in a later Phase 1 iteration — no placeholder numbers are shown so nothing here is
-                      mistaken for a committed target.
-                    </p>
-                  </div>
-                  <Badge variant="outline" className="text-xs">Not yet available</Badge>
-                </CardContent>
-              </Card>
+              <TargetsPanel canManage={isSuperAdmin} subsidiaries={subsidiaries} nameById={nameById} />
             </TabsContent>
 
             {/* Trends Tab */}
@@ -947,6 +986,7 @@ export default function EmissionsAnalysisPage() {
               )}
             </TabsContent>
           </Tabs>
+          )}
         </div>
       </main>
 

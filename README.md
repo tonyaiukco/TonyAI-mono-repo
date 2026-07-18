@@ -63,13 +63,13 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (118 unit + 10 E2E) + live RLS containment probes | ✅ |
+| Automated tests (139 unit + 12 E2E) + live RLS containment probes | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
 | Emissions Analytics wired to a live aggregation endpoint (scope totals, category/subsidiary breakdown, trends) | ✅ |
 | Home dashboard Emissions Overview + tracking matrix (FR §2 red/yellow/green) on live data | ✅ |
-| Targets & intensity metrics | ⏳ Phase 1 (labelled "not yet available") |
+| Targets & intensity (WP5) — reduction targets with live progress + per-year intensity denominators | ✅ |
 | Reports | ⏳ Phase 1/2 |
 
 **What's proven by tests today:** an `admin` sees all 5 seeded subsidiaries, a `data_entry` user sees only their 2, non‑admins are blocked from writes (HTTP 403), unauthenticated requests are rejected (HTTP 401), and every mutation writes an immutable `audit_log` row — verified at the API layer **and** the database (RLS) layer.
@@ -327,6 +327,12 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `GET` | `/period-locks` | List locked periods (tenant‑scoped; filters `?subsidiaryId=&year=`) | any |
 | `POST` | `/period-locks` | Close a reporting period (blocked while records await review) | `super_admin` |
 | `DELETE` | `/period-locks/:id` | Reopen a period (locked records revert to `approved`) | `super_admin` |
+| `GET` | `/targets` | List reduction targets (tenant‑scoped) | any |
+| `GET` | `/targets/progress` | Live progress vs committed emissions (`null` = no post‑baseline data) | any |
+| `POST` `PATCH` `DELETE` | `/targets`(`/:id`) | Manage a reduction target | `super_admin` |
+| `GET` | `/denominators` | List intensity denominators (tenant‑scoped; `?year=`) | any |
+| `POST` `PATCH` `DELETE` | `/denominators`(`/:id`) | Manage an intensity denominator | `super_admin` |
+| `GET` | `/intensity` | Emissions per configured denominator, per metric (`?year=`) | any |
 
 Activity-record workflow: `draft → submitted → under_review → approved | rejected`. `approved` and `locked` records are immutable; `rejected` records can be edited and re‑submitted. The `calculation` snapshot is written at create/update time and never recomputed on read, so historic results survive factor-library changes. Every transition writes an `audit_log` row (`entity: 'activity_record'`).
 
@@ -393,7 +399,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 ## Roadmap
 
 - **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
-- **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅; remaining — Targets & intensity (WP5), Reports (WP6).
+- **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅, Targets & intensity ✅; remaining — Reports (WP6).
 - **Phase 2 — Staging cloud & CI/CD:** Supabase cloud environments, Docker + GitHub Actions deploy (GCP/Azure), KVKK/GDPR data residency, Sentry/monitoring.
 - **Phase 3 — Advanced:** Scope 3 + supplier management, targets & intensity, reports (PDF/Excel) + Resend, bulk upload, i18n (TR/EN), dark mode, Python/FastAPI analytics microservice.
 - **Phase 4 — Production launch:** authoritative emission-factor data, security/pen-test + load test, backup/DR, user lifecycle, legal (KVKK/GDPR), go-live.

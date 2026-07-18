@@ -502,6 +502,62 @@ async function main() {
     `  seeded ${activityCount} monthly activity records (approved, incl. ${LOCATION_ACTIVITY.length * LOCATION_MONTHS.length} location-level) + ${evidenceCount} placeholder evidence files.`,
   );
 
+  // --- Targets & intensity denominators (WP5, DEMO) ------------------------
+  // Baselines are DECLARED business inputs (demo values, not computed); "current"
+  // progress is derived live from the real committed 2024 records. Two targets use
+  // a 2023 baseline (so 2024 shows real progress); one uses a 2024 baseline (so it
+  // honestly reads "n/a" — no post-baseline year has data yet). Denominators are
+  // demo organisation metrics driving the Intensity toggle (Energy + Mfg have all
+  // four; Gas has two; Logistics + Trading have none, so their toggle stays off).
+  console.log('Seeding demo targets + intensity denominators...');
+  // Baselines are tuned near the real 2024 committed emissions (~1000 / ~580 tCO₂e)
+  // so progress lands in a meaningful spread (on_track / at_risk), not pinned at
+  // 100%. The Gas target uses a 2024 baseline → "n/a" (no post-baseline data).
+  const DEMO_TARGETS = [
+    { subsidiaryId: SUBSIDIARIES[0].id, name: 'Net-zero pathway 2030', basis: 'science_based', scope: 'all', baselineYear: 2023, baselineTCo2e: 1600, targetYear: 2030, targetTCo2e: 900 },
+    { subsidiaryId: SUBSIDIARIES[2].id, name: 'Manufacturing SBTi 1.5°C', basis: 'science_based', scope: 'all', baselineYear: 2023, baselineTCo2e: 900, targetYear: 2030, targetTCo2e: 350 },
+    { subsidiaryId: SUBSIDIARIES[1].id, name: 'Scope 1 reduction plan', basis: 'baseline_reduction', scope: 'scope1', baselineYear: 2024, baselineTCo2e: 700, targetYear: 2030, targetTCo2e: 350 },
+  ];
+  let targetCount = 0;
+  for (const t of DEMO_TARGETS) {
+    const existing = await prisma.target.findFirst({
+      where: { subsidiaryId: t.subsidiaryId, name: t.name },
+    });
+    if (!existing) {
+      await prisma.target.create({ data: { ...t, createdBy: adminId } });
+      targetCount++;
+    }
+  }
+
+  const DEMO_DENOMINATORS = [
+    { subsidiaryId: SUBSIDIARIES[0].id, year: 2024, metric: 'area', value: 85000, unit: 'm²' },
+    { subsidiaryId: SUBSIDIARIES[0].id, year: 2024, metric: 'revenue', value: 320, unit: 'M EUR' },
+    { subsidiaryId: SUBSIDIARIES[0].id, year: 2024, metric: 'headcount', value: 1800, unit: 'FTE' },
+    { subsidiaryId: SUBSIDIARIES[0].id, year: 2024, metric: 'production_output', value: 950000, unit: 'units' },
+    { subsidiaryId: SUBSIDIARIES[2].id, year: 2024, metric: 'area', value: 62000, unit: 'm²' },
+    { subsidiaryId: SUBSIDIARIES[2].id, year: 2024, metric: 'revenue', value: 480, unit: 'M EUR' },
+    { subsidiaryId: SUBSIDIARIES[2].id, year: 2024, metric: 'headcount', value: 1450, unit: 'FTE' },
+    { subsidiaryId: SUBSIDIARIES[2].id, year: 2024, metric: 'production_output', value: 1250000, unit: 'units' },
+    { subsidiaryId: SUBSIDIARIES[1].id, year: 2024, metric: 'revenue', value: 210, unit: 'M EUR' },
+    { subsidiaryId: SUBSIDIARIES[1].id, year: 2024, metric: 'headcount', value: 720, unit: 'FTE' },
+  ];
+  for (const d of DEMO_DENOMINATORS) {
+    await prisma.subsidiaryDenominator.upsert({
+      where: {
+        subsidiaryId_year_metric: {
+          subsidiaryId: d.subsidiaryId,
+          year: d.year,
+          metric: d.metric,
+        },
+      },
+      update: { value: d.value, unit: d.unit },
+      create: { ...d, createdBy: adminId },
+    });
+  }
+  console.log(
+    `  seeded ${targetCount} new demo targets + ${DEMO_DENOMINATORS.length} intensity denominators (declared demo baselines; progress computed from real 2024 data).`,
+  );
+
   console.log('\nSeed complete.');
   console.log('  super_admin -> admin@tonyai.local / TonyAI!2026 (sees all 5 subsidiaries)');
   console.log('  data_entry  -> entry@tonyai.local / TonyAI!2026 (sees 2 subsidiaries)');

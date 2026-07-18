@@ -444,6 +444,108 @@ export interface TargetProgress {
   status: TargetStatus;
 }
 
+// --- Targets & intensity (WP5) — live, backed by the API/DB -----------------
+// Canonical DTOs (the interfaces above are the earlier org-level mock, still
+// referenced by the not-yet-migrated reports page; superseded here).
+
+/** An emission-reduction target for one subsidiary. `reductionPercent` is derived. */
+export interface TargetDTO {
+  id: string;
+  subsidiaryId: string;
+  name: string;
+  basis: TargetBasis;
+  scope: EmissionsScope; // 'all' | 'scope1' | 'scope2' | 'scope3'
+  baselineYear: number;
+  baselineTCo2e: number;
+  targetYear: number;
+  targetTCo2e: number;
+  reductionPercent: number; // (baseline - target) / baseline * 100
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface CreateTargetInput {
+  subsidiaryId: string;
+  name: string;
+  basis: TargetBasis;
+  scope: EmissionsScope;
+  baselineYear: number;
+  baselineTCo2e: number;
+  targetYear: number;
+  targetTCo2e: number;
+}
+
+export type UpdateTargetInput = Partial<Omit<CreateTargetInput, 'subsidiaryId'>>;
+
+/**
+ * Live target progress, computed from committed activity records. `currentTCo2e`
+ * / `progressPercent` / `status` are `null` when no post-baseline year has
+ * committed data yet — an honest "n/a" instead of a placeholder 0%.
+ */
+export interface TargetProgressDTO {
+  targetId: string;
+  currentYear: number;
+  currentTCo2e: number | null;
+  progressPercent: number | null;
+  status: TargetStatus | null;
+}
+
+/** The spec's four intensity denominators (emissions_page.md §2). */
+export type IntensityMetricKey = 'area' | 'revenue' | 'headcount' | 'production_output';
+
+export const INTENSITY_METRIC_KEYS: IntensityMetricKey[] = [
+  'area',
+  'revenue',
+  'headcount',
+  'production_output',
+];
+
+export const INTENSITY_METRIC_META: Record<
+  IntensityMetricKey,
+  { label: string; defaultUnit: string }
+> = {
+  area: { label: 'Area', defaultUnit: 'm²' },
+  revenue: { label: 'Revenue', defaultUnit: 'M EUR' },
+  headcount: { label: 'Headcount', defaultUnit: 'FTE' },
+  production_output: { label: 'Production output', defaultUnit: 'units' },
+};
+
+/** A configured intensity denominator for one subsidiary + year + metric. */
+export interface DenominatorDTO {
+  id: string;
+  subsidiaryId: string;
+  year: number;
+  metric: IntensityMetricKey;
+  value: number;
+  unit: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface CreateDenominatorInput {
+  subsidiaryId: string;
+  year: number;
+  metric: IntensityMetricKey;
+  value: number;
+  unit: string;
+}
+
+export type UpdateDenominatorInput = Partial<Pick<CreateDenominatorInput, 'value' | 'unit'>>;
+
+/** One metric's emissions intensity for a year (GET /intensity). */
+export interface IntensityMetricResultDTO {
+  metric: IntensityMetricKey;
+  unit: string;
+  emissionsTotal: number;
+  denominatorTotal: number;
+  intensity: number; // emissionsTotal / denominatorTotal
+}
+
+export interface IntensityResponseDTO {
+  year: number | null;
+  metrics: IntensityMetricResultDTO[]; // empty → Intensity toggle stays disabled
+}
+
 // Scope subcategory mappings for Summary chart
 export const SCOPE1_SUBCATEGORIES = [
   'Stationary Combustion',

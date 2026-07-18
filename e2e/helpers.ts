@@ -242,3 +242,17 @@ export async function cleanupQuarterly(request: APIRequestContext): Promise<void
   await request.delete(`${url}/rest/v1/period_locks?reporting_period=eq.${E2E_PERIOD}`, { headers });
   await request.delete(`${url}/rest/v1/activity_records?reporting_period=eq.${E2E_PERIOD}`, { headers });
 }
+
+/**
+ * Targets/denominators aren't period-scoped, so the quarterly wipe can't reach
+ * them. E2E rows use the `E2E-` name/unit sentinel; this deletes exactly those
+ * (service-role), leaving the seed's demo targets/denominators intact.
+ */
+export async function cleanupE2ETargets(request: APIRequestContext): Promise<void> {
+  const { url } = supabaseEnv();
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  await request.delete(`${url}/rest/v1/targets?name=like.E2E-*`, { headers });
+  await request.delete(`${url}/rest/v1/subsidiary_denominators?unit=like.E2E-*`, { headers });
+}
