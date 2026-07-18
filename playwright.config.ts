@@ -1,6 +1,27 @@
 import { defineConfig, devices } from '@playwright/test';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+/**
+ * Load the local Supabase URL / keys the specs + teardown need, from the
+ * gitignored env files, into process.env.E2E_* — before anything else runs.
+ * (URL + anon are public NEXT_PUBLIC_ values; the service key is used only for
+ * the local teardown wipe of the E2E-only quarterly rows.)
+ */
+function loadE2EEnv(): void {
+  const readVar = (file: string, key: string): string | undefined => {
+    try {
+      const m = readFileSync(resolve(__dirname, file), 'utf8').match(new RegExp(`^${key}=(.*)$`, 'm'));
+      return m ? m[1].trim().replace(/^["']|["']$/g, '') : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  process.env.E2E_SUPABASE_URL ??= readVar('apps/web/.env.local', 'NEXT_PUBLIC_SUPABASE_URL');
+  process.env.E2E_SUPABASE_ANON_KEY ??= readVar('apps/web/.env.local', 'NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  process.env.E2E_SUPABASE_SERVICE_KEY ??= readVar('apps/api/.env', 'SUPABASE_SERVICE_ROLE_KEY');
+}
+loadE2EEnv();
 
 /**
  * Playwright smoke E2E for the Milestone-1 slice.
@@ -37,6 +58,11 @@ export default defineConfig({
   reporter: [['list']],
   timeout: 60_000,
   expect: { timeout: 10_000 },
+
+  // Reset the DB to the pristine (monthly-only) seed before and after the run:
+  // every E2E write lives in the otherwise-unused `quarterly` space.
+  globalSetup: './e2e/global-setup.ts',
+  globalTeardown: './e2e/global-teardown.ts',
 
   use: {
     baseURL: 'http://localhost:3000',

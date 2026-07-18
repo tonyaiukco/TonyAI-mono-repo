@@ -63,7 +63,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (118 unit + 2 E2E) | ✅ |
+| Automated tests (118 unit + 10 E2E) + live RLS containment probes | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
@@ -138,7 +138,7 @@ TonyAI-mono-repo/
 ├── packages/
 │   ├── shared-types/        # single source of truth for TS types
 │   └── db/                  # Prisma schema, migrations, seed
-├── e2e/                     # Playwright smoke tests
+├── e2e/                     # Playwright E2E (demo flow, gates, RBAC) + shared helpers/fixtures
 ├── docs/                    # product + technical specs (md_docs, tech_docs) + status log (roadmap_docs)
 ├── .claude/
 │   ├── agents/              # the 7-subagent development team
@@ -174,6 +174,7 @@ Recurring procedures are packaged as **skills** in [`.claude/skills/`](.claude/s
 | --- | --- |
 | **tenant-api-module** | Scaffold a new tenant-scoped, RBAC-guarded, audit-logged NestJS resource (+ DTOs, shared types, Vitest spec) |
 | **rls-for-table** | Add Supabase RLS to a new table (enable-not-force, `auth.uid()` policies, shadow-DB shim, verification) |
+| **e2e-flow** | Add a Playwright E2E spec or an RLS/API probe against the running local stack (shared login / API-token / safe-period / evidence-upload / teardown helpers) |
 
 The relevant subagents (`backend-integrator`, `architect`, `security-rls`) have `Skill` access and invoke these automatically.
 
@@ -279,7 +280,8 @@ Run from the repo root (Turborepo fans out to each package):
 | `pnpm build` | Build all packages |
 | `pnpm typecheck` | Type‑check the whole repo |
 | `pnpm test` | Unit tests (Vitest) |
-| `pnpm e2e` | Playwright smoke tests (requires Supabase running) |
+| `pnpm e2e` | Playwright E2E: demo flow, gates, RBAC, smoke (requires Supabase running) |
+| `pnpm rls:probe` | Live RLS containment probes via PostgREST (requires Supabase running) |
 | `pnpm db:migrate` | `prisma migrate dev` |
 | `pnpm db:deploy` | Apply committed migrations (`prisma migrate deploy`) |
 | `pnpm db:seed` | Seed demo data |
@@ -369,9 +371,10 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 ## Testing
 
 - **Unit (Vitest, DB‑free):** 21 tests in `apps/api` covering tenant scoping, RBAC, audit writes and KPI aggregation with a mocked Prisma client. Run `pnpm test`.
-- **E2E (Playwright):** `e2e/smoke.spec.ts` logs in as `admin` (dashboard KPI → subsidiaries create/delete) and as `data_entry` (asserts only 2 rows visible). Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`.
+- **E2E (Playwright):** 10 specs against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
+- **RLS containment probes:** `pnpm rls:probe` hits Supabase PostgREST directly (anon + a data_entry JWT) and asserts, per tenant table, that anon sees nothing, the user sees its own rows, and it sees **exactly** its own tenants' rows and no others (cross-tenant rows hidden — even a partial leak fails) — proving the database-layer defence holds independently of the API guard.
 
-CI (`.github/workflows/ci.yml`) runs install → Prisma generate → typecheck → build → unit tests on every push/PR. E2E is intentionally kept out of the default CI pipeline.
+CI (`.github/workflows/ci.yml`) runs install → Prisma generate → typecheck → build → unit tests on every push/PR. E2E + RLS probes are intentionally kept out of the default CI pipeline (they need a live Supabase); **wiring them into CI is deferred to Phase 2** (staging smoke E2E), per the roadmap.
 
 ---
 
@@ -390,7 +393,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 ## Roadmap
 
 - **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
-- **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅; remaining — locations level, evidence upload, period locking, anomaly detection, E2E coverage.
+- **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅; remaining — Targets & intensity (WP5), Reports (WP6).
 - **Phase 2 — Staging cloud & CI/CD:** Supabase cloud environments, Docker + GitHub Actions deploy (GCP/Azure), KVKK/GDPR data residency, Sentry/monitoring.
 - **Phase 3 — Advanced:** Scope 3 + supplier management, targets & intensity, reports (PDF/Excel) + Resend, bulk upload, i18n (TR/EN), dark mode, Python/FastAPI analytics microservice.
 - **Phase 4 — Production launch:** authoritative emission-factor data, security/pen-test + load test, backup/DR, user lifecycle, legal (KVKK/GDPR), go-live.

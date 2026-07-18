@@ -110,7 +110,10 @@ export default function SubsidiariesPage() {
   const pending = subsidiaries.filter((s) => s.reportingStatus === "pending").length;
   const geographies = new Set(subsidiaries.map((s) => s.geographyCode)).size;
 
-  const canManageLocations = user?.role === "super_admin";
+  // Single source of truth for super_admin-only write controls on this page
+  // (create/delete subsidiary, and the lock/location write forms in the drawers).
+  // The API + RLS remain the real enforcement; hiding these is UX/defense-in-depth.
+  const canManage = user?.role === "super_admin";
   const locSubsidiary = subsidiaries.find((s) => s.id === locSubsidiaryId) ?? null;
   const lockSubsidiary = subsidiaries.find((s) => s.id === lockSubsidiaryId) ?? null;
   const locCount = (subsidiaryId: string) =>
@@ -175,10 +178,12 @@ export default function SubsidiariesPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Button onClick={() => setAddOpen(true)} className="gap-2">
-                <Plus className="h-4 w-4" />
-                Add Subsidiary
-              </Button>
+              {canManage && (
+                <Button onClick={() => setAddOpen(true)} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Add Subsidiary
+                </Button>
+              )}
               <Button variant="outline" onClick={handleLogout} className="gap-2">
                 <LogOut className="h-4 w-4" />
                 Sign out
@@ -253,14 +258,16 @@ export default function SubsidiariesPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setDeletingId(s.id)}
-                            aria-label="Delete subsidiary"
-                          >
-                            <Trash2 className="h-4 w-4 text-muted-foreground" />
-                          </Button>
+                          {canManage && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setDeletingId(s.id)}
+                              aria-label="Delete subsidiary"
+                            >
+                              <Trash2 className="h-4 w-4 text-muted-foreground" />
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -358,14 +365,14 @@ export default function SubsidiariesPage() {
       <LocationsDrawer
         subsidiary={locSubsidiary}
         locations={locations.filter((l) => l.subsidiaryId === locSubsidiaryId)}
-        canManage={canManageLocations}
+        canManage={canManage}
         onClose={() => setLocSubsidiaryId(null)}
         onChanged={refresh}
       />
 
       <PeriodLocksDrawer
         subsidiary={lockSubsidiary}
-        canManage={canManageLocations}
+        canManage={canManage}
         onClose={() => setLockSubsidiaryId(null)}
       />
 
