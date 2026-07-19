@@ -45,7 +45,7 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 
 ## Workflow
 - Use the specialised subagents in `.claude/agents/` for their domains: `architect`, `backend-integrator`, `frontend-engineer`, `security-rls`, `data-factors`, `qa-auditor`, `devops-cloud`.
-- Reusable procedures live in `.claude/skills/` (`tenant-api-module`, `aggregation-endpoint`, `rls-for-table`, `wire-page`, `supabase-storage`, `workflow-gate`) — invoke the skill instead of re-deriving the recipe. When a new recurring pattern emerges, extract it into a skill in the same PR that first implements it.
+- Reusable procedures live in `.claude/skills/` (`tenant-api-module`, `aggregation-endpoint`, `rls-for-table`, `wire-page`, `supabase-storage`, `workflow-gate`, `e2e-flow`, `report-generation`) — invoke the skill instead of re-deriving the recipe. When a new recurring pattern emerges, extract it into a skill in the same PR that first implements it.
 - **Keep `README.md` current:** after any change that affects setup, commands, architecture, structure, API, conventions or status, update `README.md` in the same change. The README must never go stale.
 - **Tests must stay green** — `pnpm test` gates CI. Add tests for new behaviour; cover negative/security cases, not just the happy path.
 - **Git:** **never push to `main` directly** — every change lands via a feature branch (`feat/` · `chore/` · `fix/`) and a **pull request with green CI**. **Commit & push only when asked**; do **not** pass a hardcoded `-c user.*` identity (the repo's git config is already set). Conventional-commit style messages; delete the branch after merge.

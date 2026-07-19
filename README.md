@@ -63,14 +63,14 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (139 unit + 12 E2E) + live RLS containment probes | ✅ |
+| Automated tests (161 unit + 14 E2E) + live RLS containment probes | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
 | Emissions Analytics wired to a live aggregation endpoint (scope totals, category/subsidiary breakdown, trends) | ✅ |
 | Home dashboard Emissions Overview + tracking matrix (FR §2 red/yellow/green) on live data | ✅ |
 | Targets & intensity (WP5) — reduction targets with live progress + per-year intensity denominators | ✅ |
-| Reports | ⏳ Phase 1/2 |
+| Reports (WP6) — audit-ready PDF (Puppeteer) + Excel/CSV export, year+subsidiary scoped (FR §5.3 partial), audited generation | ✅ |
 
 **What's proven by tests today:** an `admin` sees all 5 seeded subsidiaries, a `data_entry` user sees only their 2, non‑admins are blocked from writes (HTTP 403), unauthenticated requests are rejected (HTTP 401), and every mutation writes an immutable `audit_log` row — verified at the API layer **and** the database (RLS) layer.
 
@@ -116,7 +116,8 @@ flowchart LR
 | **Database / Auth / Storage** | Supabase (PostgreSQL + RLS, Auth, Storage) |
 | **Shared** | `@tonyai/shared-types` — domain + API contracts used by both apps |
 | **Tooling** | Turborepo, pnpm workspaces, Vitest, Playwright, GitHub Actions |
-| **Planned** | Resend (email), Puppeteer / exceljs (reports), Sentry, Python/FastAPI (Phase 2 analytics) |
+| **Reports** | Puppeteer (branded PDF), exceljs (multi‑sheet Excel), CSV |
+| **Planned** | Resend (email), Sentry, Python/FastAPI (later phases) |
 
 ---
 
@@ -175,6 +176,7 @@ Recurring procedures are packaged as **skills** in [`.claude/skills/`](.claude/s
 | **tenant-api-module** | Scaffold a new tenant-scoped, RBAC-guarded, audit-logged NestJS resource (+ DTOs, shared types, Vitest spec) |
 | **rls-for-table** | Add Supabase RLS to a new table (enable-not-force, `auth.uid()` policies, shadow-DB shim, verification) |
 | **e2e-flow** | Add a Playwright E2E spec or an RLS/API probe against the running local stack (shared login / API-token / safe-period / evidence-upload / teardown helpers) |
+| **report-generation** | Add a server-generated, tenant-scoped file artifact (PDF via Puppeteer / Excel / CSV) streamed as an audited download |
 
 The relevant subagents (`backend-integrator`, `architect`, `security-rls`) have `Skill` access and invoke these automatically.
 
@@ -333,6 +335,10 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `GET` | `/denominators` | List intensity denominators (tenant‑scoped; `?year=`) | any |
 | `POST` `PATCH` `DELETE` | `/denominators`(`/:id`) | Manage an intensity denominator | `super_admin` |
 | `GET` | `/intensity` | Emissions per configured denominator, per metric (`?year=`) | any |
+| `GET` | `/reports/meta` | Report completeness/status for a year (badge + data warning) | any |
+| `GET` | `/reports/pdf` | Branded audit‑ready PDF (Puppeteer; methodology + evidence appendices) | all except `data_entry` |
+| `GET` | `/reports/excel` | Excel export: Summary / Raw Activity Data / Factors Used sheets | all except `data_entry` |
+| `GET` | `/reports/csv` | CSV export of the committed records ledger | all except `data_entry` |
 
 Activity-record workflow: `draft → submitted → under_review → approved | rejected`. `approved` and `locked` records are immutable; `rejected` records can be edited and re‑submitted. The `calculation` snapshot is written at create/update time and never recomputed on read, so historic results survive factor-library changes. Every transition writes an `audit_log` row (`entity: 'activity_record'`).
 
@@ -399,7 +405,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 ## Roadmap
 
 - **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
-- **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅, Targets & intensity ✅; remaining — Reports (WP6).
+- **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅, Targets & intensity ✅, Reports ✅ — **Phase 1 complete**.
 - **Phase 2 — Staging cloud & CI/CD:** Supabase cloud environments, Docker + GitHub Actions deploy (GCP/Azure), KVKK/GDPR data residency, Sentry/monitoring.
 - **Phase 3 — Advanced:** Scope 3 + supplier management, targets & intensity, reports (PDF/Excel) + Resend, bulk upload, i18n (TR/EN), dark mode, Python/FastAPI analytics microservice.
 - **Phase 4 — Production launch:** authoritative emission-factor data, security/pen-test + load test, backup/DR, user lifecycle, legal (KVKK/GDPR), go-live.

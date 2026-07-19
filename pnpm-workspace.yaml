@@ -7,4 +7,5 @@ allowBuilds:
   '@prisma/engines': true
   esbuild: true
   prisma: true
+  puppeteer: true
   sharp: true

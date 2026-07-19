@@ -19,6 +19,9 @@ import type {
   LocationDTO,
   PeriodLockDTO,
   EmissionsSummary,
+  ReportExportType,
+  ReportMetaDTO,
+  ReportParams,
   TargetDTO,
   TargetProgressDTO,
   TrackingMatrixDTO,
@@ -274,6 +277,48 @@ export const api = {
     if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
     const qs = search.toString();
     return apiFetch<IntensityResponseDTO>(`/intensity${qs ? `?${qs}` : ""}`);
+  },
+
+  // --- Reports (WP6, FR §5) ---
+  reportMeta: (params: { year: number; subsidiaryId?: string }) => {
+    const search = new URLSearchParams({ year: String(params.year) });
+    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
+    return apiFetch<ReportMetaDTO>(`/reports/meta?${search.toString()}`);
+  },
+  /** Download a generated report artifact and hand it to the browser. */
+  downloadReport: async (kind: ReportExportType, params: ReportParams): Promise<void> => {
+    const search = new URLSearchParams({
+      template: params.template,
+      year: String(params.year),
+    });
+    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
+    if (params.includeMethodologyNotes !== undefined)
+      search.set("includeMethodologyNotes", String(params.includeMethodologyNotes));
+    if (params.includeEvidenceSummary !== undefined)
+      search.set("includeEvidenceSummary", String(params.includeEvidenceSummary));
+    const res = await fetch(`${BASE_URL}/reports/${kind}?${search.toString()}`, {
+      headers: await authHeaders(),
+    });
+    if (!res.ok) {
+      let message = `API ${res.status}`;
+      try {
+        message = (await res.json()).message ?? message;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(Array.isArray(message) ? message.join(", ") : message, res.status);
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition") ?? "";
+    const filename =
+      /filename="([^"]+)"/.exec(disposition)?.[1] ??
+      `tonyai-report.${kind === "excel" ? "xlsx" : kind}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   },
 
   // --- Emissions analytics ---
