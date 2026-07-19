@@ -25,7 +25,7 @@ import { TrackingMatrixQueryDto } from './dto/tracking-matrix-query.dto';
  * work-in-progress and rejected records are invalid, so both are excluded —
  * this keeps analytics consistent with the authoritative dataset.
  */
-const COUNTED_STATUSES: ActivityRecordStatus[] = [
+export const COUNTED_STATUSES: ActivityRecordStatus[] = [
   ActivityRecordStatus.submitted,
   ActivityRecordStatus.under_review,
   ActivityRecordStatus.approved,

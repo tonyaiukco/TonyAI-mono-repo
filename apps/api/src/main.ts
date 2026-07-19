@@ -10,7 +10,13 @@ async function bootstrap() {
     new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
   );
   const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:3000';
-  app.enableCors({ origin: webOrigin.split(','), credentials: true });
+  app.enableCors({
+    origin: webOrigin.split(','),
+    credentials: true,
+    // Content-Disposition is not CORS-safelisted — without exposing it, the
+    // report downloads' server-chosen filenames never reach the browser.
+    exposedHeaders: ['Content-Disposition'],
+  });
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen(port);

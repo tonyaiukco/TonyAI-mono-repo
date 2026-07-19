@@ -276,7 +276,7 @@ model EmissionFactor {
 model AuditLog {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String?  @map("user_id") @db.Uuid
-  action    String // create | update | delete
+  action    String // create | update | delete | submit | approve | reject | lock | unlock | generate
   entity    String // e.g. "subsidiary"
   entityId  String?  @map("entity_id")
   diff      Json?

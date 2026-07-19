@@ -369,54 +369,37 @@ export const INTENSITY_METRICS: IntensityMetric[] = [
   { id: 'production', name: 'Production Output', unit: 'units', value: 1250000 },
 ];
 
-// Report Types
-export type ReportTemplate = 'executive_summary' | 'ghg_protocol_detail' | 'subsidiary_comparison' | 'supplier_scorecard';
+// Report Types (WP6 — live report generation, FR §5)
+// Phase 1 ships two templates; Subsidiary Comparison and Supplier ESG Scorecard
+// are Phase 3 (no suppliers module; comparison is a thin summary variant).
+export type ReportTemplate = 'executive_summary' | 'ghg_protocol_detail';
 export type ReportStatus = 'approved' | 'draft' | 'contains_incomplete_data';
+export type ReportExportType = 'pdf' | 'excel' | 'csv';
 
-export interface ReportConfig {
+/** Filter-aware report parameters (FR §5.3) — v1 reports are year-scoped. */
+export interface ReportParams {
   template: ReportTemplate;
-  organisationScope: string[];
-  timeframe: string;
-  includeScope3: boolean;
-  includeMethodologyNotes: boolean;
-  includeEvidenceLinks: boolean;
+  year: number;
+  subsidiaryId?: string; // omitted = whole accessible organisation
+  includeMethodologyNotes?: boolean;
+  includeEvidenceSummary?: boolean; // filenames + counts, never signed URLs (they expire)
 }
-
-export interface ReportGenerationLog {
-  id: string;
-  generatedBy: string;
-  generatedAt: string;
-  organisationScope: string[];
-  reportingPeriod: string;
-  template: ReportTemplate;
-  includeScope3: boolean;
-  includeMethodologyNotes: boolean;
-  includeEvidenceLinks: boolean;
-  exportType: 'pdf' | 'excel' | 'preview' | null;
-  status: ReportStatus;
-}
-
-export interface MethodologySource {
-  id: string;
-  name: string;
-  description: string;
-  geography: string;
-  version: string;
-}
-
-export const METHODOLOGY_SOURCES: MethodologySource[] = [
-  { id: 'defra', name: 'DEFRA', description: 'UK Government GHG Conversion Factors', geography: 'United Kingdom', version: '2024' },
-  { id: 'turkey_national', name: 'Turkey National Factors', description: 'Turkish Ministry of Environment Emission Factors', geography: 'Turkey', version: '2023' },
-  { id: 'aib_residual', name: 'AIB Residual Mix', description: 'European Residual Mix Factors', geography: 'European Union', version: '2023' },
-  { id: 'custom', name: 'Organisation Custom Factors', description: 'Custom factors defined by the organisation', geography: 'Custom', version: 'N/A' },
-];
 
 export const REPORT_TEMPLATES: { id: ReportTemplate; name: string; description: string }[] = [
   { id: 'executive_summary', name: 'Executive Summary', description: 'High-level overview for leadership reporting' },
   { id: 'ghg_protocol_detail', name: 'GHG Protocol Detail', description: 'Detailed breakdown following GHG Protocol standards' },
-  { id: 'subsidiary_comparison', name: 'Subsidiary Comparison', description: 'Comparative analysis across subsidiaries' },
-  { id: 'supplier_scorecard', name: 'Supplier ESG Scorecard', description: 'Supplier sustainability performance report' },
 ];
+
+/** Completeness/status meta for the report preview badge (GET /reports/meta). */
+export interface ReportMetaDTO {
+  status: ReportStatus;
+  organisationName: string;
+  totalCount: number;
+  committedCount: number;
+  incompleteCount: number; // draft + rejected
+  pendingCount: number; // submitted + under_review
+  incompleteRatio: number; // 0-1
+}
 
 // Target Types
 export type TargetStatus = 'on_track' | 'at_risk' | 'off_track';
