@@ -421,7 +421,7 @@ export default function EmissionsAnalysisPage() {
 
               <Button
                 variant="outline"
-                onClick={() => toast.info('Data export arrives with report generation (Phase 2).')}
+                onClick={() => router.push('/reports')}
                 className="gap-2"
               >
                 <Download className="h-4 w-4" />

@@ -573,6 +573,32 @@ export class ActivityRecordsService {
     });
   }
 
+  /**
+   * Take a submitted record into review (FR §6.3): submitted → under_review.
+   * Marks that a reviewer is actively looking at it; approve/reject remain the
+   * only exits. Same reviewer RBAC + period-lock gate as approve/reject.
+   */
+  async startReview(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
+    const record = await this.loadScoped(user, id);
+    if (!REVIEW_ROLES.has(user.role)) {
+      throw new ForbiddenException(
+        'Only a consultant or super_admin may review records',
+      );
+    }
+    if (record.status !== ActivityRecordStatus.submitted) {
+      throw new BadRequestException(
+        `Only a submitted record can be taken into review (current status "${record.status}")`,
+      );
+    }
+    await this.assertPeriodNotLocked(
+      record.subsidiaryId,
+      record.reportingYear,
+      record.reportingPeriod,
+      record.periodValue,
+    );
+    return this.transition(user, record, ActivityRecordStatus.under_review);
+  }
+
   async approve(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
     if (!REVIEW_ROLES.has(user.role)) {

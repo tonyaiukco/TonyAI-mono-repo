@@ -63,6 +63,13 @@ export class ActivityRecordsController {
     return this.service.submit(user, id);
   }
 
+  /** Take a submitted record into review (FR §6.3) — reviewer roles only. */
+  @Post(':id/review')
+  @HttpCode(HttpStatus.OK)
+  startReview(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+    return this.service.startReview(user, id);
+  }
+
   @Post(':id/approve')
   @HttpCode(HttpStatus.OK)
   approve(@CurrentUser() user: RequestUser, @Param('id') id: string) {
