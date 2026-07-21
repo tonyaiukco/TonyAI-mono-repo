@@ -63,7 +63,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (161 unit + 14 E2E) + live RLS containment probes | ✅ |
+| Automated tests (165 unit + 14 E2E) + live RLS containment probes | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
@@ -317,6 +317,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `POST` | `/activity-records` | Create (status `draft`; optional `locationId` targets a location; stores an immutable calc snapshot) | `data_entry` / `consultant` / `super_admin` |
 | `PATCH` | `/activity-records/:id` | Update (only while `draft`/`rejected`; recomputes the snapshot; author‑or‑`super_admin`) | `data_entry` / `consultant` / `super_admin` |
 | `DELETE` | `/activity-records/:id` | Delete (only while `draft`/`rejected`; author‑or‑`super_admin`) | `data_entry` / `consultant` / `super_admin` |
+| `POST` | `/activity-records/:id/review` | Take a submitted record into review (FR §6.3) | `consultant` / `super_admin` |
 | `POST` | `/activity-records/:id/submit` | `draft` → `submitted` | any accessor |
 | `POST` | `/activity-records/:id/approve` | `submitted`/`under_review` → `approved` | `consultant` / `super_admin` |
 | `POST` | `/activity-records/:id/reject` | `submitted`/`under_review` → `rejected` (body `{ varianceReason }`) | `consultant` / `super_admin` |

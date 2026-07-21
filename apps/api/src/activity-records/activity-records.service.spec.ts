@@ -402,6 +402,54 @@ describe('ActivityRecordsService — RBAC', () => {
   });
 });
 
+describe('ActivityRecordsService — start review (FR §6.3)', () => {
+  it('consultant takes a submitted record into under_review (audited)', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-r', status: ActivityRecordStatus.submitted }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-r', status: data.status }),
+    );
+    const dto = await service.startReview(consultant(), 'rec-r');
+    expect(dto.status).toBe(ActivityRecordStatus.under_review);
+    expect(prisma.auditLog.create).toHaveBeenCalled();
+  });
+
+  it('data_entry cannot start a review -> Forbidden', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ status: ActivityRecordStatus.submitted, subsidiaryId: 'sub-1' }),
+    );
+    await expect(service.startReview(dataEntry(), 'rec-1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('only a submitted record can enter review (draft -> BadRequest)', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ status: ActivityRecordStatus.draft }),
+    );
+    await expect(service.startReview(consultant(), 'rec-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('a locked period blocks starting a review (409, no write)', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ status: ActivityRecordStatus.submitted }),
+    );
+    prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+    await expect(service.startReview(consultant(), 'rec-1')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('ActivityRecordsService — transition rules', () => {
   it('approving a draft record -> BadRequest', async () => {
     const { prisma, service } = build();
