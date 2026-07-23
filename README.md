@@ -407,8 +407,8 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 
 - **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
 - **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅, Targets & intensity ✅, Reports ✅ — **Phase 1 complete**.
-- **Phase 2 — Staging cloud & CI/CD:** Supabase cloud environments, Docker + GitHub Actions deploy (GCP/Azure), KVKK/GDPR data residency, Sentry/monitoring.
-- **Phase 3 — Advanced:** Scope 3 + supplier management, targets & intensity, reports (PDF/Excel) + Resend, bulk upload, i18n (TR/EN), dark mode, Python/FastAPI analytics microservice.
+- **Phase 2 — Staging cloud & CI/CD** *(GCP-blocked — credit pending; GCP-independent prep interleaves with Phase 3)*: Supabase cloud environments, Docker + GitHub Actions deploy (GCP Cloud Run), KVKK/GDPR data residency, Sentry/monitoring.
+- **Phase 3 — Advanced** *(active, reordered WP7–WP14)*: UAT backlog & reviewer UI → bulk upload → email notifications + report sharing (Resend) → Scope 3 + supplier management → i18n/dark mode → Python/FastAPI analytics microservice.
 - **Phase 4 — Production launch:** authoritative emission-factor data, security/pen-test + load test, backup/DR, user lifecycle, legal (KVKK/GDPR), go-live.
 
 The detailed, checkbox-level plan lives in [`docs/roadmap_docs/project-status.md`](docs/roadmap_docs/project-status.md).

@@ -6,10 +6,10 @@
 > we leave off?"). Keep entries short — link to code/PRs instead of restating them.
 > README stays the public-facing summary; this file is the granular working log.
 
-## Current status — as of 2026-07-20
+## Current status — as of 2026-07-22
 
-- **Phase:** **Phase 1 COMPLETE** (WP1–WP6) — exit gate satisfied; next: **Phase 2** (staging cloud + CI/CD)
-- **Latest merged:** PR #23 (WP6 Reports — Phase 1 complete); UAT-prep fixes on `fix/uat-prep` (uncommitted)
+- **Phase:** Phase 1 COMPLETE + UAT running (1-2 external testers). **Phase 2 is GCP-blocked** (credit application pending) → working **Phase 3 (reordered, WP7+)** + GCP-independent Phase-2 prep in the meantime
+- **Latest merged:** PR #24 (pre-UAT audit fixes + `docs/uat/uat_phase1.md`); UAT open to external testers
 - **Tests:** 165 unit (Vitest, API) + 14 E2E (Playwright) + 18 live RLS containment probes — green
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
@@ -94,27 +94,38 @@
 
 *Phase-1 exit criteria:* **SATISFIED (2026-07-19)** — every Phase-1 row in the README status table is ✅ and the full demo flow (enter → attach evidence → submit → approve → analytics → target progress → export a report) runs end-to-end locally (proven by the 13-spec E2E suite).
 
-### Phase 2 — Staging cloud & CI/CD
+### Phase 2 — Staging cloud & CI/CD — **GCP-blocked** (credit application pending)
 
-- [ ] Supabase **cloud** projects (dev/staging), env & secrets strategy (`.env` per environment, no secrets in git)
+**GCP-independent prep — may be pulled forward between Phase-3 packages:**
+- [ ] Dockerfiles (web, api — the api image needs Chromium for Puppeteer) + local `docker compose` proof
+- [ ] Supabase **cloud** projects (dev/staging) + env & secrets strategy (`.env` per environment, no secrets in git)
 - [ ] Cloud migration + seed strategy (demo records only in dev; staging gets clean fixtures)
-- [ ] Dockerfiles (web, api) + GitHub Actions **deploy pipeline** to GCP or Azure staging
-- [ ] KVKK/GDPR-compliant data residency (EU/TR region selection)
 - [ ] Observability baseline: Sentry (web + api), structured logs, uptime checks
+
+**GCP-dependent (starts when the credit lands):**
+- [ ] GitHub Actions **deploy pipeline** to GCP staging (Cloud Run)
+- [ ] KVKK/GDPR-compliant data residency (EU/TR region selection, e.g. europe-west3)
 - [ ] Staging smoke E2E running in CI on every deploy
 
 *Exit criteria:* a stakeholder can use the full Phase-1 flow on a staging URL.
 
-### Phase 3 — Advanced features (spec "Faz 2")
+### Phase 3 — Advanced features (spec "Faz 2") — **active** (reordered 2026-07-22 while GCP is pending)
 
-- [ ] **Scope 3**: categories, emission factors, dynamic forms
-- [ ] **Supplier management** module (Scope 3 supplier ESG scores)
+> Ordering rationale: UAT is running → ship the small UAT-visible fixes first, then the
+> packages least likely to be invalidated by UAT feedback (no data-model churn), and the
+> big data-model items (Scope 3, suppliers) after the first UAT round closes.
+> GCP-independent Phase-2 prep may be interleaved between packages.
+
+- [ ] **WP7 — UAT backlog & review UX** — the audit's tester-visible gaps: **audit-trail viewer** (read API + UI; G3), **subsidiary Edit dialog** incl. the geography-change recalculation warning (G5), **matrix → Data Entry shortcut** (G6), and a minimal **reviewer UI** for submit→review→approve/reject (turns the API-only flow into a testable screen). Includes the **consultant-permissions decision** (matrix says consultant may NOT approve; code allows it — user decides, docs align).
+- [ ] **WP8 — Bulk upload** — historical data via CSV/Excel (Papa Parse) + validation report (row-level errors, dry-run), server-side processing; respects all lifecycle gates + dedup.
+- [ ] **WP9 — Email notifications (Resend)** — submit/approve/reject events + anomaly alerts; dev-mode delivery (domain verification is Phase 4).
+- [ ] **WP10 — Report sharing** — share a generated report via link/email (builds on WP9's Resend baseline; report_page.md §8).
+- [ ] **WP11 — Scope 3** — categories, emission factors, dynamic forms (big data-model package; starts after the first UAT round).
+- [ ] **WP12 — Supplier management** — module + Scope 3 supplier ESG scores (depends on WP11).
+- [ ] **WP13 — i18n (TR/EN) + dark mode**
+- [ ] **WP14 — Python/FastAPI analytics microservice** (forecasting / advanced analytics; revisit the `python-analytics` subagent decision here)
 - [x] ~~**Targets backend** + intensity metrics~~ → **moved to Phase 1 (WP5)** per the 2026-07-15 decision
-- [x] ~~**Reports** (PDF/Excel export)~~ → report *generation* **moved to Phase 1 (WP6)**; report *sharing via Resend* stays here (see Email notifications below)
-- [ ] **Bulk upload**: historical data via CSV/Excel (Papa Parse) + server-side queue/worker
-- [ ] **Email notifications** (Resend): submit/approve/reject events, anomaly alerts
-- [ ] **i18n** (TR/EN) + dark mode
-- [ ] **Python/FastAPI analytics microservice** (forecasting / advanced analytics)
+- [x] ~~**Reports** (PDF/Excel export)~~ → report *generation* **moved to Phase 1 (WP6)**; report *sharing* is WP10
 
 *Exit criteria:* feature-complete against `functional_requirements.md`.
 
@@ -144,9 +155,11 @@
 - Depth of `executive_viewer` / `consultant` UX flows
 - Mobile/responsive support targets
 
-**Next up:** **Phase 2 — Staging cloud & CI/CD**: Supabase cloud projects (dev/staging), Dockerfiles (web/api — note Puppeteer/Chromium in the api image), GitHub Actions deploy pipeline, KVKK/GDPR region selection, Sentry/observability, staging smoke E2E in CI (the deferred E2E-in-CI lands here).
+**Next up:** **WP7 — UAT backlog & review UX** (audit-trail viewer, subsidiary Edit, matrix shortcut, minimal reviewer UI, consultant-permissions decision). Phase 2 starts the moment the GCP credit lands — its GCP-independent prep (Dockerfiles, Supabase cloud, Sentry) may be interleaved between Phase-3 packages.
 
 ## Decisions log
+
+- **2026-07-22** — **Phase 3 started before Phase 2** (confirmed with the user): the GCP credit application is still pending, Phase 2's deploy target is blocked, and Phase 3 is pure app-layer work with no cloud dependency — waiting would be the expensive option. Phase 3 reordered into WP7–WP14 by two principles: (1) **UAT-feedback resilience** — small tester-visible fixes first (WP7), then packages that don't touch the data model (WP8 bulk upload, WP9 notifications, WP10 sharing), and the schema-heavy packages (WP11 Scope 3, WP12 suppliers) only after the first UAT round; (2) **GCP-independent Phase-2 prep** (Dockerfiles incl. Chromium, Supabase cloud projects, Sentry) split out and allowed to interleave between packages so the eventual GCP hookup shrinks to wiring the deploy pipeline. WP7 also absorbs a **minimal reviewer UI** (the API-only review flow is a UAT friction point) and forces the **consultant-permissions decision** (spec conflict recorded 2026-07-20).
 
 - **2026-07-19** — WP6 design (confirmed with the user): **PDF via Puppeteer inside the API** — an HTML template string rendered with `page.setContent`, never printing a Next.js route (web routes sit behind the cookie `proxy` guard while the API is Bearer-only; printing a route would mean satisfying both auth systems and running a web server in the generation path). **2 templates** ship (Executive Summary + GHG Protocol Detail); Subsidiary Comparison + Supplier Scorecard → Phase 3. **Generation log = audit_log** (`entity:'report'`) — no dedicated table; the mock "Recent Reports" panel was dropped. Standing defaults applied: evidence rendered as **file names + counts** (signed URLs expire — worthless in a static artifact); Data Quality Score column deferred (inventing a metric violates the no-placeholder rule); reports are **year-scoped** in v1. Puppeteer needs `allowBuilds` in `pnpm-workspace.yaml` (pnpm 11) and Chromium in the future api Docker image (Phase 2 note).
 
@@ -182,3 +195,4 @@
 - **2026-07-18** — WP5 Targets & intensity (`feat/targets-intensity`): `targets` + `subsidiary_denominators` tables (+ `rls_targets_intensity` migration; deleted the recurring spurious `DROP INDEX` on activity_records), `TargetsModule` (CRUD + progress) + `IntensityModule` (denominator CRUD + intensity), shared-types DTOs, api-client methods, live `TargetsPanel` + `IntensityPanel` on `/emissions` with a functional Absolute/Intensity toggle, 3 demo targets + 10 denominators seeded, `prisma.config.ts`-based migrate (from the #20 chore). 139 unit tests (+21) + 2 E2E + RLS probes on 6 tables (18 checks). Verified live: on_track/at_risk/n-a progress spread, 4 intensity metric cards, RBAC 403, tenant isolation, browser round-trip. `security-rls` review pass before the PR.
 - **2026-07-19** — WP6 Reports (`feat/reports`), the final Phase-1 package: `ReportsModule` (assemble → PDF/Puppeteer + Excel/exceljs + CSV, all audited), `GET /reports/{meta,pdf,excel,csv}`, Reports page rewired to live data (orphan `emissions-data.ts` mock deleted), `report-generation` skill, UAT guide (later merged into `docs/uat/uat_phase1.md`). 161 unit (+19, incl. HTML-escaping, CSV-quoting/formula-neutralizing, meta-status math, Excel sheet structure) + 14 E2E (exact server filenames — proving the CORS `exposedHeaders` fix — plus magic-byte artifact checks and the data_entry no-export rule) + 18 RLS probes. `qa-auditor` review pass caught 7 findings, all fixed pre-PR: (1) HIGH — an empty in-scope year was badged "Approved" → committedCount=0 can never be approved; (2) MED-HIGH — the permissions matrix denies report generation to data_entry but nothing enforced it → 403 in the service + buttons hidden in the UI + docs aligned; (3) Content-Disposition not CORS-exposed (filenames never reached the browser — the green E2E masked it); (4) committed-status list divergence risk → single import from EmissionsService; (5) Puppeteer launch race leak → memoized promise; (6) header injection via subsidiaryId in the filename → sanitized; (7) hardcoded org name in the preview → live from /reports/meta. Live-verified: 4-page branded PDF, valid 3-sheet xlsx, 103-line CSV, truthful evidence counts (after killing stale API processes that masked a fix), tenant-scoped exports (entry sees only its 2 subsidiaries; cross-tenant request → empty), audit rows per generation, browser download round-trip. **Phase 1 exit criteria satisfied.**
 - **2026-07-20** — Pre-UAT full requirements audit (`qa-auditor`, all 18 docs vs implementation; re-ran the whole verification stack itself). Verdict: **Phase-1 contract satisfied, with 7 unrecorded gaps** (none UAT-blocking) + 5 undocumented deviations. Fixed in `fix/uat-prep` before opening UAT: **G1** stale/dead `/emissions` Export button → now routes to `/reports`; two surviving orphan mocks deleted (`components/dashboard/header.tsx`, `lib/data.ts`); **G2** `under_review` was unreachable → new `POST /activity-records/:id/review` transition (reviewer roles, period-lock gated, audited; +4 tests → 165). Backlogged (recorded here, listed in the UAT doc's known-limits): G3 audit-trail viewer, G4 dashboard context bar, G5 subsidiary Edit UI, G6 matrix→data-entry shortcut, G7 VAR §5.1 boundary checks; deviations to resolve before Phase 4 — consultant approve powers exceed permissions_and_roles.md (specs self-conflict), 404-vs-403 on cross-tenant, audit rows lack `role` + use `update` for transitions, friendly category taxonomy, single-subsidiary report scope. UAT docs merged into **`docs/uat/uat_phase1.md`** (TC catalog AUTH/DASH/SUBS/ENTRY/LOCK/EMIS/REP + known-limits + bug template + sign-off); `uat-guide.md` deleted.
+- **2026-07-22** — PR #24 merged (`main` synced, branch deleted); UAT opened to external testers. Phase-3 plan review with the user: reordered Phase 3 into WP7–WP14 (see decisions log), split Phase 2 into GCP-independent prep vs GCP-dependent, next up = WP7. Docs-only change.
