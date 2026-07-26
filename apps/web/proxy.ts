@@ -7,10 +7,21 @@ import { NextResponse, type NextRequest } from "next/server";
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
+  // Server-side auth check. In containers the browser-facing URL (localhost)
+  // is not reachable from inside the container, so the server runtime may
+  // override it via SUPABASE_URL_INTERNAL (runtime env, not build-inlined).
+  const supabaseUrl =
+    process.env.SUPABASE_URL_INTERNAL ||
+    (process.env.NEXT_PUBLIC_SUPABASE_URL as string);
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
+    supabaseUrl,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
     {
+      // Must match the browser client's storageKey (lib/supabase.ts): the
+      // default cookie name is derived from the URL host, which differs between
+      // the browser (localhost) and the container runtime (host.docker.internal).
+      auth: { storageKey: "sb-tonyai-auth" },
       cookies: {
         getAll() {
           return request.cookies.getAll();

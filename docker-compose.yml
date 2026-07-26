@@ -1,0 +1,56 @@
+# TonyAI — containerized web + api against the HOST's local Supabase.
+# LOCAL DEVELOPMENT ONLY. Keys are NOT hardcoded: they are interpolated from
+# your real local env files (the supabase-cli generates different demo JWTs per
+# CLI version, so baked-in values silently break storage/auth).
+#
+#   pnpm docker:up          # sources apps/api/.env + apps/web/.env.local, then
+#                           # docker compose up --build -d
+#   → web http://localhost:3000 · api http://localhost:3001/api/v1
+#
+# The containers reach the host's Supabase via host.docker.internal; the
+# browser (on the host) keeps using localhost URLs baked into the web bundle.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "127.0.0.1:3001:3001" # localhost only — the api holds the service-role key
+    environment:
+      PORT: "3001"
+      WEB_ORIGIN: "http://localhost:3000"
+      DATABASE_URL: "postgresql://postgres:postgres@host.docker.internal:54322/postgres"
+      DIRECT_URL: "postgresql://postgres:postgres@host.docker.internal:54322/postgres"
+      SUPABASE_URL: "http://host.docker.internal:54321"
+      SUPABASE_JWT_SECRET: "${SUPABASE_JWT_SECRET:?run via pnpm docker:up}"
+      SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:?run via pnpm docker:up}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # Linux parity; no-op on Docker Desktop
+    shm_size: 1gb # Chromium renders PDFs in this container
+    init: true # reap Chromium child processes (PID 1)
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: "http://localhost:54321"
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "${NEXT_PUBLIC_SUPABASE_ANON_KEY:?run via pnpm docker:up}"
+        NEXT_PUBLIC_API_BASE_URL: "http://localhost:3001/api/v1"
+    ports:
+      - "127.0.0.1:3000:3000" # localhost only
+    environment:
+      # Server-side (proxy.ts) reaches Supabase through the container gateway;
+      # the browser keeps the localhost URL inlined at build time.
+      SUPABASE_URL_INTERNAL: "http://host.docker.internal:54321"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      api:
+        condition: service_healthy

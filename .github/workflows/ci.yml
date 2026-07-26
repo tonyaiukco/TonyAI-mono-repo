@@ -35,3 +35,34 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  # Proof-of-build for the container images (no registry push, no cloud creds —
+  # the GCP deploy pipeline lands in the GCP-dependent half of Phase 2).
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build api image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: false
+          platforms: linux/amd64
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=ci-placeholder-not-a-real-key
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max

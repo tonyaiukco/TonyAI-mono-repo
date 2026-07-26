@@ -1,0 +1,29 @@
+# Load-bearing, not hygiene: the api's ConfigModule resolves .env by cwd, so a
+# stray env file baked into an image would silently override injected env vars.
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+
+# Dependencies & build outputs (rebuilt inside the image)
+node_modules
+**/node_modules
+**/.next
+**/dist
+packages/db/generated
+**/*.tsbuildinfo
+.turbo
+**/.turbo
+
+# Local tooling & artifacts
+.git
+.github
+.claude
+docs
+e2e/test-results
+test-results
+playwright-report
+supabase/.temp
+*.log
+.DS_Store

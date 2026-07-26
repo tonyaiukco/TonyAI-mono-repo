@@ -105,6 +105,9 @@ export class ReportsService implements OnModuleDestroy {
     }
     this.browserPromise = puppeteer.launch({
       headless: true,
+      // In containers we use the distro Chromium (PUPPETEER_EXECUTABLE_PATH);
+      // locally the var is unset and Puppeteer falls back to its bundled Chrome.
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
     });
     return this.browserPromise;

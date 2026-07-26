@@ -18,6 +18,10 @@ async function bootstrap() {
     exposedHeaders: ['Content-Disposition'],
   });
 
+  // Graceful shutdown: lets ReportsService.onModuleDestroy close the shared
+  // Chromium instance (otherwise containers leak a zombie browser per restart).
+  app.enableShutdownHooks();
+
   const port = Number(process.env.PORT ?? 3001);
   await app.listen(port);
   // eslint-disable-next-line no-console
