@@ -18,7 +18,9 @@
     "db:migrate": "pnpm --filter @tonyai/db run migrate",
     "db:deploy": "pnpm --filter @tonyai/db run deploy",
     "db:seed": "pnpm --filter @tonyai/db run seed",
-    "db:reset": "pnpm --filter @tonyai/db run reset"
+    "db:reset": "pnpm --filter @tonyai/db run reset",
+    "docker:up": "bash scripts/compose-dev.sh up --build -d",
+    "docker:down": "bash scripts/compose-dev.sh down"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

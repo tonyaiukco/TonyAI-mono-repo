@@ -5,6 +5,8 @@
 generator client {
   provider = "prisma-client-js"
   output   = "../generated/client"
+  // Container targets: debian (amd64) + arm64 for Apple-Silicon local builds.
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
 }
 
 datasource db {

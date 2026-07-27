@@ -271,6 +271,19 @@ pnpm dev            # web -> http://localhost:3000   api -> http://localhost:300
 
 ---
 
+### Running in containers (Phase-2 prep)
+
+Both apps ship Dockerfiles (`apps/api/Dockerfile` includes distro Chromium for PDF generation; `apps/web/Dockerfile` uses Next.js standalone output). With the local Supabase running:
+
+```bash
+pnpm docker:up      # builds + starts web (:3000) and api (:3001) containers
+pnpm docker:down
+```
+
+The wrapper sources `apps/api/.env` + `apps/web/.env.local` so the containers use your instance's real keys (supabase-cli demo JWTs differ per CLI version — never hardcoded). `NEXT_PUBLIC_*` values are inlined into the web bundle at build time, so images are environment-specific; server-side auth can override the Supabase URL at runtime via `SUPABASE_URL_INTERNAL`. CI builds both images on every PR (`docker-build` job, no push).
+
+---
+
 ## Scripts
 
 Run from the repo root (Turborepo fans out to each package):
@@ -284,6 +297,7 @@ Run from the repo root (Turborepo fans out to each package):
 | `pnpm test` | Unit tests (Vitest) |
 | `pnpm e2e` | Playwright E2E: demo flow, gates, RBAC, smoke (requires Supabase running) |
 | `pnpm rls:probe` | Live RLS containment probes via PostgREST (requires Supabase running) |
+| `pnpm docker:up` / `docker:down` | Containerized web+api against the host's local Supabase (keys sourced from your real env files) |
 | `pnpm db:migrate` | `prisma migrate dev` |
 | `pnpm db:deploy` | Apply committed migrations (`prisma migrate deploy`) |
 | `pnpm db:seed` | Seed demo data |
