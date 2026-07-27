@@ -5,6 +5,8 @@ packages:
 allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
+  # Source-map upload only — unused until a Sentry auth token exists (Phase 2).
+  '@sentry/cli': false
   esbuild: true
   prisma: true
   puppeteer: true

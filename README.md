@@ -395,6 +395,24 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 
 ---
 
+## Observability
+
+The API emits **one structured JSON line per request** to stdout — the shape every log aggregator (Cloud Logging, Loki) expects from a container:
+
+```json
+{"ts":"2026-07-27T17:31:24.008Z","level":"info","msg":"request","requestId":"5c39d54a-…","method":"GET","path":"/api/v1/subsidiaries","status":200,"durationMs":2,"userId":"62db344f-…"}
+```
+
+- **Request ids** — an inbound `x-request-id` is honoured (so a load balancer's trace id stays stitched to our logs), otherwise one is minted. It is echoed in the response header (CORS‑exposed) and attached to every log line of that request via `AsyncLocalStorage`.
+- **Levels** — 4xx are expected business outcomes (a blocked submit gate, a 403) and log at `warn`; 5xx and unhandled throws log at `error` with a stack and go to stderr.
+- **`LOG_FORMAT`** — `pretty` (default in dev) or `json` (default in production).
+- **Sentry** is opt‑in: without `SENTRY_DSN` / `NEXT_PUBLIC_SENTRY_DSN` the SDK is never initialised and every capture is a no‑op. `sendDefaultPii` is off by design — this product holds tenant emissions data.
+- **Uptime targets** once a staging URL exists: `GET /api/v1/health` (public) and `GET /login`.
+
+The web app has route (`error.tsx`), root (`global-error.tsx`) and 404 boundaries; client errors report to Sentry when a DSN is configured.
+
+---
+
 ## Testing
 
 - **Unit (Vitest, DB‑free):** 21 tests in `apps/api` covering tenant scoping, RBAC, audit writes and KPI aggregation with a mocked Prisma client. Run `pnpm test`.

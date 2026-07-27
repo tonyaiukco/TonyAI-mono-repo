@@ -25,6 +25,10 @@ services:
       SUPABASE_URL: "http://host.docker.internal:54321"
       SUPABASE_JWT_SECRET: "${SUPABASE_JWT_SECRET:?run via pnpm docker:up}"
       SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:?run via pnpm docker:up}"
+      # Observability (all optional — empty means disabled).
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
+      SENTRY_DSN: "${SENTRY_DSN:-}"
+      SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT:-local-docker}"
     extra_hosts:
       - "host.docker.internal:host-gateway" # Linux parity; no-op on Docker Desktop
     shm_size: 1gb # Chromium renders PDFs in this container
@@ -43,6 +47,8 @@ services:
         NEXT_PUBLIC_SUPABASE_URL: "http://localhost:54321"
         NEXT_PUBLIC_SUPABASE_ANON_KEY: "${NEXT_PUBLIC_SUPABASE_ANON_KEY:?run via pnpm docker:up}"
         NEXT_PUBLIC_API_BASE_URL: "http://localhost:3001/api/v1"
+        # Inlined at build time; empty means Sentry never initialises.
+        NEXT_PUBLIC_SENTRY_DSN: "${NEXT_PUBLIC_SENTRY_DSN:-}"
     ports:
       - "127.0.0.1:3000:3000" # localhost only
     environment:
