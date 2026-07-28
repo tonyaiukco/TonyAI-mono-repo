@@ -30,6 +30,16 @@ command -v docker >/dev/null    || die "docker not found  (install Docker Deskto
 docker info >/dev/null 2>&1     || die "Docker daemon is not running — start Docker Desktop and retry"
 info "node $(node -v) · pnpm $(pnpm -v) · supabase $(supabase --version 2>/dev/null | head -1)"
 
+# The CLI version decides how the local stack signs tokens and which keys
+# `supabase status` exposes, so pin a floor and say so out loud.
+SUPABASE_MIN="2.0.0"
+SUPABASE_VER="$(supabase --version 2>/dev/null | head -1 | tr -d 'v' | tr -d '[:space:]')"
+if [ -n "$SUPABASE_VER" ]; then
+  if [ "$(printf '%s\n%s\n' "$SUPABASE_MIN" "$SUPABASE_VER" | sort -V | head -1)" != "$SUPABASE_MIN" ]; then
+    die "supabase CLI $SUPABASE_VER is too old (need >= $SUPABASE_MIN). Upgrade: brew upgrade supabase"
+  fi
+fi
+
 # --- 1. dependencies ---------------------------------------------------------
 step "Installing dependencies"
 pnpm install
@@ -46,7 +56,17 @@ fi
 step "Syncing .env files from 'supabase status'"
 # Pull live values (ANON_KEY, SERVICE_ROLE_KEY, JWT_SECRET, API_URL, DB_URL)
 eval "$(supabase status -o env | grep -E '^(ANON_KEY|SERVICE_ROLE_KEY|JWT_SECRET|API_URL|DB_URL)=')"
-: "${ANON_KEY:?could not read ANON_KEY}" "${SERVICE_ROLE_KEY:?}" "${JWT_SECRET:?}" "${API_URL:?}" "${DB_URL:?}"
+for var in ANON_KEY SERVICE_ROLE_KEY JWT_SECRET API_URL DB_URL; do
+  if [ -z "${!var:-}" ]; then
+    printf '\n'
+    warn "'supabase status -o env' did not report $var."
+    info "Your supabase CLI ($SUPABASE_VER) may have dropped the legacy key names,"
+    info "or another Supabase project is occupying ports 54321/54322."
+    info "Check:  supabase status          (project should be 'TonyAI-mono-repo')"
+    info "        supabase status -o env   (should list ANON_KEY, SERVICE_ROLE_KEY, JWT_SECRET)"
+    die "Cannot write the .env files without $var."
+  fi
+done
 
 cat > apps/web/.env.local <<EOF
 NEXT_PUBLIC_SUPABASE_URL="${API_URL}"
@@ -83,6 +103,43 @@ pnpm --filter @tonyai/db run generate
 
 step "Seeding demo data"
 pnpm --filter @tonyai/db run seed
+
+# --- 5. auth smoke check -----------------------------------------------------
+# Proves the whole login chain end-to-end BEFORE you start the apps. Without it
+# a key/algorithm mismatch only surfaces later as "the page loads but there is
+# no data and an auth error" — the browser login succeeds, every API call 401s.
+step "Verifying the login chain"
+AUTH_JSON="$(curl -s -X POST "${API_URL}/auth/v1/token?grant_type=password" \
+  -H "apikey: ${ANON_KEY}" -H "Content-Type: application/json" \
+  -d '{"email":"admin@tonyai.local","password":"TonyAI!2026"}' --max-time 20 || true)"
+
+ALG="$(printf '%s' "$AUTH_JSON" | node -e "
+let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+  try{
+    const t=JSON.parse(d).access_token;
+    if(!t) return console.log('NO_TOKEN');
+    console.log(JSON.parse(Buffer.from(t.split('.')[0],'base64url').toString()).alg||'UNKNOWN');
+  }catch{console.log('NO_TOKEN')}
+});" 2>/dev/null || echo NO_TOKEN)"
+
+case "$ALG" in
+  NO_TOKEN|UNKNOWN)
+    warn "Could not obtain an access token for admin@tonyai.local."
+    info "The seed may not have created the auth users. Re-run: pnpm db:seed"
+    ;;
+  HS*)
+    info "tokens are signed ${ALG} — verified against SUPABASE_JWT_SECRET ✓"
+    ;;
+  *)
+    info "tokens are signed ${ALG} (asymmetric) — verified against the project's JWKS"
+    if curl -sf -o /dev/null --max-time 15 "${API_URL}/auth/v1/.well-known/jwks.json"; then
+      info "JWKS endpoint reachable ✓"
+    else
+      warn "JWKS endpoint is NOT reachable at ${API_URL}/auth/v1/.well-known/jwks.json"
+      info "The API will not be able to verify logins until it is."
+    fi
+    ;;
+esac
 
 # --- done --------------------------------------------------------------------
 step "Done 🎉"

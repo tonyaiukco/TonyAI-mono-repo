@@ -2,24 +2,27 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import * as jwt from 'jsonwebtoken';
 import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
+import { tokenVerifier, TokenVerificationError } from './token-verifier';
 import type { RequestUser } from './auth.types';
 
 /**
  * Primary tenant-isolation enforcement point.
  *
- * Verifies the Supabase-issued JWT (HS256, signed with SUPABASE_JWT_SECRET),
- * loads the matching profile, and computes `accessibleSubsidiaryIds` which all
- * downstream services use to scope queries. Supabase RLS is the secondary
- * (defense-in-depth) layer at the database level.
+ * Verifies the Supabase-issued JWT (HS256 shared secret or asymmetric via JWKS
+ * — see token-verifier.ts), loads the matching profile, and computes
+ * `accessibleSubsidiaryIds` which all downstream services use to scope queries.
+ * Supabase RLS is the secondary (defense-in-depth) layer at the database level.
  */
 @Injectable()
 export class SupabaseAuthGuard implements CanActivate {
+  private readonly logger = new Logger(SupabaseAuthGuard.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly prisma: PrismaService,
@@ -39,15 +42,16 @@ export class SupabaseAuthGuard implements CanActivate {
     }
     const token = authHeader.slice('Bearer '.length);
 
-    const secret = process.env.SUPABASE_JWT_SECRET;
-    if (!secret) {
-      throw new UnauthorizedException('Auth is not configured (SUPABASE_JWT_SECRET missing)');
-    }
-
-    let payload: jwt.JwtPayload;
+    let payload: Awaited<ReturnType<typeof tokenVerifier.verify>>;
     try {
-      payload = jwt.verify(token, secret) as jwt.JwtPayload;
-    } catch {
+      payload = await tokenVerifier.verify(token);
+    } catch (error) {
+      // A misconfigured API 401s every request identically to a bad token, which
+      // is exactly how "the page loads but there is no data" happens. Surface
+      // the cause in the server log; the client still learns nothing.
+      if (error instanceof TokenVerificationError && error.configError) {
+        this.logger.error(error.message);
+      }
       throw new UnauthorizedException('Invalid or expired token');
     }
 

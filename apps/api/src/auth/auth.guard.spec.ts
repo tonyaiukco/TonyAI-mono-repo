@@ -5,9 +5,10 @@ import { SupabaseAuthGuard } from './auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from './auth.types';
 
-// jwt.verify is stubbed so we can drive the token subject without a real secret.
-vi.mock('jsonwebtoken', () => ({
-  verify: vi.fn().mockReturnValue({ sub: 'user-1' }),
+// Token verification is stubbed so these cases can drive the token subject
+// without real keys; the verifier itself is covered by token-verifier.spec.ts.
+vi.mock('./token-verifier', () => ({
+  tokenVerifier: { verify: vi.fn().mockResolvedValue({ sub: 'user-1' }) },
 }));
 
 function createPrismaMock() {

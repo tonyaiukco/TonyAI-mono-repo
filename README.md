@@ -204,6 +204,7 @@ Tenant isolation is enforced in **two independent layers** — neither replaces 
 
 Additional guarantees:
 
+- **Token verification** — Supabase access tokens are accepted under both signing schemes: the legacy shared **HS256** secret and **asymmetric** keys (ES256/RS256) fetched from the project's JWKS. The key material fixes the algorithm allow‑list on each path, so a token can never downgrade a public key into an HMAC secret, and `alg: none` matches neither path.
 - **RBAC** — writes require `super_admin`; reads are tenant‑scoped for everyone.
 - **Audit immutability** — `audit_log` has SELECT‑only policies (super_admin) and **no** UPDATE/DELETE; it is append‑only.
 - **No secrets in git** — all `.env*` files are git‑ignored; only `.env.example` templates are committed.
@@ -215,7 +216,9 @@ Additional guarantees:
 
 ### Prerequisites
 
-- **Node ≥ 20**, **pnpm**, **Docker Desktop** (running), **Supabase CLI**
+- **Node ≥ 20**, **pnpm** (enable Corepack so the pinned version is used: `corepack enable`), **Docker Desktop** (running), **Supabase CLI ≥ 2.0** (`brew install supabase/tap/supabase`)
+
+`pnpm setup` enforces the CLI floor and finishes with a login smoke check that prints how your project signs tokens (`HS256` shared secret or asymmetric via JWKS) — both are supported, so a newer CLI is fine.
 
 ### First‑time setup
 
@@ -265,6 +268,7 @@ pnpm dev            # web -> http://localhost:3000   api -> http://localhost:300
 | `supabase: command not found` | Install the Supabase CLI (`brew install supabase/tap/supabase`). |
 | Port `3000` / `3001` / `54321` already in use | Stop the other process (or `supabase stop`) and re‑run. |
 | `401 Invalid or expired token` after restarting Supabase | Keys rotated — re‑run `pnpm setup` to re‑sync the `.env` files. |
+| Login succeeds but every page is empty and shows an auth error | The API could not verify the token. Re‑run `pnpm setup` and read its final "Verifying the login chain" line: it reports the signing algorithm and, for asymmetric projects, whether the JWKS endpoint is reachable. A stale `apps/api/.env` (secret from a previous Supabase instance) is the usual cause. |
 | Login works but no data shows | Make sure the DB was seeded (`pnpm db:seed`); or `pnpm db:reset`. |
 | Stale schema / weird data | `pnpm db:reset` (drops, re‑migrates, re‑seeds). |
 | `pnpm: command not found` | `npm i -g pnpm` (or enable via Corepack). |
