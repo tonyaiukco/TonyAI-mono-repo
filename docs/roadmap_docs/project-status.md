@@ -6,10 +6,11 @@
 > we leave off?"). Keep entries short — link to code/PRs instead of restating them.
 > README stays the public-facing summary; this file is the granular working log.
 
-## Current status — as of 2026-07-28
+## Current status — as of 2026-07-29
 
 - **Phase:** Phase 1 COMPLETE + UAT running (1-2 external testers). **Phase 2 is GCP-blocked** (credit application pending) → working **Phase 3 (reordered, WP7+)** + GCP-independent Phase-2 prep in the meantime
-- **Latest merged:** PR #26 (containerization). Phase-2 GCP-independent prep in flight: **PR #27 open** on `feat/observability` — observability + the Turbopack dev-memory root cause + dual-scheme JWT verification (reviewed by `security-rls` and `qa-auditor`); next is the cloud env & seed strategy
+- **Latest merged:** **PR #27** (observability + Turbopack dev-memory root cause + dual-scheme JWT verification), merged 2026-07-28, branch deleted. Phase-2 GCP-independent prep: PR 1 (containerization, #26) ✅ · PR 2 (observability, #27) ✅ · **next is PR 3 — cloud env & seed strategy**, which needs the user to create the Supabase cloud projects (dev + staging, EU region)
+- **Everyone must re-run `pnpm setup` after pulling this** — the API now refuses to boot without `ALLOW_INSECURE_LOCAL_AUTH=true` in `apps/api/.env`, and `jsonwebtoken` → `jose` means a stale `node_modules` fails too
 - **Tests:** 245 unit (Vitest, API) + a `next.config` phase guard (web) + 14 E2E (Playwright) + 18 live RLS containment probes — green
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
@@ -34,6 +35,16 @@
 | #15 | ci | Upgraded GitHub Actions to the Node.js 24 runtime |
 | #16 | backend | **WP2** — anomaly detection v1 + submit validation (VAR §4): rolling-baseline check, mandatory variance on submit |
 | #17 | full-stack | **WP3** — period locking (FR §4.2): `period_locks` table + RLS, six-path gate, super_admin lock/unlock with in-transaction audit, `PeriodLocksDrawer`; `workflow-gate` skill extracted |
+| #18 | docs | Extended Phase 1 with WP4–WP6, refreshed this log |
+| #19 | qa | **WP4** — Playwright E2E harness + shared helpers/fixtures, `scripts/rls-probes.mjs` (`pnpm rls:probe`), `e2e-flow` skill; UI RBAC polish (`canManage`) |
+| #20 | chore | Cleared the three CI build warnings (Prisma / Next proxy / Turbopack `export *`) |
+| #21 | full-stack | **WP5** — targets & intensity: `targets` + `subsidiary_denominators` (+RLS), progress/intensity endpoints, live `TargetsPanel`/`IntensityPanel` with an Absolute↔Intensity toggle |
+| #22 | security | Default-deny tenant access for a privileged profile with a null `organisationId` (an unfiltered `findMany` would have exposed every subsidiary) |
+| #23 | full-stack | **WP6** — reports: audit-ready PDF (Puppeteer) + Excel (exceljs) + CSV, `/reports/{meta,pdf,excel,csv}`, live Reports page, `report-generation` skill. **Phase 1 complete** |
+| #24 | fix | Pre-UAT audit fixes (dead Export button, unreachable `under_review` → new review transition, orphan mocks) + consolidated `docs/uat/uat_phase1.md` |
+| #25 | docs | Started Phase 3 ahead of GCP-blocked Phase 2 — reordered into WP7–WP14 |
+| #26 | devops | **Phase-2 prep PR 1** — containerized web + api (multi-stage Dockerfiles, standalone Next output, distro Chromium, `docker-compose.yml` + `pnpm docker:up`, CI docker-build) |
+| #27 | full-stack | **Phase-2 prep PR 2** — observability (JSON request logs, request-ids via ALS, exception filter, opt-in Sentry, web error boundaries) **+** the Turbopack dev-memory root cause (`outputFileTracingRoot` leaking into the dev phase) **+** dual-scheme JWT verification (HS256 **and** JWKS) with a boot-time auth-config gate; reviewed twice by `security-rls` and once by `qa-auditor` |
 
 ## What works today
 
