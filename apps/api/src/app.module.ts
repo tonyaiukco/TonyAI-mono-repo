@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { PrismaModule } from './prisma/prisma.module';
@@ -16,6 +16,7 @@ import { TargetsModule } from './targets/targets.module';
 import { IntensityModule } from './intensity/intensity.module';
 import { ReportsModule } from './reports/reports.module';
 import { HealthController } from './health.controller';
+import { RequestContextMiddleware } from './observability/request-context.middleware';
 
 @Module({
   imports: [
@@ -37,4 +38,10 @@ import { HealthController } from './health.controller';
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: SupabaseAuthGuard }],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    // Middleware (not an interceptor) so the AsyncLocalStorage request context
+    // wraps guards, the handler and the exception filter alike.
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
+  }
+}

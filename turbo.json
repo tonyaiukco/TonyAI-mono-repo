@@ -8,25 +8,48 @@
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
     "SUPABASE_JWT_SECRET",
+    "SUPABASE_JWT_SCHEME",
+    "SUPABASE_JWT_AUDIENCE",
+    "ALLOW_INSECURE_LOCAL_AUTH",
     "DATABASE_URL",
-    "DIRECT_URL"
+    "DIRECT_URL",
+    "LOG_FORMAT",
+    "SENTRY_DSN",
+    "SENTRY_ENVIRONMENT",
+    "SENTRY_RELEASE",
+    "SENTRY_TRACES_SAMPLE_RATE",
+    "NEXT_PUBLIC_SENTRY_DSN",
+    "NEXT_PUBLIC_SENTRY_ENVIRONMENT"
   ],
   "tasks": {
     "dev": {
-      "dependsOn": ["^build"],
+      "dependsOn": [
+        "^build"
+      ],
       "cache": false,
       "persistent": true
     },
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**", "generated/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        ".next/**",
+        "!.next/cache/**",
+        "dist/**",
+        "generated/**"
+      ]
     },
     "lint": {},
     "typecheck": {
-      "dependsOn": ["^build"]
+      "dependsOn": [
+        "^build"
+      ]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": [
+        "^build"
+      ]
     }
   }
 }

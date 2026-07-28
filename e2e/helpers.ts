@@ -92,9 +92,10 @@ export function bearer(token: string): Record<string, string> {
 }
 
 /**
- * Password-grant a Supabase access token — the same HS256 JWT the NestJS guard
- * verifies. Used both to drive API-only arrange/act steps (approve has no UI)
- * and by the RLS probes.
+ * Password-grant a Supabase access token — the same JWT the NestJS guard
+ * verifies. The token is never minted or parsed here, so this works under both
+ * signing schemes (HS256 shared secret and asymmetric/JWKS). Used both to drive
+ * API-only arrange/act steps (approve has no UI) and by the RLS probes.
  */
 export async function getAccessToken(
   request: APIRequestContext,

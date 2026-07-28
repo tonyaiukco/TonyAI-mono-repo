@@ -1,13 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { Logger, UnauthorizedException } from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
 import type { Reflector } from '@nestjs/core';
 import { SupabaseAuthGuard } from './auth.guard';
+import { tokenVerifier, TokenVerificationError } from './token-verifier';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from './auth.types';
 
-// jwt.verify is stubbed so we can drive the token subject without a real secret.
-vi.mock('jsonwebtoken', () => ({
-  verify: vi.fn().mockReturnValue({ sub: 'user-1' }),
+// Token verification is stubbed so these cases can drive the token subject
+// without real keys; the verifier itself is covered by token-verifier.spec.ts.
+vi.mock('./token-verifier', async (importOriginal) => ({
+  // Keep the real TokenVerificationError so the guard's instanceof check (which
+  // decides whether a config problem gets logged) behaves as in production.
+  ...(await importOriginal<typeof import('./token-verifier')>()),
+  tokenVerifier: { verify: vi.fn().mockResolvedValue({ sub: 'user-1' }) },
 }));
 
 function createPrismaMock() {
@@ -102,5 +108,111 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     await guard.canActivate(context);
     expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
     expect(request.user?.accessibleSubsidiaryIds).toEqual([]);
+  });
+});
+
+/**
+ * The guard is the PRIMARY tenant-isolation enforcement point, so every way it
+ * can refuse a request is locked down here. Without these, a refactor that
+ * dropped the try/catch or the `sub` check would ship green.
+ */
+describe('SupabaseAuthGuard — rejection paths', () => {
+  let prisma: PrismaMock;
+  let guard: SupabaseAuthGuard;
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    guard = new SupabaseAuthGuard(reflector, prisma as unknown as PrismaService);
+    vi.mocked(tokenVerifier.verify).mockResolvedValue({ sub: 'user-1' });
+  });
+
+  it.each([
+    ['no Authorization header', undefined],
+    ['a non-Bearer scheme', 'Basic dXNlcjpwYXNz'],
+    ['a bare token without the Bearer prefix', 'eyJhbGciOiJIUzI1NiJ9.e30.x'],
+  ])('rejects %s without touching the database', async (_label, header) => {
+    const request: { headers: Record<string, string>; user?: RequestUser } = { headers: {} };
+    if (header) request.headers.authorization = header;
+    const context = {
+      switchToHttp: () => ({ getRequest: () => request }),
+      getHandler: () => null,
+      getClass: () => null,
+    } as unknown as ExecutionContext;
+
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.profile.findUnique).not.toHaveBeenCalled();
+    expect(request.user).toBeUndefined();
+  });
+
+  it('rejects when verification fails, and never attaches a user', async () => {
+    vi.mocked(tokenVerifier.verify).mockRejectedValue(new Error('bad signature'));
+    const { context, request } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.profile.findUnique).not.toHaveBeenCalled();
+    expect(request.user).toBeUndefined();
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['absent', {}],
+    ['non-string', { sub: 42 }],
+  ])('rejects a verified token whose sub is %s', async (_label, payload) => {
+    vi.mocked(tokenVerifier.verify).mockResolvedValue(payload);
+    const { context, request } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.profile.findUnique).not.toHaveBeenCalled();
+    expect(request.user).toBeUndefined();
+  });
+
+  it('rejects a valid token with no matching profile', async () => {
+    prisma.profile.findUnique.mockResolvedValue(null);
+    const { context, request } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    expect(request.user).toBeUndefined();
+  });
+
+  it('logs a config error ONCE per process, not once per request', async () => {
+    // On a single-scheme deployment an unauthenticated caller can reach the
+    // "not configured" branch at will just by writing an alg header, so this
+    // must never become a free ERROR-level flood.
+    const logged: string[] = [];
+    vi.spyOn(Logger.prototype, 'error').mockImplementation((message: unknown) => {
+      logged.push(String(message));
+    });
+    vi.mocked(tokenVerifier.verify).mockRejectedValue(
+      new TokenVerificationError('Auth is not configured: nope', true),
+    );
+
+    const { context } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatch(/Auth is not configured/);
+  });
+
+  it('never logs an ordinary verification failure', async () => {
+    const logged: string[] = [];
+    vi.spyOn(Logger.prototype, 'error').mockImplementation((message: unknown) => {
+      logged.push(String(message));
+    });
+    vi.mocked(tokenVerifier.verify).mockRejectedValue(new Error('bad signature'));
+
+    const { context } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    expect(logged).toHaveLength(0);
+  });
+
+  it('lets a @Public() route through without a token', async () => {
+    vi.mocked(reflector.getAllAndOverride).mockReturnValueOnce(true);
+    const request = { headers: {} };
+    const context = {
+      switchToHttp: () => ({ getRequest: () => request }),
+      getHandler: () => null,
+      getClass: () => null,
+    } as unknown as ExecutionContext;
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(tokenVerifier.verify).not.toHaveBeenCalled();
   });
 });

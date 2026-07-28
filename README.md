@@ -63,7 +63,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (165 unit + 14 E2E) + live RLS containment probes | ✅ |
+| Automated tests (245 unit + 14 E2E) + live RLS containment probes | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
@@ -100,7 +100,7 @@ flowchart LR
 
   Web -- "sign in (email/password)" --> Auth
   Web -- "REST + Bearer JWT" --> API
-  API -- "verify JWT (HS256)" --> Auth
+  API -- "verify JWT (HS256 or JWKS)" --> Auth
   API -- "Prisma (owner role, bypasses RLS)" --> DB
   DB -. "RLS = 2nd line of defence" .-> API
   Shared --- Web
@@ -112,7 +112,7 @@ flowchart LR
 | Layer | Technology |
 | --- | --- |
 | **Frontend** | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, shadcn/ui, Recharts, Zustand, `@supabase/ssr` |
-| **Backend** | NestJS 11, Prisma 6 ORM, `class-validator`, `jsonwebtoken` (Supabase JWT verification) |
+| **Backend** | NestJS 11, Prisma 6 ORM, `class-validator`, `jose` (Supabase JWT verification — HS256 + JWKS) |
 | **Database / Auth / Storage** | Supabase (PostgreSQL + RLS, Auth, Storage) |
 | **Shared** | `@tonyai/shared-types` — domain + API contracts used by both apps |
 | **Tooling** | Turborepo, pnpm workspaces, Vitest, Playwright, GitHub Actions |
@@ -187,7 +187,7 @@ The relevant subagents (`backend-integrator`, `architect`, `security-rls`) have 
 1. The user signs in on **`/login`**; `@supabase/ssr` stores the session (a JWT) in cookies.
 2. **`proxy.ts`** protects every route — unauthenticated users are redirected to `/login`. (Next.js 16 renamed the `middleware` file convention to `proxy`; same behaviour.)
 3. The frontend calls the API through **`apps/web/lib/api.ts`**, attaching `Authorization: Bearer <access_token>`.
-4. The NestJS **`SupabaseAuthGuard`** verifies the JWT (HS256, `SUPABASE_JWT_SECRET`), loads the user's `Profile`, and computes **`accessibleSubsidiaryIds`** (a `data_entry` user is limited to explicit access rows; other roles get organisation‑wide visibility).
+4. The NestJS **`SupabaseAuthGuard`** verifies the JWT (shared HS256 secret or asymmetric via JWKS — see Security model), loads the user's `Profile`, and computes **`accessibleSubsidiaryIds`** (a `data_entry` user is limited to explicit access rows; other roles get organisation‑wide visibility).
 5. Services scope **every query** to that set; only `super_admin` may create/update/delete; each mutation writes an `audit_log` row.
 6. **Row Level Security** in Postgres independently denies cross‑tenant reads, so even a direct database/PostgREST client is contained.
 
@@ -204,6 +204,7 @@ Tenant isolation is enforced in **two independent layers** — neither replaces 
 
 Additional guarantees:
 
+- **Token verification** — Supabase access tokens are accepted under both signing schemes: the legacy shared **HS256** secret and **asymmetric** keys (ES256/RS256) fetched from the project's JWKS. The key material fixes the algorithm allow‑list on each path, so a token can never downgrade a public key into an HMAC secret, and `alg: none` matches neither path. Tokens must carry `aud: authenticated`, `sub` and `exp`, which is what keeps the anon/service‑role keys (JWTs signed with the same secret) from being replayed as user tokens. `SUPABASE_JWT_SCHEME` pins the accepted scheme; a boot-time check **refuses to start** with an unpinned scheme or the public demo secret. That check is on by default and is relaxed only by an explicit `ALLOW_INSECURE_LOCAL_AUTH=true` **together with** a loopback `SUPABASE_URL` — deliberately not keyed on `NODE_ENV`, since the container image sets it locally and a plain `node dist/main.js` deployment sets nothing, so a copied `.env` pointed at a real project always fails closed.
 - **RBAC** — writes require `super_admin`; reads are tenant‑scoped for everyone.
 - **Audit immutability** — `audit_log` has SELECT‑only policies (super_admin) and **no** UPDATE/DELETE; it is append‑only.
 - **No secrets in git** — all `.env*` files are git‑ignored; only `.env.example` templates are committed.
@@ -215,7 +216,9 @@ Additional guarantees:
 
 ### Prerequisites
 
-- **Node ≥ 20**, **pnpm**, **Docker Desktop** (running), **Supabase CLI**
+- **Node ≥ 20**, **pnpm** (enable Corepack so the pinned version is used: `corepack enable`), **Docker Desktop** (running), **Supabase CLI ≥ 2.0** (`brew install supabase/tap/supabase`)
+
+`pnpm setup` enforces the CLI floor and finishes with a login smoke check that prints how your project signs tokens (`HS256` shared secret or asymmetric via JWKS) — both are supported, so a newer CLI is fine.
 
 ### First‑time setup
 
@@ -265,9 +268,12 @@ pnpm dev            # web -> http://localhost:3000   api -> http://localhost:300
 | `supabase: command not found` | Install the Supabase CLI (`brew install supabase/tap/supabase`). |
 | Port `3000` / `3001` / `54321` already in use | Stop the other process (or `supabase stop`) and re‑run. |
 | `401 Invalid or expired token` after restarting Supabase | Keys rotated — re‑run `pnpm setup` to re‑sync the `.env` files. |
+| Login succeeds but every page is empty and shows an auth error | The API could not verify the token. Re‑run `pnpm setup` and read its final "Verifying the login chain" line: it reports the signing algorithm and, for asymmetric projects, whether the JWKS endpoint is reachable. A stale `apps/api/.env` (secret from a previous Supabase instance) is the usual cause. |
+| API exits at startup: *"SUPABASE_JWT_SCHEME must be pinned…"* or *"…demo secret"* | Working as designed — the boot check refuses an unpinned scheme or the public demo secret unless the run is explicitly local. Re‑run `pnpm setup`, which writes `ALLOW_INSECURE_LOCAL_AUTH=true` into `apps/api/.env`. `.env` files predating this check do not have it. For a real deployment, pin `SUPABASE_JWT_SCHEME` and set the project's own secret instead. |
 | Login works but no data shows | Make sure the DB was seeded (`pnpm db:seed`); or `pnpm db:reset`. |
 | Stale schema / weird data | `pnpm db:reset` (drops, re‑migrates, re‑seeds). |
 | `pnpm: command not found` | `npm i -g pnpm` (or enable via Corepack). |
+| `pnpm dev` eats memory / freezes the machine | Check that `outputFileTracingRoot` is **not** applied to the dev phase in `apps/web/next.config.mjs` — Next's Turbopack dev server adopts it as the project root and would then index and watch the whole monorepo. If a stale cache is suspected, delete `apps/web/.next`. |
 
 ---
 
@@ -395,10 +401,28 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 
 ---
 
+## Observability
+
+The API emits **one structured JSON line per request** to stdout — the shape every log aggregator (Cloud Logging, Loki) expects from a container:
+
+```json
+{"ts":"2026-07-27T17:31:24.008Z","level":"info","msg":"request","requestId":"5c39d54a-…","method":"GET","path":"/api/v1/subsidiaries","status":200,"durationMs":2,"userId":"62db344f-…"}
+```
+
+- **Request ids** — an inbound `x-request-id` is honoured (so a load balancer's trace id stays stitched to our logs), otherwise one is minted. It is echoed in the response header (CORS‑exposed) and attached to every log line of that request via `AsyncLocalStorage`.
+- **Levels** — 4xx are expected business outcomes (a blocked submit gate, a 403) and log at `warn`; 5xx and unhandled throws log at `error` with a stack and go to stderr.
+- **`LOG_FORMAT`** — `pretty` (default in dev) or `json` (default in production).
+- **Sentry** is opt‑in: without `SENTRY_DSN` / `NEXT_PUBLIC_SENTRY_DSN` the SDK is never initialised and every capture is a no‑op. `sendDefaultPii` is off by design — this product holds tenant emissions data.
+- **Uptime targets** once a staging URL exists: `GET /api/v1/health` (public) and `GET /login`.
+
+The web app has route (`error.tsx`), root (`global-error.tsx`) and 404 boundaries; client errors report to Sentry when a DSN is configured.
+
+---
+
 ## Testing
 
-- **Unit (Vitest, DB‑free):** 21 tests in `apps/api` covering tenant scoping, RBAC, audit writes and KPI aggregation with a mocked Prisma client. Run `pnpm test`.
-- **E2E (Playwright):** 10 specs against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
+- **Unit (Vitest, DB‑free):** 245 tests in `apps/api` covering the calculation engine, tenant scoping, RBAC, lifecycle gates, targets/intensity math, report assembly, request logging and JWT verification (both signing schemes, incl. algorithm‑confusion and `alg: none` forgeries) with a mocked Prisma client. Run `pnpm test`.
+- **E2E (Playwright):** 14 tests across 8 specs against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
 - **RLS containment probes:** `pnpm rls:probe` hits Supabase PostgREST directly (anon + a data_entry JWT) and asserts, per tenant table, that anon sees nothing, the user sees its own rows, and it sees **exactly** its own tenants' rows and no others (cross-tenant rows hidden — even a partial leak fails) — proving the database-layer defence holds independently of the API guard.
 
 CI (`.github/workflows/ci.yml`) runs install → Prisma generate → typecheck → build → unit tests on every push/PR. E2E + RLS probes are intentionally kept out of the default CI pipeline (they need a live Supabase); **wiring them into CI is deferred to Phase 2** (staging smoke E2E), per the roadmap.
@@ -412,7 +436,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 | File | Key | Used for |
 | --- | --- | --- |
 | `apps/web/.env.local` | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_API_BASE_URL` | Browser Supabase client + API base |
-| `apps/api/.env` | `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `PORT`, `WEB_ORIGIN` | JWT verification, CORS, server |
+| `apps/api/.env` | `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_JWT_SCHEME`, `ALLOW_INSECURE_LOCAL_AUTH`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `PORT`, `WEB_ORIGIN` | JWT verification (`SUPABASE_URL` is the JWKS origin; the flag is local-dev only), CORS, server |
 | `packages/db/.env` | `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Prisma + seed |
 
 ---

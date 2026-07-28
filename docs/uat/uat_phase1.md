@@ -19,6 +19,9 @@ TonyAI is a multi-tenant carbon-accounting platform for holding companies. Phase
 | One-command setup | `pnpm setup` (Supabase up → env sync → migrate → seed) |
 | Start the app | `pnpm dev` → web at **http://localhost:3000**, API at :3001 |
 | Reset demo data | `pnpm db:reset` — restores the full seed at any time |
+| **After pulling new code** | Run `pnpm install` — the Phase-2 prep work added dependencies, and a stale `node_modules` fails at startup. |
+
+> **One-time sign-out after updating (not a bug).** The Phase-2 containerization work renamed the browser session cookie, so the first time you open the app after pulling you will land on `/login` even if you were signed in before. Sign in again with the same credentials — it happens once, and `AUTH-01`…`AUTH-04` behave normally afterwards.
 
 **Test users** (password for both: `TonyAI!2026`):
 
@@ -133,6 +136,7 @@ Conventions: run as `admin@tonyai.local` unless the TC says otherwise. Mark each
 - Subsidiaries have no **Edit** dialog yet (create/delete only; editing exists in the API).
 - The matrix drill-down sheet has no "Go to Data Entry" shortcut.
 - Consultant / executive_viewer roles exist but have no seed users; their flows are not part of this UAT.
+- Unknown URLs and unexpected render failures now show **branded TonyAI pages** ("Page not found" / "Something went wrong" with a reference code) instead of the framework's default screens — that is the new error handling, not a defect. While signed out, any URL still redirects to `/login` first, so the 404 page only appears once you are signed in. Do report the error that *caused* such a page, quoting the reference code.
 
 ## 5. Reporting an issue
 
@@ -156,7 +160,7 @@ The demo dataset can always be restored with `pnpm db:reset`.
 
 ## 7. Automation baseline (already verified before this UAT)
 
-- **165 API unit tests** — calculation engine (unit conversions to the digit), tenant isolation, RBAC, all lifecycle gates incl. the review transition, targets/intensity math, report assembly/status honesty.
+- **182 API unit tests** — calculation engine (unit conversions to the digit), tenant isolation, RBAC, all lifecycle gates incl. the review transition, targets/intensity math, report assembly/status honesty.
 - **14 end-to-end tests** (Playwright) — login, CRUD, full data-entry lifecycle incl. evidence upload and approval, all three gates, RBAC/tenant negatives, analytics/dashboard smoke, targets round-trip, report downloads (exact filenames + magic-byte checks) and the data_entry no-export rule.
 - **18 live RLS containment probes** — the database layer independently hides cross-tenant rows even when the API is bypassed.
 - Every mutation writes an append-only **audit log** row.
