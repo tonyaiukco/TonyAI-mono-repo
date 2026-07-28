@@ -136,7 +136,7 @@ Conventions: run as `admin@tonyai.local` unless the TC says otherwise. Mark each
 - Subsidiaries have no **Edit** dialog yet (create/delete only; editing exists in the API).
 - The matrix drill-down sheet has no "Go to Data Entry" shortcut.
 - Consultant / executive_viewer roles exist but have no seed users; their flows are not part of this UAT.
-- Unknown URLs and unexpected render failures now show **branded TonyAI pages** ("Page not found" / "Something went wrong" with a reference code) instead of the framework's default screens — that is the new error handling, not a defect. Do report the error that *caused* such a page, quoting the reference code.
+- Unknown URLs and unexpected render failures now show **branded TonyAI pages** ("Page not found" / "Something went wrong" with a reference code) instead of the framework's default screens — that is the new error handling, not a defect. While signed out, any URL still redirects to `/login` first, so the 404 page only appears once you are signed in. Do report the error that *caused* such a page, quoting the reference code.
 
 ## 5. Reporting an issue
 
