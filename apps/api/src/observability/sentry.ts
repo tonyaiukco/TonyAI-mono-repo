@@ -4,17 +4,32 @@
  * DSN arrives later (Phase-2 decision, 2026-07-27). Nothing else in the API
  * imports @sentry/* — this is the only seam.
  *
- * @sentry/nestjs is imported LAZILY and only when a DSN is set: requiring it
- * pulls the whole OpenTelemetry graph into the process, which costs real
- * memory in dev watch mode for zero benefit while Sentry is disabled.
+ * The SDK is loaded LAZILY (dynamic import, only when a DSN is set) so the
+ * OpenTelemetry runtime never enters the process while Sentry is disabled.
+ *
+ * It is also typed STRUCTURALLY, on purpose: a `typeof import('@sentry/nestjs')`
+ * annotation pulled 573 Sentry/OpenTelemetry `.d.ts` files into the API's
+ * TypeScript program (35% of it), which `nest start --watch` then held in
+ * memory for the whole dev session. The narrow surface below is all we use.
  */
+type SentryScope = {
+  setTag(key: string, value: string): void;
+  setUser(user: { id: string }): void;
+};
+
+type SentryApi = {
+  init(options: Record<string, unknown>): void;
+  withScope(callback: (scope: SentryScope) => void): void;
+  captureException(error: unknown): void;
+};
+
 const dsn = process.env.SENTRY_DSN;
 
-let sentry: typeof import('@sentry/nestjs') | null = null;
+let sentry: SentryApi | null = null;
 
 export async function initSentry(): Promise<void> {
   if (sentry || !dsn) return;
-  const mod = await import('@sentry/nestjs');
+  const mod = (await import('@sentry/nestjs')) as unknown as SentryApi;
   mod.init({
     dsn,
     environment: process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? 'development',

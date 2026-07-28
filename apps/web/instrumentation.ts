@@ -3,25 +3,32 @@
  * nothing initialises, so this ships and reviews now while the account/DSN
  * arrives later (Phase-2 decision, 2026-07-27).
  *
- * @sentry/nextjs is imported LAZILY and only when a DSN is set: its module
- * graph (~66 packages incl. OpenTelemetry) is heavy enough to matter for dev
- * compile memory on small machines, so without a DSN it must never load.
+ * The SDK is imported LAZILY and typed STRUCTURALLY (never
+ * `typeof import("@sentry/nextjs")`) so the Sentry/OpenTelemetry declaration
+ * graph stays out of the web app's TypeScript program and out of the dev
+ * server's eager module graph while Sentry is disabled.
  */
+type SentryServerApi = {
+  init(options: Record<string, unknown>): void;
+  captureRequestError(error: unknown, request: unknown, context: unknown): void;
+};
+
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
-let sentryReady: Promise<typeof import("@sentry/nextjs")> | null = null;
+let sentryReady: Promise<SentryServerApi> | null = null;
 
-function loadSentry(): Promise<typeof import("@sentry/nextjs")> | null {
+function loadSentry(): Promise<SentryServerApi> | null {
   if (!dsn) return null;
-  sentryReady ??= import("@sentry/nextjs").then((Sentry) => {
-    Sentry.init({
+  sentryReady ??= import("@sentry/nextjs").then((mod) => {
+    const sentry = mod as unknown as SentryServerApi;
+    sentry.init({
       dsn,
       environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? process.env.NODE_ENV,
       tracesSampleRate: 0,
       // Compliance: never ship request bodies/headers — they carry tenant data.
       sendDefaultPii: false,
     });
-    return Sentry;
+    return sentry;
   });
   return sentryReady;
 }
@@ -31,9 +38,11 @@ export async function register(): Promise<void> {
 }
 
 /** Report React Server Component render errors (Next.js 15+ hook). */
-export const onRequestError = async (
-  ...args: Parameters<typeof import("@sentry/nextjs").captureRequestError>
-): Promise<void> => {
+export async function onRequestError(
+  error: unknown,
+  request: unknown,
+  context: unknown,
+): Promise<void> {
   const sentry = await loadSentry();
-  if (sentry) sentry.captureRequestError(...args);
-};
+  sentry?.captureRequestError(error, request, context);
+}

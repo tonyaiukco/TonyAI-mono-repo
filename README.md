@@ -268,6 +268,7 @@ pnpm dev            # web -> http://localhost:3000   api -> http://localhost:300
 | Login works but no data shows | Make sure the DB was seeded (`pnpm db:seed`); or `pnpm db:reset`. |
 | Stale schema / weird data | `pnpm db:reset` (drops, re‑migrates, re‑seeds). |
 | `pnpm: command not found` | `npm i -g pnpm` (or enable via Corepack). |
+| `pnpm dev` eats memory / freezes the machine | Check that `outputFileTracingRoot` is **not** applied to the dev phase in `apps/web/next.config.mjs` — Next's Turbopack dev server adopts it as the project root and would then index and watch the whole monorepo. If a stale cache is suspected, delete `apps/web/.next`. |
 
 ---
 
@@ -291,7 +292,7 @@ Run from the repo root (Turborepo fans out to each package):
 | Script | Description |
 | --- | --- |
 | `pnpm setup` | One‑command local bootstrap (deps, Supabase, `.env` sync, migrate, seed) |
-| `pnpm dev` | Run web + api in watch mode (each watcher runs with a `--max-old-space-size` cap so a runaway compile kills that process, not the machine) |
+| `pnpm dev` | Run web + api in watch mode |
 | `pnpm build` | Build all packages |
 | `pnpm typecheck` | Type‑check the whole repo |
 | `pnpm test` | Unit tests (Vitest) |

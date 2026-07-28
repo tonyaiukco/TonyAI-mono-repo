@@ -2,6 +2,13 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# @sentry/nextjs pins its SDK at 10.40.0 but floats @sentry/bundler-plugins,
+# which dragged in a SECOND copy of @sentry/core (10.68.0). The bundler plugin
+# is never loaded (we do not use withSentryConfig), so collapse both to the
+# pinned SDK version rather than ship two Sentry cores.
+overrides:
+  '@sentry/core': 10.40.0
+
 allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
