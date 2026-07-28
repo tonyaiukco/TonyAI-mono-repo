@@ -27,6 +27,10 @@ services:
       # hs256 | jwks | auto — see apps/api/.env.example. Local dev keeps `auto`
       # because the supabase-cli version decides how the project signs tokens.
       SUPABASE_JWT_SCHEME: "${SUPABASE_JWT_SCHEME:-auto}"
+      # This compose file is LOCAL ONLY (it talks to host.docker.internal), so
+      # the API is told it may accept the demo secret / an unpinned scheme. The
+      # flag has no effect unless SUPABASE_URL is a loopback host.
+      ALLOW_INSECURE_LOCAL_AUTH: "true"
       SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:?run via pnpm docker:up}"
       # Observability (all optional — empty means disabled).
       LOG_FORMAT: "${LOG_FORMAT:-json}"

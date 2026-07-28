@@ -70,9 +70,16 @@ done
 
 # JWT_SECRET is OPTIONAL: a project that signs asymmetrically has no shared
 # secret, and the API verifies those against the JWKS at SUPABASE_URL instead.
+# An asymmetric-only project has no shared secret; pin the scheme so the API
+# does not fall back to one. Otherwise leave it on `auto` (the CLI version
+# decides locally) — never leave JWT_SECRET unset AND unpinned.
 if [ -z "${JWT_SECRET:-}" ]; then
   warn "No JWT_SECRET reported — assuming this project signs tokens asymmetrically."
   info "The API will verify against \${SUPABASE_URL}/auth/v1/.well-known/jwks.json."
+  JWT_SECRET=""
+  JWT_SCHEME="jwks"
+else
+  JWT_SCHEME="auto"
 fi
 
 cat > apps/web/.env.local <<EOF
@@ -88,8 +95,13 @@ WEB_ORIGIN="http://localhost:3000"
 DATABASE_URL="${DB_URL}"
 DIRECT_URL="${DB_URL}"
 SUPABASE_URL="${API_URL}"
-SUPABASE_JWT_SECRET="${JWT_SECRET}"
+SUPABASE_JWT_SECRET="${JWT_SECRET:-}"
+SUPABASE_JWT_SCHEME="${JWT_SCHEME}"
 SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY}"
+# Local development only: lets the API accept the public demo secret / an
+# unpinned scheme, and ONLY together with a loopback SUPABASE_URL. Never set
+# this in a deployed environment — the API is meant to refuse to boot there.
+ALLOW_INSECURE_LOCAL_AUTH=true
 EOF
 info "wrote apps/api/.env"
 
@@ -141,7 +153,7 @@ case "$ALG" in
   HS*)
     # Actually verify the signature against the secret we just wrote, instead of
     # asserting a ✓ we never checked.
-    if printf '%s' "$AUTH_JSON" | JWT_SECRET="$JWT_SECRET" node -e "
+    if printf '%s' "$AUTH_JSON" | JWT_SECRET="${JWT_SECRET:-}" node -e "
       const {createHmac,timingSafeEqual}=require('crypto');
       let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
         try{

@@ -36,6 +36,8 @@ describe('TokenVerifier', () => {
   beforeEach(() => {
     process.env.SUPABASE_JWT_SECRET = SECRET;
     delete process.env.SUPABASE_JWT_SCHEME;
+    delete process.env.SUPABASE_JWT_AUDIENCE;
+    delete process.env.ALLOW_INSECURE_LOCAL_AUTH;
     delete process.env.NODE_ENV;
   });
   afterEach(() => {
@@ -217,37 +219,74 @@ describe('TokenVerifier', () => {
   });
 
   describe('assertAuthConfig (boot-time)', () => {
-    it('passes for a normal local setup', () => {
+    /** What `pnpm setup` writes into apps/api/.env. */
+    function localDevEnv() {
       process.env.SUPABASE_URL = 'http://127.0.0.1:54321';
+      process.env.ALLOW_INSECURE_LOCAL_AUTH = 'true';
+      process.env.SUPABASE_JWT_SECRET = DEMO_SECRET;
+    }
+
+    it('passes for a normal local setup', () => {
+      localDevEnv();
       expect(() => assertAuthConfig()).not.toThrow();
     });
 
-    it('refuses to boot in production without an explicit scheme', () => {
-      process.env.NODE_ENV = 'production';
+    // The whole point of the gate: NODE_ENV must NOT be what decides. A staging
+    // box started as `node dist/main.js` has no NODE_ENV at all, and an earlier
+    // revision of this check silently passed it.
+    it.each([
+      ['unset', undefined],
+      ['staging', 'staging'],
+      ['development', 'development'],
+      ['production', 'production'],
+    ])('refuses an unpinned scheme against a real project with NODE_ENV=%s', (_label, env) => {
+      if (env === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = env;
       process.env.SUPABASE_URL = 'https://project.supabase.co';
-      expect(() => assertAuthConfig()).toThrow(/must be set to "hs256" or "jwks" in production/);
+      expect(() => assertAuthConfig()).toThrow(/must be pinned to "hs256" or "jwks"/);
     });
 
-    it('refuses to boot in production with the publicly known demo secret', () => {
-      process.env.NODE_ENV = 'production';
+    it.each([
+      ['unset', undefined],
+      ['staging', 'staging'],
+      ['production', 'production'],
+    ])('refuses the publicly known demo secret against a real project (NODE_ENV=%s)', (_l, env) => {
+      if (env === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = env;
       process.env.SUPABASE_URL = 'https://project.supabase.co';
       process.env.SUPABASE_JWT_SCHEME = 'hs256';
       process.env.SUPABASE_JWT_SECRET = DEMO_SECRET;
       expect(() => assertAuthConfig()).toThrow(/demo secret/);
     });
 
-    it('accepts a correctly configured production deployment (jwks)', () => {
-      process.env.NODE_ENV = 'production';
-      process.env.SUPABASE_JWT_SCHEME = 'jwks';
+    it('ignores the local opt-in when the Supabase host is NOT loopback', () => {
+      // A copied local .env pointed at a real project must still fail closed.
+      process.env.ALLOW_INSECURE_LOCAL_AUTH = 'true';
       process.env.SUPABASE_URL = 'https://project.supabase.co';
-      delete process.env.SUPABASE_JWT_SECRET;
-      expect(() => assertAuthConfig()).not.toThrow();
+      process.env.SUPABASE_JWT_SECRET = DEMO_SECRET;
+      expect(() => assertAuthConfig()).toThrow();
     });
 
-    it('accepts a correctly configured production deployment (hs256, real secret)', () => {
-      process.env.NODE_ENV = 'production';
-      process.env.SUPABASE_URL = 'https://project.supabase.co';
+    it('does NOT treat a corporate .local host as local', () => {
+      // An on-prem Supabase behind corporate DNS holds real tenant data.
+      process.env.ALLOW_INSECURE_LOCAL_AUTH = 'true';
+      process.env.SUPABASE_URL = 'https://supabase.corp.local';
+      process.env.SUPABASE_JWT_SECRET = DEMO_SECRET;
       process.env.SUPABASE_JWT_SCHEME = 'hs256';
+      expect(() => assertAuthConfig()).toThrow(/demo secret/);
+    });
+
+    it('requires the opt-in flag even on a loopback host', () => {
+      process.env.SUPABASE_URL = 'http://127.0.0.1:54321';
+      process.env.SUPABASE_JWT_SECRET = DEMO_SECRET;
+      delete process.env.ALLOW_INSECURE_LOCAL_AUTH;
+      expect(() => assertAuthConfig()).toThrow(/pnpm setup/);
+    });
+
+    it.each(['jwks', 'hs256'])('accepts a correctly configured deployment (%s)', (scheme) => {
+      process.env.NODE_ENV = 'production';
+      process.env.SUPABASE_JWT_SCHEME = scheme;
+      process.env.SUPABASE_URL = 'https://project.supabase.co';
       process.env.SUPABASE_JWT_SECRET = 'a-real-project-secret-not-the-demo-one';
       expect(() => assertAuthConfig()).not.toThrow();
     });
@@ -256,10 +295,11 @@ describe('TokenVerifier', () => {
       'http://localhost:54321',
       'http://127.0.0.1:54321',
       'http://host.docker.internal:54321',
-    ])('does NOT apply the production rules to the local stack at %s', (url) => {
+    ])('allows the opted-in local stack at %s', (url) => {
       // `pnpm docker:up` runs a production BUILD against local Supabase and the
       // demo secret; refusing to boot there would kill the container workflow.
       process.env.NODE_ENV = 'production';
+      process.env.ALLOW_INSECURE_LOCAL_AUTH = 'true';
       process.env.SUPABASE_URL = url;
       process.env.SUPABASE_JWT_SCHEME = 'auto';
       process.env.SUPABASE_JWT_SECRET = DEMO_SECRET;
@@ -277,9 +317,18 @@ describe('TokenVerifier', () => {
     });
 
     it('refuses to boot when nothing at all is configured', () => {
+      // Fails closed on the scheme gate first (no URL means not local, so the
+      // strict rules apply) — which message wins matters less than that one does.
       delete process.env.SUPABASE_JWT_SECRET;
       delete process.env.SUPABASE_URL;
-      expect(() => assertAuthConfig()).toThrow(/Auth is not configured/);
+      expect(() => assertAuthConfig()).toThrow();
+    });
+
+    it('still refuses when a pinned scheme has nothing to verify with', () => {
+      delete process.env.SUPABASE_JWT_SECRET;
+      delete process.env.SUPABASE_URL;
+      process.env.SUPABASE_JWT_SCHEME = 'hs256';
+      expect(() => assertAuthConfig()).toThrow(/SUPABASE_JWT_SECRET is not set/);
     });
   });
 

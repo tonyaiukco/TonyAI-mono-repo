@@ -23,12 +23,15 @@ import type { RequestUser } from './auth.types';
 export class SupabaseAuthGuard implements CanActivate {
   private readonly logger = new Logger(SupabaseAuthGuard.name);
   /**
-   * Config errors are logged ONCE per process. On a single-scheme deployment an
-   * unauthenticated caller can trigger the other scheme's "not configured"
-   * message at will (the header alone picks the path, before any signature
-   * check), so logging per request would be a free ERROR-level flood.
+   * Config errors are throttled per message. An unauthenticated caller can
+   * trigger some of them at will (the `alg` header alone picks the path, before
+   * any signature check), so logging per request would be a free ERROR-level
+   * flood — but logging strictly once per process is worse in the other
+   * direction: a transient blip at 02:00 would permanently silence the real
+   * outage next week. Re-log after the window instead.
    */
-  private loggedConfigErrors = new Set<string>();
+  private static readonly CONFIG_LOG_WINDOW_MS = 5 * 60_000;
+  private lastLoggedConfigError = new Map<string, number>();
 
   constructor(
     private readonly reflector: Reflector,
@@ -56,13 +59,13 @@ export class SupabaseAuthGuard implements CanActivate {
       // A misconfigured API 401s every request identically to a bad token, which
       // is exactly how "the page loads but there is no data" happens. Surface
       // the cause in the server log; the client still learns nothing.
-      if (
-        error instanceof TokenVerificationError &&
-        error.configError &&
-        !this.loggedConfigErrors.has(error.message)
-      ) {
-        this.loggedConfigErrors.add(error.message);
-        this.logger.error(error.message);
+      if (error instanceof TokenVerificationError && error.configError) {
+        const now = Date.now();
+        const last = this.lastLoggedConfigError.get(error.message) ?? 0;
+        if (now - last >= SupabaseAuthGuard.CONFIG_LOG_WINDOW_MS) {
+          this.lastLoggedConfigError.set(error.message, now);
+          this.logger.error(error.message);
+        }
       }
       throw new UnauthorizedException('Invalid or expired token');
     }
