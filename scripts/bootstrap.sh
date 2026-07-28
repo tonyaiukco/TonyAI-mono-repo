@@ -109,9 +109,12 @@ pnpm --filter @tonyai/db run seed
 # a key/algorithm mismatch only surfaces later as "the page loads but there is
 # no data and an auth error" — the browser login succeeds, every API call 401s.
 step "Verifying the login chain"
-AUTH_JSON="$(curl -s -X POST "${API_URL}/auth/v1/token?grant_type=password" \
-  -H "apikey: ${ANON_KEY}" -H "Content-Type: application/json" \
-  -d '{"email":"admin@tonyai.local","password":"TonyAI!2026"}' --max-time 20 || true)"
+# The body goes in on stdin so the seed password never lands in the process
+# list, where any local user could read it via `ps`.
+AUTH_JSON="$(printf '%s' '{"email":"admin@tonyai.local","password":"TonyAI!2026"}' \
+  | curl -s -X POST "${API_URL}/auth/v1/token?grant_type=password" \
+    -H "apikey: ${ANON_KEY}" -H "Content-Type: application/json" \
+    --data @- --max-time 20 || true)"
 
 ALG="$(printf '%s' "$AUTH_JSON" | node -e "
 let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{

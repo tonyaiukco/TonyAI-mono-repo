@@ -1,13 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { UnauthorizedException } from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
 import type { Reflector } from '@nestjs/core';
 import { SupabaseAuthGuard } from './auth.guard';
+import { tokenVerifier } from './token-verifier';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from './auth.types';
 
 // Token verification is stubbed so these cases can drive the token subject
 // without real keys; the verifier itself is covered by token-verifier.spec.ts.
-vi.mock('./token-verifier', () => ({
+vi.mock('./token-verifier', async (importOriginal) => ({
+  // Keep the real TokenVerificationError so the guard's instanceof check (which
+  // decides whether a config problem gets logged) behaves as in production.
+  ...(await importOriginal<typeof import('./token-verifier')>()),
   tokenVerifier: { verify: vi.fn().mockResolvedValue({ sub: 'user-1' }) },
 }));
 
@@ -103,5 +108,78 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
     await guard.canActivate(context);
     expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
     expect(request.user?.accessibleSubsidiaryIds).toEqual([]);
+  });
+});
+
+/**
+ * The guard is the PRIMARY tenant-isolation enforcement point, so every way it
+ * can refuse a request is locked down here. Without these, a refactor that
+ * dropped the try/catch or the `sub` check would ship green.
+ */
+describe('SupabaseAuthGuard — rejection paths', () => {
+  let prisma: PrismaMock;
+  let guard: SupabaseAuthGuard;
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    guard = new SupabaseAuthGuard(reflector, prisma as unknown as PrismaService);
+    vi.mocked(tokenVerifier.verify).mockResolvedValue({ sub: 'user-1' });
+  });
+
+  it.each([
+    ['no Authorization header', undefined],
+    ['a non-Bearer scheme', 'Basic dXNlcjpwYXNz'],
+    ['a bare token without the Bearer prefix', 'eyJhbGciOiJIUzI1NiJ9.e30.x'],
+  ])('rejects %s without touching the database', async (_label, header) => {
+    const request: { headers: Record<string, string>; user?: RequestUser } = { headers: {} };
+    if (header) request.headers.authorization = header;
+    const context = {
+      switchToHttp: () => ({ getRequest: () => request }),
+      getHandler: () => null,
+      getClass: () => null,
+    } as unknown as ExecutionContext;
+
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.profile.findUnique).not.toHaveBeenCalled();
+    expect(request.user).toBeUndefined();
+  });
+
+  it('rejects when verification fails, and never attaches a user', async () => {
+    vi.mocked(tokenVerifier.verify).mockRejectedValue(new Error('bad signature'));
+    const { context, request } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.profile.findUnique).not.toHaveBeenCalled();
+    expect(request.user).toBeUndefined();
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['absent', {}],
+    ['non-string', { sub: 42 }],
+  ])('rejects a verified token whose sub is %s', async (_label, payload) => {
+    vi.mocked(tokenVerifier.verify).mockResolvedValue(payload);
+    const { context, request } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.profile.findUnique).not.toHaveBeenCalled();
+    expect(request.user).toBeUndefined();
+  });
+
+  it('rejects a valid token with no matching profile', async () => {
+    prisma.profile.findUnique.mockResolvedValue(null);
+    const { context, request } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    expect(request.user).toBeUndefined();
+  });
+
+  it('lets a @Public() route through without a token', async () => {
+    vi.mocked(reflector.getAllAndOverride).mockReturnValueOnce(true);
+    const request = { headers: {} };
+    const context = {
+      switchToHttp: () => ({ getRequest: () => request }),
+      getHandler: () => null,
+      getClass: () => null,
+    } as unknown as ExecutionContext;
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(tokenVerifier.verify).not.toHaveBeenCalled();
   });
 });

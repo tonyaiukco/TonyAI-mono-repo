@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { initSentry } from './observability/sentry';
+import { assertAuthConfig } from './auth/token-verifier';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
@@ -11,6 +12,9 @@ async function bootstrap() {
   // Sentry first, before Nest builds the app — a no-op unless SENTRY_DSN is
   // set (and @sentry/nestjs is only loaded then; see observability/sentry.ts).
   await initSentry();
+  // Refuse to start on an auth misconfiguration instead of 401-ing every
+  // request with an indistinguishable "invalid token".
+  assertAuthConfig();
   const logger = new JsonLogger();
   const app = await NestFactory.create(AppModule, { logger });
   app.setGlobalPrefix('api/v1');

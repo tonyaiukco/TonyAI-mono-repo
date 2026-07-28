@@ -22,6 +22,13 @@ import type { RequestUser } from './auth.types';
 @Injectable()
 export class SupabaseAuthGuard implements CanActivate {
   private readonly logger = new Logger(SupabaseAuthGuard.name);
+  /**
+   * Config errors are logged ONCE per process. On a single-scheme deployment an
+   * unauthenticated caller can trigger the other scheme's "not configured"
+   * message at will (the header alone picks the path, before any signature
+   * check), so logging per request would be a free ERROR-level flood.
+   */
+  private loggedConfigErrors = new Set<string>();
 
   constructor(
     private readonly reflector: Reflector,
@@ -49,7 +56,12 @@ export class SupabaseAuthGuard implements CanActivate {
       // A misconfigured API 401s every request identically to a bad token, which
       // is exactly how "the page loads but there is no data" happens. Surface
       // the cause in the server log; the client still learns nothing.
-      if (error instanceof TokenVerificationError && error.configError) {
+      if (
+        error instanceof TokenVerificationError &&
+        error.configError &&
+        !this.loggedConfigErrors.has(error.message)
+      ) {
+        this.loggedConfigErrors.add(error.message);
         this.logger.error(error.message);
       }
       throw new UnauthorizedException('Invalid or expired token');

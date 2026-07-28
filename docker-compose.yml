@@ -24,6 +24,9 @@ services:
       DIRECT_URL: "postgresql://postgres:postgres@host.docker.internal:54322/postgres"
       SUPABASE_URL: "http://host.docker.internal:54321"
       SUPABASE_JWT_SECRET: "${SUPABASE_JWT_SECRET:?run via pnpm docker:up}"
+      # hs256 | jwks | auto — see apps/api/.env.example. Local dev keeps `auto`
+      # because the supabase-cli version decides how the project signs tokens.
+      SUPABASE_JWT_SCHEME: "${SUPABASE_JWT_SCHEME:-auto}"
       SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:?run via pnpm docker:up}"
       # Observability (all optional — empty means disabled).
       LOG_FORMAT: "${LOG_FORMAT:-json}"

@@ -63,7 +63,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (165 unit + 14 E2E) + live RLS containment probes | ✅ |
+| Automated tests (222 unit + 14 E2E) + live RLS containment probes | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
@@ -204,7 +204,7 @@ Tenant isolation is enforced in **two independent layers** — neither replaces 
 
 Additional guarantees:
 
-- **Token verification** — Supabase access tokens are accepted under both signing schemes: the legacy shared **HS256** secret and **asymmetric** keys (ES256/RS256) fetched from the project's JWKS. The key material fixes the algorithm allow‑list on each path, so a token can never downgrade a public key into an HMAC secret, and `alg: none` matches neither path.
+- **Token verification** — Supabase access tokens are accepted under both signing schemes: the legacy shared **HS256** secret and **asymmetric** keys (ES256/RS256) fetched from the project's JWKS. The key material fixes the algorithm allow‑list on each path, so a token can never downgrade a public key into an HMAC secret, and `alg: none` matches neither path. Tokens must carry `aud: authenticated`, `sub` and `exp`, which is what keeps the anon/service‑role keys (JWTs signed with the same secret) from being replayed as user tokens. `SUPABASE_JWT_SCHEME` pins the accepted scheme and is **required outside local dev** — while both are accepted, a leaked legacy secret still mints valid tokens after a move to asymmetric keys. The API refuses to boot in production with the public demo secret.
 - **RBAC** — writes require `super_admin`; reads are tenant‑scoped for everyone.
 - **Audit immutability** — `audit_log` has SELECT‑only policies (super_admin) and **no** UPDATE/DELETE; it is append‑only.
 - **No secrets in git** — all `.env*` files are git‑ignored; only `.env.example` templates are committed.
@@ -420,7 +420,7 @@ The web app has route (`error.tsx`), root (`global-error.tsx`) and 404 boundarie
 
 ## Testing
 
-- **Unit (Vitest, DB‑free):** 21 tests in `apps/api` covering tenant scoping, RBAC, audit writes and KPI aggregation with a mocked Prisma client. Run `pnpm test`.
+- **Unit (Vitest, DB‑free):** 222 tests in `apps/api` covering the calculation engine, tenant scoping, RBAC, lifecycle gates, targets/intensity math, report assembly, request logging and JWT verification (both signing schemes, incl. algorithm‑confusion and `alg: none` forgeries) with a mocked Prisma client. Run `pnpm test`.
 - **E2E (Playwright):** 10 specs against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
 - **RLS containment probes:** `pnpm rls:probe` hits Supabase PostgREST directly (anon + a data_entry JWT) and asserts, per tenant table, that anon sees nothing, the user sees its own rows, and it sees **exactly** its own tenants' rows and no others (cross-tenant rows hidden — even a partial leak fails) — proving the database-layer defence holds independently of the API guard.
 
