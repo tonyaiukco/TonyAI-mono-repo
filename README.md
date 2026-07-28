@@ -291,7 +291,7 @@ Run from the repo root (Turborepo fans out to each package):
 | Script | Description |
 | --- | --- |
 | `pnpm setup` | One‑command local bootstrap (deps, Supabase, `.env` sync, migrate, seed) |
-| `pnpm dev` | Run web + api in watch mode |
+| `pnpm dev` | Run web + api in watch mode (each watcher runs with a `--max-old-space-size` cap so a runaway compile kills that process, not the machine) |
 | `pnpm build` | Build all packages |
 | `pnpm typecheck` | Type‑check the whole repo |
 | `pnpm test` | Unit tests (Vitest) |

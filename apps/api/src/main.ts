@@ -1,9 +1,5 @@
 import 'reflect-metadata';
-// Sentry must initialise before Nest builds the app so its instrumentation can
-// patch the runtime. No-op unless SENTRY_DSN is set.
 import { initSentry } from './observability/sentry';
-initSentry();
-
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
@@ -12,6 +8,9 @@ import { LoggingInterceptor } from './observability/logging.interceptor';
 import { HttpExceptionFilter } from './observability/http-exception.filter';
 
 async function bootstrap() {
+  // Sentry first, before Nest builds the app — a no-op unless SENTRY_DSN is
+  // set (and @sentry/nestjs is only loaded then; see observability/sentry.ts).
+  await initSentry();
   const logger = new JsonLogger();
   const app = await NestFactory.create(AppModule, { logger });
   app.setGlobalPrefix('api/v1');

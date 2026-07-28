@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "nest start --watch",
+    "dev": "NODE_OPTIONS=--max-old-space-size=1536 nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
     "lint": "echo \"(api) lint placeholder — eslint to be configured by qa-auditor\" && exit 0",
