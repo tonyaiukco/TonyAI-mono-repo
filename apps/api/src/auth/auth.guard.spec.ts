@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { UnauthorizedException } from '@nestjs/common';
+import { Logger, UnauthorizedException } from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
 import type { Reflector } from '@nestjs/core';
 import { SupabaseAuthGuard } from './auth.guard';
-import { tokenVerifier } from './token-verifier';
+import { tokenVerifier, TokenVerificationError } from './token-verifier';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from './auth.types';
 
@@ -168,6 +168,39 @@ describe('SupabaseAuthGuard — rejection paths', () => {
     const { context, request } = makeContext();
     await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
     expect(request.user).toBeUndefined();
+  });
+
+  it('logs a config error ONCE per process, not once per request', async () => {
+    // On a single-scheme deployment an unauthenticated caller can reach the
+    // "not configured" branch at will just by writing an alg header, so this
+    // must never become a free ERROR-level flood.
+    const logged: string[] = [];
+    vi.spyOn(Logger.prototype, 'error').mockImplementation((message: unknown) => {
+      logged.push(String(message));
+    });
+    vi.mocked(tokenVerifier.verify).mockRejectedValue(
+      new TokenVerificationError('Auth is not configured: nope', true),
+    );
+
+    const { context } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatch(/Auth is not configured/);
+  });
+
+  it('never logs an ordinary verification failure', async () => {
+    const logged: string[] = [];
+    vi.spyOn(Logger.prototype, 'error').mockImplementation((message: unknown) => {
+      logged.push(String(message));
+    });
+    vi.mocked(tokenVerifier.verify).mockRejectedValue(new Error('bad signature'));
+
+    const { context } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    expect(logged).toHaveLength(0);
   });
 
   it('lets a @Public() route through without a token', async () => {

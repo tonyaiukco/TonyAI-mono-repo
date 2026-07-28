@@ -58,6 +58,32 @@ export class TokenVerificationError extends Error {
   }
 }
 
+/**
+ * The containerized local stack (`pnpm docker:up`) runs a production BUILD
+ * (`NODE_ENV=production` in apps/api/Dockerfile) against the developer's local
+ * Supabase, demo secret and all. Keying the strict checks on NODE_ENV alone
+ * would refuse to boot there, so they key on the Supabase host instead: a
+ * deployment that talks to a real project is held to the strict rules, a
+ * loopback one is not.
+ */
+const LOCAL_SUPABASE_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '::1',
+  'host.docker.internal',
+]);
+
+function targetsLocalSupabase(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+    return LOCAL_SUPABASE_HOSTS.has(host) || host.endsWith('.local');
+  } catch {
+    return false;
+  }
+}
+
 export function resolveScheme(): JwtScheme {
   const raw = (process.env.SUPABASE_JWT_SCHEME ?? 'auto').toLowerCase();
   if (raw === 'hs256' || raw === 'jwks' || raw === 'auto') return raw;
@@ -74,16 +100,16 @@ export function assertAuthConfig(): void {
   const scheme = resolveScheme();
   const secret = process.env.SUPABASE_JWT_SECRET;
   const url = process.env.SUPABASE_URL;
-  const isProduction = process.env.NODE_ENV === 'production';
+  const strict = process.env.NODE_ENV === 'production' && !targetsLocalSupabase(url);
 
-  if (isProduction && scheme === 'auto') {
+  if (strict && scheme === 'auto') {
     throw new Error(
       'SUPABASE_JWT_SCHEME must be set to "hs256" or "jwks" in production. ' +
         'Accepting both lets a leaked legacy secret mint tokens even after ' +
         'the project moved to asymmetric keys.',
     );
   }
-  if (isProduction && secret === DEMO_JWT_SECRET) {
+  if (strict && secret === DEMO_JWT_SECRET) {
     throw new Error(
       'SUPABASE_JWT_SECRET is still the publicly known Supabase demo secret. ' +
         'Anyone could forge a super_admin token. Set the real project secret.',

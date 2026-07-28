@@ -56,17 +56,24 @@ fi
 step "Syncing .env files from 'supabase status'"
 # Pull live values (ANON_KEY, SERVICE_ROLE_KEY, JWT_SECRET, API_URL, DB_URL)
 eval "$(supabase status -o env | grep -E '^(ANON_KEY|SERVICE_ROLE_KEY|JWT_SECRET|API_URL|DB_URL)=')"
-for var in ANON_KEY SERVICE_ROLE_KEY JWT_SECRET API_URL DB_URL; do
+for var in ANON_KEY SERVICE_ROLE_KEY API_URL DB_URL; do
   if [ -z "${!var:-}" ]; then
     printf '\n'
     warn "'supabase status -o env' did not report $var."
     info "Your supabase CLI ($SUPABASE_VER) may have dropped the legacy key names,"
     info "or another Supabase project is occupying ports 54321/54322."
     info "Check:  supabase status          (project should be 'TonyAI-mono-repo')"
-    info "        supabase status -o env   (should list ANON_KEY, SERVICE_ROLE_KEY, JWT_SECRET)"
+    info "        supabase status -o env   (should list ANON_KEY, SERVICE_ROLE_KEY, API_URL)"
     die "Cannot write the .env files without $var."
   fi
 done
+
+# JWT_SECRET is OPTIONAL: a project that signs asymmetrically has no shared
+# secret, and the API verifies those against the JWKS at SUPABASE_URL instead.
+if [ -z "${JWT_SECRET:-}" ]; then
+  warn "No JWT_SECRET reported — assuming this project signs tokens asymmetrically."
+  info "The API will verify against \${SUPABASE_URL}/auth/v1/.well-known/jwks.json."
+fi
 
 cat > apps/web/.env.local <<EOF
 NEXT_PUBLIC_SUPABASE_URL="${API_URL}"
@@ -129,17 +136,40 @@ case "$ALG" in
   NO_TOKEN|UNKNOWN)
     warn "Could not obtain an access token for admin@tonyai.local."
     info "The seed may not have created the auth users. Re-run: pnpm db:seed"
+    die "Login is broken — fix this before starting the apps."
     ;;
   HS*)
-    info "tokens are signed ${ALG} — verified against SUPABASE_JWT_SECRET ✓"
+    # Actually verify the signature against the secret we just wrote, instead of
+    # asserting a ✓ we never checked.
+    if printf '%s' "$AUTH_JSON" | JWT_SECRET="$JWT_SECRET" node -e "
+      const {createHmac,timingSafeEqual}=require('crypto');
+      let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+        try{
+          const [h,p,s]=JSON.parse(d).access_token.split('.');
+          const want=createHmac('sha256',process.env.JWT_SECRET).update(h+'.'+p).digest();
+          const got=Buffer.from(s,'base64url');
+          process.exit(want.length===got.length&&timingSafeEqual(want,got)?0:1);
+        }catch{process.exit(1)}
+      });" 2>/dev/null; then
+      info "tokens are signed ${ALG} and verify against SUPABASE_JWT_SECRET ✓"
+    else
+      warn "The token does NOT verify against the SUPABASE_JWT_SECRET just written."
+      info "Usually a stale Supabase instance or a port-conflicting project."
+      die "The API would reject every login."
+    fi
     ;;
   *)
     info "tokens are signed ${ALG} (asymmetric) — verified against the project's JWKS"
-    if curl -sf -o /dev/null --max-time 15 "${API_URL}/auth/v1/.well-known/jwks.json"; then
-      info "JWKS endpoint reachable ✓"
+    # A 200 is not enough: an empty key set also returns 200 and would 401 every
+    # request. Require at least one published key.
+    if curl -sf --max-time 15 "${API_URL}/auth/v1/.well-known/jwks.json" \
+      | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+          try{process.exit((JSON.parse(d).keys||[]).length>0?0:1)}catch{process.exit(1)}
+        });" 2>/dev/null; then
+      info "JWKS endpoint reachable and publishing keys ✓"
     else
-      warn "JWKS endpoint is NOT reachable at ${API_URL}/auth/v1/.well-known/jwks.json"
-      info "The API will not be able to verify logins until it is."
+      warn "JWKS at ${API_URL}/auth/v1/.well-known/jwks.json is unreachable or empty."
+      die "The API would reject every login."
     fi
     ;;
 esac

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PHASE_DEVELOPMENT_SERVER } from 'next/constants.js';
+import { PHASE_PRODUCTION_BUILD } from 'next/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,7 +31,9 @@ const baseConfig = {
  * the root is the actual fix.
  */
 export default function nextConfig(phase) {
-  if (phase === PHASE_DEVELOPMENT_SERVER) return baseConfig;
+  // `next start` also warns that it "does not work with output: standalone",
+  // so the build phase is the only one that gets these.
+  if (phase !== PHASE_PRODUCTION_BUILD) return baseConfig;
   return {
     ...baseConfig,
     output: 'standalone',

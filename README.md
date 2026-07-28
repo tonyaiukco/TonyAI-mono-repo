@@ -63,7 +63,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (222 unit + 14 E2E) + live RLS containment probes | ✅ |
+| Automated tests (236 unit + 14 E2E) + live RLS containment probes | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
@@ -100,7 +100,7 @@ flowchart LR
 
   Web -- "sign in (email/password)" --> Auth
   Web -- "REST + Bearer JWT" --> API
-  API -- "verify JWT (HS256)" --> Auth
+  API -- "verify JWT (HS256 or JWKS)" --> Auth
   API -- "Prisma (owner role, bypasses RLS)" --> DB
   DB -. "RLS = 2nd line of defence" .-> API
   Shared --- Web
@@ -112,7 +112,7 @@ flowchart LR
 | Layer | Technology |
 | --- | --- |
 | **Frontend** | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, shadcn/ui, Recharts, Zustand, `@supabase/ssr` |
-| **Backend** | NestJS 11, Prisma 6 ORM, `class-validator`, `jsonwebtoken` (Supabase JWT verification) |
+| **Backend** | NestJS 11, Prisma 6 ORM, `class-validator`, `jose` (Supabase JWT verification — HS256 + JWKS) |
 | **Database / Auth / Storage** | Supabase (PostgreSQL + RLS, Auth, Storage) |
 | **Shared** | `@tonyai/shared-types` — domain + API contracts used by both apps |
 | **Tooling** | Turborepo, pnpm workspaces, Vitest, Playwright, GitHub Actions |
@@ -187,7 +187,7 @@ The relevant subagents (`backend-integrator`, `architect`, `security-rls`) have 
 1. The user signs in on **`/login`**; `@supabase/ssr` stores the session (a JWT) in cookies.
 2. **`proxy.ts`** protects every route — unauthenticated users are redirected to `/login`. (Next.js 16 renamed the `middleware` file convention to `proxy`; same behaviour.)
 3. The frontend calls the API through **`apps/web/lib/api.ts`**, attaching `Authorization: Bearer <access_token>`.
-4. The NestJS **`SupabaseAuthGuard`** verifies the JWT (HS256, `SUPABASE_JWT_SECRET`), loads the user's `Profile`, and computes **`accessibleSubsidiaryIds`** (a `data_entry` user is limited to explicit access rows; other roles get organisation‑wide visibility).
+4. The NestJS **`SupabaseAuthGuard`** verifies the JWT (shared HS256 secret or asymmetric via JWKS — see Security model), loads the user's `Profile`, and computes **`accessibleSubsidiaryIds`** (a `data_entry` user is limited to explicit access rows; other roles get organisation‑wide visibility).
 5. Services scope **every query** to that set; only `super_admin` may create/update/delete; each mutation writes an `audit_log` row.
 6. **Row Level Security** in Postgres independently denies cross‑tenant reads, so even a direct database/PostgREST client is contained.
 
@@ -420,8 +420,8 @@ The web app has route (`error.tsx`), root (`global-error.tsx`) and 404 boundarie
 
 ## Testing
 
-- **Unit (Vitest, DB‑free):** 222 tests in `apps/api` covering the calculation engine, tenant scoping, RBAC, lifecycle gates, targets/intensity math, report assembly, request logging and JWT verification (both signing schemes, incl. algorithm‑confusion and `alg: none` forgeries) with a mocked Prisma client. Run `pnpm test`.
-- **E2E (Playwright):** 10 specs against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
+- **Unit (Vitest, DB‑free):** 236 tests in `apps/api` covering the calculation engine, tenant scoping, RBAC, lifecycle gates, targets/intensity math, report assembly, request logging and JWT verification (both signing schemes, incl. algorithm‑confusion and `alg: none` forgeries) with a mocked Prisma client. Run `pnpm test`.
+- **E2E (Playwright):** 14 tests across 8 specs against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
 - **RLS containment probes:** `pnpm rls:probe` hits Supabase PostgREST directly (anon + a data_entry JWT) and asserts, per tenant table, that anon sees nothing, the user sees its own rows, and it sees **exactly** its own tenants' rows and no others (cross-tenant rows hidden — even a partial leak fails) — proving the database-layer defence holds independently of the API guard.
 
 CI (`.github/workflows/ci.yml`) runs install → Prisma generate → typecheck → build → unit tests on every push/PR. E2E + RLS probes are intentionally kept out of the default CI pipeline (they need a live Supabase); **wiring them into CI is deferred to Phase 2** (staging smoke E2E), per the roadmap.
@@ -435,7 +435,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 | File | Key | Used for |
 | --- | --- | --- |
 | `apps/web/.env.local` | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_API_BASE_URL` | Browser Supabase client + API base |
-| `apps/api/.env` | `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `PORT`, `WEB_ORIGIN` | JWT verification, CORS, server |
+| `apps/api/.env` | `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_JWT_SCHEME`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `PORT`, `WEB_ORIGIN` | JWT verification (`SUPABASE_URL` is the JWKS origin), CORS, server |
 | `packages/db/.env` | `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Prisma + seed |
 
 ---

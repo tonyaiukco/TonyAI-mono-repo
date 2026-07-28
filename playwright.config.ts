@@ -44,7 +44,8 @@ const apiDist = resolve(__dirname, 'apps/api/dist/main.js');
 const apiDir = resolve(__dirname, 'apps/api');
 
 // If the API isn't built, build it first, then start it (with cwd = apps/api).
-// Using a shell so the build only runs when the dist is missing.
+// `pnpm e2e` rebuilds up front regardless — running the suite against a stale
+// dist silently turns "14/14 green" into evidence about the PREVIOUS code.
 const apiStartCmd = existsSync(apiDist)
   ? 'node dist/main.js'
   : 'pnpm --filter @tonyai/api build && node dist/main.js';

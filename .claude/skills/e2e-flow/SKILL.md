@@ -34,7 +34,7 @@ in `e2e/helpers.ts`.
 1. **Fixtures/helpers first.** Reuse `e2e/helpers.ts`; add a helper there only if ≥2 specs need it.
    Evidence uploads use `EVIDENCE_FIXTURE` (`e2e/fixtures/sample-invoice.pdf`).
 2. **Auth.** UI: `login(page, ADMIN_EMAIL | ENTRY_EMAIL)`. API/probe: `getAccessToken(request, email)`
-   (Supabase password grant → the same HS256 JWT the guard verifies).
+   (Supabase password grant → the same JWT the guard verifies; scheme-agnostic).
 3. **Write the spec** — arrange (API) → act (UI, field-scoped selectors) → assert (rendered text +, where
    it matters, a DB/API cross-check). Keep `workers:1` / `retries:0` (serial writes share one DB).
 4. **RLS/API probes** go in `scripts/rls-probes.mjs` (standalone, no browser). For each tenant table assert

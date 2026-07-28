@@ -111,17 +111,19 @@ describe('TokenVerifier', () => {
     });
   });
 
-  describe('ES256 (asymmetric, via JWKS)', () => {
+  // Supabase Cloud's asymmetric option covers both curves/algorithms, so both
+  // must be exercised — not just the one the local CLI happens to emit.
+  describe.each(['ES256', 'RS256'] as const)('%s (asymmetric, via JWKS)', (algorithm) => {
     let jwks: JWTVerifyGetKey;
     let sign: (claims?: Record<string, unknown>) => Promise<string>;
 
     beforeEach(async () => {
-      const { privateKey, publicKey } = await generateKeyPair('ES256', { extractable: true });
-      const publicJwk: JWK = { ...(await exportJWK(publicKey)), alg: 'ES256', kid: 'test-key-1' };
+      const { privateKey, publicKey } = await generateKeyPair(algorithm, { extractable: true });
+      const publicJwk: JWK = { ...(await exportJWK(publicKey)), alg: algorithm, kid: 'test-key-1' };
       jwks = createLocalJWKSet({ keys: [publicJwk] });
       sign = (claims = userClaims()) =>
         new SignJWT(claims)
-          .setProtectedHeader({ alg: 'ES256', kid: 'test-key-1' })
+          .setProtectedHeader({ alg: algorithm, kid: 'test-key-1' })
           .setIssuedAt()
           .setExpirationTime('5m')
           .sign(privateKey);
@@ -133,9 +135,9 @@ describe('TokenVerifier', () => {
     });
 
     it('rejects a token signed by a key that is NOT in the JWKS', async () => {
-      const { privateKey } = await generateKeyPair('ES256', { extractable: true });
+      const { privateKey } = await generateKeyPair(algorithm, { extractable: true });
       const foreign = await new SignJWT(userClaims())
-        .setProtectedHeader({ alg: 'ES256', kid: 'test-key-1' })
+        .setProtectedHeader({ alg: algorithm, kid: 'test-key-1' })
         .setIssuedAt()
         .setExpirationTime('5m')
         .sign(privateKey);
@@ -143,13 +145,23 @@ describe('TokenVerifier', () => {
     });
 
     it('rejects an unknown kid WITHOUT flagging a config error (attacker-triggerable)', async () => {
-      const { privateKey } = await generateKeyPair('ES256', { extractable: true });
+      const { privateKey } = await generateKeyPair(algorithm, { extractable: true });
       const unknownKid = await new SignJWT(userClaims())
-        .setProtectedHeader({ alg: 'ES256', kid: 'no-such-key' })
+        .setProtectedHeader({ alg: algorithm, kid: 'no-such-key' })
         .setIssuedAt()
         .setExpirationTime('5m')
         .sign(privateKey);
       const error = await errorOf(new TokenVerifier(jwks).verify(unknownKid));
+      expect((error as TokenVerificationError).configError).toBeFalsy();
+    });
+
+    it('rejects every token when the JWKS publishes no keys', async () => {
+      // Documents a real blind spot: an empty key set is indistinguishable from
+      // an unknown kid, so it stays a plain rejection with no server-side
+      // signal. `pnpm setup` catches this case at setup time instead.
+      const empty = createLocalJWKSet({ keys: [] });
+      const error = await errorOf(new TokenVerifier(empty).verify(await sign()));
+      expect(error).toBeInstanceOf(Error);
       expect((error as TokenVerificationError).configError).toBeFalsy();
     });
 
@@ -218,9 +230,40 @@ describe('TokenVerifier', () => {
 
     it('refuses to boot in production with the publicly known demo secret', () => {
       process.env.NODE_ENV = 'production';
+      process.env.SUPABASE_URL = 'https://project.supabase.co';
       process.env.SUPABASE_JWT_SCHEME = 'hs256';
       process.env.SUPABASE_JWT_SECRET = DEMO_SECRET;
       expect(() => assertAuthConfig()).toThrow(/demo secret/);
+    });
+
+    it('accepts a correctly configured production deployment (jwks)', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.SUPABASE_JWT_SCHEME = 'jwks';
+      process.env.SUPABASE_URL = 'https://project.supabase.co';
+      delete process.env.SUPABASE_JWT_SECRET;
+      expect(() => assertAuthConfig()).not.toThrow();
+    });
+
+    it('accepts a correctly configured production deployment (hs256, real secret)', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.SUPABASE_URL = 'https://project.supabase.co';
+      process.env.SUPABASE_JWT_SCHEME = 'hs256';
+      process.env.SUPABASE_JWT_SECRET = 'a-real-project-secret-not-the-demo-one';
+      expect(() => assertAuthConfig()).not.toThrow();
+    });
+
+    it.each([
+      'http://localhost:54321',
+      'http://127.0.0.1:54321',
+      'http://host.docker.internal:54321',
+    ])('does NOT apply the production rules to the local stack at %s', (url) => {
+      // `pnpm docker:up` runs a production BUILD against local Supabase and the
+      // demo secret; refusing to boot there would kill the container workflow.
+      process.env.NODE_ENV = 'production';
+      process.env.SUPABASE_URL = url;
+      process.env.SUPABASE_JWT_SCHEME = 'auto';
+      process.env.SUPABASE_JWT_SECRET = DEMO_SECRET;
+      expect(() => assertAuthConfig()).not.toThrow();
     });
 
     it('refuses hs256 without a secret and jwks without a URL', () => {
@@ -263,9 +306,25 @@ describe('TokenVerifier', () => {
       );
     });
 
-    it.each(['HS384', 'HS512', 'PS256', 'EdDSA', 'ES384', 'hs256'])(
-      'rejects the unsupported algorithm %s',
+    it.each(['HS384', 'HS512'] as const)(
+      'rejects a VALIDLY SIGNED %s token — the HS allow-list is HS256 only',
       async (alg) => {
+        // The realistic downgrade: the HS secret is shared, so an attacker can
+        // legitimately sign with a stronger/weaker HS variant. A junk-signature
+        // test would pass even with the allow-list deleted; this one would not.
+        const downgraded = await new SignJWT(userClaims({ sub: 'attacker' }))
+          .setProtectedHeader({ alg })
+          .setIssuedAt()
+          .setExpirationTime('5m')
+          .sign(encoded);
+        await expect(new TokenVerifier().verify(downgraded)).rejects.toThrow();
+      },
+    );
+
+    it.each(['PS256', 'EdDSA', 'ES384', 'hs256'])(
+      'rejects the unsupported algorithm %s at the router',
+      async (alg) => {
+        // `hs256` (lowercase) matters: it exercises the case-sensitive routing.
         const header = base64url.encode(JSON.stringify({ alg, typ: 'JWT' }));
         const body = base64url.encode(JSON.stringify(userClaims()));
         await expect(new TokenVerifier().verify(`${header}.${body}.x`)).rejects.toThrow();
