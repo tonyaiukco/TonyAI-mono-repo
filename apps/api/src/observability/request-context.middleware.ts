@@ -9,9 +9,9 @@ import { runWithRequestContext } from './request-context';
  * by the time the controller runs. Middleware wraps guards, pipes, the handler
  * and filters alike.
  *
- * An inbound `x-request-id` is honoured (so a load balancer / Cloud Run trace
- * id stays stitched to our logs); otherwise we mint one. It is echoed back in
- * the response header for client-side correlation.
+ * An inbound `x-request-id` is honoured (so a load balancer / cloud ingress
+ * trace id stays stitched to our logs); otherwise we mint one. It is echoed
+ * back in the response header for client-side correlation.
  */
 @Injectable()
 export class RequestContextMiddleware implements NestMiddleware {

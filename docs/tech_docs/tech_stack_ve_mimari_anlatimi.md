@@ -83,9 +83,9 @@ Verileri asla kaybetmemek ve hızlıca bulmak için kullandığımız teknolojil
 *   **Nedir?** Çok sık kullanılan bilgileri (örneğin elektrik emisyon katsayıları gibi sabit verileri) her seferinde kilitli kasadan (veritabanı) aramak yerine tezgahın üstünde hazır tutan "hızlı bellek" yapısıdır.
 *   **Neden Seçtik?** Kullanıcılar veri girişi yaparken canlı emisyon hesaplamalarının milisaniyeler içinde gerçekleşmesi ve sistemin göz kırpma hızında yanıt vermesi için.
 
-### DevOps, Canlı Yayın (GCP veya Azure) ve Dijital DevOps Ajanımız
+### DevOps, Canlı Yayın (Azure) ve Dijital DevOps Ajanımız
 *   **Nedir?** Yazılım kodlarımızın güvenle depolandığı merkez ve bu kodları alıp internette kurumsal standartlarda canlı yayına alan bulut altyapısıdır. Bu süreci yönetmek ve hatasız sürdürmek için ekibimize **The DevOps & Cloud Engineer** adında otonom bir yapay zeka ajanı katılmıştır.
-*   **Neden Seçtik?** Altyapıyı otomatik kurabilmek, geliştirme-test-canlı ortamlarını birbirine karıştırmadan yönetmek ve GCP/Azure gibi kurumsal bulut sağlayıcılarının gücünden yararlanmak için. DevOps ajanımız sayesinde sunucu yönetimi insansız ve kesintisiz yürütülür.
+*   **Neden Seçtik?** Altyapıyı otomatik kurabilmek, geliştirme-test-canlı ortamlarını birbirine karıştırmadan yönetmek ve Azure gibi kurumsal bulut sağlayıcılarının gücünden yararlanmak için (sağlayıcı kararı 2026-07-29: Azure — Container Apps). DevOps ajanımız sayesinde sunucu yönetimi insansız ve kesintisiz yürütülür.
 *   **KVKK ve GDPR Uyumluluğu:** Kurumsal holdingler verilerinin nerede tutulduğuna çok önem verir. DevOps ajanımız tarafından yapılandırılan bulut altyapısı sayesinde, müşteri verilerini yasal zorunluluklara göre Avrupa'da (Frankfurt) veya Türkiye'de barındıracak şekilde izole edebiliriz. Bu, satış aşamasında kurumsal IT departmanlarından kolayca onay almamızı sağlar.
 
 ---

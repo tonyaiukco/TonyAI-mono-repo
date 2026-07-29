@@ -65,7 +65,7 @@ Ben (Ana Yapay Zeka / Tech Lead) takımın lideri olarak görev yapıyorum. Sade
 *   **Ne İş Yapar?**
     Sistemin kurulacağı bulut altyapısını hazırlar. Kodların güvenle depolanmasını, otomatik test edilmesini ve kullanıcıların erişebileceği canlı internet ortamına (production) veya test ortamına (staging) otomatik olarak yüklenmesini (deploy) sağlar.
 *   **Bizim Projedeki Sorumluluğu:**
-    Supabase üzerinde Geliştirme (Development), Test (Staging) ve Canlı (Production) veritabanı ortamlarını kurmak. GitHub Actions ile otomatik yayınlama (CI/CD) süreçlerini tasarlamak. Projenin Docker konteynerlerini oluşturmak ve GCP veya Azure üzerinde güvenli bir şekilde barındırmak. KVKK ve GDPR gereksinimlerine uygun olarak verilerin bölge (Frankfurt/Avrupa vb.) sınırlarında tutulmasını altyapısal olarak garanti altına almak.
+    Supabase üzerinde Geliştirme (Development), Test (Staging) ve Canlı (Production) veritabanı ortamlarını kurmak. GitHub Actions ile otomatik yayınlama (CI/CD) süreçlerini tasarlamak. Projenin Docker konteynerlerini oluşturmak ve Azure (Container Apps) üzerinde güvenli bir şekilde barındırmak. KVKK ve GDPR gereksinimlerine uygun olarak verilerin bölge (Frankfurt/Avrupa vb.) sınırlarında tutulmasını altyapısal olarak garanti altına almak.
 *   **Çıktısı (Ürettiği Şey):** Canlıda sorunsuz, hızlı çalışan, siber saldırılara karşı korunaklı, yedekleme ve altyapı kurulumları tamamlanmış sunucu sistemleri.
 
 ---
@@ -103,7 +103,7 @@ Bu ekibin nasıl birlikte çalıştığını bir örnekle anlatalım:
 6.  **Faktör Hazırlığı:** **The Data & Emission Factor Engineer** doğru emisyon katsayılarını (ülke/yıl bazlı) sisteme yükler ki hesaplama motoru gerçek ve denetlenebilir sonuçlar üretsin.
 7.  **Entegrasyon:** Ardından **The Integrator** bu grafikleri ve ekranları arka plandaki gerçek verilerle bağlar, veritabanı bağlantılarını kurar ve sistemi canlandırır.
 8.  **Test:** Son olarak **The QA & Auditor** sisteme girer, yanlış veriler girmeye çalışarak hesaplamaların, yetkilendirmelerin ve görsellerin doğru tepki verdiğini test eder.
-9.  **Dağıtım:** QA onayı sonrası **The DevOps & Cloud Engineer** son kodları canlı sunuculara (GCP/Azure) otomatik olarak aktarır ve kullanıcıların hizmetine sunar.
+9.  **Dağıtım:** QA onayı sonrası **The DevOps & Cloud Engineer** son kodları canlı sunuculara (Azure) otomatik olarak aktarır ve kullanıcıların hizmetine sunar.
 
 Ben (Ana Yapay Zeka) ise bu 7 ajanı sırayla görevlendirip süreci yöneterek ürünün baştan sona eksiksiz çıkmasını sağlıyor olacağım.
 
