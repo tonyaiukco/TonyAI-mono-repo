@@ -62,7 +62,7 @@ Keep the main thread's context small; the biggest cost is accumulated context (w
 
 ## Status & roadmap
 - **Session memory lives in `docs/roadmap_docs/project-status.md`** — read it at session start to see where work left off; update it (status, decisions, next steps) in the same change whenever a PR merges or the roadmap shifts. It must never go stale.
-- Done: M0 + M1 vertical slice; Phase-1 emission-factor library + Scope 1&2 calc engine + activity-records API & review workflow + Data Entry UI + Emissions Analytics wiring.
-- Next (Phase 1): dashboard `/` wiring, locations level, evidence upload, period locking, anomaly detection, hardening; then **Phase 2** (staging cloud + CI/CD). Full phased plan (0–4 + post-launch) in the status log above.
+- Done: Phases 0–1 complete (calc engine, records + review workflow, evidence, period locking, anomaly detection, targets/intensity, reports, E2E + RLS probes); UAT running; Phase-2 prep shipped (containerization #26, observability + dual-scheme JWT #27).
+- Next: **Phase 3 (WP7+ — UAT backlog & review UX)**. **Phase 2 = staging on Azure** (Container Apps + ACR + Key Vault + Log Analytics, Germany West Central, GitHub OIDC) once the credit lands — GCP was dropped 2026-07-29; the old "PR 3 cloud env & seed strategy" folded into the future cloud-wiring PR. Full phased plan (0–4 + post-launch) in the status log above.
 
 <!-- Add your own recurring rules/preferences below this line -->

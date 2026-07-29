@@ -826,7 +826,7 @@ Frontend'de henüz implementasyonu olmamakla birlikte, `technical_analysis.md`'d
 - [ ] Supabase projesinin oluşturulması ve Development/Staging veritabanı ortamlarının kurulması
 - [ ] GitHub organizasyonu ve takım repolarının kurulması
 - [ ] Geliştiriciler için Dockerfile ve docker-compose yapılandırmasının hazırlanması
-- [ ] GCP (Cloud Run) veya Azure (App Service) bulut altyapısı entegrasyonu (Staging deployment için)
+- [ ] Azure (Container Apps) bulut altyapısı entegrasyonu (Staging deployment için)
 
 #### The Security & Compliance Engineer Görevleri (Faz 1):
 - [ ] RBAC rol/izin matrisinin tanımı (4 rol: `super_admin`, `consultant`, `data_entry`, `executive_viewer`)

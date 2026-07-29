@@ -37,7 +37,8 @@ jobs:
         run: pnpm test
 
   # Proof-of-build for the container images (no registry push, no cloud creds —
-  # the GCP deploy pipeline lands in the GCP-dependent half of Phase 2).
+  # the Azure deploy pipeline (push to ACR + Container Apps via GitHub OIDC)
+  # lands in the credit-dependent half of Phase 2).
   docker-build:
     runs-on: ubuntu-latest
     steps:

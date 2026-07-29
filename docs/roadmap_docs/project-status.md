@@ -8,8 +8,8 @@
 
 ## Current status — as of 2026-07-29
 
-- **Phase:** Phase 1 COMPLETE + UAT running (1-2 external testers). **Phase 2 is GCP-blocked** (credit application pending) → working **Phase 3 (reordered, WP7+)** + GCP-independent Phase-2 prep in the meantime
-- **Latest merged:** **PR #27** (observability + Turbopack dev-memory root cause + dual-scheme JWT verification), merged 2026-07-28, branch deleted. Phase-2 GCP-independent prep: PR 1 (containerization, #26) ✅ · PR 2 (observability, #27) ✅ · **next is PR 3 — cloud env & seed strategy**, which needs the user to create the Supabase cloud projects (dev + staging, EU region)
+- **Phase:** Phase 1 COMPLETE + UAT running (1-2 external testers). **Phase 2 targets Azure** (decision 2026-07-29: no credit agreement with GCP; Azure credits expected) → working **Phase 3 (reordered, WP7+)** in the meantime; cloud-independent Phase-2 prep is done
+- **Latest merged:** PR #28 (status-log sync). Phase-2 prep: PR 1 (containerization, #26) ✅ · PR 2 (observability, #27) ✅ · the standalone **"PR 3 — cloud env & seed strategy" is cancelled** (2026-07-29) — a strategy doc could not be verified against real projects; its content folds into the concrete **cloud-wiring PR** once the Supabase staging project (Frankfurt) exists
 - **Everyone must re-run `pnpm setup` after pulling this** — the API now refuses to boot without `ALLOW_INSECURE_LOCAL_AUTH=true` in `apps/api/.env`, and `jsonwebtoken` → `jose` means a stale `node_modules` fails too
 - **Tests:** 245 unit (Vitest, API) + a `next.config` phase guard (web) + 14 E2E (Playwright) + 18 live RLS containment probes — green
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
@@ -45,6 +45,7 @@
 | #25 | docs | Started Phase 3 ahead of GCP-blocked Phase 2 — reordered into WP7–WP14 |
 | #26 | devops | **Phase-2 prep PR 1** — containerized web + api (multi-stage Dockerfiles, standalone Next output, distro Chromium, `docker-compose.yml` + `pnpm docker:up`, CI docker-build) |
 | #27 | full-stack | **Phase-2 prep PR 2** — observability (JSON request logs, request-ids via ALS, exception filter, opt-in Sentry, web error boundaries) **+** the Turbopack dev-memory root cause (`outputFileTracingRoot` leaking into the dev phase) **+** dual-scheme JWT verification (HS256 **and** JWKS) with a boot-time auth-config gate; reviewed twice by `security-rls` and once by `qa-auditor` |
+| #28 | docs | Post-#27 status-log sync (PR history rows #18–#27, post-pull `pnpm setup` note) |
 
 ## What works today
 
@@ -105,27 +106,38 @@
 
 *Phase-1 exit criteria:* **SATISFIED (2026-07-19)** — every Phase-1 row in the README status table is ✅ and the full demo flow (enter → attach evidence → submit → approve → analytics → target progress → export a report) runs end-to-end locally (proven by the 13-spec E2E suite).
 
-### Phase 2 — Staging cloud & CI/CD — **GCP-blocked** (credit application pending)
+### Phase 2 — Staging cloud & CI/CD — **Azure** (provider switched from GCP 2026-07-29; credit expected)
 
-**GCP-independent prep — may be pulled forward between Phase-3 packages:**
+> **Azure design (devops-cloud, 2026-07-29 — full rationale in the decisions log):**
+> **Azure Container Apps** (Consumption plan, scale-to-zero) hosts both containers ·
+> **ACR** Basic · **Key Vault** secret references via managed identity · **Log Analytics**
+> ingests the stdout JSON logs as-is (KQL over `ContainerAppConsoleLogs`; Sentry stays for
+> errors — no Application Insights, it would double-pay) · GitHub Actions authenticates via
+> **OIDC workload identity federation** (no stored cloud secrets) · region **Germany West
+> Central (Frankfurt)** beside a **Supabase Frankfurt** project (KVKK/GDPR EU residency).
+
+**Cloud-independent prep — done:**
 - [x] Dockerfiles (web, api — distro Chromium via `PUPPETEER_EXECUTABLE_PATH`) + `docker compose` proof (`pnpm docker:up`; full 14-spec E2E suite green against the containers) + CI `docker-build` job
-- [ ] Supabase **cloud** projects (dev/staging) + env & secrets strategy (`.env` per environment, no secrets in git)
-- [ ] Cloud migration + seed strategy (demo records only in dev; staging gets clean fixtures)
-- [x] Observability baseline — JSON request logging (requestId via AsyncLocalStorage middleware, honours inbound `x-request-id`, health excluded, 4xx=warn/5xx=error), global exception filter that **preserves Nest's response body shape** (the whole web client reads `body.message`), Sentry wired as **opt-in no-op** (api `@sentry/nestjs` + web `@sentry/nextjs`, nothing initialises without a DSN, `sendDefaultPii:false`), web error/global-error/not-found boundaries. Uptime targets identified (`/api/v1/health`, `/login`) — monitors configured once a staging URL exists (GCP half).
+- [x] Observability baseline — JSON request logging (requestId via AsyncLocalStorage middleware, honours inbound `x-request-id`, health excluded, 4xx=warn/5xx=error), global exception filter that **preserves Nest's response body shape** (the whole web client reads `body.message`), Sentry wired as **opt-in no-op** (api `@sentry/nestjs` + web `@sentry/nextjs`, nothing initialises without a DSN, `sendDefaultPii:false`), web error/global-error/not-found boundaries. Uptime targets identified (`/api/v1/health`, `/login`) — monitors configured once a staging URL exists (Azure half).
 
-**GCP-dependent (starts when the credit lands):**
-- [ ] GitHub Actions **deploy pipeline** to GCP staging (Cloud Run)
-- [ ] KVKK/GDPR-compliant data residency (EU/TR region selection, e.g. europe-west3)
-- [ ] Staging smoke E2E running in CI on every deploy
+**When the Azure credit lands (ordered):**
+1. [ ] **Supabase cloud project** — staging only, Frankfurt (`eu-central-1`); local Supabase stays "dev", a cloud dev project is deferred until actually needed. Free tier pauses after ~1 week idle → budget Pro ($25/mo) during active UAT.
+2. [ ] **Cloud env wiring PR** (absorbs the cancelled "PR 3 — cloud env & seed strategy"): `prisma migrate deploy` path, evidence storage bucket + RLS, selective seed (emission-factor library yes; demo tenants/users no — or explicitly labelled), pin `SUPABASE_JWT_SCHEME=jwks` and never set `ALLOW_INSECURE_LOCAL_AUTH` in cloud, **Supavisor pooler URLs** (ACA egress is IPv4, Supabase direct DB is IPv6-first — transaction-mode for `DATABASE_URL`, session-mode for `DIRECT_URL`)
+3. [ ] **Azure foundation** (scripted, kept in-repo under `infra/`): resource group (Germany West Central), ACR Basic, Log Analytics workspace, ACA environment, Key Vault, managed identities, Entra app + GitHub OIDC federation
+4. [ ] **CI push to ACR** — extend the existing `docker-build` job to push on `main` merges. Api image is env-agnostic → build once, promote by retag; **web image is environment-bound** (`NEXT_PUBLIC_*` is build-inlined) → rebuilt per environment from the same commit, never retagged
+5. [ ] **Staging deploy on ACA** — api 1 vCPU/2 GiB (Chromium headroom), web 0.5 vCPU/1 GiB, **`minReplicas: 0` on both** (the setting that keeps staging ≈ $6–10/mo); probes declared in ACA config (Docker `HEALTHCHECK` is ignored): api `/api/v1/health`, web `/login`. Dockerfile tweaks in the same PR: `tini` as PID 1 (ACA has no `init: true`) + the image slimming already flagged in `apps/api/Dockerfile` (1.9 GB → slow cold pulls at scale-to-zero)
+6. [ ] **Staging smoke E2E in CI** — tagged Playwright subset against the staging URL after every deploy (`staging` GitHub environment)
+7. [ ] Custom domain + ACA managed TLS (free) on both apps
+8. [ ] Production later — separate resource group + Supabase project; api promoted by retag, web rebuilt with prod build args
 
 *Exit criteria:* a stakeholder can use the full Phase-1 flow on a staging URL.
 
-### Phase 3 — Advanced features (spec "Faz 2") — **active** (reordered 2026-07-22 while GCP is pending)
+### Phase 3 — Advanced features (spec "Faz 2") — **active** (reordered 2026-07-22 while the cloud credit is pending)
 
 > Ordering rationale: UAT is running → ship the small UAT-visible fixes first, then the
 > packages least likely to be invalidated by UAT feedback (no data-model churn), and the
 > big data-model items (Scope 3, suppliers) after the first UAT round closes.
-> GCP-independent Phase-2 prep may be interleaved between packages.
+> Cloud-independent Phase-2 prep may be interleaved between packages.
 
 - [ ] **WP7 — UAT backlog & review UX** — the audit's tester-visible gaps: **audit-trail viewer** (read API + UI; G3), **subsidiary Edit dialog** incl. the geography-change recalculation warning (G5), **matrix → Data Entry shortcut** (G6), and a minimal **reviewer UI** for submit→review→approve/reject (turns the API-only flow into a testable screen). Includes the **consultant-permissions decision** (matrix says consultant may NOT approve; code allows it — user decides, docs align).
 - [ ] **WP8 — Bulk upload** — historical data via CSV/Excel (Papa Parse) + validation report (row-level errors, dry-run), server-side processing; respects all lifecycle gates + dedup.
@@ -169,6 +181,8 @@
 **Next up:** **WP7 — UAT backlog & review UX** (audit-trail viewer, subsidiary Edit, matrix shortcut, minimal reviewer UI, consultant-permissions decision). Phase 2 starts the moment the GCP credit lands — its GCP-independent prep (Dockerfiles, Supabase cloud, Sentry) may be interleaved between Phase-3 packages.
 
 ## Decisions log
+
+- **2026-07-29** — **Cloud provider switched: GCP → Azure** (user decision — no credit agreement was reached with GCP; Azure credits are expected). Design produced by `devops-cloud`: **Azure Container Apps** (Consumption plan) hosts both containers — chosen for scale-to-zero (a near-idle staging app is ~free), the revision model, built-in HTTPS ingress + free managed certs, and 4 vCPU/8 GiB headroom for Chromium; **App Service rejected** (no scale-to-zero → 24/7 billing), **AKS rejected** (cluster cost/ops indefensible for two containers, solo dev). **ACR Basic** for images (same-region pulls matter at 1.9 GB; ACA pulls via `AcrPull` managed identity — GHCR noted as the free fallback). **Key Vault** secret references via managed identity (rotation + audit trail befits a compliance product; secrets never pass through GitHub). **Log Analytics** for the stdout JSON logs (KQL-queryable as-is) with **Sentry kept for errors — Application Insights rejected as double-pay**. GitHub Actions → Azure via **OIDC workload identity federation**, no long-lived cloud secrets. Region **Germany West Central (Frankfurt)** beside a **Supabase Frankfurt** (`eu-central-1`) project — same metro keeps Prisma round-trips in single-digit ms; KVKK note: Azure has no Türkiye region, so TR→EU transfer safeguards are contractual under any provider; fallback region West Europe. Deploy-PR gotchas recorded: `tini` as PID 1 (ACA lacks `init: true`), ACA ignores Docker `HEALTHCHECK` → declare probes, `--disable-dev-shm-usage` already covers the small-shm limitation, **Supavisor pooler URLs required** (ACA egress is IPv4; Supabase direct DB is IPv6-first), web image is environment-bound (`NEXT_PUBLIC_*` build-inlined → rebuild per env; api promotes by retag), `minReplicas: 0` on both apps keeps staging ≈ **$6–10/mo** (+ Supabase Pro $25/mo during active UAT). Same decision: **the standalone "PR 3 — cloud env & seed strategy" is cancelled** — a strategy doc could not be verified against real projects and would go stale; its content (migrations, bucket, selective seed with the demo-data labelling rule, JWKS pinning) folds into the concrete cloud-wiring PR once the Supabase staging project exists. All project docs (README, CLAUDE.md, tech_docs, agent definitions, CI comments) updated from GCP to Azure in the same change.
 
 - **2026-07-22** — **Phase 3 started before Phase 2** (confirmed with the user): the GCP credit application is still pending, Phase 2's deploy target is blocked, and Phase 3 is pure app-layer work with no cloud dependency — waiting would be the expensive option. Phase 3 reordered into WP7–WP14 by two principles: (1) **UAT-feedback resilience** — small tester-visible fixes first (WP7), then packages that don't touch the data model (WP8 bulk upload, WP9 notifications, WP10 sharing), and the schema-heavy packages (WP11 Scope 3, WP12 suppliers) only after the first UAT round; (2) **GCP-independent Phase-2 prep** (Dockerfiles incl. Chromium, Supabase cloud projects, Sentry) split out and allowed to interleave between packages so the eventual GCP hookup shrinks to wiring the deploy pipeline. WP7 also absorbs a **minimal reviewer UI** (the API-only review flow is a UAT friction point) and forces the **consultant-permissions decision** (spec conflict recorded 2026-07-20).
 

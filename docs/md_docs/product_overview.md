@@ -21,5 +21,5 @@ The platform measures success through:
 - **Data Quality Score:** Ratio of metered vs. estimated data points.
 
 ## 5. Deployment Context
-- **Infrastructure:** GCP / Azure (Containerized/Serverless Deployment for Next.js).
+- **Infrastructure:** Azure (Container Apps — containerized/serverless deployment; provider decision 2026-07-29).
 - **Architecture:** Headless UI connected to a calculation engine API via JSON.

@@ -35,7 +35,7 @@ Bu yapı, tip tutarlılığını garanti altına alır ve subagent'ların aynı 
 Büyük veri setleri, yüksek performans gereksinimi ve kurumsal bir B2B SaaS hissi yaratmak için aşağıdaki kararlaştırılmış teknoloji yığını ve kütüphaneler kullanılacaktır:
 
 ### Frontend (Kullanıcı Arayüzü)
-*   **Framework:** React 19 tabanlı **Next.js 16 (App Router)**. GCP/Azure üzerinde Docker container'lar ile host edilecektir.
+*   **Framework:** React 19 tabanlı **Next.js 16 (App Router)**. Azure üzerinde (Container Apps) Docker container'ları ile host edilecektir.
 *   **Styling & UI Components:** **Tailwind CSS v4** (Hızlı ve modern stillendirme) ve **Shadcn UI (New York stili)** (Kurumsal ve erişilebilir temel bileşen seti).
 *   **Veri Görselleştirme:** **Recharts** (Frontend tasarımına uygun olarak Donut, Bar, Area, Treemap, Line ve Composed grafiklerinin çizimi için).
 *   **İkonografi:** **Lucide React**.
@@ -92,7 +92,7 @@ Bu devasa projeyi insansız ve paralel olarak geliştirebilmek için yazılım e
 *   **Görev:** Anomali senaryoları, yetki aşım denemeleri, birim (unit) testler ve E2E (End-to-End) testler yazarak projenin ISO 14064-1 ve GHG protokolüne denetim açısından uygunluğunu sağlamak.
 
 ### Agent 5: "The DevOps & Cloud Engineer" (Bulut Altyapı ve DevOps Uzmanı)
-*   **Görev:** Turborepo monorepo iskeletini kurmak. Supabase üzerinde Geliştirme (Development), Test (Staging) ve Canlı (Production) veritabanı ortamlarını kurmak. GitHub Actions ile otomatik CI/CD hatlarını yapılandırmak. Uygulamanın Docker konteynerlerini hazırlayarak GCP veya Azure üzerinde güvenli ve ölçeklenebilir şekilde canlıya almak. KVKK/GDPR uyumlu veri barındırma bölgelerini ayarlamak.
+*   **Görev:** Turborepo monorepo iskeletini kurmak. Supabase üzerinde Geliştirme (Development), Test (Staging) ve Canlı (Production) veritabanı ortamlarını kurmak. GitHub Actions ile otomatik CI/CD hatlarını yapılandırmak. Uygulamanın Docker konteynerlerini hazırlayarak Azure (Container Apps) üzerinde güvenli ve ölçeklenebilir şekilde canlıya almak. KVKK/GDPR uyumlu veri barındırma bölgelerini ayarlamak.
 
 ### Agent 6: "The Security & Compliance Engineer" (Güvenlik ve Uyumluluk Uzmanı)
 *   **Görev:** Çok-kiracılı (multi-tenant) güvenliğin sahibi. RBAC rol/izin matrisini, Supabase RLS politikalarını ve NestJS tenant guard'larını (birincil enforcement) tasarlayıp uygulamak. Audit log değişmezliğini (immutability) ve kapalı dönem (locked period) kilitlerini garanti etmek. KVKK/GDPR veri yerleşimi ve gizlilik gereksinimlerini doğrulamak. Bu rol, daha önce QA içine sıkışmış olan kritik güvenlik sorumluluğunu ayrı bir uzmanlığa taşır.
@@ -106,8 +106,8 @@ Bu devasa projeyi insansız ve paralel olarak geliştirebilmek için yazılım e
 
 ## 6. Sonraki Adımlar
 
-Yukarıdaki analiz ve güncel kararlar (Supabase, GCP/Azure, Github, Figma ve Resend) doğrultusunda, projenin inşasına başlamak için izlememiz gereken yol haritası:
-1.  **Altyapı Kurulumu:** `~/Repos/TonyAI-mono-repo` altında Turborepo monorepo'nun (pnpm workspaces; `apps/web`, `apps/api`, `packages/shared-types`, `packages/db`) kurulması, GitHub reposunun açılması, GCP veya Azure üzerinde projenin (Cloud Run / App Service vb.) yapılandırmasının yapılması ve Supabase (PostgreSQL + Auth) projesinin oluşturulması.
+Yukarıdaki analiz ve güncel kararlar (Supabase, Azure, Github, Figma ve Resend) doğrultusunda, projenin inşasına başlamak için izlememiz gereken yol haritası:
+1.  **Altyapı Kurulumu:** `~/Repos/TonyAI-mono-repo` altında Turborepo monorepo'nun (pnpm workspaces; `apps/web`, `apps/api`, `packages/shared-types`, `packages/db`) kurulması, GitHub reposunun açılması, Azure üzerinde projenin (Container Apps) yapılandırmasının yapılması ve Supabase (PostgreSQL + Auth) projesinin oluşturulması.
 2.  **Temel Veri (Seed Data):** `data_models_and_json_mocks.md` dosyasındaki verilerin projeye mock olarak entegre edilmesi.
 3.  **UI İnşası (Figma Destekli):** İletilecek Figma tasarımları referans alınarak, ilk olarak **Dashboard (Overview)** ve ardından **Data Entry** sayfalarının görsel olarak inşa edilmesi.
 4.  **Fonksiyonalite:** Hesaplama motorunun bağlanması ve test edilmesi. Resend ile e-posta bildirimlerinin entegrasyonu.
@@ -127,7 +127,7 @@ Yukarıdaki analiz ve güncel kararlar (Supabase, GCP/Azure, Github, Figma ve Re
         *   Gelişmiş Raporlama ve Dışa Aktarma: PDF ve Excel formatında denetime hazır raporların oluşturulması (Puppeteer/exceljs), Resend ile paylaşım.
         *   Gelişmiş Anomali Tespiti: Önceki dönemlere göre yüksek sapma tespiti (%50+).
         *   Toplu Veri Yükleme (Bulk Upload): Geçmiş yılların verilerinin CSV/Excel ile toplu aktarımı (Papa Parse ve sunucu tarafında kuyruk/worker altyapısı).
-        *   Playwright ile E2E entegrasyon testleri ve Production ortamı (GCP/Azure) dağıtımı.
+        *   Playwright ile E2E entegrasyon testleri ve Production ortamı (Azure) dağıtımı.
         *   İleri analitik/tahminleme için **Python (FastAPI) mikroservisi** ve UI **dark mode**, MVP kritik yolunda olmadığından bu faza ertelenmiştir.
 
 **Sonuç:** Bu teknik analiz ve mimari yol haritası onaylandığı takdirde, 7 kişilik subagent ekibiyle ilerleyeceğiz: ilk olarak DevOps & Cloud Engineer ajanını görevlendirip monorepo + altyapı (GitHub, Supabase, Docker) hazırlıklarını başlatacak; Security & Compliance Engineer ile RLS/RBAC temelini ve Data & Emission Factor Engineer ile faktör kütüphanesini kuracağız. Ardından UI/UX Engineer ile mevcut önyüzü monorepo'ya taşıyıp **İnce Dikey Dilim** milestone'una geçeceğiz.
