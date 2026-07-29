@@ -19,7 +19,8 @@ TonyAI is a multi-tenant carbon-accounting platform for holding companies. Phase
 | One-command setup | `pnpm setup` (Supabase up → env sync → migrate → seed) |
 | Start the app | `pnpm dev` → web at **http://localhost:3000**, API at :3001 |
 | Reset demo data | `pnpm db:reset` — restores the full seed at any time |
-| **After pulling new code** | Run `pnpm install` — the Phase-2 prep work added dependencies, and a stale `node_modules` fails at startup. |
+| **After pulling new code** | Run `pnpm setup` (not just `pnpm install`) — recent work added dependencies AND the API now refuses to start unless `apps/api/.env` carries a flag that `pnpm setup` writes. A stale env presents as "the app is broken": the page loads, login succeeds, no data appears. |
+| **Data handling** | Use only the seeded demo data on your local stack — never enter real personal or company data. When your UAT participation ends, wipe the local database (`supabase stop` then `docker volume rm` the project volumes, or simply delete the repo clone). |
 
 > **One-time sign-out after updating (not a bug).** The Phase-2 containerization work renamed the browser session cookie, so the first time you open the app after pulling you will land on `/login` even if you were signed in before. Sign in again with the same credentials — it happens once, and `AUTH-01`…`AUTH-04` behave normally afterwards.
 
@@ -160,7 +161,7 @@ The demo dataset can always be restored with `pnpm db:reset`.
 
 ## 7. Automation baseline (already verified before this UAT)
 
-- **182 API unit tests** — calculation engine (unit conversions to the digit), tenant isolation, RBAC, all lifecycle gates incl. the review transition, targets/intensity math, report assembly/status honesty.
+- **245 API unit tests** — calculation engine (unit conversions to the digit), tenant isolation, RBAC, all lifecycle gates incl. the review transition, targets/intensity math, report assembly/status honesty, JWT verification under both signing schemes.
 - **14 end-to-end tests** (Playwright) — login, CRUD, full data-entry lifecycle incl. evidence upload and approval, all three gates, RBAC/tenant negatives, analytics/dashboard smoke, targets round-trip, report downloads (exact filenames + magic-byte checks) and the data_entry no-export rule.
 - **18 live RLS containment probes** — the database layer independently hides cross-tenant rows even when the API is bypassed.
 - Every mutation writes an append-only **audit log** row.

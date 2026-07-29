@@ -444,7 +444,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 ## Roadmap
 
 - **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
-- **Phase 1 — Core MVP (Scope 1 & 2)** *(active)*: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅, Targets & intensity ✅, Reports ✅ — **Phase 1 complete**.
+- **Phase 1 — Core MVP (Scope 1 & 2)** ✅: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅, Targets & intensity ✅, Reports ✅ — **Phase 1 complete**.
 - **Phase 2 — Staging cloud & CI/CD** *(target: **Azure** — provider switched from GCP 2026-07-29, credit expected; cloud-independent prep is done)*: Supabase cloud (Frankfurt), **Azure Container Apps** deploy via GitHub Actions **OIDC** + **ACR**, Key Vault secrets, Log Analytics for the JSON logs + Sentry for errors, KVKK/GDPR EU residency (Germany West Central), staging smoke E2E in CI.
 - **Phase 3 — Advanced** *(active, reordered WP7–WP14)*: UAT backlog & reviewer UI → bulk upload → email notifications + report sharing (Resend) → Scope 3 + supplier management → i18n/dark mode → Python/FastAPI analytics microservice.
 - **Phase 4 — Production launch:** authoritative emission-factor data, security/pen-test + load test, backup/DR, user lifecycle, legal (KVKK/GDPR), go-live.
