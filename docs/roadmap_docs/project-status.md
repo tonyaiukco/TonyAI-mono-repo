@@ -6,12 +6,13 @@
 > we leave off?"). Keep entries short — link to code/PRs instead of restating them.
 > README stays the public-facing summary; this file is the granular working log.
 
-## Current status — as of 2026-07-29
+## Current status — as of 2026-07-31
 
 - **Phase:** Phase 1 COMPLETE + UAT running (1-2 external testers). **Phase 2 targets Azure** (decision 2026-07-29: no credit agreement with GCP; Azure credits expected) → working **Phase 3 (reordered, WP7+)** in the meantime; cloud-independent Phase-2 prep is done
-- **Latest merged:** PR #28 (status-log sync). Phase-2 prep: PR 1 (containerization, #26) ✅ · PR 2 (observability, #27) ✅ · the standalone **"PR 3 — cloud env & seed strategy" is cancelled** (2026-07-29) — a strategy doc could not be verified against real projects; its content folds into the concrete **cloud-wiring PR** once the Supabase staging project (Frankfurt) exists
+- **Latest merged:** PR #29 (GCP → Azure switch + the four-seat phase-plan revision). Phase-2 prep: PR 1 (containerization, #26) ✅ · PR 2 (observability, #27) ✅ · the standalone **"PR 3 — cloud env & seed strategy" is cancelled** (2026-07-29) — its content folds into the concrete **cloud-wiring PR** once the Supabase staging project (Frankfurt) exists
+- **IN FLIGHT — resume here:** **WP7 is being delivered as 4 PRs.** **PR 1 (audit foundation) is OPEN as [#30](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/30) on `feat/wp7-audit-foundation`, CI green, reviewed by `security-rls` + `qa-auditor` (all findings closed), awaiting the user's merge.** Remaining, in order: **PR 2 — audit-trail viewer** (paginated `GET /audit` — the repo's first paginated endpoint, so the `PaginatedDTO<T>` convention gets set here — + the viewer UI, modelled on the emissions History tab); **PR 3 — reviewer UI** at a new `/review` route (the api client has no `review`/`approve`/`reject` methods yet, only `submit`); **PR 4 — subsidiary Edit dialog** (incl. the geography-change warning whose exact text is in `subsidiaries_page.md:170`; existing records keep their snapshots, only future ones change) **+ matrix → Data Entry shortcut** (the matrix cell click currently drops the category, and Data Entry accepts no URL params — both need widening). The user merges each PR individually.
 - **Everyone must re-run `pnpm setup` after pulling this** — the API now refuses to boot without `ALLOW_INSECURE_LOCAL_AUTH=true` in `apps/api/.env`, and `jsonwebtoken` → `jose` means a stale `node_modules` fails too
-- **Tests:** 245 unit (Vitest, API) + a `next.config` phase guard (web) + 14 E2E (Playwright) + 18 live RLS containment probes — green
+- **Tests:** 259 unit (Vitest, API) + a `next.config` phase guard (web) + 17 E2E (Playwright) + 22 live RLS containment probes — green (counts include the open PR #30)
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)
