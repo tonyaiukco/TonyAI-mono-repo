@@ -745,7 +745,13 @@ export interface ActivityRecordDTO {
   calculation: CalculationResult;
   createdBy: string;
   anomalyFlag: boolean;
+  /** The AUTHOR's justification for an anomalous value (VAR §4). */
   varianceReason: string | null;
+  /** Who decided the review outcome, when, and why. `reviewNote` carries the
+   * REVIEWER's words — a rejection reason never overwrites `varianceReason`. */
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
   /** Number of evidence files linked to this record (FR §4.1). */
   evidenceCount: number;
   createdAt: string;

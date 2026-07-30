@@ -439,7 +439,12 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     );
     const dto = await service.startReview(consultant(), 'rec-r');
     expect(dto.status).toBe(ActivityRecordStatus.under_review);
-    expect(audit.record).toHaveBeenCalled();
+    // The action taxonomy is the point of the change: a transition must no
+    // longer be logged as a blanket 'update'.
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      expect.objectContaining({ action: 'review', entity: 'activity_record' }),
+    );
   });
 
   it('data_entry cannot start a review -> Forbidden', async () => {
@@ -526,7 +531,10 @@ describe('ActivityRecordsService — transition rules', () => {
 
     const dto = await service.submit(dataEntry(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
-    expect(audit.record).toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      expect.objectContaining({ action: 'submit', entity: 'activity_record' }),
+    );
   });
 
   it('blocks submit of an evidence-required category with no evidence (FR §4.1)', async () => {
@@ -542,13 +550,20 @@ describe('ActivityRecordsService — transition rules', () => {
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
-  it('reject moves submitted -> rejected and stores the varianceReason', async () => {
+  it('reject moves submitted -> rejected and stores the reviewer note (not varianceReason)', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-r', status: ActivityRecordStatus.submitted }),
     );
     prisma.activityRecord.update.mockImplementation(({ data }: any) =>
-      makeRecord({ id: 'rec-r', status: data.status, varianceReason: data.varianceReason }),
+      makeRecord({
+        id: 'rec-r',
+        status: data.status,
+        varianceReason: data.varianceReason,
+        reviewNote: data.reviewNote,
+        reviewedBy: data.reviewedBy,
+        reviewedAt: data.reviewedAt,
+      }),
     );
 
     const dto = await service.reject(consultant(), 'rec-r', 'invoice mismatch');
@@ -560,6 +575,12 @@ describe('ActivityRecordsService — transition rules', () => {
     expect(updateArg.data.varianceReason).toBeUndefined();
     expect(updateArg.data.reviewedBy).toBeDefined();
     expect(updateArg.data.reviewedAt).toBeInstanceOf(Date);
+    // …and it must be READABLE: the reason is worthless if no DTO exposes it.
+    expect(dto.reviewNote).toBe('invoice mismatch');
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      expect.objectContaining({ action: 'reject', entity: 'activity_record' }),
+    );
   });
 
   it('update recomputes the calc snapshot on value change', async () => {

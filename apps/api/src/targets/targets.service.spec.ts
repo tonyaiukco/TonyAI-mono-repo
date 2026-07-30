@@ -162,7 +162,7 @@ describe('TargetsService', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ id: expect.any(String) }),
       expect.objectContaining({ action: 'create', entity: 'target' }),
-      expect.anything(),
+      prisma.tx,
     );
   });
 

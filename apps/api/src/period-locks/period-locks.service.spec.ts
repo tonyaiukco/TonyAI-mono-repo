@@ -149,7 +149,7 @@ describe('PeriodLocksService', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ id: expect.any(String) }),
       expect.objectContaining({ action: 'lock', entity: 'period_lock' }),
-      expect.anything(),
+      prisma.tx,
     );
   });
 
@@ -195,7 +195,7 @@ describe('PeriodLocksService', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ id: expect.any(String) }),
       expect.objectContaining({ action: 'unlock', entity: 'period_lock' }),
-      expect.anything(),
+      prisma.tx,
     );
   });
 

@@ -131,6 +131,31 @@ async function cleanupPeriodLocks() {
   await svc('DELETE', 'period_locks?period_value=eq.ZZ');
 }
 
+// The seed writes no audit rows, so a fresh `db:reset` would leave the audit
+// probes with nothing to measure. Seed two: one in the admin's organisation and
+// one filed under a FOREIGN organisation — the latter is what proves the RLS
+// tightening (a super_admin of org A must not read org B's rows), which a
+// single-organisation seed otherwise cannot demonstrate.
+const AUDIT_PROBE_ENTITY = 'rls_probe';
+const FOREIGN_ORG = '99999999-9999-9999-9999-999999999999';
+async function seedAuditRows() {
+  const r = await fetch(`${URL_}/rest/v1/profiles?role=eq.super_admin&select=id,organisation_id&limit=1`, {
+    headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+  });
+  const admin = (await r.json())[0];
+  if (!admin) throw new Error('could not resolve a super_admin profile for the audit_log seed');
+  const base = { action: 'create', entity: AUDIT_PROBE_ENTITY, user_id: admin.id, role: 'super_admin' };
+  const res = await svc('POST', 'audit_log', [
+    { id: randomUUID(), ...base, organisation_id: admin.organisation_id },
+    { id: randomUUID(), ...base, organisation_id: FOREIGN_ORG },
+  ]);
+  if (!res.ok) throw new Error(`audit_log seed failed: ${res.status} ${await res.text()}`);
+  return admin;
+}
+async function cleanupAuditRows() {
+  await svc('DELETE', `audit_log?entity=eq.${AUDIT_PROBE_ENTITY}`);
+}
+
 // --- run ---------------------------------------------------------------------
 const failures = [];
 function check(name, ok, detail) {
@@ -176,17 +201,21 @@ async function main() {
   // (super_admin only) AND organisation-scoped, so a data_entry user must see
   // nothing at all while an admin sees only their own organisation's rows.
   console.log('▸ audit_log (role-gated + organisation-scoped)');
-  {
+  await cleanupAuditRows(); // in case a previous run aborted
+  await seedAuditRows();
+  try {
     const adminToken = await getToken(ADMIN_EMAIL);
     const anon = await count('audit_log');
     const entry = await count('audit_log', { token });
     const admin = await count('audit_log', { token: adminToken });
-    // Everything the service role can see, minus rows of other organisations.
-    const total = await count('audit_log', { token: SERVICE, key: SERVICE });
     const foreign = await count('audit_log', {
       token: SERVICE,
       key: SERVICE,
-      query: 'select=id&organisation_id=is.null',
+      query: `select=id&organisation_id=eq.${FOREIGN_ORG}`,
+    });
+    const adminSeesForeign = await count('audit_log', {
+      token: adminToken,
+      query: `select=id&organisation_id=eq.${FOREIGN_ORG}`,
     });
 
     if (anon.error) check('audit_log: anon read', false, `unexpected status ${anon.error}`);
@@ -194,24 +223,22 @@ async function main() {
 
     if (entry.error) check('audit_log: entry read', false, `unexpected status ${entry.error}`);
     else
-      check(
-        'audit_log: data_entry sees nothing (role-gated)',
-        entry.total === 0,
-        `count=${entry.total}`,
-      );
+      check('audit_log: data_entry sees nothing (role-gated)', entry.total === 0, `count=${entry.total}`);
 
     if (admin.error) check('audit_log: admin read', false, `unexpected status ${admin.error} (missing GRANT?)`);
     else check('audit_log: super_admin sees own-organisation rows', admin.total > 0, `count=${admin.total}`);
 
-    if (!admin.error && !total.error && !foreign.error) {
-      // Rows with a null organisation are unreadable by design (fail-closed),
-      // so the admin's count is everything minus those.
+    // The tightening this probe exists for: before it, a super_admin of one
+    // organisation could read another organisation's audit rows.
+    if (!foreign.error && !adminSeesForeign.error) {
       check(
-        'audit_log: unscoped rows stay invisible (fail-closed)',
-        admin.total === total.total - foreign.total,
-        `admin=${admin.total} == total(${total.total}) - unscoped(${foreign.total})`,
+        'audit_log: super_admin cannot read another organisation (the WP7 fix)',
+        foreign.total > 0 && adminSeesForeign.total === 0,
+        `foreign rows exist=${foreign.total}, visible to admin=${adminSeesForeign.total}`,
       );
     }
+  } finally {
+    await cleanupAuditRows();
   }
 
   console.log('');

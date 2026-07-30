@@ -131,7 +131,7 @@ describe('IntensityService', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ id: expect.any(String) }),
       expect.objectContaining({ action: 'create', entity: 'denominator' }),
-      expect.anything(),
+      prisma.tx,
     );
   });
 

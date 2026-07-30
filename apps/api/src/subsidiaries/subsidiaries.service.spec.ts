@@ -169,12 +169,28 @@ describe('SubsidiariesService', () => {
       expect(audit.record).not.toHaveBeenCalled();
     });
 
-    it('throws NotFound when the row does not exist', async () => {
+    it('refuses to update a subsidiary outside the access set WITHOUT querying it', async () => {
+      // Regression guard for the cross-tenant write hole: update used to check
+      // the ROLE only and then findUnique by id, so a super_admin of one
+      // organisation could edit another's subsidiary. The "never queried"
+      // assertion is what distinguishes the fix from the old code — a
+      // not-found id alone would 404 either way.
+      const user = makeSuperAdmin();
+
+      await expect(
+        service.update(user, 'sub-of-another-org', { legalName: 'Hijacked' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
+      expect(prisma.subsidiary.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFound when an in-scope row has since been deleted', async () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.update(user, 'missing', { legalName: 'Renamed' }),
+        service.update(user, 'sub-1', { legalName: 'Renamed' }),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.subsidiary.update).not.toHaveBeenCalled();
     });
@@ -218,11 +234,22 @@ describe('SubsidiariesService', () => {
       expect(audit.record).not.toHaveBeenCalled();
     });
 
-    it('throws NotFound when the row does not exist', async () => {
+    it('refuses to delete a subsidiary outside the access set WITHOUT querying it', async () => {
+      const user = makeSuperAdmin();
+
+      await expect(service.remove(user, 'sub-of-another-org')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
+      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFound when an in-scope row has since been deleted', async () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(null);
 
-      await expect(service.remove(user, 'missing')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
     });
 

@@ -115,6 +115,9 @@ export class ActivityRecordsService {
       createdBy: r.createdBy,
       anomalyFlag: r.anomalyFlag,
       varianceReason: r.varianceReason,
+      reviewedBy: r.reviewedBy,
+      reviewedAt: r.reviewedAt ? r.reviewedAt.toISOString() : null,
+      reviewNote: r.reviewNote,
       evidenceCount,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
@@ -628,7 +631,11 @@ export class ActivityRecordsService {
       record.reportingPeriod,
       record.periodValue,
     );
-    return this.transition(user, record, ActivityRecordStatus.approved);
+    // Clear any earlier rejection note: an approved record showing last
+    // round's rejection reason would misread as "approved, but rejected".
+    return this.transition(user, record, ActivityRecordStatus.approved, {
+      reviewNote: null,
+    });
   }
 
   async reject(
@@ -693,7 +700,7 @@ export class ActivityRecordsService {
     extra: {
       varianceReason?: string;
       anomalyFlag?: boolean;
-      reviewNote?: string;
+      reviewNote?: string | null;
     } = {},
   ): Promise<ActivityRecordDTO> {
     // A review outcome records WHO decided and WHEN, so the reviewer screen
