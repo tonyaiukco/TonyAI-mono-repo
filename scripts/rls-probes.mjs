@@ -46,6 +46,7 @@ if (!URL_ || !ANON || !SERVICE) {
 }
 
 const ENTRY_EMAIL = 'entry@tonyai.local';
+const ADMIN_EMAIL = 'admin@tonyai.local';
 const PASSWORD = 'TonyAI!2026';
 const TENANT_TABLES = [
   'activity_records',
@@ -86,15 +87,16 @@ async function count(table, { token, key = ANON, query = 'select=id' } = {}) {
   return { total: Number(cr.split('/')[1] || '0') };
 }
 
-async function getEntryToken() {
+async function getToken(email) {
   const res = await fetch(`${URL_}/auth/v1/token?grant_type=password`, {
     method: 'POST',
     headers: { apikey: ANON, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: ENTRY_EMAIL, password: PASSWORD }),
+    body: JSON.stringify({ email, password: PASSWORD }),
   });
-  if (!res.ok) throw new Error(`entry token grant failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`${email} token grant failed: ${res.status} ${await res.text()}`);
   return (await res.json()).access_token;
 }
+const getEntryToken = () => getToken(ENTRY_EMAIL);
 
 function svc(method, path, body) {
   return fetch(`${URL_}/rest/v1/${path}`, {
@@ -168,6 +170,48 @@ async function main() {
     }
   } finally {
     await cleanupPeriodLocks();
+  }
+
+  // audit_log does NOT follow the tenant-table shape: its policy is role-gated
+  // (super_admin only) AND organisation-scoped, so a data_entry user must see
+  // nothing at all while an admin sees only their own organisation's rows.
+  console.log('▸ audit_log (role-gated + organisation-scoped)');
+  {
+    const adminToken = await getToken(ADMIN_EMAIL);
+    const anon = await count('audit_log');
+    const entry = await count('audit_log', { token });
+    const admin = await count('audit_log', { token: adminToken });
+    // Everything the service role can see, minus rows of other organisations.
+    const total = await count('audit_log', { token: SERVICE, key: SERVICE });
+    const foreign = await count('audit_log', {
+      token: SERVICE,
+      key: SERVICE,
+      query: 'select=id&organisation_id=is.null',
+    });
+
+    if (anon.error) check('audit_log: anon read', false, `unexpected status ${anon.error}`);
+    else check('audit_log: anon sees nothing', anon.total === 0, `count=${anon.total}`);
+
+    if (entry.error) check('audit_log: entry read', false, `unexpected status ${entry.error}`);
+    else
+      check(
+        'audit_log: data_entry sees nothing (role-gated)',
+        entry.total === 0,
+        `count=${entry.total}`,
+      );
+
+    if (admin.error) check('audit_log: admin read', false, `unexpected status ${admin.error} (missing GRANT?)`);
+    else check('audit_log: super_admin sees own-organisation rows', admin.total > 0, `count=${admin.total}`);
+
+    if (!admin.error && !total.error && !foreign.error) {
+      // Rows with a null organisation are unreadable by design (fail-closed),
+      // so the admin's count is everything minus those.
+      check(
+        'audit_log: unscoped rows stay invisible (fail-closed)',
+        admin.total === total.total - foreign.total,
+        `admin=${admin.total} == total(${total.total}) - unscoped(${foreign.total})`,
+      );
+    }
   }
 
   console.log('');

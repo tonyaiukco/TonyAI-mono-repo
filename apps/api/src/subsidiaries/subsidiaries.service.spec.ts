@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { SubsidiariesService } from './subsidiaries.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,15 +10,27 @@ import {
   type PrismaMock,
 } from '../../test/helpers';
 
+import { AuditService } from '../audit/audit.service';
+
+/**
+ * Audit writes go through the shared AuditService. A single shared spy lets the
+ * specs assert WHAT was audited; the row shape it stamps (actor role +
+ * organisation) is covered by audit.service.spec.ts.
+ */
+const audit = { record: vi.fn() };
+const auditMock = () => audit as unknown as AuditService;
+
 describe('SubsidiariesService', () => {
   let prisma: PrismaMock;
   let service: SubsidiariesService;
 
   beforeEach(() => {
+
+    audit.record.mockClear();
     prisma = createPrismaMock();
     // Direct instantiation with the mock — the service only depends on the
     // narrow PrismaService surface, so no Nest container / DB is needed.
-    service = new SubsidiariesService(prisma as unknown as PrismaService);
+    service = new SubsidiariesService(prisma as unknown as PrismaService, auditMock());
   });
 
   describe('list — tenant isolation', () => {
@@ -104,7 +116,7 @@ describe('SubsidiariesService', () => {
 
       await expect(service.create(user, dto)).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.subsidiary.create).not.toHaveBeenCalled();
-      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
     });
 
     it('throws Forbidden when a super_admin has no organisation context', async () => {
@@ -118,29 +130,26 @@ describe('SubsidiariesService', () => {
       const user = makeSuperAdmin();
       const created = makeSubsidiary({ id: 'sub-new', legalName: 'New Co' });
       prisma.subsidiary.create.mockResolvedValue(created);
-      prisma.auditLog.create.mockResolvedValue({});
-
-      const result = await service.create(user, dto);
+            const result = await service.create(user, dto);
 
       expect(result.id).toBe('sub-new');
       expect(prisma.subsidiary.create).toHaveBeenCalledTimes(1);
-      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
-      const auditArg = prisma.auditLog.create.mock.calls[0][0];
-      expect(auditArg.data).toMatchObject({
-        userId: user.id,
+      expect(audit.record).toHaveBeenCalledTimes(1);
+      // The actor is the first argument now; the entry describes the change.
+      expect(audit.record.mock.calls[0][0]).toMatchObject({ id: user.id });
+      const auditArg = audit.record.mock.calls[0][1];
+      expect(auditArg).toMatchObject({
         action: 'create',
         entity: 'subsidiary',
         entityId: 'sub-new',
       });
-      expect(auditArg.data.diff).toHaveProperty('after');
+      expect(auditArg.diff).toHaveProperty('after');
     });
 
     it('applies documented defaults (pending status, scopes [1,2]) for optional fields', async () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
-      prisma.auditLog.create.mockResolvedValue({});
-
-      await service.create(user, dto);
+            await service.create(user, dto);
 
       const createArg = prisma.subsidiary.create.mock.calls[0][0];
       expect(createArg.data.reportingStatus).toBe('pending');
@@ -157,7 +166,7 @@ describe('SubsidiariesService', () => {
         service.update(user, 'sub-1', { legalName: 'Renamed' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.subsidiary.update).not.toHaveBeenCalled();
-      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
     });
 
     it('throws NotFound when the row does not exist', async () => {
@@ -176,28 +185,24 @@ describe('SubsidiariesService', () => {
       const after = makeSubsidiary({ id: 'sub-1', legalName: 'New' });
       prisma.subsidiary.findUnique.mockResolvedValue(before);
       prisma.subsidiary.update.mockResolvedValue(after);
-      prisma.auditLog.create.mockResolvedValue({});
-
-      const result = await service.update(user, 'sub-1', { legalName: 'New' });
+            const result = await service.update(user, 'sub-1', { legalName: 'New' });
 
       expect(result.legalName).toBe('New');
       expect(prisma.subsidiary.update).toHaveBeenCalledWith({
         where: { id: 'sub-1' },
         data: { legalName: 'New' },
       });
-      const auditArg = prisma.auditLog.create.mock.calls[0][0];
-      expect(auditArg.data.action).toBe('update');
-      expect(auditArg.data.diff).toHaveProperty('before');
-      expect(auditArg.data.diff).toHaveProperty('after');
+      const auditArg = audit.record.mock.calls[0][1];
+      expect(auditArg.action).toBe('update');
+      expect(auditArg.diff).toHaveProperty('before');
+      expect(auditArg.diff).toHaveProperty('after');
     });
 
     it('only includes explicitly-provided fields in the update payload', async () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       prisma.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      prisma.auditLog.create.mockResolvedValue({});
-
-      await service.update(user, 'sub-1', { reportingStatus: 'active' });
+            await service.update(user, 'sub-1', { reportingStatus: 'active' });
 
       const updateArg = prisma.subsidiary.update.mock.calls[0][0];
       expect(updateArg.data).toEqual({ reportingStatus: 'active' });
@@ -210,7 +215,7 @@ describe('SubsidiariesService', () => {
 
       await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
-      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
     });
 
     it('throws NotFound when the row does not exist', async () => {
@@ -226,15 +231,13 @@ describe('SubsidiariesService', () => {
       const before = makeSubsidiary({ id: 'sub-1' });
       prisma.subsidiary.findUnique.mockResolvedValue(before);
       prisma.subsidiary.delete.mockResolvedValue(before);
-      prisma.auditLog.create.mockResolvedValue({});
-
-      const result = await service.remove(user, 'sub-1');
+            const result = await service.remove(user, 'sub-1');
 
       expect(result).toEqual({ id: 'sub-1', deleted: true });
       expect(prisma.subsidiary.delete).toHaveBeenCalledWith({ where: { id: 'sub-1' } });
-      const auditArg = prisma.auditLog.create.mock.calls[0][0];
-      expect(auditArg.data.action).toBe('delete');
-      expect(auditArg.data.diff).toHaveProperty('before');
+      const auditArg = audit.record.mock.calls[0][1];
+      expect(auditArg.action).toBe('delete');
+      expect(auditArg.diff).toHaveProperty('before');
     });
   });
 });

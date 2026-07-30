@@ -339,8 +339,8 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `DELETE` | `/activity-records/:id` | Delete (only while `draft`/`rejected`; author‑or‑`super_admin`) | `data_entry` / `consultant` / `super_admin` |
 | `POST` | `/activity-records/:id/review` | Take a submitted record into review (FR §6.3) | `consultant` / `super_admin` |
 | `POST` | `/activity-records/:id/submit` | `draft` → `submitted` | any accessor |
-| `POST` | `/activity-records/:id/approve` | `submitted`/`under_review` → `approved` | `consultant` / `super_admin` |
-| `POST` | `/activity-records/:id/reject` | `submitted`/`under_review` → `rejected` (body `{ varianceReason }`) | `consultant` / `super_admin` |
+| `POST` | `/activity-records/:id/approve` | `submitted`/`under_review` → `approved` (records `reviewedBy`/`reviewedAt`) | **`super_admin` only** |
+| `POST` | `/activity-records/:id/reject` | `submitted`/`under_review` → `rejected` (body `{ varianceReason }` → stored as `reviewNote`, never over the author's variance justification) | `consultant` / `super_admin` |
 | `GET` | `/emissions/summary` | Tenant‑scoped analytics aggregation from committed records: scope totals, category & subsidiary breakdown, monthly/quarterly/yearly trends (filters `?subsidiaryId=&year=&scope=&category=`) | any |
 | `GET` | `/emissions/tracking-matrix` | Subsidiary × category completeness matrix (FR §2: missing/incomplete/complete) with committed tCO₂e per cell (filter `?year=`) | any |
 | `GET` | `/activity-records/:id/evidence` | List evidence files linked to a record | any |

@@ -13,6 +13,7 @@ import type {
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { AuditService } from '../audit/audit.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import { CreateDenominatorDto } from './dto/create-denominator.dto';
 import { UpdateDenominatorDto } from './dto/update-denominator.dto';
@@ -22,6 +23,7 @@ export class IntensityService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emissions: EmissionsService,
+    private readonly audit: AuditService,
   ) {}
 
   private toDTO(d: SubsidiaryDenominator): DenominatorDTO {
@@ -89,9 +91,16 @@ export class IntensityService {
             createdBy: user.id,
           },
         });
-        await this.audit(tx, user.id, 'create', row.id, {
-          denominator: this.toDTO(row),
-        });
+        await this.audit.record(
+          user,
+          {
+            action: 'create',
+            entity: 'denominator',
+            entityId: row.id,
+            diff: { denominator: this.toDTO(row) },
+          },
+          tx,
+        );
         return row;
       });
       return this.toDTO(created);
@@ -128,10 +137,16 @@ export class IntensityService {
         where: { id },
         data: { value: dto.value, unit: dto.unit },
       });
-      await this.audit(tx, user.id, 'update', row.id, {
-        before: this.toDTO(existing),
-        after: this.toDTO(row),
-      });
+      await this.audit.record(
+        user,
+        {
+          action: 'update',
+          entity: 'denominator',
+          entityId: row.id,
+          diff: { before: this.toDTO(existing), after: this.toDTO(row) },
+        },
+        tx,
+      );
       return row;
     });
     return this.toDTO(updated);
@@ -153,9 +168,16 @@ export class IntensityService {
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.subsidiaryDenominator.delete({ where: { id } });
-      await this.audit(tx, user.id, 'delete', id, {
-        denominator: this.toDTO(existing),
-      });
+      await this.audit.record(
+        user,
+        {
+          action: 'delete',
+          entity: 'denominator',
+          entityId: id,
+          diff: { denominator: this.toDTO(existing) },
+        },
+        tx,
+      );
     });
     return { id, deleted: true };
   }
@@ -228,21 +250,4 @@ export class IntensityService {
     return { year, metrics };
   }
 
-  private async audit(
-    tx: Prisma.TransactionClient,
-    userId: string,
-    action: string,
-    entityId: string,
-    diff: unknown,
-  ): Promise<void> {
-    await tx.auditLog.create({
-      data: {
-        userId,
-        action,
-        entity: 'denominator',
-        entityId,
-        diff: diff as Prisma.InputJsonValue,
-      },
-    });
-  }
 }

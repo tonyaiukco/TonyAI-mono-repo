@@ -19,6 +19,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import type { RequestUser } from '../auth/auth.types';
+import { AuditService } from '../audit/audit.service';
 
 export const EVIDENCE_BUCKET = 'evidence';
 const SIGNED_URL_TTL_SECONDS = 60;
@@ -36,6 +37,7 @@ export class EvidenceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly audit: AuditService,
   ) {}
 
   private toDTO(e: Evidence): EvidenceDTO {
@@ -128,9 +130,14 @@ export class EvidenceService {
         uploadedBy: user.id,
       },
     });
-    await this.audit(user.id, 'create', created.id, {
+    await this.audit.record(user, {
+      action: 'create',
+      entity: 'evidence',
+      entityId: created.id,
+      diff: {
       after: { ...this.toDTO(created), recordId },
-    });
+    },
+    })
     return this.toDTO(created);
   }
 
@@ -166,26 +173,15 @@ export class EvidenceService {
     this.assertCanMutate(user, record);
     await this.storage.remove(EVIDENCE_BUCKET, [evidence.storagePath]);
     await this.prisma.evidence.delete({ where: { id } });
-    await this.audit(user.id, 'delete', id, {
+    await this.audit.record(user, {
+      action: 'delete',
+      entity: 'evidence',
+      entityId: id,
+      diff: {
       before: this.toDTO(evidence),
-    });
+    },
+    })
     return { id, deleted: true };
   }
 
-  private async audit(
-    userId: string,
-    action: 'create' | 'delete',
-    entityId: string,
-    diff: Record<string, unknown>,
-  ): Promise<void> {
-    await this.prisma.auditLog.create({
-      data: {
-        userId,
-        action,
-        entity: 'evidence',
-        entityId,
-        diff: diff as Prisma.InputJsonValue,
-      },
-    });
-  }
 }

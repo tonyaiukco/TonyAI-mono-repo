@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { LocationsService } from './locations.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,13 +10,25 @@ import {
   type PrismaMock,
 } from '../../test/helpers';
 
+import { AuditService } from '../audit/audit.service';
+
+/**
+ * Audit writes go through the shared AuditService. A single shared spy lets the
+ * specs assert WHAT was audited; the row shape it stamps (actor role +
+ * organisation) is covered by audit.service.spec.ts.
+ */
+const audit = { record: vi.fn() };
+const auditMock = () => audit as unknown as AuditService;
+
 describe('LocationsService', () => {
   let prisma: PrismaMock;
   let service: LocationsService;
 
   beforeEach(() => {
+
+    audit.record.mockClear();
     prisma = createPrismaMock();
-    service = new LocationsService(prisma as unknown as PrismaService);
+    service = new LocationsService(prisma as unknown as PrismaService, auditMock());
   });
 
   describe('list', () => {
@@ -97,14 +109,13 @@ describe('LocationsService', () => {
       const dto = await service.create(user, { subsidiaryId: 'sub-1', name: 'HQ', geographyCode: 'TR' });
 
       expect(dto).toMatchObject({ subsidiaryId: 'sub-1', name: 'HQ' });
-      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ id: expect.any(String) }),
         expect.objectContaining({
-          data: expect.objectContaining({
             action: 'create',
             entity: 'location',
             entityId: created.id,
           }),
-        }),
       );
     });
   });
@@ -131,10 +142,9 @@ describe('LocationsService', () => {
         data: { name: 'New' },
       });
       expect(dto.name).toBe('New');
-      expect(prisma.auditLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ action: 'update', entity: 'location' }),
-        }),
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ id: expect.any(String) }),
+        expect.objectContaining({ action: 'update', entity: 'location' }),
       );
     });
 
@@ -147,10 +157,9 @@ describe('LocationsService', () => {
       const res = await service.remove(user, existing.id);
 
       expect(res).toEqual({ id: existing.id, deleted: true });
-      expect(prisma.auditLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ action: 'delete', entity: 'location' }),
-        }),
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ id: expect.any(String) }),
+        expect.objectContaining({ action: 'delete', entity: 'location' }),
       );
     });
 

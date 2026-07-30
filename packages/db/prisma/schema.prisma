@@ -136,7 +136,13 @@ model ActivityRecord {
   calculation    Json // immutable calc-engine snapshot (tCo2e + factor traceability)
   createdBy      String               @map("created_by") @db.Uuid
   anomalyFlag    Boolean              @default(false) @map("anomaly_flag")
+  // The AUTHOR's justification for an anomalous value (VAR §4). A reviewer must
+  // never overwrite it — their own words go in reviewNote.
   varianceReason String?              @map("variance_reason")
+  // Review outcome: who acted, when, and why (a rejection reason is mandatory).
+  reviewedBy     String?              @map("reviewed_by") @db.Uuid
+  reviewedAt     DateTime?            @map("reviewed_at")
+  reviewNote     String?              @map("review_note")
   evidence       Evidence[]
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
@@ -276,14 +282,27 @@ model EmissionFactor {
 }
 
 model AuditLog {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String?  @map("user_id") @db.Uuid
-  action    String // create | update | delete | submit | approve | reject | lock | unlock | generate
-  entity    String // e.g. "subsidiary"
-  entityId  String?  @map("entity_id")
-  diff      Json?
-  createdAt DateTime @default(now()) @map("created_at")
+  id     String  @id @default(uuid()) @db.Uuid
+  userId String? @map("user_id") @db.Uuid
+  // The actor's role AT THE TIME of the action — denormalised on purpose: roles
+  // change, and an audit trail that renders today's role next to a year-old
+  // action would misstate who was allowed to do what. Null on rows written
+  // before this column existed (never back-dated with a guess).
+  role   String?
+  // Tenant scope, denormalised from the ACTOR's profile rather than joined from
+  // the entity: `report` rows carry a null entityId, and `delete` rows point at
+  // a row that no longer exists — neither can be joined. This column is what
+  // makes tenant-scoped audit reads possible for every entity.
+  organisationId String? @map("organisation_id") @db.Uuid
+  // create | update | delete | submit | review | approve | reject | lock | unlock | generate
+  action         String
+  entity         String // e.g. "subsidiary"
+  entityId       String? @map("entity_id")
+  diff           Json?
+  createdAt      DateTime @default(now()) @map("created_at")
 
   @@index([entity, entityId])
+  // The viewer lists newest-first, scoped to one organisation.
+  @@index([organisationId, createdAt])
   @@map("audit_log")
 }

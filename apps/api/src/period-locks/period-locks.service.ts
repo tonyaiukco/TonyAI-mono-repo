@@ -13,6 +13,7 @@ import {
 import type { PeriodLockDTO, ReportingPeriod } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { AuditService } from '../audit/audit.service';
 import { CreatePeriodLockDto } from './dto/create-period-lock.dto';
 import { isValidPeriodValue } from '../activity-records/activity-records.service';
 
@@ -30,7 +31,10 @@ const PENDING_REVIEW_STATUSES: ActivityRecordStatus[] = [
 
 @Injectable()
 export class PeriodLocksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   private toDTO(l: PeriodLock): PeriodLockDTO {
     return {
@@ -132,18 +136,16 @@ export class PeriodLocksService {
           data: { status: ActivityRecordStatus.locked },
         });
         // Audit inside the transaction so a bulk flip can never go unaudited.
-        await tx.auditLog.create({
-          data: {
-            userId: user.id,
+        await this.audit.record(
+          user,
+          {
             action: 'lock',
             entity: 'period_lock',
             entityId: row.id,
-            diff: {
-              lock: this.toDTO(row),
-              recordsLocked: flipped.count,
-            } as unknown as Prisma.InputJsonValue,
+            diff: { lock: this.toDTO(row), recordsLocked: flipped.count },
           },
-        });
+          tx,
+        );
         return row;
       });
     } catch (e) {
@@ -191,18 +193,16 @@ export class PeriodLocksService {
         data: { status: ActivityRecordStatus.approved },
       });
       // Audit inside the transaction so a bulk flip can never go unaudited.
-      await tx.auditLog.create({
-        data: {
-          userId: user.id,
+      await this.audit.record(
+        user,
+        {
           action: 'unlock',
           entity: 'period_lock',
           entityId: id,
-          diff: {
-            lock: this.toDTO(existing),
-            recordsReverted: flipped.count,
-          } as unknown as Prisma.InputJsonValue,
+          diff: { lock: this.toDTO(existing), recordsReverted: flipped.count },
         },
-      });
+        tx,
+      );
     });
 
     return { id, deleted: true };

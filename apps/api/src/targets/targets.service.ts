@@ -14,6 +14,7 @@ import type {
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { AuditService } from '../audit/audit.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import { CreateTargetDto } from './dto/create-target.dto';
 import { UpdateTargetDto } from './dto/update-target.dto';
@@ -39,6 +40,7 @@ export class TargetsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emissions: EmissionsService,
+    private readonly audit: AuditService,
   ) {}
 
   private toDTO(t: Target): TargetDTO {
@@ -126,9 +128,11 @@ export class TargetsService {
           createdBy: user.id,
         },
       });
-      await this.audit(tx, user.id, 'create', row.id, {
-        target: this.toDTO(row),
-      });
+      await this.audit.record(
+        user,
+        { action: 'create', entity: 'target', entityId: row.id, diff: { target: this.toDTO(row) } },
+        tx,
+      );
       return row;
     });
     return this.toDTO(created);
@@ -167,10 +171,16 @@ export class TargetsService {
           targetTCo2e: dto.targetTCo2e,
         },
       });
-      await this.audit(tx, user.id, 'update', row.id, {
-        before: this.toDTO(existing),
-        after: this.toDTO(row),
-      });
+      await this.audit.record(
+        user,
+        {
+          action: 'update',
+          entity: 'target',
+          entityId: row.id,
+          diff: { before: this.toDTO(existing), after: this.toDTO(row) },
+        },
+        tx,
+      );
       return row;
     });
     return this.toDTO(updated);
@@ -190,9 +200,11 @@ export class TargetsService {
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.target.delete({ where: { id } });
-      await this.audit(tx, user.id, 'delete', id, {
-        target: this.toDTO(existing),
-      });
+      await this.audit.record(
+        user,
+        { action: 'delete', entity: 'target', entityId: id, diff: { target: this.toDTO(existing) } },
+        tx,
+      );
     });
     return { id, deleted: true };
   }
@@ -263,21 +275,4 @@ export class TargetsService {
     };
   }
 
-  private async audit(
-    tx: Prisma.TransactionClient,
-    userId: string,
-    action: string,
-    entityId: string,
-    diff: unknown,
-  ): Promise<void> {
-    await tx.auditLog.create({
-      data: {
-        userId,
-        action,
-        entity: 'target',
-        entityId,
-        diff: diff as Prisma.InputJsonValue,
-      },
-    });
-  }
 }

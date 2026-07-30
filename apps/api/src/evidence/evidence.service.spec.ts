@@ -10,6 +10,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import type { RequestUser } from '../auth/auth.types';
 
+import { AuditService } from '../audit/audit.service';
+
+/**
+ * Audit writes go through the shared AuditService. A single shared spy lets the
+ * specs assert WHAT was audited; the row shape it stamps (actor role +
+ * organisation) is covered by audit.service.spec.ts.
+ */
+const audit = { record: vi.fn() };
+const auditMock = () => audit as unknown as AuditService;
+
 function createPrismaMock() {
   return {
     activityRecord: { findUnique: vi.fn() },
@@ -91,12 +101,15 @@ describe('EvidenceService', () => {
   let service: EvidenceService;
 
   beforeEach(() => {
+
+    audit.record.mockClear();
     seq = 0;
     prisma = createPrismaMock();
     storage = createStorageMock();
     service = new EvidenceService(
       prisma as unknown as PrismaService,
       storage as unknown as StorageService,
+      auditMock(),
     );
   });
 
@@ -133,7 +146,7 @@ describe('EvidenceService', () => {
     const [bucket, path] = storage.upload.mock.calls[0];
     expect(bucket).toBe('evidence');
     expect(path).toMatch(/^rec-1\//);
-    expect(prisma.auditLog.create).toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalled();
     expect(dto.fileName).toBe('invoice.pdf');
   });
 

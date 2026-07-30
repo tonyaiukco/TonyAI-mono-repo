@@ -40,6 +40,7 @@ This matrix defines action permissions for UI rendering and backend enforcement.
 | Submit records for review | ✅ | ❌ | ✅ | ❌ |
 | Flag records for revision | ✅ | ✅ | ❌ | ❌ |
 | Approve records | ✅ | ❌ | ❌ | ❌ |
+| Reject records / flag for revision | ✅ | ✅ | ❌ | ❌ |
 | Lock records | ✅ | ❌ | ❌ | ❌ |
 | Manage subsidiaries | ✅ | ❌ | ❌ | ❌ |
 | Manage suppliers | ✅ | ❌ | ❌ | ❌ |
@@ -119,7 +120,19 @@ A user may only retrieve or mutate data that belongs to their assigned scope.
 
 ### Example
 If a `data_entry` user attempts to access a record for a `subsidiaryId` outside their assigned list:
-- the backend must return `403 Forbidden`
+- the backend must return **`404 Not Found`**
+
+**Decision 2026-07-30 — 404 for tenancy, 403 for role.** An earlier draft of this
+document said `403 Forbidden` here, but a 403 confirms that the row exists, which
+hands an attacker a tenant-enumeration oracle. The implemented rule is:
+
+| Situation | Status |
+| --- | --- |
+| Resource belongs to another tenant (outside `accessibleSubsidiaryIds`) | `404 Not Found` — indistinguishable from "does not exist" |
+| Resource is visible to you, but your **role** may not perform the action | `403 Forbidden` |
+| Resource is visible and you may act, but its **state** forbids it (locked period, wrong status) | `400` / `409` |
+
+List endpoints never 404: they return only the rows in scope.
 
 ## 6.3 Context Filtering Rule
 All list and search results must be filtered by the user’s authorised organisation and subsidiary scope before being returned to the frontend.

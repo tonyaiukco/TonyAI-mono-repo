@@ -12,6 +12,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CalculationsService } from '../calculations/calculations.service';
 import type { RequestUser } from '../auth/auth.types';
 
+import { AuditService } from '../audit/audit.service';
+
+/**
+ * Audit writes go through the shared AuditService. A single shared spy lets the
+ * specs assert WHAT was audited; the row shape it stamps (actor role +
+ * organisation) is covered by audit.service.spec.ts.
+ */
+const audit = { record: vi.fn() };
+const auditMock = () => audit as unknown as AuditService;
+
 // --- Local, DB-free mocks --------------------------------------------------
 
 function createPrismaMock() {
@@ -160,6 +170,7 @@ function build(scope = 2) {
   const service = new ActivityRecordsService(
     prisma as unknown as PrismaService,
     calc as unknown as CalculationsService,
+      auditMock(),
   );
   return { prisma, calc, service };
 }
@@ -181,6 +192,8 @@ describe('ActivityRecordsService — tenant scoping', () => {
   let service: ActivityRecordsService;
 
   beforeEach(() => {
+
+    audit.record.mockClear();
     ({ prisma, service } = build());
   });
 
@@ -246,14 +259,13 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
     expect(createArg.data.createdBy).toBe('user-entry');
     expect(dto.calculation.tCo2e).toBeCloseTo(19.8, 6);
     // Audit written.
-    expect(prisma.auditLog.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
+    expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ id: expect.any(String) }),
+        expect.objectContaining({
           action: 'create',
           entity: 'activity_record',
         }),
-      }),
-    );
+      );
   });
 
   it('resolves the factor geography from the LOCATION when a locationId is given (FR §5.2)', async () => {
@@ -346,7 +358,22 @@ describe('ActivityRecordsService — RBAC', () => {
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
-  it('consultant can approve a submitted record (writes audit)', async () => {
+  it('consultant may NOT approve — approval is super_admin only', async () => {
+    // Decision 2026-07-30: a consultant enters data on a client's behalf, so
+    // letting the same seat approve it breaks "the preparer does not approve".
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted }),
+    );
+
+    await expect(service.approve(consultant(), 'rec-a')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('super_admin approves a submitted record (audited as `approve`)', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted }),
@@ -355,16 +382,15 @@ describe('ActivityRecordsService — RBAC', () => {
       makeRecord({ id: 'rec-a', status: data.status }),
     );
 
-    const dto = await service.approve(consultant(), 'rec-a');
+    const dto = await service.approve(superAdmin(), 'rec-a');
     expect(dto.status).toBe(ActivityRecordStatus.approved);
-    expect(prisma.auditLog.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          action: 'update',
+    expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ id: expect.any(String) }),
+        expect.objectContaining({
+          action: 'approve',
           entity: 'activity_record',
         }),
-      }),
-    );
+      );
   });
 
   it('non-owner data_entry cannot edit a peer record -> Forbidden', async () => {
@@ -413,7 +439,7 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     );
     const dto = await service.startReview(consultant(), 'rec-r');
     expect(dto.status).toBe(ActivityRecordStatus.under_review);
-    expect(prisma.auditLog.create).toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalled();
   });
 
   it('data_entry cannot start a review -> Forbidden', async () => {
@@ -456,7 +482,7 @@ describe('ActivityRecordsService — transition rules', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ status: ActivityRecordStatus.draft }),
     );
-    await expect(service.approve(consultant(), 'rec-1')).rejects.toBeInstanceOf(
+    await expect(service.approve(superAdmin(), 'rec-1')).rejects.toBeInstanceOf(
       BadRequestException,
     );
   });
@@ -500,7 +526,7 @@ describe('ActivityRecordsService — transition rules', () => {
 
     const dto = await service.submit(dataEntry(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
-    expect(prisma.auditLog.create).toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalled();
   });
 
   it('blocks submit of an evidence-required category with no evidence (FR §4.1)', async () => {
@@ -527,9 +553,13 @@ describe('ActivityRecordsService — transition rules', () => {
 
     const dto = await service.reject(consultant(), 'rec-r', 'invoice mismatch');
     expect(dto.status).toBe(ActivityRecordStatus.rejected);
-    expect(dto.varianceReason).toBe('invoice mismatch');
     const updateArg = prisma.activityRecord.update.mock.calls[0][0];
-    expect(updateArg.data.varianceReason).toBe('invoice mismatch');
+    // The reviewer's reason is its own field; the author's variance
+    // justification (VAR §4) must survive untouched.
+    expect(updateArg.data.reviewNote).toBe('invoice mismatch');
+    expect(updateArg.data.varianceReason).toBeUndefined();
+    expect(updateArg.data.reviewedBy).toBeDefined();
+    expect(updateArg.data.reviewedAt).toBeInstanceOf(Date);
   });
 
   it('update recomputes the calc snapshot on value change', async () => {

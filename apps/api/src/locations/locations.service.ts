@@ -7,12 +7,16 @@ import { Prisma, type Location } from '@tonyai/db';
 import type { LocationDTO } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { AuditService } from '../audit/audit.service';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 
 @Injectable()
 export class LocationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   private toDTO(l: Location): LocationDTO {
     return {
@@ -91,9 +95,14 @@ export class LocationsService {
         authorizedPerson: dto.authorizedPerson ?? null,
       },
     });
-    await this.audit(user.id, 'create', created.id, {
+    await this.audit.record(user, {
+      action: 'create',
+      entity: 'location',
+      entityId: created.id,
+      diff: {
       after: this.toDTO(created),
-    });
+    },
+    })
     return this.toDTO(created);
   }
 
@@ -114,10 +123,15 @@ export class LocationsService {
     }
 
     const updated = await this.prisma.location.update({ where: { id }, data });
-    await this.audit(user.id, 'update', id, {
+    await this.audit.record(user, {
+      action: 'update',
+      entity: 'location',
+      entityId: id,
+      diff: {
       before: this.toDTO(existing),
       after: this.toDTO(updated),
-    });
+    },
+    })
     return this.toDTO(updated);
   }
 
@@ -128,24 +142,13 @@ export class LocationsService {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
     await this.prisma.location.delete({ where: { id } });
-    await this.audit(user.id, 'delete', id, { before: this.toDTO(existing) });
+    await this.audit.record(user, {
+      action: 'delete',
+      entity: 'location',
+      entityId: id,
+      diff: { before: this.toDTO(existing) },
+    })
     return { id, deleted: true };
   }
 
-  private async audit(
-    userId: string,
-    action: 'create' | 'update' | 'delete',
-    entityId: string,
-    diff: Record<string, unknown>,
-  ): Promise<void> {
-    await this.prisma.auditLog.create({
-      data: {
-        userId,
-        action,
-        entity: 'location',
-        entityId,
-        diff: diff as Prisma.InputJsonValue,
-      },
-    });
-  }
 }
