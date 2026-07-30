@@ -38,7 +38,6 @@ This matrix defines action permissions for UI rendering and backend enforcement.
 | Upload evidence files | ✅ | ❌ | ✅ | ❌ |
 | Save draft records | ✅ | ❌ | ✅ | ❌ |
 | Submit records for review | ✅ | ❌ | ✅ | ❌ |
-| Flag records for revision | ✅ | ✅ | ❌ | ❌ |
 | Approve records | ✅ | ❌ | ❌ | ❌ |
 | Reject records / flag for revision | ✅ | ✅ | ❌ | ❌ |
 | Lock records | ✅ | ❌ | ❌ | ❌ |
@@ -47,7 +46,7 @@ This matrix defines action permissions for UI rendering and backend enforcement.
 | Override calculation factors | ✅ | ❌ | ❌ | ❌ |
 | Generate and export reports | ✅ | ✅ | ❌ | ✅ |
 | Manage users and roles | ✅ | ❌ | ❌ | ❌ |
-| View audit trail | ✅ | ✅ | limited | limited |
+| View audit trail | ✅ | ❌ ¹ | ❌ ¹ | ❌ ¹ |
 
 ### Limited Audit Visibility
 - `data_entry` may view audit history for records they created or are assigned to
@@ -133,6 +132,14 @@ hands an attacker a tenant-enumeration oracle. The implemented rule is:
 | Resource is visible and you may act, but its **state** forbids it (locked period, wrong status) | `400` / `409` |
 
 List endpoints never 404: they return only the rows in scope.
+
+¹ **Narrowed 2026-07-30 (WP7).** The shipped `audit_log` RLS policy is
+`super_admin` **and same-organisation** only. The earlier "consultant ✅ /
+data_entry limited / executive_viewer limited" promise was never implemented and
+the per-record scoping it implied has no column to hang on — audit rows are
+scoped by organisation, not by subsidiary. Widening it later is a policy change
+plus a scoping decision (which subsidiary does a `report` row with a null
+`entityId` belong to?), so it is deliberately out of scope for the WP7 viewer.
 
 ## 6.3 Context Filtering Rule
 All list and search results must be filtered by the user’s authorised organisation and subsidiary scope before being returned to the frontend.

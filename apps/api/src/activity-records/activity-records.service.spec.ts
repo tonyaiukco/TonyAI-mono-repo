@@ -450,6 +450,63 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     );
   });
 
+  it('consultant is review-only: may NOT create, update, delete or submit', async () => {
+    // Decision 2026-07-30 — the consultant seat is advisory (review, anomaly
+    // flagging, guidance) and typically sits outside the holding company; data
+    // preparation belongs to the tenant's own data_entry staff.
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-c', status: ActivityRecordStatus.draft }),
+    );
+
+    await expect(
+      service.create(consultant(), {
+        subsidiaryId: 'sub-1',
+        locationId: null,
+        reportingYear: 2024,
+        reportingPeriod: 'quarterly',
+        periodValue: 'Q1',
+        category: 'Electricity',
+        activityValue: 100,
+        activityUnit: 'kWh',
+      } as never),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    await expect(
+      service.update(consultant(), 'rec-c', { activityValue: 200 } as never),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    await expect(service.remove(consultant(), 'rec-c')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+
+    await expect(service.submit(consultant(), 'rec-c')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('consultant KEEPS review and reject (the seat is not read-only)', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-k', status: ActivityRecordStatus.submitted }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-k', status: data.status, reviewNote: data.reviewNote }),
+    );
+
+    const reviewed = await service.startReview(consultant(), 'rec-k');
+    expect(reviewed.status).toBe(ActivityRecordStatus.under_review);
+
+    const rejected = await service.reject(consultant(), 'rec-k', 'missing invoice');
+    expect(rejected.status).toBe(ActivityRecordStatus.rejected);
+    expect(rejected.reviewNote).toBe('missing invoice');
+  });
+
   it('data_entry cannot start a review -> Forbidden', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(

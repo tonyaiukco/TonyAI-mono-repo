@@ -26,7 +26,8 @@ const SIGNED_URL_TTL_SECONDS = 60;
 
 // Mirrors activity-records: who may attach/remove evidence, and while the parent
 // record is still editable (evidence is frozen once a record is committed).
-const WRITE_ROLES = new Set(['data_entry', 'consultant', 'super_admin']);
+// Mirrors activity-records: a consultant is review-only (decision 2026-07-30).
+const WRITE_ROLES = new Set(['data_entry', 'super_admin']);
 const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
   ActivityRecordStatus.draft,
   ActivityRecordStatus.rejected,

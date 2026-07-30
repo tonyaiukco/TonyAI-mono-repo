@@ -26,15 +26,20 @@ import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
 
-// Roles allowed to create/update/delete their own records.
-const WRITE_ROLES = new Set(['data_entry', 'consultant', 'super_admin']);
+// Roles allowed to create/update/delete/submit their own records.
+// A consultant is NOT among them (decision 2026-07-30): the permissions matrix
+// defines the seat as advisory — review, anomaly flagging, guidance — and it is
+// typically filled by someone outside the holding company. Data preparation
+// belongs to the tenant's own data_entry staff.
+const WRITE_ROLES = new Set(['data_entry', 'super_admin']);
 // Roles allowed to take a record into review and to reject it ("flag for
 // revision" in permissions_and_roles.md §3).
 const REVIEW_ROLES = new Set(['consultant', 'super_admin']);
-// Roles allowed to APPROVE. Deliberately narrower than REVIEW_ROLES (decision
-// 2026-07-30): a consultant enters data on a client's behalf, so letting the
-// same seat approve it would break the "the preparer does not approve" rule
-// auditors expect under ISO 14064-1 §9. Approval stays with super_admin.
+// Roles allowed to APPROVE — narrower than REVIEW_ROLES on purpose. A
+// consultant reviews and can send a record back ("flag for revision"), but the
+// act of accepting a figure into the inventory stays with the holding company's
+// own super_admin: an external advisor should not be able to sign off the
+// numbers their client will report. Matches permissions_and_roles.md §3.
 const APPROVE_ROLES = new Set(['super_admin']);
 // Statuses in which a record may still be edited or deleted by an author.
 const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([

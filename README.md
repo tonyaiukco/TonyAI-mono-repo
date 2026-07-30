@@ -334,9 +334,9 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `GET` | `/factors` | List emission factors (optional `?category=&geographyCode=&year=`) | any |
 | `GET` | `/activity-records` | List (tenant‑scoped; filters `?subsidiaryId=&year=&period=&category=&status=`) | any |
 | `GET` | `/activity-records/:id` | Get one (404 if outside access set) | any |
-| `POST` | `/activity-records` | Create (status `draft`; optional `locationId` targets a location; stores an immutable calc snapshot) | `data_entry` / `consultant` / `super_admin` |
-| `PATCH` | `/activity-records/:id` | Update (only while `draft`/`rejected`; recomputes the snapshot; author‑or‑`super_admin`) | `data_entry` / `consultant` / `super_admin` |
-| `DELETE` | `/activity-records/:id` | Delete (only while `draft`/`rejected`; author‑or‑`super_admin`) | `data_entry` / `consultant` / `super_admin` |
+| `POST` | `/activity-records` | Create (status `draft`; optional `locationId` targets a location; stores an immutable calc snapshot) | `data_entry` / `super_admin` |
+| `PATCH` | `/activity-records/:id` | Update (only while `draft`/`rejected`; recomputes the snapshot; author‑or‑`super_admin`) | `data_entry` / `super_admin` |
+| `DELETE` | `/activity-records/:id` | Delete (only while `draft`/`rejected`; author‑or‑`super_admin`) | `data_entry` / `super_admin` |
 | `POST` | `/activity-records/:id/review` | Take a submitted record into review (FR §6.3) | `consultant` / `super_admin` |
 | `POST` | `/activity-records/:id/submit` | `draft` → `submitted` | any accessor |
 | `POST` | `/activity-records/:id/approve` | `submitted`/`under_review` → `approved` (records `reviewedBy`/`reviewedAt`) | **`super_admin` only** |
@@ -344,9 +344,9 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `GET` | `/emissions/summary` | Tenant‑scoped analytics aggregation from committed records: scope totals, category & subsidiary breakdown, monthly/quarterly/yearly trends (filters `?subsidiaryId=&year=&scope=&category=`) | any |
 | `GET` | `/emissions/tracking-matrix` | Subsidiary × category completeness matrix (FR §2: missing/incomplete/complete) with committed tCO₂e per cell (filter `?year=`) | any |
 | `GET` | `/activity-records/:id/evidence` | List evidence files linked to a record | any |
-| `POST` | `/activity-records/:id/evidence` | Upload evidence (multipart `file`; PDF/JPG/PNG/XLSX/CSV, ≤10 MB) — author‑or‑`super_admin`, record editable | `data_entry` / `consultant` / `super_admin` |
+| `POST` | `/activity-records/:id/evidence` | Upload evidence (multipart `file`; PDF/JPG/PNG/XLSX/CSV, ≤10 MB) — author‑or‑`super_admin`, record editable | `data_entry` / `super_admin` |
 | `GET` | `/evidence/:id/url` | Short‑lived signed download URL for a private file | any |
-| `DELETE` | `/evidence/:id` | Remove an evidence file (while the record is editable) | `data_entry` / `consultant` / `super_admin` |
+| `DELETE` | `/evidence/:id` | Remove an evidence file (while the record is editable) | `data_entry` / `super_admin` |
 | `GET` | `/period-locks` | List locked periods (tenant‑scoped; filters `?subsidiaryId=&year=`) | any |
 | `POST` | `/period-locks` | Close a reporting period (blocked while records await review) | `super_admin` |
 | `DELETE` | `/period-locks/:id` | Reopen a period (locked records revert to `approved`) | `super_admin` |
@@ -395,7 +395,7 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | Role | Capability |
 | --- | --- |
 | `super_admin` | Full control; manage subsidiaries, factors, approvals |
-| `consultant` | Organisation‑wide read + review/flag |
+| `consultant` | Organisation‑wide read + review/reject (**review‑only** — may not enter, edit or submit data, and may not approve) |
 | `data_entry` | Limited to assigned subsidiaries; submit activity data |
 | `executive_viewer` | Read‑only dashboards and reports |
 
