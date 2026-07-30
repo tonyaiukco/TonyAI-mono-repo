@@ -137,7 +137,7 @@ export class EvidenceService {
       diff: {
       after: { ...this.toDTO(created), recordId },
     },
-    })
+    });
     return this.toDTO(created);
   }
 
@@ -180,7 +180,7 @@ export class EvidenceService {
       diff: {
       before: this.toDTO(evidence),
     },
-    })
+    });
     return { id, deleted: true };
   }
 

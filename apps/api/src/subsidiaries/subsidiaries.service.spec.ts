@@ -265,6 +265,9 @@ describe('SubsidiariesService', () => {
       const auditArg = audit.record.mock.calls[0][1];
       expect(auditArg.action).toBe('delete');
       expect(auditArg.diff).toHaveProperty('before');
+      // Written through the transaction client — a delete whose audit row fails
+      // must roll back, or the subsidiary is gone with no trail at all.
+      expect(audit.record.mock.calls[0][2]).toBe(prisma);
     });
   });
 });

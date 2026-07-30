@@ -22,6 +22,9 @@ import { AuditService } from '../audit/audit.service';
 const audit = { record: vi.fn() };
 const auditMock = () => audit as unknown as AuditService;
 
+// Order-independence: some describes below assert `not.toHaveBeenCalled()`.
+beforeEach(() => audit.record.mockClear());
+
 // --- Local, DB-free mocks --------------------------------------------------
 
 function createPrismaMock() {

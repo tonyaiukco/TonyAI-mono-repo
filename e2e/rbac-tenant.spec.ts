@@ -8,7 +8,7 @@ import {
   ADMIN_EMAIL,
   API_BASE,
   SUB,
-  CROSS_TENANT_SUB,
+  OUT_OF_SCOPE_SUB,
   findRecordId,
 } from './helpers';
 
@@ -59,11 +59,13 @@ test('data_entry: locking a period is rejected at the API (403)', async ({ reque
  * Neither leg had any coverage before WP7 — CROSS_TENANT_SUB was defined in the
  * helpers and never used.
  */
-test('cross-tenant access 404s (never 403 — no existence oracle)', async ({ request }) => {
+test('out-of-scope access 404s (never 403 — no existence oracle)', async ({ request }) => {
   const token = await getAccessToken(request, ENTRY_EMAIL);
 
-  // A real subsidiary, outside entry's access set.
-  const read = await request.get(`${API_BASE}/subsidiaries/${CROSS_TENANT_SUB}`, {
+  // A real subsidiary, outside entry's access set. (The seed has one
+  // organisation, so this is access-set isolation; cross-ORG isolation is
+  // proven at the RLS layer by the audit_log probe.)
+  const read = await request.get(`${API_BASE}/subsidiaries/${OUT_OF_SCOPE_SUB}`, {
     headers: bearer(token),
   });
   expect(read.status()).toBe(404);

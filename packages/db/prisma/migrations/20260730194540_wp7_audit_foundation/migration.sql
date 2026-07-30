@@ -37,10 +37,14 @@ ADD COLUMN     "role" TEXT;
 
 CREATE INDEX "audit_log_organisation_id_created_at_idx" ON "audit_log"("organisation_id", "created_at");
 
--- Backfill the tenant scope from the actor's profile. Organisation membership
--- is stable, so this is a faithful reconstruction. `role` is deliberately NOT
--- backfilled: roles change over time and stamping today's role onto a year-old
--- action would be a fabricated audit record. Historic rows keep role = NULL.
+-- Backfill the tenant scope from the actor's profile as it stands TODAY.
+-- Assumption, stated plainly: no user has changed organisation. That holds now
+-- (a single organisation exists and there is no org-change flow), and it is why
+-- this is acceptable — but a future org-change feature must NOT rewrite these
+-- rows, or a user's old actions would retroactively move to their new tenant.
+-- `role` is deliberately NOT backfilled: roles change routinely, and stamping
+-- today's role onto a year-old action would be a fabricated audit record.
+-- Historic rows keep role = NULL.
 UPDATE "audit_log" a
    SET "organisation_id" = p."organisation_id"
   FROM "profiles" p
@@ -71,3 +75,13 @@ CREATE POLICY "audit_log_select_scoped"
         AND p."organisation_id" = "audit_log"."organisation_id"
     )
   );
+
+-- --------------------------------------------------------------------------
+-- Defense-in-depth for immutability. RLS already denies INSERT/UPDATE/DELETE to
+-- these roles (no such policy exists), but **TRUNCATE is not subject to RLS at
+-- all** — a table-level privilege is the only thing standing in its way. For
+-- the one table whose entire value is being append-only, the privilege should
+-- not be granted in the first place. SELECT stays (the policy governs it).
+-- Prisma/the API connect as the owner and are unaffected.
+-- --------------------------------------------------------------------------
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON "audit_log" FROM "anon", "authenticated";

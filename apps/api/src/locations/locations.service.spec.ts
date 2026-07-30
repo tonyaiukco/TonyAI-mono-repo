@@ -157,9 +157,12 @@ describe('LocationsService', () => {
       const res = await service.remove(user, existing.id);
 
       expect(res).toEqual({ id: existing.id, deleted: true });
+      // The third argument is the transaction client: the row is gone after
+      // this call, so a failed audit insert must roll the delete back with it.
       expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({ id: expect.any(String) }),
         expect.objectContaining({ action: 'delete', entity: 'location' }),
+        prisma,
       );
     });
 

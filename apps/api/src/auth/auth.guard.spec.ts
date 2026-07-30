@@ -58,9 +58,47 @@ describe('SupabaseAuthGuard — accessibleSubsidiaryIds', () => {
       organisationId: 'org-1',
       subsidiaryAccess: [{ subsidiaryId: 'sub-1' }, { subsidiaryId: 'sub-2' }],
     });
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }, { id: 'sub-2' }]);
     const { context, request } = makeContext();
     await guard.canActivate(context);
     expect(request.user?.accessibleSubsidiaryIds).toEqual(['sub-1', 'sub-2']);
+  });
+
+  it('drops an access row that points OUTSIDE the profile\'s organisation', async () => {
+    // A stray grant must not become real access: WP7 stamps audit rows with the
+    // ACTOR's organisation, so acting on another tenant's subsidiary would file
+    // that tenant's activity under the wrong organisation — readable by the
+    // wrong super_admin and invisible to the right one.
+    prisma.profile.findUnique.mockResolvedValue({
+      id: 'user-1',
+      email: 'e@x',
+      role: 'data_entry',
+      organisationId: 'org-1',
+      subsidiaryAccess: [{ subsidiaryId: 'sub-1' }, { subsidiaryId: 'sub-foreign' }],
+    });
+    // Only sub-1 is in org-1.
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1' }]);
+    const { context, request } = makeContext();
+    await guard.canActivate(context);
+    expect(request.user?.accessibleSubsidiaryIds).toEqual(['sub-1']);
+    expect(prisma.subsidiary.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organisationId: 'org-1' }),
+      }),
+    );
+  });
+
+  it('default-denies a data_entry profile with no organisation', async () => {
+    prisma.profile.findUnique.mockResolvedValue({
+      id: 'user-1',
+      email: 'e@x',
+      role: 'data_entry',
+      organisationId: null,
+      subsidiaryAccess: [{ subsidiaryId: 'sub-1' }],
+    });
+    const { context, request } = makeContext();
+    await guard.canActivate(context);
+    expect(request.user?.accessibleSubsidiaryIds).toEqual([]);
     expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
   });
 

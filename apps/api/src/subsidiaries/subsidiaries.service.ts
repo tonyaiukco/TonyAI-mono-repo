@@ -126,12 +126,15 @@ export class SubsidiariesService {
   async remove(user: RequestUser, id: string): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
-    await this.prisma.subsidiary.delete({ where: { id } });
-    await this.audit.record(user, {
-      action: 'delete',
-      entity: 'subsidiary',
-      entityId: id,
-      diff: { before: this.toDTO(existing) },
+    // Delete + audit in one transaction: the row is gone afterwards, so a
+    // failed audit insert would leave a deletion with no trail at all.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.subsidiary.delete({ where: { id } });
+      await this.audit.record(
+        user,
+        { action: 'delete', entity: 'subsidiary', entityId: id, diff: { before: this.toDTO(existing) } },
+        tx,
+      );
     });
     return { id, deleted: true };
   }

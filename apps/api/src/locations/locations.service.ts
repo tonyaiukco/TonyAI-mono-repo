@@ -102,7 +102,7 @@ export class LocationsService {
       diff: {
       after: this.toDTO(created),
     },
-    })
+    });
     return this.toDTO(created);
   }
 
@@ -131,7 +131,7 @@ export class LocationsService {
       before: this.toDTO(existing),
       after: this.toDTO(updated),
     },
-    })
+    });
     return this.toDTO(updated);
   }
 
@@ -141,13 +141,15 @@ export class LocationsService {
   ): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
-    await this.prisma.location.delete({ where: { id } });
-    await this.audit.record(user, {
-      action: 'delete',
-      entity: 'location',
-      entityId: id,
-      diff: { before: this.toDTO(existing) },
-    })
+    // Delete + audit in one transaction (see subsidiaries.remove).
+    await this.prisma.$transaction(async (tx) => {
+      await tx.location.delete({ where: { id } });
+      await this.audit.record(
+        user,
+        { action: 'delete', entity: 'location', entityId: id, diff: { before: this.toDTO(existing) } },
+        tx,
+      );
+    });
     return { id, deleted: true };
   }
 
