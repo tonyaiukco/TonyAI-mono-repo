@@ -9,6 +9,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { MAX_AUDIT_LIMIT } from '../audit.service';
 import {
   AUDIT_ACTIONS,
   AUDIT_ENTITIES,
@@ -53,17 +54,21 @@ export class ListAuditQueryDto implements ListAuditParams {
   @IsISO8601()
   to?: string;
 
-  /** Capped so a single request cannot pull the whole trail into memory. */
+  /** Capped so a single request cannot pull the whole trail into memory.
+   * The service clamps to the same number for non-HTTP callers. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(200)
+  @Max(MAX_AUDIT_LIMIT)
   limit?: number;
 
+  /** Bounded too: a deep offset makes the index walk pure waste, and the honest
+   * answer at that depth is "narrow your filters", not a slower page. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
+  @Max(10_000)
   offset?: number;
 }

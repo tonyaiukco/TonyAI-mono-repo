@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, ShieldAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut, ShieldAlert } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +33,7 @@ import {
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
+import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   AUDIT_ACTIONS,
   AUDIT_ENTITIES,
@@ -99,7 +101,9 @@ function summarise(row: AuditLogDTO): string | null {
 }
 
 export default function AuditPage() {
+  const router = useRouter();
   const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
   const [rows, setRows] = useState<AuditLogDTO[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -149,6 +153,21 @@ export default function AuditPage() {
     void load();
   }, [load]);
 
+  // The store is in-memory, so a hard load of /audit has no user until this
+  // runs — without it the header renders "· ()" and the forbidden card says
+  // "Your role is ⟨blank⟩". Every other page does the same bootstrap.
+  useEffect(() => {
+    api.me().then(setUser).catch(() => {
+      /* the proxy already redirects an unauthenticated visitor to /login */
+    });
+  }, [setUser]);
+
+  async function handleLogout() {
+    await getSupabaseBrowserClient().auth.signOut();
+    router.push("/login");
+    router.refresh();
+  }
+
   // Client-side narrowing on top of the server filters: the server already
   // bounded the page, this just helps scan it.
   const visible = search.trim()
@@ -171,10 +190,18 @@ export default function AuditPage() {
             <div>
               <h1 className="text-2xl font-semibold">Audit Trail</h1>
               <p className="text-sm text-muted-foreground">
-                Every mutation, append-only · {user?.fullName ?? user?.email} (
-                {user?.role})
+                {/* Precise on purpose: this records mutations that go through
+                    the API's audited paths. It is not a claim that nothing else
+                    can ever change — user management, when it lands, must be
+                    audited too or this line becomes false. */}
+                Append-only record of audited changes
+                {user ? ` · ${user.fullName ?? user.email} (${user.role})` : ""}
               </p>
             </div>
+            <Button variant="outline" onClick={handleLogout} className="gap-2">
+              <LogOut className="h-4 w-4" />
+              Sign out
+            </Button>
           </div>
 
           {forbidden ? (
@@ -194,8 +221,12 @@ export default function AuditPage() {
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-3">
+                {/* Deliberately labelled as page-scoped. It filters the rows
+                    already loaded, NOT the trail: an auditor who typed an email
+                    here and saw "no matches" would otherwise conclude that
+                    person never acted. Entity/action below are server-side. */}
                 <Input
-                  placeholder="Search actor, entity id…"
+                  placeholder="Filter this page…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="max-w-xs"
@@ -271,7 +302,9 @@ export default function AuditPage() {
                             colSpan={6}
                             className="text-center py-8 text-muted-foreground"
                           >
-                            No audit entries match these filters.
+                            {search.trim()
+                              ? "No entries on this page match that text. The text filter only searches the loaded page — use the entity and action filters, or another page, to search the whole trail."
+                              : "No audit entries match these filters."}
                           </TableCell>
                         </TableRow>
                       ) : (

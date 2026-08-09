@@ -135,22 +135,38 @@ describe('AuditService', () => {
     // was added — the classic rotting guard. The actual vector is any service
     // calling Prisma directly: the API connects as the table owner, so RLS
     // does not stop it. Scan the source instead.
-    const root = resolve(__dirname, '..');
+    // Scan the API *and* packages/db: the most plausible future regression is a
+    // "reset the demo tenant" seed helper calling auditLog.deleteMany(), which
+    // an apps/api-only scan would wave straight through.
+    const roots = [resolve(__dirname, '..'), resolve(__dirname, '../../../../packages/db')];
     const offenders: string[] = [];
+    const rawSql: string[] = [];
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        // `generated` holds the Prisma client, whose own JSDoc demonstrates
+        // auditLog.delete/update — generated code is not our code.
+        if (['node_modules', 'dist', 'generated'].includes(entry.name)) continue;
         const full = join(dir, entry.name);
         if (entry.isDirectory()) walk(full);
-        else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.spec.ts')) {
+        else if (
+          entry.name.endsWith('.ts') &&
+          !entry.name.endsWith('.spec.ts') &&
+          !entry.name.endsWith('.d.ts')
+        ) {
           const src = readFileSync(full, 'utf8');
           if (/auditLog\s*\.\s*(update|updateMany|delete|deleteMany|upsert)\b/.test(src)) {
             offenders.push(full);
           }
+          // Raw SQL bypasses the Prisma-shaped check entirely.
+          if (/\$(execute|query)Raw/.test(src) && /audit_log/.test(src)) {
+            rawSql.push(full);
+          }
         }
       }
     };
-    walk(root);
+    for (const root of roots) walk(root);
     expect(offenders).toEqual([]);
+    expect(rawSql).toEqual([]);
   });
 
   describe('list — reading the trail', () => {

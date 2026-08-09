@@ -32,8 +32,14 @@ import { ListAuditQueryDto } from './dto/list-audit-query.dto';
  * RLS), so this check is what actually enforces it. */
 const READ_ROLES = new Set<UserRole>(['super_admin']);
 
-/** Hard ceiling regardless of what the client asks for. */
 const DEFAULT_LIMIT = 50;
+/**
+ * Hard ceiling, enforced HERE as well as in the DTO. The DTO's `@Max` only runs
+ * for HTTP callers going through the global ValidationPipe — an internal caller
+ * (an export job, a second controller) could otherwise ask for `take: 1e9` and
+ * pull the whole trail into memory. Exported so the DTO uses the same number.
+ */
+export const MAX_AUDIT_LIMIT = 200;
 
 /** Accepts a transaction client so the audit row commits with the mutation. */
 type Writer = Pick<Prisma.TransactionClient, 'auditLog'>;
@@ -89,11 +95,16 @@ export class AuditService {
     }
     if (!user.organisationId) {
       // Default-deny, mirroring the guard's treatment of an org-less profile.
-      return { items: [], total: 0, limit: query.limit ?? DEFAULT_LIMIT, offset: 0 };
+      return {
+        items: [],
+        total: 0,
+        limit: Math.min(Math.max(query.limit ?? DEFAULT_LIMIT, 1), MAX_AUDIT_LIMIT),
+        offset: Math.max(query.offset ?? 0, 0),
+      };
     }
 
-    const limit = query.limit ?? DEFAULT_LIMIT;
-    const offset = query.offset ?? 0;
+    const limit = Math.min(Math.max(query.limit ?? DEFAULT_LIMIT, 1), MAX_AUDIT_LIMIT);
+    const offset = Math.max(query.offset ?? 0, 0);
 
     const where: Prisma.AuditLogWhereInput = {
       organisationId: user.organisationId,
