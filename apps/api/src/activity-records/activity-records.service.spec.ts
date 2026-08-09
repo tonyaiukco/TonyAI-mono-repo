@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
+import { PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
 import type { CalculationResult } from '@tonyai/shared-types';
 import { ActivityRecordsService } from './activity-records.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -214,6 +215,29 @@ describe('ActivityRecordsService — tenant scoping', () => {
     const result = await service.list(dataEntry(), { subsidiaryId: 'sub-2' });
     expect(result).toEqual([]);
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+  });
+
+  it('list filters on a SET of statuses (the reviewer queue)', async () => {
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    await service.list(superAdmin(), {
+      status: [...PENDING_REVIEW_STATUSES],
+    });
+    expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ['submitted', 'under_review'] },
+        }),
+      }),
+    );
+  });
+
+  it('list omits the status filter entirely when none is given', async () => {
+    // Not `{ in: [] }` — Prisma reads an empty `in` as "match nothing", so a
+    // careless refactor here would silently empty every unfiltered list.
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    await service.list(superAdmin(), {});
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.status).toBeUndefined();
   });
 
   it('get treats an out-of-scope record as NotFound', async () => {
@@ -595,6 +619,98 @@ describe('ActivityRecordsService — transition rules', () => {
       expect.objectContaining({ id: expect.any(String) }),
       expect.objectContaining({ action: 'submit', entity: 'activity_record' }),
     );
+  });
+
+  it('a REJECTED record can be resubmitted, and keeps the reviewer\'s note', async () => {
+    // Rejection must not be a one-way door. `update` allows editing a rejected
+    // record but never moved it back to `draft`, and submit accepted only
+    // `draft` — so every rejected record was permanently stranded: excluded
+    // from the counted statuses, dropped from the inventory, and pinning its
+    // report to `contains_incomplete_data` with no API path back.
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-r',
+        status: ActivityRecordStatus.rejected,
+        reviewNote: 'invoice mismatch',
+      }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-r', status: data.status, reviewNote: data.reviewNote }),
+    );
+
+    const dto = await service.submit(dataEntry(), 'rec-r');
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+    // The note is NOT destroyed: it is the reviewer's only in-record signal that
+    // this record has been round the loop before, and `/review` renders it as
+    // "Previous review note". The stale-note problem is solved by rendering it
+    // only on a rejected record, not by deleting the value.
+    const data = prisma.activityRecord.update.mock.calls[0][0].data;
+    expect('reviewNote' in data).toBe(false);
+  });
+
+  it('a non-author may not resubmit — that would overturn a rejection', async () => {
+    // `update`/`remove` already gate on the author; submit did not, so any
+    // data_entry user who could see the subsidiary could undo a reviewer's
+    // decision while still being forbidden from fixing the number.
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-n',
+        status: ActivityRecordStatus.rejected,
+        createdBy: 'someone-else',
+      }),
+    );
+
+    await expect(service.submit(dataEntry(), 'rec-n')).rejects.toThrow(
+      /only resubmit activity records you created/i,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('a super_admin may resubmit a record they did not author', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-sa',
+        status: ActivityRecordStatus.rejected,
+        createdBy: 'someone-else',
+      }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-sa', status: data.status }),
+    );
+
+    const dto = await service.submit(superAdmin(), 'rec-sa');
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it('a first submit does not touch reviewNote at all', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-d', status: ActivityRecordStatus.draft }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-d', status: data.status }),
+    );
+
+    await service.submit(dataEntry(), 'rec-d');
+    const data = prisma.activityRecord.update.mock.calls[0][0].data;
+    expect('reviewNote' in data).toBe(false);
+  });
+
+  it('still refuses to submit an approved record', async () => {
+    // Widening submit to accept `rejected` must not have widened it to anything
+    // else — an approved record is immutable.
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-a', status: ActivityRecordStatus.approved }),
+    );
+
+    await expect(service.submit(dataEntry(), 'rec-a')).rejects.toThrow(
+      /draft or rejected/i,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
   it('blocks submit of an evidence-required category with no evidence (FR §4.1)', async () => {

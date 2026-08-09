@@ -10,6 +10,7 @@ import {
   Prisma,
   type PeriodLock,
 } from '@tonyai/db';
+import { PENDING_REVIEW_STATUSES as SHARED_PENDING_REVIEW } from '@tonyai/shared-types';
 import type { PeriodLockDTO, ReportingPeriod } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -24,10 +25,16 @@ import { isValidPeriodValue } from '../activity-records/activity-records.service
 // the consultant review workflow, and makes the bulk flip fully reconstructible
 // from the audit row (period tuple + count). Drafts/rejected keep their status
 // (the record gate blocks them anyway).
-const PENDING_REVIEW_STATUSES: ActivityRecordStatus[] = [
-  ActivityRecordStatus.submitted,
-  ActivityRecordStatus.under_review,
-];
+// Derived from the shared list rather than restated, so the reviewer queue and
+// the lock gate cannot drift: any status added to one is a status the other
+// starts refusing to lock past.
+//
+// A plain assignment, NOT `SHARED_PENDING_REVIEW.map(s => ActivityRecordStatus[s])`
+// — that form's guard is TS7053, which only fires under `noImplicitAny`, and this
+// package has it OFF (tsconfig.json). It would have compiled clean and produced
+// `['submitted', undefined]` at runtime, silently disarming the gate below.
+// Assignability is checked regardless of that flag, and names the bad status.
+const PENDING_REVIEW_STATUSES: ActivityRecordStatus[] = [...SHARED_PENDING_REVIEW];
 
 @Injectable()
 export class PeriodLocksService {

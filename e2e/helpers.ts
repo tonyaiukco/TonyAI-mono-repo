@@ -5,6 +5,11 @@ import { resolve } from 'node:path';
 export const PASSWORD = 'TonyAI!2026';
 export const ADMIN_EMAIL = 'admin@tonyai.local';
 export const ENTRY_EMAIL = 'entry@tonyai.local';
+/** Review-only: org-wide read, may review and reject, may NOT approve. Seeded
+ * with no per-subsidiary access rows on purpose — a consultant's visibility
+ * comes from the organisation, so granting rows here would hide a regression in
+ * that guard branch. */
+export const CONSULTANT_EMAIL = 'review@tonyai.local';
 
 // NestJS API (versioned prefix). Absolute so it ignores the page baseURL.
 export const API_BASE = 'http://localhost:3001/api/v1';
@@ -41,6 +46,17 @@ export const E2E_PERIOD = 'quarterly';
  * Logs in via the real Supabase-backed login form and waits to land on the
  * dashboard (middleware redirects unauthenticated users to /login).
  */
+/**
+ * Switch to another user mid-test. Goes through the app's own Sign out rather
+ * than clearing storage: an active session makes `/login` redirect straight to
+ * the dashboard, so `login()` alone would silently keep the previous user.
+ */
+export async function switchUser(page: Page, email: string): Promise<void> {
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.waitForURL('**/login');
+  await login(page, email);
+}
+
 export async function login(page: Page, email: string, password = PASSWORD): Promise<void> {
   await page.goto('/login');
   await page.locator('#email').fill(email);

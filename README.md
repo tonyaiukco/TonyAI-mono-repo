@@ -63,7 +63,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (245 unit + 14 E2E) + live RLS containment probes | ✅ |
+| Automated tests (290 unit + 27 E2E) + live RLS containment probes (24) | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit) | ✅ |
@@ -71,6 +71,8 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | Home dashboard Emissions Overview + tracking matrix (FR §2 red/yellow/green) on live data | ✅ |
 | Targets & intensity (WP5) — reduction targets with live progress + per-year intensity denominators | ✅ |
 | Reports (WP6) — audit-ready PDF (Puppeteer) + Excel/CSV export, year+subsidiary scoped (FR §5.3 partial), audited generation | ✅ |
+| Audit-trail viewer (WP7) — read-only `/audit`, tenant-scoped and paginated, showing each actor's role **as recorded at the time** | ✅ |
+| Review queue (WP7) — `/review` turns the submit → review → approve/reject API into a screen: evidence and factor provenance in the detail sheet, rejection reason returned to the submitter | ✅ |
 
 **What's proven by tests today:** an `admin` sees all 5 seeded subsidiaries, a `data_entry` user sees only their 2, non‑admins are blocked from writes (HTTP 403), unauthenticated requests are rejected (HTTP 401), and every mutation writes an immutable `audit_log` row — verified at the API layer **and** the database (RLS) layer.
 
@@ -257,6 +259,7 @@ pnpm dev            # web -> http://localhost:3000   api -> http://localhost:300
 | --- | --- | --- | --- |
 | `admin@tonyai.local` | `TonyAI!2026` | `super_admin` | all 5 subsidiaries |
 | `entry@tonyai.local` | `TonyAI!2026` | `data_entry` | 2 subsidiaries (tenant‑isolation demo) |
+| `review@tonyai.local` | `TonyAI!2026` | `consultant` | organisation‑wide read; review/reject only (cannot enter, edit, submit or approve) |
 
 ---
 
@@ -332,7 +335,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `GET` | `/kpi` | Dashboard summary (subsidiary totals + geography breakdown + operational location count) | any |
 | `POST` | `/calculations/preview` | Live emissions preview: normalises the unit, applies the matching factor, returns `tCo2e` + factor snapshot | any |
 | `GET` | `/factors` | List emission factors (optional `?category=&geographyCode=&year=`) | any |
-| `GET` | `/activity-records` | List (tenant‑scoped; filters `?subsidiaryId=&year=&period=&category=&status=`) | any |
+| `GET` | `/activity-records` | List (tenant‑scoped; filters `?subsidiaryId=&year=&period=&category=&status=`). `status` takes one value or a comma‑separated set (`submitted,under_review`), which is how the review queue is fetched in a single call | any |
 | `GET` | `/activity-records/:id` | Get one (404 if outside access set) | any |
 | `POST` | `/activity-records` | Create (status `draft`; optional `locationId` targets a location; stores an immutable calc snapshot) | `data_entry` / `super_admin` |
 | `PATCH` | `/activity-records/:id` | Update (only while `draft`/`rejected`; recomputes the snapshot; author‑or‑`super_admin`) | `data_entry` / `super_admin` |

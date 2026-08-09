@@ -160,6 +160,19 @@ describe('PeriodLocksService', () => {
       /awaiting review/i,
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
+
+    // Assert WHICH statuses were counted, not just that a count happened. With
+    // the count mocked, an empty or truncated PENDING_REVIEW_STATUSES still
+    // produced a green suite — and an empty one means a super_admin can close a
+    // period holding undecided records, flipping them to the immutable `locked`
+    // state unreviewed. That is the exact failure this gate exists to stop.
+    expect(prisma.activityRecord.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ['submitted', 'under_review'] },
+        }),
+      }),
+    );
   });
 
   it('locking an already-locked period maps P2002 to 409', async () => {

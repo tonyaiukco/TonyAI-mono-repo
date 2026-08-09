@@ -1,9 +1,9 @@
 import type {
   ActivityRecordDTO,
-  ActivityRecordStatus,
   AuditLogDTO,
   AuthUser,
   ListAuditParams,
+  ListActivityRecordsParams,
   Paginated,
   CalculationInput,
   CalculationResult,
@@ -28,7 +28,7 @@ import type {
   TargetDTO,
   TargetProgressDTO,
   TrackingMatrixDTO,
-  ReportingPeriod,
+  RejectInput,
   SubsidiaryDTO,
   UpdateActivityRecordInput,
   UpdateDenominatorInput,
@@ -37,15 +37,6 @@ import type {
   UpdateTargetInput,
 } from "@tonyai/shared-types";
 import { getSupabaseBrowserClient } from "./supabase";
-
-/** Optional filters for GET /activity-records (all AND-combined). */
-export interface ListActivityRecordsParams {
-  subsidiaryId?: string;
-  year?: number;
-  period?: ReportingPeriod;
-  category?: Category;
-  status?: ActivityRecordStatus;
-}
 
 /** Optional filters for GET /emissions/summary (all AND-combined). */
 export interface EmissionsSummaryParams {
@@ -155,7 +146,11 @@ export const api = {
     if (params.year !== undefined) search.set("year", String(params.year));
     if (params.period) search.set("period", params.period);
     if (params.category) search.set("category", params.category);
-    if (params.status) search.set("status", params.status);
+    // A set becomes the comma-separated form the API's DTO parses back.
+    // `?.length`, not truthiness: `[]` is truthy and would serialise to
+    // `status=`, which the DTO deliberately rejects — an unchecked "filter by
+    // status" checkbox group would 400 instead of returning everything.
+    if (params.status?.length) search.set("status", params.status.join(","));
     const qs = search.toString();
     return apiFetch<ActivityRecordDTO[]>(
       `/activity-records${qs ? `?${qs}` : ""}`,
@@ -176,6 +171,26 @@ export const api = {
   submitActivityRecord: (id: string) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/submit`, {
       method: "POST",
+    }),
+
+  // The review verbs. Each is a POST with no body except `reject`, which
+  // carries the reason the submitter will read. The role rules (consultant may
+  // review and reject but not approve) are enforced by the API — the UI hides
+  // what a role cannot do, it does not decide it.
+  reviewActivityRecord: (id: string) =>
+    apiFetch<ActivityRecordDTO>(`/activity-records/${id}/review`, {
+      method: "POST",
+    }),
+
+  approveActivityRecord: (id: string) =>
+    apiFetch<ActivityRecordDTO>(`/activity-records/${id}/approve`, {
+      method: "POST",
+    }),
+
+  rejectActivityRecord: (id: string, body: RejectInput) =>
+    apiFetch<ActivityRecordDTO>(`/activity-records/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
 
   // --- Evidence (files linked to an activity record) ---

@@ -48,6 +48,18 @@ const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
   ActivityRecordStatus.rejected,
 ]);
 
+// A rejected record must be able to come BACK. Rejecting is the reviewer's
+// routine action, editing a rejected record is already allowed, and `rejected`
+// is excluded from the counted statuses — so if `submitted` were reachable only
+// from `draft`, every rejection would strand a record permanently outside the
+// inventory with no API path back, while pinning its report to
+// `contains_incomplete_data`. Found by review before the reviewer UI made
+// rejection a one-click action.
+const SUBMITTABLE_STATUSES = new Set<ActivityRecordStatus>([
+  ActivityRecordStatus.draft,
+  ActivityRecordStatus.rejected,
+]);
+
 // --- Anomaly detection (VAR §4) --------------------------------------------
 // A value is anomalous when it deviates > ±50% from the rolling average of the
 // previous (up to) 3 comparable periods for the same reporting entity, measured
@@ -304,7 +316,7 @@ export class ActivityRecordsService {
         reportingYear: query.year,
         reportingPeriod: query.period,
         category: query.category,
-        status: query.status,
+        status: query.status ? { in: query.status } : undefined,
       },
       orderBy: { createdAt: 'desc' },
       include: { _count: { select: { evidence: true } } },
@@ -541,9 +553,24 @@ export class ActivityRecordsService {
     if (!WRITE_ROLES.has(user.role)) {
       throw new ForbiddenException('Your role may not submit activity records');
     }
-    if (record.status !== ActivityRecordStatus.draft) {
+    if (!SUBMITTABLE_STATUSES.has(record.status)) {
       throw new BadRequestException(
-        `Only a draft record can be submitted (current status "${record.status}")`,
+        `Only a draft or rejected record can be submitted (current status "${record.status}")`,
+      );
+    }
+    const isResubmission = record.status === ActivityRecordStatus.rejected;
+    // Resubmitting REVERSES a reviewer's decision, so it needs the author gate
+    // that `update`/`remove` already apply. Without it, any data_entry user who
+    // can merely SEE the subsidiary could overturn a rejection — while still
+    // being forbidden from editing the number, so the only thing the capability
+    // could be used for is making the rejection go away.
+    if (
+      isResubmission &&
+      user.role !== 'super_admin' &&
+      record.createdBy !== user.id
+    ) {
+      throw new ForbiddenException(
+        'You may only resubmit activity records you created',
       );
     }
     // Period-lock gate (FR §4.2): no submissions into a closed period.
@@ -585,6 +612,13 @@ export class ActivityRecordsService {
         'This value deviates significantly from the historical average — add a variance comment before submitting.',
       );
     }
+    // The note is deliberately KEPT. Clearing it on resubmit was the first cut,
+    // and it was wrong twice over: `reviewedBy`/`reviewedAt` survived anyway, so
+    // the review stamp was only half-cleared, and it dead-coded the reviewer
+    // sheet's "Previous review note" — a consultant re-reviewing a bounced-back
+    // record would see something indistinguishable from a first submission. The
+    // stale-note problem it was meant to solve is a RENDERING one, fixed where
+    // it belongs: `/emissions` shows the note only on a `rejected` record.
     return this.transition(user, record, ActivityRecordStatus.submitted, {
       anomalyFlag: anomalous,
     });
