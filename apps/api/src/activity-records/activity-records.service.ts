@@ -304,7 +304,7 @@ export class ActivityRecordsService {
         reportingYear: query.year,
         reportingPeriod: query.period,
         category: query.category,
-        status: query.status,
+        status: query.status ? { in: query.status } : undefined,
       },
       orderBy: { createdAt: 'desc' },
       include: { _count: { select: { evidence: true } } },

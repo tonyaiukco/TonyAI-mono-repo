@@ -360,6 +360,7 @@ async function main() {
   console.log('Seeding auth users + profiles...');
   const adminId = await ensureAuthUser('admin@tonyai.local', 'TonyAI!2026', 'Tony Admin');
   const entryId = await ensureAuthUser('entry@tonyai.local', 'TonyAI!2026', 'Eda Entry');
+  const reviewId = await ensureAuthUser('review@tonyai.local', 'TonyAI!2026', 'Cem Consultant');
 
   await prisma.profile.upsert({
     where: { id: adminId },
@@ -371,6 +372,17 @@ async function main() {
     where: { id: entryId },
     update: { role: UserRole.data_entry, organisationId: ORG_ID },
     create: { id: entryId, email: 'entry@tonyai.local', fullName: 'Eda Entry', role: UserRole.data_entry, organisationId: ORG_ID },
+  });
+
+  // Review-only (decision 2026-07-30): may take records into review and reject
+  // them, may NOT enter, edit, submit or approve. Deliberately given NO
+  // userSubsidiaryAccess rows — a consultant's visibility comes from the
+  // organisation, not from per-subsidiary grants, so seeding grants here would
+  // hide a regression in that guard branch behind data that papers over it.
+  await prisma.profile.upsert({
+    where: { id: reviewId },
+    update: { role: UserRole.consultant, organisationId: ORG_ID },
+    create: { id: reviewId, email: 'review@tonyai.local', fullName: 'Cem Consultant', role: UserRole.consultant, organisationId: ORG_ID },
   });
 
   // data_entry user can only access two of the five subsidiaries (tenant isolation demo)
@@ -561,6 +573,7 @@ async function main() {
   console.log('\nSeed complete.');
   console.log('  super_admin -> admin@tonyai.local / TonyAI!2026 (sees all 5 subsidiaries)');
   console.log('  data_entry  -> entry@tonyai.local / TonyAI!2026 (sees 2 subsidiaries)');
+  console.log('  consultant  -> review@tonyai.local / TonyAI!2026 (org-wide read; review/reject only, cannot approve)');
 }
 
 main()

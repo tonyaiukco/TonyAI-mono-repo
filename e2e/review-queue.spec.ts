@@ -1,0 +1,229 @@
+import { test, expect } from '@playwright/test';
+import {
+  login,
+  switchUser,
+  bearer,
+  getAccessToken,
+  createCommittedRecord,
+  ADMIN_EMAIL,
+  CONSULTANT_EMAIL,
+  ENTRY_EMAIL,
+  API_BASE,
+  SUB,
+} from './helpers';
+
+/**
+ * WP7 PR 3 — the reviewer UI at `/review`.
+ *
+ * The rule this file exists to defend is the one that was previously asserted
+ * only against mocks: a consultant may take a record into review and send it
+ * back, but may NOT approve it. Until the seed grew a consultant user there was
+ * no way to exercise that branch against the real guard, so "review-only" rested
+ * entirely on unit tests that could not have caught a guard wired to the wrong
+ * role set.
+ *
+ * Two collision rules, both learned by breaking them: every test writes a tuple
+ * (subsidiary+category+period) no other spec touches — sharing one is a 409 on
+ * create and a shared anomaly baseline that trips the variance gate on submit —
+ * and every row locator is scoped by SUBSIDIARY as well as period, because in a
+ * full-suite run the queue also holds records other specs left behind. A row
+ * matched on period alone rejected a different spec's record and left this
+ * test's own record untouched.
+ */
+
+test('a submitted record reaches the queue and approving clears it', async ({
+  page,
+  request,
+}) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.trading,
+    category: 'Natural Gas',
+    periodValue: 'Q4',
+    activityValue: 7400,
+  });
+
+  await login(page, ADMIN_EMAIL);
+  await page.goto('/review');
+  await expect(page.getByRole('heading', { name: 'Review Queue' })).toBeVisible();
+
+  const row = page
+    .locator('table tbody tr', { hasText: 'TonyAI Trading' })
+    .filter({ hasText: 'Q4 2024' });
+  await expect(row).toContainText('submitted');
+  await row.click();
+
+  await page.getByRole('button', { name: 'Approve' }).click();
+  await expect(page.getByText('Record approved')).toBeVisible();
+
+  // The queue is defined by status, so an approved record must be gone from it.
+  await expect(
+    page
+      .locator('table tbody tr', { hasText: 'TonyAI Trading' })
+      .filter({ hasText: 'Q4 2024' }),
+  ).toHaveCount(0);
+
+  // Cross-check the actual state rather than trusting the screen.
+  const after = await request.get(`${API_BASE}/activity-records/${id}`, {
+    headers: bearer(token),
+  });
+  expect((await after.json()).status).toBe('approved');
+});
+
+test('rejecting requires a reason, and that reason reaches the submitter', async ({
+  page,
+  request,
+}) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await createCommittedRecord(request, token, {
+    // Logistics is inside the data_entry user's access set, so the submitter can
+    // actually open the rejected record afterwards — the point of the test.
+    subsidiaryId: SUB.logistics,
+    category: 'Electricity',
+    periodValue: 'Q3',
+    activityValue: 3300,
+  });
+
+  await login(page, ADMIN_EMAIL);
+  await page.goto('/review');
+  await page
+    .locator('table tbody tr', { hasText: 'TonyAI Logistics' })
+    .filter({ hasText: 'Q3 2024' })
+    .click();
+
+  // No reason typed yet: rejecting is not offered, because a rejection with no
+  // explanation tells the submitter nothing about what to fix.
+  const reject = page.getByRole('button', { name: 'Reject' });
+  await expect(reject).toBeDisabled();
+
+  await page.getByLabel('Reason (required to reject)').fill('Invoice total does not match the meter reading');
+  await expect(reject).toBeEnabled();
+  await reject.click();
+  await expect(page.getByText(/Record rejected/)).toBeVisible();
+
+  const after = await request.get(`${API_BASE}/activity-records/${id}`, {
+    headers: bearer(token),
+  });
+  const record = await after.json();
+  expect(record.status).toBe('rejected');
+  // Written to reviewNote, NOT over the submitter's own varianceReason.
+  expect(record.reviewNote).toBe('Invoice total does not match the meter reading');
+
+  // FR §6.5 — the submitter must be able to read why it came back.
+  await switchUser(page, ENTRY_EMAIL);
+  await page.goto('/emissions');
+  await page.getByRole('tab', { name: /History/i }).click();
+  await page
+    .locator('table tbody tr', { hasText: 'TonyAI Logistics' })
+    .filter({ hasText: 'Q3' })
+    .first()
+    .click();
+  await expect(
+    page.getByText('Invoice total does not match the meter reading'),
+  ).toBeVisible();
+});
+
+test('a consultant may send a record back but is not offered Approve', async ({
+  page,
+  request,
+}) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const id = await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.gas,
+    category: 'Natural Gas',
+    periodValue: 'Q1',
+    activityValue: 5200,
+    activityUnit: 'm3',
+  });
+
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto('/review');
+  await expect(page.getByRole('heading', { name: 'Review Queue' })).toBeVisible();
+
+  const row = page
+    .locator('table tbody tr', { hasText: 'TonyAI Gas' })
+    .filter({ hasText: 'Natural Gas' });
+  await row.click();
+
+  // The control a consultant may not use is absent, and the page says why
+  // rather than leaving its absence to be read as a bug.
+  await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+  await expect(page.getByText(/Approval is reserved for a super_admin/)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Start review' }).click();
+  await expect(page.getByText('Taken into review')).toBeVisible();
+
+  const mid = await request.get(`${API_BASE}/activity-records/${id}`, {
+    headers: bearer(token),
+  });
+  expect((await mid.json()).status).toBe('under_review');
+});
+
+test('the API — not the UI — is what stops a consultant approving', async ({
+  request,
+}) => {
+  const admin = await getAccessToken(request, ADMIN_EMAIL);
+  const consultant = await getAccessToken(request, CONSULTANT_EMAIL);
+  const id = await createCommittedRecord(request, admin, {
+    subsidiaryId: SUB.gas,
+    category: 'Fuel',
+    periodValue: 'Q1',
+    activityValue: 900,
+    activityUnit: 'litres',
+  });
+
+  // Hiding the button is a courtesy; this is the actual boundary.
+  const approve = await request.post(`${API_BASE}/activity-records/${id}/approve`, {
+    headers: bearer(consultant),
+  });
+  expect(approve.status()).toBe(403);
+
+  // Still 403 once the record is under review — the refusal is about the role,
+  // not about the record being in the wrong state.
+  const review = await request.post(`${API_BASE}/activity-records/${id}/review`, {
+    headers: bearer(consultant),
+  });
+  expect(review.status()).toBe(200);
+  const approveAgain = await request.post(
+    `${API_BASE}/activity-records/${id}/approve`,
+    { headers: bearer(consultant) },
+  );
+  expect(approveAgain.status()).toBe(403);
+
+  // And a consultant cannot write data either (review-only, decision 2026-07-30).
+  const write = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(consultant),
+    data: {
+      subsidiaryId: SUB.gas,
+      locationId: null,
+      reportingYear: 2024,
+      reportingPeriod: 'quarterly',
+      periodValue: 'Q4',
+      category: 'Electricity',
+      activityValue: 10,
+      activityUnit: 'kWh',
+      varianceReason: null,
+      input: null,
+    },
+  });
+  expect(write.status()).toBe(403);
+
+  const reject = await request.post(`${API_BASE}/activity-records/${id}/reject`, {
+    headers: bearer(consultant),
+    data: { varianceReason: 'meter reading missing' },
+  });
+  expect(reject.status()).toBe(200);
+  expect((await reject.json()).status).toBe('rejected');
+});
+
+test('data_entry is told the decision is not theirs, not shown a broken page', async ({
+  page,
+}) => {
+  await login(page, ENTRY_EMAIL);
+  await page.goto('/review');
+
+  await expect(
+    page.getByText(/Reviewing is done by a consultant or a super_admin/i),
+  ).toBeVisible();
+  await expect(page.locator('table')).toHaveCount(0);
+});

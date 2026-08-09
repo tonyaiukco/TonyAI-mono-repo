@@ -22,7 +22,7 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 - `pnpm setup` — one-command local bootstrap (Supabase up → sync `.env` → migrate → seed)
 - `pnpm dev` — web :3000 + api :3001 · `pnpm typecheck` · `pnpm build` · `pnpm test` (Vitest) · `pnpm e2e` (Playwright)
 - `pnpm db:migrate | db:deploy | db:seed | db:reset`
-- Local-first: requires Docker + `supabase start`. Seed users: `admin@tonyai.local` / `entry@tonyai.local` (pwd `TonyAI!2026`).
+- Local-first: requires Docker + `supabase start`. Seed users: `admin@tonyai.local` / `entry@tonyai.local` / `review@tonyai.local` (consultant, review-only) — pwd `TonyAI!2026`.
 
 ## Architecture rules (do not break)
 - **One source of truth for types:** add domain/API types to `@tonyai/shared-types`; never duplicate. On web, import via `@/lib/types` (re-exports it).

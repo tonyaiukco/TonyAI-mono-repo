@@ -721,9 +721,11 @@ export default function DataEntryPage() {
                   key={editingId}
                   recordId={editingId}
                   category={category}
+                  // A consultant is review-only (decision 2026-07-30) and the
+                  // evidence API 403s them, so offering upload/delete controls
+                  // here only produced a button that always failed.
                   canManage={
-                    !!user &&
-                    ["data_entry", "consultant", "super_admin"].includes(user.role)
+                    !!user && ["data_entry", "super_admin"].includes(user.role)
                   }
                 />
               )}

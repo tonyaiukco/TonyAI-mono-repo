@@ -30,6 +30,7 @@ TonyAI is a multi-tenant carbon-accounting platform for holding companies. Phase
 | --- | --- | --- |
 | `admin@tonyai.local` | `super_admin` | all **5** subsidiaries; can manage everything |
 | `entry@tonyai.local` | `data_entry` | only **2** subsidiaries (TonyAI Energy, TonyAI Logistics); cannot manage org structure, cannot generate reports |
+| `review@tonyai.local` | `consultant` | organisation-wide read; may review and reject records but **may not approve**, and may not enter, edit or submit data |
 
 **Seed data:** 1 organisation · 5 subsidiaries · 8 operational locations · 102 approved monthly 2024 activity records (each with a demo evidence file) · 3 reduction targets · 10 intensity denominators.
 
@@ -80,7 +81,7 @@ Conventions: run as `admin@tonyai.local` unless the TC says otherwise. Mark each
 | ENTRY-07 | Switch category to **Mobile Combustion** or **Refrigerants**, enter a value | Preview says "No emission factor for this selection" — expected: Phase 1 seeds factors only for Electricity / Natural Gas / Fuel | |
 | ENTRY-08 | As entry: create + submit a record on TonyAI Energy | Same flow works for the data_entry role on its own subsidiaries | |
 
-> **Review/approve note:** approving is **API-only** in Phase 1 (no reviewer UI). The transitions `submitted → under_review → approved/rejected` exist and are fully tested at the API (`POST /activity-records/:id/review|approve|reject`, reviewer roles only). For UAT purposes the seed already contains 102 approved records feeding analytics and reports.
+> **Review/approve note:** as of WP7 PR 3 the reviewer actions have a UI at **`/review`** — a queue of records awaiting a decision, with Start review / Reject / Approve. Approve renders for `super_admin` only; a `consultant` may take a record into review and reject it, and the API refuses an approve from that role regardless of what the UI offers. A rejection's reason is written to the record's review note and shown to the submitter on `/emissions`. The seed also contains 102 already-approved records feeding analytics and reports.
 
 ### 3.5 Period locking (`/subsidiaries` → padlock)
 
@@ -122,7 +123,7 @@ Conventions: run as `admin@tonyai.local` unless the TC says otherwise. Mark each
 ## 4. Known limitations — do NOT report these as bugs
 
 **By design in Phase 1 (recorded decisions):**
-- **Approve/reject/review has no UI** — reviewer actions are API-only; a reviewer UI arrives with the consultant workflow.
+- **Bulk review has no UI** — the `/review` queue decides one record at a time; there is no multi-select approve yet.
 - **Emission factors are prototype demo values** for Electricity / Natural Gas / Fuel only; the other categories show "No emission factor" (authoritative DEFRA/TR/AIB libraries arrive in Phase 4).
 - **Reports are year+subsidiary scoped** — scope/category filter-aware exports arrive later; report **sharing** (link/email) is Phase 3.
 - Report generation history ("Recent Reports" panel) is not shown; generations are recorded in the audit log.

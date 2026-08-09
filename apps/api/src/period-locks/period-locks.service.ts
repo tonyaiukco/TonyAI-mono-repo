@@ -10,6 +10,7 @@ import {
   Prisma,
   type PeriodLock,
 } from '@tonyai/db';
+import { PENDING_REVIEW_STATUSES as SHARED_PENDING_REVIEW } from '@tonyai/shared-types';
 import type { PeriodLockDTO, ReportingPeriod } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -24,10 +25,13 @@ import { isValidPeriodValue } from '../activity-records/activity-records.service
 // the consultant review workflow, and makes the bulk flip fully reconstructible
 // from the audit row (period tuple + count). Drafts/rejected keep their status
 // (the record gate blocks them anyway).
-const PENDING_REVIEW_STATUSES: ActivityRecordStatus[] = [
-  ActivityRecordStatus.submitted,
-  ActivityRecordStatus.under_review,
-];
+// Derived from the shared list rather than restated, so the reviewer queue and
+// the lock gate cannot drift: any status added to one is a status the other
+// starts refusing to lock past. The map exists only to cross from the shared
+// string union into Prisma's generated enum.
+const PENDING_REVIEW_STATUSES: ActivityRecordStatus[] = SHARED_PENDING_REVIEW.map(
+  (s) => ActivityRecordStatus[s],
+);
 
 @Injectable()
 export class PeriodLocksService {

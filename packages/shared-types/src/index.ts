@@ -782,6 +782,38 @@ export interface RejectInput {
   varianceReason: string;
 }
 
+/**
+ * The statuses a reviewer's queue is made of: a record that has left the
+ * submitter's hands but has not yet been decided.
+ *
+ * This is one list, not two independent ones, because the two statuses mean
+ * "waiting" in exactly the same sense — `under_review` only records that a
+ * reviewer has opened it, and nothing collects records a reviewer abandoned
+ * mid-review. Splitting the queue on that flag would strand those rows in a
+ * tab nobody watches, which is the failure mode a review queue exists to
+ * prevent. `period-locks` uses the same list to refuse closing a period that
+ * still has undecided records, so the two must never drift apart.
+ */
+export const PENDING_REVIEW_STATUSES = [
+  'submitted',
+  'under_review',
+] as const satisfies readonly ActivityRecordStatus[];
+
+/**
+ * Optional filters for GET /activity-records (all AND-combined).
+ *
+ * `status` accepts several values because the reviewer queue is defined by a
+ * set, not a single state. Over the wire it is a comma-separated list; a lone
+ * value stays valid, so every pre-existing caller is unaffected.
+ */
+export interface ListActivityRecordsParams {
+  subsidiaryId?: string;
+  year?: number;
+  period?: ReportingPeriod;
+  category?: Category;
+  status?: ActivityRecordStatus | ActivityRecordStatus[];
+}
+
 // ---------------------------------------------------------------------------
 // Period locking (Phase 1, FR §4.2) — closing a reporting period.
 // A lock freezes one subsidiary's specific reporting period (e.g. 2024/Q1):

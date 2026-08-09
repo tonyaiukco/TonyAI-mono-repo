@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
+import { PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
 import type { CalculationResult } from '@tonyai/shared-types';
 import { ActivityRecordsService } from './activity-records.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -214,6 +215,29 @@ describe('ActivityRecordsService — tenant scoping', () => {
     const result = await service.list(dataEntry(), { subsidiaryId: 'sub-2' });
     expect(result).toEqual([]);
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+  });
+
+  it('list filters on a SET of statuses (the reviewer queue)', async () => {
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    await service.list(superAdmin(), {
+      status: [...PENDING_REVIEW_STATUSES],
+    });
+    expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ['submitted', 'under_review'] },
+        }),
+      }),
+    );
+  });
+
+  it('list omits the status filter entirely when none is given', async () => {
+    // Not `{ in: [] }` — Prisma reads an empty `in` as "match nothing", so a
+    // careless refactor here would silently empty every unfiltered list.
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    await service.list(superAdmin(), {});
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.status).toBeUndefined();
   });
 
   it('get treats an out-of-scope record as NotFound', async () => {

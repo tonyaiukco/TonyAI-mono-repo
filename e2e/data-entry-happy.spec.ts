@@ -13,7 +13,8 @@ import {
 /**
  * The end-to-end demo flow (Phase-1 exit gate rehearsal): a super_admin enters
  * activity data, sees a live tCO₂e preview, saves a draft, attaches the required
- * evidence, submits, then approves it (approve is API-only — there is no UI) and
+ * evidence, submits, then approves it (via the API — the UI path is covered
+ * by `review-queue.spec.ts`) and
  * the record shows as Approved. Uses TonyAI Energy · Electricity · 2024 · Q1 —
  * an unseeded quarterly tuple with no baseline, so nothing is flagged anomalous.
  */
