@@ -150,6 +150,15 @@ For each issue please capture:
 
 The demo dataset can always be restored with `pnpm db:reset`.
 
+## 5b. Results
+
+**Round 1 feedback received (2026-07-27, product-owner walkthrough):**
+[`uat_phase1_feedback_round1.md`](uat_phase1_feedback_round1.md) — 16 items across
+Subsidiaries, Data Entry, Overview and Emissions, tagged functional gap / UX /
+new capability. Prioritisation was deliberately left to development; the triage
+and the round-1 close-out are tracked in
+[`../roadmap_docs/project-status.md`](../roadmap_docs/project-status.md).
+
 ## 6. Sign-off
 
 | Area | Tester | Date | Verdict (Pass / Pass w/ notes / Fail) |
