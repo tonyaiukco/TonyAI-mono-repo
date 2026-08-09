@@ -1,7 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma } from '@tonyai/db';
+import type {
+  AuditAction,
+  AuditEntity,
+  AuditLogDTO,
+  Paginated,
+  UserRole,
+} from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { ListAuditQueryDto } from './dto/list-audit-query.dto';
 
 /**
  * The single place an audit row is written.
@@ -16,28 +24,17 @@ import type { RequestUser } from '../auth/auth.types';
  * policy) — this service therefore only ever creates.
  */
 
-/** The full taxonomy. `submit|review|approve|reject` used to be `update`. */
-export type AuditAction =
-  | 'create'
-  | 'update'
-  | 'delete'
-  | 'submit'
-  | 'review'
-  | 'approve'
-  | 'reject'
-  | 'lock'
-  | 'unlock'
-  | 'generate';
+// The taxonomy lives in @tonyai/shared-types so the API and the viewer cannot
+// drift apart; re-exported here because every writer already imports it here.
+export type { AuditAction, AuditEntity };
 
-export type AuditEntity =
-  | 'subsidiary'
-  | 'location'
-  | 'activity_record'
-  | 'evidence'
-  | 'period_lock'
-  | 'target'
-  | 'denominator'
-  | 'report';
+/** Reading the trail is super_admin-only, matching the RLS policy exactly.
+ * The API is the primary control (Prisma connects as the owner and bypasses
+ * RLS), so this check is what actually enforces it. */
+const READ_ROLES = new Set<UserRole>(['super_admin']);
+
+/** Hard ceiling regardless of what the client asks for. */
+const DEFAULT_LIMIT = 50;
 
 /** Accepts a transaction client so the audit row commits with the mutation. */
 type Writer = Pick<Prisma.TransactionClient, 'auditLog'>;
@@ -74,4 +71,91 @@ export class AuditService {
       },
     });
   }
+
+  /**
+   * Read the trail, newest first, scoped to the caller's organisation.
+   *
+   * Tenant scoping uses `audit_log.organisation_id`, denormalised from the
+   * ACTOR at write time — a `report` row has no `entityId` and a `delete` row
+   * points at a row that no longer exists, so joining to the entity is not
+   * possible for every action. A caller with no organisation reads nothing:
+   * a null tenant would otherwise widen the query to every row ever written.
+   */
+  async list(
+    user: RequestUser,
+    query: ListAuditQueryDto,
+  ): Promise<Paginated<AuditLogDTO>> {
+    if (!READ_ROLES.has(user.role)) {
+      throw new ForbiddenException('Only a super_admin may read the audit trail');
+    }
+    if (!user.organisationId) {
+      // Default-deny, mirroring the guard's treatment of an org-less profile.
+      return { items: [], total: 0, limit: query.limit ?? DEFAULT_LIMIT, offset: 0 };
+    }
+
+    const limit = query.limit ?? DEFAULT_LIMIT;
+    const offset = query.offset ?? 0;
+
+    const where: Prisma.AuditLogWhereInput = {
+      organisationId: user.organisationId,
+      ...(query.entity ? { entity: query.entity } : {}),
+      ...(query.action ? { action: query.action } : {}),
+      ...(query.entityId ? { entityId: query.entityId } : {}),
+      ...(query.userId ? { userId: query.userId } : {}),
+      ...(query.from || query.to
+        ? {
+            createdAt: {
+              ...(query.from ? { gte: new Date(query.from) } : {}),
+              ...(query.to ? { lt: new Date(query.to) } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset,
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+
+    // `audit_log.user_id` has no FK (the row must survive the actor's deletion),
+    // so the actor is resolved separately — one query for the page, not per row.
+    const userIds = [...new Set(rows.map((r) => r.userId).filter((id): id is string => !!id))];
+    const profiles = userIds.length
+      ? await this.prisma.profile.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, email: true, fullName: true },
+        })
+      : [];
+    const byId = new Map(profiles.map((p) => [p.id, p]));
+
+    return {
+      items: rows.map((r) => {
+        const profile = r.userId ? byId.get(r.userId) : undefined;
+        return {
+          id: r.id,
+          action: r.action as AuditAction,
+          entity: r.entity as AuditEntity,
+          entityId: r.entityId,
+          userId: r.userId,
+          userEmail: profile?.email ?? null,
+          userFullName: profile?.fullName ?? null,
+          // The role STORED on the row, never the profile's current role: an
+          // audit trail that re-derived it would misstate who was allowed to
+          // do what at the time.
+          role: (r.role as UserRole | null) ?? null,
+          diff: (r.diff as Record<string, unknown> | null) ?? null,
+          createdAt: r.createdAt.toISOString(),
+        };
+      }),
+      total,
+      limit,
+      offset,
+    };
+  }
+
 }
