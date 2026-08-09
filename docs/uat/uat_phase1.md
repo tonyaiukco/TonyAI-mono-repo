@@ -150,6 +150,29 @@ For each issue please capture:
 
 The demo dataset can always be restored with `pnpm db:reset`.
 
+## 5b. Results
+
+**Round 1 feedback received (2026-07-27, product-owner walkthrough):**
+[`uat_phase1_feedback_round1.md`](uat_phase1_feedback_round1.md) — 16 items across
+Subsidiaries, Data Entry, Overview and Emissions, tagged functional gap / UX /
+new capability. Prioritisation was deliberately left to development; the triage
+and the round-1 close-out are tracked in
+[`../roadmap_docs/project-status.md`](../roadmap_docs/project-status.md).
+
+### What happens to round-1 feedback
+
+Fixes land **incrementally while UAT continues** — you are not waiting for one big
+release. Each merged PR names the feedback IDs it closes (e.g. "closes DE-6, DE-7").
+When you are told a fix has landed:
+
+1. `git pull` and re-run **`pnpm setup`** (not just `pnpm install` — see §2).
+2. Re-test only the item(s) named in that PR, plus anything you were mid-way through.
+
+Some items are deliberately **not** quick fixes and are scheduled later — mobile
+combustion and refrigerants need emission-factor values we do not have yet, and the
+invoice-level completeness tracking is a data-model change. The routing for all 16
+items is in [`../roadmap_docs/project-status.md`](../roadmap_docs/project-status.md).
+
 ## 6. Sign-off
 
 | Area | Tester | Date | Verdict (Pass / Pass w/ notes / Fail) |
