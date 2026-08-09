@@ -172,6 +172,16 @@ Stated as factual relationships between items (not a build order — prioritisat
 
 ## 7. Points to Confirm With Product Owner
 
+> **All four answered 2026-07-31** (rationale in the decisions log of
+> [`../roadmap_docs/project-status.md`](../roadmap_docs/project-status.md)):
+> **SUB-3** — Google Places is out of scope for now; multi-location ships without it (WP16).
+> **DE-5** — no reference spreadsheet available, so mobile combustion defers to the Phase-4 factor package (DE-4 with it).
+> **DE-7** — Germany/EU grid options are **hidden, not removed**; deleting EU would break the seeded Munich subsidiary's factor resolution (WP15).
+> **DASH-3** — invoice-level tracking covers **Electricity, Natural Gas, Water** only; the other eight categories are complete/incomplete (WP17).
+>
+> The questions below are preserved as received.
+
+
 - **SUB-3:** Google Places API — key, billing model, and whether the call routes through the NestJS API or the browser.
 - **DE-5:** access to the reference **spreadsheet** for mobile-combustion factors and calculation logic.
 - **DE-7:** remove vs. hide the Germany / EU grid regions.
