@@ -10,6 +10,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import type { RequestUser } from '../auth/auth.types';
 
+import { AuditService } from '../audit/audit.service';
+
+/**
+ * Audit writes go through the shared AuditService. A single shared spy lets the
+ * specs assert WHAT was audited; the row shape it stamps (actor role +
+ * organisation) is covered by audit.service.spec.ts.
+ */
+const audit = { record: vi.fn() };
+const auditMock = () => audit as unknown as AuditService;
+
 const now = new Date('2026-01-01T00:00:00.000Z');
 
 function makeDenominator(overrides: Record<string, unknown> = {}) {
@@ -70,11 +80,14 @@ describe('IntensityService', () => {
   let service: IntensityService;
 
   beforeEach(() => {
+
+    audit.record.mockClear();
     prisma = createPrismaMock();
     emissions = { summary: vi.fn() };
     service = new IntensityService(
       prisma as unknown as PrismaService,
       emissions as unknown as EmissionsService,
+      auditMock(),
     );
   });
 
@@ -115,10 +128,10 @@ describe('IntensityService', () => {
   it('createDenominator writes the row and an audit row (entity denominator)', async () => {
     prisma.tx.subsidiaryDenominator.create.mockResolvedValue(makeDenominator());
     await service.createDenominator(admin, createInput);
-    expect(prisma.tx.auditLog.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ action: 'create', entity: 'denominator' }),
-      }),
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      expect.objectContaining({ action: 'create', entity: 'denominator' }),
+      prisma.tx,
     );
   });
 

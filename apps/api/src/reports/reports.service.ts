@@ -11,6 +11,7 @@ import puppeteer, { type Browser } from 'puppeteer';
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { AuditService } from '../audit/audit.service';
 import { COUNTED_STATUSES, EmissionsService } from '../emissions/emissions.service';
 import { ReportQueryDto } from './dto/report-query.dto';
 import { buildReportHtml } from './report-html';
@@ -90,6 +91,7 @@ export class ReportsService implements OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emissions: EmissionsService,
+    private readonly auditLog: AuditService,
   ) {}
 
   async onModuleDestroy(): Promise<void> {
@@ -421,26 +423,26 @@ export class ReportsService implements OnModuleDestroy {
   }
 
   /** Generation log (report_page.md §10): one audit row per generated artifact. */
+  /** Report generation IS the §10 generation log — no dedicated table. */
   private async audit(
     user: RequestUser,
     q: ReportQueryDto,
     exportType: ReportExportType,
     recordCount: number,
   ): Promise<void> {
-    await this.prisma.auditLog.create({
-      data: {
-        userId: user.id,
-        action: 'generate',
-        entity: 'report',
-        entityId: null,
-        diff: {
-          template: q.template,
-          year: q.year,
-          subsidiaryId: q.subsidiaryId ?? null,
-          exportType,
-          recordCount,
-        } as unknown as Prisma.InputJsonValue,
+    await this.auditLog.record(user, {
+      action: 'generate',
+      entity: 'report',
+      // Reports have no persisted row to point at; the diff carries the scope.
+      entityId: null,
+      diff: {
+        template: q.template,
+        year: q.year,
+        subsidiaryId: q.subsidiaryId ?? null,
+        exportType,
+        recordCount,
       },
     });
+
   }
 }

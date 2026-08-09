@@ -22,7 +22,10 @@ export const SUB = {
 } as const;
 
 /** A subsidiary the data_entry user CANNOT access — used by cross-tenant probes. */
-export const CROSS_TENANT_SUB = SUB.mfg;
+/** A subsidiary OUTSIDE `entry@tonyai.local`'s access set. The seed has a
+ * single organisation, so this proves access-set isolation, not cross-ORG
+ * isolation — a second seeded org would be needed for that. */
+export const OUT_OF_SCOPE_SUB = SUB.mfg;
 
 /**
  * The seed is monthly-2024 only, so the whole `quarterly` space is unseeded.

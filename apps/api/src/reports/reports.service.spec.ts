@@ -7,6 +7,16 @@ import type { RequestUser } from '../auth/auth.types';
 import type { ReportQueryDto } from './dto/report-query.dto';
 import type { ActivityRecordStatus, EmissionsSummary } from '@tonyai/shared-types';
 
+import { AuditService } from '../audit/audit.service';
+
+/**
+ * Audit writes go through the shared AuditService. A single shared spy lets the
+ * specs assert WHAT was audited; the row shape it stamps (actor role +
+ * organisation) is covered by audit.service.spec.ts.
+ */
+const audit = { record: vi.fn() };
+const auditMock = () => audit as unknown as AuditService;
+
 const now = new Date('2026-01-01T00:00:00.000Z');
 
 const SUMMARY = {
@@ -96,11 +106,14 @@ describe('ReportsService', () => {
   let service: ReportsService;
 
   beforeEach(() => {
+
+    audit.record.mockClear();
     prisma = createPrismaMock();
     emissions = { summary: vi.fn().mockResolvedValue(SUMMARY) };
     service = new ReportsService(
       prisma as unknown as PrismaService,
       emissions as unknown as EmissionsService,
+      auditMock(),
     );
   });
 
@@ -205,15 +218,14 @@ describe('ReportsService', () => {
     expect(lines).toHaveLength(3);
     expect(lines[0]).toContain('subsidiary,category');
     expect(lines[2]).toContain('"Feb, ""cold"""');
-    expect(prisma.auditLog.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
+    expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ id: expect.any(String) }),
+        expect.objectContaining({
           entity: 'report',
           action: 'generate',
           diff: expect.objectContaining({ exportType: 'csv' }),
         }),
-      }),
-    );
+      );
   });
 
   // --- HTML builder (pure) --------------------------------------------------
@@ -257,7 +269,7 @@ describe('ReportsService', () => {
   it('generation is forbidden for data_entry (permissions matrix)', async () => {
     const entry = { ...admin, role: 'data_entry' } as RequestUser;
     await expect(service.generateCsv(entry, q)).rejects.toMatchObject({ status: 403 });
-    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('generateExcel builds the three audit sheets', async () => {

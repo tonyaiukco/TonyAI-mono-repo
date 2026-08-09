@@ -10,6 +10,16 @@ import { PeriodLocksService } from './period-locks.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 
+import { AuditService } from '../audit/audit.service';
+
+/**
+ * Audit writes go through the shared AuditService. A single shared spy lets the
+ * specs assert WHAT was audited; the row shape it stamps (actor role +
+ * organisation) is covered by audit.service.spec.ts.
+ */
+const audit = { record: vi.fn() };
+const auditMock = () => audit as unknown as AuditService;
+
 // --- Local, DB-free mocks --------------------------------------------------
 
 function createPrismaMock() {
@@ -85,8 +95,10 @@ describe('PeriodLocksService', () => {
   let service: PeriodLocksService;
 
   beforeEach(() => {
+
+    audit.record.mockClear();
     prisma = createPrismaMock();
-    service = new PeriodLocksService(prisma as unknown as PrismaService);
+    service = new PeriodLocksService(prisma as unknown as PrismaService, auditMock());
   });
 
   it('only super_admin may lock (RBAC 403, nothing written)', async () => {
@@ -134,10 +146,10 @@ describe('PeriodLocksService', () => {
       data: { status: ActivityRecordStatus.locked },
     });
     // Audit is written INSIDE the transaction (bulk flip can never go unaudited).
-    expect(prisma.tx.auditLog.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ action: 'lock', entity: 'period_lock' }),
-      }),
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      expect.objectContaining({ action: 'lock', entity: 'period_lock' }),
+      prisma.tx,
     );
   });
 
@@ -180,10 +192,10 @@ describe('PeriodLocksService', () => {
       },
       data: { status: ActivityRecordStatus.approved },
     });
-    expect(prisma.tx.auditLog.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ action: 'unlock', entity: 'period_lock' }),
-      }),
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      expect.objectContaining({ action: 'unlock', entity: 'period_lock' }),
+      prisma.tx,
     );
   });
 

@@ -21,14 +21,26 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CalculationsService } from '../calculations/calculations.service';
 import type { RequestUser } from '../auth/auth.types';
+import { AuditService, type AuditAction } from '../audit/audit.service';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
 
-// Roles allowed to create/update/delete their own records.
-const WRITE_ROLES = new Set(['data_entry', 'consultant', 'super_admin']);
-// Roles allowed to approve/reject a record under review.
+// Roles allowed to create/update/delete/submit their own records.
+// A consultant is NOT among them (decision 2026-07-30): the permissions matrix
+// defines the seat as advisory — review, anomaly flagging, guidance — and it is
+// typically filled by someone outside the holding company. Data preparation
+// belongs to the tenant's own data_entry staff.
+const WRITE_ROLES = new Set(['data_entry', 'super_admin']);
+// Roles allowed to take a record into review and to reject it ("flag for
+// revision" in permissions_and_roles.md §3).
 const REVIEW_ROLES = new Set(['consultant', 'super_admin']);
+// Roles allowed to APPROVE — narrower than REVIEW_ROLES on purpose. A
+// consultant reviews and can send a record back ("flag for revision"), but the
+// act of accepting a figure into the inventory stays with the holding company's
+// own super_admin: an external advisor should not be able to sign off the
+// numbers their client will report. Matches permissions_and_roles.md §3.
+const APPROVE_ROLES = new Set(['super_admin']);
 // Statuses in which a record may still be edited or deleted by an author.
 const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
   ActivityRecordStatus.draft,
@@ -87,6 +99,7 @@ export class ActivityRecordsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly calculations: CalculationsService,
+    private readonly audit: AuditService,
   ) {}
 
   private toDTO(r: ActivityRecord, evidenceCount = 0): ActivityRecordDTO {
@@ -107,6 +120,9 @@ export class ActivityRecordsService {
       createdBy: r.createdBy,
       anomalyFlag: r.anomalyFlag,
       varianceReason: r.varianceReason,
+      reviewedBy: r.reviewedBy,
+      reviewedAt: r.reviewedAt ? r.reviewedAt.toISOString() : null,
+      reviewNote: r.reviewNote,
       evidenceCount,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
@@ -379,7 +395,7 @@ export class ActivityRecordsService {
       }
       throw e;
     }
-    await this.audit(user.id, 'create', created.id, {
+    await this.auditCreateUpdateDelete(user, 'create', created.id, {
       after: this.toDTO(created),
     });
     return this.toDTO(created);
@@ -492,7 +508,7 @@ export class ActivityRecordsService {
       }
       throw e;
     }
-    await this.audit(user.id, 'update', id, {
+    await this.auditCreateUpdateDelete(user, 'update', id, {
       before: this.toDTO(existing),
       after: this.toDTO(updated, updated._count.evidence),
     });
@@ -513,7 +529,7 @@ export class ActivityRecordsService {
       existing.periodValue,
     );
     await this.prisma.activityRecord.delete({ where: { id } });
-    await this.audit(user.id, 'delete', id, { before: this.toDTO(existing) });
+    await this.auditCreateUpdateDelete(user, 'delete', id, { before: this.toDTO(existing) });
     return { id, deleted: true };
   }
 
@@ -601,10 +617,8 @@ export class ActivityRecordsService {
 
   async approve(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
-    if (!REVIEW_ROLES.has(user.role)) {
-      throw new ForbiddenException(
-        'Only a consultant or super_admin may approve records',
-      );
+    if (!APPROVE_ROLES.has(user.role)) {
+      throw new ForbiddenException('Only a super_admin may approve records');
     }
     if (
       record.status !== ActivityRecordStatus.submitted &&
@@ -622,7 +636,11 @@ export class ActivityRecordsService {
       record.reportingPeriod,
       record.periodValue,
     );
-    return this.transition(user, record, ActivityRecordStatus.approved);
+    // Clear any earlier rejection note: an approved record showing last
+    // round's rejection reason would misread as "approved, but rejected".
+    return this.transition(user, record, ActivityRecordStatus.approved, {
+      reviewNote: null,
+    });
   }
 
   async reject(
@@ -651,9 +669,32 @@ export class ActivityRecordsService {
       record.reportingPeriod,
       record.periodValue,
     );
+    // The reviewer's reason goes in reviewNote — overwriting varianceReason
+    // would destroy the author's own anomaly justification (VAR §4).
     return this.transition(user, record, ActivityRecordStatus.rejected, {
-      varianceReason,
+      reviewNote: varianceReason,
     });
+  }
+
+  /**
+   * Which status a transition lands on decides the audit action. Before WP7
+   * every transition logged `update` with the real move buried in the diff,
+   * which made the audit trail unreadable and unfilterable.
+   */
+  private static readonly TRANSITION_ACTIONS: Record<string, AuditAction> = {
+    [ActivityRecordStatus.submitted]: 'submit',
+    [ActivityRecordStatus.under_review]: 'review',
+    [ActivityRecordStatus.approved]: 'approve',
+    [ActivityRecordStatus.rejected]: 'reject',
+  };
+
+  private async auditCreateUpdateDelete(
+    user: RequestUser,
+    action: 'create' | 'update' | 'delete',
+    entityId: string,
+    diff: Record<string, unknown>,
+  ): Promise<void> {
+    await this.audit.record(user, { action, entity: 'activity_record', entityId, diff });
   }
 
   /** Apply a status change + optional field patch, and audit it. */
@@ -661,8 +702,19 @@ export class ActivityRecordsService {
     user: RequestUser,
     record: ActivityRecord,
     status: ActivityRecordStatus,
-    extra: { varianceReason?: string; anomalyFlag?: boolean } = {},
+    extra: {
+      varianceReason?: string;
+      anomalyFlag?: boolean;
+      reviewNote?: string | null;
+    } = {},
   ): Promise<ActivityRecordDTO> {
+    // A review outcome records WHO decided and WHEN, so the reviewer screen
+    // does not have to reconstruct it from the audit log.
+    const isReviewOutcome =
+      status === ActivityRecordStatus.approved ||
+      status === ActivityRecordStatus.rejected ||
+      status === ActivityRecordStatus.under_review;
+
     const updated = await this.prisma.activityRecord.update({
       where: { id: record.id },
       data: {
@@ -673,32 +725,23 @@ export class ActivityRecordsService {
         ...(extra.anomalyFlag !== undefined
           ? { anomalyFlag: extra.anomalyFlag }
           : {}),
+        ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
+        ...(isReviewOutcome ? { reviewedBy: user.id, reviewedAt: new Date() } : {}),
       },
       include: { _count: { select: { evidence: true } } },
     });
-    await this.audit(user.id, 'update', record.id, {
-      transition: { from: record.status, to: status },
-      ...(extra.varianceReason !== undefined
-        ? { varianceReason: extra.varianceReason }
-        : {}),
-    });
-    return this.toDTO(updated, updated._count.evidence);
-  }
-
-  private async audit(
-    userId: string,
-    action: 'create' | 'update' | 'delete',
-    entityId: string,
-    diff: Record<string, unknown>,
-  ): Promise<void> {
-    await this.prisma.auditLog.create({
-      data: {
-        userId,
-        action,
-        entity: 'activity_record',
-        entityId,
-        diff: diff as Prisma.InputJsonValue,
+    await this.audit.record(user, {
+      action: ActivityRecordsService.TRANSITION_ACTIONS[status] ?? 'update',
+      entity: 'activity_record',
+      entityId: record.id,
+      diff: {
+        transition: { from: record.status, to: status },
+        ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
+        ...(extra.varianceReason !== undefined
+          ? { varianceReason: extra.varianceReason }
+          : {}),
       },
     });
+    return this.toDTO(updated, updated._count.evidence);
   }
 }

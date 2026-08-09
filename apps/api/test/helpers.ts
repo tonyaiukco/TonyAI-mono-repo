@@ -8,7 +8,7 @@ import type { RequestUser } from '../src/auth/auth.types';
  * tests can stub return values and assert call arguments. No DB is touched.
  */
 export function createPrismaMock() {
-  return {
+  const mock = {
     subsidiary: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
@@ -27,7 +27,14 @@ export function createPrismaMock() {
     auditLog: {
       create: vi.fn(),
     },
+    // Runs the callback against the SAME mock, so a mutation performed inside a
+    // transaction is still observable as `prisma.<model>.delete(...)`, while the
+    // audit spy receives this object as its third argument — which is what
+    // proves the audit row commits with the mutation rather than after it.
+    $transaction: vi.fn(),
   };
+  mock.$transaction.mockImplementation(async (cb: (tx: typeof mock) => unknown) => cb(mock));
+  return mock;
 }
 
 export type PrismaMock = ReturnType<typeof createPrismaMock>;

@@ -83,7 +83,26 @@ export class SupabaseAuthGuard implements CanActivate {
 
     let accessibleSubsidiaryIds: string[];
     if (profile.role === 'data_entry') {
-      accessibleSubsidiaryIds = profile.subsidiaryAccess.map((a) => a.subsidiaryId);
+      // Access rows are intersected with the profile's OWN organisation. Without
+      // this, a stray `user_subsidiary_access` row pointing at another tenant's
+      // subsidiary would grant real access — and every audit row it produced
+      // would be stamped with this actor's organisation (WP7 denormalises the
+      // tenant from the actor), filing another tenant's activity under this one:
+      // visible to the wrong super_admin, invisible to the right one.
+      // A data_entry profile with no organisation is default-denied for the same
+      // reason the privileged roles below are.
+      if (!profile.organisationId) {
+        accessibleSubsidiaryIds = [];
+      } else {
+        const granted = profile.subsidiaryAccess.map((a) => a.subsidiaryId);
+        const sameOrg = granted.length
+          ? await this.prisma.subsidiary.findMany({
+              where: { id: { in: granted }, organisationId: profile.organisationId },
+              select: { id: true },
+            })
+          : [];
+        accessibleSubsidiaryIds = sameOrg.map((s) => s.id);
+      }
     } else if (!profile.organisationId) {
       // super_admin / consultant / executive_viewer WITHOUT an organisation →
       // default-deny. Otherwise a null `organisationId` would make the query below
