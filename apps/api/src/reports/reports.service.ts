@@ -177,11 +177,11 @@ export class ReportsService implements OnModuleDestroy {
       ActivityRecordStatus.draft,
       ActivityRecordStatus.rejected,
     ]);
-      // Derived, not restated: this count is what stamps a generated report
-  // `approved`, so a status added to the shared pending list and forgotten here
-  // would mean an audit-ready PDF marked approved while undecided records sit in
-  // the reviewer's queue.
-  const pendingCount = count([...PENDING_REVIEW_STATUSES]);
+    // Derived, not restated: this count is what stamps a generated report
+    // `approved`, so a status added to the shared pending list and forgotten
+    // here would mean an audit-ready PDF marked approved while undecided
+    // records still sit in the reviewer's queue.
+    const pendingCount = count([...PENDING_REVIEW_STATUSES]);
     const incompleteRatio = totalCount > 0 ? incompleteCount / totalCount : 0;
 
     // "Approved" must mean reviewed data EXISTS — a zero-record year is never

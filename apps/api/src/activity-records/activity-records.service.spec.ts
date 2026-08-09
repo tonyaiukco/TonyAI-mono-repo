@@ -621,7 +621,7 @@ describe('ActivityRecordsService — transition rules', () => {
     );
   });
 
-  it('a REJECTED record can be resubmitted, and the stale note is cleared', async () => {
+  it('a REJECTED record can be resubmitted, and keeps the reviewer\'s note', async () => {
     // Rejection must not be a one-way door. `update` allows editing a rejected
     // record but never moved it back to `draft`, and submit accepted only
     // `draft` — so every rejected record was permanently stranded: excluded
@@ -641,14 +641,48 @@ describe('ActivityRecordsService — transition rules', () => {
 
     const dto = await service.submit(dataEntry(), 'rec-r');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
-    // Resubmitting is the claim that the note was addressed; leaving it attached
-    // showed the submitter a rejection reason on a record now reading `submitted`.
-    expect(prisma.activityRecord.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ reviewNote: null }),
+    // The note is NOT destroyed: it is the reviewer's only in-record signal that
+    // this record has been round the loop before, and `/review` renders it as
+    // "Previous review note". The stale-note problem is solved by rendering it
+    // only on a rejected record, not by deleting the value.
+    const data = prisma.activityRecord.update.mock.calls[0][0].data;
+    expect('reviewNote' in data).toBe(false);
+  });
+
+  it('a non-author may not resubmit — that would overturn a rejection', async () => {
+    // `update`/`remove` already gate on the author; submit did not, so any
+    // data_entry user who could see the subsidiary could undo a reviewer's
+    // decision while still being forbidden from fixing the number.
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-n',
+        status: ActivityRecordStatus.rejected,
+        createdBy: 'someone-else',
       }),
     );
-    expect(dto.reviewNote).toBeNull();
+
+    await expect(service.submit(dataEntry(), 'rec-n')).rejects.toThrow(
+      /only resubmit activity records you created/i,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('a super_admin may resubmit a record they did not author', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-sa',
+        status: ActivityRecordStatus.rejected,
+        createdBy: 'someone-else',
+      }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-sa', status: data.status }),
+    );
+
+    const dto = await service.submit(superAdmin(), 'rec-sa');
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
   });
 
   it('a first submit does not touch reviewNote at all', async () => {

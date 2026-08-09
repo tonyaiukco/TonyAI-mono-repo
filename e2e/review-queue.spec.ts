@@ -123,6 +123,17 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
     page.getByText('Invoice total does not match the meter reading'),
   ).toBeVisible();
 
+  // Resubmitting reverses a reviewer's decision, so it is gated on authorship.
+  // This user can SEE the subsidiary but did not author the record; without the
+  // gate they could make the rejection disappear while remaining forbidden from
+  // editing the number — the capability has no other use.
+  const entryToken = await getAccessToken(request, ENTRY_EMAIL);
+  const byOther = await request.post(
+    `${API_BASE}/activity-records/${id}/submit`,
+    { headers: bearer(entryToken) },
+  );
+  expect(byOther.status()).toBe(403);
+
   // Reading why is half the loop. Until this was fixed, `submit` accepted only
   // `draft`, so a rejected record could never come back — it dropped out of the
   // inventory permanently while the test above still passed.
@@ -133,8 +144,10 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
   expect(resubmit.status()).toBe(200);
   const back = await resubmit.json();
   expect(back.status).toBe('submitted');
-  // The note described what to fix; resubmitting claims it was fixed.
-  expect(back.reviewNote).toBeNull();
+  // The note SURVIVES: it is the reviewer's only in-record signal that this
+  // record has been round the loop before. Hiding it from the submitter is a
+  // rendering rule, not a reason to destroy it.
+  expect(back.reviewNote).toBe('Invoice total does not match the meter reading');
 });
 
 test('a consultant may send a record back but is not offered Approve', async ({

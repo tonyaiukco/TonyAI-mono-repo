@@ -260,8 +260,16 @@ async function main() {
 
   // Review-only means review-only at the database too: RLS has no write policy
   // for this role, so an UPDATE straight through PostgREST must affect nothing.
+  // A REAL, consultant-visible row: patching a nonexistent id returns `[]`
+  // whether or not a write policy exists, so that form of the probe could never
+  // fail — it proved nothing.
+  const sample = await fetch(
+    `${URL_}/rest/v1/activity_records?select=id,status&limit=1`,
+    { headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` } },
+  );
+  const [sampleRow] = await sample.json();
   const patch = await fetch(
-    `${URL_}/rest/v1/activity_records?id=eq.${'00000000-0000-0000-0000-000000000000'}`,
+    `${URL_}/rest/v1/activity_records?id=eq.${sampleRow.id}`,
     {
       method: 'PATCH',
       headers: {
@@ -274,10 +282,19 @@ async function main() {
     },
   );
   const patched = patch.ok ? await patch.json() : null;
+  // Read the row back with the service role: "0 rows returned" and "0 rows
+  // changed" are not the same claim, and only the second one is the control.
+  const after = await fetch(
+    `${URL_}/rest/v1/activity_records?select=status&id=eq.${sampleRow.id}`,
+    { headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` } },
+  );
+  const [afterRow] = await after.json();
   check(
-    'activity_records: consultant cannot write through RLS',
-    !patch.ok || (Array.isArray(patched) && patched.length === 0),
-    `status=${patch.status}, rows=${Array.isArray(patched) ? patched.length : 'n/a'}`,
+    'activity_records: consultant cannot write through RLS (real row unchanged)',
+    (!patch.ok || (Array.isArray(patched) && patched.length === 0)) &&
+      afterRow.status === sampleRow.status,
+    `status=${patch.status}, rows=${Array.isArray(patched) ? patched.length : 'n/a'}, ` +
+      `row status ${sampleRow.status} -> ${afterRow.status}`,
   );
 
   console.log('');

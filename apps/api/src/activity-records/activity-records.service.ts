@@ -559,6 +559,20 @@ export class ActivityRecordsService {
       );
     }
     const isResubmission = record.status === ActivityRecordStatus.rejected;
+    // Resubmitting REVERSES a reviewer's decision, so it needs the author gate
+    // that `update`/`remove` already apply. Without it, any data_entry user who
+    // can merely SEE the subsidiary could overturn a rejection — while still
+    // being forbidden from editing the number, so the only thing the capability
+    // could be used for is making the rejection go away.
+    if (
+      isResubmission &&
+      user.role !== 'super_admin' &&
+      record.createdBy !== user.id
+    ) {
+      throw new ForbiddenException(
+        'You may only resubmit activity records you created',
+      );
+    }
     // Period-lock gate (FR §4.2): no submissions into a closed period.
     await this.assertPeriodNotLocked(
       record.subsidiaryId,
@@ -598,12 +612,15 @@ export class ActivityRecordsService {
         'This value deviates significantly from the historical average — add a variance comment before submitting.',
       );
     }
+    // The note is deliberately KEPT. Clearing it on resubmit was the first cut,
+    // and it was wrong twice over: `reviewedBy`/`reviewedAt` survived anyway, so
+    // the review stamp was only half-cleared, and it dead-coded the reviewer
+    // sheet's "Previous review note" — a consultant re-reviewing a bounced-back
+    // record would see something indistinguishable from a first submission. The
+    // stale-note problem it was meant to solve is a RENDERING one, fixed where
+    // it belongs: `/emissions` shows the note only on a `rejected` record.
     return this.transition(user, record, ActivityRecordStatus.submitted, {
       anomalyFlag: anomalous,
-      // The previous reviewer's note described what to fix; resubmitting is the
-      // claim that it was fixed. Leaving it attached would show the submitter a
-      // stale rejection reason on a record whose badge now says `submitted`.
-      ...(isResubmission ? { reviewNote: null } : {}),
     });
   }
 
