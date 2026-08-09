@@ -83,6 +83,26 @@ Conventions: run as `admin@tonyai.local` unless the TC says otherwise. Mark each
 
 > **Review/approve note:** as of WP7 PR 3 the reviewer actions have a UI at **`/review`** — a queue of records awaiting a decision, with Start review / Reject / Approve. Approve renders for `super_admin` only; a `consultant` may take a record into review and reject it, and the API refuses an approve from that role regardless of what the UI offers. A rejection's reason is written to the record's review note and shown to the submitter on `/emissions`. The seed also contains 102 already-approved records feeding analytics and reports.
 
+### 3.4b Review queue (`/review`) — WP7 PR 3
+
+Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
+
+| TC | Steps | Expected | P/F |
+| --- | --- | --- | --- |
+| REV-01 | As admin: open **Review Queue** in the sidebar | Table lists only records awaiting a decision (`submitted` / `under_review`), oldest first, with subsidiary, period, category, activity, tCO₂e, status and **Age** | |
+| REV-02 | Click a row | Detail panel opens showing the subsidiary, the activity value, the calculated tCO₂e, the **factor source + version**, the evidence file(s) and a *Reason* box | |
+| REV-03 | Click the evidence file name | The uploaded file opens in a new tab (signed link). **If it does not open, do not decide the record** — report it | |
+| REV-04 | Try **Reject** with the reason box empty | Reject is disabled — a rejection must say what to fix | |
+| REV-05 | Type a reason → **Reject** | Toast confirms; the row leaves the queue | |
+| REV-06 | Go to `/emissions` → **History** → open that record | Status **rejected**, and a **"Why this was sent back"** block shows the exact reason you typed | |
+| REV-07 | As the record's author, submit it again (Data Entry → *Submit for review*) | Accepted: a rejected record can be fixed and resubmitted, and it reappears in the queue | |
+| REV-08 | Back on `/review`, click a `submitted` row → **Start review** | Row **stays** in the queue and its status changes to **under review** (it is still undecided) | |
+| REV-09 | Click a row → **Approve** | Toast confirms; the row leaves the queue and the record reads **approved** on `/emissions` | |
+| REV-10 | Sign in as `review@tonyai.local` (consultant) → `/review` | Queue is visible with **Start review** and **Reject**, but **no Approve button**, plus a line explaining approval is `super_admin` only | |
+| REV-11 | Sign in as `entry@tonyai.local` → `/review` | An explanation card ("Reviewing is done by a consultant or a super_admin"), **not** an error or an empty page | |
+
+> **Note for testers:** `review@tonyai.local` (password `TonyAI!2026`) is a new seeded user — if signing in fails, re-run `pnpm db:seed`.
+
 ### 3.5 Period locking (`/subsidiaries` → padlock)
 
 | TC | Steps | Expected | P/F |
