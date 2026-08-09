@@ -43,8 +43,13 @@ describe('ListActivityRecordsQueryDto — status', () => {
   });
 
   it('rejects an empty string instead of treating it as "no filter"', () => {
+    // `toHaveLength(1)` counts ValidationError OBJECTS — at most one per
+    // property however many constraints fire — so it cannot tell you which rule
+    // caught this. Naming the constraint is the difference between a test that
+    // defends a behaviour and one that merely observes a 400.
     const { errors } = parse({ status: '' });
     expect(errors).toHaveLength(1);
+    expect(Object.keys(errors[0].constraints ?? {})).toContain('isIn');
   });
 
   it('rejects an unknown status, even alongside valid ones', () => {
@@ -57,5 +62,14 @@ describe('ListActivityRecordsQueryDto — status', () => {
       status: 'draft,draft,draft,draft,draft,draft,draft',
     });
     expect(errors).toHaveLength(1);
+    expect(Object.keys(errors[0].constraints ?? {})).toContain('arrayMaxSize');
+  });
+
+  it('rejects an unknown CATEGORY rather than returning an empty list', () => {
+    // A typo'd category used to be `@IsString()` — a silently empty result to a
+    // caller who believed they had narrowed the list.
+    const { errors } = parse({ category: 'Electrcity' });
+    expect(errors).toHaveLength(1);
+    expect(Object.keys(errors[0].constraints ?? {})).toContain('isIn');
   });
 });

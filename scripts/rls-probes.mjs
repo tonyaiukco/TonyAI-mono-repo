@@ -47,6 +47,7 @@ if (!URL_ || !ANON || !SERVICE) {
 
 const ENTRY_EMAIL = 'entry@tonyai.local';
 const ADMIN_EMAIL = 'admin@tonyai.local';
+const CONSULTANT_EMAIL = 'review@tonyai.local';
 const PASSWORD = 'TonyAI!2026';
 const TENANT_TABLES = [
   'activity_records',
@@ -240,6 +241,44 @@ async function main() {
   } finally {
     await cleanupAuditRows();
   }
+
+  // --- The consultant seat (WP7 PR 3) -------------------------------------
+  // Added with the reviewer UI. The NestJS guard grants a consultant org-wide
+  // READ and no writes; that is the primary layer, and this asserts the second
+  // one independently agrees — otherwise the whole review-only decision would
+  // rest on the guard alone for a seat no probe had ever touched.
+  const consultantToken = await getToken(CONSULTANT_EMAIL);
+  const svcRecords = await count('activity_records', { key: SERVICE, token: SERVICE });
+  const consultantRecords = await count('activity_records', {
+    token: consultantToken,
+  });
+  check(
+    'activity_records: consultant reads the organisation (SELECT grant + policy)',
+    consultantRecords.total === svcRecords.total && consultantRecords.total > 0,
+    `consultant=${consultantRecords.total}, service=${svcRecords.total}`,
+  );
+
+  // Review-only means review-only at the database too: RLS has no write policy
+  // for this role, so an UPDATE straight through PostgREST must affect nothing.
+  const patch = await fetch(
+    `${URL_}/rest/v1/activity_records?id=eq.${'00000000-0000-0000-0000-000000000000'}`,
+    {
+      method: 'PATCH',
+      headers: {
+        apikey: ANON,
+        Authorization: `Bearer ${consultantToken}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify({ status: 'approved' }),
+    },
+  );
+  const patched = patch.ok ? await patch.json() : null;
+  check(
+    'activity_records: consultant cannot write through RLS',
+    !patch.ok || (Array.isArray(patched) && patched.length === 0),
+    `status=${patch.status}, rows=${Array.isArray(patched) ? patched.length : 'n/a'}`,
+  );
 
   console.log('');
   if (failures.length) {

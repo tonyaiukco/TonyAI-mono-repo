@@ -91,7 +91,8 @@ export type UserRole = 'super_admin' | 'consultant' | 'data_entry' | 'executive_
 
 export type SubmissionStatus = 'draft' | 'submitted' | 'in_review' | 'approved' | 'revision_requested';
 
-export type ReportingPeriod = 'monthly' | 'quarterly' | 'annual';
+export const REPORTING_PERIODS = ['monthly', 'quarterly', 'annual'] as const;
+export type ReportingPeriod = (typeof REPORTING_PERIODS)[number];
 
 export interface DataEntryField {
   id: string;
@@ -307,34 +308,11 @@ export const COUNTRIES = [
 // Emissions Analysis Types
 export type EmissionsScope = 'all' | 'scope1' | 'scope2' | 'scope3';
 export type DataViewMode = 'absolute' | 'intensity';
-export type EmissionsRecordStatus = 'draft' | 'submitted' | 'under_review' | 'approved' | 'rejected' | 'locked';
-
-export interface EmissionsRecord {
-  id: string;
-  timestamp: string;
-  subsidiary: string;
-  subsidiaryId: string;
-  category: Category;
-  scope: 1 | 2 | 3;
-  activityValue: number;
-  unit: string;
-  tCo2e: number;
-  status: EmissionsRecordStatus;
-  evidenceCount: number;
-  evidenceTypes: ('pdf' | 'image' | 'spreadsheet')[];
-  enteredBy: string;
-  invoiceReference?: string;
-  notes?: string;
-  anomalyFlagged?: boolean;
-  // Audit details
-  emissionFactor: number;
-  emissionFactorUnit: string;
-  methodology: string;
-  geographyCode: string;
-  createdAt: string;
-  updatedAt: string;
-  varianceReason?: string;
-}
+// NOTE: `EmissionsRecordStatus` and `EmissionsRecord` lived here and were
+// deleted in WP7 PR 3. They had zero consumers and restated the record
+// lifecycle with the SAME six members as `ActivityRecordStatus` — a second
+// source of truth for the lifecycle, one autocomplete slip away from being
+// picked in place of the real one.
 
 export interface CategoryEmissions {
   category: Category;
@@ -714,13 +692,15 @@ export interface CalculationResult {
  * `approved` and `locked` are terminal & immutable; `rejected` records can be
  * edited (back to draft-like behaviour) and re-submitted.
  */
-export type ActivityRecordStatus =
-  | 'draft'
-  | 'submitted'
-  | 'under_review'
-  | 'approved'
-  | 'rejected'
-  | 'locked';
+export const ACTIVITY_RECORD_STATUSES = [
+  'draft',
+  'submitted',
+  'under_review',
+  'approved',
+  'rejected',
+  'locked',
+] as const;
+export type ActivityRecordStatus = (typeof ACTIVITY_RECORD_STATUSES)[number];
 
 /**
  * An activity record as returned/accepted by the API (DB-shaped). `calculation`
@@ -802,16 +782,18 @@ export const PENDING_REVIEW_STATUSES = [
 /**
  * Optional filters for GET /activity-records (all AND-combined).
  *
- * `status` accepts several values because the reviewer queue is defined by a
- * set, not a single state. Over the wire it is a comma-separated list; a lone
- * value stays valid, so every pre-existing caller is unaffected.
+ * `status` is a set because the reviewer queue is defined by one, not by a
+ * single state. Over the wire it is a comma-separated list, so a bare
+ * `?status=draft` from an existing client still parses; the TypeScript side is
+ * an array only — a scalar arm would buy nothing (no caller passes one) and
+ * would seed an `Array.isArray` branch in every future multi-valued filter.
  */
 export interface ListActivityRecordsParams {
   subsidiaryId?: string;
   year?: number;
   period?: ReportingPeriod;
   category?: Category;
-  status?: ActivityRecordStatus | ActivityRecordStatus[];
+  status?: readonly ActivityRecordStatus[];
 }
 
 // ---------------------------------------------------------------------------

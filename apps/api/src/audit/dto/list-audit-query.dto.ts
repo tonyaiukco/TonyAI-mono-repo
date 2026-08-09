@@ -72,3 +72,15 @@ export class ListAuditQueryDto implements ListAuditParams {
   @Max(10_000)
   offset?: number;
 }
+
+/**
+ * `implements` checks only the filters DECLARED here: TypeScript does not
+ * require a class to declare an interface's optional members. This makes the
+ * doc comment above true — add a filter to `ListAuditParams` and forget it here,
+ * and this stops compiling with the missing key named.
+ */
+const _noMissingAuditFilters: never = null as unknown as Exclude<
+  keyof ListAuditParams,
+  keyof ListAuditQueryDto
+>;
+void _noMissingAuditFilters;

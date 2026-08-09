@@ -27,11 +27,14 @@ import { isValidPeriodValue } from '../activity-records/activity-records.service
 // (the record gate blocks them anyway).
 // Derived from the shared list rather than restated, so the reviewer queue and
 // the lock gate cannot drift: any status added to one is a status the other
-// starts refusing to lock past. The map exists only to cross from the shared
-// string union into Prisma's generated enum.
-const PENDING_REVIEW_STATUSES: ActivityRecordStatus[] = SHARED_PENDING_REVIEW.map(
-  (s) => ActivityRecordStatus[s],
-);
+// starts refusing to lock past.
+//
+// A plain assignment, NOT `SHARED_PENDING_REVIEW.map(s => ActivityRecordStatus[s])`
+// — that form's guard is TS7053, which only fires under `noImplicitAny`, and this
+// package has it OFF (tsconfig.json). It would have compiled clean and produced
+// `['submitted', undefined]` at runtime, silently disarming the gate below.
+// Assignability is checked regardless of that flag, and names the bad status.
+const PENDING_REVIEW_STATUSES: ActivityRecordStatus[] = [...SHARED_PENDING_REVIEW];
 
 @Injectable()
 export class PeriodLocksService {

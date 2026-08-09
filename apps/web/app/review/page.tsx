@@ -72,7 +72,8 @@ function formatDate(iso: string): string {
   });
 }
 
-/** Whole days a record has been sitting in the queue, for the "waiting" column. */
+/** Whole days since the record was CREATED — not since it was submitted, which
+ * nothing records yet. The column is named "Age" for exactly that reason. */
 function daysSince(iso: string): number {
   return Math.max(
     0,
@@ -91,6 +92,7 @@ export default function ReviewPage() {
   const [subsidiaryId, setSubsidiaryId] = useState<string>(ANY);
   const [selected, setSelected] = useState<ActivityRecordDTO | null>(null);
   const [evidence, setEvidence] = useState<EvidenceDTO[] | null>(null);
+  const [evidenceError, setEvidenceError] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -107,7 +109,7 @@ export default function ReviewPage() {
     setLoading(true);
     try {
       const [records, subs] = await Promise.all([
-        api.listActivityRecords({ status: [...PENDING_REVIEW_STATUSES] }),
+        api.listActivityRecords({ status: PENDING_REVIEW_STATUSES }),
         api.listSubsidiaries(),
       ]);
       // Oldest first: a review queue sorted newest-first buries the record that
@@ -146,11 +148,16 @@ export default function ReviewPage() {
   useEffect(() => {
     if (!selected) return;
     setEvidence(null);
+    setEvidenceError(false);
     let cancelled = false;
     api
       .listEvidence(selected.id)
       .then((files) => !cancelled && setEvidence(files))
-      .catch(() => !cancelled && setEvidence([]));
+      // NOT `[]`. A 403, a 500 or a dropped connection rendered identically to
+      // "this record genuinely has no evidence" — on the one screen where
+      // someone decides whether to accept a figure into the inventory, that is
+      // the rubber-stamping this panel exists to prevent.
+      .catch(() => !cancelled && setEvidenceError(true));
     return () => {
       cancelled = true;
     };
@@ -229,9 +236,15 @@ export default function ReviewPage() {
     subsidiaryId === ANY
       ? rows
       : rows.filter((r) => r.subsidiaryId === subsidiaryId);
-  const visible = filtered.slice(offset, offset + PAGE_SIZE);
-  const page = Math.floor(offset / PAGE_SIZE) + 1;
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // Clamped: deciding the last record on a page shrinks the list under the
+  // current offset, and the slice then came back empty — so the queue announced
+  // "Nothing is waiting for review" while the header still counted 25 waiting.
+  // On a screen whose whole purpose is that nothing gets lost, that state is
+  // worse than a wrong page number.
+  const safeOffset = Math.min(offset, (pages - 1) * PAGE_SIZE);
+  const visible = filtered.slice(safeOffset, safeOffset + PAGE_SIZE);
+  const page = Math.floor(safeOffset / PAGE_SIZE) + 1;
 
   const subsidiaryName = (id: string) =>
     subsidiaries.find((s) => s.id === id)?.legalName ?? id;
@@ -255,7 +268,17 @@ export default function ReviewPage() {
             </Button>
           </div>
 
-          {user && !canReview ? (
+          {!user ? (
+            // The store is in-memory, so `user` is null on every hard load. The
+            // old `user && !canReview` rendered the FULL queue to every role —
+            // including executive_viewer — until /me resolved. The API refuses
+            // their actions, but the page should not contradict its own rule.
+            <Card>
+              <CardContent className="py-8">
+                <Skeleton className="h-6 w-full" />
+              </CardContent>
+            </Card>
+          ) : !canReview ? (
             <Card>
               <CardContent className="flex items-start gap-3 py-8">
                 <ShieldAlert className="h-5 w-5 text-amber-500 shrink-0" />
@@ -267,9 +290,9 @@ export default function ReviewPage() {
                     {/* Precise: this is not hidden data. A data_entry user can
                         see these same records on Emissions — what they cannot do
                         is decide them, and nobody may approve their own work. */}
-                    Your own submitted records are still visible on the Emissions
-                    page; only the decision on them belongs to someone else. Your
-                    role is <span className="font-mono">{user.role}</span>.
+                    This is not hidden data — records you can already see on the
+                    Emissions page are the same ones being decided here. Your role
+                    is <span className="font-mono">{user.role}</span>.
                   </p>
                 </div>
               </CardContent>
@@ -312,7 +335,7 @@ export default function ReviewPage() {
                         <TableHead className="text-right">Activity</TableHead>
                         <TableHead className="text-right">tCO₂e</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Waiting</TableHead>
+                        <TableHead>Age</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -398,16 +421,16 @@ export default function ReviewPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={offset === 0 || loading}
-                    onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+                    disabled={safeOffset === 0 || loading}
+                    onClick={() => setOffset(Math.max(0, safeOffset - PAGE_SIZE))}
                   >
                     <ChevronLeft className="h-4 w-4" /> Previous
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={offset + PAGE_SIZE >= filtered.length || loading}
-                    onClick={() => setOffset(offset + PAGE_SIZE)}
+                    disabled={safeOffset + PAGE_SIZE >= filtered.length || loading}
+                    onClick={() => setOffset(safeOffset + PAGE_SIZE)}
                   >
                     Next <ChevronRight className="h-4 w-4" />
                   </Button>
@@ -460,7 +483,10 @@ export default function ReviewPage() {
                       of that number belongs on this screen, not one click away. */}
                   {selected.calculation.source} v{selected.calculation.version}
                 </span>
-                <span className="text-muted-foreground">Submitted</span>
+                {/* `createdAt` is when the DRAFT was created, not when it was
+                    submitted — there is no `submittedAt` column yet. Labelling it
+                    "Submitted" asserted a date the record does not carry. */}
+                <span className="text-muted-foreground">Created</span>
                 <span className="col-span-2">
                   {formatDate(selected.createdAt)}
                 </span>
@@ -494,7 +520,19 @@ export default function ReviewPage() {
                   <Paperclip className="h-4 w-4" />
                   Evidence
                 </p>
-                {evidence === null ? (
+                {evidenceError ? (
+                  <p className="text-xs text-red-600">
+                    Could not load the evidence for this record — do not decide
+                    it until you can see the files.{" "}
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={() => setSelected({ ...selected })}
+                    >
+                      Retry
+                    </button>
+                  </p>
+                ) : evidence === null ? (
                   <Skeleton className="h-8 w-full" />
                 ) : evidence.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
@@ -539,7 +577,7 @@ export default function ReviewPage() {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                {selected.status === "submitted" && (
+                {canReview && selected.status === "submitted" && (
                   <Button
                     variant="outline"
                     disabled={busy}
@@ -548,13 +586,15 @@ export default function ReviewPage() {
                     Start review
                   </Button>
                 )}
-                <Button
-                  variant="destructive"
-                  disabled={busy || !reason.trim()}
-                  onClick={() => act("reject", selected)}
-                >
-                  Reject
-                </Button>
+                {canReview && (
+                  <Button
+                    variant="destructive"
+                    disabled={busy || !reason.trim()}
+                    onClick={() => act("reject", selected)}
+                  >
+                    Reject
+                  </Button>
+                )}
                 {canApprove && (
                   <Button
                     disabled={busy}
@@ -564,7 +604,7 @@ export default function ReviewPage() {
                   </Button>
                 )}
               </div>
-              {!canApprove && (
+              {canReview && !canApprove && (
                 <p className="text-xs text-muted-foreground">
                   Approval is reserved for a super_admin — as a consultant you can
                   take a record into review or send it back.

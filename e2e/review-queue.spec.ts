@@ -113,14 +113,28 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
   await switchUser(page, ENTRY_EMAIL);
   await page.goto('/emissions');
   await page.getByRole('tab', { name: /History/i }).click();
+  // No `.first()`: strict mode should fail loudly if a second row ever matches,
+  // rather than silently deciding which record the assertion is about.
   await page
     .locator('table tbody tr', { hasText: 'TonyAI Logistics' })
-    .filter({ hasText: 'Q3' })
-    .first()
+    .filter({ hasText: 'Q3 2024' })
     .click();
   await expect(
     page.getByText('Invoice total does not match the meter reading'),
   ).toBeVisible();
+
+  // Reading why is half the loop. Until this was fixed, `submit` accepted only
+  // `draft`, so a rejected record could never come back — it dropped out of the
+  // inventory permanently while the test above still passed.
+  const resubmit = await request.post(
+    `${API_BASE}/activity-records/${id}/submit`,
+    { headers: bearer(token) },
+  );
+  expect(resubmit.status()).toBe(200);
+  const back = await resubmit.json();
+  expect(back.status).toBe('submitted');
+  // The note described what to fix; resubmitting claims it was fixed.
+  expect(back.reviewNote).toBeNull();
 });
 
 test('a consultant may send a record back but is not offered Approve', async ({
@@ -142,7 +156,8 @@ test('a consultant may send a record back but is not offered Approve', async ({
 
   const row = page
     .locator('table tbody tr', { hasText: 'TonyAI Gas' })
-    .filter({ hasText: 'Natural Gas' });
+    .filter({ hasText: 'Natural Gas' })
+    .filter({ hasText: 'Q1 2024' });
   await row.click();
 
   // The control a consultant may not use is absent, and the page says why
@@ -150,13 +165,56 @@ test('a consultant may send a record back but is not offered Approve', async ({
   await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
   await expect(page.getByText(/Approval is reserved for a super_admin/)).toBeVisible();
 
+  // The sheet must carry what a decision needs. Both of these were implemented
+  // and asserted by nothing — removing either left the suite green.
+  await expect(page.getByText('sample-invoice.pdf')).toBeVisible();
+  await expect(page.getByText(/prototype demo factors.*v2024\.1/)).toBeVisible();
+
   await page.getByRole('button', { name: 'Start review' }).click();
   await expect(page.getByText('Taken into review')).toBeVisible();
+
+  // `review` leaves the record PENDING, so it must stay in the queue and change
+  // status. Dropping it instead also passed before this assertion existed —
+  // a reviewer would have watched a record they had merely opened vanish.
+  await expect(row).toBeVisible();
+  await expect(row).toContainText('under review');
 
   const mid = await request.get(`${API_BASE}/activity-records/${id}`, {
     headers: bearer(token),
   });
   expect((await mid.json()).status).toBe('under_review');
+});
+
+test('the queue is ordered oldest-first', async ({ page, request }) => {
+  // Asserted on two records this test creates, in a known creation order, so it
+  // holds whether or not other specs have left rows behind. Reversing the sort
+  // left the suite green before this existed.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.energy,
+    category: 'Natural Gas',
+    periodValue: 'Q2',
+    activityValue: 1200,
+    activityUnit: 'm3',
+  });
+  await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.energy,
+    category: 'Fuel',
+    periodValue: 'Q2',
+    activityValue: 800,
+    activityUnit: 'litres',
+  });
+
+  await login(page, ADMIN_EMAIL);
+  await page.goto('/review');
+  const rows = page.locator('table tbody tr');
+  await expect(rows.first()).toBeVisible();
+
+  const text = await rows.allInnerTexts();
+  const older = text.findIndex((t) => t.includes('Natural Gas') && t.includes('Q2 2024'));
+  const newer = text.findIndex((t) => t.includes('Fuel') && t.includes('Q2 2024'));
+  expect(older).toBeGreaterThanOrEqual(0);
+  expect(newer).toBeGreaterThan(older);
 });
 
 test('the API — not the UI — is what stops a consultant approving', async ({

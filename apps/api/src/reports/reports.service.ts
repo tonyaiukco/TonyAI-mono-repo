@@ -6,7 +6,7 @@ import type {
   ReportStatus,
   ReportTemplate,
 } from '@tonyai/shared-types';
-import { REPORT_TEMPLATES } from '@tonyai/shared-types';
+import { PENDING_REVIEW_STATUSES, REPORT_TEMPLATES } from '@tonyai/shared-types';
 import puppeteer, { type Browser } from 'puppeteer';
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -177,10 +177,11 @@ export class ReportsService implements OnModuleDestroy {
       ActivityRecordStatus.draft,
       ActivityRecordStatus.rejected,
     ]);
-    const pendingCount = count([
-      ActivityRecordStatus.submitted,
-      ActivityRecordStatus.under_review,
-    ]);
+      // Derived, not restated: this count is what stamps a generated report
+  // `approved`, so a status added to the shared pending list and forgotten here
+  // would mean an audit-ready PDF marked approved while undecided records sit in
+  // the reviewer's queue.
+  const pendingCount = count([...PENDING_REVIEW_STATUSES]);
     const incompleteRatio = totalCount > 0 ? incompleteCount / totalCount : 0;
 
     // "Approved" must mean reviewed data EXISTS — a zero-record year is never

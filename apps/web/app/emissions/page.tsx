@@ -1074,9 +1074,12 @@ export default function EmissionsAnalysisPage() {
                     with no way to learn why. Kept separate from the variance
                     reason above — one is the submitter's own explanation, this
                     is the reviewer's answer to it. */}
-                {selectedRecord.reviewNote && (
+                {selectedRecord.status === "rejected" &&
+                  selectedRecord.reviewNote?.trim() && (
                   <div className="border-t border-border pt-4">
-                    <h4 className="text-sm font-medium mb-2">Reviewer&apos;s Note</h4>
+                    <h4 className="text-sm font-medium mb-2">
+                      Why this was sent back
+                    </h4>
                     <p className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
                       {selectedRecord.reviewNote}
                     </p>

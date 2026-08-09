@@ -147,11 +147,10 @@ export const api = {
     if (params.period) search.set("period", params.period);
     if (params.category) search.set("category", params.category);
     // A set becomes the comma-separated form the API's DTO parses back.
-    if (params.status)
-      search.set(
-        "status",
-        Array.isArray(params.status) ? params.status.join(",") : params.status,
-      );
+    // `?.length`, not truthiness: `[]` is truthy and would serialise to
+    // `status=`, which the DTO deliberately rejects — an unchecked "filter by
+    // status" checkbox group would 400 instead of returning everything.
+    if (params.status?.length) search.set("status", params.status.join(","));
     const qs = search.toString();
     return apiFetch<ActivityRecordDTO[]>(
       `/activity-records${qs ? `?${qs}` : ""}`,

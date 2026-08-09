@@ -48,6 +48,18 @@ const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
   ActivityRecordStatus.rejected,
 ]);
 
+// A rejected record must be able to come BACK. Rejecting is the reviewer's
+// routine action, editing a rejected record is already allowed, and `rejected`
+// is excluded from the counted statuses — so if `submitted` were reachable only
+// from `draft`, every rejection would strand a record permanently outside the
+// inventory with no API path back, while pinning its report to
+// `contains_incomplete_data`. Found by review before the reviewer UI made
+// rejection a one-click action.
+const SUBMITTABLE_STATUSES = new Set<ActivityRecordStatus>([
+  ActivityRecordStatus.draft,
+  ActivityRecordStatus.rejected,
+]);
+
 // --- Anomaly detection (VAR §4) --------------------------------------------
 // A value is anomalous when it deviates > ±50% from the rolling average of the
 // previous (up to) 3 comparable periods for the same reporting entity, measured
@@ -541,11 +553,12 @@ export class ActivityRecordsService {
     if (!WRITE_ROLES.has(user.role)) {
       throw new ForbiddenException('Your role may not submit activity records');
     }
-    if (record.status !== ActivityRecordStatus.draft) {
+    if (!SUBMITTABLE_STATUSES.has(record.status)) {
       throw new BadRequestException(
-        `Only a draft record can be submitted (current status "${record.status}")`,
+        `Only a draft or rejected record can be submitted (current status "${record.status}")`,
       );
     }
+    const isResubmission = record.status === ActivityRecordStatus.rejected;
     // Period-lock gate (FR §4.2): no submissions into a closed period.
     await this.assertPeriodNotLocked(
       record.subsidiaryId,
@@ -587,6 +600,10 @@ export class ActivityRecordsService {
     }
     return this.transition(user, record, ActivityRecordStatus.submitted, {
       anomalyFlag: anomalous,
+      // The previous reviewer's note described what to fix; resubmitting is the
+      // claim that it was fixed. Leaving it attached would show the submitter a
+      // stale rejection reason on a record whose badge now says `submitted`.
+      ...(isResubmission ? { reviewNote: null } : {}),
     });
   }
 
