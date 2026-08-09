@@ -1,17 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import {
-  LayoutDashboard,
-  Building2,
-  BarChart3,
-  FileText,
-  Settings,
-  Leaf,
-  ChevronLeft,
-  ChevronRight,
-  ClipboardEdit,
-} from 'lucide-react';
+import { BarChart3, Building2, ChevronLeft, ChevronRight, ClipboardEdit, FileText, LayoutDashboard, Leaf, ScrollText, Settings } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -24,6 +14,9 @@ const navItems = [
   { id: 'subsidiaries', label: 'Subsidiaries', icon: Building2, href: '/subsidiaries' },
   { id: 'emissions', label: 'Emissions', icon: BarChart3, href: '/emissions' },
   { id: 'reports', label: 'Reports', icon: FileText, href: '/reports' },
+  // super_admin-only: the API 403s every other role, and the page says so
+  // rather than hiding — a missing nav item reads as a bug to a tester.
+  { id: 'audit', label: 'Audit Trail', icon: ScrollText, href: '/audit' },
 ];
 
 export function Sidebar() {

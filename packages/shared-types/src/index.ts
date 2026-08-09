@@ -965,3 +965,98 @@ export interface TrackingMatrixDTO {
   /** Cell-status counts across the whole matrix. */
   totals: { complete: number; incomplete: number; missing: number };
 }
+
+// ---------------------------------------------------------------------------
+// Audit trail (WP7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Envelope for paginated list endpoints. The audit trail is the first list in
+ * the API that cannot return everything — every other list is bounded by the
+ * tenant's own data, while `audit_log` grows forever. New paginated endpoints
+ * should reuse this shape rather than inventing a second one.
+ */
+export interface Paginated<T> {
+  items: T[];
+  /** Total rows matching the filter, ignoring limit/offset. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** Every action the audit trail records. Workflow transitions are their own
+ * verbs — before WP7 they were all logged as `update`. */
+export const AUDIT_ACTIONS = [
+  'create',
+  'update',
+  'delete',
+  'submit',
+  'review',
+  'approve',
+  'reject',
+  'lock',
+  'unlock',
+  'generate',
+] as const;
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+/** Entities the audit trail covers. */
+export const AUDIT_ENTITIES = [
+  'subsidiary',
+  'location',
+  'activity_record',
+  'evidence',
+  'period_lock',
+  'target',
+  'denominator',
+  'report',
+] as const;
+export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
+
+/**
+ * One audit row, as rendered by the trail viewer.
+ *
+ * Two asymmetries worth knowing before consuming this:
+ *  - `role` is a SNAPSHOT taken at write time, while `userEmail`/`userFullName`
+ *    are resolved from the profile at READ time. A renamed user therefore
+ *    changes how year-old rows read, and a deleted profile loses the name while
+ *    the row survives. Snapshotting identity too is a real option — it collides
+ *    with GDPR erasure, so it is a decision, not an oversight.
+ *  - `action`/`entity` are typed as the CURRENT taxonomy, but the columns are
+ *    TEXT so historic rows can carry a verb that has since been retired.
+ *    Consumers should look up with a fallback rather than assume exhaustiveness.
+ */
+export interface AuditLogDTO {
+  id: string;
+  action: AuditAction;
+  entity: AuditEntity;
+  /** Null for `report` rows — a generation has no persisted entity to point at. */
+  entityId: string | null;
+  /** Actor identity, resolved from `profiles` at read time. Null when the
+   * profile has since been deleted — the row itself is never rewritten. */
+  userId: string | null;
+  userEmail: string | null;
+  userFullName: string | null;
+  /**
+   * The role the actor held AT THE TIME of the action — read from the row, not
+   * from the profile. Null on rows written before WP7 added the column; they
+   * are deliberately not back-dated with a guess.
+   */
+  role: UserRole | null;
+  /** Raw change payload. Shape varies by entity; the viewer renders a summary. */
+  diff: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+/** Filters accepted by `GET /audit`. */
+export interface ListAuditParams {
+  entity?: AuditEntity;
+  action?: AuditAction;
+  entityId?: string;
+  userId?: string;
+  /** ISO dates, inclusive lower / exclusive upper bound on `createdAt`. */
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}

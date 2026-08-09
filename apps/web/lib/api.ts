@@ -1,7 +1,10 @@
 import type {
   ActivityRecordDTO,
   ActivityRecordStatus,
+  AuditLogDTO,
   AuthUser,
+  ListAuditParams,
+  Paginated,
   CalculationInput,
   CalculationResult,
   Category,
@@ -210,6 +213,18 @@ export const api = {
     }),
 
   // --- Period locks (FR §4.2) ---
+  /**
+   * Audit trail (super_admin only — the API 403s every other role). Paginated:
+   * unlike every other list in the app, this one grows without bound.
+   */
+  listAudit: (params: ListAuditParams = {}) => {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") search.set(key, String(value));
+    }
+    const qs = search.toString();
+    return apiFetch<Paginated<AuditLogDTO>>(`/audit${qs ? `?${qs}` : ""}`);
+  },
   listPeriodLocks: (params: { subsidiaryId?: string; year?: number } = {}) => {
     const search = new URLSearchParams();
     if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);

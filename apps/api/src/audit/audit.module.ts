@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { AuditService } from './audit.service';
+import { AuditController } from './audit.controller';
 
 /**
  * Global so every feature module can inject `AuditService` without importing
@@ -8,6 +9,7 @@ import { AuditService } from './audit.service';
  */
 @Global()
 @Module({
+  controllers: [AuditController],
   providers: [AuditService],
   exports: [AuditService],
 })
