@@ -15,13 +15,14 @@ import {
   isEvidenceRequired,
   type ActivityRecordDTO,
   type CalculationResult,
+  type AuditAction,
   type Category,
   type ReportingPeriod,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { CalculationsService } from '../calculations/calculations.service';
 import type { RequestUser } from '../auth/auth.types';
-import { AuditService, type AuditAction } from '../audit/audit.service';
+import { AuditService } from '../audit/audit.service';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';

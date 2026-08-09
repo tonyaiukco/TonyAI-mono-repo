@@ -24,9 +24,8 @@ import { ListAuditQueryDto } from './dto/list-audit-query.dto';
  * policy) — this service therefore only ever creates.
  */
 
-// The taxonomy lives in @tonyai/shared-types so the API and the viewer cannot
-// drift apart; re-exported here because every writer already imports it here.
-export type { AuditAction, AuditEntity };
+// The taxonomy lives in @tonyai/shared-types — one source of truth. Writers
+// import it from there directly rather than through this module.
 
 /** Reading the trail is super_admin-only, matching the RLS policy exactly.
  * The API is the primary control (Prisma connects as the owner and bypasses
@@ -115,7 +114,12 @@ export class AuditService {
     const [rows, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        // `created_at` is TIMESTAMP(3) defaulting to the TRANSACTION start
+        // time, so every row written in one transaction ties exactly — and
+        // Postgres gives no stable order among ties. Without the id tiebreaker
+        // an offset page can repeat a row or skip one, which on an append-only
+        // compliance trail is the worst possible failure.
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit,
         skip: offset,
       }),

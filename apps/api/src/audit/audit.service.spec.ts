@@ -247,11 +247,23 @@ describe('AuditService', () => {
       });
     });
 
+    it('breaks ties on id so a page cannot repeat or skip a row', async () => {
+      // created_at is TIMESTAMP(3) defaulting to the TRANSACTION start time, so
+      // every row written in one transaction ties exactly. Postgres gives no
+      // stable order among ties, and with OFFSET paging that means a row can
+      // appear twice or vanish — unacceptable on an append-only trail.
+      await service.list(makeUser(), {});
+      expect(prisma.auditLog.findMany.mock.calls[0][0].orderBy).toEqual([
+        { createdAt: 'desc' },
+        { id: 'desc' },
+      ]);
+    });
+
     it('orders newest first and paginates', async () => {
       prisma.auditLog.count.mockResolvedValue(137);
       const page = await service.list(makeUser(), { limit: 25, offset: 50 });
       const args = prisma.auditLog.findMany.mock.calls[0][0];
-      expect(args.orderBy).toEqual({ createdAt: 'desc' });
+      expect(args.orderBy[0]).toEqual({ createdAt: 'desc' });
       expect(args.take).toBe(25);
       expect(args.skip).toBe(50);
       expect(page).toMatchObject({ total: 137, limit: 25, offset: 50 });

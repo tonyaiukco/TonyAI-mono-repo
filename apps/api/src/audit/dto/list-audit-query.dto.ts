@@ -9,7 +9,13 @@ import {
   Max,
   Min,
 } from 'class-validator';
-import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '@tonyai/shared-types';
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+  type AuditAction,
+  type AuditEntity,
+  type ListAuditParams,
+} from '@tonyai/shared-types';
 
 /**
  * `ValidationPipe` runs with `whitelist + forbidNonWhitelisted`, so an unknown
@@ -17,14 +23,17 @@ import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '@tonyai/shared-types';
  * because a mistyped filter on an audit search would otherwise quietly return
  * the unfiltered trail.
  */
-export class ListAuditQueryDto {
+export class ListAuditQueryDto implements ListAuditParams {
+  // `[...ARRAY]` rather than a cast: the decorator only needs a mutable array,
+  // and keeping the property typed as the union means this DTO cannot drift
+  // from `ListAuditParams` without failing to compile.
   @IsOptional()
-  @IsIn(AUDIT_ENTITIES as unknown as string[])
-  entity?: string;
+  @IsIn([...AUDIT_ENTITIES])
+  entity?: AuditEntity;
 
   @IsOptional()
-  @IsIn(AUDIT_ACTIONS as unknown as string[])
-  action?: string;
+  @IsIn([...AUDIT_ACTIONS])
+  action?: AuditAction;
 
   /** Not a UUID: `entityId` is an unconstrained string so audit rows survive
    * the deletion of their subject. */

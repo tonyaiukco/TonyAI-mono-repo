@@ -32,7 +32,12 @@ import {
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
-import { AUDIT_ACTIONS, AUDIT_ENTITIES, type AuditLogDTO } from "@/lib/types";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+  type AuditAction,
+  type AuditLogDTO,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
@@ -40,7 +45,7 @@ const ANY = "__any__";
 
 /** Colour by consequence, not by entity: a reader scanning the trail is looking
  * for the destructive and the decisive, not for which table changed. */
-const ACTION_COLORS: Record<string, string> = {
+const ACTION_COLORS: Record<AuditAction, string> = {
   create: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30",
   update: "bg-slate-500/15 text-slate-700 border-slate-500/30",
   delete: "bg-red-500/15 text-red-700 border-red-500/30",
@@ -52,6 +57,8 @@ const ACTION_COLORS: Record<string, string> = {
   unlock: "bg-amber-500/15 text-amber-700 border-amber-500/30",
   generate: "bg-violet-500/15 text-violet-700 border-violet-500/30",
 };
+
+const NEUTRAL_ACTION = "bg-slate-500/15 text-slate-700 border-slate-500/30";
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString("en-GB", {
@@ -102,6 +109,13 @@ export default function AuditPage() {
   const [action, setAction] = useState<string>(ANY);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AuditLogDTO | null>(null);
+  /**
+   * Offset paging over a table that grows AT THE HEAD shifts every page down as
+   * new rows land mid-session — page 2 would silently re-show what was page 1.
+   * Freezing an upper bound on first load turns the browse into a stable
+   * snapshot (and stops `total` moving under the reader). `to` is exclusive.
+   */
+  const [readWindow] = useState(() => new Date().toISOString());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -109,6 +123,7 @@ export default function AuditPage() {
       const page = await api.listAudit({
         limit: PAGE_SIZE,
         offset,
+        to: readWindow,
         ...(entity !== ANY ? { entity: entity as never } : {}),
         ...(action !== ANY ? { action: action as never } : {}),
       });
@@ -128,7 +143,7 @@ export default function AuditPage() {
     } finally {
       setLoading(false);
     }
-  }, [entity, action, offset]);
+  }, [entity, action, offset, readWindow]);
 
   useEffect(() => {
     void load();
@@ -292,7 +307,10 @@ export default function AuditPage() {
                               <Badge
                                 className={cn(
                                   "text-xs",
-                                  ACTION_COLORS[row.action] ?? ACTION_COLORS.update,
+                                  // Typed map so a new action fails to compile;
+                                  // tolerant lookup so a RETIRED one still
+                                  // renders instead of crashing the page.
+                                  ACTION_COLORS[row.action] ?? NEUTRAL_ACTION,
                                 )}
                               >
                                 {row.action}

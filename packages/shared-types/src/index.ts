@@ -1013,7 +1013,19 @@ export const AUDIT_ENTITIES = [
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
-/** One audit row, as rendered by the trail viewer. */
+/**
+ * One audit row, as rendered by the trail viewer.
+ *
+ * Two asymmetries worth knowing before consuming this:
+ *  - `role` is a SNAPSHOT taken at write time, while `userEmail`/`userFullName`
+ *    are resolved from the profile at READ time. A renamed user therefore
+ *    changes how year-old rows read, and a deleted profile loses the name while
+ *    the row survives. Snapshotting identity too is a real option — it collides
+ *    with GDPR erasure, so it is a decision, not an oversight.
+ *  - `action`/`entity` are typed as the CURRENT taxonomy, but the columns are
+ *    TEXT so historic rows can carry a verb that has since been retired.
+ *    Consumers should look up with a fallback rather than assume exhaustiveness.
+ */
 export interface AuditLogDTO {
   id: string;
   action: AuditAction;

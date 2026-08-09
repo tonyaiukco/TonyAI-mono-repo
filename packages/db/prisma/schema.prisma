@@ -294,7 +294,10 @@ model AuditLog {
   // a row that no longer exists — neither can be joined. This column is what
   // makes tenant-scoped audit reads possible for every entity.
   organisationId String? @map("organisation_id") @db.Uuid
-  // create | update | delete | submit | review | approve | reject | lock | unlock | generate
+  // Deliberately TEXT, not an enum — for the same reason as `role` above: a
+  // historical record must be able to hold a verb that has since been retired,
+  // and a PG enum makes retiring one a migration. The current taxonomy is
+  // AUDIT_ACTIONS / AUDIT_ENTITIES in @tonyai/shared-types.
   action         String
   entity         String // e.g. "subsidiary"
   entityId       String? @map("entity_id")
