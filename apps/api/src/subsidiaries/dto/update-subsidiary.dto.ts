@@ -43,9 +43,13 @@ export class UpdateSubsidiaryDto {
   @IsIn(['active', 'inactive', 'pending'])
   reportingStatus?: 'active' | 'inactive' | 'pending';
 
+  /** Only the three GHG Protocol scopes exist. Unbounded integers were accepted
+   *  and stored (`[99]` returned 200), which the Edit dialog now makes a
+   *  first-class UI path rather than an API-only curiosity. */
   @IsOptional()
   @IsArray()
   @ArrayNotEmpty()
   @IsInt({ each: true })
+  @IsIn([1, 2, 3], { each: true })
   includedScopes?: number[];
 }

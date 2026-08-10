@@ -264,6 +264,25 @@ export async function cleanupQuarterly(request: APIRequestContext): Promise<void
 }
 
 /**
+ * Remove subsidiaries created by a previous run.
+ *
+ * `smoke.spec.ts` creates one, edits it and deletes it — and PR 4 widened that
+ * window (create → edit → geography confirmation → cancel → save → delete), so
+ * an abort now strands a row more often. Nothing else reclaimed them, and a
+ * single leftover breaks every spec that asserts an absolute subsidiary count
+ * (observed: two failures in `smoke.spec.ts` and two in `targets.spec.ts` from
+ * one stray row). The `E2E Test Co` prefix is the sentinel; the seed's five
+ * legal names cannot match it.
+ */
+export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promise<void> {
+  const { url } = supabaseEnv();
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  await request.delete(`${url}/rest/v1/subsidiaries?legal_name=like.E2E%20Test%20Co*`, { headers });
+}
+
+/**
  * Targets/denominators aren't period-scoped, so the quarterly wipe can't reach
  * them. E2E rows use the `E2E-` name/unit sentinel; this deletes exactly those
  * (service-role), leaving the seed's demo targets/denominators intact.

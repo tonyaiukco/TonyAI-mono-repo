@@ -94,9 +94,12 @@ export type SubmissionStatus = 'draft' | 'submitted' | 'in_review' | 'approved' 
 /**
  * The reporting years the product will accept data for, newest first.
  *
- * A fixed list rather than a range ending at "this year": a year is only usable
- * once the factor library covers it, so offering 2026 before its factors are
- * seeded would put the user in front of a form that can only fail. The first
+ * A fixed list rather than a range ending at "this year", because a year is only
+ * usable where the factor library covers it — offering 2026 before any of its
+ * factors exist would put the user in front of a form that can only fail. Note
+ * this is a per-year/geography/category question, not a per-year one: 2023
+ * currently has a single factor row, so most 2023 selections still 404. Listing
+ * a year is therefore not a promise that every category works in it. The first
  * entry is what screens default to.
  */
 export const REPORTING_YEARS = [2024, 2023] as const;

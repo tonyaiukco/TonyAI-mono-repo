@@ -452,7 +452,9 @@ export default function SubsidiariesPage() {
               What happens here: records already committed keep the emission
               factor they were calculated with — those figures do not change.
               The new geography applies to records created from now on, and to
-              any draft or rejected record that is edited and recalculated.
+              any draft or sent-back record the next time it is saved — which
+              recalculates it, even if you only changed a note. A committed
+              record that is later sent back and re-saved is recalculated too.
             </p>
             {editingId && locCount(editingId) > 0 && (
               <p>

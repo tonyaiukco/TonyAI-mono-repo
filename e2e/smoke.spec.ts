@@ -62,8 +62,21 @@ test.describe('Milestone-1 slice', () => {
     ).toBeVisible();
 
     // Cancelling must not save — a warning the user declined is not a save.
+    // Asserted against the SERVER, not the table still on screen: the dialog
+    // does not refresh on cancel, so checking the current DOM passes even if the
+    // cancel button wrote to the API (proven by mutation — that exact test was
+    // green while a cancelled edit persisted).
     await geoAlert.getByRole('button', { name: 'Cancel' }).click();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await page.reload();
+    await expect(page.getByRole('cell', { name: uniqueName })).toBeVisible();
     await expect(page.getByRole('cell', { name: renamed })).toHaveCount(0);
+    await expect(page.locator('tr', { hasText: uniqueName })).toContainText('TR');
+
+    // Re-open and redo the edit, this time confirming it.
+    await page.locator('tr', { hasText: uniqueName }).getByRole('button', { name: 'Edit subsidiary' }).click();
+    await dialog.getByRole('textbox').first().fill(renamed);
+    await pickByFieldLabel(page, 'Geography', 'UK');
 
     await dialog.getByRole('button', { name: 'Save changes' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Continue' }).click();

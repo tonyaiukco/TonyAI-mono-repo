@@ -78,7 +78,11 @@ export default function CarbonDashboard() {
     Promise.all([
       api.kpi(),
       api.listSubsidiaries(),
-      api.emissionsSummary(),
+      // Same year as the matrix below. These two feed ONE set of KPI cards
+      // (`buildKpiData`), so an unscoped total sitting beside a 2024-only
+      // completeness bar would put two different time ranges in one row with
+      // neither of them labelled.
+      api.emissionsSummary({ year: DEFAULT_REPORTING_YEAR }),
       // A year, not "everything": without one the endpoint folds every year
       // into a single cell, so a subsidiary complete for 2023 and empty for
       // 2024 read as complete. A completeness view that spans years states
@@ -303,7 +307,7 @@ export default function CarbonDashboard() {
 
                 <div className="grid gap-6 lg:grid-cols-3">
                   <div className="lg:col-span-1">
-                    <AlertsPanel alerts={liveAlerts} />
+                    <AlertsPanel alerts={liveAlerts} reportingYear={matrix?.reportingYear ?? null} />
                   </div>
                   <div className="lg:col-span-2">
                     <EmissionsCharts subsidiaries={matrixSubsidiaries} />

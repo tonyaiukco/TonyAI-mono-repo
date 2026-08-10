@@ -229,6 +229,12 @@ describe('SubsidiariesService', () => {
 
       const result = await service.update(user, 'sub-1', { geographyCode: 'TR' });
 
+      // Assert the PAYLOAD, not just the returned row: the row comes from the
+      // mocked resolution, so dropping `geographyCode` from the update data
+      // left this green (found by mutation).
+      expect(prisma.subsidiary.update.mock.calls[0][0].data).toEqual({
+        geographyCode: 'TR',
+      });
       expect(result.geographyCode).toBe('TR');
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
       expect(prisma.activityRecord.updateMany).not.toHaveBeenCalled();

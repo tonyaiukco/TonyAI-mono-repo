@@ -46,6 +46,7 @@ import type {
   CalculationResult,
   Category,
   LocationDTO,
+  PeriodLockDTO,
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
@@ -146,7 +147,13 @@ const numberFmt = new Intl.NumberFormat("en-GB", {
  * unexpected server error tells the user nothing on its own. */
 function saveErrorMessage(e: unknown): string {
   if (e instanceof ApiError && e.status === 409) {
-    return `${e.message} Open it from Previous submissions to continue it.`;
+    // Three things return 409: a duplicate reporting entity, and two period-lock
+    // refusals. Only the first is fixed by opening the existing record, so the
+    // advice is attached to the message that earns it — the lock's own sentence
+    // already says what to do.
+    return /locked/i.test(e.message)
+      ? e.message
+      : `${e.message} Open it from Previous submissions to continue it.`;
   }
   if (e instanceof ApiError && e.status >= 500) {
     return "Could not save — the server failed to process this record. Try again, and report it if it persists.";
@@ -215,6 +222,16 @@ function DataEntryPageInner() {
   // cannot answer that: an empty list means both "not fetched yet" and "fetched,
   // none exist", and the deep-link effect below has to tell those apart.
   const [recordsFetchedFor, setRecordsFetchedFor] = useState<string | null>(null);
+  const [locks, setLocks] = useState<PeriodLockDTO[]>([]);
+  // The reporting entity the loaded record belongs to. Kept so that moving the
+  // form off that tuple can stop targeting it — see the effect below.
+  const [editingTuple, setEditingTuple] = useState<{
+    category: string;
+    reportingYear: number;
+    reportingPeriod: ReportingPeriod;
+    periodValue: string;
+    locationId: string;
+  } | null>(null);
   // What the deep link asked for, kept so the records effect below can act on it
   // once they arrive. A ref, not state: it must fire exactly once, and it is not
   // rendered.
@@ -259,13 +276,21 @@ function DataEntryPageInner() {
   const refreshRecords = useCallback(async (subId: string) => {
     if (!subId) {
       setRecords([]);
+      setLocks([]);
       setRecordsFetchedFor(null);
       return;
     }
     setRecordsLoading(true);
     try {
-      const list = await api.listActivityRecords({ subsidiaryId: subId });
+      const [list, lockList] = await Promise.all([
+        api.listActivityRecords({ subsidiaryId: subId }),
+        // Locks are fetched with the records because a locked period refuses
+        // every write: without them the form happily opens a record it cannot
+        // save, and the failure only surfaces after the user has typed.
+        api.listPeriodLocks({ subsidiaryId: subId }),
+      ]);
       setRecords(list);
+      setLocks(lockList);
       setRecordsFetchedFor(subId);
     } catch (e) {
       toast.error((e as Error).message);
@@ -450,6 +475,30 @@ function DataEntryPageInner() {
       );
       return;
     }
+    // The API allows an author (or a super_admin) to modify a record, so a
+    // colleague's draft would open, accept typing, and only then 403. On a deep
+    // link this happens with no click at all — the user would be looking at
+    // someone else's figures believing they were their own.
+    if (user && user.role !== "super_admin" && rec.createdBy !== user.id) {
+      toast.info("This record was entered by someone else — only its author can change it.");
+      return;
+    }
+    // A period lock only flips `approved → locked`, so a draft inside a locked
+    // period keeps its status and would sail past the check above. Every write
+    // to it is refused with a 409.
+    if (
+      locks.some(
+        (l) =>
+          l.reportingYear === rec.reportingYear &&
+          l.reportingPeriod === rec.reportingPeriod &&
+          l.periodValue === rec.periodValue,
+      )
+    ) {
+      toast.info(
+        `${rec.periodValue} ${rec.reportingYear} is locked — a super_admin must unlock it before this record can change.`,
+      );
+      return;
+    }
     setEditingId(rec.id);
     setSubsidiaryId(rec.subsidiaryId);
     setLocationId(rec.locationId ?? "");
@@ -463,7 +512,41 @@ function DataEntryPageInner() {
     setAnomalyFlag(rec.anomalyFlag);
     setVarianceReason(rec.varianceReason ?? "");
     setPreviewError(null);
+    setEditingTuple(tupleOf(rec));
   }
+
+  /**
+   * Stop targeting the loaded record once the form no longer describes it.
+   *
+   * `editingId` used to be set only by your own save, so "keep editing what I
+   * just saved" was a fair reading. A matrix cell now sets it WITHOUT any user
+   * intent, and the reporting-entity selects were unguarded — so opening a Fuel
+   * Q3 draft and then switching to Electricity Q1 overwrote the Fuel record
+   * with the Electricity numbers and reported "Draft saved". The Fuel record
+   * simply ceased to exist. The subsidiary select already had this protection
+   * (it calls `resetForm`); the rest of the tuple did not.
+   */
+  useEffect(() => {
+    if (!editingId || !editingTuple) return;
+    const movedOff =
+      editingTuple.category !== category ||
+      editingTuple.reportingYear !== reportingYear ||
+      editingTuple.reportingPeriod !== reportingPeriod ||
+      editingTuple.periodValue !== periodValue ||
+      editingTuple.locationId !== locationId;
+    if (!movedOff) return;
+    setEditingId(null);
+    setEditingTuple(null);
+    toast.info("Now entering a new record — the one you opened is untouched.");
+  }, [
+    editingId,
+    editingTuple,
+    category,
+    reportingYear,
+    reportingPeriod,
+    periodValue,
+    locationId,
+  ]);
 
   function resetForm() {
     setActivityValue("");
@@ -471,9 +554,20 @@ function DataEntryPageInner() {
     setPreview(null);
     setPreviewError(null);
     setEditingId(null);
+    setEditingTuple(null);
     setLocationId("");
     setAnomalyFlag(false);
     setVarianceReason("");
+  }
+
+  function tupleOf(rec: ActivityRecordDTO) {
+    return {
+      category: rec.category,
+      reportingYear: rec.reportingYear,
+      reportingPeriod: rec.reportingPeriod,
+      periodValue: rec.periodValue,
+      locationId: rec.locationId ?? "",
+    };
   }
 
   function buildInputPayload(): Record<string, unknown> | null {
@@ -526,6 +620,7 @@ function DataEntryPageInner() {
       const rec = await persist();
       if (!rec) return;
       setEditingId(rec.id);
+      setEditingTuple(tupleOf(rec));
       setAnomalyFlag(rec.anomalyFlag);
       toast.success(
         rec.anomalyFlag
@@ -548,6 +643,7 @@ function DataEntryPageInner() {
       // Keep the saved record "current" so that if submit is blocked (evidence
       // or anomaly gate), the vault + variance field stay visible to fix + retry.
       setEditingId(rec.id);
+      setEditingTuple(tupleOf(rec));
       setAnomalyFlag(rec.anomalyFlag);
       // Mirror the server anomaly gate (VAR §2.2 / §4.3): a flagged value needs
       // a variance comment before it can be submitted.
@@ -893,8 +989,19 @@ function DataEntryPageInner() {
               {/* Actions */}
               <div className="flex items-center justify-end gap-2">
                 {editingId && (
-                  <span className="mr-auto text-sm text-muted-foreground">
+                  <span className="mr-auto flex items-center gap-2 text-sm text-muted-foreground">
                     Editing draft {editingId.slice(0, 8)}…
+                    {/* The only way out of edit mode used to be a successful
+                        submit or a page reload — and a cell click can now put
+                        you here without asking. */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={resetForm}
+                    >
+                      Start a new record
+                    </Button>
                   </span>
                 )}
                 <Button
@@ -954,7 +1061,18 @@ function DataEntryPageInner() {
                             key={r.id}
                             type="button"
                             onClick={() => loadRecord(r)}
-                            className="flex w-full items-center gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-secondary"
+                            // Still focusable and still explains itself on
+                            // activation — `disabled` would make the reason
+                            // unreachable by keyboard — but it no longer
+                            // advertises itself as an editable row.
+                            aria-disabled={
+                              r.status !== "draft" && r.status !== "rejected"
+                            }
+                            className={`flex w-full items-center gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-left transition-colors ${
+                              r.status === "draft" || r.status === "rejected"
+                                ? "hover:border-primary/40 hover:bg-secondary"
+                                : "cursor-default"
+                            }`}
                           >
                             <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                             <div className="min-w-0 flex-1">

@@ -14,9 +14,11 @@ interface StatusCellProps {
   data: CategoryData;
   onClick?: () => void;
   compact?: boolean;
-  /** Accessible name for the cell. The button's visible content is a colour and
-   *  a number, so without this it announces as an unnamed button — the status it
-   *  conveys is invisible to a screen reader. */
+  /** Identity part of the accessible name (subsidiary + category). The status
+   *  and value are appended here, because the button's visible content is a
+   *  colour and a number: without this it announces as an unnamed button, and a
+   *  label carrying only the identity would still hide the status the cell
+   *  exists to convey. */
   label?: string;
 }
 
@@ -79,7 +81,13 @@ export function StatusCell({ data, onClick, compact = false, label }: StatusCell
         <TooltipTrigger asChild>
           <button
             onClick={onClick}
-            aria-label={label}
+            aria-label={
+              label
+                ? `${label}: ${config.label}${
+                    hasEmission ? `, ${formatEmission(data.emission!)} tCO2e` : ''
+                  }`
+                : undefined
+            }
             className={cn(
               'relative flex items-center justify-center rounded-lg transition-all duration-200',
               'focus:outline-none focus:ring-2 focus:ring-[#007AFF]/40 focus:ring-offset-2',
