@@ -1061,13 +1061,12 @@ function DataEntryPageInner() {
                             key={r.id}
                             type="button"
                             onClick={() => loadRecord(r)}
-                            // Still focusable and still explains itself on
-                            // activation — `disabled` would make the reason
-                            // unreachable by keyboard — but it no longer
-                            // advertises itself as an editable row.
-                            aria-disabled={
-                              r.status !== "draft" && r.status !== "rejected"
-                            }
+                            // Deliberately NOT aria-disabled: a non-editable row
+                            // still answers "why can't I edit this?" when
+                            // activated, and marking it disabled is what stops
+                            // assistive tech (and Playwright) from ever reaching
+                            // that answer. The hover affordance below carries the
+                            // distinction instead.
                             className={`flex w-full items-center gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-left transition-colors ${
                               r.status === "draft" || r.status === "rejected"
                                 ? "hover:border-primary/40 hover:bg-secondary"
