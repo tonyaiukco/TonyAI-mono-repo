@@ -17,7 +17,7 @@
   - The user merges each PR individually. **Never start the next PR until asked.**
 - **Re-run `pnpm db:seed` after pulling WP7 PR 3** — it adds the `review@tonyai.local` consultant; without it the five new `/review` E2E tests fail at token grant.
 - **Everyone must re-run `pnpm setup` after pulling this** — the API now refuses to boot without `ALLOW_INSECURE_LOCAL_AUTH=true` in `apps/api/.env`, and `jsonwebtoken` → `jose` means a stale `node_modules` fails too
-- **Tests:** 291 unit (Vitest, API) + a `next.config` phase guard (web) + 28 E2E (Playwright) + 24 live RLS containment probes — green (counts include the open PR 4 branch)
+- **Tests:** 291 unit (Vitest, API) + a `next.config` phase guard (web) + 30 E2E (Playwright) + 24 live RLS containment probes — green (counts include the open PR 4 branch)
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)

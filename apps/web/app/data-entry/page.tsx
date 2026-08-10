@@ -211,6 +211,10 @@ function DataEntryPageInner() {
   // Records + saving
   const [records, setRecords] = useState<ActivityRecordDTO[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
+  // Which subsidiary the rows in `records` actually belong to. `records.length`
+  // cannot answer that: an empty list means both "not fetched yet" and "fetched,
+  // none exist", and the deep-link effect below has to tell those apart.
+  const [recordsFetchedFor, setRecordsFetchedFor] = useState<string | null>(null);
   // What the deep link asked for, kept so the records effect below can act on it
   // once they arrive. A ref, not state: it must fire exactly once, and it is not
   // rendered.
@@ -255,12 +259,14 @@ function DataEntryPageInner() {
   const refreshRecords = useCallback(async (subId: string) => {
     if (!subId) {
       setRecords([]);
+      setRecordsFetchedFor(null);
       return;
     }
     setRecordsLoading(true);
     try {
       const list = await api.listActivityRecords({ subsidiaryId: subId });
       setRecords(list);
+      setRecordsFetchedFor(subId);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -343,7 +349,10 @@ function DataEntryPageInner() {
    */
   useEffect(() => {
     const wanted = deepLink.current;
-    if (!wanted || deepLinkHandled.current || recordsLoading || !subsidiaryId) return;
+    if (!wanted || deepLinkHandled.current) return;
+    // Wait for the rows that belong to THIS subsidiary; acting earlier reads an
+    // empty list as "nothing exists" and burns the one shot this effect gets.
+    if (recordsLoading || !subsidiaryId || recordsFetchedFor !== subsidiaryId) return;
     deepLinkHandled.current = true;
 
     const matches = records.filter(
@@ -357,7 +366,7 @@ function DataEntryPageInner() {
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, recordsLoading, subsidiaryId]);
+  }, [records, recordsLoading, recordsFetchedFor, subsidiaryId]);
 
   // --- Live preview (debounced) --------------------------------------------
 
