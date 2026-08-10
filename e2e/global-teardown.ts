@@ -1,5 +1,9 @@
 import { request as playwrightRequest } from '@playwright/test';
-import { cleanupQuarterly, cleanupE2ETargets } from './helpers';
+import {
+  cleanupQuarterly,
+  cleanupE2ESubsidiaries,
+  cleanupE2ETargets,
+} from './helpers';
 
 /** Post-run tidy-up: leave the DB back at the pristine monthly-only seed. */
 export default async function globalTeardown(): Promise<void> {
@@ -7,6 +11,7 @@ export default async function globalTeardown(): Promise<void> {
   try {
     await cleanupQuarterly(ctx);
     await cleanupE2ETargets(ctx);
+    await cleanupE2ESubsidiaries(ctx);
   } finally {
     await ctx.dispose();
   }

@@ -1,5 +1,9 @@
 import { request as playwrightRequest } from '@playwright/test';
-import { cleanupQuarterly, cleanupE2ETargets } from './helpers';
+import {
+  cleanupQuarterly,
+  cleanupE2ESubsidiaries,
+  cleanupE2ETargets,
+} from './helpers';
 
 /**
  * Pre-run reset: wipe any quarterly rows left by a previous (possibly aborted)
@@ -11,6 +15,7 @@ export default async function globalSetup(): Promise<void> {
   try {
     await cleanupQuarterly(ctx);
     await cleanupE2ETargets(ctx);
+    await cleanupE2ESubsidiaries(ctx);
   } finally {
     await ctx.dispose();
   }

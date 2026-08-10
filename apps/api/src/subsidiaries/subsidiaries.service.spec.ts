@@ -214,6 +214,41 @@ describe('SubsidiariesService', () => {
       expect(auditArg.diff).toHaveProperty('after');
     });
 
+    it('a geography change touches ONLY the subsidiary — no record is recalculated', async () => {
+      // The UI warns before this change, and the warning tells the user that
+      // committed figures do not move. That promise rests entirely on this:
+      // `geographyCode` is read at record-WRITE time and frozen into the
+      // calculation snapshot, so updating the subsidiary must not reach into
+      // activity_records at all. If it ever did, the warning would be a lie and
+      // historic emissions would silently change.
+      const user = makeSuperAdmin();
+      const before = makeSubsidiary({ id: 'sub-1', geographyCode: 'UK' });
+      const after = makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' });
+      prisma.subsidiary.findUnique.mockResolvedValue(before);
+      prisma.subsidiary.update.mockResolvedValue(after);
+
+      const result = await service.update(user, 'sub-1', { geographyCode: 'TR' });
+
+      // Assert the PAYLOAD, not just the returned row: the row comes from the
+      // mocked resolution, so dropping `geographyCode` from the update data
+      // left this green (found by mutation).
+      expect(prisma.subsidiary.update.mock.calls[0][0].data).toEqual({
+        geographyCode: 'TR',
+      });
+      expect(result.geographyCode).toBe('TR');
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(prisma.activityRecord.updateMany).not.toHaveBeenCalled();
+      expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+
+      // The change is reconstructible from the audit trail on its own.
+      const diff = audit.record.mock.calls[0][1].diff as {
+        before: { geographyCode: string };
+        after: { geographyCode: string };
+      };
+      expect(diff.before.geographyCode).toBe('UK');
+      expect(diff.after.geographyCode).toBe('TR');
+    });
+
     it('only includes explicitly-provided fields in the update payload', async () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));

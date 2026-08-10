@@ -17,7 +17,7 @@
   - The user merges each PR individually. **Never start the next PR until asked.**
 - **Re-run `pnpm db:seed` after pulling WP7 PR 3** — it adds the `review@tonyai.local` consultant; without it the five new `/review` E2E tests fail at token grant.
 - **Everyone must re-run `pnpm setup` after pulling this** — the API now refuses to boot without `ALLOW_INSECURE_LOCAL_AUTH=true` in `apps/api/.env`, and `jsonwebtoken` → `jose` means a stale `node_modules` fails too
-- **Tests:** 290 unit (Vitest, API) + a `next.config` phase guard (web) + 27 E2E (Playwright) + 24 live RLS containment probes — green (counts include the open PR 3 branch)
+- **Tests:** 291 unit (Vitest, API) + a `next.config` phase guard (web) + 31 E2E (Playwright) + 24 live RLS containment probes — green (counts include the open PR 4 branch)
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)
@@ -222,6 +222,9 @@
 - **A rejected record inside a LOCKED period is still stranded** *(WP7 PR 3 re-review)* — `PENDING_REVIEW_STATUSES` is `{submitted, under_review}`, so a period holding a `rejected` record locks cleanly; the record then cannot be resubmitted, edited or deleted (409) and stays outside `COUNTED_STATUSES`, pinning the year to `contains_incomplete_data` until a `super_admin` unlocks. The fix that reopened rejection is real, but "no API path back" remains true inside a locked period. Decide whether the lock gate should also refuse a period holding rejected records.
 - **A non-author can submit someone else's DRAFT** — `submit()` now gates authorship on the RESUBMIT path (it reverses a reviewer's decision), but the pre-existing draft path is still open: a `data_entry` user who can see the subsidiary can submit a draft they did not create, while `update`/`remove` refuse them. Left alone deliberately in PR 3 to keep the change to the transition it introduced; decide whether drafts should match.
 - **`GET /activity-records/:id` with a non-uuid returns 500**, not 400/404 — no `ParseUUIDPipe` on the route param, so `.../undefined` surfaces a Prisma `Error creating UUID` as a 5xx. Leaks nothing; turns client bugs into server errors and noise in the logs.
+- **A non-author can still submit someone else's DRAFT** *(carried over from WP7 PR 3, re-confirmed in PR 4)* — `submit()` gates authorship only on the RESUBMIT path. PR 4 closed the UI half (a colleague's record no longer opens in the form), but the API gap remains: a `data_entry` user who can see the subsidiary can submit a draft they did not write. Decide whether drafts should match `update`/`remove`.
+- **A rejected record recalculates on ANY edit** — `update()` unconditionally re-runs `computeSnapshot`, so editing an unrelated field (a variance note) after a geography change moves the number: measured live, 0.2071 → 0.44 tCO₂e from changing a justification string. Defensible (the record is not committed) but surprising, and the geography-change confirmation now says so explicitly rather than leaving it implied.
+- **The dashboard's two data sources are now both year-scoped, but nothing else is** — `trackingMatrix` and `emissionsSummary` both take `DEFAULT_REPORTING_YEAR`. A year *picker* on the dashboard is the obvious next step; today the year is fixed by a constant and only stated in two card headers.
 - Billing/subscription model — not covered by any spec
 - Depth of `executive_viewer` / `consultant` UX flows
 - Mobile/responsive support targets

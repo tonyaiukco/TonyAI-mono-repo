@@ -9,6 +9,11 @@ import { Button } from '@/components/ui/button';
 
 interface AlertsPanelProps {
   alerts: Alert[];
+  /** The year these items were derived from. The list comes from the tracking
+   *  matrix, which is scoped to one year — so "no action items" means "none in
+   *  this year", and saying which one is the difference between reassurance and
+   *  a false all-clear. */
+  reportingYear?: number | null;
 }
 
 const alertConfig = {
@@ -38,7 +43,7 @@ const alertConfig = {
   },
 };
 
-export function AlertsPanel({ alerts }: AlertsPanelProps) {
+export function AlertsPanel({ alerts, reportingYear }: AlertsPanelProps) {
   const errorCount = alerts.filter(a => a.type === 'error').length;
   const warningCount = alerts.filter(a => a.type === 'warning').length;
 
@@ -48,6 +53,11 @@ export function AlertsPanel({ alerts }: AlertsPanelProps) {
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base font-semibold text-foreground">
             Action Items
+            {reportingYear ? (
+              <span className="text-sm font-normal text-[#6E6E73]">
+                {reportingYear}
+              </span>
+            ) : null}
             {(errorCount > 0 || warningCount > 0) && (
               <span className="flex items-center gap-1.5 ml-2">
                 {errorCount > 0 && (

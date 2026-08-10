@@ -67,6 +67,12 @@ Conventions: run as `admin@tonyai.local` unless the TC says otherwise. Mark each
 | SUBS-03 | As admin: open **Manage locations** (map-pin icon) | Drawer lists that subsidiary's locations; add + delete a location works | |
 | SUBS-04 | Sign in as `entry@tonyai.local`: count rows | Exactly **2** rows; **no** Add/Delete controls rendered | |
 | SUBS-05 | As entry: open **Manage period locks** (padlock) | Drawer opens read-only: no *Lock period* form, "only a super_admin" note | |
+| SUBS-06 | As admin: click the **pencil** on a subsidiary | Dialog opens titled *Edit subsidiary*, **pre-filled** with that subsidiary's current values (round-1 **SUB-1**) | |
+| SUBS-07 | Change the legal name only → **Save changes** | Saves straight away with *Subsidiary settings updated successfully.*; the row shows the new name | |
+| SUBS-08 | Edit again, change **Geography** → **Save changes** | A confirmation appears first, naming the old and new geography, warning about the factor basis **and** stating that already-committed records keep their existing factor — their figures do not change | |
+| SUBS-09 | Press **Cancel** in that confirmation | Nothing is saved — the row still shows the old geography | |
+| SUBS-10 | Repeat and press **Continue** | Saved; the row shows the new geography. Then check `/emissions` → **History**: the tCO₂e of existing records for that subsidiary is **unchanged** | |
+| SUBS-11 | Sign in as `entry@tonyai.local` | **No pencil icon** on any row (and none as `review@tonyai.local`) | |
 
 ### 3.4 Data entry lifecycle (`/data-entry`) — the core flow
 
@@ -102,6 +108,17 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | REV-11 | Sign in as `entry@tonyai.local` → `/review` | An explanation card ("Reviewing is done by a consultant or a super_admin"), **not** an error or an empty page | |
 
 > **Note for testers:** `review@tonyai.local` (password `TonyAI!2026`) is a new seeded user — if signing in fails, re-run `pnpm db:seed`.
+
+### 3.4c Dashboard matrix shortcut (round-1 **DASH-2**)
+
+| TC | Steps | Expected | P/F |
+| --- | --- | --- | --- |
+| DASH-01 | As admin: look at **Data Collection Status** on the dashboard | The heading carries a **year** (e.g. 2024) — the grid describes that one year, not all years at once | |
+| DASH-02 | Click a **coloured cell** (not the subsidiary name) | Lands on **Data Entry** with that subsidiary **and that category** already selected, and the year from the grid | |
+| DASH-03 | Click the **subsidiary name** or the **chevron** on the same row | Still opens the subsidiary detail drawer as before — only the cells changed | |
+| DASH-04 | Click a cell for a category that already has one record that year | The existing record **opens in the form** for editing (if it is a draft or was sent back); if it is submitted/approved you are told so instead of getting a blank form | |
+| DASH-05 | Click a cell for a category with several records that year | You are told how many exist and asked to pick one from *Previous submissions* — nothing is guessed for you | |
+| DASH-06 | On Data Entry, click any row in **Previous submissions** | A draft or sent-back record reopens in the form; anything else says it can no longer be edited | |
 
 ### 3.5 Period locking (`/subsidiaries` → padlock)
 

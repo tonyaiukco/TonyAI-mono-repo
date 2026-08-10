@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,13 +35,18 @@ import { api, ApiError } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
-import { CATEGORIES } from "@/lib/types";
+import {
+  CATEGORIES,
+  DEFAULT_REPORTING_YEAR,
+  REPORTING_YEARS,
+} from "@/lib/types";
 import type {
   ActivityRecordDTO,
   ActivityRecordStatus,
   CalculationResult,
   Category,
   LocationDTO,
+  PeriodLockDTO,
   ReportingPeriod,
   SubsidiaryDTO,
 } from "@/lib/types";
@@ -52,7 +57,6 @@ import {
 
 // --- Static option sets -----------------------------------------------------
 
-const YEARS = [2024, 2023] as const;
 
 const PERIODS: { value: ReportingPeriod; label: string }[] = [
   { value: "quarterly", label: "Quarterly" },
@@ -135,12 +139,24 @@ const numberFmt = new Intl.NumberFormat("en-GB", {
   maximumFractionDigits: 3,
 });
 
-/** Turn a save/submit failure into a message a user can act on. The API returns
- * a bare 500 when a record for the same subsidiary+year+period+category already
- * exists, so we hint at that rather than surfacing "Internal server error". */
+/** Turn a save/submit failure into a message a user can act on.
+ *
+ * A duplicate reporting entity is a 409 — the API grew a P2002 handler and this
+ * still claimed it was "a bare 500", so the one case it existed to explain was
+ * the one case it no longer caught. 5xx keeps a generic hint because an
+ * unexpected server error tells the user nothing on its own. */
 function saveErrorMessage(e: unknown): string {
+  if (e instanceof ApiError && e.status === 409) {
+    // Three things return 409: a duplicate reporting entity, and two period-lock
+    // refusals. Only the first is fixed by opening the existing record, so the
+    // advice is attached to the message that earns it — the lock's own sentence
+    // already says what to do.
+    return /locked/i.test(e.message)
+      ? e.message
+      : `${e.message} Open it from Previous submissions to continue it.`;
+  }
   if (e instanceof ApiError && e.status >= 500) {
-    return "Could not save. A record for this subsidiary, period and category may already exist — change the period or category and try again.";
+    return "Could not save — the server failed to process this record. Try again, and report it if it persists.";
   }
   return (e as Error).message;
 }
@@ -150,8 +166,22 @@ function saveErrorMessage(e: unknown): string {
 // driver — these are never fed to the engine.
 type ContextValues = Record<string, string | number>;
 
+/**
+ * `useSearchParams` opts the route out of static rendering unless it sits under
+ * a Suspense boundary — without this wrapper `next build` fails. This is the
+ * first deep-linked page in the app, so the boundary is new here.
+ */
 export default function DataEntryPage() {
+  return (
+    <Suspense fallback={null}>
+      <DataEntryPageInner />
+    </Suspense>
+  );
+}
+
+function DataEntryPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, setUser } = useAuthStore();
 
   // Controls
@@ -160,7 +190,9 @@ export default function DataEntryPage() {
   const [locations, setLocations] = useState<LocationDTO[]>([]);
   // "" = whole subsidiary; otherwise the operational location id.
   const [locationId, setLocationId] = useState("");
-  const [reportingYear, setReportingYear] = useState<number>(2024);
+  const [reportingYear, setReportingYear] = useState<number>(
+    DEFAULT_REPORTING_YEAR,
+  );
   const [reportingPeriod, setReportingPeriod] =
     useState<ReportingPeriod>("quarterly");
   const [periodValue, setPeriodValue] = useState("Q1");
@@ -186,6 +218,25 @@ export default function DataEntryPage() {
   // Records + saving
   const [records, setRecords] = useState<ActivityRecordDTO[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
+  // Which subsidiary the rows in `records` actually belong to. `records.length`
+  // cannot answer that: an empty list means both "not fetched yet" and "fetched,
+  // none exist", and the deep-link effect below has to tell those apart.
+  const [recordsFetchedFor, setRecordsFetchedFor] = useState<string | null>(null);
+  const [locks, setLocks] = useState<PeriodLockDTO[]>([]);
+  // The reporting entity the loaded record belongs to. Kept so that moving the
+  // form off that tuple can stop targeting it — see the effect below.
+  const [editingTuple, setEditingTuple] = useState<{
+    category: string;
+    reportingYear: number;
+    reportingPeriod: ReportingPeriod;
+    periodValue: string;
+    locationId: string;
+  } | null>(null);
+  // What the deep link asked for, kept so the records effect below can act on it
+  // once they arrive. A ref, not state: it must fire exactly once, and it is not
+  // rendered.
+  const deepLink = useRef<{ category: string; year: number } | null>(null);
+  const deepLinkHandled = useRef(false);
   const [subsLoading, setSubsLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState<null | "draft" | "submit">(null);
@@ -225,12 +276,22 @@ export default function DataEntryPage() {
   const refreshRecords = useCallback(async (subId: string) => {
     if (!subId) {
       setRecords([]);
+      setLocks([]);
+      setRecordsFetchedFor(null);
       return;
     }
     setRecordsLoading(true);
     try {
-      const list = await api.listActivityRecords({ subsidiaryId: subId });
+      const [list, lockList] = await Promise.all([
+        api.listActivityRecords({ subsidiaryId: subId }),
+        // Locks are fetched with the records because a locked period refuses
+        // every write: without them the form happily opens a record it cannot
+        // save, and the failure only surfaces after the user has typed.
+        api.listPeriodLocks({ subsidiaryId: subId }),
+      ]);
       setRecords(list);
+      setLocks(lockList);
+      setRecordsFetchedFor(subId);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -253,8 +314,41 @@ export default function DataEntryPage() {
         ]);
         setSubsidiaries(list);
         setLocations(locs);
-        if (list.length > 0) {
-          setSubsidiaryId(list[0].id);
+
+        // Deep link (tracking matrix → here). Validated against what this user
+        // can actually see: an id outside the accessible set would leave the
+        // Radix Select bound to a value with no matching item, i.e. a silently
+        // blank control rather than an error.
+        const wantedSub = searchParams.get("subsidiaryId");
+        const wantedCategory = searchParams.get("category");
+        const wantedYear = Number(searchParams.get("year"));
+
+        if (wantedSub && !list.some((sub) => sub.id === wantedSub)) {
+          toast.error("That subsidiary is not available to you.");
+        }
+        const resolvedSub =
+          wantedSub && list.some((sub) => sub.id === wantedSub)
+            ? wantedSub
+            : (list[0]?.id ?? "");
+        if (resolvedSub) setSubsidiaryId(resolvedSub);
+
+        if (wantedCategory) {
+          if ((CATEGORIES as readonly string[]).includes(wantedCategory)) {
+            setCategory(wantedCategory as Category);
+          } else {
+            toast.error(`Unknown category "${wantedCategory}".`);
+          }
+        }
+        if ((REPORTING_YEARS as readonly number[]).includes(wantedYear)) {
+          setReportingYear(wantedYear);
+        }
+        if (wantedCategory && (CATEGORIES as readonly string[]).includes(wantedCategory)) {
+          deepLink.current = {
+            category: wantedCategory,
+            year: (REPORTING_YEARS as readonly number[]).includes(wantedYear)
+              ? wantedYear
+              : DEFAULT_REPORTING_YEAR,
+          };
         }
       } catch (e) {
         toast.error((e as Error).message);
@@ -268,6 +362,36 @@ export default function DataEntryPage() {
   useEffect(() => {
     void refreshRecords(subsidiaryId);
   }, [subsidiaryId, refreshRecords]);
+
+  /**
+   * Resolve a deep link against what the subsidiary already has.
+   *
+   * A matrix cell says "this category, this year" and nothing about the period,
+   * so the target is a set. One match is unambiguous and opens. Several is NOT
+   * guessable — picking the first would silently open a period the user did not
+   * ask for — so it says how many there are and leaves the form alone. None
+   * means the cell was empty, which is the ordinary "enter it now" case.
+   */
+  useEffect(() => {
+    const wanted = deepLink.current;
+    if (!wanted || deepLinkHandled.current) return;
+    // Wait for the rows that belong to THIS subsidiary; acting earlier reads an
+    // empty list as "nothing exists" and burns the one shot this effect gets.
+    if (recordsLoading || !subsidiaryId || recordsFetchedFor !== subsidiaryId) return;
+    deepLinkHandled.current = true;
+
+    const matches = records.filter(
+      (r) => r.category === wanted.category && r.reportingYear === wanted.year,
+    );
+    if (matches.length === 1) {
+      loadRecord(matches[0]);
+    } else if (matches.length > 1) {
+      toast.info(
+        `${matches.length} ${wanted.category} records exist for ${wanted.year}. Pick one from Previous submissions, or enter another period.`,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records, recordsLoading, recordsFetchedFor, subsidiaryId]);
 
   // --- Live preview (debounced) --------------------------------------------
 
@@ -332,15 +456,118 @@ export default function DataEntryPage() {
     setPeriodValue(PERIOD_VALUES[next][0]);
   }
 
+  /**
+   * Pull a saved record back into the form.
+   *
+   * Until now `editingId` was only ever set immediately after a save, so a draft
+   * you navigated away from was unreachable: returning to the same period and
+   * category produced a 409 with no way to continue the record. That is also
+   * exactly where a tracking-matrix cell lands you.
+   *
+   * Only `draft` and `rejected` are editable server-side (`EDITABLE_STATUSES`),
+   * so anything else is shown, not opened — offering a form that the API will
+   * refuse to save is worse than saying why.
+   */
+  function loadRecord(rec: ActivityRecordDTO) {
+    if (rec.status !== "draft" && rec.status !== "rejected") {
+      toast.info(
+        `This record is ${rec.status.replace(/_/g, " ")} and can no longer be edited.`,
+      );
+      return;
+    }
+    // The API allows an author (or a super_admin) to modify a record, so a
+    // colleague's draft would open, accept typing, and only then 403. On a deep
+    // link this happens with no click at all — the user would be looking at
+    // someone else's figures believing they were their own.
+    if (user && user.role !== "super_admin" && rec.createdBy !== user.id) {
+      toast.info("This record was entered by someone else — only its author can change it.");
+      return;
+    }
+    // A period lock only flips `approved → locked`, so a draft inside a locked
+    // period keeps its status and would sail past the check above. Every write
+    // to it is refused with a 409.
+    if (
+      locks.some(
+        (l) =>
+          l.reportingYear === rec.reportingYear &&
+          l.reportingPeriod === rec.reportingPeriod &&
+          l.periodValue === rec.periodValue,
+      )
+    ) {
+      toast.info(
+        `${rec.periodValue} ${rec.reportingYear} is locked — a super_admin must unlock it before this record can change.`,
+      );
+      return;
+    }
+    setEditingId(rec.id);
+    setSubsidiaryId(rec.subsidiaryId);
+    setLocationId(rec.locationId ?? "");
+    setReportingYear(rec.reportingYear);
+    setReportingPeriod(rec.reportingPeriod);
+    setPeriodValue(rec.periodValue);
+    setCategory(rec.category as Category);
+    setActivityValue(String(rec.activityValue));
+    setActivityUnit(rec.activityUnit);
+    setContext((rec.input as ContextValues | null) ?? {});
+    setAnomalyFlag(rec.anomalyFlag);
+    setVarianceReason(rec.varianceReason ?? "");
+    setPreviewError(null);
+    setEditingTuple(tupleOf(rec));
+  }
+
+  /**
+   * Stop targeting the loaded record once the form no longer describes it.
+   *
+   * `editingId` used to be set only by your own save, so "keep editing what I
+   * just saved" was a fair reading. A matrix cell now sets it WITHOUT any user
+   * intent, and the reporting-entity selects were unguarded — so opening a Fuel
+   * Q3 draft and then switching to Electricity Q1 overwrote the Fuel record
+   * with the Electricity numbers and reported "Draft saved". The Fuel record
+   * simply ceased to exist. The subsidiary select already had this protection
+   * (it calls `resetForm`); the rest of the tuple did not.
+   */
+  useEffect(() => {
+    if (!editingId || !editingTuple) return;
+    const movedOff =
+      editingTuple.category !== category ||
+      editingTuple.reportingYear !== reportingYear ||
+      editingTuple.reportingPeriod !== reportingPeriod ||
+      editingTuple.periodValue !== periodValue ||
+      editingTuple.locationId !== locationId;
+    if (!movedOff) return;
+    setEditingId(null);
+    setEditingTuple(null);
+    toast.info("Now entering a new record — the one you opened is untouched.");
+  }, [
+    editingId,
+    editingTuple,
+    category,
+    reportingYear,
+    reportingPeriod,
+    periodValue,
+    locationId,
+  ]);
+
   function resetForm() {
     setActivityValue("");
     setContext({});
     setPreview(null);
     setPreviewError(null);
     setEditingId(null);
+    setEditingTuple(null);
     setLocationId("");
     setAnomalyFlag(false);
     setVarianceReason("");
+  }
+
+  function tupleOf(rec: ActivityRecordDTO) {
+    return {
+      category: rec.category,
+      reportingYear: rec.reportingYear,
+      reportingPeriod: rec.reportingPeriod,
+      periodValue: rec.periodValue,
+      locationId: rec.locationId ?? "",
+    };
   }
 
   function buildInputPayload(): Record<string, unknown> | null {
@@ -393,6 +620,7 @@ export default function DataEntryPage() {
       const rec = await persist();
       if (!rec) return;
       setEditingId(rec.id);
+      setEditingTuple(tupleOf(rec));
       setAnomalyFlag(rec.anomalyFlag);
       toast.success(
         rec.anomalyFlag
@@ -415,6 +643,7 @@ export default function DataEntryPage() {
       // Keep the saved record "current" so that if submit is blocked (evidence
       // or anomaly gate), the vault + variance field stay visible to fix + retry.
       setEditingId(rec.id);
+      setEditingTuple(tupleOf(rec));
       setAnomalyFlag(rec.anomalyFlag);
       // Mirror the server anomaly gate (VAR §2.2 / §4.3): a flagged value needs
       // a variance comment before it can be submitted.
@@ -559,7 +788,7 @@ export default function DataEntryPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {YEARS.map((y) => (
+                        {REPORTING_YEARS.map((y) => (
                           <SelectItem key={y} value={String(y)}>
                             {y}
                           </SelectItem>
@@ -760,8 +989,19 @@ export default function DataEntryPage() {
               {/* Actions */}
               <div className="flex items-center justify-end gap-2">
                 {editingId && (
-                  <span className="mr-auto text-sm text-muted-foreground">
+                  <span className="mr-auto flex items-center gap-2 text-sm text-muted-foreground">
                     Editing draft {editingId.slice(0, 8)}…
+                    {/* The only way out of edit mode used to be a successful
+                        submit or a page reload — and a cell click can now put
+                        you here without asking. */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={resetForm}
+                    >
+                      Start a new record
+                    </Button>
                   </span>
                 )}
                 <Button
@@ -817,9 +1057,21 @@ export default function DataEntryPage() {
                         const badge = statusBadge[r.status];
                         const Icon = badge.icon;
                         return (
-                          <div
+                          <button
                             key={r.id}
-                            className="flex items-center gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5"
+                            type="button"
+                            onClick={() => loadRecord(r)}
+                            // Deliberately NOT aria-disabled: a non-editable row
+                            // still answers "why can't I edit this?" when
+                            // activated, and marking it disabled is what stops
+                            // assistive tech (and Playwright) from ever reaching
+                            // that answer. The hover affordance below carries the
+                            // distinction instead.
+                            className={`flex w-full items-center gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-left transition-colors ${
+                              r.status === "draft" || r.status === "rejected"
+                                ? "hover:border-primary/40 hover:bg-secondary"
+                                : "cursor-default"
+                            }`}
                           >
                             <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                             <div className="min-w-0 flex-1">
@@ -839,7 +1091,7 @@ export default function DataEntryPage() {
                                 {numberFmt.format(r.calculation.tCo2e)} tCO₂e
                               </div>
                             </div>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
