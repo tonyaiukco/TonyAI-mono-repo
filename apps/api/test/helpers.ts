@@ -27,6 +27,15 @@ export function createPrismaMock() {
     auditLog: {
       create: vi.fn(),
     },
+    // Present so specs can assert a service did NOT reach into records. Without
+    // the namespace an accidental access throws a TypeError, which reads as a
+    // broken test rather than the finding it actually is.
+    activityRecord: {
+      findMany: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      count: vi.fn(),
+    },
     // Runs the callback against the SAME mock, so a mutation performed inside a
     // transaction is still observable as `prisma.<model>.delete(...)`, while the
     // audit spy receives this object as its third argument — which is what

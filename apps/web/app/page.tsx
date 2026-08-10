@@ -37,6 +37,7 @@ import {
   matrixToAlerts,
   matrixToSubsidiaries,
 } from '@/lib/dashboard-view';
+import { DEFAULT_REPORTING_YEAR } from '@/lib/types';
 import type {
   DashboardKpi,
   EmissionsSummary,
@@ -78,7 +79,11 @@ export default function CarbonDashboard() {
       api.kpi(),
       api.listSubsidiaries(),
       api.emissionsSummary(),
-      api.trackingMatrix(),
+      // A year, not "everything": without one the endpoint folds every year
+      // into a single cell, so a subsidiary complete for 2023 and empty for
+      // 2024 read as complete. A completeness view that spans years states
+      // nothing about either.
+      api.trackingMatrix({ year: DEFAULT_REPORTING_YEAR }),
     ])
       .then(([kpiData, list, summaryData, matrixData]) => {
         setKpi(kpiData);
@@ -118,6 +123,19 @@ export default function CarbonDashboard() {
   const handleMatrixSubsidiaryClick = (subsidiary: Subsidiary) => {
     setSelectedSubsidiary(subsidiary);
     setDetailOpen(true);
+  };
+
+  // A cell is a (subsidiary, category) pair, so clicking one goes where that
+  // pair is acted on rather than opening the same subsidiary drawer as the row
+  // name. Round-1 UAT (DASH-2): the cells advertise "click to view details" and
+  // did nothing distinguishable.
+  const handleMatrixCategoryClick = (subsidiary: Subsidiary, category: string) => {
+    const params = new URLSearchParams({
+      subsidiaryId: subsidiary.id,
+      category,
+      year: String(DEFAULT_REPORTING_YEAR),
+    });
+    router.push(`/data-entry?${params.toString()}`);
   };
 
   async function handleLogout() {
@@ -278,7 +296,9 @@ export default function CarbonDashboard() {
 
                 <TrackingMatrix
                   subsidiaries={matrixSubsidiaries}
+                  reportingYear={matrix?.reportingYear ?? null}
                   onSubsidiaryClick={handleMatrixSubsidiaryClick}
+                  onCategoryClick={handleMatrixCategoryClick}
                 />
 
                 <div className="grid gap-6 lg:grid-cols-3">

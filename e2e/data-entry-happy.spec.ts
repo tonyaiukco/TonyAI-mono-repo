@@ -58,11 +58,12 @@ test('data entry: draft → live preview → evidence → submit → approve →
 
   // Reload, re-select Energy (the page defaults to the first subsidiary), and
   // confirm the record now reads as Approved in Previous submissions. Scope to
-  // the single Q1 2024 row (`bg-secondary/40` is the record-row class) so a
+  // the single Q1 2024 row — addressed by role now that a submission row is a
+  // real button (it reopens the record), not a styled div. A
   // seeded "Approved" elsewhere on the page can't satisfy this — the badge must
   // be in the same row as our record.
   await page.reload();
   await selectSubsidiary(page, 'TonyAI Energy (TR)');
-  const row = page.locator('div.bg-secondary\\/40', { hasText: 'Q1 2024' });
+  const row = page.getByRole('button', { name: /Q1 2024/ });
   await expect(row).toContainText('Approved');
 });

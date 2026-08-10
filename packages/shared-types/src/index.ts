@@ -91,6 +91,18 @@ export type UserRole = 'super_admin' | 'consultant' | 'data_entry' | 'executive_
 
 export type SubmissionStatus = 'draft' | 'submitted' | 'in_review' | 'approved' | 'revision_requested';
 
+/**
+ * The reporting years the product will accept data for, newest first.
+ *
+ * A fixed list rather than a range ending at "this year": a year is only usable
+ * once the factor library covers it, so offering 2026 before its factors are
+ * seeded would put the user in front of a form that can only fail. The first
+ * entry is what screens default to.
+ */
+export const REPORTING_YEARS = [2024, 2023] as const;
+export type ReportingYear = (typeof REPORTING_YEARS)[number];
+export const DEFAULT_REPORTING_YEAR: ReportingYear = REPORTING_YEARS[0];
+
 export const REPORTING_PERIODS = ['monthly', 'quarterly', 'annual'] as const;
 export type ReportingPeriod = (typeof REPORTING_PERIODS)[number];
 

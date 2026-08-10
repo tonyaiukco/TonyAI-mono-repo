@@ -29,6 +29,7 @@ test('data_entry: scoped reads + period-lock write gated in the UI', async ({ pa
   // Admin visibility of these is covered by smoke.spec's create/delete flow.
   await expect(page.getByRole('button', { name: 'Add Subsidiary' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Delete subsidiary' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Edit subsidiary' })).toHaveCount(0);
 
   // The read-only drawers stay available: the period-locks drawer opens (locked
   // list) but the lock/unlock form is gated — no "Lock period" button, and an

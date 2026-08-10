@@ -9,7 +9,14 @@ import { ChevronRight } from 'lucide-react';
 
 interface TrackingMatrixProps {
   subsidiaries: Subsidiary[];
+  /** The year these cells describe. Null means the caller asked for every year
+   *  at once, which makes a completeness cell meaningless — say so rather than
+   *  printing a confident status over mixed years. */
+  reportingYear: number | null;
   onSubsidiaryClick: (subsidiary: Subsidiary) => void;
+  /** A cell is a (subsidiary, category) pair; the row name and the chevron stay
+   *  on `onSubsidiaryClick`. */
+  onCategoryClick: (subsidiary: Subsidiary, category: string) => void;
 }
 
 const categoryShortNames: Record<string, string> = {
@@ -32,7 +39,7 @@ function getCompletionColor(rate: number): string {
   return 'text-[#B91C1C]';
 }
 
-export function TrackingMatrix({ subsidiaries, onSubsidiaryClick }: TrackingMatrixProps) {
+export function TrackingMatrix({ subsidiaries, reportingYear, onSubsidiaryClick, onCategoryClick }: TrackingMatrixProps) {
   return (
     <Card className="border-[#D2D2D7] bg-white rounded-xl shadow-sm overflow-hidden">
       <CardHeader className="pb-0 pt-5 px-6">
@@ -40,9 +47,16 @@ export function TrackingMatrix({ subsidiaries, onSubsidiaryClick }: TrackingMatr
           <div>
             <h2 className="text-lg font-bold text-[#1D1D1F]">
               Data Collection Status
+              {reportingYear ? (
+                <span className="ml-2 text-base font-semibold text-[#6E6E73]">
+                  {reportingYear}
+                </span>
+              ) : null}
             </h2>
             <p className="text-sm font-medium text-[#6E6E73] mt-1">
-              Click any cell for details. Values show calculated emissions in tCO₂e.
+              {reportingYear
+                ? 'Click a cell to enter or review that category. Values show calculated emissions in tCO₂e.'
+                : 'Showing every reporting year at once — a cell mixes years, so its status describes none of them.'}
             </p>
           </div>
           <div className="flex items-center gap-6">
@@ -116,7 +130,8 @@ export function TrackingMatrix({ subsidiaries, onSubsidiaryClick }: TrackingMatr
                       <StatusCell
                         key={`${sub.id}-${cat.category}`}
                         data={cat}
-                        onClick={() => onSubsidiaryClick(sub)}
+                        label={`${sub.shortName} ${cat.category}`}
+                        onClick={() => onCategoryClick(sub, cat.category)}
                         compact
                       />
                     ))}

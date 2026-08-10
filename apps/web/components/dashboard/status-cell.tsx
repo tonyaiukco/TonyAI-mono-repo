@@ -14,6 +14,10 @@ interface StatusCellProps {
   data: CategoryData;
   onClick?: () => void;
   compact?: boolean;
+  /** Accessible name for the cell. The button's visible content is a colour and
+   *  a number, so without this it announces as an unnamed button — the status it
+   *  conveys is invisible to a screen reader. */
+  label?: string;
 }
 
 // Apple-style status colors
@@ -65,7 +69,7 @@ function formatEmission(value: number): string {
   return value.toString();
 }
 
-export function StatusCell({ data, onClick, compact = false }: StatusCellProps) {
+export function StatusCell({ data, onClick, compact = false, label }: StatusCellProps) {
   const config = statusConfig[data.status];
   const hasEmission = data.calculationComplete && data.emission !== null;
 
@@ -75,6 +79,7 @@ export function StatusCell({ data, onClick, compact = false }: StatusCellProps) 
         <TooltipTrigger asChild>
           <button
             onClick={onClick}
+            aria-label={label}
             className={cn(
               'relative flex items-center justify-center rounded-lg transition-all duration-200',
               'focus:outline-none focus:ring-2 focus:ring-[#007AFF]/40 focus:ring-offset-2',

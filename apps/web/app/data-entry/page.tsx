@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,7 +35,11 @@ import { api, ApiError } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
-import { CATEGORIES } from "@/lib/types";
+import {
+  CATEGORIES,
+  DEFAULT_REPORTING_YEAR,
+  REPORTING_YEARS,
+} from "@/lib/types";
 import type {
   ActivityRecordDTO,
   ActivityRecordStatus,
@@ -52,7 +56,6 @@ import {
 
 // --- Static option sets -----------------------------------------------------
 
-const YEARS = [2024, 2023] as const;
 
 const PERIODS: { value: ReportingPeriod; label: string }[] = [
   { value: "quarterly", label: "Quarterly" },
@@ -135,12 +138,18 @@ const numberFmt = new Intl.NumberFormat("en-GB", {
   maximumFractionDigits: 3,
 });
 
-/** Turn a save/submit failure into a message a user can act on. The API returns
- * a bare 500 when a record for the same subsidiary+year+period+category already
- * exists, so we hint at that rather than surfacing "Internal server error". */
+/** Turn a save/submit failure into a message a user can act on.
+ *
+ * A duplicate reporting entity is a 409 — the API grew a P2002 handler and this
+ * still claimed it was "a bare 500", so the one case it existed to explain was
+ * the one case it no longer caught. 5xx keeps a generic hint because an
+ * unexpected server error tells the user nothing on its own. */
 function saveErrorMessage(e: unknown): string {
+  if (e instanceof ApiError && e.status === 409) {
+    return `${e.message} Open it from Previous submissions to continue it.`;
+  }
   if (e instanceof ApiError && e.status >= 500) {
-    return "Could not save. A record for this subsidiary, period and category may already exist — change the period or category and try again.";
+    return "Could not save — the server failed to process this record. Try again, and report it if it persists.";
   }
   return (e as Error).message;
 }
@@ -150,8 +159,22 @@ function saveErrorMessage(e: unknown): string {
 // driver — these are never fed to the engine.
 type ContextValues = Record<string, string | number>;
 
+/**
+ * `useSearchParams` opts the route out of static rendering unless it sits under
+ * a Suspense boundary — without this wrapper `next build` fails. This is the
+ * first deep-linked page in the app, so the boundary is new here.
+ */
 export default function DataEntryPage() {
+  return (
+    <Suspense fallback={null}>
+      <DataEntryPageInner />
+    </Suspense>
+  );
+}
+
+function DataEntryPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, setUser } = useAuthStore();
 
   // Controls
@@ -160,7 +183,9 @@ export default function DataEntryPage() {
   const [locations, setLocations] = useState<LocationDTO[]>([]);
   // "" = whole subsidiary; otherwise the operational location id.
   const [locationId, setLocationId] = useState("");
-  const [reportingYear, setReportingYear] = useState<number>(2024);
+  const [reportingYear, setReportingYear] = useState<number>(
+    DEFAULT_REPORTING_YEAR,
+  );
   const [reportingPeriod, setReportingPeriod] =
     useState<ReportingPeriod>("quarterly");
   const [periodValue, setPeriodValue] = useState("Q1");
@@ -186,6 +211,11 @@ export default function DataEntryPage() {
   // Records + saving
   const [records, setRecords] = useState<ActivityRecordDTO[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
+  // What the deep link asked for, kept so the records effect below can act on it
+  // once they arrive. A ref, not state: it must fire exactly once, and it is not
+  // rendered.
+  const deepLink = useRef<{ category: string; year: number } | null>(null);
+  const deepLinkHandled = useRef(false);
   const [subsLoading, setSubsLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState<null | "draft" | "submit">(null);
@@ -253,8 +283,41 @@ export default function DataEntryPage() {
         ]);
         setSubsidiaries(list);
         setLocations(locs);
-        if (list.length > 0) {
-          setSubsidiaryId(list[0].id);
+
+        // Deep link (tracking matrix → here). Validated against what this user
+        // can actually see: an id outside the accessible set would leave the
+        // Radix Select bound to a value with no matching item, i.e. a silently
+        // blank control rather than an error.
+        const wantedSub = searchParams.get("subsidiaryId");
+        const wantedCategory = searchParams.get("category");
+        const wantedYear = Number(searchParams.get("year"));
+
+        if (wantedSub && !list.some((sub) => sub.id === wantedSub)) {
+          toast.error("That subsidiary is not available to you.");
+        }
+        const resolvedSub =
+          wantedSub && list.some((sub) => sub.id === wantedSub)
+            ? wantedSub
+            : (list[0]?.id ?? "");
+        if (resolvedSub) setSubsidiaryId(resolvedSub);
+
+        if (wantedCategory) {
+          if ((CATEGORIES as readonly string[]).includes(wantedCategory)) {
+            setCategory(wantedCategory as Category);
+          } else {
+            toast.error(`Unknown category "${wantedCategory}".`);
+          }
+        }
+        if ((REPORTING_YEARS as readonly number[]).includes(wantedYear)) {
+          setReportingYear(wantedYear);
+        }
+        if (wantedCategory && (CATEGORIES as readonly string[]).includes(wantedCategory)) {
+          deepLink.current = {
+            category: wantedCategory,
+            year: (REPORTING_YEARS as readonly number[]).includes(wantedYear)
+              ? wantedYear
+              : DEFAULT_REPORTING_YEAR,
+          };
         }
       } catch (e) {
         toast.error((e as Error).message);
@@ -268,6 +331,33 @@ export default function DataEntryPage() {
   useEffect(() => {
     void refreshRecords(subsidiaryId);
   }, [subsidiaryId, refreshRecords]);
+
+  /**
+   * Resolve a deep link against what the subsidiary already has.
+   *
+   * A matrix cell says "this category, this year" and nothing about the period,
+   * so the target is a set. One match is unambiguous and opens. Several is NOT
+   * guessable — picking the first would silently open a period the user did not
+   * ask for — so it says how many there are and leaves the form alone. None
+   * means the cell was empty, which is the ordinary "enter it now" case.
+   */
+  useEffect(() => {
+    const wanted = deepLink.current;
+    if (!wanted || deepLinkHandled.current || recordsLoading || !subsidiaryId) return;
+    deepLinkHandled.current = true;
+
+    const matches = records.filter(
+      (r) => r.category === wanted.category && r.reportingYear === wanted.year,
+    );
+    if (matches.length === 1) {
+      loadRecord(matches[0]);
+    } else if (matches.length > 1) {
+      toast.info(
+        `${matches.length} ${wanted.category} records exist for ${wanted.year}. Pick one from Previous submissions, or enter another period.`,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records, recordsLoading, subsidiaryId]);
 
   // --- Live preview (debounced) --------------------------------------------
 
@@ -330,6 +420,40 @@ export default function DataEntryPage() {
   function handlePeriodChange(next: ReportingPeriod) {
     setReportingPeriod(next);
     setPeriodValue(PERIOD_VALUES[next][0]);
+  }
+
+  /**
+   * Pull a saved record back into the form.
+   *
+   * Until now `editingId` was only ever set immediately after a save, so a draft
+   * you navigated away from was unreachable: returning to the same period and
+   * category produced a 409 with no way to continue the record. That is also
+   * exactly where a tracking-matrix cell lands you.
+   *
+   * Only `draft` and `rejected` are editable server-side (`EDITABLE_STATUSES`),
+   * so anything else is shown, not opened — offering a form that the API will
+   * refuse to save is worse than saying why.
+   */
+  function loadRecord(rec: ActivityRecordDTO) {
+    if (rec.status !== "draft" && rec.status !== "rejected") {
+      toast.info(
+        `This record is ${rec.status.replace(/_/g, " ")} and can no longer be edited.`,
+      );
+      return;
+    }
+    setEditingId(rec.id);
+    setSubsidiaryId(rec.subsidiaryId);
+    setLocationId(rec.locationId ?? "");
+    setReportingYear(rec.reportingYear);
+    setReportingPeriod(rec.reportingPeriod);
+    setPeriodValue(rec.periodValue);
+    setCategory(rec.category as Category);
+    setActivityValue(String(rec.activityValue));
+    setActivityUnit(rec.activityUnit);
+    setContext((rec.input as ContextValues | null) ?? {});
+    setAnomalyFlag(rec.anomalyFlag);
+    setVarianceReason(rec.varianceReason ?? "");
+    setPreviewError(null);
   }
 
   function resetForm() {
@@ -559,7 +683,7 @@ export default function DataEntryPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {YEARS.map((y) => (
+                        {REPORTING_YEARS.map((y) => (
                           <SelectItem key={y} value={String(y)}>
                             {y}
                           </SelectItem>
@@ -817,9 +941,11 @@ export default function DataEntryPage() {
                         const badge = statusBadge[r.status];
                         const Icon = badge.icon;
                         return (
-                          <div
+                          <button
                             key={r.id}
-                            className="flex items-center gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5"
+                            type="button"
+                            onClick={() => loadRecord(r)}
+                            className="flex w-full items-center gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-secondary"
                           >
                             <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                             <div className="min-w-0 flex-1">
@@ -839,7 +965,7 @@ export default function DataEntryPage() {
                                 {numberFmt.format(r.calculation.tCo2e)} tCO₂e
                               </div>
                             </div>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>

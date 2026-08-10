@@ -40,7 +40,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Building2, CheckCircle2, Clock, Globe, Lock, LogOut, MapPin, Plus, Trash2 } from "lucide-react";
+import { Building2, CheckCircle2, Clock, Globe, Lock, LogOut, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
@@ -74,6 +74,14 @@ export default function SubsidiariesPage() {
   const [locations, setLocations] = useState<LocationDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
+  // One dialog serves Add and Edit — the fields are identical, and the locations
+  // drawer already establishes this shape (`editingId` + a shared form).
+  const [editingId, setEditingId] = useState<string | null>(null);
+  // Set only while the geography confirmation is open; the save resumes from
+  // the confirm action rather than being re-driven through handleSave.
+  const [geoConfirm, setGeoConfirm] = useState<{ from: string; to: string } | null>(
+    null,
+  );
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -119,23 +127,66 @@ export default function SubsidiariesPage() {
   const locCount = (subsidiaryId: string) =>
     locations.filter((l) => l.subsidiaryId === subsidiaryId).length;
 
-  async function handleCreate() {
+  function openAdd() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setAddOpen(true);
+  }
+
+  function openEdit(s: SubsidiaryDTO) {
+    setEditingId(s.id);
+    setForm({
+      legalName: s.legalName,
+      tradingName: s.tradingName ?? "",
+      location: s.location ?? "",
+      geographyCode: s.geographyCode,
+      sector: s.sector ?? "",
+      reportingStatus: s.reportingStatus,
+    });
+    setAddOpen(true);
+  }
+
+  const editing = editingId
+    ? (subsidiaries.find((s) => s.id === editingId) ?? null)
+    : null;
+
+  async function handleSave() {
     if (form.legalName.trim().length < 2) {
       toast.error("Legal name is required");
       return;
     }
+    // Changing the geography changes which factor set FUTURE calculations use
+    // for this subsidiary, so it is confirmed rather than saved silently —
+    // `subsidiaries_page.md` §9: "do not silently overwrite historical
+    // calculations without confirmation".
+    if (editing && editing.geographyCode !== form.geographyCode) {
+      setGeoConfirm({ from: editing.geographyCode, to: form.geographyCode });
+      return;
+    }
+    await persist();
+  }
+
+  async function persist() {
     setSaving(true);
     try {
-      await api.createSubsidiary({
+      const body = {
         legalName: form.legalName.trim(),
         tradingName: form.tradingName || null,
         location: form.location || null,
         geographyCode: form.geographyCode,
         sector: form.sector || null,
         reportingStatus: form.reportingStatus,
-      });
-      toast.success("Subsidiary created");
+      };
+      if (editingId) {
+        await api.updateSubsidiary(editingId, body);
+        toast.success("Subsidiary settings updated successfully.");
+      } else {
+        await api.createSubsidiary(body);
+        toast.success("Subsidiary created");
+      }
       setAddOpen(false);
+      setEditingId(null);
+      setGeoConfirm(null);
       setForm(emptyForm);
       await refresh();
     } catch (e) {
@@ -179,7 +230,7 @@ export default function SubsidiariesPage() {
             </div>
             <div className="flex items-center gap-2">
               {canManage && (
-                <Button onClick={() => setAddOpen(true)} className="gap-2">
+                <Button onClick={openAdd} className="gap-2">
                   <Plus className="h-4 w-4" />
                   Add Subsidiary
                 </Button>
@@ -259,14 +310,24 @@ export default function SubsidiariesPage() {
                         </TableCell>
                         <TableCell>
                           {canManage && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => setDeletingId(s.id)}
-                              aria-label="Delete subsidiary"
-                            >
-                              <Trash2 className="h-4 w-4 text-muted-foreground" />
-                            </Button>
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => openEdit(s)}
+                                aria-label="Edit subsidiary"
+                              >
+                                <Pencil className="h-4 w-4 text-muted-foreground" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setDeletingId(s.id)}
+                                aria-label="Delete subsidiary"
+                              >
+                                <Trash2 className="h-4 w-4 text-muted-foreground" />
+                              </Button>
+                            </>
                           )}
                         </TableCell>
                       </TableRow>
@@ -282,7 +343,7 @@ export default function SubsidiariesPage() {
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add subsidiary</DialogTitle>
+            <DialogTitle>{editingId ? "Edit subsidiary" : "Add subsidiary"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <Field label="Legal name *">
@@ -355,12 +416,61 @@ export default function SubsidiariesPage() {
             <Button variant="outline" onClick={() => setAddOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleCreate} disabled={saving}>
-              {saving ? "Saving…" : "Create"}
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : editingId ? "Save changes" : "Create"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Geography-change confirmation (subsidiaries_page.md §7 "Recalculation
+          Alert"). The first paragraph is the spec's wording, unaltered. The
+          second says what this system actually does, because the spec's "may
+          require recalculation" could otherwise read as "your committed numbers
+          may change" — they cannot: `geographyCode` is resolved at write time
+          and frozen into each record's calculation snapshot, and nothing
+          recalculates it afterwards. On a compliance product that distinction
+          is the whole point of the warning. */}
+      <AlertDialog
+        open={!!geoConfirm}
+        onOpenChange={(open) => !open && setGeoConfirm(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Change geography from {geoConfirm?.from} to {geoConfirm?.to}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Warning: Changing the geography will change the configured factor
+              basis for geography dependent calculations. This may require
+              recalculation of affected Scope 2 records for selected reporting
+              periods. Do you want to continue?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-lg bg-muted/60 p-3 text-sm text-muted-foreground space-y-2">
+            <p>
+              What happens here: records already committed keep the emission
+              factor they were calculated with — those figures do not change.
+              The new geography applies to records created from now on, and to
+              any draft or rejected record that is edited and recalculated.
+            </p>
+            {editingId && locCount(editingId) > 0 && (
+              <p>
+                This subsidiary has {locCount(editingId)}{" "}
+                {locCount(editingId) === 1 ? "location" : "locations"}. Records
+                entered against a location take that location&apos;s geography,
+                not the subsidiary&apos;s, so they are unaffected either way.
+              </p>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={persist} disabled={saving}>
+              {saving ? "Saving…" : "Continue"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <LocationsDrawer
         subsidiary={locSubsidiary}
