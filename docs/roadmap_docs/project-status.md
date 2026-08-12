@@ -19,7 +19,7 @@
   - The user merges each PR individually. **Never start the next PR until asked.**
 - **Re-run `pnpm db:seed` after pulling WP7 PR 3** — it adds the `review@tonyai.local` consultant; without it the five new `/review` E2E tests fail at token grant.
 - **Everyone must re-run `pnpm setup` after pulling this** — the API now refuses to boot without `ALLOW_INSECURE_LOCAL_AUTH=true` in `apps/api/.env`, and `jsonwebtoken` → `jose` means a stale `node_modules` fails too
-- **Tests:** 291 unit (Vitest, API) + a `next.config` phase guard (web) + 31 E2E (Playwright) + 24 live RLS containment probes — green from a from-scratch `pnpm db:reset`
+- **Tests:** 291 unit (Vitest, API) + a `next.config` phase guard (web) + 31 E2E (Playwright) + 25 live RLS containment probes (incl. an RLS-coverage assertion) — green from a from-scratch `pnpm db:reset`
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)
@@ -227,6 +227,8 @@
 - **A non-author can still submit someone else's DRAFT** *(carried over from WP7 PR 3, re-confirmed in PR 4)* — `submit()` gates authorship only on the RESUBMIT path. PR 4 closed the UI half (a colleague's record no longer opens in the form), but the API gap remains: a `data_entry` user who can see the subsidiary can submit a draft they did not write. Decide whether drafts should match `update`/`remove`.
 - **A rejected record recalculates on ANY edit** — `update()` unconditionally re-runs `computeSnapshot`, so editing an unrelated field (a variance note) after a geography change moves the number: measured live, 0.2071 → 0.44 tCO₂e from changing a justification string. Defensible (the record is not committed) but surprising, and the geography-change confirmation now says so explicitly rather than leaving it implied.
 - **The dashboard's two data sources are now both year-scoped, but nothing else is** — `trackingMatrix` and `emissionsSummary` both take `DEFAULT_REPORTING_YEAR`. A year *picker* on the dashboard is the obvious next step; today the year is fixed by a constant and only stated in two card headers.
+- **`REPORTING_YEARS` and the API's year validation disagree** — the DTOs accept `@Min(2000) @Max(2100)` while the UI now offers 2015–2026. Pre-existing (the server was always wider than the old two-year list) and not a regression, but the two layers state different things about what a valid reporting year is. Decide which is the contract.
+- **The `rls-for-table` skill is now load-bearing, not advisory** — default privileges are granted to `service_role` only, so a new table comes up invisible to client roles until its own migration grants them. That is deliberately fail-closed, and `scripts/rls-probes.mjs` additionally fails if any table in `public` ships with RLS off. Anyone adding a table must follow the skill or the probes go red.
 - Billing/subscription model — not covered by any spec
 - Depth of `executive_viewer` / `consultant` UX flows
 - Mobile/responsive support targets

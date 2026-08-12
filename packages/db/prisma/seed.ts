@@ -69,7 +69,17 @@ const LOCATIONS = [
 export const DEMO_YEAR = 2026;
 export const PRIOR_YEAR = DEMO_YEAR - 1;
 
+// The DEMO_YEAR rows are the doc's demo numbers RE-DATED, so they need the same
+// "not authoritative" marking the prior-year row has. Without it the two sets
+// read backwards: a reader comparing them infers the year with the caveat is the
+// placeholder and the other one is real. `source` and `version` are printed
+// verbatim into the customer-facing factor appendix, so this is the label a
+// customer actually sees.
+
 const DEMO_SOURCE = 'docs/md_docs/calculation_logic.md §3 (prototype demo factors)';
+// Applied to the DEMO_YEAR rows: those values are the doc's demo set re-dated,
+// so they get exactly the same caveat the prior-year row carries.
+const DEMO_FACTOR_SOURCE = `${DEMO_SOURCE} — ${DEMO_YEAR} demo placeholder, NOT an authoritative value`;
 
 interface SeedFactor {
   category: string;
@@ -86,9 +96,9 @@ interface SeedFactor {
 
 const EMISSION_FACTORS: SeedFactor[] = [
   // --- Scope 2: purchased electricity (kgCO2e/kWh) — DEMO_YEAR ---
-  { category: 'Electricity', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.2071, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Electricity', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.4400, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Electricity', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.2310, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'residual-mix', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Electricity', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.2071, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Electricity', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.4400, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Electricity', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.2310, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'residual-mix', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
 
   // --- Scope 2: purchased electricity — PRIOR_YEAR versioning demo (UK) ---
   // Placeholder value (the doc gives one demo set only); present to prove that
@@ -98,18 +108,18 @@ const EMISSION_FACTORS: SeedFactor[] = [
   // --- Scope 1: natural gas (kgCO2e/kWh) — DEMO_YEAR ---
   // Geography-agnostic demo factor; seeded per supported geography so a lookup by
   // the reporting entity's geographyCode always resolves.
-  { category: 'Natural Gas', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Natural Gas', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Natural Gas', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Natural Gas', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Natural Gas', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Natural Gas', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
 
   // --- Scope 1: liquid fuels (kgCO2e/litre) — DEMO_YEAR ---
   // Doc §3.1 gives Diesel 2.6841 and Petrol 2.3111; both fall under the
   // canonical "Fuel" category, differentiated by geography-agnostic demo values.
   // Seeded per geography so a lookup always resolves; Diesel is used as the
   // representative "Fuel" factor here.
-  { category: 'Fuel', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Fuel', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Fuel', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Fuel', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Fuel', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Fuel', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
 ];
 
 // ---------------------------------------------------------------------------

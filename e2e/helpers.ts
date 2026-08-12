@@ -265,28 +265,50 @@ export async function lockPeriod(
  * unrelated specs — a 409 four files away is a very expensive way to learn that
  * teardown is broken.
  */
+/** Teardown deletes with the service-role key, so it must never be pointed at a
+ *  shared database. `supabaseEnv()` reads whatever the local env files say. */
+function assertLocalTarget(url: string): void {
+  if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(url)) {
+    throw new Error(
+      `Refusing to run E2E teardown against a non-local Supabase (${url}). ` +
+        'These deletes bypass RLS.',
+    );
+  }
+}
+
 async function del(
   request: APIRequestContext,
   url: string,
   headers: Record<string, string>,
 ): Promise<void> {
   const res = await request.delete(url, { headers });
-  if (!res.ok()) {
-    throw new Error(
-      `E2E cleanup failed: ${res.status()} on ${url.split('/rest/v1/')[1]} — ` +
-        `${await res.text()}`,
-    );
-  }
+  if (res.ok()) return null;
+  return `${res.status()} on ${url.split('/rest/v1/')[1]} — ${await res.text()}`;
+}
+
+/** Run every delete, THEN report. Failing fast on the first one skipped the
+ *  rest, which is the leak the check was added to prevent. */
+function reportCleanup(errors: (string | null)[]): void {
+  const failed = errors.filter(Boolean);
+  if (failed.length) throw new Error(`E2E cleanup failed: ${failed.join(' | ')}`);
 }
 
 export async function cleanupQuarterly(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
+  assertLocalTarget(url);
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
   // Locks first (independent), then records (evidence cascades in the DB).
-  await del(request, `${url}/rest/v1/period_locks?reporting_period=eq.${E2E_PERIOD}`, headers);
-  await del(request, `${url}/rest/v1/activity_records?reporting_period=eq.${E2E_PERIOD}`, headers);
+  // Scoped by YEAR as well as period. Filtering on period alone was survivable
+  // while the UI offered two years; DE-9 opened it to twelve, so an unscoped
+  // wipe would destroy a UAT tester's quarterly data in any of them — with the
+  // service-role key, which bypasses RLS and therefore every tenant boundary.
+  const scope = `reporting_period=eq.${E2E_PERIOD}&reporting_year=eq.${E2E_YEAR}`;
+  reportCleanup([
+    await del(request, `${url}/rest/v1/period_locks?${scope}`, headers),
+    await del(request, `${url}/rest/v1/activity_records?${scope}`, headers),
+  ]);
 }
 
 /**
@@ -302,10 +324,13 @@ export async function cleanupQuarterly(request: APIRequestContext): Promise<void
  */
 export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
+  assertLocalTarget(url);
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
-  await del(request, `${url}/rest/v1/subsidiaries?legal_name=like.E2E%20Test%20Co*`, headers);
+  reportCleanup([
+    await del(request, `${url}/rest/v1/subsidiaries?legal_name=like.E2E%20Test%20Co*`, headers),
+  ]);
 }
 
 /**
@@ -315,9 +340,12 @@ export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promis
  */
 export async function cleanupE2ETargets(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
+  assertLocalTarget(url);
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
-  await del(request, `${url}/rest/v1/targets?name=like.E2E-*`, headers);
-  await del(request, `${url}/rest/v1/subsidiary_denominators?unit=like.E2E-*`, headers);
+  reportCleanup([
+    await del(request, `${url}/rest/v1/targets?name=like.E2E-*`, headers),
+    await del(request, `${url}/rest/v1/subsidiary_denominators?unit=like.E2E-*`, headers),
+  ]);
 }
