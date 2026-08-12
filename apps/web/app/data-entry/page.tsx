@@ -422,8 +422,12 @@ function DataEntryPageInner() {
       } catch (e) {
         setPreview(null);
         if (e instanceof ApiError && e.status === 404) {
+          // Name the year that does work. DE-9 opened the list to 2015–2026
+          // while the prototype library still covers one year, so without this a
+          // tester picking 2018 sees a refusal that reads like a broken app
+          // rather than a boundary of the demo data.
           setPreviewError(
-            "No emission factor for this selection. Try a different category, geography or year.",
+            `No emission factor for this selection. This prototype's factor library currently covers ${DEFAULT_REPORTING_YEAR} — try that year, or a different category or geography.`,
           );
         } else {
           // 400 (unit mismatch / unsupported unit) and anything else: show the

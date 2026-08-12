@@ -25,9 +25,9 @@ test('reports: live preview + PDF/Excel/CSV downloads', async ({ page }) => {
   // Exact server-chosen filenames (proves Content-Disposition survives CORS)
   // plus a magic-byte check that the artifact really is what it claims to be.
   const cases = [
-    { button: 'Download PDF', file: 'tonyai-executive_summary-2024.pdf', magic: '%PDF', toast: 'PDF report generated' },
-    { button: 'Export Excel', file: 'tonyai-executive_summary-2024.xlsx', magic: 'PK', toast: 'EXCEL report generated' },
-    { button: 'Export CSV', file: 'tonyai-executive_summary-2024.csv', magic: 'subsidiary,', toast: 'CSV report generated' },
+    { button: 'Download PDF', file: 'tonyai-executive_summary-2026.pdf', magic: '%PDF', toast: 'PDF report generated' },
+    { button: 'Export Excel', file: 'tonyai-executive_summary-2026.xlsx', magic: 'PK', toast: 'EXCEL report generated' },
+    { button: 'Export CSV', file: 'tonyai-executive_summary-2026.csv', magic: 'subsidiary,', toast: 'CSV report generated' },
   ] as const;
 
   for (const c of cases) {

@@ -15,7 +15,7 @@ import {
  * activity data, sees a live tCO₂e preview, saves a draft, attaches the required
  * evidence, submits, then approves it (via the API — the UI path is covered
  * by `review-queue.spec.ts`) and
- * the record shows as Approved. Uses TonyAI Energy · Electricity · 2024 · Q1 —
+ * the record shows as Approved. Uses TonyAI Energy · Electricity · 2026 · Q1 —
  * an unseeded quarterly tuple with no baseline, so nothing is flagged anomalous.
  */
 test('data entry: draft → live preview → evidence → submit → approve → visible', async ({
@@ -25,8 +25,8 @@ test('data entry: draft → live preview → evidence → submit → approve →
   await login(page, ADMIN_EMAIL);
   await page.goto('/data-entry');
 
-  // Reporting scope: Energy (TR) · Electricity · 2024 · quarterly · Q1 (defaults
-  // already are Electricity / 2024 / Quarterly / Q1 / kWh).
+  // Reporting scope: Energy (TR) · Electricity · 2026 · quarterly · Q1 (defaults
+  // already are Electricity / 2026 / Quarterly / Q1 / kWh).
   await selectSubsidiary(page, 'TonyAI Energy (TR)');
 
   // Activity value → live preview (the "Emission factor" row only renders on a
@@ -58,12 +58,12 @@ test('data entry: draft → live preview → evidence → submit → approve →
 
   // Reload, re-select Energy (the page defaults to the first subsidiary), and
   // confirm the record now reads as Approved in Previous submissions. Scope to
-  // the single Q1 2024 row — addressed by role now that a submission row is a
+  // the single Q1 2026 row — addressed by role now that a submission row is a
   // real button (it reopens the record), not a styled div. A
   // seeded "Approved" elsewhere on the page can't satisfy this — the badge must
   // be in the same row as our record.
   await page.reload();
   await selectSubsidiary(page, 'TonyAI Energy (TR)');
-  const row = page.getByRole('button', { name: /Q1 2024/ });
+  const row = page.getByRole('button', { name: /Q1 2026/ });
   await expect(row).toContainText('Approved');
 });

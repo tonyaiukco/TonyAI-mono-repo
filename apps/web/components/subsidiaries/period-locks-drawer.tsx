@@ -20,9 +20,9 @@ import {
 import { Lock, LockOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { DEFAULT_REPORTING_YEAR, REPORTING_YEARS } from '@/lib/types';
 import type { PeriodLockDTO, ReportingPeriod, SubsidiaryDTO } from '@/lib/types';
 
-const YEARS = [2024, 2023] as const;
 const PERIODS: { value: ReportingPeriod; label: string }[] = [
   { value: 'quarterly', label: 'Quarterly' },
   { value: 'monthly', label: 'Monthly' },
@@ -53,7 +53,7 @@ export function PeriodLocksDrawer({
   const [locks, setLocks] = useState<PeriodLockDTO[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [year, setYear] = useState<number>(2024);
+  const [year, setYear] = useState<number>(DEFAULT_REPORTING_YEAR);
   const [period, setPeriod] = useState<ReportingPeriod>('quarterly');
   const [periodValue, setPeriodValue] = useState('Q1');
 
@@ -166,7 +166,7 @@ export function PeriodLocksDrawer({
                       <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {YEARS.map((y) => (
+                          {REPORTING_YEARS.map((y) => (
                             <SelectItem key={y} value={String(y)}>{y}</SelectItem>
                           ))}
                         </SelectContent>

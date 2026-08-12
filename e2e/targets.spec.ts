@@ -13,12 +13,12 @@ test('targets: seeded progress + create round-trip', async ({ page }) => {
   await page.goto('/emissions');
   await page.getByRole('tab', { name: 'Targets' }).click();
 
-  // Seeded targets render. The Scope-1 target has a 2024 baseline, so its
+  // Seeded targets render. The Scope-1 target has a 2026 baseline, so its
   // progress is honestly "n/a" regardless of any other test's data (a stable
   // assertion; exact % status depends on mutable committed emissions).
   await expect(page.getByText('Manufacturing SBTi 1.5°C')).toBeVisible();
   await expect(page.getByText('Net-zero pathway 2030')).toBeVisible();
-  await expect(page.getByText(/no committed data for a year after the 2024 baseline/i)).toBeVisible();
+  await expect(page.getByText(/no committed data for a year after the 2026 baseline/i)).toBeVisible();
 
   // Create a target (sentinel name) via the super_admin dialog.
   await page.getByRole('button', { name: 'Add target' }).click();

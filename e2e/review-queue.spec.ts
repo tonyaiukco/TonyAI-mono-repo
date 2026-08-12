@@ -49,7 +49,7 @@ test('a submitted record reaches the queue and approving clears it', async ({
 
   const row = page
     .locator('table tbody tr', { hasText: 'TonyAI Trading' })
-    .filter({ hasText: 'Q4 2024' });
+    .filter({ hasText: 'Q4 2026' });
   await expect(row).toContainText('submitted');
   await row.click();
 
@@ -60,7 +60,7 @@ test('a submitted record reaches the queue and approving clears it', async ({
   await expect(
     page
       .locator('table tbody tr', { hasText: 'TonyAI Trading' })
-      .filter({ hasText: 'Q4 2024' }),
+      .filter({ hasText: 'Q4 2026' }),
   ).toHaveCount(0);
 
   // Cross-check the actual state rather than trusting the screen.
@@ -88,7 +88,7 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
   await page.goto('/review');
   await page
     .locator('table tbody tr', { hasText: 'TonyAI Logistics' })
-    .filter({ hasText: 'Q3 2024' })
+    .filter({ hasText: 'Q3 2026' })
     .click();
 
   // No reason typed yet: rejecting is not offered, because a rejection with no
@@ -117,7 +117,7 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
   // rather than silently deciding which record the assertion is about.
   await page
     .locator('table tbody tr', { hasText: 'TonyAI Logistics' })
-    .filter({ hasText: 'Q3 2024' })
+    .filter({ hasText: 'Q3 2026' })
     .click();
   await expect(
     page.getByText('Invoice total does not match the meter reading'),
@@ -170,7 +170,7 @@ test('a consultant may send a record back but is not offered Approve', async ({
   const row = page
     .locator('table tbody tr', { hasText: 'TonyAI Gas' })
     .filter({ hasText: 'Natural Gas' })
-    .filter({ hasText: 'Q1 2024' });
+    .filter({ hasText: 'Q1 2026' });
   await row.click();
 
   // The control a consultant may not use is absent, and the page says why
@@ -181,7 +181,7 @@ test('a consultant may send a record back but is not offered Approve', async ({
   // The sheet must carry what a decision needs. Both of these were implemented
   // and asserted by nothing — removing either left the suite green.
   await expect(page.getByText('sample-invoice.pdf')).toBeVisible();
-  await expect(page.getByText(/prototype demo factors.*v2024\.1/)).toBeVisible();
+  await expect(page.getByText(/prototype demo factors.*v2026\.1/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Start review' }).click();
   await expect(page.getByText('Taken into review')).toBeVisible();
@@ -224,8 +224,8 @@ test('the queue is ordered oldest-first', async ({ page, request }) => {
   await expect(rows.first()).toBeVisible();
 
   const text = await rows.allInnerTexts();
-  const older = text.findIndex((t) => t.includes('Natural Gas') && t.includes('Q2 2024'));
-  const newer = text.findIndex((t) => t.includes('Fuel') && t.includes('Q2 2024'));
+  const older = text.findIndex((t) => t.includes('Natural Gas') && t.includes('Q2 2026'));
+  const newer = text.findIndex((t) => t.includes('Fuel') && t.includes('Q2 2026'));
   expect(older).toBeGreaterThanOrEqual(0);
   expect(newer).toBeGreaterThan(older);
 });
@@ -267,7 +267,7 @@ test('the API — not the UI — is what stops a consultant approving', async ({
     data: {
       subsidiaryId: SUB.gas,
       locationId: null,
-      reportingYear: 2024,
+      reportingYear: 2026,
       reportingPeriod: 'quarterly',
       periodValue: 'Q4',
       category: 'Electricity',

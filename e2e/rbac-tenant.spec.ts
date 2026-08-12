@@ -45,7 +45,7 @@ test('data_entry: locking a period is rejected at the API (403)', async ({ reque
     headers: bearer(token),
     data: {
       subsidiaryId: SUB.energy, // even an accessible subsidiary — RBAC forbids the action
-      reportingYear: 2024,
+      reportingYear: 2026,
       reportingPeriod: 'quarterly',
       periodValue: 'Q4',
     },

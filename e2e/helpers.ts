@@ -33,11 +33,14 @@ export const SUB = {
 export const OUT_OF_SCOPE_SUB = SUB.mfg;
 
 /**
- * The seed is monthly-2024 only, so the whole `quarterly` space is unseeded.
+ * The seed is monthly-only in E2E_YEAR, so the whole `quarterly` space is unseeded.
  * Every E2E write lives there (distinct subsidiary per test → no tuple/baseline
  * collisions) and the teardown wipes all quarterly rows — the seed is untouched.
  */
-export const E2E_YEAR = 2024;
+// Must track the seed's DEMO_YEAR: the invariant is "the seed is monthly-only in
+// this year, so the whole quarterly space is ours". Point it at a different year
+// and the teardown stops reclaiming what the specs write.
+export const E2E_YEAR = 2026;
 export const E2E_PERIOD = 'quarterly';
 
 // --- Login (UI) -------------------------------------------------------------
@@ -147,7 +150,7 @@ interface CommittedRecordInput {
 
 /**
  * Arrange a committed (submitted) activity record via the API: create draft →
- * attach evidence (all 2024 factor categories are evidence-required) → submit.
+ * attach evidence (every seeded factor category is evidence-required) → submit.
  * Returns the record id. Used to build anomaly baselines that would be tedious
  * to create through the UI.
  */
@@ -253,14 +256,37 @@ export async function lockPeriod(
  * seed-preserving reset. Evidence rows cascade on the DB FK; a few orphaned
  * storage objects may remain locally (harmless).
  */
+/**
+ * A cleanup that fails must SAY so.
+ *
+ * These ran fire-and-forget, so when `prisma migrate reset` wiped the schema
+ * grants every delete came back 403 and the suite carried on as if the database
+ * had been reset. The rows it left behind then surfaced as tuple collisions in
+ * unrelated specs — a 409 four files away is a very expensive way to learn that
+ * teardown is broken.
+ */
+async function del(
+  request: APIRequestContext,
+  url: string,
+  headers: Record<string, string>,
+): Promise<void> {
+  const res = await request.delete(url, { headers });
+  if (!res.ok()) {
+    throw new Error(
+      `E2E cleanup failed: ${res.status()} on ${url.split('/rest/v1/')[1]} — ` +
+        `${await res.text()}`,
+    );
+  }
+}
+
 export async function cleanupQuarterly(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
   // Locks first (independent), then records (evidence cascades in the DB).
-  await request.delete(`${url}/rest/v1/period_locks?reporting_period=eq.${E2E_PERIOD}`, { headers });
-  await request.delete(`${url}/rest/v1/activity_records?reporting_period=eq.${E2E_PERIOD}`, { headers });
+  await del(request, `${url}/rest/v1/period_locks?reporting_period=eq.${E2E_PERIOD}`, headers);
+  await del(request, `${url}/rest/v1/activity_records?reporting_period=eq.${E2E_PERIOD}`, headers);
 }
 
 /**
@@ -279,7 +305,7 @@ export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promis
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
-  await request.delete(`${url}/rest/v1/subsidiaries?legal_name=like.E2E%20Test%20Co*`, { headers });
+  await del(request, `${url}/rest/v1/subsidiaries?legal_name=like.E2E%20Test%20Co*`, headers);
 }
 
 /**
@@ -292,6 +318,6 @@ export async function cleanupE2ETargets(request: APIRequestContext): Promise<voi
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
-  await request.delete(`${url}/rest/v1/targets?name=like.E2E-*`, { headers });
-  await request.delete(`${url}/rest/v1/subsidiary_denominators?unit=like.E2E-*`, { headers });
+  await del(request, `${url}/rest/v1/targets?name=like.E2E-*`, headers);
+  await del(request, `${url}/rest/v1/subsidiary_denominators?unit=like.E2E-*`, headers);
 }

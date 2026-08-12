@@ -47,7 +47,32 @@ test('super_admin reads the trail; the newest entry is the action just performed
   await expect(firstRow).toContainText('super_admin');
 });
 
-test('the viewer paginates rather than loading the whole trail', async ({ page }) => {
+test('the viewer paginates rather than loading the whole trail', async ({
+  page,
+  request,
+}) => {
+  // Establish the precondition instead of inheriting it. This asserted a second
+  // page while relying on whatever audit rows the dev database happened to have
+  // accumulated — it passed for months and went red the first time the database
+  // was reset, which means it was never testing the pager on its own terms.
+  // A subsidiary PATCH is the cheapest audited mutation available.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const PAGE_SIZE = 25;
+  const before = await request.get(`${API_BASE}/audit?limit=1`, { headers: bearer(token) });
+  const total = (await before.json()).total as number;
+  for (let i = total; i <= PAGE_SIZE; i++) {
+    const res = await request.patch(`${API_BASE}/subsidiaries/${SUB.gas}`, {
+      headers: bearer(token),
+      data: { sector: `Utilities (audit fixture ${i})` },
+    });
+    expect(res.status()).toBe(200);
+  }
+  // Leave the seeded value as it was; the audit rows this made are the point.
+  await request.patch(`${API_BASE}/subsidiaries/${SUB.gas}`, {
+    headers: bearer(token),
+    data: { sector: 'Utilities' },
+  });
+
   await login(page, ADMIN_EMAIL);
   await page.goto('/audit');
   await expect(page.getByRole('heading', { name: 'Audit Trail' })).toBeVisible();

@@ -54,12 +54,21 @@ const LOCATIONS = [
 // factor is applied (see the calculation engine's normalize()): electricity and
 // natural gas -> kWh, liquid fuels -> litres.
 //
-// The doc gives a single demo factor set (treated here as reporting year 2024).
-// To demonstrate factor VERSIONING we additionally seed a 2023 variant for UK
-// electricity, explicitly marked as a demo placeholder — the doc does not give a
-// 2023 number, so it must NOT be treated as an authoritative DEFRA 2023 value.
+// The doc gives a single demo factor set, seeded here under DEMO_YEAR. The
+// VALUES are the doc's demo numbers; re-dating them does not make them that
+// year's real factors, which is why every row's `source` says so. Authoritative
+// DEFRA/AIB values arrive with the Phase-4 factor library.
+// To demonstrate factor VERSIONING we additionally seed a PRIOR_YEAR variant for
+// UK electricity, explicitly marked as a demo placeholder.
 // The `source`/`version` fields carry provenance so a calculation can snapshot
 // exactly which factor it used.
+// The reporting year the demo dataset lives in. Restated in 30+ places before
+// WP15; a single constant is what stops the next move from being another sweep.
+// PRIOR_YEAR exists only to give the factor library a second version to resolve
+// against, so factor versioning is demonstrable.
+export const DEMO_YEAR = 2026;
+export const PRIOR_YEAR = DEMO_YEAR - 1;
+
 const DEMO_SOURCE = 'docs/md_docs/calculation_logic.md §3 (prototype demo factors)';
 
 interface SeedFactor {
@@ -76,31 +85,31 @@ interface SeedFactor {
 }
 
 const EMISSION_FACTORS: SeedFactor[] = [
-  // --- Scope 2: purchased electricity (kgCO2e/kWh) — 2024 ---
-  { category: 'Electricity', geographyCode: 'UK', reportingYear: 2024, scope: 2, factorValue: 0.2071, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_SOURCE, version: '2024.1' },
-  { category: 'Electricity', geographyCode: 'TR', reportingYear: 2024, scope: 2, factorValue: 0.4400, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_SOURCE, version: '2024.1' },
-  { category: 'Electricity', geographyCode: 'EU', reportingYear: 2024, scope: 2, factorValue: 0.2310, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'residual-mix', source: DEMO_SOURCE, version: '2024.1' },
+  // --- Scope 2: purchased electricity (kgCO2e/kWh) — DEMO_YEAR ---
+  { category: 'Electricity', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.2071, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Electricity', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.4400, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Electricity', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.2310, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'residual-mix', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
 
-  // --- Scope 2: purchased electricity — 2023 versioning demo (UK) ---
-  // Placeholder value (doc gives no 2023 number); present only to prove that
-  // (category, geography, year) resolves to a DIFFERENT factor than 2024.
-  { category: 'Electricity', geographyCode: 'UK', reportingYear: 2023, scope: 2, factorValue: 0.2123, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: `${DEMO_SOURCE} — 2023 demo placeholder, NOT an authoritative value`, version: '2023.1' },
+  // --- Scope 2: purchased electricity — PRIOR_YEAR versioning demo (UK) ---
+  // Placeholder value (the doc gives one demo set only); present to prove that
+  // (category, geography, year) resolves to a DIFFERENT factor than DEMO_YEAR.
+  { category: 'Electricity', geographyCode: 'UK', reportingYear: PRIOR_YEAR, scope: 2, factorValue: 0.2123, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: `${DEMO_SOURCE} — ${PRIOR_YEAR} demo placeholder, NOT an authoritative value`, version: `${PRIOR_YEAR}.1` },
 
-  // --- Scope 1: natural gas (kgCO2e/kWh) — 2024 ---
+  // --- Scope 1: natural gas (kgCO2e/kWh) — DEMO_YEAR ---
   // Geography-agnostic demo factor; seeded per supported geography so a lookup by
   // the reporting entity's geographyCode always resolves.
-  { category: 'Natural Gas', geographyCode: 'UK', reportingYear: 2024, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: '2024.1' },
-  { category: 'Natural Gas', geographyCode: 'TR', reportingYear: 2024, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: '2024.1' },
-  { category: 'Natural Gas', geographyCode: 'EU', reportingYear: 2024, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: '2024.1' },
+  { category: 'Natural Gas', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Natural Gas', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Natural Gas', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
 
-  // --- Scope 1: liquid fuels (kgCO2e/litre) — 2024 ---
+  // --- Scope 1: liquid fuels (kgCO2e/litre) — DEMO_YEAR ---
   // Doc §3.1 gives Diesel 2.6841 and Petrol 2.3111; both fall under the
   // canonical "Fuel" category, differentiated by geography-agnostic demo values.
   // Seeded per geography so a lookup always resolves; Diesel is used as the
   // representative "Fuel" factor here.
-  { category: 'Fuel', geographyCode: 'UK', reportingYear: 2024, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: '2024.1' },
-  { category: 'Fuel', geographyCode: 'TR', reportingYear: 2024, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: '2024.1' },
-  { category: 'Fuel', geographyCode: 'EU', reportingYear: 2024, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: '2024.1' },
+  { category: 'Fuel', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Fuel', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
+  { category: 'Fuel', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_SOURCE, version: `${DEMO_YEAR}.1` },
 ];
 
 // ---------------------------------------------------------------------------
@@ -113,7 +122,7 @@ const EMISSION_FACTORS: SeedFactor[] = [
 //
 // Only Scope 1 & 2 categories are seeded (Electricity, Natural Gas, Fuel) —
 // the only ones with seeded factors, and exactly the Phase 1 Scope 1 & 2
-// boundary. Records are seeded MONTHLY across 2024 so the monthly, quarterly
+// boundary. Records are seeded MONTHLY across DEMO_YEAR so the monthly, quarterly
 // and yearly trend views all populate. Records are `approved` (committed), so
 // they feed the inventory the same way real reviewed data would.
 const MONTHS = [
@@ -131,7 +140,7 @@ const MONTHS = [
   'December',
 ];
 
-const ACTIVITY_YEAR = 2024;
+const ACTIVITY_YEAR = DEMO_YEAR;
 
 interface ActivitySpec {
   subsidiaryIndex: number; // index into SUBSIDIARIES
@@ -516,19 +525,20 @@ async function main() {
 
   // --- Targets & intensity denominators (WP5, DEMO) ------------------------
   // Baselines are DECLARED business inputs (demo values, not computed); "current"
-  // progress is derived live from the real committed 2024 records. Two targets use
-  // a 2023 baseline (so 2024 shows real progress); one uses a 2024 baseline (so it
+  // progress is derived live from the real committed DEMO_YEAR records. Two use
+  // a PRIOR_YEAR baseline (so DEMO_YEAR shows real progress); one uses a
+  // DEMO_YEAR baseline (so it
   // honestly reads "n/a" — no post-baseline year has data yet). Denominators are
   // demo organisation metrics driving the Intensity toggle (Energy + Mfg have all
   // four; Gas has two; Logistics + Trading have none, so their toggle stays off).
   console.log('Seeding demo targets + intensity denominators...');
-  // Baselines are tuned near the real 2024 committed emissions (~1000 / ~580 tCO₂e)
+  // Baselines are tuned near the real committed emissions (~1000 / ~580 tCO₂e)
   // so progress lands in a meaningful spread (on_track / at_risk), not pinned at
-  // 100%. The Gas target uses a 2024 baseline → "n/a" (no post-baseline data).
+  // 100%. The Gas target uses a DEMO_YEAR baseline → "n/a" (no post-baseline data).
   const DEMO_TARGETS = [
-    { subsidiaryId: SUBSIDIARIES[0].id, name: 'Net-zero pathway 2030', basis: 'science_based', scope: 'all', baselineYear: 2023, baselineTCo2e: 1600, targetYear: 2030, targetTCo2e: 900 },
-    { subsidiaryId: SUBSIDIARIES[2].id, name: 'Manufacturing SBTi 1.5°C', basis: 'science_based', scope: 'all', baselineYear: 2023, baselineTCo2e: 900, targetYear: 2030, targetTCo2e: 350 },
-    { subsidiaryId: SUBSIDIARIES[1].id, name: 'Scope 1 reduction plan', basis: 'baseline_reduction', scope: 'scope1', baselineYear: 2024, baselineTCo2e: 700, targetYear: 2030, targetTCo2e: 350 },
+    { subsidiaryId: SUBSIDIARIES[0].id, name: 'Net-zero pathway 2030', basis: 'science_based', scope: 'all', baselineYear: PRIOR_YEAR, baselineTCo2e: 1600, targetYear: 2030, targetTCo2e: 900 },
+    { subsidiaryId: SUBSIDIARIES[2].id, name: 'Manufacturing SBTi 1.5°C', basis: 'science_based', scope: 'all', baselineYear: PRIOR_YEAR, baselineTCo2e: 900, targetYear: 2030, targetTCo2e: 350 },
+    { subsidiaryId: SUBSIDIARIES[1].id, name: 'Scope 1 reduction plan', basis: 'baseline_reduction', scope: 'scope1', baselineYear: DEMO_YEAR, baselineTCo2e: 700, targetYear: 2030, targetTCo2e: 350 },
   ];
   let targetCount = 0;
   for (const t of DEMO_TARGETS) {
@@ -542,16 +552,16 @@ async function main() {
   }
 
   const DEMO_DENOMINATORS = [
-    { subsidiaryId: SUBSIDIARIES[0].id, year: 2024, metric: 'area', value: 85000, unit: 'm²' },
-    { subsidiaryId: SUBSIDIARIES[0].id, year: 2024, metric: 'revenue', value: 320, unit: 'M EUR' },
-    { subsidiaryId: SUBSIDIARIES[0].id, year: 2024, metric: 'headcount', value: 1800, unit: 'FTE' },
-    { subsidiaryId: SUBSIDIARIES[0].id, year: 2024, metric: 'production_output', value: 950000, unit: 'units' },
-    { subsidiaryId: SUBSIDIARIES[2].id, year: 2024, metric: 'area', value: 62000, unit: 'm²' },
-    { subsidiaryId: SUBSIDIARIES[2].id, year: 2024, metric: 'revenue', value: 480, unit: 'M EUR' },
-    { subsidiaryId: SUBSIDIARIES[2].id, year: 2024, metric: 'headcount', value: 1450, unit: 'FTE' },
-    { subsidiaryId: SUBSIDIARIES[2].id, year: 2024, metric: 'production_output', value: 1250000, unit: 'units' },
-    { subsidiaryId: SUBSIDIARIES[1].id, year: 2024, metric: 'revenue', value: 210, unit: 'M EUR' },
-    { subsidiaryId: SUBSIDIARIES[1].id, year: 2024, metric: 'headcount', value: 720, unit: 'FTE' },
+    { subsidiaryId: SUBSIDIARIES[0].id, year: DEMO_YEAR, metric: 'area', value: 85000, unit: 'm²' },
+    { subsidiaryId: SUBSIDIARIES[0].id, year: DEMO_YEAR, metric: 'revenue', value: 320, unit: 'M EUR' },
+    { subsidiaryId: SUBSIDIARIES[0].id, year: DEMO_YEAR, metric: 'headcount', value: 1800, unit: 'FTE' },
+    { subsidiaryId: SUBSIDIARIES[0].id, year: DEMO_YEAR, metric: 'production_output', value: 950000, unit: 'units' },
+    { subsidiaryId: SUBSIDIARIES[2].id, year: DEMO_YEAR, metric: 'area', value: 62000, unit: 'm²' },
+    { subsidiaryId: SUBSIDIARIES[2].id, year: DEMO_YEAR, metric: 'revenue', value: 480, unit: 'M EUR' },
+    { subsidiaryId: SUBSIDIARIES[2].id, year: DEMO_YEAR, metric: 'headcount', value: 1450, unit: 'FTE' },
+    { subsidiaryId: SUBSIDIARIES[2].id, year: DEMO_YEAR, metric: 'production_output', value: 1250000, unit: 'units' },
+    { subsidiaryId: SUBSIDIARIES[1].id, year: DEMO_YEAR, metric: 'revenue', value: 210, unit: 'M EUR' },
+    { subsidiaryId: SUBSIDIARIES[1].id, year: DEMO_YEAR, metric: 'headcount', value: 720, unit: 'FTE' },
   ];
   for (const d of DEMO_DENOMINATORS) {
     await prisma.subsidiaryDenominator.upsert({
@@ -567,7 +577,7 @@ async function main() {
     });
   }
   console.log(
-    `  seeded ${targetCount} new demo targets + ${DEMO_DENOMINATORS.length} intensity denominators (declared demo baselines; progress computed from real 2024 data).`,
+    `  seeded ${targetCount} new demo targets + ${DEMO_DENOMINATORS.length} intensity denominators (declared demo baselines; progress computed from real ${DEMO_YEAR} data).`,
   );
 
   console.log('\nSeed complete.');
