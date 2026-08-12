@@ -297,6 +297,35 @@ async function main() {
       `row status ${sampleRow.status} -> ${afterRow.status}`,
   );
 
+  // --- Every table must carry RLS ------------------------------------------
+  // The grants migration hands client roles SELECT/INSERT/UPDATE/DELETE on all
+  // tables, so a table shipped with RLS off is not "invisible until wired up" —
+  // it is open. `pg_class` is not reachable through PostgREST, so this asks the
+  // database directly, the same way the seed does.
+  try {
+    // The root package does not depend on @tonyai/db, so resolve the generated
+    // client by path — the same client the seed uses.
+    const { createRequire } = await import('node:module');
+    const req = createRequire(import.meta.url);
+    const { PrismaClient } = req('../packages/db/generated/client');
+    const prisma = new PrismaClient();
+    const rows = await prisma.$queryRawUnsafe(
+      `select c.relname as name from pg_class c
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relkind = 'r'
+          and not c.relrowsecurity and c.relname <> '_prisma_migrations'`,
+    );
+    await prisma.$disconnect();
+    const open = rows.map((r) => r.name);
+    check(
+      'every table in public has RLS enabled (a grant without RLS is open, not invisible)',
+      open.length === 0,
+      open.length ? `RLS missing on: ${open.join(', ')}` : 'all tables protected',
+    );
+  } catch (e) {
+    check('RLS coverage check could run', false, e.message);
+  }
+
   console.log('');
   if (failures.length) {
     console.error(`FAILED — ${failures.length} check(s): ${failures.join(', ')}`);

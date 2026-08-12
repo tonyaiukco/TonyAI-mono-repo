@@ -34,10 +34,10 @@ test('dashboard renders the emissions overview + tracking matrix', async ({ page
   // The tracking matrix (FR §2) renders on live data (heading "Data Collection Status").
   await expect(page.getByRole('heading', { name: 'Data Collection Status' })).toBeVisible();
   // Scoped to one year: without it the endpoint folds every year into a cell,
-  // so a subsidiary complete for 2023 and empty for 2024 reads as complete.
+  // so a subsidiary complete for 2023 and empty for 2026 reads as complete.
   await expect(
     page.getByRole('heading', { name: /Data Collection Status/ }),
-  ).toContainText('2024');
+  ).toContainText('2026');
 });
 
 test('a matrix cell opens Data Entry for THAT subsidiary and category', async ({
@@ -56,7 +56,7 @@ test('a matrix cell opens Data Entry for THAT subsidiary and category', async ({
   await page.waitForURL(/\/data-entry\?/);
   const url = new URL(page.url());
   expect(url.searchParams.get('category')).toBe('Natural Gas');
-  expect(url.searchParams.get('year')).toBe('2024');
+  expect(url.searchParams.get('year')).toBe('2026');
   expect(url.searchParams.get('subsidiaryId')).toBeTruthy();
 
   // The form arrives on that category rather than the page default — read off
@@ -95,7 +95,7 @@ test('a cell reopens the single record that already exists there', async ({
   expect(created.status()).toBe(201);
 
   // The precondition is the whole test: "exactly one" is what makes the cell
-  // unambiguous. A stray MONTHLY Trading/Fuel/2024 row — which the quarterly
+  // unambiguous. A stray MONTHLY Trading/Fuel/2026 row — which the quarterly
   // teardown does not reclaim — would make this fail for a reason that has
   // nothing to do with the code under test, so state it out loud.
   const existing = await request.get(
@@ -104,7 +104,7 @@ test('a cell reopens the single record that already exists there', async ({
   );
   expect(
     (await existing.json()).length,
-    'expected exactly one Trading/Fuel/2024 record — clear stray rows for this tuple',
+    'expected exactly one Trading/Fuel/2026 record — clear stray rows for this tuple',
   ).toBe(1);
 
   await login(page, ADMIN_EMAIL);
@@ -117,7 +117,7 @@ test('a cell reopens the single record that already exists there', async ({
 });
 
 test('a cell with several records that year guesses nothing', async ({ page }) => {
-  // The seed holds twelve monthly Electricity records for Energy in 2024, so
+  // The seed holds twelve monthly Electricity records for Energy in 2026, so
   // the target is ambiguous. Opening the first would silently put the user in a
   // period they did not ask for.
   await login(page, ADMIN_EMAIL);
@@ -125,7 +125,7 @@ test('a cell with several records that year guesses nothing', async ({ page }) =
   await page.waitForURL(/\/data-entry\?/);
 
   await expect(
-    page.getByText(/Electricity records exist for 2024/),
+    page.getByText(/Electricity records exist for 2026/),
   ).toBeVisible();
   await expect(page.getByText(/Editing draft/)).toHaveCount(0);
 });
@@ -167,7 +167,7 @@ test('moving the form off a loaded record stops targeting it', async ({
   await page.goto(
     `/data-entry?subsidiaryId=${SUB.logistics}&category=Fuel&year=${E2E_YEAR}`,
   );
-  await page.getByRole('button', { name: /Q4 2024/ }).click();
+  await page.getByRole('button', { name: /Q4 2026/ }).click();
   await expect(page.getByText(/Editing draft/)).toBeVisible();
 
   // Move to a different period — the same form, a different reporting entity.

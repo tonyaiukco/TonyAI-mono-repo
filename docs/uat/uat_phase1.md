@@ -1,5 +1,12 @@
 # TonyAI — Phase 1 UAT Plan & Test Catalog
 
+> ⚠️ **Re-seed before this round.** The demo dataset moved from 2024 to **2026**
+> (round-1 **DE-9**), so a database seeded earlier still holds 2024 data and the
+> scenarios below will not match it. Run **`pnpm db:reset`** — plain `pnpm db:seed`
+> upserts, so it would leave the old 2024 rows sitting beside the new ones.
+> Reporting years now offer **2015–2026**; emission factors still cover 2026 only,
+> so any other year honestly reports that no factor exists for the selection.
+
 > **Purpose:** the single UAT document for opening TonyAI Phase 1 to external testers (1-2 users).
 > **Version:** Phase 1 complete (WP1–WP6) + UAT-prep fixes · 2026-07-20.
 > **Scope under test:** Scope 1 & 2 carbon accounting, local environment.
@@ -32,9 +39,9 @@ TonyAI is a multi-tenant carbon-accounting platform for holding companies. Phase
 | `entry@tonyai.local` | `data_entry` | only **2** subsidiaries (TonyAI Energy, TonyAI Logistics); cannot manage org structure, cannot generate reports |
 | `review@tonyai.local` | `consultant` | organisation-wide read; may review and reject records but **may not approve**, and may not enter, edit or submit data |
 
-**Seed data:** 1 organisation · 5 subsidiaries · 8 operational locations · 102 approved monthly 2024 activity records (each with a demo evidence file) · 3 reduction targets · 10 intensity denominators.
+**Seed data:** 1 organisation · 5 subsidiaries · 8 operational locations · 102 approved monthly 2026 activity records (each with a demo evidence file) · 3 reduction targets · 10 intensity denominators.
 
-**Recommended free period for entry tests:** any **2024 · Quarterly** period (the seed only fills monthly periods).
+**Recommended free period for entry tests:** any **2026 · Quarterly** period (the seed only fills monthly periods).
 
 ## 3. Test-case catalog
 
@@ -78,12 +85,12 @@ Conventions: run as `admin@tonyai.local` unless the TC says otherwise. Mark each
 
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
-| ENTRY-01 | As admin: pick **TonyAI Energy · Electricity · 2024 · Quarterly · Q1**, enter `12500` kWh | **Live tCO₂e preview** appears with factor value, source and version | |
+| ENTRY-01 | As admin: pick **TonyAI Energy · Electricity · 2026 · Quarterly · Q1**, enter `12500` kWh | **Live tCO₂e preview** appears with factor value, source and version | |
 | ENTRY-02 | Click **Save draft** | Record appears under *Previous submissions* as **Draft**; the **Evidence vault** appears | |
 | ENTRY-03 | Click **Submit for review** *without* uploading a file | Blocked with "requires at least one evidence file" (evidence gate) | |
 | ENTRY-04 | Upload a PDF/JPG/XLSX into the vault → **Submit for review** | "Submitted for review"; status badge turns **Submitted** | |
 | ENTRY-05 | Repeat ENTRY-01 with the **same** period/category → Save draft | Clear duplicate error (a record for this combination exists) | |
-| ENTRY-06 | Pick a period **with history** (e.g. Energy · Electricity · 2024 · Quarterly · Q2 after committing Q1), enter a value ~10× Q1 → Save draft | Amber **anomaly banner** + mandatory *Reason for variance* field; submit blocked until a reason is entered | |
+| ENTRY-06 | Pick a period **with history** (e.g. Energy · Electricity · 2026 · Quarterly · Q2 after committing Q1), enter a value ~10× Q1 → Save draft | Amber **anomaly banner** + mandatory *Reason for variance* field; submit blocked until a reason is entered | |
 | ENTRY-07 | Switch category to **Mobile Combustion** or **Refrigerants**, enter a value | Preview says "No emission factor for this selection" — expected: Phase 1 seeds factors only for Electricity / Natural Gas / Fuel | |
 | ENTRY-08 | As entry: create + submit a record on TonyAI Energy | Same flow works for the data_entry role on its own subsidiaries | |
 
@@ -113,7 +120,7 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
-| DASH-01 | As admin: look at **Data Collection Status** on the dashboard | The heading carries a **year** (e.g. 2024) — the grid describes that one year, not all years at once | |
+| DASH-01 | As admin: look at **Data Collection Status** on the dashboard | The heading carries a **year** (e.g. 2026) — the grid describes that one year, not all years at once | |
 | DASH-02 | Click a **coloured cell** (not the subsidiary name) | Lands on **Data Entry** with that subsidiary **and that category** already selected, and the year from the grid | |
 | DASH-03 | Click the **subsidiary name** or the **chevron** on the same row | Still opens the subsidiary detail drawer as before — only the cells changed | |
 | DASH-04 | Click a cell for a category that already has one record that year | The existing record **opens in the form** for editing (if it is a draft or was sent back); if it is submitted/approved you are told so instead of getting a blank form | |
@@ -124,7 +131,7 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
-| LOCK-01 | As admin: lock **TonyAI Energy · 2024 · Quarterly · Q3** (an empty period) | Lock appears in the drawer list | |
+| LOCK-01 | As admin: lock **TonyAI Energy · 2026 · Quarterly · Q3** (an empty period) | Lock appears in the drawer list | |
 | LOCK-02 | Go to `/data-entry`, try to save a record in that period | Blocked: "…is locked — a super_admin must unlock it" | |
 | LOCK-03 | Try to lock a period that has a **submitted** (unreviewed) record | Blocked with "awaiting review" (409) — locking cannot bypass review | |
 | LOCK-04 | Unlock the period from the drawer | Entry works again | |
@@ -133,7 +140,7 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
-| EMIS-01 | Open all four tabs (Summary / Breakdown / History / Trends) | Live data everywhere; 2024 total ≈ **3,177 tCO₂e** on the pristine seed | |
+| EMIS-01 | Open all four tabs (Summary / Breakdown / History / Trends) | Live data everywhere; 2026 total ≈ **3,177 tCO₂e** on the pristine seed | |
 | EMIS-02 | Apply a Scope filter and a Category filter | All tabs update consistently | |
 | EMIS-03 | History tab: open a record's detail sheet | Full calculation snapshot: factor value, source, version, methodology | |
 | EMIS-04 | **Targets** tab | 3 demo targets: one **On track**, one **At risk**, one honest **"Progress n/a"** (baseline year has no later data) | |
@@ -147,9 +154,9 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
 | REP-01 | Open `/reports` as admin | **Live** preview: status badge, scope tiles, charts, category table; *Data completeness* panel shows real counts | |
-| REP-02 | Status badge on the pristine seed (2024, whole org) | **Approved** (all 102 records reviewed) | |
+| REP-02 | Status badge on the pristine seed (2026, whole org) | **Approved** (all 102 records reviewed) | |
 | REP-03 | Switch Reporting year to **2023** | Badge is **not** "Approved" (no data — an empty year is never approved); tables show "No committed data" | |
-| REP-04 | **Download PDF** (2024, Methodology notes ticked) | Branded multi-page A4 `tonyai-executive_summary-2024.pdf` with totals, tables and the **emission-factor appendix** (value/source/version) | |
+| REP-04 | **Download PDF** (2026, Methodology notes ticked) | Branded multi-page A4 `tonyai-executive_summary-2026.pdf` with totals, tables and the **emission-factor appendix** (value/source/version) | |
 | REP-05 | Template → **GHG Protocol Detail** → Download PDF | PDF additionally contains the full activity-records ledger | |
 | REP-06 | Tick **Evidence summary** → Download PDF | Evidence appendix lists **file names + counts** (no links — they expire by design) | |
 | REP-07 | **Export Excel** | 3 sheets: *Summary*, *Raw Activity Data*, *Factors Used* | |

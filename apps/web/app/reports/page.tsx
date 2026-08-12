@@ -43,6 +43,7 @@ import { api } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { REPORT_TEMPLATES } from '@/lib/types';
+import { DEFAULT_REPORTING_YEAR, REPORTING_YEARS } from '@/lib/types';
 import type {
   EmissionsSummary,
   ReportExportType,
@@ -52,7 +53,6 @@ import type {
   SubsidiaryDTO,
 } from '@/lib/types';
 
-const YEARS = [2024, 2023] as const;
 
 const SCOPE_COLORS = { scope1: '#34C759', scope2: '#007AFF', scope3: '#AF52DE' };
 
@@ -70,7 +70,7 @@ export default function ReportsPage() {
 
   // Config (FR §5.3 — filter-aware, year-scoped v1)
   const [template, setTemplate] = useState<ReportTemplate>('executive_summary');
-  const [year, setYear] = useState<number>(2024);
+  const [year, setYear] = useState<number>(DEFAULT_REPORTING_YEAR);
   const [subsidiaryId, setSubsidiaryId] = useState(''); // '' = whole organisation
   const [includeMethodology, setIncludeMethodology] = useState(true);
   const [includeEvidence, setIncludeEvidence] = useState(false);
@@ -224,7 +224,7 @@ export default function ReportsPage() {
                     <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {YEARS.map((y) => (
+                        {REPORTING_YEARS.map((y) => (
                           <SelectItem key={y} value={String(y)}>{y}</SelectItem>
                         ))}
                       </SelectContent>

@@ -51,6 +51,7 @@ import { api, ApiError } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { CATEGORIES } from '@/lib/types';
+import { DEFAULT_REPORTING_YEAR } from '@/lib/types';
 import type {
   ActivityRecordDTO,
   ActivityRecordStatus,
@@ -210,7 +211,11 @@ export default function EmissionsAnalysisPage() {
   const isSuperAdmin = user?.role === 'super_admin';
   // The most recent year with data drives the intensity denominators in view.
   const dataYear = useMemo(
-    () => records.reduce((max, r) => Math.max(max, r.reportingYear), 2024),
+    () =>
+      records.reduce<number>(
+        (max, r) => Math.max(max, r.reportingYear),
+        DEFAULT_REPORTING_YEAR,
+      ),
     [records],
   );
   const intensityAvailable = (intensity?.metrics.length ?? 0) > 0;
