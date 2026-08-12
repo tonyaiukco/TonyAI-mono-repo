@@ -6,6 +6,11 @@ import { Building2, MapPin, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
 interface KPICardsProps {
   data: KPIData;
+  /** The year the completeness figures describe. They come from the tracking
+   *  matrix, which is scoped to one year — and the matrix card below this strip
+   *  carries the same title WITH a year, so leaving this one bare puts two
+   *  identically-titled blocks on the page, only one of them dated. */
+  reportingYear?: number | null;
 }
 
 function formatEmissions(value: number): string {
@@ -89,9 +94,10 @@ interface DataStatusCardProps {
   /** null while the KPI endpoint hasn't loaded yet. */
   locations: number | null;
   completionRate: number;
+  reportingYear?: number | null;
 }
 
-function DataStatusCard({ complete, partial, missing, subsidiaries, locations, completionRate }: DataStatusCardProps) {
+function DataStatusCard({ complete, partial, missing, subsidiaries, locations, completionRate, reportingYear }: DataStatusCardProps) {
   const total = complete + partial + missing;
   const completePercent = (complete / total) * 100;
   const partialPercent = (partial / total) * 100;
@@ -99,7 +105,14 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
   return (
     <div className="rounded-xl border border-border bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between mb-4">
-        <p className="text-base font-semibold text-[#1D1D1F]">Data Collection Status</p>
+        <p className="text-base font-semibold text-[#1D1D1F]">
+          Data Collection Status
+          {reportingYear ? (
+            <span className="ml-2 text-sm font-normal text-[#6E6E73]">
+              {reportingYear}
+            </span>
+          ) : null}
+        </p>
         <span className={cn(
           'text-base font-bold font-mono tabular-nums',
           completionRate >= 70 ? 'text-[#1D7A5F]' : completionRate >= 40 ? 'text-[#92400E]' : 'text-[#B91C1C]'
@@ -164,7 +177,7 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
   );
 }
 
-export function KPICards({ data }: KPICardsProps) {
+export function KPICards({ data, reportingYear }: KPICardsProps) {
   return (
     <div className="space-y-5">
       {/* Emissions KPIs - Executive Level */}
@@ -207,6 +220,7 @@ export function KPICards({ data }: KPICardsProps) {
         subsidiaries={data.totalSubsidiaries}
         locations={data.totalLocations}
         completionRate={data.calculationCompletionRate}
+        reportingYear={reportingYear}
       />
     </div>
   );

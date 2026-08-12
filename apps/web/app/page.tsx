@@ -296,7 +296,10 @@ export default function CarbonDashboard() {
               </p>
             ) : (
               <div className="space-y-6">
-                <KPICards data={emissionsKpiData} />
+                <KPICards
+                  data={emissionsKpiData}
+                  reportingYear={matrix?.reportingYear ?? null}
+                />
 
                 <TrackingMatrix
                   subsidiaries={matrixSubsidiaries}
