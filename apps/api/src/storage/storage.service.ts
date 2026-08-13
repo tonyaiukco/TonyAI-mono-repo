@@ -45,10 +45,18 @@ export class StorageService {
     bucket: string,
     path: string,
     expiresIn: number,
+    /** Filename the browser should save under. Object keys are sanitised to
+     *  ASCII and prefixed with a uuid, so without this a download of
+     *  "Şubat-Faturası.pdf" landed as "<uuid>-_ubat-Fatura_.pdf". */
+    downloadAs?: string,
   ): Promise<string> {
     const { data, error } = await this.client.storage
       .from(bucket)
-      .createSignedUrl(path, expiresIn);
+      .createSignedUrl(
+        path,
+        expiresIn,
+        downloadAs ? { download: downloadAs } : undefined,
+      );
     if (error || !data) {
       throw new InternalServerErrorException(
         `Failed to sign file URL: ${error?.message ?? 'unknown error'}`,

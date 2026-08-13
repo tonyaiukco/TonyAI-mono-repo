@@ -29,7 +29,15 @@ export class EvidenceController {
   /** Attach an evidence file to an activity record (multipart `file`). */
   @Post('activity-records/:recordId/evidence')
   @UseInterceptors(
-    FileInterceptor('file', { limits: { fileSize: EVIDENCE_MAX_SIZE_BYTES } }),
+    FileInterceptor('file', {
+      limits: { fileSize: EVIDENCE_MAX_SIZE_BYTES },
+      // multer defaults `defParamCharset` to 'latin1', so a browser's UTF-8
+      // filename bytes were decoded as latin1 and `originalname` arrived
+      // already mangled — "Şubat" became "Åubat" BEFORE any of our code saw
+      // it. That mojibake was then stored, listed, and printed into the
+      // evidence appendix of customer-facing report PDFs. Round-1 DE-8.
+      defParamCharset: 'utf8',
+    }),
   )
   upload(
     @CurrentUser() user: RequestUser,

@@ -112,6 +112,12 @@ export class EvidenceService {
     }
 
     // Deterministic-ish object key: <recordId>/<uuid>-<sanitised name>.
+    //
+    // `\w` is ASCII-only, so Turkish letters collapse to `_` here. That is fine
+    // and deliberate: the key is opaque, never displayed, and made unique by the
+    // uuid — the user's real name lives in `fileName` and now also rides on the
+    // signed URL's download parameter. Transliterating instead would buy nothing
+    // and risk collisions.
     const safeName = file.originalname.replace(/[^\w.\-]+/g, '_').slice(0, 120);
     const storagePath = `${recordId}/${randomUUID()}-${safeName}`;
     await this.storage.upload(
@@ -162,6 +168,7 @@ export class EvidenceService {
       EVIDENCE_BUCKET,
       evidence.storagePath,
       SIGNED_URL_TTL_SECONDS,
+      evidence.fileName,
     );
     return { url, expiresIn: SIGNED_URL_TTL_SECONDS };
   }

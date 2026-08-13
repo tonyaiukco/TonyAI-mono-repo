@@ -171,6 +171,19 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | DASH-01 | Leave the Dashboard open, add a **location** from another tab or window, then click back onto the Dashboard tab | The Locations figure updates when the tab regains focus | |
 | DASH-02 | Add a **subsidiary** and return to the Dashboard | Companies rises by one; **Locations does not change** — the new company has no locations yet. This is correct | |
 
+### 3.4g Turkish characters in evidence (round-1 **DE-8**)
+
+| TC | Steps | Expected | P/F |
+| --- | --- | --- | --- |
+| TR-01 | Data Entry → save a draft → upload a file named with Turkish letters, e.g. `Şubat-Faturası-İĞÜÖÇ.pdf` | The evidence list shows the name **exactly** as on disk — no `Åubat`, no `Ä±` | |
+| TR-02 | Click that file to open it, then save it | It downloads under the same Turkish name, not under an internal id | |
+| TR-03 | Take the record through review (`/review`) and open the detail sheet | The name is intact there too | |
+| TR-04 | Generate a **PDF report** with *Evidence summary* ticked | The evidence appendix lists the name correctly | |
+
+> **If you uploaded files before this fix**, their stored names are already
+> mangled and stay that way — the fix repairs the reading, not the past. Re-run
+> `pnpm db:reset` (already required for the 2026 move) and upload again.
+
 ### 3.5 Period locking (`/subsidiaries` → padlock)
 
 | TC | Steps | Expected | P/F |
