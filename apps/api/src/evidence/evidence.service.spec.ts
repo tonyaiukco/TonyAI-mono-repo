@@ -150,6 +150,27 @@ describe('EvidenceService', () => {
     expect(dto.fileName).toBe('invoice.pdf');
   });
 
+  it('stores the filename verbatim and keeps the object key ASCII', async () => {
+    // DE-8: the DISPLAYED name must survive exactly, while the storage key stays
+    // opaque ASCII. Note this spec cannot see the actual DE-8 bug — that
+    // happened inside multer, before the service is called — which is why the
+    // real guard is the e2e that goes through multipart.
+    prisma.activityRecord.findUnique.mockResolvedValue(makeRecord({ id: 'rec-1' }));
+    prisma.evidence.create.mockImplementation(({ data }: any) => ({
+      id: 'ev-new',
+      ...data,
+      createdAt: new Date(),
+    }));
+
+    const name = 'Şubat-Faturası-İĞÜÖÇ.pdf';
+    const dto = await service.upload(dataEntry(), 'rec-1', makeFile({ originalname: name }));
+
+    expect(dto.fileName).toBe(name);
+    const key = storage.upload.mock.calls[0][1] as string;
+    expect(key).toMatch(/^rec-1\//);
+    expect(key, 'the object key must not carry non-ASCII').toMatch(/^[\u0000-\u007F]*$/);
+  });
+
   it('rejects an unsupported file type before touching storage', async () => {
     prisma.activityRecord.findUnique.mockResolvedValue(makeRecord({ id: 'rec-1' }));
     await expect(
@@ -205,6 +226,13 @@ describe('EvidenceService', () => {
     const { url, expiresIn } = await service.signedUrl(dataEntry(), 'ev-1');
     expect(url).toContain('https://');
     expect(expiresIn).toBeGreaterThan(0);
-    expect(storage.createSignedUrl).toHaveBeenCalledWith('evidence', 'rec-1/a.pdf', expiresIn);
+    // The user's real filename rides along so the browser saves under it rather
+    // than under the sanitised, uuid-prefixed object key (DE-8).
+    expect(storage.createSignedUrl).toHaveBeenCalledWith(
+      'evidence',
+      'rec-1/a.pdf',
+      expiresIn,
+      'a.pdf',
+    );
   });
 });
