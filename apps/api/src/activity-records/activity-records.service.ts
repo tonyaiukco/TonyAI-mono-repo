@@ -189,6 +189,8 @@ export class ActivityRecordsService {
     activityValue: number,
     activityUnit: string,
     locationId?: string | null,
+    /** False when `activityUnit` came from the stored record, not this request. */
+    unitChosenNow = true,
   ): Promise<{ calculation: CalculationResult; scope: number }> {
     if (!accessibleSubsidiaryIds.includes(subsidiaryId)) {
       // Tenant isolation: cannot attach a record to an inaccessible subsidiary.
@@ -214,13 +216,16 @@ export class ActivityRecordsService {
     }
 
     const scope = CATEGORY_SCOPE_MAP[category];
-    const calculation = await this.calculations.compute({
-      category,
-      geographyCode,
-      reportingYear,
-      value: activityValue,
-      unit: activityUnit,
-    });
+    const calculation = await this.calculations.compute(
+      {
+        category,
+        geographyCode,
+        reportingYear,
+        value: activityValue,
+        unit: activityUnit,
+      },
+      { enforceCategoryUnit: unitChosenNow },
+    );
     return { calculation, scope };
   }
 
@@ -468,6 +473,7 @@ export class ActivityRecordsService {
       activityValue,
       activityUnit,
       locationId,
+      dto.activityUnit !== undefined,
     );
 
     const anomalyFlag = await this.detectAnomaly({

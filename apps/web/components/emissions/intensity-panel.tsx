@@ -207,7 +207,7 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
             <p className="text-sm font-medium text-foreground">No intensity denominators configured for {year}</p>
             <p className="text-sm text-muted-foreground">
               {canManage
-                ? 'Add a denominator (revenue, headcount, area or production output) to compute intensity.'
+                ? 'Add a denominator (revenue, headcount, area, production output or sales output) to compute intensity.'
                 : 'A super_admin can configure intensity denominators.'}
             </p>
           </CardContent>

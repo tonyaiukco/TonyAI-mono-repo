@@ -271,13 +271,17 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
     const dto = await service.create(dataEntry(), CREATE_DTO);
 
     // compute() called with resolved geography + engine input.
-    expect(calc.compute).toHaveBeenCalledWith({
-      category: 'Electricity',
-      geographyCode: 'TR',
-      reportingYear: 2024,
-      value: 45000,
-      unit: 'kWh',
-    });
+    expect(calc.compute).toHaveBeenCalledWith(
+      {
+        category: 'Electricity',
+        geographyCode: 'TR',
+        reportingYear: 2024,
+        value: 45000,
+        unit: 'kWh',
+      },
+      // A create always chooses its unit, so the category/unit map applies.
+      { enforceCategoryUnit: true },
+    );
     // Snapshot + derived scope persisted on the row.
     const createArg = prisma.activityRecord.create.mock.calls[0][0];
     expect(createArg.data.scope).toBe(2); // Electricity -> Scope 2
@@ -314,12 +318,13 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
 
     expect(calc.compute).toHaveBeenCalledWith(
       expect.objectContaining({ geographyCode: 'UK' }),
+      expect.anything(),
     );
     const createArg = prisma.activityRecord.create.mock.calls[0][0];
     expect(createArg.data.locationId).toBe('loc-1');
   });
 
-  it('rejects a location that belongs to another subsidiary (NotFound, no compute)', async () => {
+    it('rejects a location that belongs to another subsidiary (NotFound, no compute)', async () => {
     const { prisma, calc, service } = build(2);
     prisma.subsidiary.findUnique.mockResolvedValue(
       makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
@@ -713,6 +718,33 @@ describe('ActivityRecordsService — transition rules', () => {
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
+  it('does not re-police the unit when an edit did not change it', async () => {
+    // The category/unit map is new. A record stored before it (gas in MWh, say)
+    // would otherwise 400 on ANY edit — including one that never touched the
+    // unit — with a message telling the user to change a historical figure.
+    const { prisma, calc, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-u',
+        subsidiaryId: 'sub-1',
+        createdBy: 'user-entry',
+        status: ActivityRecordStatus.rejected,
+        activityUnit: 'MWh',
+      }),
+    );
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-u', ...data }),
+    );
+
+    await service.update(dataEntry(), 'rec-u', { varianceReason: 'a note' });
+
+    expect(calc.compute).toHaveBeenCalledWith(
+      expect.objectContaining({ unit: 'MWh' }),
+      { enforceCategoryUnit: false },
+    );
+  });
+
   it('blocks submit of an evidence-required category with no evidence (FR §4.1)', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
@@ -777,6 +809,7 @@ describe('ActivityRecordsService — transition rules', () => {
     await service.update(dataEntry(), 'rec-u', { activityValue: 90000 });
     expect(calc.compute).toHaveBeenCalledWith(
       expect.objectContaining({ value: 90000, geographyCode: 'TR' }),
+      expect.anything(),
     );
     const updateArg = prisma.activityRecord.update.mock.calls[0][0];
     expect(updateArg.data.calculation).toEqual(calc.snapshot);

@@ -19,7 +19,7 @@
   - The user merges each PR individually. **Never start the next PR until asked.**
 - **Re-run `pnpm db:seed` after pulling WP7 PR 3** — it adds the `review@tonyai.local` consultant; without it the five new `/review` E2E tests fail at token grant.
 - **Everyone must re-run `pnpm setup` after pulling this** — the API now refuses to boot without `ALLOW_INSECURE_LOCAL_AUTH=true` in `apps/api/.env`, and `jsonwebtoken` → `jose` means a stale `node_modules` fails too
-- **Tests:** 296 unit (Vitest, API) + a `next.config` phase guard (web) + 31 E2E (Playwright) + 25 live RLS containment probes — green from a from-scratch `pnpm db:reset`
+- **Tests:** 303 unit (Vitest, API) + a `next.config` phase guard (web) + 31 E2E (Playwright) + 25 live RLS containment probes — green from a from-scratch `pnpm db:reset`
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)
@@ -231,6 +231,9 @@
 - **The `rls-for-table` skill is now load-bearing, not advisory** — default privileges are granted to `service_role` only, so a new table comes up invisible to client roles until its own migration grants them. That is deliberately fail-closed, and `scripts/rls-probes.mjs` additionally fails if any table in `public` ships with RLS off. Anyone adding a table must follow the skill or the probes go red.
 - **`11.36` (m³ → kWh) is unsourced** — no citation, no calorific basis (gross vs net), no reference conditions. It ships because the prototype must calculate, it is now disclosed everywhere it is applied, and it must be replaced by a sourced factor in the Phase-4 library. `Sm³` stays blocked until then.
 - **`pickByFieldLabel` breaks on duplicate field labels** — `/data-entry` has two `Unit` fields (Activity data, Additional context), so the helper is a strict-mode violation there. Documented in `e2e/helpers.ts`; a `data-testid` on the field wrapper would fix it properly.
+- **The volume→energy conversion belongs in the versioned factor table, not in `normalization.ts`** *(WP15 PR 2 review)* — the factor snapshot carries `source` + `version`; the conversion ruleset carries neither. When 11.36 is replaced, an edited 2026 record recomputes on the new multiplier while its untouched neighbours keep the old one, and nothing says which produced which. Keying the conversion by category+geography+year also solves Sm³ (TR bills in Sm³; UK publishes a per-m³ factor that removes the conversion entirely). Interim mitigation shipped: the multiplier and its basis are in every snapshot and in the report.
+- **`normalize()` is category-blind while the physics is category-dependent** — `m³ → kWh ×11.36` is global, so the day a Water (m³) or Refrigerants (kg) factor is seeded the same token means a different quantity. `kg` has no unit entry at all, so refrigerant leakage cannot be recorded. The signature should become `normalize(value, unit, category)`.
+- **Group-level intensity can double-count** — denominators are summed by metric+unit, so 1,250,000 MWh of generated electricity plus 480,000 MWh of distributed gas become one 1,730,000 MWh denominator, mixing primary and secondary energy and counting intra-group sales twice. The unit guard cannot see it: both are honestly MWh. Either keep `sales_output` subsidiary-scoped or qualify the commodity.
 - Billing/subscription model — not covered by any spec
 - Depth of `executive_viewer` / `consultant` UX flows
 - Mobile/responsive support targets

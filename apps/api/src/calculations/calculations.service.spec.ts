@@ -248,7 +248,7 @@ describe('CalculationsService.compute', () => {
 
     expect(result.conversionApplied).toBe(true);
     expect(result.conversionFactor).toBe(11.36);
-    expect(result.conversionBasis).toMatch(/unsourced/i);
+    expect(result.conversionBasis).toMatch(/NOT a sourced factor/i);
   });
 
   it('leaves the conversion fields off when nothing was converted', async () => {

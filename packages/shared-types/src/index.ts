@@ -143,8 +143,6 @@ export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
   { value: 'tonnes', label: 'Tonnes', target: 'tonnes' },
 ] as const;
 
-export const ACTIVITY_UNIT_VALUES = ACTIVITY_UNITS.map((u) => u.value);
-
 /**
  * Which units make sense for which category.
  *
@@ -156,16 +154,32 @@ export const ACTIVITY_UNIT_VALUES = ACTIVITY_UNITS.map((u) => u.value);
  */
 export const CATEGORY_UNITS: Partial<Record<Category, readonly string[]>> = {
   Electricity: ['kWh', 'MWh'],
-  'Natural Gas': ['kWh', 'cubic_metres', 'standard_cubic_metres', 'therms', 'gj'],
+  // MWh belongs here: EU gas markets and industrial contracts quote gas in MWh
+  // and MWh→kWh is exact, so excluding it would push a hand conversion outside
+  // the system — the un-audited step this whole contract exists to remove.
+  'Natural Gas': [
+    'kWh',
+    'MWh',
+    'cubic_metres',
+    'standard_cubic_metres',
+    'therms',
+    'gj',
+  ],
   Fuel: ['litres', 'uk_gallons', 'us_gallons'],
 };
 
-/** The units offered for a category, or every unit when it has no mapping. */
+/**
+ * The units offered for a category.
+ *
+ * A category with no factor yet is left unconstrained — the factor lookup will
+ * refuse it anyway — except that it never offers a BLOCKED unit, since those are
+ * guaranteed to be refused and listing them everywhere just invites the refusal.
+ */
 export function unitsForCategory(category: string): readonly ActivityUnitSpec[] {
   const allowed = CATEGORY_UNITS[category as Category];
   return allowed
     ? ACTIVITY_UNITS.filter((u) => allowed.includes(u.value))
-    : ACTIVITY_UNITS;
+    : ACTIVITY_UNITS.filter((u) => !u.blocked);
 }
 
 

@@ -43,6 +43,11 @@ export function buildReportHtml(data: ReportData): string {
         .map(
           (r) => `<tr><td>${esc(r.subsidiaryName)}</td><td>${esc(r.category)}</td>
           <td>${esc(r.periodValue)}</td><td class="num">${fmt.format(r.activityValue)} ${esc(r.activityUnit)}</td>
+          <td class="num">${
+            r.conversionFactor && r.normalizedValue !== undefined
+              ? `${fmt.format(r.normalizedValue)} ${esc(r.normalizedUnit ?? '')} <span class="note">(&times;${r.conversionFactor})</span>`
+              : '&mdash;'
+          }</td>
           <td class="num">${fmt.format(r.tCo2e)}</td><td>${esc(r.status)}</td>
           <td class="num">${r.evidenceCount}</td></tr>`,
         )
@@ -53,7 +58,11 @@ export function buildReportHtml(data: ReportData): string {
     .map(
       (f) => `<tr><td>${esc(f.category)}</td><td>${esc(f.geographyCode)}</td>
       <td class="num">${f.factorValue} ${esc(f.factorUnit)}</td><td>${esc(f.methodology)}</td>
-      <td>${esc(f.source)}</td><td>${esc(f.version)}</td></tr>`,
+      <td>${esc(f.source)}</td><td>${esc(f.version)}</td></tr>${
+        f.conversionBasis
+          ? `<tr><td colspan="6" class="note">Unit conversion applied before this factor: ${esc(f.conversionBasis)}</td></tr>`
+          : ''
+      }`,
     )
     .join('');
 
@@ -117,7 +126,7 @@ export function buildReportHtml(data: ReportData): string {
   ${
     isDetail
       ? `<h2>Activity records ledger</h2>
-  <table><thead><tr><th>Subsidiary</th><th>Category</th><th>Period</th><th class="num">Activity</th><th class="num">tCO₂e</th><th>Status</th><th class="num">Evidence</th></tr></thead>
+  <table><thead><tr><th>Subsidiary</th><th>Category</th><th>Period</th><th class="num">Activity</th><th class="num">Normalised</th><th class="num">tCO₂e</th><th>Status</th><th class="num">Evidence</th></tr></thead>
   <tbody>${ledgerRows}</tbody></table>`
       : ''
   }
@@ -125,7 +134,7 @@ export function buildReportHtml(data: ReportData): string {
   ${
     data.includeMethodologyNotes
       ? `<h2>Methodology & emission factors</h2>
-  <p class="note">Every calculation stores an immutable snapshot of the factor it used (value, source, version); historic results never change. Boundary: operational control. Aligned with ISO 14064-1 / GHG Protocol.</p>
+  <p class="note">Every calculation stores an immutable snapshot of the factor it used (value, source, version) and of any unit conversion applied before it, so each figure in the ledger can be recomputed from this report; historic results never change. Boundary: operational control. Aligned with ISO 14064-1 / GHG Protocol.</p>
   <table><thead><tr><th>Category</th><th>Geography</th><th class="num">Factor</th><th>Methodology</th><th>Source</th><th>Version</th></tr></thead>
   <tbody>${factorRows}</tbody></table>`
       : ''

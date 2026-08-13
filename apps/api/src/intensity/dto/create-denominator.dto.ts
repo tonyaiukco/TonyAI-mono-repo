@@ -11,12 +11,10 @@ import {
 import { INTENSITY_METRIC_KEYS } from '@tonyai/shared-types';
 import type { IntensityMetricKey } from '@tonyai/shared-types';
 
-const METRICS: IntensityMetricKey[] = [
-  'area',
-  'revenue',
-  'headcount',
-  'production_output',
-];
+// Derived, never restated. Hand-copying this list is how `sales_output` came to
+// be offered by the UI, written by the seed and refused by the API — a metric
+// that looked delivered from every angle except the one that saves it.
+const METRICS: IntensityMetricKey[] = [...INTENSITY_METRIC_KEYS];
 
 /**
  * Body of POST /api/v1/denominators — a configured intensity denominator for one

@@ -92,7 +92,14 @@ export class CalculationsService {
    * kgCo2e = normalizedValue × factorValue ; tCo2e = kgCo2e / 1000.
    * Returns the factor snapshot for traceability (calculation_logic.md §5).
    */
-  async compute(input: CalculationInput): Promise<CalculationResult> {
+  async compute(
+    input: CalculationInput,
+    /** `false` when the unit was INHERITED from a stored record rather than
+     *  chosen now. The category map is new, so a record saved before it (gas in
+     *  MWh, say) would otherwise 400 on any edit — including one that never
+     *  touched the unit — and tell the user to change a historical figure. */
+    options: { enforceCategoryUnit?: boolean } = {},
+  ): Promise<CalculationResult> {
     if (!Number.isFinite(input.value)) {
       throw new BadRequestException('value must be a finite number');
     }
@@ -109,7 +116,10 @@ export class CalculationsService {
     // BETWEEN unit families (litres vs kWh); within the kWh family `therms` on
     // Electricity or `MWh` on Natural Gas produced a plausible number and no
     // error at all.
-    const allowedUnits = CATEGORY_UNITS[input.category as Category];
+    const allowedUnits =
+      options.enforceCategoryUnit === false
+        ? undefined
+        : CATEGORY_UNITS[input.category as Category];
     // Compare canonical to canonical: the shared list carries display tokens
     // (`kWh`, `MWh`) while the engine keys on resolved aliases (`kwh`, `mwh`),
     // so a raw `includes` rejected the very units it was meant to allow.
