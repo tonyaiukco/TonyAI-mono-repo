@@ -246,7 +246,7 @@ export default function SubsidiariesPage() {
             <SummaryCard title="Total" value={total} icon={<Building2 className="h-4 w-4 text-primary" />} hint="Accessible to you" />
             <SummaryCard title="Active" value={active} icon={<CheckCircle2 className="h-4 w-4 text-primary" />} hint="Reporting active" />
             <SummaryCard title="Pending" value={pending} icon={<Clock className="h-4 w-4 text-primary" />} hint="Awaiting onboarding" />
-            <SummaryCard title="Geographies" value={geographies} icon={<Globe className="h-4 w-4 text-primary" />} hint="UK / TR / EU" />
+            <SummaryCard title="Geographies" value={geographies} icon={<Globe className="h-4 w-4 text-primary" />} hint="in use across the register" />
           </div>
 
           <Card>
@@ -380,7 +380,7 @@ export default function SubsidiariesPage() {
                         already holds — otherwise editing the seeded EU
                         subsidiary would bind the Select to a value with no
                         matching item and render a blank trigger. */}
-                    {geographyOptions(form.geographyCode).map((g) => (
+                    {geographyOptions(form.geographyCode, editing?.geographyCode).map((g) => (
                       <SelectItem key={g} value={g}>
                         {geographyLabel(g)}
                       </SelectItem>

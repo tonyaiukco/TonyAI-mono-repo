@@ -788,15 +788,21 @@ export const SELECTABLE_GEOGRAPHY_CODES: readonly GeographyCode[] = ['UK', 'TR']
  * silently empty the control on the one screen where you can change it. Keeping
  * the current value in the list is what makes "hidden, not deleted" true for the
  * user and not just for the database.
+ *
+ * Takes SEVERAL codes because the live form value is not enough: change EU to UK
+ * by mistake and EU would drop out of the list, leaving Cancel — which discards
+ * every other edit in the dialog — as the only way back. Pass the persisted
+ * value alongside the form's so the choice stays reversible in place.
  */
-export function geographyOptions(current?: string | null): GeographyCode[] {
-  const base = [...SELECTABLE_GEOGRAPHY_CODES];
-  if (
-    current &&
-    (GEOGRAPHY_CODES as readonly string[]).includes(current) &&
-    !base.includes(current as GeographyCode)
-  ) {
-    base.push(current as GeographyCode);
+export function geographyOptions(
+  ...current: (string | null | undefined)[]
+): string[] {
+  const base: string[] = [...SELECTABLE_GEOGRAPHY_CODES];
+  for (const code of current) {
+    // Any non-empty code is rescued, not just the three we know: the guard
+    // exists to stop a stored value blanking its own control, and a code that
+    // reached the database by some other route needs that more, not less.
+    if (code && !base.includes(code)) base.push(code);
   }
   return base;
 }

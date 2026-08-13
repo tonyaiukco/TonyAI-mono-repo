@@ -19,7 +19,7 @@
   - The user merges each PR individually. **Never start the next PR until asked.**
 - **Re-run `pnpm db:seed` after pulling WP7 PR 3** — it adds the `review@tonyai.local` consultant; without it the five new `/review` E2E tests fail at token grant.
 - **Everyone must re-run `pnpm setup` after pulling this** — the API now refuses to boot without `ALLOW_INSECURE_LOCAL_AUTH=true` in `apps/api/.env`, and `jsonwebtoken` → `jose` means a stale `node_modules` fails too
-- **Tests:** 303 unit (Vitest, API) + a `next.config` phase guard (web) + 34 E2E (Playwright) + 25 live RLS containment probes — green from a from-scratch `pnpm db:reset`
+- **Tests:** 303 unit (Vitest, API) + a `next.config` phase guard (web) + 35 E2E (Playwright) + 25 live RLS containment probes — green from a from-scratch `pnpm db:reset`
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)
@@ -234,6 +234,8 @@
 - **The volume→energy conversion belongs in the versioned factor table, not in `normalization.ts`** *(WP15 PR 2 review)* — the factor snapshot carries `source` + `version`; the conversion ruleset carries neither. When 11.36 is replaced, an edited 2026 record recomputes on the new multiplier while its untouched neighbours keep the old one, and nothing says which produced which. Keying the conversion by category+geography+year also solves Sm³ (TR bills in Sm³; UK publishes a per-m³ factor that removes the conversion entirely). Interim mitigation shipped: the multiplier and its basis are in every snapshot and in the report.
 - **`normalize()` is category-blind while the physics is category-dependent** — `m³ → kWh ×11.36` is global, so the day a Water (m³) or Refrigerants (kg) factor is seeded the same token means a different quantity. `kg` has no unit entry at all, so refrigerant leakage cannot be recorded. The signature should become `normalize(value, unit, category)`.
 - **Group-level intensity can double-count** — denominators are summed by metric+unit, so 1,250,000 MWh of generated electricity plus 480,000 MWh of distributed gas become one 1,730,000 MWh denominator, mixing primary and secondary energy and counting intra-group sales twice. The unit guard cannot see it: both are honestly MWh. Either keep `sales_output` subsidiary-scoped or qualify the commodity.
+- **The E2E specs are never type-checked** — there is no root `tsconfig.json` and no `e2e/tsconfig.json`, so `pnpm typecheck` covers only `apps/web` and `apps/api`; Playwright merely transpiles. An unused import or a type error in a spec goes unnoticed (one shipped in WP15 slice (a) and was found by review, not tooling). Adding `e2e/tsconfig.json` plus a typecheck target is small and closes it.
+- **Legacy records keep a `grid_region` value in `input`** that the UI can no longer show or clear (WP15 slice (a) removed the field). Nothing is lost and nothing breaks, but the key is dormant metadata — do not read it as authoritative if it surfaces in an export or an audit diff.
 - Billing/subscription model — not covered by any spec
 - Depth of `executive_viewer` / `consultant` UX flows
 - Mobile/responsive support targets

@@ -853,7 +853,7 @@ function DataEntryPageInner() {
                       , from{" "}
                       {selectedLocation
                         ? `${selectedLocation.name} (location)`
-                        : `${selectedSubsidiary?.legalName ?? "this subsidiary"} (subsidiary)`}
+                        : `${selectedSubsidiary?.tradingName ?? selectedSubsidiary?.legalName ?? "this subsidiary"} (subsidiary)`}
                       . Change it on the Subsidiaries page.
                     </p>
                   )}

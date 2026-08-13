@@ -149,7 +149,7 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
 | GEO-01 | Data Entry, pick any subsidiary | A line reads **"Factor geography: TR — Türkiye, from … (subsidiary)"** with the right code, and no "Grid Region" picker exists | |
-| GEO-02 | Choose a **location** that has a different geography | The line switches to that location's geography and says **(location)** | |
+| GEO-02 | Choose a **location** in the Location picker | The line names that location and says **(location)** instead of (subsidiary). *(Every seeded location shares its parent's geography, so the code itself may not change — the source label is the thing to check.)* | |
 | GEO-03 | Subsidiaries → **Add Subsidiary** → Geography | Offers **United Kingdom (UK)** and **Türkiye (TR)** only | |
 | GEO-04 | Edit **TonyAI Manufacturing GmbH** (Munich) | Geography shows **European Union (EU)** — not blank — and saving without touching it keeps EU | |
 | GEO-05 | Manage locations on the Munich subsidiary → edit a location | Same: its EU value is shown, not blanked | |

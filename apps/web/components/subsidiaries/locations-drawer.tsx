@@ -246,7 +246,11 @@ export function LocationsDrawer({
                           {/* UK + Türkiye, plus this location's own value if it
                               is something else — hiding a code the record holds
                               would blank the trigger. */}
-                          {geographyOptions(form.geographyCode).map((g) => (
+                          {geographyOptions(
+                            form.geographyCode,
+                            subsidiary?.geographyCode,
+                            locations.find((l) => l.id === editingId)?.geographyCode,
+                          ).map((g) => (
                             <SelectItem key={g} value={g}>
                               {geographyLabel(g)}
                             </SelectItem>

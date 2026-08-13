@@ -7,6 +7,7 @@ import {
   IsString,
   MinLength,
 } from 'class-validator';
+import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
 
 export class CreateSubsidiaryDto {
   @IsString()
@@ -22,7 +23,7 @@ export class CreateSubsidiaryDto {
   location?: string;
 
   @IsString()
-  @IsIn(['UK', 'TR', 'EU'])
+  @IsIn(GEOGRAPHY_CODES as readonly string[])
   geographyCode!: string;
 
   @IsOptional()
