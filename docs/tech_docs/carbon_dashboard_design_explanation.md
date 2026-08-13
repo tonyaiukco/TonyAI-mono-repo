@@ -199,7 +199,7 @@ Her kategorinin kendine özgü alan grupları (FieldGroup) ve alanları (DataEnt
 
 | Kategori | Alan Grupları | Kritik Alanlar |
 |----------|--------------|----------------|
-| **Electricity** | Consumption, Billing, Documentation | `total_kwh` (zorunlu), `renewable_kwh`, `grid_region` (select, zorunlu) |
+| **Electricity** | Consumption, Billing, Documentation | `total_kwh` (zorunlu), `renewable_kwh`, ~~`grid_region`~~ (removed in WP15 — it was metadata and never drove the emission factor) |
 | **Fuel** | Stationary Combustion, Documentation | `fuel_type` (select), `quantity` (zorunlu), `quantity_unit` (select), `purpose` (select) |
 | **Business Travel** | Air Travel, Ground Transportation, Documentation | `short/medium/long_haul_km`, `travel_class`, `rental_car_km`, `train_km` |
 | **Waste** | Waste Volumes, Documentation | `general_waste_tonnes`, `recycled_waste_tonnes`, `hazardous_waste_tonnes`, `disposal_method` |

@@ -38,6 +38,7 @@ import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import {
   ACTIVITY_UNITS,
   CATEGORIES,
+  GEOGRAPHY_LABELS,
   DEFAULT_REPORTING_YEAR,
   REPORTING_YEARS,
   unitsForCategory,
@@ -834,6 +835,28 @@ function DataEntryPageInner() {
                       </Select>
                     </Field>
                   </div>
+
+                  {/* What actually decides the emission factor.
+                      Round-1 DE-6 asked for Türkiye as a selectable "grid
+                      region"; the field they were looking at was metadata that
+                      never reached the engine. The geography is not a per-record
+                      choice — it comes from the reporting entity (FR §5.2) — so
+                      the honest fix is to show it, and to say where it came
+                      from, rather than offer a control that changes nothing. */}
+                  {effectiveGeography && (
+                    <p className="text-xs text-muted-foreground">
+                      Factor geography:{" "}
+                      <span className="font-mono">{effectiveGeography}</span> —{" "}
+                      {GEOGRAPHY_LABELS[
+                        effectiveGeography as keyof typeof GEOGRAPHY_LABELS
+                      ] ?? effectiveGeography}
+                      , from{" "}
+                      {selectedLocation
+                        ? `${selectedLocation.name} (location)`
+                        : `${selectedSubsidiary?.tradingName ?? selectedSubsidiary?.legalName ?? "this subsidiary"} (subsidiary)`}
+                      . Change it on the Subsidiaries page.
+                    </p>
+                  )}
                 </CardContent>
               </Card>
 

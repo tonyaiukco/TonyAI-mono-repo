@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { GEOGRAPHY_CODES } from '@/lib/types';
+import { geographyLabel, geographyOptions } from '@/lib/types';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -243,9 +243,16 @@ export function LocationsDrawer({
                           <SelectValue placeholder="Select geography" />
                         </SelectTrigger>
                         <SelectContent>
-                          {GEOGRAPHY_CODES.map((g) => (
+                          {/* UK + Türkiye, plus this location's own value if it
+                              is something else — hiding a code the record holds
+                              would blank the trigger. */}
+                          {geographyOptions(
+                            form.geographyCode,
+                            subsidiary?.geographyCode,
+                            locations.find((l) => l.id === editingId)?.geographyCode,
+                          ).map((g) => (
                             <SelectItem key={g} value={g}>
-                              {g}
+                              {geographyLabel(g)}
                             </SelectItem>
                           ))}
                         </SelectContent>

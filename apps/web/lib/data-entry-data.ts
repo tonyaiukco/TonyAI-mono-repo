@@ -33,7 +33,13 @@ export const categoryFieldGroups: Record<string, FieldGroup[]> = {
       fields: [
         { id: 'total_kwh', name: 'total_kwh', type: 'number', label: 'Total Consumption', placeholder: 'Enter total kWh', required: true, unit: 'kWh', helperText: 'Total electricity consumed during the reporting period' },
         { id: 'renewable_kwh', name: 'renewable_kwh', type: 'number', label: 'Renewable Energy', placeholder: 'Enter renewable kWh', required: false, unit: 'kWh', helperText: 'Portion from certified renewable sources' },
-        { id: 'grid_region', name: 'grid_region', type: 'select', label: 'Grid Region', required: true, options: ['Germany - National Grid', 'Germany - Regional (North)', 'Germany - Regional (South)', 'EU Average'], helperText: 'Select the electricity grid region for emission factor' },
+        // `grid_region` was removed in WP15 (round-1 DE-6/DE-7). It sat in the
+        // "saved as metadata" card, never reached the calculation engine, and
+        // its helper text claimed to "select the electricity grid region for
+        // emission factor" — so a user picking a region got a different factor
+        // than the one they chose. The factor geography comes from the
+        // subsidiary or the targeted location, and Data Entry now shows that
+        // read-only instead of offering a choice that does nothing.
       ],
     },
     {
@@ -207,7 +213,7 @@ export const sampleSubmission: DataSubmission = {
     ...group,
     fields: group.fields.map(field => ({
       ...field,
-      value: field.id === 'total_kwh' ? 45000 : field.id === 'grid_region' ? 'Germany - National Grid' : null,
+      value: field.id === 'total_kwh' ? 45000 : null,
     })),
   })),
   calculationPreview: {
