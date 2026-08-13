@@ -36,9 +36,11 @@ import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import {
+  ACTIVITY_UNITS,
   CATEGORIES,
   DEFAULT_REPORTING_YEAR,
   REPORTING_YEARS,
+  unitsForCategory,
 } from "@/lib/types";
 import type {
   ActivityRecordDTO,
@@ -82,20 +84,6 @@ const PERIOD_VALUES: Record<ReportingPeriod, string[]> = {
   ],
   annual: ["Annual"],
 };
-
-// Unit tokens the calculation engine understands (apps/api normalization.ts).
-const UNITS: { value: string; label: string }[] = [
-  { value: "kWh", label: "kWh (electricity / gas)" },
-  { value: "MWh", label: "MWh (electricity)" },
-  { value: "cubic_metres", label: "Cubic metres (natural gas)" },
-  { value: "therms", label: "Therms (natural gas)" },
-  { value: "litres", label: "Litres (liquid fuel)" },
-  { value: "uk_gallons", label: "UK gallons (liquid fuel)" },
-  { value: "us_gallons", label: "US gallons (liquid fuel)" },
-  { value: "kilometres", label: "Kilometres" },
-  { value: "passenger_kilometres", label: "Passenger-km" },
-  { value: "tonnes", label: "Tonnes" },
-];
 
 // --- Status badge styling (matches subsidiaries page emerald/amber palette) --
 
@@ -766,8 +754,18 @@ function DataEntryPageInner() {
                     <Select
                       value={category}
                       onValueChange={(v) => {
-                        setCategory(v as Category);
+                        const next = v as Category;
+                        setCategory(next);
                         setContext({});
+                        // The unit list is category-scoped, so a unit that is
+                        // not offered for the new category would otherwise stay
+                        // selected and bind the Select to a value with no item —
+                        // a silently blank control, and a request the API now
+                        // rejects.
+                        const allowed = unitsForCategory(next);
+                        if (!allowed.some((u) => u.value === activityUnit)) {
+                          setActivityUnit(allowed[0]?.value ?? "kWh");
+                        }
                       }}
                     >
                       <SelectTrigger>
@@ -863,7 +861,10 @@ function DataEntryPageInner() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {UNITS.map((u) => (
+                          {/* Scoped to the category: offering therms for
+                              Electricity used to produce a plausible number
+                              rather than an error. */}
+                          {unitsForCategory(category).map((u) => (
                             <SelectItem key={u.value} value={u.value}>
                               {u.label}
                             </SelectItem>
@@ -877,6 +878,34 @@ function DataEntryPageInner() {
                     engine normalises the unit (e.g. MWh &rarr; kWh) before
                     applying the factor.
                   </p>
+                  {(() => {
+                    const spec = ACTIVITY_UNITS.find(
+                      (u) => u.value === activityUnit,
+                    );
+                    if (spec?.blocked) {
+                      return (
+                        <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900">
+                          {spec.blocked}
+                        </p>
+                      );
+                    }
+                    if (activityUnit === "cubic_metres") {
+                      // The 11.36 in calculation_logic.md §2.1 has no citation,
+                      // no calorific basis and no stated reference conditions.
+                      // It has been converting silently; on a compliance product
+                      // the user is entitled to know the number rests on an
+                      // assumption.
+                      return (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          m³ is converted to kWh at &times;11.36 — a prototype
+                          assumption with no cited source, and no stated calorific
+                          basis or reference conditions. It will be replaced by a
+                          sourced factor in the Phase-4 factor library.
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()}
                 </CardContent>
               </Card>
 

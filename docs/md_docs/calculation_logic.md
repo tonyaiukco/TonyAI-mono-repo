@@ -15,6 +15,21 @@ Before emission factors are applied, raw activity data must be normalised to the
 - **Base Unit:** `kwh`
 - **Conversion Factors:**
   - `cubic_metres` to `kwh`: multiply by `11.36`
+
+> **Provenance warning (added WP15).** The `11.36` above is a **prototype
+> assumption carried over from the original demo spec. It has no citation, no
+> stated calorific-value basis (gross vs net) and no stated reference conditions
+> (temperature/pressure).** Volume-to-energy conversion for natural gas depends on
+> all three, so this number must not be treated as authoritative. It is applied
+> today so the prototype can calculate, it is recorded in every affected
+> calculation snapshot as `conversionFactor` + `conversionBasis`, and it is
+> replaced by a sourced factor with the Phase-4 factor library.
+>
+> **Standard cubic metres (`Sm3` / `Nm3`) are deliberately NOT converted.** They
+> are a different physical quantity from actual cubic metres, and this repository
+> holds no sourced calorific value for them. The unit is offered in the UI and
+> refused by the API with that reason, rather than silently reusing the m³
+> assumption — which would put a fabricated figure into an emissions inventory.
   - `therms` to `kwh`: multiply by `29.3`
   - `gj` to `kwh`: multiply by `277.78`
 

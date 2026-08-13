@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /**
@@ -40,15 +40,17 @@ loadE2EEnv();
  * NOT part of the turbo `test` pipeline — CI stays unit-only for now.
  */
 
-const apiDist = resolve(__dirname, 'apps/api/dist/main.js');
 const apiDir = resolve(__dirname, 'apps/api');
 
-// If the API isn't built, build it first, then start it (with cwd = apps/api).
-// `pnpm e2e` rebuilds up front regardless — running the suite against a stale
-// dist silently turns "14/14 green" into evidence about the PREVIOUS code.
-const apiStartCmd = existsSync(apiDist)
-  ? 'node dist/main.js'
-  : 'pnpm --filter @tonyai/api build && node dist/main.js';
+// ALWAYS build before starting, never "build only if dist is missing".
+//
+// `pnpm e2e` rebuilds up front, but `pnpm exec playwright test` does not — and
+// with a dist present the old conditional started it unchanged, so the suite
+// reported on the PREVIOUS build of the API. That is the worst kind of green:
+// it bit this repo during WP15, where six specs failed against stale code and
+// then passed untouched after a rebuild. The safeguard must not depend on which
+// command someone types.
+const apiStartCmd = 'pnpm --filter @tonyai/api build && node dist/main.js';
 
 export default defineConfig({
   testDir: './e2e',

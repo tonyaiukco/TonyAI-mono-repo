@@ -28,6 +28,14 @@ export interface ReportLedgerRow {
   reportingPeriod: string;
   activityValue: number;
   activityUnit: string;
+  /** What the activity value became after unit conversion, and by what factor.
+   *  Without these the ledger prints "5,000 cubic_metres → 10.4 tCO₂e" beside a
+   *  factor quoted per kWh, and the ×11.36 between them appears nowhere — the
+   *  figure cannot be recomputed from the report, which is what ISO 14064-1
+   *  §9.3.1 and GHG Protocol Ch.7 ask a report to make possible. */
+  normalizedValue?: number;
+  normalizedUnit?: string;
+  conversionFactor?: number;
   tCo2e: number;
   status: string;
   evidenceCount: number;
@@ -43,6 +51,10 @@ export interface ReportFactorRow {
   methodology: string;
   source: string;
   version: string;
+  /** Set when records under this factor went through a unit conversion. The
+   *  basis is disclosed here because for natural gas it is an ASSUMPTION, not a
+   *  definition, and a factor appendix that hides it is not audit-traceable. */
+  conversionBasis?: string;
 }
 
 export interface ReportEvidenceRow {
@@ -237,6 +249,10 @@ export class ReportsService implements OnModuleDestroy {
 
     type Snapshot = {
       tCo2e?: number;
+      normalizedValue?: number;
+      normalizedUnit?: string;
+      conversionFactor?: number;
+      conversionBasis?: string;
       factorId?: string;
       factorValue?: number;
       factorUnit?: string;
@@ -256,6 +272,9 @@ export class ReportsService implements OnModuleDestroy {
         reportingPeriod: r.reportingPeriod,
         activityValue: r.activityValue,
         activityUnit: r.activityUnit,
+        normalizedValue: calc.normalizedValue,
+        normalizedUnit: calc.normalizedUnit,
+        conversionFactor: calc.conversionFactor,
         tCo2e: calc.tCo2e ?? 0,
         status: r.status,
         evidenceCount: withEvidence.evidence?.length ?? 0,
@@ -276,6 +295,9 @@ export class ReportsService implements OnModuleDestroy {
           methodology: calc.methodology ?? '',
           source: calc.source ?? '',
           version: calc.version ?? '',
+          ...(calc.conversionBasis
+            ? { conversionBasis: calc.conversionBasis }
+            : {}),
         });
       }
     }

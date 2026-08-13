@@ -127,6 +127,16 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | DASH-05 | Click a cell for a category with several records that year | You are told how many exist and asked to pick one from *Previous submissions* — nothing is guessed for you | |
 | DASH-06 | On Data Entry, click any row in **Previous submissions** | A draft or sent-back record reopens in the form; anything else says it can no longer be edited | |
 
+### 3.4d Units & intensity metric (round-1 **DE-3 / EM-1**)
+
+| TC | Steps | Expected | P/F |
+| --- | --- | --- | --- |
+| UNIT-01 | Data Entry → category **Natural Gas** → open **Unit** | Offers kWh, m³, **Sm³**, Therms, GJ — and **no** liquid-fuel or distance units | |
+| UNIT-02 | Pick **Sm³**, enter a value | Clear refusal: standard cubic metres need a sourced calorific value, which arrives with the Phase-4 factor library. **Saving is refused too**, not just the on-screen note | |
+| UNIT-03 | Pick **m³**, enter a value | Calculates, **and** states that ×11.36 is a prototype assumption with no cited source and no stated calorific basis | |
+| UNIT-04 | Switch category to **Electricity** | Unit list narrows to kWh / MWh; the previously chosen gas unit does not stay selected | |
+| UNIT-05 | Emissions → **Intensity** toggle | **Sales output** is offered as a denominator metric (MWh) | |
+
 ### 3.5 Period locking (`/subsidiaries` → padlock)
 
 | TC | Steps | Expected | P/F |

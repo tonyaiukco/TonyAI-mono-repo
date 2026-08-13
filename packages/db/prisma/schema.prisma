@@ -226,7 +226,7 @@ model Target {
 // A configured intensity denominator for one subsidiary + year + metric (WP5).
 // Intensity = emissions / denominator (e.g. tCO₂e per M EUR revenue). Kept
 // per-year so intensity over time stays honest. Metric is one of the spec's four
-// (emissions_page.md §2): 'area' | 'revenue' | 'headcount' | 'production_output'.
+// (emissions_page.md §2): 'area' | 'revenue' | 'headcount' | 'production_output' | 'sales_output'.
 // super_admin only; every write is audited. The Intensity toggle only offers
 // metrics that have a configured value for the year in view.
 model SubsidiaryDenominator {
@@ -234,7 +234,7 @@ model SubsidiaryDenominator {
   subsidiaryId String     @map("subsidiary_id") @db.Uuid
   subsidiary   Subsidiary @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
   year         Int
-  metric       String // 'area' | 'revenue' | 'headcount' | 'production_output'
+  metric       String // 'area' | 'revenue' | 'headcount' | 'production_output' | 'sales_output'
   value        Float
   unit         String
   createdBy    String     @map("created_by") @db.Uuid

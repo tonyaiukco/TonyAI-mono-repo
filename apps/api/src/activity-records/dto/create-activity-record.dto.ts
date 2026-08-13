@@ -14,6 +14,7 @@ import type {
   Category,
   ReportingPeriod,
 } from '@tonyai/shared-types';
+import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
 
 const REPORTING_PERIODS: ReportingPeriod[] = ['monthly', 'quarterly', 'annual'];
 
@@ -58,6 +59,7 @@ export class CreateActivityRecordDto {
   @Min(0)
   activityValue!: number;
 
+  @IsActivityUnit()
   @IsString()
   @MinLength(1)
   activityUnit!: string;
