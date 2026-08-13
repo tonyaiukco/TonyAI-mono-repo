@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useCallback, useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/dashboard/sidebar';
 import { KPICards } from '@/components/dashboard/kpi-cards';
@@ -68,37 +68,70 @@ export default function CarbonDashboard() {
   const [selectedSubsidiary, setSelectedSubsidiary] = useState<Subsidiary | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
+  /**
+   * Load the dashboard's four sources together.
+   *
+   * `silent` skips the loading state so a background refresh does not blank the
+   * page under the reader — a refresh they did not ask for should look like the
+   * numbers changing, not like the page reloading.
+   */
+  const loadDashboard = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const [kpiData, list, summaryData, matrixData] = await Promise.all([
+        api.kpi(),
+        api.listSubsidiaries(),
+        // Same year as the matrix below. These two feed ONE set of KPI cards
+        // (`buildKpiData`), so an unscoped total sitting beside a 2024-only
+        // completeness bar would put two different time ranges in one row with
+        // neither of them labelled.
+        api.emissionsSummary({ year: DEFAULT_REPORTING_YEAR }),
+        // A year, not "everything": without one the endpoint folds every year
+        // into a single cell, so a subsidiary complete for 2023 and empty for
+        // 2024 read as complete. A completeness view that spans years states
+        // nothing about either.
+        api.trackingMatrix({ year: DEFAULT_REPORTING_YEAR }),
+      ]);
+      setKpi(kpiData);
+      setSubsidiaries(list);
+      setSummary(summaryData);
+      setMatrix(matrixData);
+    } catch (e) {
+      // A background refresh that fails must not throw a toast at someone who
+      // did not ask for it; the visible numbers simply stay as they were.
+      if (!silent) toast.error((e as Error).message);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     api
       .me()
       .then(setUser)
       .catch((e) => toast.error((e as Error).message));
+    void loadDashboard();
+  }, [loadDashboard, setUser]);
 
-    setLoading(true);
-    Promise.all([
-      api.kpi(),
-      api.listSubsidiaries(),
-      // Same year as the matrix below. These two feed ONE set of KPI cards
-      // (`buildKpiData`), so an unscoped total sitting beside a 2024-only
-      // completeness bar would put two different time ranges in one row with
-      // neither of them labelled.
-      api.emissionsSummary({ year: DEFAULT_REPORTING_YEAR }),
-      // A year, not "everything": without one the endpoint folds every year
-      // into a single cell, so a subsidiary complete for 2023 and empty for
-      // 2024 read as complete. A completeness view that spans years states
-      // nothing about either.
-      api.trackingMatrix({ year: DEFAULT_REPORTING_YEAR }),
-    ])
-      .then(([kpiData, list, summaryData, matrixData]) => {
-        setKpi(kpiData);
-        setSubsidiaries(list);
-        setSummary(summaryData);
-        setMatrix(matrixData);
-      })
-      .catch((e) => toast.error((e as Error).message))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  /**
+   * Refresh when the tab comes back into focus (round-1 DASH-1).
+   *
+   * These figures are computed from data changed on OTHER pages — add a location
+   * on Subsidiaries and this page, if it is sitting open in another tab, keeps
+   * yesterday's count with nothing to invalidate it. Navigating here already
+   * remounts and refetches; this covers the case navigation does not.
+   */
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState === 'visible') void loadDashboard(true);
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [loadDashboard]);
 
   const filteredSubsidiaries = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();

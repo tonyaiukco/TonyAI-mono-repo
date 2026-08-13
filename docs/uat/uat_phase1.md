@@ -155,6 +155,22 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | GEO-05 | Manage locations on the Munich subsidiary → edit a location | Same: its EU value is shown, not blanked | |
 | GEO-06 | Subsidiary table / audit trail | Still show the raw codes (TR / UK / EU) — labels are for choosing, codes are what is stored | |
 
+### 3.4f Layout & live counts (round-1 **DE-1 / DASH-1**)
+
+> **On DASH-1, please read this first.** The round-1 report said the
+> total-locations figure does not update when a **subsidiary** is added. That is
+> correct behaviour, not a defect: a brand-new subsidiary has **no locations**,
+> so the total must not move. We reproduced the exact steps and confirmed the
+> Companies count rises while Locations correctly stays put. What we *did* fix is
+> narrower — see DASH-01 below.
+
+| TC | Steps | Expected | P/F |
+| --- | --- | --- | --- |
+| DE1-01 | Subsidiaries → add a company with a **very long** legal name, then open Data Entry and select it | The Subsidiary control stays inside its own column: the name is cut off with the control's edge, and it never covers the Location field beside it | |
+| DE1-02 | Same on Emissions → Intensity → **Add denominator**, and on Reports | The selects there behave the same way | |
+| DASH-01 | Leave the Dashboard open, add a **location** from another tab or window, then click back onto the Dashboard tab | The Locations figure updates when the tab regains focus | |
+| DASH-02 | Add a **subsidiary** and return to the Dashboard | Companies rises by one; **Locations does not change** — the new company has no locations yet. This is correct | |
+
 ### 3.5 Period locking (`/subsidiaries` → padlock)
 
 | TC | Steps | Expected | P/F |
