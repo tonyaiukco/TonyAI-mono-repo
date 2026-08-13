@@ -47,9 +47,9 @@ import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { LocationsDrawer } from "@/components/subsidiaries/locations-drawer";
 import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
+import { geographyLabel, geographyOptions } from "@/lib/types";
 import type { LocationDTO, SubsidiaryDTO } from "@/lib/types";
 
-const GEOGRAPHIES = ["UK", "TR", "EU"] as const;
 const STATUSES = ["pending", "active", "inactive"] as const;
 
 const statusClass: Record<string, string> = {
@@ -376,9 +376,13 @@ export default function SubsidiariesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {GEOGRAPHIES.map((g) => (
+                    {/* The list is UK + Türkiye, plus whatever this record
+                        already holds — otherwise editing the seeded EU
+                        subsidiary would bind the Select to a value with no
+                        matching item and render a blank trigger. */}
+                    {geographyOptions(form.geographyCode).map((g) => (
                       <SelectItem key={g} value={g}>
-                        {g}
+                        {geographyLabel(g)}
                       </SelectItem>
                     ))}
                   </SelectContent>

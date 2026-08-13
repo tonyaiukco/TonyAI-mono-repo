@@ -49,7 +49,7 @@ test.describe('Milestone-1 slice', () => {
     await dialog.getByRole('textbox').first().fill(renamed);
 
     // Changing the geography must be confirmed, not saved silently.
-    await pickByFieldLabel(page, 'Geography', 'UK');
+    await pickByFieldLabel(page, 'Geography', 'United Kingdom (UK)');
     await dialog.getByRole('button', { name: 'Save changes' }).click();
     const geoAlert = page.getByRole('alertdialog');
     await expect(geoAlert.getByText(/Change geography from TR to UK\?/)).toBeVisible();
@@ -76,7 +76,7 @@ test.describe('Milestone-1 slice', () => {
     // Re-open and redo the edit, this time confirming it.
     await page.locator('tr', { hasText: uniqueName }).getByRole('button', { name: 'Edit subsidiary' }).click();
     await dialog.getByRole('textbox').first().fill(renamed);
-    await pickByFieldLabel(page, 'Geography', 'UK');
+    await pickByFieldLabel(page, 'Geography', 'United Kingdom (UK)');
 
     await dialog.getByRole('button', { name: 'Save changes' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Continue' }).click();

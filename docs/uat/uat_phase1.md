@@ -137,6 +137,24 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | UNIT-04 | Switch category to **Electricity** | Unit list narrows to kWh / MWh; the previously chosen gas unit does not stay selected | |
 | UNIT-05 | Emissions → **Intensity** toggle | **Sales output** is offered as a denominator metric (MWh) | |
 
+### 3.4e Geography / grid regions (round-1 **DE-6 / DE-7**)
+
+> **Read this before running these.** The "Grid Region" picker you saw on Data
+> Entry did **not** affect the emission factor — it was saved as metadata only,
+> even though its helper text said otherwise. It has been removed. The factor
+> geography comes from the subsidiary (or the location the record targets), and
+> Data Entry now states which one it will use. If that is not what you expected,
+> say so in round 2 — it is a deliberate change from what DE-6 literally asked for.
+
+| TC | Steps | Expected | P/F |
+| --- | --- | --- | --- |
+| GEO-01 | Data Entry, pick any subsidiary | A line reads **"Factor geography: TR — Türkiye, from … (subsidiary)"** with the right code, and no "Grid Region" picker exists | |
+| GEO-02 | Choose a **location** that has a different geography | The line switches to that location's geography and says **(location)** | |
+| GEO-03 | Subsidiaries → **Add Subsidiary** → Geography | Offers **United Kingdom (UK)** and **Türkiye (TR)** only | |
+| GEO-04 | Edit **TonyAI Manufacturing GmbH** (Munich) | Geography shows **European Union (EU)** — not blank — and saving without touching it keeps EU | |
+| GEO-05 | Manage locations on the Munich subsidiary → edit a location | Same: its EU value is shown, not blanked | |
+| GEO-06 | Subsidiary table / audit trail | Still show the raw codes (TR / UK / EU) — labels are for choosing, codes are what is stored | |
+
 ### 3.5 Period locking (`/subsidiaries` → padlock)
 
 | TC | Steps | Expected | P/F |

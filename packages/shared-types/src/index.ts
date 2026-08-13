@@ -755,6 +755,58 @@ export interface DashboardKpi {
 export const GEOGRAPHY_CODES = ['UK', 'TR', 'EU'] as const;
 export type GeographyCode = typeof GEOGRAPHY_CODES[number];
 
+/**
+ * Human names for the geography codes.
+ *
+ * Round-1 DE-6 reported "Turkey is not an option" while `TR` was there all
+ * along — a two-letter code is not a country to the person reading it. Pickers
+ * render the label; tables, the audit trail and the geography-change
+ * confirmation keep the CODE, because that is what is stored, snapshotted and
+ * asserted on.
+ */
+export const GEOGRAPHY_LABELS: Record<GeographyCode, string> = {
+  UK: 'United Kingdom',
+  TR: 'Türkiye',
+  EU: 'European Union',
+};
+
+/**
+ * The geographies offered when creating something new (round-1 DE-7).
+ *
+ * `EU` is HIDDEN, not deleted: the seeded Munich subsidiary resolves its
+ * electricity factor through it, and removing the code would make new records
+ * for that entity impossible. It stays valid at the API, in the factor table and
+ * on every existing record.
+ */
+export const SELECTABLE_GEOGRAPHY_CODES: readonly GeographyCode[] = ['UK', 'TR'];
+
+/**
+ * The options a geography picker should show, given what is currently selected.
+ *
+ * A Radix Select bound to a value with no matching item renders a BLANK trigger
+ * — no error, no placeholder — so hiding `EU` while an EU entity is open would
+ * silently empty the control on the one screen where you can change it. Keeping
+ * the current value in the list is what makes "hidden, not deleted" true for the
+ * user and not just for the database.
+ */
+export function geographyOptions(current?: string | null): GeographyCode[] {
+  const base = [...SELECTABLE_GEOGRAPHY_CODES];
+  if (
+    current &&
+    (GEOGRAPHY_CODES as readonly string[]).includes(current) &&
+    !base.includes(current as GeographyCode)
+  ) {
+    base.push(current as GeographyCode);
+  }
+  return base;
+}
+
+/** `Türkiye (TR)` — label for the reader, code so it stays greppable. */
+export function geographyLabel(code: string): string {
+  const name = GEOGRAPHY_LABELS[code as GeographyCode];
+  return name ? `${name} (${code})` : code;
+}
+
 // ---------------------------------------------------------------------------
 // Emission-factor library + calculation engine (Phase 1, PR1)
 // ---------------------------------------------------------------------------
