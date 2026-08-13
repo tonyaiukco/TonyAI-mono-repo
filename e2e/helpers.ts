@@ -340,6 +340,25 @@ export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promis
 }
 
 /**
+ * Remove locations left by a previous run.
+ *
+ * Subsidiaries and targets had sentinels; locations had none, so a run that died
+ * between creating one and its `finally` stranded it permanently — surviving
+ * re-seeds, shifting the location count the UAT testers see, and invisible to
+ * every spec, since nothing asserts an absolute location total.
+ */
+export async function cleanupE2ELocations(request: APIRequestContext): Promise<void> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  reportCleanup([
+    await del(request, `${url}/rest/v1/locations?name=like.E2E%20*`, headers),
+  ]);
+}
+
+/**
  * Targets/denominators aren't period-scoped, so the quarterly wipe can't reach
  * them. E2E rows use the `E2E-` name/unit sentinel; this deletes exactly those
  * (service-role), leaving the seed's demo targets/denominators intact.

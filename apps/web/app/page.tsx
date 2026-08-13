@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useCallback, useState, useMemo, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/dashboard/sidebar';
 import { KPICards } from '@/components/dashboard/kpi-cards';
@@ -29,7 +29,7 @@ import {
   Search,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import {
@@ -67,38 +67,101 @@ export default function CarbonDashboard() {
   // Drill-down detail sheet (view model mapped from the live tracking matrix)
   const [selectedSubsidiary, setSelectedSubsidiary] = useState<Subsidiary | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [refreshFailures, setRefreshFailures] = useState(0);
+  const inFlight = useRef(false);
+
+  /**
+   * Load the dashboard's four sources together.
+   *
+   * `silent` skips the loading state so a background refresh does not blank the
+   * page under the reader — a refresh they did not ask for should look like the
+   * numbers changing, not like the page reloading.
+   */
+  // Sequence token: whichever request resolves LAST used to win, so a slow
+  // response carrying an older view could land after a newer one and stay on
+  // screen until the next focus. On a compliance dashboard a figure that is
+  // wrong and never self-corrects is the failure that matters.
+  const loadSeq = useRef(0);
+
+  const loadDashboard = useCallback(async (silent = false) => {
+    // One refresh at a time. A real alt-tab fires `focus` AND
+    // `visibilitychange`, so without this a single tab return issued two full
+    // reloads — eight requests — and rapid switching multiplied it.
+    if (silent && loadSeq.current !== 0 && inFlight.current) return;
+    const mine = ++loadSeq.current;
+    inFlight.current = true;
+    if (!silent) setLoading(true);
+    try {
+      const [kpiData, list, summaryData, matrixData] = await Promise.all([
+        api.kpi(),
+        api.listSubsidiaries(),
+        // Same year as the matrix below. These two feed ONE set of KPI cards
+        // (`buildKpiData`), so an unscoped total sitting beside a 2024-only
+        // completeness bar would put two different time ranges in one row with
+        // neither of them labelled.
+        api.emissionsSummary({ year: DEFAULT_REPORTING_YEAR }),
+        // A year, not "everything": without one the endpoint folds every year
+        // into a single cell, so a subsidiary complete for 2023 and empty for
+        // 2024 read as complete. A completeness view that spans years states
+        // nothing about either.
+        api.trackingMatrix({ year: DEFAULT_REPORTING_YEAR }),
+      ]);
+      // A response from a superseded request must not overwrite a newer one.
+      if (mine !== loadSeq.current) return;
+      setKpi(kpiData);
+      setSubsidiaries(list);
+      setSummary(summaryData);
+      setMatrix(matrixData);
+      setRefreshFailures(0);
+    } catch (e) {
+      // An expired session is the MOST likely failure on the focus path — it is
+      // the "came back after a while" path — so it cannot be swallowed: the
+      // page would keep showing authenticated figures to someone who is signed
+      // out, beside a green "Live data" badge.
+      if (e instanceof ApiError && e.status === 401) {
+        router.push('/login');
+        return;
+      }
+      if (!silent) {
+        toast.error((e as Error).message);
+      } else {
+        // Swallowing one transient failure is right; swallowing them forever is
+        // not. After a few, say the numbers are not live any more.
+        setRefreshFailures((n) => n + 1);
+      }
+    } finally {
+      inFlight.current = false;
+      if (!silent) setLoading(false);
+    }
+  }, [router]);
 
   useEffect(() => {
     api
       .me()
       .then(setUser)
       .catch((e) => toast.error((e as Error).message));
+    void loadDashboard();
+  }, [loadDashboard, setUser]);
 
-    setLoading(true);
-    Promise.all([
-      api.kpi(),
-      api.listSubsidiaries(),
-      // Same year as the matrix below. These two feed ONE set of KPI cards
-      // (`buildKpiData`), so an unscoped total sitting beside a 2024-only
-      // completeness bar would put two different time ranges in one row with
-      // neither of them labelled.
-      api.emissionsSummary({ year: DEFAULT_REPORTING_YEAR }),
-      // A year, not "everything": without one the endpoint folds every year
-      // into a single cell, so a subsidiary complete for 2023 and empty for
-      // 2024 read as complete. A completeness view that spans years states
-      // nothing about either.
-      api.trackingMatrix({ year: DEFAULT_REPORTING_YEAR }),
-    ])
-      .then(([kpiData, list, summaryData, matrixData]) => {
-        setKpi(kpiData);
-        setSubsidiaries(list);
-        setSummary(summaryData);
-        setMatrix(matrixData);
-      })
-      .catch((e) => toast.error((e as Error).message))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  /**
+   * Refresh when the tab comes back into focus (round-1 DASH-1).
+   *
+   * These figures are computed from data changed on OTHER pages — add a location
+   * on Subsidiaries and this page, if it is sitting open in another tab, keeps
+   * yesterday's count with nothing to invalidate it. Navigating here already
+   * remounts and refetches; this covers the case navigation does not.
+   */
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState === 'visible') void loadDashboard(true);
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [loadDashboard]);
 
   const filteredSubsidiaries = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -198,13 +261,26 @@ export default function CarbonDashboard() {
               <CardTitle className="text-lg font-semibold text-foreground">
                 Subsidiary Register
               </CardTitle>
-              <Badge
-                variant="outline"
-                className="gap-1.5 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
-              >
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                Live data
-              </Badge>
+              {/* The badge is a claim. Once background refreshes keep failing
+                  it stops being true, and a green "Live data" beside stale
+                  figures is worse than no badge at all. */}
+              {refreshFailures >= 3 ? (
+                <Badge
+                  variant="outline"
+                  className="gap-1.5 rounded-lg border-amber-500/30 bg-amber-500/10 text-amber-700"
+                >
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  Not refreshing — reload to retry
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="gap-1.5 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
+                >
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  Live data
+                </Badge>
+              )}
             </CardHeader>
             <CardContent className="p-0">
               {loading ? (
@@ -275,13 +351,26 @@ export default function CarbonDashboard() {
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-[#1D1D1F]">Emissions Overview</h2>
-              <Badge
-                variant="outline"
-                className="gap-1.5 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
-              >
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                Live data
-              </Badge>
+              {/* The badge is a claim. Once background refreshes keep failing
+                  it stops being true, and a green "Live data" beside stale
+                  figures is worse than no badge at all. */}
+              {refreshFailures >= 3 ? (
+                <Badge
+                  variant="outline"
+                  className="gap-1.5 rounded-lg border-amber-500/30 bg-amber-500/10 text-amber-700"
+                >
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  Not refreshing — reload to retry
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="gap-1.5 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
+                >
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  Live data
+                </Badge>
+              )}
             </div>
             <p className="-mt-2 text-sm text-muted-foreground">
               Committed Scope 1 &amp; 2 activity records. Year-over-year trends

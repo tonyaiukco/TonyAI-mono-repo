@@ -1,6 +1,7 @@
 import { request as playwrightRequest } from '@playwright/test';
 import {
   cleanupQuarterly,
+  cleanupE2ELocations,
   cleanupE2ESubsidiaries,
   cleanupE2ETargets,
 } from './helpers';
@@ -16,6 +17,7 @@ export default async function globalSetup(): Promise<void> {
     await cleanupQuarterly(ctx);
     await cleanupE2ETargets(ctx);
     await cleanupE2ESubsidiaries(ctx);
+    await cleanupE2ELocations(ctx);
   } finally {
     await ctx.dispose();
   }
