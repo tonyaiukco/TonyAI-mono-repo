@@ -8,6 +8,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { INTENSITY_METRIC_KEYS } from '@tonyai/shared-types';
 import type { IntensityMetricKey } from '@tonyai/shared-types';
 
 const METRICS: IntensityMetricKey[] = [

@@ -1,12 +1,20 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { EmissionFactor } from '@tonyai/db';
+import { CATEGORY_UNITS } from '@tonyai/shared-types';
 import type {
   CalculationInput,
   CalculationResult,
+  Category,
   EmissionFactorDTO,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
-import { isKnownUnit, normalize, type NormalizationResult } from './normalization';
+import {
+  blockedUnitReason,
+  canonicalUnit as canonicalInputUnit,
+  isKnownUnit,
+  normalize,
+  type NormalizationResult,
+} from './normalization';
 
 @Injectable()
 export class CalculationsService {
@@ -91,11 +99,39 @@ export class CalculationsService {
     if (!isKnownUnit(input.unit)) {
       throw new BadRequestException(`Unsupported unit "${input.unit}"`);
     }
+    // Recognised but not calculable (Sm³): refuse by name, with the reason, so
+    // the caller learns what is missing rather than "unsupported unit".
+    const blocked = blockedUnitReason(input.unit);
+    if (blocked) {
+      throw new BadRequestException(blocked);
+    }
+    // Category/unit agreement. The factor guard below only catches a mismatch
+    // BETWEEN unit families (litres vs kWh); within the kWh family `therms` on
+    // Electricity or `MWh` on Natural Gas produced a plausible number and no
+    // error at all.
+    const allowedUnits = CATEGORY_UNITS[input.category as Category];
+    // Compare canonical to canonical: the shared list carries display tokens
+    // (`kWh`, `MWh`) while the engine keys on resolved aliases (`kwh`, `mwh`),
+    // so a raw `includes` rejected the very units it was meant to allow.
+    if (
+      allowedUnits &&
+      !allowedUnits
+        .map((u) => canonicalInputUnit(u))
+        .includes(canonicalInputUnit(input.unit))
+    ) {
+      throw new BadRequestException(
+        `Unit "${input.unit}" is not valid for "${input.category}". ` +
+          `Accepted: ${allowedUnits.join(', ')}.`,
+      );
+    }
 
-    const { normalizedValue, normalizedUnit, conversionApplied } = normalize(
-      input.value,
-      input.unit,
-    );
+    const {
+      normalizedValue,
+      normalizedUnit,
+      conversionApplied,
+      conversionFactor,
+      conversionBasis,
+    } = normalize(input.value, input.unit);
 
     const factor = await this.resolveFactor(
       input.category,
@@ -124,6 +160,8 @@ export class CalculationsService {
       normalizedValue,
       normalizedUnit,
       conversionApplied,
+      ...(conversionFactor !== undefined ? { conversionFactor } : {}),
+      ...(conversionBasis !== undefined ? { conversionBasis } : {}),
       kgCo2e,
       tCo2e,
       factorId: factor.id,

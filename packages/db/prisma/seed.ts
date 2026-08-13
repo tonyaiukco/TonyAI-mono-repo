@@ -572,6 +572,10 @@ async function main() {
     { subsidiaryId: SUBSIDIARIES[2].id, year: DEMO_YEAR, metric: 'production_output', value: 1250000, unit: 'units' },
     { subsidiaryId: SUBSIDIARIES[1].id, year: DEMO_YEAR, metric: 'revenue', value: 210, unit: 'M EUR' },
     { subsidiaryId: SUBSIDIARIES[1].id, year: DEMO_YEAR, metric: 'headcount', value: 720, unit: 'FTE' },
+    // Round-1 EM-1: energy sold, for the two energy-sector subsidiaries. The
+    // unit is MWh (product owner, 2026-08-13) — the docs never stated one.
+    { subsidiaryId: SUBSIDIARIES[0].id, year: DEMO_YEAR, metric: 'sales_output', value: 1250000, unit: 'MWh' },
+    { subsidiaryId: SUBSIDIARIES[1].id, year: DEMO_YEAR, metric: 'sales_output', value: 480000, unit: 'MWh' },
   ];
   for (const d of DEMO_DENOMINATORS) {
     await prisma.subsidiaryDenominator.upsert({

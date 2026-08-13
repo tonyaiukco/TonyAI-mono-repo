@@ -85,6 +85,90 @@ export const CATEGORIES = [
 
 export type Category = typeof CATEGORIES[number];
 
+// ---------------------------------------------------------------------------
+// Activity units (WP15 / round-1 DE-3 + EM-1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every unit a user may submit activity data in.
+ *
+ * One list, because there were three: the engine's conversion rules, the
+ * engine's alias table and the Data Entry dropdown — which had already drifted
+ * (the engine accepts `gj`, the dropdown never offered it).
+ *
+ * `target` is the base unit the value normalises to, and is what makes a
+ * unit/factor mismatch detectable. `blocked` marks a unit that is offered but
+ * cannot be calculated yet, so the UI can list it and the API can refuse it with
+ * the same reason.
+ */
+export interface ActivityUnitSpec {
+  value: string;
+  label: string;
+  target: 'kWh' | 'litres' | 'kilometres' | 'passenger_kilometres' | 'tonnes';
+  /** Present when the unit is selectable but not yet calculable. */
+  blocked?: string;
+}
+
+export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
+  { value: 'kWh', label: 'kWh (electricity / gas)', target: 'kWh' },
+  { value: 'MWh', label: 'MWh (electricity)', target: 'kWh' },
+  {
+    value: 'cubic_metres',
+    label: 'Cubic metres — m³ (natural gas)',
+    target: 'kWh',
+  },
+  {
+    // Round-1 DE-3/EM-1 asked for Sm³ alongside m³. It is listed rather than
+    // hidden, because the request was to SEE it — but standard and actual cubic
+    // metres are different physical quantities, and this repo holds no sourced
+    // calorific value for the conversion. Inventing one would put a fabricated
+    // number into an inventory, so it is offered and refused, with the reason.
+    value: 'standard_cubic_metres',
+    label: 'Standard cubic metres — Sm³ (natural gas)',
+    target: 'kWh',
+    blocked:
+      'Standard cubic metres need a sourced calorific value to become kWh, and this prototype does not have one yet — it arrives with the Phase-4 factor library. Enter the volume in m³, or the energy in kWh.',
+  },
+  { value: 'therms', label: 'Therms (natural gas)', target: 'kWh' },
+  { value: 'gj', label: 'GJ (natural gas)', target: 'kWh' },
+  { value: 'litres', label: 'Litres (liquid fuel)', target: 'litres' },
+  { value: 'uk_gallons', label: 'UK gallons (liquid fuel)', target: 'litres' },
+  { value: 'us_gallons', label: 'US gallons (liquid fuel)', target: 'litres' },
+  { value: 'kilometres', label: 'Kilometres', target: 'kilometres' },
+  {
+    value: 'passenger_kilometres',
+    label: 'Passenger-km',
+    target: 'passenger_kilometres',
+  },
+  { value: 'tonnes', label: 'Tonnes', target: 'tonnes' },
+] as const;
+
+export const ACTIVITY_UNIT_VALUES = ACTIVITY_UNITS.map((u) => u.value);
+
+/**
+ * Which units make sense for which category.
+ *
+ * Without this the only guard is the unit FAMILY check in the calc service, so
+ * litres on Electricity is refused (litres vs kWh) while `therms` on Electricity
+ * or `MWh` on Natural Gas sail straight through and produce a number — a silent
+ * wrong figure rather than an error. Categories absent from this map have no
+ * seeded factor yet, so they are unconstrained until they do.
+ */
+export const CATEGORY_UNITS: Partial<Record<Category, readonly string[]>> = {
+  Electricity: ['kWh', 'MWh'],
+  'Natural Gas': ['kWh', 'cubic_metres', 'standard_cubic_metres', 'therms', 'gj'],
+  Fuel: ['litres', 'uk_gallons', 'us_gallons'],
+};
+
+/** The units offered for a category, or every unit when it has no mapping. */
+export function unitsForCategory(category: string): readonly ActivityUnitSpec[] {
+  const allowed = CATEGORY_UNITS[category as Category];
+  return allowed
+    ? ACTIVITY_UNITS.filter((u) => allowed.includes(u.value))
+    : ACTIVITY_UNITS;
+}
+
+
 // Data Entry Types
 // Canonical 4-role enum (aligned with docs/tech_docs technical_analysis.md §4 and Prisma user_role)
 export type UserRole = 'super_admin' | 'consultant' | 'data_entry' | 'executive_viewer';
@@ -474,13 +558,19 @@ export interface TargetProgressDTO {
 }
 
 /** The spec's four intensity denominators (emissions_page.md §2). */
-export type IntensityMetricKey = 'area' | 'revenue' | 'headcount' | 'production_output';
+export type IntensityMetricKey =
+  | 'area'
+  | 'revenue'
+  | 'headcount'
+  | 'production_output'
+  | 'sales_output';
 
 export const INTENSITY_METRIC_KEYS: IntensityMetricKey[] = [
   'area',
   'revenue',
   'headcount',
   'production_output',
+  'sales_output',
 ];
 
 export const INTENSITY_METRIC_META: Record<
@@ -491,6 +581,11 @@ export const INTENSITY_METRIC_META: Record<
   revenue: { label: 'Revenue', defaultUnit: 'M EUR' },
   headcount: { label: 'Headcount', defaultUnit: 'FTE' },
   production_output: { label: 'Production output', defaultUnit: 'units' },
+  // Round-1 EM-1. The tester asked for "sales output" and to "focus on
+  // energy-sector metrics", and the docs give no unit — MWh of energy sold was
+  // the product owner's call (2026-08-13). The unit stays editable per
+  // denominator, so a non-energy subsidiary can record something else.
+  sales_output: { label: 'Sales output', defaultUnit: 'MWh' },
 };
 
 /** A configured intensity denominator for one subsidiary + year + metric. */
@@ -693,6 +788,12 @@ export interface CalculationResult {
   normalizedUnit: string;
   /** true when a unit conversion was applied during normalization. */
   conversionApplied: boolean;
+  /** The multiplier applied, and where it comes from. Optional because records
+   *  written before WP15 have neither, and because a passthrough has nothing to
+   *  record. `conversionApplied` on its own could not answer "converted HOW?",
+   *  which is the question an auditor actually asks. */
+  conversionFactor?: number;
+  conversionBasis?: string;
   kgCo2e: number;
   tCo2e: number;
   // Factor traceability snapshot (see calculation_logic.md §5).

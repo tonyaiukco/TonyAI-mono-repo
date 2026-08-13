@@ -81,6 +81,12 @@ export function subsidiaryRows(page: Page) {
  * name — it isn't affected by how Radix composes the trigger's name. Waits for
  * the listbox to close so the overlay can't swallow the next interaction.
  */
+/**
+ * NOTE: this resolves the field by an EXACT label match, so it breaks with a
+ * strict-mode violation when two fields share a label — on `/data-entry` both
+ * "Activity data" and "Additional context" have a `Unit`. For those, address the
+ * control by the option it currently displays instead.
+ */
 export async function pickByFieldLabel(page: Page, fieldLabel: string, optionName: string): Promise<void> {
   const field = page.locator('div.space-y-2', { has: page.getByText(fieldLabel, { exact: true }) });
   await field.getByRole('combobox').click();

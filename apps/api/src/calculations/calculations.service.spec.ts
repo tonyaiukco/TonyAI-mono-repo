@@ -3,7 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { EmissionFactor } from '@tonyai/db';
 import { CalculationsService } from './calculations.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { normalize } from './normalization';
+import { isKnownUnit, normalize } from './normalization';
 
 // Local Prisma mock: only the emissionFactor surface the service touches. No DB.
 function createFactorPrismaMock() {
@@ -74,6 +74,14 @@ describe('normalize (calculation_logic.md §2)', () => {
 
   it('throws for an unsupported unit', () => {
     expect(() => normalize(1, 'bananas')).toThrow(/Unsupported unit/);
+  });
+
+  it('knows Sm³ but refuses to convert it', () => {
+    // Recognised, so the DTO accepts it and the refusal can explain itself —
+    // "unsupported unit" would send the user looking for a spelling mistake.
+    expect(isKnownUnit('Sm3')).toBe(true);
+    expect(() => normalize(1, 'Sm3')).toThrow(/sourced calorific value/i);
+    expect(() => normalize(1, 'Nm³')).toThrow(/sourced calorific value/i);
   });
 });
 
@@ -198,6 +206,83 @@ describe('CalculationsService.compute', () => {
     expect(result.normalizedValue).toBeCloseTo(1136, 6);
     expect(result.kgCo2e).toBeCloseTo(207.7744, 4);
     expect(result.scope).toBe(1);
+  });
+
+  it('refuses Sm³ by name, saying what is missing', async () => {
+    // Sm³ and m³ are different physical quantities and this repo holds no
+    // sourced calorific value for the first. Registering it with the m³
+    // multiplier would produce a number nobody could defend, so it is
+    // recognised and refused — and the message must say why, or a tester reads
+    // it as "unsupported unit" and simply reaches for m³ instead.
+    await expect(
+      service.compute({
+        category: 'Natural Gas',
+        geographyCode: 'UK',
+        reportingYear: 2026,
+        value: 100,
+        unit: 'Sm3',
+      }),
+    ).rejects.toThrow(/sourced calorific value/i);
+    expect(prisma.emissionFactor.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('records WHICH conversion was applied, not just that one was', async () => {
+    // `conversionApplied` is a boolean; an auditor asking what multiplier was
+    // used had to divide normalizedValue by the input to find out.
+    prisma.emissionFactor.findFirst.mockResolvedValue(
+      makeFactor({
+        category: 'Natural Gas',
+        normalizedUnit: 'kWh',
+        factorValue: 0.1829,
+        scope: 1,
+      }),
+    );
+
+    const result = await service.compute({
+      category: 'Natural Gas',
+      geographyCode: 'UK',
+      reportingYear: 2026,
+      value: 100,
+      unit: 'cubic_metres',
+    });
+
+    expect(result.conversionApplied).toBe(true);
+    expect(result.conversionFactor).toBe(11.36);
+    expect(result.conversionBasis).toMatch(/unsourced/i);
+  });
+
+  it('leaves the conversion fields off when nothing was converted', async () => {
+    prisma.emissionFactor.findFirst.mockResolvedValue(
+      makeFactor({ normalizedUnit: 'kWh' }),
+    );
+
+    const result = await service.compute({
+      category: 'Electricity',
+      geographyCode: 'UK',
+      reportingYear: 2026,
+      value: 10,
+      unit: 'kWh',
+    });
+
+    expect(result.conversionApplied).toBe(false);
+    expect(result.conversionFactor).toBeUndefined();
+    expect(result.conversionBasis).toBeUndefined();
+  });
+
+  it('rejects a unit that is wrong for the category but right for the family', async () => {
+    // The pre-existing guard only compares unit FAMILIES, so `therms` on
+    // Electricity normalised to kWh, matched the factor and produced a
+    // plausible number with no error at all.
+    await expect(
+      service.compute({
+        category: 'Electricity',
+        geographyCode: 'UK',
+        reportingYear: 2026,
+        value: 100,
+        unit: 'therms',
+      }),
+    ).rejects.toThrow(/not valid for "Electricity"/);
+    expect(prisma.emissionFactor.findFirst).not.toHaveBeenCalled();
   });
 
   it('throws NotFound when no factor exists for the key', async () => {

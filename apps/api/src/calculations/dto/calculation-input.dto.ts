@@ -1,4 +1,5 @@
 import { IsInt, IsNumber, IsString, Max, Min } from 'class-validator';
+import { IsActivityUnit } from '../is-activity-unit.decorator';
 
 /**
  * Body of POST /api/v1/calculations/preview.
@@ -20,6 +21,7 @@ export class CalculationInputDto {
   @Min(0)
   value!: number;
 
+  @IsActivityUnit()
   @IsString()
   unit!: string;
 }

@@ -12,6 +12,12 @@ export interface NormalizationResult {
   normalizedUnit: string;
   /** true when a non-identity conversion factor was applied. */
   conversionApplied: boolean;
+  /** The multiplier that was applied. `conversionApplied` alone only says THAT
+   *  something happened — an auditor asking WHAT was applied had to divide
+   *  `normalizedValue` by the input to find out. */
+  conversionFactor?: number;
+  /** Where that multiplier comes from. */
+  conversionBasis?: string;
 }
 
 interface UnitRule {
@@ -19,6 +25,12 @@ interface UnitRule {
   target: string;
   /** Multiply the input value by this to reach the base unit. */
   multiplier: number;
+  /** Where the multiplier comes from, recorded in the calculation snapshot when
+   *  a conversion is applied. */
+  basis?: string;
+  /** Set when the unit is recognised but cannot be calculated — the caller must
+   *  refuse with this reason rather than treat it as an unknown unit. */
+  blocked?: string;
 }
 
 // Keyed by a canonical (lowercased, trimmed) unit alias. Values taken verbatim
@@ -27,11 +39,32 @@ const UNIT_RULES: Record<string, UnitRule> = {
   // --- Energy base unit: kWh ---
   kwh: { target: 'kWh', multiplier: 1 },
   // Natural gas -> kWh (§2.1)
-  cubic_metres: { target: 'kWh', multiplier: 11.36 },
+  // §2.1 gives 11.36 with no source, no calorific-value basis and no stated
+  // reference conditions. It is a prototype assumption, not a sourced factor —
+  // `basis` carries that into the calculation snapshot so a record can say what
+  // was applied instead of leaving it to arithmetic.
+  cubic_metres: {
+    target: 'kWh',
+    multiplier: 11.36,
+    basis:
+      'calculation_logic.md §2.1 prototype assumption — unsourced, calorific basis and reference conditions undefined',
+  },
   therms: { target: 'kWh', multiplier: 29.3 },
   gj: { target: 'kWh', multiplier: 277.78 },
   // Electricity -> kWh (§2.3)
   mwh: { target: 'kWh', multiplier: 1000 },
+
+  // Standard cubic metres: RECOGNISED but not calculable. Sm³ and m³ are
+  // different physical quantities — the conversion needs a calorific value at
+  // stated reference conditions, and this repo has no sourced one. Registering
+  // it with any multiplier would produce a number nobody could defend, so it is
+  // registered with none and refused by name.
+  standard_cubic_metres: {
+    target: 'kWh',
+    multiplier: 1,
+    blocked:
+      'Standard cubic metres need a sourced calorific value to become kWh, and this prototype does not have one yet — it arrives with the Phase-4 factor library. Enter the volume in m³, or the energy in kWh.',
+  },
 
   // --- Liquid fuel base unit: litres (§2.2) ---
   litres: { target: 'litres', multiplier: 1 },
@@ -50,6 +83,13 @@ const UNIT_ALIASES: Record<string, string> = {
   'kw h': 'kwh',
   mwh: 'mwh',
   m3: 'cubic_metres',
+  sm3: 'standard_cubic_metres',
+  'sm³': 'standard_cubic_metres',
+  standard_cubic_metre: 'standard_cubic_metres',
+  standard_cubic_metres: 'standard_cubic_metres',
+  scm: 'standard_cubic_metres',
+  nm3: 'standard_cubic_metres',
+  'nm³': 'standard_cubic_metres',
   'm³': 'cubic_metres',
   cubic_metre: 'cubic_metres',
   cubic_meters: 'cubic_metres',
@@ -78,7 +118,10 @@ const UNIT_ALIASES: Record<string, string> = {
 };
 
 /** Canonicalise a raw unit string: lowercase, trim, collapse whitespace. */
-function canonicalUnit(unit: string): string {
+/** The alias-resolved key a raw unit string maps to. Exported so the category
+ *  guard compares the same token the rules are keyed by, not the user's
+ *  spelling — `m3`, `m³` and `cubic_metres` are one unit. */
+export function canonicalUnit(unit: string): string {
   const cleaned = unit.trim().toLowerCase().replace(/\s+/g, '_');
   return UNIT_ALIASES[cleaned] ?? cleaned;
 }
@@ -98,9 +141,21 @@ export function normalize(value: number, unit: string): NormalizationResult {
   if (!rule) {
     throw new Error(`Unsupported unit "${unit}" for normalization`);
   }
+  if (rule.blocked) {
+    throw new Error(rule.blocked);
+  }
   return {
     normalizedValue: value * rule.multiplier,
     normalizedUnit: rule.target,
     conversionApplied: rule.multiplier !== 1,
+    // Only when something was actually converted; a passthrough has no basis to
+    // record and an empty string would read as "basis unknown".
+    ...(rule.multiplier !== 1 ? { conversionFactor: rule.multiplier } : {}),
+    ...(rule.multiplier !== 1 && rule.basis ? { conversionBasis: rule.basis } : {}),
   };
+}
+
+/** The reason a recognised unit cannot be calculated, or null if it can. */
+export function blockedUnitReason(unit: string): string | null {
+  return UNIT_RULES[canonicalUnit(unit)]?.blocked ?? null;
 }

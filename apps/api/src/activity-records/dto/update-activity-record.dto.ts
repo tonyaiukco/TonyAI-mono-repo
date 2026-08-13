@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 import { CATEGORIES } from '@tonyai/shared-types';
 import type { Category, ReportingPeriod } from '@tonyai/shared-types';
+import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
 
 const REPORTING_PERIODS: ReportingPeriod[] = ['monthly', 'quarterly', 'annual'];
 
@@ -56,6 +57,7 @@ export class UpdateActivityRecordDto {
   activityValue?: number;
 
   @IsOptional()
+  @IsActivityUnit()
   @IsString()
   @MinLength(1)
   activityUnit?: string;
