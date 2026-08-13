@@ -18,7 +18,7 @@
   - The user merges each PR individually. **Never start the next PR until asked.**
 - **Re-run `pnpm db:seed` after pulling WP7 PR 3** — it adds the `review@tonyai.local` consultant; without it the five new `/review` E2E tests fail at token grant.
 - **Everyone must re-run `pnpm setup` after pulling this** — the API now refuses to boot without `ALLOW_INSECURE_LOCAL_AUTH=true` in `apps/api/.env`, and `jsonwebtoken` → `jose` means a stale `node_modules` fails too
-- **Tests:** 303 unit (Vitest, API) + a `next.config` phase guard (web) + 37 E2E (Playwright) + 25 live RLS containment probes — green from a from-scratch `pnpm db:reset`
+- **Tests:** 303 unit (Vitest, API) + a `next.config` phase guard (web) + 38 E2E (Playwright) + 25 live RLS containment probes — green from a from-scratch `pnpm db:reset`
 - **Local stack:** Docker + Supabase (`pnpm setup`), `pnpm dev` → web :3000, api :3001
 
 ## Delivered (PR history)
@@ -235,6 +235,9 @@
 - **Group-level intensity can double-count** — denominators are summed by metric+unit, so 1,250,000 MWh of generated electricity plus 480,000 MWh of distributed gas become one 1,730,000 MWh denominator, mixing primary and secondary energy and counting intra-group sales twice. The unit guard cannot see it: both are honestly MWh. Either keep `sales_output` subsidiary-scoped or qualify the commodity.
 - **The E2E specs are never type-checked** — there is no root `tsconfig.json` and no `e2e/tsconfig.json`, so `pnpm typecheck` covers only `apps/web` and `apps/api`; Playwright merely transpiles. An unused import or a type error in a spec goes unnoticed (one shipped in WP15 slice (a) and was found by review, not tooling). Adding `e2e/tsconfig.json` plus a typecheck target is small and closes it.
 - **Legacy records keep a `grid_region` value in `input`** that the UI can no longer show or clear (WP15 slice (a) removed the field). Nothing is lost and nothing breaks, but the key is dormant metadata — do not read it as authoritative if it surfaces in an export or an audit diff.
+- **A real tab return is not reproducible in Playwright** — pages stay `visible`, `bringToFront()` and CDP lifecycle transitions fire nothing, so the E2E proves `window.focus → silent refresh` is wired but leaves the `visibilitychange` half to the manual UAT case. Do not read the DASH-1 coverage as end-to-end.
+- **`apps/web/components/dashboard/data-table.tsx` is dead code** — no importer anywhere; found while sweeping Select usages.
+- **`pnpm lint` is still a placeholder** in both apps (`echo … && exit 0`), so nothing machine-checks lint rules — including the `react-hooks/exhaustive-deps` suppressions this PR removed.
 - Billing/subscription model — not covered by any spec
 - Depth of `executive_viewer` / `consultant` UX flows
 - Mobile/responsive support targets
