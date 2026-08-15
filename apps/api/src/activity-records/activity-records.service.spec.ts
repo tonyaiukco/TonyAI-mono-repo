@@ -378,6 +378,113 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
   });
 });
 
+/**
+ * `locationName` is resolved by a join, not stored on the row. That makes it a
+ * read-time convenience — and a liability the moment it reaches `audit_log`,
+ * which is append-only and has no correction path. Before the split, `toDTO`
+ * served both jobs and the queries disagreed about the include, so a create
+ * whose `locationId` was set the whole time logged `locationName: null` and the
+ * next unrelated edit logged `null → "Ankara Plant"` — a permanent record of a
+ * geography decision that never happened on that day.
+ */
+describe('ActivityRecordsService — locationName: read-only, never audited', () => {
+  const located = { ...CREATE_DTO, locationId: 'loc-1' };
+
+  function withLocation(prisma: PrismaMock) {
+    prisma.subsidiary.findUnique.mockResolvedValue(
+      makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
+    );
+    prisma.location.findUnique.mockResolvedValue({
+      id: 'loc-1',
+      subsidiaryId: 'sub-1',
+      geographyCode: 'UK',
+    });
+  }
+
+  beforeEach(() => {
+    audit.record.mockClear();
+  });
+
+  it('create returns the name but keeps it out of the audit snapshot', async () => {
+    const { prisma, service } = build(2);
+    withLocation(prisma);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ ...data, id: 'rec-new' }),
+      location: { name: 'Ankara Plant' },
+    }));
+
+    const dto = await service.create(dataEntry(), located);
+
+    expect(dto.locationName).toBe('Ankara Plant');
+    const diff = audit.record.mock.calls[0][1].diff as any;
+    // The persisted column IS audited; the resolved label is not.
+    expect(diff.after.locationId).toBe('loc-1');
+    expect(diff.after).not.toHaveProperty('locationName');
+  });
+
+  it('update audits neither side with a resolved name', async () => {
+    const { prisma, service } = build(2);
+    withLocation(prisma);
+    prisma.activityRecord.findUnique.mockResolvedValue({
+      ...makeRecord({
+        id: 'rec-u',
+        subsidiaryId: 'sub-1',
+        locationId: 'loc-1',
+        status: ActivityRecordStatus.draft,
+        createdBy: 'user-entry',
+      }),
+      location: { name: 'Ankara Plant' },
+    });
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
+      _count: { evidence: 0 },
+      location: { name: 'Ankara Plant' },
+    }));
+
+    const dto = await service.update(dataEntry(), 'rec-u', { activityValue: 5000 });
+
+    expect(dto.locationName).toBe('Ankara Plant');
+    const diff = audit.record.mock.calls[0][1].diff as any;
+    expect(diff.before).not.toHaveProperty('locationName');
+    expect(diff.after).not.toHaveProperty('locationName');
+  });
+
+  it('single-record reads carry the same include as the list (GET /:id agrees)', async () => {
+    // The contract documents `locationName: null` as "subsidiary-level, or the
+    // location has since been removed" — and this work package makes the second
+    // case impossible. A GET that answered `null` for a located record would
+    // therefore read as "orphaned, investigate".
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue({
+      ...makeRecord({ id: 'rec-g', subsidiaryId: 'sub-1', locationId: 'loc-1' }),
+      location: { name: 'Ankara Plant' },
+    });
+
+    const dto = await service.get(dataEntry(), 'rec-g');
+
+    expect(dto.locationName).toBe('Ankara Plant');
+    expect(prisma.activityRecord.findUnique).toHaveBeenCalledWith({
+      where: { id: 'rec-g' },
+      include: { location: { select: { name: true } } },
+    });
+  });
+
+  it('create asks for the include too — otherwise the 201 body lies', async () => {
+    const { prisma, service } = build(2);
+    withLocation(prisma);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ ...data, id: 'rec-new' }),
+      location: { name: 'Ankara Plant' },
+    }));
+
+    await service.create(dataEntry(), located);
+
+    expect(prisma.activityRecord.create.mock.calls[0][0].include).toEqual({
+      location: { select: { name: true } },
+    });
+  });
+});
+
 describe('ActivityRecordsService — RBAC', () => {
   it('data_entry cannot approve -> Forbidden', async () => {
     const { prisma, service } = build();

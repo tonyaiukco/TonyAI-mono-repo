@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -135,12 +136,44 @@ export class LocationsService {
     return this.toDTO(updated);
   }
 
+  /**
+   * Refuse to delete something that committed data still points at.
+   *
+   * The FK is `ON DELETE SET NULL`, so a delete used to succeed silently and
+   * leave every referencing record claiming the SUBSIDIARY's geography while its
+   * frozen calculation snapshot was computed from the LOCATION's — measured:
+   * subsidiary TR, location UK, record detached with `geographyCode: 'UK'` still
+   * in the snapshot. Nothing recorded that per record, so the divergence was
+   * undiscoverable from the audit trail.
+   *
+   * The count is part of the message because "you cannot delete this" without a
+   * number leaves the user with no idea what to do next.
+   */
+  private async assertNoRecords(locationId: string): Promise<void> {
+    const count = await this.prisma.activityRecord.count({
+      where: { locationId },
+    });
+    if (count > 0) {
+      // Draft and rejected records can be re-targeted; committed ones cannot be
+      // moved OR deleted, so for those the honest answer is that the location
+      // stays — it is part of what the reported figures mean.
+      throw new ConflictException(
+        `${count} activity record(s) are recorded at this location. Deleting it ` +
+          'would leave them showing a different geography than the one they ' +
+          'were calculated with. Re-target any draft records to another ' +
+          'location first; a location with committed records stays, because it ' +
+          'is part of what those figures mean.',
+      );
+    }
+  }
+
   async remove(
     user: RequestUser,
     id: string,
   ): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
+    await this.assertNoRecords(id);
     // Delete + audit in one transaction (see subsidiaries.remove).
     await this.prisma.$transaction(async (tx) => {
       await tx.location.delete({ where: { id } });

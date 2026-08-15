@@ -57,6 +57,9 @@ export function LocationsDrawer({
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [geoConfirm, setGeoConfirm] = useState<{ from: string; to: string } | null>(
+    null,
+  );
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // A new location defaults to its parent subsidiary's geography (editable).
@@ -87,7 +90,22 @@ export function LocationsDrawer({
     setForm(freshForm());
   }
 
+  /**
+   * A location's geography drives the emission factor for every record entered
+   * against it, exactly as the subsidiary's does — and the subsidiary dialog
+   * confirms that change while this one silently accepted it. Same rule, same
+   * warning, or the protection is a matter of which screen you happened to use.
+   */
   async function handleSave() {
+    const editing = editingId ? locations.find((l) => l.id === editingId) : null;
+    if (editing && editing.geographyCode !== form.geographyCode) {
+      setGeoConfirm({ from: editing.geographyCode, to: form.geographyCode });
+      return;
+    }
+    await persist();
+  }
+
+  async function persist() {
     if (!subsidiary) return;
     if (form.name.trim().length < 1) {
       toast.error('Location name is required');
@@ -118,6 +136,7 @@ export function LocationsDrawer({
         toast.success('Location added');
       }
       cancelEdit();
+      setGeoConfirm(null);
       await onChanged();
     } catch (e) {
       toast.error((e as Error).message);
@@ -295,12 +314,49 @@ export function LocationsDrawer({
         </SheetContent>
       </Sheet>
 
+      {/* Same warning the subsidiary dialog gives, for the same reason: this
+          value decides the emission factor for future records here, while every
+          committed record keeps the factor it was calculated with. */}
+      <AlertDialog
+        open={!!geoConfirm}
+        onOpenChange={(open) => !open && setGeoConfirm(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Change geography from {geoConfirm?.from} to {geoConfirm?.to}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Warning: Changing the geography will change the configured factor
+              basis for geography dependent calculations. This may require
+              recalculation of affected Scope 2 records for selected reporting
+              periods. Do you want to continue?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-lg bg-muted/60 p-3 text-sm text-muted-foreground">
+            Records already committed at this location keep the emission factor
+            they were calculated with — those figures do not change. The new
+            geography applies to records created here from now on, and to any
+            draft or sent-back record the next time it is saved.
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={persist} disabled={saving}>
+              {saving ? 'Saving…' : 'Continue'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={!!deletingId} onOpenChange={() => setDeletingId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete location?</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently removes the location. An audit log entry is recorded.
+              This permanently removes the location and is recorded in the audit
+              log. A location that activity records are attached to cannot be
+              removed — those records would end up showing a different geography
+              than the one they were calculated with.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

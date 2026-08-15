@@ -148,10 +148,26 @@ describe('LocationsService', () => {
       );
     });
 
+    it('refuses to delete a location that records are attached to', async () => {
+      // The FK is ON DELETE SET NULL, so this used to succeed and leave every
+      // referencing record claiming the SUBSIDIARY's geography while its frozen
+      // snapshot was computed from the LOCATION's — measured live: subsidiary
+      // TR, location UK, record detached with 'UK' still in the snapshot.
+      const user = makeSuperAdmin();
+      const existing = makeLocation({ subsidiaryId: 'sub-1' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.activityRecord.count.mockResolvedValue(3);
+
+      await expect(service.remove(user, existing.id)).rejects.toThrow(/3 activity record/);
+      expect(prisma.location.delete).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
     it('removes a scoped location and audits it', async () => {
       const user = makeSuperAdmin();
       const existing = makeLocation({ subsidiaryId: 'sub-1' });
       prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.activityRecord.count.mockResolvedValue(0);
       prisma.location.delete.mockResolvedValue(existing);
 
       const res = await service.remove(user, existing.id);
