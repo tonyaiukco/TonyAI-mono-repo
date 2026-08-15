@@ -908,6 +908,11 @@ export interface ActivityRecordDTO {
   /** Optional operational location this entry is attributed to (FR §5.2). When
    * set, it drives the emission-factor geography instead of the subsidiary's. */
   locationId: string | null;
+  /** The location's name, resolved at read time (null for subsidiary-level
+   *  records, or when the location has since been removed). Uniqueness includes
+   *  `location_id`, so without this two records can be indistinguishable in a
+   *  list while being different reporting entities. */
+  locationName?: string | null;
   reportingYear: number;
   reportingPeriod: ReportingPeriod;
   periodValue: string;

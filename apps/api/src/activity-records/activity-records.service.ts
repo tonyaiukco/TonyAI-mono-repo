@@ -115,11 +115,19 @@ export class ActivityRecordsService {
     private readonly audit: AuditService,
   ) {}
 
-  private toDTO(r: ActivityRecord, evidenceCount = 0): ActivityRecordDTO {
+  private toDTO(
+    r: ActivityRecord & { location?: { name: string } | null },
+    evidenceCount = 0,
+  ): ActivityRecordDTO {
     return {
       id: r.id,
       subsidiaryId: r.subsidiaryId,
       locationId: r.locationId,
+      // Resolved at read time, the same way the audit trail resolves an actor's
+      // name: uniqueness includes `location_id`, so two pending records in the
+      // same subsidiary/period/category can differ ONLY by location — and the
+      // reviewer saw two identical-looking rows with no way to tell them apart.
+      locationName: r.location?.name ?? null,
       reportingYear: r.reportingYear,
       reportingPeriod: r.reportingPeriod as ReportingPeriod,
       periodValue: r.periodValue,
@@ -324,7 +332,10 @@ export class ActivityRecordsService {
         status: query.status ? { in: query.status } : undefined,
       },
       orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { evidence: true } } },
+      include: {
+        _count: { select: { evidence: true } },
+        location: { select: { name: true } },
+      },
     });
     return rows.map((r) => this.toDTO(r, r._count.evidence));
   }
@@ -513,7 +524,10 @@ export class ActivityRecordsService {
       updated = await this.prisma.activityRecord.update({
         where: { id },
         data,
-        include: { _count: { select: { evidence: true } } },
+        include: {
+        _count: { select: { evidence: true } },
+        location: { select: { name: true } },
+      },
       });
     } catch (e) {
       // Re-targeting can collide with an existing record for the new entity.
@@ -769,7 +783,10 @@ export class ActivityRecordsService {
         ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
         ...(isReviewOutcome ? { reviewedBy: user.id, reviewedAt: new Date() } : {}),
       },
-      include: { _count: { select: { evidence: true } } },
+      include: {
+        _count: { select: { evidence: true } },
+        location: { select: { name: true } },
+      },
     });
     await this.audit.record(user, {
       action: ActivityRecordsService.TRANSITION_ACTIONS[status] ?? 'update',

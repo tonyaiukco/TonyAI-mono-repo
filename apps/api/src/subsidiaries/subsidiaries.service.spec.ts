@@ -288,6 +288,20 @@ describe('SubsidiariesService', () => {
       expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
     });
 
+    it('refuses to delete a subsidiary that still holds records', async () => {
+      // `ActivityRecord.subsidiary` is ON DELETE CASCADE, so a delete did not
+      // detach those records — it DESTROYED them with their evidence, targets
+      // and period locks. Measured: a record taken through submit AND approve
+      // was a 404 immediately after one DELETE, leaving one "delete subsidiary"
+      // audit row and nothing about the approved figures that went with it.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.activityRecord.count.mockResolvedValue(102);
+
+      await expect(service.remove(user, 'sub-1')).rejects.toThrow(/102 activity record/);
+      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
     it('deletes and audits with the before snapshot for super_admin', async () => {
       const user = makeSuperAdmin();
       const before = makeSubsidiary({ id: 'sub-1' });
