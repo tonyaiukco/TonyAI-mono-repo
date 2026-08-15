@@ -299,6 +299,58 @@ function reportCleanup(errors: (string | null)[]): void {
   if (failed.length) throw new Error(`E2E cleanup failed: ${failed.join(' | ')}`);
 }
 
+/**
+ * Storage paths of the evidence attached to records matching a PostgREST filter
+ * on `activity_records` (or, through it, on `subsidiaries`).
+ *
+ * Collected BEFORE the rows are deleted, because that is the only moment they
+ * are knowable: `Evidence.activityRecord` is ON DELETE CASCADE, so the rows go
+ * inside Postgres and the object keys go with them. Teardown then used to leave
+ * the files behind forever — every run uploads at least one invoice per
+ * committed record, and the local bucket had grown to 1501 objects against 102
+ * rows before anyone counted.
+ */
+async function evidencePathsFor(
+  request: APIRequestContext,
+  /** Full PostgREST query string: the `select` embed AND the filters on it. One
+   *  argument rather than two, because the embed and the filter that walks it
+   *  have to agree — `activity_records.x=` only works if the select joined it. */
+  query: string,
+): Promise<string[]> {
+  const { url } = supabaseEnv();
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY as string;
+  const res = await request.get(`${url}/rest/v1/evidence?${query}`, {
+    headers: { apikey: service, Authorization: `Bearer ${service}` },
+  });
+  if (!res.ok()) {
+    throw new Error(`E2E cleanup could not list evidence paths: ${res.status()} ${await res.text()}`);
+  }
+  return ((await res.json()) as { storage_path: string }[]).map((r) => r.storage_path);
+}
+
+/**
+ * Delete storage objects by key. Returns a failure string in the same shape as
+ * `del`, so it can join a `reportCleanup` batch.
+ */
+async function removeEvidenceObjects(
+  request: APIRequestContext,
+  paths: string[],
+): Promise<string | null> {
+  if (paths.length === 0) return null;
+  const { url } = supabaseEnv();
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY as string;
+  const res = await request.delete(`${url}/storage/v1/object/evidence`, {
+    headers: {
+      apikey: service,
+      Authorization: `Bearer ${service}`,
+      'Content-Type': 'application/json',
+    },
+    data: { prefixes: paths },
+  });
+  if (res.ok()) return null;
+  return `${res.status()} removing ${paths.length} evidence object(s) — ${await res.text()}`;
+}
+
 export async function cleanupQuarterly(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
   assertLocalTarget(url);
@@ -311,7 +363,16 @@ export async function cleanupQuarterly(request: APIRequestContext): Promise<void
   // wipe would destroy a UAT tester's quarterly data in any of them — with the
   // service-role key, which bypasses RLS and therefore every tenant boundary.
   const scope = `reporting_period=eq.${E2E_PERIOD}&reporting_year=eq.${E2E_YEAR}`;
+  // Files BEFORE rows: the evidence rows cascade away with the records, taking
+  // the object keys with them, so this is the last moment they can be read.
+  const paths = await evidencePathsFor(
+    request,
+    'select=storage_path,activity_records!inner(id)' +
+      `&activity_records.reporting_period=eq.${E2E_PERIOD}` +
+      `&activity_records.reporting_year=eq.${E2E_YEAR}`,
+  );
   reportCleanup([
+    await removeEvidenceObjects(request, paths),
     await del(request, `${url}/rest/v1/period_locks?${scope}`, headers),
     await del(request, `${url}/rest/v1/activity_records?${scope}`, headers),
   ]);
@@ -334,7 +395,17 @@ export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promis
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  // Same rule as cleanupQuarterly: the subsidiary delete cascades all the way
+  // down to evidence rows, so the files have to be reclaimed while their keys
+  // are still readable. Not covered by the quarterly sweep — a spec is free to
+  // put an E2E subsidiary's record in any period.
+  const paths = await evidencePathsFor(
+    request,
+    'select=storage_path,activity_records!inner(subsidiaries!inner(id))' +
+      '&activity_records.subsidiaries.legal_name=like.E2E%20Test%20Co*',
+  );
   reportCleanup([
+    await removeEvidenceObjects(request, paths),
     await del(request, `${url}/rest/v1/subsidiaries?legal_name=like.E2E%20Test%20Co*`, headers),
   ]);
 }

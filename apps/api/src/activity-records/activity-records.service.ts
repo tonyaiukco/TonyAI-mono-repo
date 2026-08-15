@@ -23,6 +23,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CalculationsService } from '../calculations/calculations.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
+import { EvidenceService } from '../evidence/evidence.service';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
@@ -113,6 +114,7 @@ export class ActivityRecordsService {
     private readonly prisma: PrismaService,
     private readonly calculations: CalculationsService,
     private readonly audit: AuditService,
+    private readonly evidence: EvidenceService,
   ) {}
 
   private toDTO(r: ActivityRecord, evidenceCount = 0): ActivityRecordDTO {
@@ -547,6 +549,13 @@ export class ActivityRecordsService {
       existing.reportingPeriod,
       existing.periodValue,
     );
+    // Reclaim the evidence FILES first. The rows go by themselves — the FK is
+    // ON DELETE CASCADE — but that happens inside Postgres, so this is the last
+    // moment any code can still see what the blobs are. Skip it and the
+    // invoices outlive every pointer to them, which is a retention problem, not
+    // wasted disk. Before the row delete on purpose: if storage fails, nothing
+    // has been destroyed yet.
+    await this.evidence.removeAllForRecord(id);
     await this.prisma.activityRecord.delete({ where: { id } });
     await this.auditCreateUpdateDelete(user, 'delete', id, { before: this.toDTO(existing) });
     return { id, deleted: true };
