@@ -60,6 +60,22 @@ test('contact details round-trip, and can be cleared once set', async ({ request
   expect(cleared.contactEmail).toBeNull();
   expect(cleared.contactPhone).toBe('+90 555 000 0001');
 
+  // A blank is stored as null, not as an empty string: otherwise the column
+  // ends up with three spellings of "no phone" and a panel renders '' where it
+  // should render its empty state.
+  const blanked = await (await request.patch(`${API_BASE}/subsidiaries/${sub.id}`, {
+    headers: bearer(token),
+    data: { contactPhone: '   ' },
+  })).json();
+  expect(blanked.contactPhone).toBeNull();
+
+  // …and surrounding whitespace is trimmed rather than stored.
+  const padded = await (await request.patch(`${API_BASE}/subsidiaries/${sub.id}`, {
+    headers: bearer(token),
+    data: { contactPhone: '  +44 7700 900002  ' },
+  })).json();
+  expect(padded.contactPhone).toBe('+44 7700 900002');
+
   await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
 });
 
@@ -81,9 +97,9 @@ test('a malformed address is refused before it reaches the column', async ({ req
 });
 
 test('summary counts every dependent, and agrees with the delete guard', async ({ request }) => {
-  // The whole point of extracting the counter: a panel that computed
-  // "deletable" itself would eventually disagree with the endpoint that
-  // actually refuses. This walks the tiers and checks both answers each time.
+  // The whole point of extracting the counter: a panel that worked out the
+  // blockers itself would eventually disagree with the endpoint that actually
+  // refuses. This walks the tiers and checks both answers each time.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const sub = await makeSubsidiary(request, token, 'E2E Test Co Summary');
 
@@ -97,7 +113,7 @@ test('summary counts every dependent, and agrees with the delete guard', async (
   expect(s).toMatchObject({
     subsidiaryId: sub.id,
     locations: 0, terminalRecords: 0, reviewRecords: 0, openRecords: 0,
-    periodLocks: 0, targets: 0, denominators: 0, deletable: true,
+    periodLocks: 0, targets: 0, denominators: 0, hasBlockingDependents: false,
   });
 
   // One location: still no records at all, but the delete now cascades
@@ -108,7 +124,7 @@ test('summary counts every dependent, and agrees with the delete guard', async (
   })).json();
   s = await read();
   expect(s.locations).toBe(1);
-  expect(s.deletable).toBe(false);
+  expect(s.hasBlockingDependents).toBe(true);
   expect(await deleteStatus(), 'summary and guard must agree').toBe(409);
 
   // A draft record moves the open tier, not the terminal one.
@@ -125,7 +141,7 @@ test('summary counts every dependent, and agrees with the delete guard', async (
   await request.delete(`${API_BASE}/activity-records/${rec.id}`, { headers: bearer(token) });
   await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
   s = await read();
-  expect(s.deletable).toBe(true);
+  expect(s.hasBlockingDependents).toBe(false);
   expect(await deleteStatus()).toBe(200);
 });
 

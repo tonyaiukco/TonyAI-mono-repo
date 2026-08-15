@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
@@ -10,6 +11,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
+import { blankToNull } from './create-subsidiary.dto';
 
 export class UpdateSubsidiaryDto {
   @IsOptional()
@@ -61,12 +63,15 @@ export class UpdateSubsidiaryDto {
    * it is unrelated to this change.)
    */
   @IsOptional()
+  @Transform(blankToNull)
   @IsEmail()
   @MaxLength(320)
   contactEmail?: string | null;
 
   @IsOptional()
+  @Transform(blankToNull)
   @IsString()
+  @MinLength(1)
   @MaxLength(40)
   contactPhone?: string | null;
 

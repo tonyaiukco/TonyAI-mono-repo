@@ -19,6 +19,34 @@ import { EDITABLE_STATUSES } from '../activity-records/activity-records.service'
 import { CreateSubsidiaryDto } from './dto/create-subsidiary.dto';
 import { UpdateSubsidiaryDto } from './dto/update-subsidiary.dto';
 
+/**
+ * The counts, on their own. Named as its own type rather than derived from the
+ * summary DTO so that adding an INFORMATIONAL field to the DTO later cannot
+ * silently enrol it as a delete blocker.
+ */
+type SubsidiaryDependentCounts = Pick<
+  SubsidiarySummaryDTO,
+  | 'terminalRecords'
+  | 'reviewRecords'
+  | 'openRecords'
+  | 'locations'
+  | 'periodLocks'
+  | 'targets'
+  | 'denominators'
+>;
+
+/** Exactly the counts that stop a delete — listed, not inferred. */
+const BLOCKING_DEPENDENTS: (keyof SubsidiaryDependentCounts)[] = [
+  'terminalRecords',
+  'reviewRecords',
+  'openRecords',
+  'locations',
+  'periodLocks',
+  'targets',
+  'denominators',
+];
+
+
 @Injectable()
 export class SubsidiariesService {
   constructor(
@@ -146,9 +174,9 @@ export class SubsidiariesService {
    * the API then refuses — or, worse, hiding one it would have allowed.
    */
   private async countDependents(
-    db: Prisma.TransactionClient,
+    db: Prisma.TransactionClient | PrismaService,
     id: string,
-  ): Promise<Omit<SubsidiarySummaryDTO, 'subsidiaryId' | 'deletable'>> {
+  ): Promise<SubsidiaryDependentCounts> {
     // Annotated, not inferred: assignability is what catches a status that no
     // longer exists in the Prisma enum, and it names the bad one. The same trap
     // period-locks.service.ts documents — an index-lookup form would only be
@@ -192,16 +220,18 @@ export class SubsidiariesService {
    */
   async summary(user: RequestUser, id: string): Promise<SubsidiarySummaryDTO> {
     await this.loadScoped(user, id);
-    const counts = await this.countDependents(
-      this.prisma as unknown as Prisma.TransactionClient,
-      id,
-    );
+    // `this.prisma` is directly assignable — the delegates a transaction client
+    // exposes are the ones used here. Verified: removing the cast typechecks.
+    const counts = await this.countDependents(this.prisma, id);
     return {
       subsidiaryId: id,
       ...counts,
-      // Derived here, from the guard's own numbers, so a client never has to
-      // reimplement the rule and never has to guess.
-      deletable: Object.values(counts).every((n) => n === 0),
+      // Named explicitly rather than `Object.values(counts).every(...)`. That
+      // form made the dependency run backwards: because `counts` was typed off
+      // the DTO, every future summary field would have been forced into the
+      // blocking computation, so adding an informational count (evidence files,
+      // records this year) would silently turn it into a delete blocker.
+      hasBlockingDependents: BLOCKING_DEPENDENTS.some((k) => counts[k] > 0),
     };
   }
 

@@ -727,9 +727,9 @@ export type UpdateSubsidiaryInput = Partial<CreateSubsidiaryInput>;
  * guard computes exactly these counts, but until now the only way to see them
  * was to attempt the DELETE and read the 409.
  *
- * `deletable` is therefore computed from the same counts the guard uses, and
- * deliberately not re-derived by callers — a UI that decided for itself would
- * eventually disagree with the endpoint that actually refuses.
+ * `hasBlockingDependents` is therefore computed from the same counts the guard
+ * uses, and deliberately not re-derived by callers — a UI that decided for
+ * itself would eventually disagree with the endpoint that actually refuses.
  */
 export interface SubsidiarySummaryDTO {
   subsidiaryId: string;
@@ -743,8 +743,17 @@ export interface SubsidiarySummaryDTO {
   periodLocks: number;
   targets: number;
   denominators: number;
-  /** True only when nothing above is left, i.e. `DELETE` would succeed today. */
-  deletable: boolean;
+  /**
+   * True while anything above still hangs off the subsidiary — a statement
+   * about DEPENDENCIES only.
+   *
+   * It deliberately does NOT say "deletable". `remove()` runs `assertCanWrite`
+   * first, so a non-super_admin caller with an empty subsidiary would have been
+   * told `deletable: true` and then refused with 403. Encoding an authorisation
+   * outcome here would also make the same subsidiary answer differently per
+   * caller, which is worse than useless for caching.
+   */
+  hasBlockingDependents: boolean;
 }
 
 // ---------------------------------------------------------------------------

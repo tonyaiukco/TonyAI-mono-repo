@@ -36,7 +36,10 @@ const CASES: [string, Record<string, unknown>, boolean][] = [
   ['an explicit null (this is how a contact is CLEARED)', { contactEmail: null }, true],
   ['a bare word', { contactEmail: 'aylin' }, false],
   ['a missing domain', { contactEmail: 'aylin@' }, false],
-  ['whitespace', { contactEmail: '   ' }, false],
+  // Blank collapses to null via @Transform, which @IsOptional then skips —
+  // so it is ACCEPTED, and means "clear this field". Before the transform an
+  // empty phone was stored verbatim, leaving three spellings of "no phone".
+  ['whitespace (this is a clear, not a value)', { contactEmail: '   ' }, true],
   // RFC 5321 caps the local part at 64 and `@IsEmail` enforces that on its own
   // — measured, so `MaxLength(320)` is belt-and-braces rather than the binding
   // constraint. Pinned because a future switch to a laxer email check would
@@ -53,6 +56,27 @@ describe('subsidiary contact fields — validation', () => {
 
   it.each(CASES)('update: %s', (_label, body, valid) => {
     expect(updateErrors(body)).toHaveLength(valid ? 0 : 1);
+  });
+
+  it('collapses a blank contact to null instead of storing it', () => {
+    for (const blank of ['', '   ', '\t']) {
+      const dto = plainToInstance(CreateSubsidiaryDto, {
+        legalName: 'New Co', geographyCode: 'UK', contactPhone: blank, contactEmail: blank,
+      });
+      expect(validateSync(dto)).toHaveLength(0);
+      expect(dto.contactPhone).toBeNull();
+      expect(dto.contactEmail).toBeNull();
+    }
+  });
+
+  it('trims rather than refusing a pasted value with surrounding space', () => {
+    const dto = plainToInstance(CreateSubsidiaryDto, {
+      legalName: 'New Co', geographyCode: 'UK',
+      contactEmail: '  aylin.demir@example.com  ', contactPhone: '  +44 7700 900002  ',
+    });
+    expect(validateSync(dto)).toHaveLength(0);
+    expect(dto.contactEmail).toBe('aylin.demir@example.com');
+    expect(dto.contactPhone).toBe('+44 7700 900002');
   });
 
   it('keeps the phone a free string — no format is safe to assume', () => {

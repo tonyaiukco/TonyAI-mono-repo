@@ -382,19 +382,19 @@ describe('SubsidiariesService', () => {
         periodLocks: 1,
         targets: 3,
         denominators: 4,
-        deletable: false,
+        hasBlockingDependents: true,
       });
     });
 
-    it('says deletable only when literally nothing is left', async () => {
+    it('reports no blockers only when literally nothing is left', async () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
 
-      expect((await service.summary(user, 'sub-1')).deletable).toBe(true);
+      expect((await service.summary(user, 'sub-1')).hasBlockingDependents).toBe(false);
     });
 
-    it('a single location alone is enough to make it undeletable', async () => {
+    it('a single location alone is enough to block the delete', async () => {
       // The tier that is easiest to forget: no records at all, but the delete
       // still cascades the location away unaudited. If `deletable` and the
       // guard ever disagreed, this is where it would show first.
@@ -404,7 +404,7 @@ describe('SubsidiariesService', () => {
       prisma.location.count.mockResolvedValue(1);
 
       const s = await service.summary(user, 'sub-1');
-      expect(s.deletable).toBe(false);
+      expect(s.hasBlockingDependents).toBe(true);
       // …and the guard agrees, because both read the same counter.
       await expect(refusal(service.remove(user, 'sub-1'))).resolves.toMatch(
         /1 location\(s\)/,
