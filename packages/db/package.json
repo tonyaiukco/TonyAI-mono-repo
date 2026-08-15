@@ -9,11 +9,12 @@
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "deploy": "prisma migrate deploy",
-    "reset": "prisma migrate reset --force",
+    "reset": "prisma migrate reset --force && node scripts/reclaim-evidence.mjs --apply --older-than=0",
     "seed": "tsx prisma/seed.ts",
     "studio": "prisma studio",
     "lint": "echo \"(db) no lint\" && exit 0",
-    "typecheck": "echo \"(db) typecheck handled by consumers\" && exit 0"
+    "typecheck": "echo \"(db) typecheck handled by consumers\" && exit 0",
+    "evidence:reclaim": "node scripts/reclaim-evidence.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0"

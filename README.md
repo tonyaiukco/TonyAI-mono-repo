@@ -305,15 +305,16 @@ Run from the repo root (Turborepo fans out to each package):
 | `pnpm setup` | One‑command local bootstrap (deps, Supabase, `.env` sync, migrate, seed) |
 | `pnpm dev` | Run web + api in watch mode |
 | `pnpm build` | Build all packages |
-| `pnpm typecheck` | Type‑check the whole repo |
+| `pnpm typecheck` | Type‑check the whole repo, `e2e/` and `playwright.config.ts` included (`tsconfig.e2e.json` — Playwright's own runner strips types without checking them) |
 | `pnpm test` | Unit tests (Vitest) |
 | `pnpm e2e` | Playwright E2E: demo flow, gates, RBAC, smoke (requires Supabase running) |
 | `pnpm rls:probe` | Live RLS containment probes via PostgREST (requires Supabase running) |
+| `pnpm evidence:reclaim` | Report evidence blobs no `evidence` row points at (dry run; add `-- --apply` to delete, `-- --older-than=<hours>` to widen the grace window) |
 | `pnpm docker:up` / `docker:down` | Containerized web+api against the host's local Supabase (keys sourced from your real env files) |
 | `pnpm db:migrate` | `prisma migrate dev` |
 | `pnpm db:deploy` | Apply committed migrations (`prisma migrate deploy`) |
 | `pnpm db:seed` | Seed demo data |
-| `pnpm db:reset` | Drop, re‑migrate and re‑seed |
+| `pnpm db:reset` | Drop, re‑migrate, re‑seed, then reclaim orphaned evidence blobs (the reset drops the schema but not the storage bucket) |
 
 ---
 

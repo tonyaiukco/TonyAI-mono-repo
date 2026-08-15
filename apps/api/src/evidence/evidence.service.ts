@@ -192,4 +192,35 @@ export class EvidenceService {
     return { id, deleted: true };
   }
 
+  /**
+   * Reclaim the storage objects behind a record's evidence, for a caller that
+   * is about to delete the record itself.
+   *
+   * `Evidence.activityRecord` is `onDelete: Cascade`, so deleting a record
+   * removes the evidence ROWS inside Postgres — below the application, where no
+   * code sees them go and therefore no code deletes the files. Storage is a
+   * separate system and nothing reconciled the two. Measured locally: 1501
+   * objects in the bucket against 102 rows.
+   *
+   * These are utility invoices, so files outliving every pointer to them is a
+   * retention problem (KVKK/GDPR), not wasted disk — the whole set was 188 kB.
+   *
+   * No RBAC check here, deliberately: this is not a route. The caller has
+   * already proved it may delete the parent record, which is the strictly
+   * stronger right. Blobs go BEFORE the row, matching `remove()` above — a
+   * storage failure then aborts with everything still intact, instead of
+   * dropping the record and stranding the files with nothing pointing at them.
+   */
+  async removeAllForRecord(activityRecordId: string): Promise<number> {
+    const rows = await this.prisma.evidence.findMany({
+      where: { activityRecordId },
+      select: { storagePath: true },
+    });
+    if (rows.length === 0) return 0;
+    await this.storage.remove(
+      EVIDENCE_BUCKET,
+      rows.map((r) => r.storagePath),
+    );
+    return rows.length;
+  }
 }

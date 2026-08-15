@@ -2,14 +2,15 @@
   "name": "tonyai",
   "version": "0.0.0",
   "private": true,
-  "description": "TonyAI — Enterprise carbon accounting / ESG SaaS (monorepo)",
+  "description": "TonyAI \u2014 Enterprise carbon accounting / ESG SaaS (monorepo)",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "setup": "bash scripts/bootstrap.sh",
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck",
+    "typecheck": "turbo run typecheck && pnpm typecheck:e2e",
+    "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "test": "turbo run test",
     "e2e": "pnpm --filter @tonyai/api build && playwright test",
     "e2e:ui": "playwright test --ui",
@@ -19,11 +20,13 @@
     "db:deploy": "pnpm --filter @tonyai/db run deploy",
     "db:seed": "pnpm --filter @tonyai/db run seed",
     "db:reset": "pnpm --filter @tonyai/db run reset",
+    "evidence:reclaim": "pnpm --filter @tonyai/db run evidence:reclaim",
     "docker:up": "bash scripts/compose-dev.sh up --build -d",
     "docker:down": "bash scripts/compose-dev.sh down"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
+    "@types/node": "^22",
     "turbo": "^2.3.3",
     "typescript": "5.7.3"
   },

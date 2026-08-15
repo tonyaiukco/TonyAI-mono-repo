@@ -217,6 +217,40 @@ describe('EvidenceService', () => {
     expect(res).toEqual({ id: 'ev-1', deleted: true });
   });
 
+  it('removeAllForRecord reclaims every blob for a record in one call', async () => {
+    // The rows are about to be cascaded away by the FK, inside Postgres, where
+    // no application code can see them — so this is the last moment anything
+    // knows what the object keys are.
+    prisma.evidence.findMany.mockResolvedValue([
+      { storagePath: 'rec-1/a.pdf' },
+      { storagePath: 'rec-1/b.pdf' },
+    ]);
+
+    const count = await service.removeAllForRecord('rec-1');
+
+    expect(count).toBe(2);
+    expect(prisma.evidence.findMany).toHaveBeenCalledWith({
+      where: { activityRecordId: 'rec-1' },
+      select: { storagePath: true },
+    });
+    expect(storage.remove).toHaveBeenCalledWith('evidence', [
+      'rec-1/a.pdf',
+      'rec-1/b.pdf',
+    ]);
+    // It must NOT delete the rows itself — the cascade owns that, and a delete
+    // here would run outside the caller's transaction.
+    expect(prisma.evidence.delete).not.toHaveBeenCalled();
+  });
+
+  it('removeAllForRecord does not call storage at all for a record with no evidence', async () => {
+    // `storage.remove([])` is a pointless round trip on the commonest case:
+    // most records carry no files.
+    prisma.evidence.findMany.mockResolvedValue([]);
+
+    expect(await service.removeAllForRecord('rec-1')).toBe(0);
+    expect(storage.remove).not.toHaveBeenCalled();
+  });
+
   it('returns a signed URL for an accessible evidence file', async () => {
     prisma.evidence.findUnique.mockResolvedValue({
       id: 'ev-1', activityRecordId: 'rec-1', storagePath: 'rec-1/a.pdf', fileName: 'a.pdf', mimeType: 'application/pdf', sizeBytes: 10, uploadedBy: 'user-entry', createdAt: new Date(),
