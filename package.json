@@ -2,7 +2,7 @@
   "name": "tonyai",
   "version": "0.0.0",
   "private": true,
-  "description": "TonyAI — Enterprise carbon accounting / ESG SaaS (monorepo)",
+  "description": "TonyAI \u2014 Enterprise carbon accounting / ESG SaaS (monorepo)",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "setup": "bash scripts/bootstrap.sh",
@@ -20,6 +20,7 @@
     "db:deploy": "pnpm --filter @tonyai/db run deploy",
     "db:seed": "pnpm --filter @tonyai/db run seed",
     "db:reset": "pnpm --filter @tonyai/db run reset",
+    "evidence:reclaim": "pnpm --filter @tonyai/db run evidence:reclaim",
     "docker:up": "bash scripts/compose-dev.sh up --build -d",
     "docker:down": "bash scripts/compose-dev.sh down"
   },

@@ -14,6 +14,7 @@ import { CalculationsService } from '../calculations/calculations.service';
 import type { RequestUser } from '../auth/auth.types';
 
 import { AuditService } from '../audit/audit.service';
+import { EvidenceService } from '../evidence/evidence.service';
 
 /**
  * Audit writes go through the shared AuditService. A single shared spy lets the
@@ -168,15 +169,26 @@ function consultant(overrides: Partial<RequestUser> = {}): RequestUser {
   };
 }
 
+/**
+ * Evidence FILES are reclaimed by the evidence service on the way out; the rows
+ * go by themselves through the FK cascade. Only `removeAllForRecord` is used
+ * from here.
+ */
+function createEvidenceMock() {
+  return { removeAllForRecord: vi.fn().mockResolvedValue(0) };
+}
+
 function build(scope = 2) {
   const prisma = createPrismaMock();
   const calc = createCalcMock(scope);
+  const evidence = createEvidenceMock();
   const service = new ActivityRecordsService(
     prisma as unknown as PrismaService,
     calc as unknown as CalculationsService,
-      auditMock(),
+    auditMock(),
+    evidence as unknown as EvidenceService,
   );
-  return { prisma, calc, service };
+  return { prisma, calc, evidence, service };
 }
 
 const CREATE_DTO = {
@@ -482,6 +494,72 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
     expect(prisma.activityRecord.create.mock.calls[0][0].include).toEqual({
       location: { select: { name: true } },
     });
+  });
+});
+
+/**
+ * Deleting a record cascades its `evidence` ROWS away inside Postgres, where no
+ * application code sees them go — so nothing ever deleted the FILES. Storage is
+ * a separate system; nothing reconciled the two. Measured on the local stack:
+ * 1501 objects in the bucket against 102 rows. They are utility invoices, so
+ * files outliving every pointer to them is a retention problem (KVKK/GDPR).
+ *
+ * Note what was NOT covered before this: every existing `remove` spec asserts a
+ * refusal, so the successful delete path had no unit test at all — which is why
+ * adding a whole new constructor dependency left the suite green.
+ */
+describe('ActivityRecordsService — deleting a record reclaims its evidence files', () => {
+  function deletableRecord(prisma: PrismaMock) {
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-del',
+        subsidiaryId: 'sub-1',
+        status: ActivityRecordStatus.draft,
+        createdBy: 'user-entry',
+      }),
+    );
+  }
+
+  it('reclaims the blobs, and does it BEFORE the row is gone', async () => {
+    const { prisma, evidence, service } = build();
+    deletableRecord(prisma);
+    evidence.removeAllForRecord.mockResolvedValue(2);
+
+    await service.remove(dataEntry(), 'rec-del');
+
+    expect(evidence.removeAllForRecord).toHaveBeenCalledWith('rec-del');
+    // Order is the whole point: the storage paths are only knowable while the
+    // rows still exist, and a storage failure must abort before anything is
+    // destroyed rather than after.
+    const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
+      fn.mock.invocationCallOrder[0];
+    expect(order(evidence.removeAllForRecord)).toBeLessThan(
+      order(prisma.activityRecord.delete),
+    );
+  });
+
+  it('does not delete the record when storage refuses', async () => {
+    // Otherwise the failure mode is the exact one being fixed: row gone, file
+    // stranded, and now nothing left that even knows the file exists.
+    const { prisma, evidence, service } = build();
+    deletableRecord(prisma);
+    evidence.removeAllForRecord.mockRejectedValue(new Error('storage down'));
+
+    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toThrow(/storage down/);
+    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+  });
+
+  it('is not attempted for a record that is refused (gate runs first)', async () => {
+    const { prisma, evidence, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-a', status: ActivityRecordStatus.approved, createdBy: 'user-entry' }),
+    );
+
+    await expect(service.remove(dataEntry(), 'rec-a')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(evidence.removeAllForRecord).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
   });
 });
 

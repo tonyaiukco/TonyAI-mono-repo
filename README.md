@@ -63,7 +63,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (314 unit + 47 E2E) + live RLS containment probes (25) | ✅ |
+| Automated tests (319 unit + 49 E2E) + live RLS containment probes (25) | ✅ |
 | Reporting years 2015–2026 (WP15/DE-9); the demo dataset and factor library live in one `DEMO_YEAR`, and any year without factors says so instead of failing silently | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
@@ -309,11 +309,12 @@ Run from the repo root (Turborepo fans out to each package):
 | `pnpm test` | Unit tests (Vitest) |
 | `pnpm e2e` | Playwright E2E: demo flow, gates, RBAC, smoke (requires Supabase running) |
 | `pnpm rls:probe` | Live RLS containment probes via PostgREST (requires Supabase running) |
+| `pnpm evidence:reclaim` | Report evidence blobs no `evidence` row points at (dry run; add `-- --apply` to delete, `-- --older-than=<hours>` to widen the grace window) |
 | `pnpm docker:up` / `docker:down` | Containerized web+api against the host's local Supabase (keys sourced from your real env files) |
 | `pnpm db:migrate` | `prisma migrate dev` |
 | `pnpm db:deploy` | Apply committed migrations (`prisma migrate deploy`) |
 | `pnpm db:seed` | Seed demo data |
-| `pnpm db:reset` | Drop, re‑migrate and re‑seed |
+| `pnpm db:reset` | Drop, re‑migrate, re‑seed, then reclaim orphaned evidence blobs (the reset drops the schema but not the storage bucket) |
 
 ---
 
