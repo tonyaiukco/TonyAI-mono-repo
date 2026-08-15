@@ -12,6 +12,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { PeriodLocksService } from './period-locks.service';
 import { CreatePeriodLockDto } from './dto/create-period-lock.dto';
+import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
 @Controller('period-locks')
 export class PeriodLocksController {
@@ -35,7 +36,7 @@ export class PeriodLocksController {
 
   /** Reopen a period — super_admin only, audited. */
   @Delete(':id')
-  unlock(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  unlock(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.unlock(user, id);
   }
 }

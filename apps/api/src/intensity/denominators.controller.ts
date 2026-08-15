@@ -14,6 +14,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { IntensityService } from './intensity.service';
 import { CreateDenominatorDto } from './dto/create-denominator.dto';
 import { UpdateDenominatorDto } from './dto/update-denominator.dto';
+import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
 @Controller('denominators')
 export class DenominatorsController {
@@ -39,7 +40,7 @@ export class DenominatorsController {
   @Patch(':id')
   update(
     @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
+    @Param('id', ParseUuidParamPipe) id: string,
     @Body() dto: UpdateDenominatorDto,
   ) {
     return this.service.updateDenominator(user, id, dto);
@@ -47,7 +48,7 @@ export class DenominatorsController {
 
   /** Remove a denominator — super_admin only, audited. */
   @Delete(':id')
-  remove(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  remove(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.removeDenominator(user, id);
   }
 }

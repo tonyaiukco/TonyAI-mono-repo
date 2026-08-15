@@ -12,6 +12,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { EvidenceService } from './evidence.service';
 import { EVIDENCE_MAX_SIZE_BYTES } from '@tonyai/shared-types';
+import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
 @Controller()
 export class EvidenceController {
@@ -21,7 +22,7 @@ export class EvidenceController {
   @Get('activity-records/:recordId/evidence')
   list(
     @CurrentUser() user: RequestUser,
-    @Param('recordId') recordId: string,
+    @Param('recordId', ParseUuidParamPipe) recordId: string,
   ) {
     return this.service.list(user, recordId);
   }
@@ -41,7 +42,7 @@ export class EvidenceController {
   )
   upload(
     @CurrentUser() user: RequestUser,
-    @Param('recordId') recordId: string,
+    @Param('recordId', ParseUuidParamPipe) recordId: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
     return this.service.upload(user, recordId, file);
@@ -49,13 +50,13 @@ export class EvidenceController {
 
   /** Short-lived signed download URL for one evidence file. */
   @Get('evidence/:id/url')
-  signedUrl(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  signedUrl(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.signedUrl(user, id);
   }
 
   /** Remove an evidence file (while the parent record is still editable). */
   @Delete('evidence/:id')
-  remove(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  remove(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.remove(user, id);
   }
 }
