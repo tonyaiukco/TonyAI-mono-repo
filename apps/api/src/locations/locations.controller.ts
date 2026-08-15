@@ -13,6 +13,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { LocationsService } from './locations.service';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
+import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
 @Controller('locations')
 export class LocationsController {
@@ -27,7 +28,7 @@ export class LocationsController {
   }
 
   @Get(':id')
-  get(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  get(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.get(user, id);
   }
 
@@ -39,14 +40,14 @@ export class LocationsController {
   @Patch(':id')
   update(
     @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
+    @Param('id', ParseUuidParamPipe) id: string,
     @Body() dto: UpdateLocationDto,
   ) {
     return this.service.update(user, id, dto);
   }
 
   @Delete(':id')
-  remove(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  remove(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.remove(user, id);
   }
 }

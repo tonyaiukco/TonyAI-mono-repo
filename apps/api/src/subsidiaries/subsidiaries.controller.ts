@@ -12,6 +12,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { SubsidiariesService } from './subsidiaries.service';
 import { CreateSubsidiaryDto } from './dto/create-subsidiary.dto';
 import { UpdateSubsidiaryDto } from './dto/update-subsidiary.dto';
+import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
 @Controller('subsidiaries')
 export class SubsidiariesController {
@@ -23,7 +24,7 @@ export class SubsidiariesController {
   }
 
   @Get(':id')
-  get(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  get(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.get(user, id);
   }
 
@@ -35,14 +36,14 @@ export class SubsidiariesController {
   @Patch(':id')
   update(
     @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
+    @Param('id', ParseUuidParamPipe) id: string,
     @Body() dto: UpdateSubsidiaryDto,
   ) {
     return this.service.update(user, id, dto);
   }
 
   @Delete(':id')
-  remove(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  remove(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.remove(user, id);
   }
 }

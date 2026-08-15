@@ -13,6 +13,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { TargetsService } from './targets.service';
 import { CreateTargetDto } from './dto/create-target.dto';
 import { UpdateTargetDto } from './dto/update-target.dto';
+import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
 @Controller('targets')
 export class TargetsController {
@@ -46,7 +47,7 @@ export class TargetsController {
   @Patch(':id')
   update(
     @CurrentUser() user: RequestUser,
-    @Param('id') id: string,
+    @Param('id', ParseUuidParamPipe) id: string,
     @Body() dto: UpdateTargetDto,
   ) {
     return this.service.update(user, id, dto);
@@ -54,7 +55,7 @@ export class TargetsController {
 
   /** Delete a target — super_admin only, audited. */
   @Delete(':id')
-  remove(@CurrentUser() user: RequestUser, @Param('id') id: string) {
+  remove(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.remove(user, id);
   }
 }
