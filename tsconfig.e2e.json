@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // The Playwright suite had no tsconfig at all: `apps/api` includes only
+  // `src`/`test`, `apps/web` is rooted at `apps/web`, so `pnpm typecheck` never
+  // saw `e2e/`. Playwright's own runner strips types without checking them, so
+  // a wrong property name on an API response compiled fine and failed later as
+  // a confusing runtime assertion. That was survivable while the specs were
+  // thin; `helpers.ts` is now shared machinery that every spec leans on.
+  //
+  // Deliberately NOT an extension of tsconfig.base.json: this project needs
+  // `noEmit` (nothing here is built) and the DOM lib (page.evaluate bodies run
+  // in the browser), neither of which belongs in the base.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  // `playwright.config.ts` is in here too: it is the file that wires the web
+  // servers and the env loader, and it was equally unchecked.
+  "include": ["e2e/**/*.ts", "playwright.config.ts"],
+  "exclude": ["node_modules", "e2e/test-results", "playwright-report"]
+}

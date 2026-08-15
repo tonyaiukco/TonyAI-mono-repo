@@ -282,11 +282,22 @@ function assertLocalTarget(url: string): void {
   }
 }
 
+/**
+ * Delete via PostgREST and RETURN the failure rather than throwing it, so the
+ * caller can run every delete before reporting (see `reportCleanup`).
+ *
+ * The return type said `void` while the body returned `null` or a message. The
+ * runtime was right and the annotation was the lie, but it was a lie with teeth:
+ * it told every reader that these calls produce nothing, which is an invitation
+ * to "simplify" the returns away and silently turn `reportCleanup` into a
+ * no-op — a teardown that reports success no matter what it failed to delete.
+ * Nothing caught it because `e2e/` was outside every tsconfig until now.
+ */
 async function del(
   request: APIRequestContext,
   url: string,
   headers: Record<string, string>,
-): Promise<void> {
+): Promise<string | null> {
   const res = await request.delete(url, { headers });
   if (res.ok()) return null;
   return `${res.status()} on ${url.split('/rest/v1/')[1]} — ${await res.text()}`;
