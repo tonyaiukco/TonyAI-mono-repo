@@ -43,7 +43,11 @@ const REVIEW_ROLES = new Set(['consultant', 'super_admin']);
 // numbers their client will report. Matches permissions_and_roles.md §3.
 const APPROVE_ROLES = new Set(['super_admin']);
 // Statuses in which a record may still be edited or deleted by an author.
-const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
+// Exported so the subsidiary delete guard can tell a removable draft from a
+// committed record it must refuse over — if the two lists drifted, that guard
+// would start offering advice ("delete the drafts first") that the record
+// endpoint refuses to carry out.
+export const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
   ActivityRecordStatus.draft,
   ActivityRecordStatus.rejected,
 ]);
@@ -115,19 +119,29 @@ export class ActivityRecordsService {
     private readonly audit: AuditService,
   ) {}
 
-  private toDTO(
-    r: ActivityRecord & { location?: { name: string } | null },
+  /**
+   * The record's own persisted columns, and nothing resolved by a join. This is
+   * the audit snapshot, and `audit_log` is append-only: whatever goes in here is
+   * permanent and has no correction path.
+   *
+   * `locationName` is carried by an `include` that only some queries ask for, so
+   * feeding the read DTO straight to the audit trail wrote falsehoods — a create
+   * whose `locationId` was set the whole time logged `locationName: null`, and
+   * the next unrelated edit logged `null → "Site A"`, dating a geography
+   * decision to a day on which nothing about the location changed.
+   *
+   * Resolved fields belong in `toDTO`, which builds on this — so a field added
+   * to `ActivityRecordDTO` has to be placed on one side or the other instead of
+   * silently reaching the audit log.
+   */
+  private toAuditSnapshot(
+    r: ActivityRecord,
     evidenceCount = 0,
-  ): ActivityRecordDTO {
+  ): Omit<ActivityRecordDTO, 'locationName'> {
     return {
       id: r.id,
       subsidiaryId: r.subsidiaryId,
       locationId: r.locationId,
-      // Resolved at read time, the same way the audit trail resolves an actor's
-      // name: uniqueness includes `location_id`, so two pending records in the
-      // same subsidiary/period/category can differ ONLY by location — and the
-      // reviewer saw two identical-looking rows with no way to tell them apart.
-      locationName: r.location?.name ?? null,
       reportingYear: r.reportingYear,
       reportingPeriod: r.reportingPeriod as ReportingPeriod,
       periodValue: r.periodValue,
@@ -150,15 +164,38 @@ export class ActivityRecordsService {
     };
   }
 
+  private toDTO(
+    r: ActivityRecord & { location?: { name: string } | null },
+    evidenceCount = 0,
+  ): ActivityRecordDTO {
+    return {
+      ...this.toAuditSnapshot(r, evidenceCount),
+      // Resolved at read time, the same way the audit trail resolves an actor's
+      // name: uniqueness includes `location_id`, so two pending records in the
+      // same subsidiary/period/category can differ ONLY by location — and the
+      // reviewer saw two identical-looking rows with no way to tell them apart.
+      locationName: r.location?.name ?? null,
+    };
+  }
+
   /**
    * Load a record and enforce tenant isolation: ids whose subsidiary is outside
    * the caller's accessible set are treated as not found (never leak existence).
+   *
+   * The location include is not optional: every read path has to agree on
+   * `locationName`, and the contract documents `null` as "subsidiary-level, or
+   * the location has since been removed" — the second half being exactly the
+   * state this work package made impossible. A `GET /:id` that answered `null`
+   * for a located record would therefore read as "orphaned, investigate".
    */
   private async loadScoped(
     user: RequestUser,
     id: string,
-  ): Promise<ActivityRecord> {
-    const record = await this.prisma.activityRecord.findUnique({ where: { id } });
+  ): Promise<ActivityRecord & { location: { name: string } | null }> {
+    const record = await this.prisma.activityRecord.findUnique({
+      where: { id },
+      include: { location: { select: { name: true } } },
+    });
     if (!record || !user.accessibleSubsidiaryIds.includes(record.subsidiaryId)) {
       throw new NotFoundException('Activity record not found');
     }
@@ -390,9 +427,13 @@ export class ActivityRecordsService {
       currentTCo2e: calculation.tCo2e,
     });
 
-    let created: ActivityRecord;
+    let created: ActivityRecord & { location: { name: string } | null };
     try {
       created = await this.prisma.activityRecord.create({
+        // Same include as every other read path — the create response is what
+        // the subsidiary create flow renders, and it must not claim the record
+        // has no location seconds after being handed one.
+        include: { location: { select: { name: true } } },
         data: {
           subsidiaryId: dto.subsidiaryId,
           locationId: dto.locationId ?? null,
@@ -425,7 +466,7 @@ export class ActivityRecordsService {
       throw e;
     }
     await this.auditCreateUpdateDelete(user, 'create', created.id, {
-      after: this.toDTO(created),
+      after: this.toAuditSnapshot(created),
     });
     return this.toDTO(created);
   }
@@ -519,15 +560,18 @@ export class ActivityRecordsService {
     }
     if (dto.varianceReason !== undefined) data.varianceReason = dto.varianceReason;
 
-    let updated: ActivityRecord & { _count: { evidence: number } };
+    let updated: ActivityRecord & {
+      _count: { evidence: number };
+      location: { name: string } | null;
+    };
     try {
       updated = await this.prisma.activityRecord.update({
         where: { id },
         data,
         include: {
-        _count: { select: { evidence: true } },
-        location: { select: { name: true } },
-      },
+          _count: { select: { evidence: true } },
+          location: { select: { name: true } },
+        },
       });
     } catch (e) {
       // Re-targeting can collide with an existing record for the new entity.
@@ -542,8 +586,8 @@ export class ActivityRecordsService {
       throw e;
     }
     await this.auditCreateUpdateDelete(user, 'update', id, {
-      before: this.toDTO(existing),
-      after: this.toDTO(updated, updated._count.evidence),
+      before: this.toAuditSnapshot(existing),
+      after: this.toAuditSnapshot(updated, updated._count.evidence),
     });
     return this.toDTO(updated, updated._count.evidence);
   }
@@ -562,7 +606,9 @@ export class ActivityRecordsService {
       existing.periodValue,
     );
     await this.prisma.activityRecord.delete({ where: { id } });
-    await this.auditCreateUpdateDelete(user, 'delete', id, { before: this.toDTO(existing) });
+    await this.auditCreateUpdateDelete(user, 'delete', id, {
+      before: this.toAuditSnapshot(existing),
+    });
     return { id, deleted: true };
   }
 

@@ -9,6 +9,7 @@ import type { SubsidiaryDTO } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
+import { EDITABLE_STATUSES } from '../activity-records/activity-records.service';
 import { CreateSubsidiaryDto } from './dto/create-subsidiary.dto';
 import { UpdateSubsidiaryDto } from './dto/update-subsidiary.dto';
 
@@ -125,35 +126,68 @@ export class SubsidiariesService {
   }
 
   /**
-   * Refuse to delete a subsidiary that still holds activity records.
+   * A subsidiary may only be deleted once nothing is left under it.
    *
-   * `ActivityRecord.subsidiary` is `onDelete: Cascade`, so a delete did not
-   * detach those records — it DESTROYED them, along with their evidence,
-   * targets, denominators and period locks. Measured: a record taken all the way
-   * through draft → evidence → submit → approve was a 404 immediately after one
-   * DELETE, leaving a single "delete subsidiary" audit row and nothing at all
-   * about the approved emissions figures that went with it.
+   * EVERY child relation is `onDelete: Cascade` (schema.prisma:101, 189, 210,
+   * 235), so a delete never detached anything — it destroyed it, and the FK does
+   * that below the application, so the whole lot went unaudited behind a single
+   * "delete subsidiary" row. Two measurements:
    *
-   * On a product whose whole premise is that history cannot be rewritten —
-   * append-only audit, frozen factor snapshots, locked periods — a one-click
-   * erase of committed inventory is not a delete, it is data loss.
+   * - a record taken through draft → evidence → submit → approve was a 404
+   *   immediately after one DELETE, with nothing recorded about the approved
+   *   emissions figures that went with it;
+   * - a period lock erased by cascade left its `lock` audit row with no matching
+   *   `unlock`, i.e. a closed reporting period reopened with no trace, while
+   *   `DELETE /period-locks/:id` writes that `unlock` row properly.
+   *
+   * Hence "empty it first" rather than "records only". Every dependent counted
+   * here has its own endpoint that deletes it with an audit row, so the advice
+   * can actually be followed — with one exception: committed records are
+   * terminal by design and cannot be deleted at all. For those the honest answer
+   * is that the subsidiary stays, and `reportingStatus: 'inactive'` is how an
+   * entity gets retired.
    */
-  private async assertNoRecords(id: string): Promise<void> {
-    const count = await this.prisma.activityRecord.count({
-      where: { subsidiaryId: id },
-    });
-    if (count > 0) {
-      // Say something the user can act on. Committed records cannot be deleted
-      // at all (approved and locked are terminal), so "delete the records
-      // first" would be advice that cannot be followed — the same trap as
-      // telling someone to open a record they are not allowed to open. Retiring
-      // an entity is what `reportingStatus: 'inactive'` is for.
+  private async assertDeletable(id: string): Promise<void> {
+    const committedFilter = { notIn: [...EDITABLE_STATUSES] };
+    const [committedRecords, openRecords, locations, periodLocks, targets, denominators] =
+      await Promise.all([
+        this.prisma.activityRecord.count({
+          where: { subsidiaryId: id, status: committedFilter },
+        }),
+        this.prisma.activityRecord.count({
+          where: { subsidiaryId: id, status: { in: [...EDITABLE_STATUSES] } },
+        }),
+        this.prisma.location.count({ where: { subsidiaryId: id } }),
+        this.prisma.periodLock.count({ where: { subsidiaryId: id } }),
+        this.prisma.target.count({ where: { subsidiaryId: id } }),
+        this.prisma.subsidiaryDenominator.count({ where: { subsidiaryId: id } }),
+      ]);
+
+    if (committedRecords > 0) {
       throw new ConflictException(
-        `${count} activity record(s) belong to this subsidiary, and deleting it ` +
-          'would permanently destroy them along with their evidence, targets and ' +
-          'period locks. Committed records cannot be deleted, so a subsidiary ' +
-          'that has reported data stays. Set its status to "inactive" to retire ' +
-          'it instead.',
+        `${committedRecords} submitted, approved or locked activity record(s) ` +
+          'belong to this subsidiary, and deleting it would permanently destroy ' +
+          'them along with their evidence. Committed records cannot be deleted, ' +
+          'so a subsidiary that has reported data stays. Set its status to ' +
+          '"inactive" to retire it instead.',
+      );
+    }
+
+    // Nothing committed — so everything below IS removable, and the message
+    // should say how rather than send the user to "inactive" for a subsidiary
+    // that is genuinely disposable (a typo in the create form, most often).
+    const blockers: string[] = [];
+    if (openRecords > 0) blockers.push(`${openRecords} draft or rejected record(s)`);
+    if (locations > 0) blockers.push(`${locations} location(s)`);
+    if (periodLocks > 0) blockers.push(`${periodLocks} closed reporting period(s)`);
+    if (targets > 0) blockers.push(`${targets} reduction target(s)`);
+    if (denominators > 0) blockers.push(`${denominators} intensity denominator(s)`);
+    if (blockers.length > 0) {
+      throw new ConflictException(
+        `This subsidiary still holds ${blockers.join(', ')}. Deleting it would ` +
+          'destroy them without an audit entry for each. Remove them first ' +
+          '(reopen any closed period rather than deleting its lock), then ' +
+          'delete the subsidiary.',
       );
     }
   }
@@ -161,7 +195,7 @@ export class SubsidiariesService {
   async remove(user: RequestUser, id: string): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
-    await this.assertNoRecords(id);
+    await this.assertDeletable(id);
     // Delete + audit in one transaction: the row is gone afterwards, so a
     // failed audit insert would leave a deletion with no trail at all.
     await this.prisma.$transaction(async (tx) => {

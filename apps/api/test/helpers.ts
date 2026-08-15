@@ -36,6 +36,13 @@ export function createPrismaMock() {
       updateMany: vi.fn(),
       count: vi.fn(),
     },
+    // Everything hanging off a subsidiary is ON DELETE CASCADE, so the delete
+    // guard has to count all of it. Present here for the same reason as
+    // activityRecord above: an unmocked namespace throws a TypeError, which
+    // reads as a broken test instead of the missing guard it actually is.
+    periodLock: { count: vi.fn() },
+    target: { count: vi.fn() },
+    subsidiaryDenominator: { count: vi.fn() },
     // Runs the callback against the SAME mock, so a mutation performed inside a
     // transaction is still observable as `prisma.<model>.delete(...)`, while the
     // audit spy receives this object as its third argument — which is what
@@ -43,6 +50,19 @@ export function createPrismaMock() {
     $transaction: vi.fn(),
   };
   mock.$transaction.mockImplementation(async (cb: (tx: typeof mock) => unknown) => cb(mock));
+  // Counting is how the delete guards decide, and an unmocked `count` resolves
+  // to `undefined` — which makes `count > 0` quietly false, i.e. a disarmed
+  // guard that still looks green. Default every counter to "nothing there", so
+  // a spec that means "there IS something" has to say so out loud.
+  for (const model of [
+    mock.location,
+    mock.activityRecord,
+    mock.periodLock,
+    mock.target,
+    mock.subsidiaryDenominator,
+  ]) {
+    model.count.mockResolvedValue(0);
+  }
   return mock;
 }
 

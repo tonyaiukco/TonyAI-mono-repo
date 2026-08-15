@@ -107,6 +107,79 @@ test('a subsidiary holding committed records cannot be deleted', async ({ reques
   expect(still.status(), 'the approved record must survive the refused delete').toBe(200);
 });
 
+test('a disposable subsidiary can still be emptied and deleted', async ({ request }) => {
+  // The counterpart to the test above. Everything under a subsidiary is ON
+  // DELETE CASCADE — locations included — so the guard blocks on all of it, not
+  // just records. That is only defensible if the advice can be followed, so
+  // walk the whole path: block, clear, delete.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const sub = await makeSubsidiary(request, token, 'E2E Test Co Empty Guard');
+
+  const loc = await (await request.post(`${API_BASE}/locations`, {
+    headers: bearer(token),
+    data: { subsidiaryId: sub.id, name: 'E2E Disposable Site', geographyCode: 'UK' },
+  })).json();
+  const draft = await (await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: { subsidiaryId: sub.id, locationId: loc.id, reportingYear: E2E_YEAR,
+      reportingPeriod: E2E_PERIOD, periodValue: 'Q3', category: 'Electricity',
+      activityValue: 10, activityUnit: 'kWh', varianceReason: null, input: null },
+  })).json();
+
+  const blocked = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
+  expect(blocked.status()).toBe(409);
+  const message = (await blocked.json()).message as string;
+  expect(message).toMatch(/1 draft or rejected record\(s\)/);
+  expect(message).toMatch(/1 location\(s\)/);
+  // Nothing here is committed, so "retire it as inactive" would be the wrong
+  // advice — this subsidiary really can go.
+  expect(message).not.toMatch(/inactive/);
+
+  // Follow the advice, in the order it implies.
+  expect((await request.delete(`${API_BASE}/activity-records/${draft.id}`, { headers: bearer(token) })).status()).toBe(200);
+  expect((await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) })).status()).toBe(200);
+  expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);
+  expect((await request.get(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(404);
+});
+
+test('locationName is a read-time field and never enters the audit trail', async ({ request }) => {
+  // `audit_log` is append-only: a wrong value written here is permanent. Before
+  // the read/audit split, a create whose locationId was set logged
+  // `locationName: null`, and the next unrelated edit logged `null → "…"`,
+  // dating a geography decision to a day nothing about the location changed.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const sub = await makeSubsidiary(request, token, 'E2E Test Co Audit Guard');
+  const loc = await (await request.post(`${API_BASE}/locations`, {
+    headers: bearer(token),
+    data: { subsidiaryId: sub.id, name: 'E2E Audited Site', geographyCode: 'UK' },
+  })).json();
+
+  const created = await (await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: { subsidiaryId: sub.id, locationId: loc.id, reportingYear: E2E_YEAR,
+      reportingPeriod: E2E_PERIOD, periodValue: 'Q4', category: 'Electricity',
+      activityValue: 10, activityUnit: 'kWh', varianceReason: null, input: null },
+  })).json();
+
+  // Every read path agrees — including the 201 body and GET /:id, which used to
+  // answer `null` because only `list` carried the join.
+  expect(created.locationName).toBe('E2E Audited Site');
+  const fetched = await (await request.get(`${API_BASE}/activity-records/${created.id}`, { headers: bearer(token) })).json();
+  expect(fetched.locationName).toBe('E2E Audited Site');
+
+  const audit = await (await request.get(
+    `${API_BASE}/audit?entity=activity_record&action=create&entityId=${created.id}`,
+    { headers: bearer(token) },
+  )).json();
+  const createRow = audit.items[0];
+  expect(createRow.diff.after.locationId).toBe(loc.id);
+  expect(createRow.diff.after).not.toHaveProperty('locationName');
+
+  // Clean up in the order the guard requires.
+  await request.delete(`${API_BASE}/activity-records/${created.id}`, { headers: bearer(token) });
+  await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
+});
+
 test('only a super_admin may write locations', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const entry = await getAccessToken(request, ENTRY_EMAIL);

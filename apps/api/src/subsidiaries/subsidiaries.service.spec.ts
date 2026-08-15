@@ -20,6 +20,36 @@ import { AuditService } from '../audit/audit.service';
 const audit = { record: vi.fn() };
 const auditMock = () => audit as unknown as AuditService;
 
+/**
+ * Await a call that must be refused and hand back its message. A plain
+ * `.catch(e => e)` types as "error OR the success value", and a guard that
+ * stopped throwing would then be asserted against an object with no `message`
+ * at all — green by accident.
+ */
+async function refusal(call: Promise<unknown>): Promise<string> {
+  try {
+    await call;
+  } catch (e) {
+    return (e as Error).message;
+  }
+  throw new Error('expected this call to be refused, but it succeeded');
+}
+
+/**
+ * The delete guard counts committed and still-editable records separately, in
+ * one `Promise.all` against the same mock. Route each call by the filter it
+ * actually sends, so "3 drafts" cannot silently also mean "3 approved" — the
+ * two lead to opposite advice.
+ */
+function countRecords(
+  prisma: PrismaMock,
+  { committed = 0, open = 0 }: { committed?: number; open?: number },
+): void {
+  prisma.activityRecord.count.mockImplementation(async ({ where }: any) =>
+    where.status?.in ? open : committed,
+  );
+}
+
 describe('SubsidiariesService', () => {
   let prisma: PrismaMock;
   let service: SubsidiariesService;
@@ -288,7 +318,7 @@ describe('SubsidiariesService', () => {
       expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
     });
 
-    it('refuses to delete a subsidiary that still holds records', async () => {
+    it('refuses to delete a subsidiary that still holds committed records', async () => {
       // `ActivityRecord.subsidiary` is ON DELETE CASCADE, so a delete did not
       // detach those records — it DESTROYED them with their evidence, targets
       // and period locks. Measured: a record taken through submit AND approve
@@ -296,9 +326,50 @@ describe('SubsidiariesService', () => {
       // audit row and nothing about the approved figures that went with it.
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      prisma.activityRecord.count.mockResolvedValue(102);
+      countRecords(prisma, { committed: 102 });
 
-      await expect(service.remove(user, 'sub-1')).rejects.toThrow(/102 activity record/);
+      await expect(service.remove(user, 'sub-1')).rejects.toThrow(
+        /102 submitted, approved or locked/,
+      );
+      // Committed records cannot be deleted at all, so "inactive" is the only
+      // thing the caller can actually do — the message must say so.
+      await expect(service.remove(user, 'sub-1')).rejects.toThrow(/"inactive"/);
+      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it('blocks on drafts, but tells the caller they can be removed', async () => {
+      // A drafts-only subsidiary is fully recoverable — the drafts delete
+      // through their own endpoint. Sending that caller to `inactive` would be
+      // the mirror image of unfollowable advice: telling someone not to bother
+      // with the one action that would work.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, { open: 3 });
+
+      const message = await refusal(service.remove(user, 'sub-1'));
+      expect(message).toMatch(/3 draft or rejected record\(s\)/);
+      expect(message).not.toMatch(/"inactive"/);
+      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it('blocks on a closed period, and on locations/targets/denominators', async () => {
+      // The cascade erases a period lock WITHOUT the `unlock` audit row that
+      // `DELETE /period-locks/:id` writes — a closed reporting period reopened
+      // with no trace. Same for targets and denominators: compliance artifacts
+      // that would vanish behind one "delete subsidiary" row.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, {});
+      prisma.periodLock.count.mockResolvedValue(1);
+      prisma.location.count.mockResolvedValue(2);
+      prisma.target.count.mockResolvedValue(1);
+      prisma.subsidiaryDenominator.count.mockResolvedValue(1);
+
+      const message = await refusal(service.remove(user, 'sub-1'));
+      expect(message).toMatch(/2 location\(s\)/);
+      expect(message).toMatch(/1 closed reporting period\(s\)/);
+      expect(message).toMatch(/1 reduction target\(s\)/);
+      expect(message).toMatch(/1 intensity denominator\(s\)/);
       expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
     });
 
