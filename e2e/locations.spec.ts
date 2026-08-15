@@ -107,6 +107,41 @@ test('a subsidiary holding committed records cannot be deleted', async ({ reques
   expect(still.status(), 'the approved record must survive the refused delete').toBe(200);
 });
 
+test('a record awaiting review blocks the delete WITHOUT calling it permanent', async ({ request }) => {
+  // `submitted` and `under_review` look terminal and are not — a reviewer sends
+  // the record back and it becomes deletable, and so does the subsidiary. The
+  // first cut of this guard lumped them in with `approved` and told the caller
+  // to retire the entity as inactive, foreclosing an action the API grants.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const sub = await makeSubsidiary(request, token, 'E2E Test Co Review Guard');
+  const rec = await (await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: { subsidiaryId: sub.id, locationId: null, reportingYear: E2E_YEAR,
+      reportingPeriod: E2E_PERIOD, periodValue: 'Q1', category: 'Electricity',
+      activityValue: 42, activityUnit: 'kWh', varianceReason: null, input: null },
+  })).json();
+  await request.post(`${API_BASE}/activity-records/${rec.id}/evidence`, {
+    headers: bearer(token),
+    multipart: { file: { name: 'review.pdf', mimeType: 'application/pdf', buffer: readFileSync(EVIDENCE_FIXTURE) } },
+  });
+  expect((await request.post(`${API_BASE}/activity-records/${rec.id}/submit`, { headers: bearer(token) })).status()).toBe(200);
+
+  const blocked = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
+  expect(blocked.status()).toBe(409);
+  const message = (await blocked.json()).message as string;
+  expect(message).toMatch(/1 record\(s\) awaiting review/);
+  expect(message).toMatch(/sent back by a reviewer/);
+  expect(message).not.toMatch(/inactive/);
+
+  // Follow it: a reviewer sends the record back, and the subsidiary really does
+  // become disposable. This is the assertion the old copy contradicted.
+  expect((await request.post(`${API_BASE}/activity-records/${rec.id}/reject`, {
+    headers: bearer(token), data: { varianceReason: 'E2E: sent back' },
+  })).status()).toBe(200);
+  expect((await request.delete(`${API_BASE}/activity-records/${rec.id}`, { headers: bearer(token) })).status()).toBe(200);
+  expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);
+});
+
 test('a disposable subsidiary can still be emptied and deleted', async ({ request }) => {
   // The counterpart to the test above. Everything under a subsidiary is ON
   // DELETE CASCADE — locations included — so the guard blocks on all of it, not
@@ -205,10 +240,10 @@ test('only a super_admin may write locations', async ({ page, request }) => {
 test('changing a location geography is confirmed, not silent', async ({ page, request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const sub = await makeSubsidiary(request, token, 'E2E Test Co Geo Warn');
-  await request.post(`${API_BASE}/locations`, {
+  const loc = await (await request.post(`${API_BASE}/locations`, {
     headers: bearer(token),
     data: { subsidiaryId: sub.id, name: 'E2E Warn Site', geographyCode: 'TR' },
-  });
+  })).json();
   try {
     await login(page, ADMIN_EMAIL);
     await page.goto('/subsidiaries');
@@ -224,6 +259,14 @@ test('changing a location geography is confirmed, not silent', async ({ page, re
     await expect(alert.getByText(/keep the emission factor they were calculated with/)).toBeVisible();
     await alert.getByRole('button', { name: 'Cancel' }).click();
   } finally {
-    await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
+    // Assert BOTH statuses. This cleanup was written before the widened delete
+    // guard and silently started 409-ing once a location counted as a blocker —
+    // the suite stayed green while the spec advertised a self-cleanup it no
+    // longer performed, leaning on the privileged afterAll without saying so.
+    // An unasserted teardown call is indistinguishable from a working one.
+    const locGone = await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
+    expect(locGone.status()).toBe(200);
+    const subGone = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
+    expect(subGone.status()).toBe(200);
   }
 });

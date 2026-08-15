@@ -63,7 +63,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (312 unit + 46 E2E) + live RLS containment probes (25) | ✅ |
+| Automated tests (314 unit + 47 E2E) + live RLS containment probes (25) | ✅ |
 | Reporting years 2015–2026 (WP15/DE-9); the demo dataset and factor library live in one `DEMO_YEAR`, and any year without factors says so instead of failing silently | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
@@ -329,7 +329,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `GET` | `/subsidiaries/:id` | Get one (404 if outside access set) | any |
 | `POST` | `/subsidiaries` | Create | `super_admin` |
 | `PATCH` | `/subsidiaries/:id` | Update | `super_admin` |
-| `DELETE` | `/subsidiaries/:id` | Delete — refused (409) while anything still hangs off it (records, locations, targets, denominators, closed periods), because every child relation is `ON DELETE CASCADE`; a subsidiary with committed records is retired via `reportingStatus: 'inactive'` instead | `super_admin` |
+| `DELETE` | `/subsidiaries/:id` | Delete — refused (409) while anything still hangs off it (records, locations, targets, denominators, closed periods), because every child relation is `ON DELETE CASCADE`; a subsidiary holding an `approved`/`locked` record is retired via `reportingStatus: 'inactive'` instead, since those records can never be deleted | `super_admin` |
 | `GET` | `/locations` | List operational locations (tenant‑scoped; filter `?subsidiaryId=`) | any |
 | `GET` | `/locations/:id` | Get one (404 if outside access set) | any |
 | `POST` | `/locations` | Create (child of a subsidiary; `geographyCode` required) | `super_admin` |

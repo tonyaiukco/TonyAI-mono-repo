@@ -4,7 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, SubsidiaryStatus, type Subsidiary } from '@tonyai/db';
+import {
+  Prisma,
+  SubsidiaryStatus,
+  type ActivityRecordStatus,
+  type Subsidiary,
+} from '@tonyai/db';
+import { PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
 import type { SubsidiaryDTO } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -142,41 +148,61 @@ export class SubsidiariesService {
    *
    * Hence "empty it first" rather than "records only". Every dependent counted
    * here has its own endpoint that deletes it with an audit row, so the advice
-   * can actually be followed — with one exception: committed records are
-   * terminal by design and cannot be deleted at all. For those the honest answer
-   * is that the subsidiary stays, and `reportingStatus: 'inactive'` is how an
-   * entity gets retired.
+   * can actually be followed.
+   *
+   * Records are graded in three tiers, not two, because only TWO statuses are
+   * genuinely terminal. `approved` and `locked` can never be deleted, so the
+   * honest answer there is that the subsidiary stays and `reportingStatus:
+   * 'inactive'` is how an entity gets retired. But `submitted`/`under_review`
+   * look terminal and are not: a reviewer rejects the record, and it becomes
+   * deletable — measured, delete then went through with 200. Lumping those in
+   * with `approved` told a super_admin that a mistyped subsidiary was
+   * permanently in the register, which forecloses an action the API grants. It
+   * is the same error as promising a delete that cannot happen, pointing the
+   * other way.
    */
-  private async assertDeletable(id: string): Promise<void> {
-    const committedFilter = { notIn: [...EDITABLE_STATUSES] };
-    const [committedRecords, openRecords, locations, periodLocks, targets, denominators] =
+  private async assertDeletable(
+    db: Prisma.TransactionClient,
+    id: string,
+  ): Promise<void> {
+    // Annotated, not inferred: assignability is what catches a status that no
+    // longer exists in the Prisma enum, and it names the bad one. The same trap
+    // period-locks.service.ts documents — an index-lookup form would only be
+    // guarded by TS7053, which this package has switched off.
+    const reviewable: ActivityRecordStatus[] = [...PENDING_REVIEW_STATUSES];
+    const editable: ActivityRecordStatus[] = [...EDITABLE_STATUSES];
+    const [terminalRecords, reviewRecords, openRecords, locations, periodLocks, targets, denominators] =
       await Promise.all([
-        this.prisma.activityRecord.count({
-          where: { subsidiaryId: id, status: committedFilter },
+        db.activityRecord.count({
+          where: { subsidiaryId: id, status: { notIn: [...editable, ...reviewable] } },
         }),
-        this.prisma.activityRecord.count({
-          where: { subsidiaryId: id, status: { in: [...EDITABLE_STATUSES] } },
+        db.activityRecord.count({
+          where: { subsidiaryId: id, status: { in: reviewable } },
         }),
-        this.prisma.location.count({ where: { subsidiaryId: id } }),
-        this.prisma.periodLock.count({ where: { subsidiaryId: id } }),
-        this.prisma.target.count({ where: { subsidiaryId: id } }),
-        this.prisma.subsidiaryDenominator.count({ where: { subsidiaryId: id } }),
+        db.activityRecord.count({
+          where: { subsidiaryId: id, status: { in: editable } },
+        }),
+        db.location.count({ where: { subsidiaryId: id } }),
+        db.periodLock.count({ where: { subsidiaryId: id } }),
+        db.target.count({ where: { subsidiaryId: id } }),
+        db.subsidiaryDenominator.count({ where: { subsidiaryId: id } }),
       ]);
 
-    if (committedRecords > 0) {
+    if (terminalRecords > 0) {
       throw new ConflictException(
-        `${committedRecords} submitted, approved or locked activity record(s) ` +
-          'belong to this subsidiary, and deleting it would permanently destroy ' +
-          'them along with their evidence. Committed records cannot be deleted, ' +
-          'so a subsidiary that has reported data stays. Set its status to ' +
-          '"inactive" to retire it instead.',
+        `${terminalRecords} approved or locked activity record(s) belong to this ` +
+          'subsidiary, and deleting it would permanently destroy them along with ' +
+          'their evidence. Those records cannot be deleted at any point, so a ' +
+          'subsidiary that has reported data stays. Set its status to "inactive" ' +
+          'to retire it instead.',
       );
     }
 
-    // Nothing committed — so everything below IS removable, and the message
+    // Nothing terminal — so everything below IS removable, and the message
     // should say how rather than send the user to "inactive" for a subsidiary
     // that is genuinely disposable (a typo in the create form, most often).
     const blockers: string[] = [];
+    if (reviewRecords > 0) blockers.push(`${reviewRecords} record(s) awaiting review`);
     if (openRecords > 0) blockers.push(`${openRecords} draft or rejected record(s)`);
     if (locations > 0) blockers.push(`${locations} location(s)`);
     if (periodLocks > 0) blockers.push(`${periodLocks} closed reporting period(s)`);
@@ -186,8 +212,11 @@ export class SubsidiariesService {
       throw new ConflictException(
         `This subsidiary still holds ${blockers.join(', ')}. Deleting it would ` +
           'destroy them without an audit entry for each. Remove them first ' +
-          '(reopen any closed period rather than deleting its lock), then ' +
-          'delete the subsidiary.',
+          '(reopen any closed period rather than deleting its lock' +
+          (reviewRecords > 0
+            ? '; a record awaiting review must be sent back by a reviewer before it can be removed'
+            : '') +
+          '), then delete the subsidiary.',
       );
     }
   }
@@ -195,10 +224,17 @@ export class SubsidiariesService {
   async remove(user: RequestUser, id: string): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
-    await this.assertDeletable(id);
     // Delete + audit in one transaction: the row is gone afterwards, so a
     // failed audit insert would leave a deletion with no trail at all.
     await this.prisma.$transaction(async (tx) => {
+      // Lock the parent row BEFORE counting. Inserting any child takes a
+      // FOR KEY SHARE lock on the row it references, so FOR UPDATE here
+      // serialises against a record/location/target/lock being created while
+      // the counts run. Without it the guard is a time-of-check read, and the
+      // loser is not an error — the FK cascades the newcomer away silently,
+      // which is the exact loss this whole guard exists to prevent.
+      await tx.$queryRaw`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR UPDATE`;
+      await this.assertDeletable(tx, id);
       await tx.subsidiary.delete({ where: { id } });
       await this.audit.record(
         user,

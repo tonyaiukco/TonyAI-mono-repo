@@ -47,6 +47,9 @@ export function createPrismaMock() {
     // transaction is still observable as `prisma.<model>.delete(...)`, while the
     // audit spy receives this object as its third argument — which is what
     // proves the audit row commits with the mutation rather than after it.
+    // The subsidiary delete locks its row (`SELECT … FOR UPDATE`) before
+    // counting children, so the guard cannot be raced by a concurrent insert.
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
   mock.$transaction.mockImplementation(async (cb: (tx: typeof mock) => unknown) => cb(mock));

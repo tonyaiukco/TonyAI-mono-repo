@@ -36,18 +36,21 @@ async function refusal(call: Promise<unknown>): Promise<string> {
 }
 
 /**
- * The delete guard counts committed and still-editable records separately, in
- * one `Promise.all` against the same mock. Route each call by the filter it
- * actually sends, so "3 drafts" cannot silently also mean "3 approved" — the
- * two lead to opposite advice.
+ * Give the subsidiary a real set of record statuses, and let each of the guard's
+ * three count queries filter it the way Postgres would.
+ *
+ * The first cut handed each query a fixed number instead, keyed off the shape of
+ * its `where`. That decoupled the buckets from each other, and it cost a real
+ * mutation: folding `submitted` back in with `approved` — the exact bug this
+ * grading exists to fix — left the suite green, because the obliging mock never
+ * let one record be seen by two queries. It has to be one set, filtered.
  */
-function countRecords(
-  prisma: PrismaMock,
-  { committed = 0, open = 0 }: { committed?: number; open?: number },
-): void {
-  prisma.activityRecord.count.mockImplementation(async ({ where }: any) =>
-    where.status?.in ? open : committed,
-  );
+function countRecords(prisma: PrismaMock, statuses: string[]): void {
+  prisma.activityRecord.count.mockImplementation(async ({ where }: any) => {
+    const f = where.status;
+    return statuses.filter((s) => (f.in ? f.in.includes(s) : !f.notIn.includes(s)))
+      .length;
+  });
 }
 
 describe('SubsidiariesService', () => {
@@ -318,7 +321,50 @@ describe('SubsidiariesService', () => {
       expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
     });
 
-    it('refuses to delete a subsidiary that still holds committed records', async () => {
+    it('does NOT tell the caller a reviewable record is permanent', async () => {
+      // `submitted`/`under_review` look terminal and are not: a reviewer
+      // rejects the record, it becomes deletable, and so does the subsidiary —
+      // measured live, the delete then went through with 200. Sending that
+      // caller to "inactive" forecloses an action the API actually grants, the
+      // same error as promising a delete that cannot happen, inverted.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, ['submitted', 'under_review']);
+
+      const message = await refusal(service.remove(user, 'sub-1'));
+      expect(message).toMatch(/2 record\(s\) awaiting review/);
+      expect(message).toMatch(/sent back by a reviewer/);
+      expect(message).not.toMatch(/"inactive"/);
+      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it('counts the subsidiary row BEFORE anything can be added to it', async () => {
+      // The counts are a time-of-check read. Inserting any child takes a
+      // FOR KEY SHARE lock on the parent row, so locking it FOR UPDATE first
+      // serialises the guard against a concurrent create — and the loser of
+      // that race is not an error, it is a row the FK cascades away silently.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+
+      await service.remove(user, 'sub-1');
+
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      const [fragments] = prisma.$queryRaw.mock.calls[0] as [string[]];
+      expect(fragments.join('?')).toMatch(/FOR UPDATE/);
+      // Order is the invariant, not mere presence: a lock taken AFTER the
+      // counts protects nothing at all.
+      const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
+        fn.mock.invocationCallOrder[0];
+      expect(order(prisma.$transaction)).toBeLessThan(order(prisma.$queryRaw));
+      expect(order(prisma.$queryRaw)).toBeLessThan(order(prisma.activityRecord.count));
+      // Transaction MEMBERSHIP is not assertable here and this test does not
+      // pretend otherwise: `$transaction` hands the callback the same mock
+      // object, by design, so `tx.x` and `prisma.x` are one spy. That the
+      // counts run on `tx` is structural, and was verified against a live API.
+    });
+
+    it('refuses to delete a subsidiary that still holds terminal records', async () => {
       // `ActivityRecord.subsidiary` is ON DELETE CASCADE, so a delete did not
       // detach those records — it DESTROYED them with their evidence, targets
       // and period locks. Measured: a record taken through submit AND approve
@@ -326,10 +372,10 @@ describe('SubsidiariesService', () => {
       // audit row and nothing about the approved figures that went with it.
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      countRecords(prisma, { committed: 102 });
+      countRecords(prisma, Array(101).fill('approved').concat('locked'));
 
       await expect(service.remove(user, 'sub-1')).rejects.toThrow(
-        /102 submitted, approved or locked/,
+        /102 approved or locked/,
       );
       // Committed records cannot be deleted at all, so "inactive" is the only
       // thing the caller can actually do — the message must say so.
@@ -344,7 +390,7 @@ describe('SubsidiariesService', () => {
       // with the one action that would work.
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      countRecords(prisma, { open: 3 });
+      countRecords(prisma, ['draft', 'draft', 'rejected']);
 
       const message = await refusal(service.remove(user, 'sub-1'));
       expect(message).toMatch(/3 draft or rejected record\(s\)/);
@@ -359,7 +405,7 @@ describe('SubsidiariesService', () => {
       // that would vanish behind one "delete subsidiary" row.
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      countRecords(prisma, {});
+      countRecords(prisma, []);
       prisma.periodLock.count.mockResolvedValue(1);
       prisma.location.count.mockResolvedValue(2);
       prisma.target.count.mockResolvedValue(1);
