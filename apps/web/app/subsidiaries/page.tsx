@@ -497,7 +497,10 @@ export default function SubsidiariesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete subsidiary?</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently removes the subsidiary. An audit log entry is recorded.
+              This permanently removes the subsidiary and is recorded in the
+              audit log. A subsidiary that still holds activity records,
+              locations, targets or closed reporting periods cannot be removed —
+              deleting it would destroy them, and their evidence with them.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
