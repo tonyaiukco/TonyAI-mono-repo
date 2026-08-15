@@ -371,6 +371,15 @@ export default function ReviewPage() {
                           >
                             <TableCell className="text-sm">
                               {subsidiaryName(row.subsidiaryId)}
+                              {/* Uniqueness includes the location, so two rows
+                                  can differ only by this. Without it a reviewer
+                                  sees two identical rows and cannot tell which
+                                  figure they are deciding. */}
+                              {row.locationName && (
+                                <span className="block text-xs text-muted-foreground">
+                                  {row.locationName}
+                                </span>
+                              )}
                             </TableCell>
                             <TableCell className="text-sm whitespace-nowrap">
                               {row.periodValue} {row.reportingYear}
@@ -464,6 +473,10 @@ export default function ReviewPage() {
                 <span className="text-muted-foreground">Subsidiary</span>
                 <span className="col-span-2">
                   {subsidiaryName(selected.subsidiaryId)}
+                </span>
+                <span className="text-muted-foreground">Location</span>
+                <span className="col-span-2">
+                  {selected.locationName ?? 'Whole subsidiary'}
                 </span>
                 <span className="text-muted-foreground">Activity</span>
                 <span className="col-span-2 font-mono">
