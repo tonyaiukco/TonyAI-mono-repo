@@ -30,7 +30,10 @@ const ORG_ID = '11111111-1111-1111-1111-111111111111';
 // BNetzA publish no equivalent, and `+90 555 …` is a LIVE Turkcell prefix — an
 // earlier draft of this seed used one, which would have let a UAT tester tap a
 // demo contact and reach a stranger. The TR and DE numbers are therefore one
-// digit short of a valid subscriber number, so they cannot route either.
+// digit short of a valid subscriber number, so they cannot route either — with
+// one caveat worth stating rather than glossing: German subscriber numbers are
+// variable-length and Berlin (+49 30) has legitimate short ones, so the DE
+// number uses an all-zero subscriber block instead, which is not allocated.
 // Before WP16 every row carried the literal string "Seed Admin" as its
 // designated person — a placeholder that read like data, which is exactly what
 // CLAUDE.md forbids.
@@ -41,7 +44,7 @@ const ORG_ID = '11111111-1111-1111-1111-111111111111';
 const SUBSIDIARIES = [
   { id: '22222222-2222-2222-2222-222222220001', designatedPerson: 'Aylin Demir', contactEmail: 'aylin.demir@example.com', contactPhone: '+90 555 000 000', legalName: 'TonyAI Energy A.Ş.', tradingName: 'TonyAI Energy', location: 'Istanbul, Turkey', geographyCode: 'TR', sector: 'Energy', businessArea: 'Power Generation', status: SubsidiaryStatus.active },
   { id: '22222222-2222-2222-2222-222222220002', designatedPerson: 'James Carter', contactEmail: 'james.carter@example.com', contactPhone: '+44 7700 900002', legalName: 'TonyAI Gas Ltd.', tradingName: 'TonyAI Gas', location: 'London, UK', geographyCode: 'UK', sector: 'Utilities', businessArea: 'Gas Distribution', status: SubsidiaryStatus.active },
-  { id: '22222222-2222-2222-2222-222222220003', designatedPerson: 'Lena Brandt', contactEmail: 'lena.brandt@example.com', contactPhone: '+49 30 9000', legalName: 'TonyAI Manufacturing GmbH', tradingName: 'TonyAI Mfg', location: 'Munich, Germany', geographyCode: 'EU', sector: 'Manufacturing', businessArea: 'Industrial Production', status: SubsidiaryStatus.active },
+  { id: '22222222-2222-2222-2222-222222220003', designatedPerson: 'Lena Brandt', contactEmail: 'lena.brandt@example.com', contactPhone: '+49 30 000000', legalName: 'TonyAI Manufacturing GmbH', tradingName: 'TonyAI Mfg', location: 'Munich, Germany', geographyCode: 'EU', sector: 'Manufacturing', businessArea: 'Industrial Production', status: SubsidiaryStatus.active },
   { id: '22222222-2222-2222-2222-222222220004', designatedPerson: 'Murat Aksoy', contactEmail: 'murat.aksoy@example.com', contactPhone: '+90 555 000 004', legalName: 'TonyAI Logistics A.Ş.', tradingName: 'TonyAI Logistics', location: 'Izmir, Turkey', geographyCode: 'TR', sector: 'Transportation', businessArea: 'Freight & Logistics', status: SubsidiaryStatus.pending },
   { id: '22222222-2222-2222-2222-222222220005', designatedPerson: 'Sophie Hall', contactEmail: 'sophie.hall@example.com', contactPhone: '+44 7700 900005', legalName: 'TonyAI Trading Ltd.', tradingName: 'TonyAI Trading', location: 'Manchester, UK', geographyCode: 'UK', sector: 'Wholesale Trade', businessArea: 'Commodity Trading', status: SubsidiaryStatus.inactive },
 ];

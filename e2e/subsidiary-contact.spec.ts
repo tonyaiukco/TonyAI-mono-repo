@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   bearer, getAccessToken, cleanupE2ESubsidiaries,
+  lockPeriod,
   ADMIN_EMAIL, ENTRY_EMAIL, API_BASE, E2E_YEAR, E2E_PERIOD,
 } from './helpers';
 
@@ -137,7 +138,28 @@ test('summary counts every dependent, and agrees with the delete guard', async (
   s = await read();
   expect(s).toMatchObject({ openRecords: 1, reviewRecords: 0, terminalRecords: 0 });
 
+  // A period lock, on a period this subsidiary has no record in. Non-negotiable
+  // coverage: the seed ships ZERO period locks, so every other assertion about
+  // `periodLocks` compares 0 to 0 — and dropping `subsidiaryId` from that one
+  // count survived the entire suite. Because the counter is shared with the
+  // delete guard, an unscoped version would make EVERY subsidiary permanently
+  // undeletable the moment one lock exists anywhere in the database.
+  const lockId = await lockPeriod(request, token, { subsidiaryId: sub.id, periodValue: 'Q4' });
+  s = await read();
+  expect(s.periodLocks, 'the lock must be counted, and counted for THIS subsidiary').toBe(1);
+
+  // Its blast radius is the point: an unscoped count would also report this
+  // lock against an unrelated subsidiary.
+  const other = await makeSubsidiary(request, token, 'E2E Test Co Summary Neighbour');
+  const neighbour = await (await request.get(`${API_BASE}/subsidiaries/${other.id}/summary`, {
+    headers: bearer(token),
+  })).json();
+  expect(neighbour.periodLocks, 'a lock on one subsidiary is not a lock on another').toBe(0);
+  expect(neighbour.hasBlockingDependents).toBe(false);
+  await request.delete(`${API_BASE}/subsidiaries/${other.id}`, { headers: bearer(token) });
+
   // Clear it the way the 409 tells you to, and the two answers flip together.
+  expect((await request.delete(`${API_BASE}/period-locks/${lockId}`, { headers: bearer(token) })).status()).toBe(200);
   await request.delete(`${API_BASE}/activity-records/${rec.id}`, { headers: bearer(token) });
   await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
   s = await read();

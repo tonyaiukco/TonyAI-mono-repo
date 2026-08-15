@@ -438,6 +438,47 @@ describe('SubsidiariesService', () => {
       expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
     });
 
+    it('scopes EVERY count to this subsidiary, not just the record ones', async () => {
+      // `countRecords` only ever inspected `where.status`, and the other six
+      // counters were bare `mockResolvedValue` — so the tenant scoping of all
+      // seven was invisible to this suite. Dropping `subsidiaryId` from
+      // `periodLock.count` passed 369 unit, 56 E2E and 30 RLS probes, because
+      // the seed ships zero period locks and every assertion compared 0 to 0.
+      // Shared with the delete guard, that would make every subsidiary in the
+      // database undeletable the moment one lock existed anywhere.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+
+      await service.summary(user, 'sub-1');
+
+      for (const counter of [
+        prisma.location.count,
+        prisma.periodLock.count,
+        prisma.target.count,
+        prisma.subsidiaryDenominator.count,
+      ]) {
+        expect(counter).toHaveBeenCalledWith({ where: { subsidiaryId: 'sub-1' } });
+      }
+      for (const call of prisma.activityRecord.count.mock.calls) {
+        expect(call[0].where).toMatchObject({ subsidiaryId: 'sub-1' });
+      }
+    });
+
+    it('never takes a row lock — a read must not serialise against the delete', async () => {
+      // `remove()` locks the row before counting; `summary()` deliberately does
+      // not. Pinned as a NEGATIVE so nobody later "fixes" the snapshot skew
+      // below by putting a FOR UPDATE inside a GET.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+
+      await service.summary(user, 'sub-1');
+
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it('refuses an id outside the access set WITHOUT counting anything', async () => {
       const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1'] });
 

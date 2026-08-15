@@ -215,11 +215,16 @@ async function main() {
   console.log(`RLS containment probes → ${URL_}\n`);
   const token = await getEntryToken();
   await cleanupPeriodLocks(); // in case a previous run aborted
-  await seedPeriodLocks();
 
   await cleanupForeignSubsidiary(); // in case a previous run aborted
-  await seedForeignSubsidiary();
   try {
+    // Seeds go INSIDE the try. Outside it, a failure between the organisation
+    // insert and the subsidiary insert left an orphan organisation behind (and
+    // `seedPeriodLocks` had the same shape) — recovered by the next run's
+    // pre-cleanup, but visible in the UAT database in between, and the stray
+    // period locks show up as closed periods on real subsidiaries.
+    await seedPeriodLocks();
+    await seedForeignSubsidiary();
     for (const table of TENANT_TABLES) {
       console.log(`▸ ${table}`);
       const anon = await count(table);

@@ -690,9 +690,27 @@ export interface SubsidiaryDTO {
   geographyCode: string;
   businessArea: string | null;
   sector: string | null;
-  /** Name of the person responsible for this entity's reporting. Predates the
-   *  other two: it is rendered read-only as "responsible" in the tracking
-   *  matrix, but nothing could write it until WP16. */
+  /**
+   * The OPERATIONAL reporting contact for this entity — who to reach about its
+   * data. In ISO 14064-1 §9.3.1 terms this is the preparer/coordinator, and it
+   * is explicitly NOT the "responsible party" of ISO 14064-3, i.e. whoever
+   * signs off the GHG assertion.
+   *
+   * Named now because the distinction is cheap to state and expensive to
+   * recover: TonyAI already encodes it in the workflow (`data_entry` prepares,
+   * `super_admin` approves), but this record carries no role, so once UAT
+   * testers start filling it — some meaning "who to chase for data", others
+   * meaning "who signs it off" — no migration could tell the two apart. A
+   * future `responsibleParty*` field is then an addition, not a reinterpretation.
+   *
+   * Current state, not history: an inventory is per-period but this column is
+   * not, so a report that ever prints the contact would show today's person
+   * against an older year. Nothing reads it that way today — the only consumer
+   * renders it as "responsible" in the tracking matrix.
+   *
+   * `designatedPerson` predates the other two and had no write path until WP16,
+   * which is why every seeded row said the literal string "Seed Admin".
+   */
   designatedPerson: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
@@ -730,6 +748,14 @@ export type UpdateSubsidiaryInput = Partial<CreateSubsidiaryInput>;
  * `hasBlockingDependents` is therefore computed from the same counts the guard
  * uses, and deliberately not re-derived by callers — a UI that decided for
  * itself would eventually disagree with the endpoint that actually refuses.
+ *
+ * It is a SNAPSHOT, not a promise. Sharing the counting function does not share
+ * the transaction: `remove()` counts inside its delete transaction behind a row
+ * lock, while this endpoint issues seven independent reads under READ
+ * COMMITTED. A record moving `draft → submitted` between two of them can be
+ * counted twice or not at all, so a caller can be told there are no blockers
+ * and still get a 409. **The 409 is authoritative**; treat this as a display
+ * value and let the refusal be the gate.
  */
 export interface SubsidiarySummaryDTO {
   subsidiaryId: string;

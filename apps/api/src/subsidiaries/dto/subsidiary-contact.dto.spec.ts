@@ -29,8 +29,15 @@ function updateErrors(body: Record<string, unknown>) {
   return validateSync(plainToInstance(UpdateSubsidiaryDto, body));
 }
 
+const DTOS = [
+  ['CreateSubsidiaryDto', CreateSubsidiaryDto],
+  ['UpdateSubsidiaryDto', UpdateSubsidiaryDto],
+] as const;
+
 const CASES: [string, Record<string, unknown>, boolean][] = [
   ['a plain address', { contactEmail: 'aylin.demir@example.com' }, true],
+  ['a phone', { contactPhone: '+44 7700 900002' }, true],
+  ['a phone over the length cap', { contactPhone: 'x'.repeat(41) }, false],
   ['a plus-addressed mailbox', { contactEmail: 'a.demir+esg@example.com' }, true],
   ['no email at all', {}, true],
   ['an explicit null (this is how a contact is CLEARED)', { contactEmail: null }, true],
@@ -40,11 +47,12 @@ const CASES: [string, Record<string, unknown>, boolean][] = [
   // so it is ACCEPTED, and means "clear this field". Before the transform an
   // empty phone was stored verbatim, leaving three spellings of "no phone".
   ['whitespace (this is a clear, not a value)', { contactEmail: '   ' }, true],
-  // RFC 5321 caps the local part at 64 and `@IsEmail` enforces that on its own
-  // — measured, so `MaxLength(320)` is belt-and-braces rather than the binding
-  // constraint. Pinned because a future switch to a laxer email check would
-  // leave that column as the only thing between a paste accident and an
-  // unbounded `text` write.
+  // These two rows pin `@IsEmail`'s RFC behaviour, NOT `@MaxLength(320)`.
+  // Measured: no input reaches the length rule while `IsEmail` is in front of
+  // it — a 556-character address fails both — so `MaxLength` is unreachable
+  // defence, kept only for the day someone relaxes the email check. Saying it
+  // pinned the length cap would have been a comment asserting coverage that
+  // does not exist.
   ['a local part at the RFC limit (64)', { contactEmail: `${'a'.repeat(64)}@example.com` }, true],
   ['a local part one over the limit', { contactEmail: `${'a'.repeat(65)}@example.com` }, false],
 ];
@@ -58,9 +66,13 @@ describe('subsidiary contact fields — validation', () => {
     expect(updateErrors(body)).toHaveLength(valid ? 0 : 1);
   });
 
-  it('collapses a blank contact to null instead of storing it', () => {
+  // Both DTOs, both fields. These are hand-maintained twins — `Update` does not
+  // extend `Create` — and the first cut of this spec exercised the transform on
+  // the create side only, so removing `@Transform` from `UpdateSubsidiaryDto`'s
+  // phone alone survived the whole CI gate.
+  it.each(DTOS)('%s collapses a blank contact to null instead of storing it', (_n, Dto) => {
     for (const blank of ['', '   ', '\t']) {
-      const dto = plainToInstance(CreateSubsidiaryDto, {
+      const dto = plainToInstance(Dto, {
         legalName: 'New Co', geographyCode: 'UK', contactPhone: blank, contactEmail: blank,
       });
       expect(validateSync(dto)).toHaveLength(0);
@@ -69,14 +81,22 @@ describe('subsidiary contact fields — validation', () => {
     }
   });
 
-  it('trims rather than refusing a pasted value with surrounding space', () => {
-    const dto = plainToInstance(CreateSubsidiaryDto, {
+  it.each(DTOS)('%s trims rather than refusing a pasted value with space', (_n, Dto) => {
+    const dto = plainToInstance(Dto, {
       legalName: 'New Co', geographyCode: 'UK',
       contactEmail: '  aylin.demir@example.com  ', contactPhone: '  +44 7700 900002  ',
     });
     expect(validateSync(dto)).toHaveLength(0);
     expect(dto.contactEmail).toBe('aylin.demir@example.com');
     expect(dto.contactPhone).toBe('+44 7700 900002');
+  });
+
+  it.each(DTOS)('%s rejects an unknown key rather than dropping it', (_n, Dto) => {
+    const errors = validateSync(
+      plainToInstance(Dto, { legalName: 'New Co', geographyCode: 'UK', contactMobile: '+90 555' }),
+      { whitelist: true, forbidNonWhitelisted: true },
+    );
+    expect(errors).toHaveLength(1);
   });
 
   it('keeps the phone a free string — no format is safe to assume', () => {
