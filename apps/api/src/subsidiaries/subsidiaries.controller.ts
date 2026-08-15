@@ -28,6 +28,20 @@ export class SubsidiariesController {
     return this.service.get(user, id);
   }
 
+  /**
+   * Counts of everything hanging off this subsidiary, for the control panel.
+   *
+   * Declared AFTER `@Get(':id')` and safe regardless of order: `:id` matches a
+   * SINGLE path segment and will not cross a `/`, so a two-segment path can
+   * never match it. The UUID pipe has nothing to do with it — pipes run after
+   * the route has already been chosen, so a literal like `@Get('summary')`
+   * WOULD need to precede `:id`.
+   */
+  @Get(':id/summary')
+  summary(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
+    return this.service.summary(user, id);
+  }
+
   @Post()
   create(@CurrentUser() user: RequestUser, @Body() dto: CreateSubsidiaryDto) {
     return this.service.create(user, dto);

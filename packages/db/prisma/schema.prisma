@@ -79,7 +79,14 @@ model Subsidiary {
   geographyCode    String                 @map("geography_code")
   businessArea     String?                @map("business_area")
   sector           String?
+  // Who to contact about this entity's reporting (round-1 UAT SUB-2). Nullable:
+  // every existing row predates them, and a subsidiary is legally identifiable
+  // without them. `designatedPerson` is the NAME and already existed — it is
+  // rendered read-only as "responsible" in the tracking matrix — but until WP16
+  // nothing could write it, so all five seeded rows say "Seed Admin".
   designatedPerson String?                @map("designated_person")
+  contactEmail     String?                @map("contact_email")
+  contactPhone     String?                @map("contact_phone")
   reportingStatus  SubsidiaryStatus       @default(pending) @map("reporting_status")
   includedScopes   Int[]                  @default([1, 2]) @map("included_scopes")
   locations        Location[]

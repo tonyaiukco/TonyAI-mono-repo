@@ -690,7 +690,30 @@ export interface SubsidiaryDTO {
   geographyCode: string;
   businessArea: string | null;
   sector: string | null;
+  /**
+   * The OPERATIONAL reporting contact for this entity — who to reach about its
+   * data. In ISO 14064-1 §9.3.1 terms this is the preparer/coordinator, and it
+   * is explicitly NOT the "responsible party" of ISO 14064-3, i.e. whoever
+   * signs off the GHG assertion.
+   *
+   * Named now because the distinction is cheap to state and expensive to
+   * recover: TonyAI already encodes it in the workflow (`data_entry` prepares,
+   * `super_admin` approves), but this record carries no role, so once UAT
+   * testers start filling it — some meaning "who to chase for data", others
+   * meaning "who signs it off" — no migration could tell the two apart. A
+   * future `responsibleParty*` field is then an addition, not a reinterpretation.
+   *
+   * Current state, not history: an inventory is per-period but this column is
+   * not, so a report that ever prints the contact would show today's person
+   * against an older year. Nothing reads it that way today — the only consumer
+   * renders it as "responsible" in the tracking matrix.
+   *
+   * `designatedPerson` predates the other two and had no write path until WP16,
+   * which is why every seeded row said the literal string "Seed Admin".
+   */
   designatedPerson: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
   reportingStatus: SubsidiaryStatus;
   includedScopes: number[];
   createdAt: string;
@@ -705,11 +728,59 @@ export interface CreateSubsidiaryInput {
   businessArea?: string | null;
   sector?: string | null;
   designatedPerson?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
   reportingStatus?: SubsidiaryStatus;
   includedScopes?: number[];
 }
 
 export type UpdateSubsidiaryInput = Partial<CreateSubsidiaryInput>;
+
+/**
+ * Everything hanging off one subsidiary, counted server-side.
+ *
+ * Two jobs, both of which the API could not do before. First, showing "36
+ * records" without downloading 36 records — `GET /activity-records` is not
+ * paginated. Second, answering *why* a subsidiary cannot be deleted: the delete
+ * guard computes exactly these counts, but until now the only way to see them
+ * was to attempt the DELETE and read the 409.
+ *
+ * `hasBlockingDependents` is therefore computed from the same counts the guard
+ * uses, and deliberately not re-derived by callers — a UI that decided for
+ * itself would eventually disagree with the endpoint that actually refuses.
+ *
+ * It is a SNAPSHOT, not a promise. Sharing the counting function does not share
+ * the transaction: `remove()` counts inside its delete transaction behind a row
+ * lock, while this endpoint issues seven independent reads under READ
+ * COMMITTED. A record moving `draft → submitted` between two of them can be
+ * counted twice or not at all, so a caller can be told there are no blockers
+ * and still get a 409. **The 409 is authoritative**; treat this as a display
+ * value and let the refusal be the gate.
+ */
+export interface SubsidiarySummaryDTO {
+  subsidiaryId: string;
+  locations: number;
+  /** `approved`/`locked` — these can never be deleted, at any point. */
+  terminalRecords: number;
+  /** `submitted`/`under_review` — a reviewer can send them back, and then they can. */
+  reviewRecords: number;
+  /** `draft`/`rejected` — still the author's to remove. */
+  openRecords: number;
+  periodLocks: number;
+  targets: number;
+  denominators: number;
+  /**
+   * True while anything above still hangs off the subsidiary — a statement
+   * about DEPENDENCIES only.
+   *
+   * It deliberately does NOT say "deletable". `remove()` runs `assertCanWrite`
+   * first, so a non-super_admin caller with an empty subsidiary would have been
+   * told `deletable: true` and then refused with 403. Encoding an authorisation
+   * outcome here would also make the same subsidiary answer differently per
+   * caller, which is worse than useless for caching.
+   */
+  hasBlockingDependents: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // Operational locations (FR §1.1: Holding > Subsidiary > Location).

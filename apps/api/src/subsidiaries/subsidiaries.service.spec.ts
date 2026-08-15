@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { SubsidiariesService } from './subsidiaries.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -290,6 +290,214 @@ describe('SubsidiariesService', () => {
 
       const updateArg = prisma.subsidiary.update.mock.calls[0][0];
       expect(updateArg.data).toEqual({ reportingStatus: 'active' });
+    });
+  });
+
+  describe('contact fields (round-1 UAT SUB-2)', () => {
+    it('round-trips through create, and lands in the audit diff', async () => {
+      // Deliberate, not incidental: `create`/`update`/`delete` embed the whole
+      // DTO in `diff`, so contact details become permanent, uncorrectable rows
+      // in an append-only log. Excluded here would mean "contact changed" is
+      // unauditable, which is worse — but it IS a choice, so it is pinned.
+      const user = makeSuperAdmin();
+      const created = makeSubsidiary({
+        id: 'sub-new',
+        designatedPerson: 'Aylin Demir',
+        contactEmail: 'aylin.demir@example.com',
+        contactPhone: '+90 555 000 0001',
+      });
+      prisma.subsidiary.create.mockResolvedValue(created);
+
+      const dto = await service.create(user, {
+        legalName: 'New Co',
+        geographyCode: 'UK',
+        contactEmail: 'aylin.demir@example.com',
+        contactPhone: '+90 555 000 0001',
+      });
+
+      expect(prisma.subsidiary.create.mock.calls[0][0].data).toMatchObject({
+        contactEmail: 'aylin.demir@example.com',
+        contactPhone: '+90 555 000 0001',
+      });
+      expect(dto.contactEmail).toBe('aylin.demir@example.com');
+      expect(dto.contactPhone).toBe('+90 555 000 0001');
+      const diff = audit.record.mock.calls[0][1].diff as {
+        after: { contactEmail: string; contactPhone: string };
+      };
+      expect(diff.after.contactEmail).toBe('aylin.demir@example.com');
+      expect(diff.after.contactPhone).toBe('+90 555 000 0001');
+    });
+
+    it('defaults both to null when omitted, never undefined', async () => {
+      // `undefined` would serialise the key away entirely, so a client could
+      // not tell "no contact recorded" from "this API version has no such
+      // field". Every other optional column on this entity answers `null`.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
+
+      const dto = await service.create(user, { legalName: 'New Co', geographyCode: 'UK' });
+
+      expect(prisma.subsidiary.create.mock.calls[0][0].data).toMatchObject({
+        contactEmail: null,
+        contactPhone: null,
+      });
+      expect(dto.contactEmail).toBeNull();
+      expect(dto.contactPhone).toBeNull();
+    });
+
+    it('can be cleared, and clearing is distinguishable from not touching', async () => {
+      // The `!== undefined` discipline is what makes this possible: an explicit
+      // `null` clears the field, an absent key leaves it alone. A truthiness
+      // check here would make a contact impossible to remove once set.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+
+      await service.update(user, 'sub-1', { contactEmail: null });
+
+      expect(prisma.subsidiary.update.mock.calls[0][0].data).toEqual({
+        contactEmail: null,
+      });
+    });
+  });
+
+  describe('summary — the counts behind the control panel', () => {
+    it('reports every dependent class, and is tenant-scoped', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, ['approved', 'locked', 'submitted', 'draft', 'draft']);
+      prisma.location.count.mockResolvedValue(2);
+      prisma.periodLock.count.mockResolvedValue(1);
+      prisma.target.count.mockResolvedValue(3);
+      prisma.subsidiaryDenominator.count.mockResolvedValue(4);
+
+      const s = await service.summary(user, 'sub-1');
+
+      expect(s).toEqual({
+        subsidiaryId: 'sub-1',
+        terminalRecords: 2,
+        reviewRecords: 1,
+        openRecords: 2,
+        locations: 2,
+        periodLocks: 1,
+        targets: 3,
+        denominators: 4,
+        hasBlockingDependents: true,
+      });
+    });
+
+    it('reports no blockers only when literally nothing is left', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+
+      expect((await service.summary(user, 'sub-1')).hasBlockingDependents).toBe(false);
+    });
+
+    it('a single location alone is enough to block the delete', async () => {
+      // The tier that is easiest to forget: no records at all, but the delete
+      // still cascades the location away unaudited. If `deletable` and the
+      // guard ever disagreed, this is where it would show first.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      prisma.location.count.mockResolvedValue(1);
+
+      const s = await service.summary(user, 'sub-1');
+      expect(s.hasBlockingDependents).toBe(true);
+      // …and the guard agrees, because both read the same counter.
+      await expect(refusal(service.remove(user, 'sub-1'))).resolves.toMatch(
+        /1 location\(s\)/,
+      );
+    });
+
+    it.each([
+      'terminalRecords', 'reviewRecords', 'openRecords',
+      'locations', 'periodLocks', 'targets', 'denominators',
+    ] as const)('%s alone blocks the delete, so it belongs in the blocker list', async (key) => {
+      // `BLOCKING_DEPENDENTS` currently lists all seven, so the design guard is
+      // about the future: add a count to the summary, forget the array, and it
+      // would promise a delete the API then 409s. This pins the two together by
+      // setting each dependent to 1 ON ITS OWN and asserting both answers.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      const byKey: Record<string, () => void> = {
+        terminalRecords: () => countRecords(prisma, ['approved']),
+        reviewRecords: () => countRecords(prisma, ['submitted']),
+        openRecords: () => countRecords(prisma, ['draft']),
+        locations: () => prisma.location.count.mockResolvedValue(1),
+        periodLocks: () => prisma.periodLock.count.mockResolvedValue(1),
+        targets: () => prisma.target.count.mockResolvedValue(1),
+        denominators: () => prisma.subsidiaryDenominator.count.mockResolvedValue(1),
+      };
+      byKey[key]();
+
+      expect((await service.summary(user, 'sub-1')).hasBlockingDependents).toBe(true);
+      await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it('scopes EVERY count to this subsidiary, not just the record ones', async () => {
+      // `countRecords` only ever inspected `where.status`, and the other six
+      // counters were bare `mockResolvedValue` — so the tenant scoping of all
+      // seven was invisible to this suite. Dropping `subsidiaryId` from
+      // `periodLock.count` passed 369 unit, 56 E2E and 30 RLS probes, because
+      // the seed ships zero period locks and every assertion compared 0 to 0.
+      // Shared with the delete guard, that would make every subsidiary in the
+      // database undeletable the moment one lock existed anywhere.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+
+      await service.summary(user, 'sub-1');
+
+      for (const counter of [
+        prisma.location.count,
+        prisma.periodLock.count,
+        prisma.target.count,
+        prisma.subsidiaryDenominator.count,
+      ]) {
+        expect(counter).toHaveBeenCalledWith({ where: { subsidiaryId: 'sub-1' } });
+      }
+      for (const call of prisma.activityRecord.count.mock.calls) {
+        expect(call[0].where).toMatchObject({ subsidiaryId: 'sub-1' });
+      }
+    });
+
+    it('never takes a row lock — a read must not serialise against the delete', async () => {
+      // `remove()` locks the row before counting; `summary()` deliberately does
+      // not. Pinned as a NEGATIVE so nobody later "fixes" the snapshot skew
+      // below by putting a FOR UPDATE inside a GET.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+
+      await service.summary(user, 'sub-1');
+
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('refuses an id outside the access set WITHOUT counting anything', async () => {
+      const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1'] });
+
+      await expect(service.summary(user, 'sub-99')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
+      expect(prisma.activityRecord.count).not.toHaveBeenCalled();
+    });
+
+    it('is readable by a non-admin inside the tenant (reads are not role-gated)', async () => {
+      // SUB-2: the PANEL is super_admin-only, but reads stay tenant-scoped for
+      // everyone — and this exposes nothing a data_entry user could not already
+      // count by listing the collections they can see, only far more cheaply.
+      const user = makeDataEntry({ accessibleSubsidiaryIds: ['sub-1'] });
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, ['approved']);
+
+      expect((await service.summary(user, 'sub-1')).terminalRecords).toBe(1);
     });
   });
 

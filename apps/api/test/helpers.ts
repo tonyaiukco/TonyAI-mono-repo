@@ -87,6 +87,12 @@ export function makeSubsidiary(overrides: Partial<Subsidiary> = {}): Subsidiary 
     businessArea: null,
     sector: null,
     designatedPerson: null,
+    // Listed explicitly, not left to the `as Subsidiary` cast below: an omitted
+    // column does NOT fail to compile there, it silently becomes `undefined`,
+    // and `toDTO` then returns `undefined` where every DTO assertion expects
+    // `null`. The failure surfaces far from the cause.
+    contactEmail: null,
+    contactPhone: null,
     reportingStatus: 'pending',
     includedScopes: [1, 2],
     createdAt: now,
