@@ -22,12 +22,22 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
 
 const ORG_ID = '11111111-1111-1111-1111-111111111111';
 
+// Demo contacts. Email uses the RFC 2606 reserved `example.com` domain and the
+// phone numbers sit in ranges regulators keep for fiction (Ofcom's +44 7700
+// 900xxx), so nothing here can reach a real person if a UAT tester taps it.
+// Before WP16 every row carried the literal string "Seed Admin" as its
+// designated person — a placeholder that read like data, which is exactly what
+// CLAUDE.md forbids.
+//
+// NOTE: the upsert below is create-only (`update: {}`), so an existing database
+// keeps its NULL contacts until `pnpm db:reset`. That is the seed's long-
+// standing idempotency contract and this change does not alter it.
 const SUBSIDIARIES = [
-  { id: '22222222-2222-2222-2222-222222220001', legalName: 'TonyAI Energy A.Ş.', tradingName: 'TonyAI Energy', location: 'Istanbul, Turkey', geographyCode: 'TR', sector: 'Energy', businessArea: 'Power Generation', status: SubsidiaryStatus.active },
-  { id: '22222222-2222-2222-2222-222222220002', legalName: 'TonyAI Gas Ltd.', tradingName: 'TonyAI Gas', location: 'London, UK', geographyCode: 'UK', sector: 'Utilities', businessArea: 'Gas Distribution', status: SubsidiaryStatus.active },
-  { id: '22222222-2222-2222-2222-222222220003', legalName: 'TonyAI Manufacturing GmbH', tradingName: 'TonyAI Mfg', location: 'Munich, Germany', geographyCode: 'EU', sector: 'Manufacturing', businessArea: 'Industrial Production', status: SubsidiaryStatus.active },
-  { id: '22222222-2222-2222-2222-222222220004', legalName: 'TonyAI Logistics A.Ş.', tradingName: 'TonyAI Logistics', location: 'Izmir, Turkey', geographyCode: 'TR', sector: 'Transportation', businessArea: 'Freight & Logistics', status: SubsidiaryStatus.pending },
-  { id: '22222222-2222-2222-2222-222222220005', legalName: 'TonyAI Trading Ltd.', tradingName: 'TonyAI Trading', location: 'Manchester, UK', geographyCode: 'UK', sector: 'Wholesale Trade', businessArea: 'Commodity Trading', status: SubsidiaryStatus.inactive },
+  { id: '22222222-2222-2222-2222-222222220001', designatedPerson: 'Aylin Demir', contactEmail: 'aylin.demir@example.com', contactPhone: '+90 555 000 0001', legalName: 'TonyAI Energy A.Ş.', tradingName: 'TonyAI Energy', location: 'Istanbul, Turkey', geographyCode: 'TR', sector: 'Energy', businessArea: 'Power Generation', status: SubsidiaryStatus.active },
+  { id: '22222222-2222-2222-2222-222222220002', designatedPerson: 'James Carter', contactEmail: 'james.carter@example.com', contactPhone: '+44 7700 900002', legalName: 'TonyAI Gas Ltd.', tradingName: 'TonyAI Gas', location: 'London, UK', geographyCode: 'UK', sector: 'Utilities', businessArea: 'Gas Distribution', status: SubsidiaryStatus.active },
+  { id: '22222222-2222-2222-2222-222222220003', designatedPerson: 'Lena Brandt', contactEmail: 'lena.brandt@example.com', contactPhone: '+49 30 900003', legalName: 'TonyAI Manufacturing GmbH', tradingName: 'TonyAI Mfg', location: 'Munich, Germany', geographyCode: 'EU', sector: 'Manufacturing', businessArea: 'Industrial Production', status: SubsidiaryStatus.active },
+  { id: '22222222-2222-2222-2222-222222220004', designatedPerson: 'Murat Aksoy', contactEmail: 'murat.aksoy@example.com', contactPhone: '+90 555 000 0004', legalName: 'TonyAI Logistics A.Ş.', tradingName: 'TonyAI Logistics', location: 'Izmir, Turkey', geographyCode: 'TR', sector: 'Transportation', businessArea: 'Freight & Logistics', status: SubsidiaryStatus.pending },
+  { id: '22222222-2222-2222-2222-222222220005', designatedPerson: 'Sophie Hall', contactEmail: 'sophie.hall@example.com', contactPhone: '+44 7700 900005', legalName: 'TonyAI Trading Ltd.', tradingName: 'TonyAI Trading', location: 'Manchester, UK', geographyCode: 'UK', sector: 'Wholesale Trade', businessArea: 'Commodity Trading', status: SubsidiaryStatus.inactive },
 ];
 
 // Operational locations (FR §1.1 third tier). Fixed ids keep the seed
@@ -337,7 +347,9 @@ async function main() {
         geographyCode: s.geographyCode,
         sector: s.sector,
         businessArea: s.businessArea,
-        designatedPerson: 'Seed Admin',
+        designatedPerson: s.designatedPerson,
+        contactEmail: s.contactEmail,
+        contactPhone: s.contactPhone,
         reportingStatus: s.status,
         includedScopes: [1, 2],
       },

@@ -690,7 +690,12 @@ export interface SubsidiaryDTO {
   geographyCode: string;
   businessArea: string | null;
   sector: string | null;
+  /** Name of the person responsible for this entity's reporting. Predates the
+   *  other two: it is rendered read-only as "responsible" in the tracking
+   *  matrix, but nothing could write it until WP16. */
   designatedPerson: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
   reportingStatus: SubsidiaryStatus;
   includedScopes: number[];
   createdAt: string;
@@ -705,11 +710,42 @@ export interface CreateSubsidiaryInput {
   businessArea?: string | null;
   sector?: string | null;
   designatedPerson?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
   reportingStatus?: SubsidiaryStatus;
   includedScopes?: number[];
 }
 
 export type UpdateSubsidiaryInput = Partial<CreateSubsidiaryInput>;
+
+/**
+ * Everything hanging off one subsidiary, counted server-side.
+ *
+ * Two jobs, both of which the API could not do before. First, showing "36
+ * records" without downloading 36 records — `GET /activity-records` is not
+ * paginated. Second, answering *why* a subsidiary cannot be deleted: the delete
+ * guard computes exactly these counts, but until now the only way to see them
+ * was to attempt the DELETE and read the 409.
+ *
+ * `deletable` is therefore computed from the same counts the guard uses, and
+ * deliberately not re-derived by callers — a UI that decided for itself would
+ * eventually disagree with the endpoint that actually refuses.
+ */
+export interface SubsidiarySummaryDTO {
+  subsidiaryId: string;
+  locations: number;
+  /** `approved`/`locked` — these can never be deleted, at any point. */
+  terminalRecords: number;
+  /** `submitted`/`under_review` — a reviewer can send them back, and then they can. */
+  reviewRecords: number;
+  /** `draft`/`rejected` — still the author's to remove. */
+  openRecords: number;
+  periodLocks: number;
+  targets: number;
+  denominators: number;
+  /** True only when nothing above is left, i.e. `DELETE` would succeed today. */
+  deletable: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // Operational locations (FR §1.1: Holding > Subsidiary > Location).

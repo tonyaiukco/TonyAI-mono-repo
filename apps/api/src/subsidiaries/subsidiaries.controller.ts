@@ -28,6 +28,18 @@ export class SubsidiariesController {
     return this.service.get(user, id);
   }
 
+  /**
+   * Counts of everything hanging off this subsidiary, for the control panel.
+   *
+   * Declared AFTER `:id` but they cannot collide — `summary` is a second path
+   * segment, and `:id` is UUID-validated anyway, so `/subsidiaries/x/summary`
+   * could never be read as an id.
+   */
+  @Get(':id/summary')
+  summary(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
+    return this.service.summary(user, id);
+  }
+
   @Post()
   create(@CurrentUser() user: RequestUser, @Body() dto: CreateSubsidiaryDto) {
     return this.service.create(user, dto);

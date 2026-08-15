@@ -11,7 +11,7 @@ import {
   type Subsidiary,
 } from '@tonyai/db';
 import { PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
-import type { SubsidiaryDTO } from '@tonyai/shared-types';
+import type { SubsidiaryDTO, SubsidiarySummaryDTO } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
@@ -37,6 +37,8 @@ export class SubsidiariesService {
       businessArea: s.businessArea,
       sector: s.sector,
       designatedPerson: s.designatedPerson,
+      contactEmail: s.contactEmail,
+      contactPhone: s.contactPhone,
       reportingStatus: s.reportingStatus,
       includedScopes: s.includedScopes,
       createdAt: s.createdAt.toISOString(),
@@ -83,6 +85,8 @@ export class SubsidiariesService {
         businessArea: dto.businessArea ?? null,
         sector: dto.sector ?? null,
         designatedPerson: dto.designatedPerson ?? null,
+        contactEmail: dto.contactEmail ?? null,
+        contactPhone: dto.contactPhone ?? null,
         reportingStatus: (dto.reportingStatus ?? 'pending') as SubsidiaryStatus,
         includedScopes: dto.includedScopes ?? [1, 2],
       },
@@ -116,6 +120,8 @@ export class SubsidiariesService {
     if (dto.businessArea !== undefined) data.businessArea = dto.businessArea;
     if (dto.sector !== undefined) data.sector = dto.sector;
     if (dto.designatedPerson !== undefined) data.designatedPerson = dto.designatedPerson;
+    if (dto.contactEmail !== undefined) data.contactEmail = dto.contactEmail;
+    if (dto.contactPhone !== undefined) data.contactPhone = dto.contactPhone;
     if (dto.reportingStatus !== undefined) {
       data.reportingStatus = dto.reportingStatus as SubsidiaryStatus;
     }
@@ -129,6 +135,74 @@ export class SubsidiariesService {
       diff: { before: this.toDTO(existing), after: this.toDTO(updated) },
     });
     return this.toDTO(updated);
+  }
+
+  /**
+   * Count everything that hangs off a subsidiary, in one round of queries.
+   *
+   * Extracted so the delete guard and `GET /subsidiaries/:id/summary` cannot
+   * disagree. If the read path counted separately it would eventually drift,
+   * and the visible failure would be a control panel promising a delete that
+   * the API then refuses — or, worse, hiding one it would have allowed.
+   */
+  private async countDependents(
+    db: Prisma.TransactionClient,
+    id: string,
+  ): Promise<Omit<SubsidiarySummaryDTO, 'subsidiaryId' | 'deletable'>> {
+    // Annotated, not inferred: assignability is what catches a status that no
+    // longer exists in the Prisma enum, and it names the bad one. The same trap
+    // period-locks.service.ts documents — an index-lookup form would only be
+    // guarded by TS7053, which this package has switched off.
+    const reviewable: ActivityRecordStatus[] = [...PENDING_REVIEW_STATUSES];
+    const editable: ActivityRecordStatus[] = [...EDITABLE_STATUSES];
+    const [terminalRecords, reviewRecords, openRecords, locations, periodLocks, targets, denominators] =
+      await Promise.all([
+        db.activityRecord.count({
+          where: { subsidiaryId: id, status: { notIn: [...editable, ...reviewable] } },
+        }),
+        db.activityRecord.count({
+          where: { subsidiaryId: id, status: { in: reviewable } },
+        }),
+        db.activityRecord.count({
+          where: { subsidiaryId: id, status: { in: editable } },
+        }),
+        db.location.count({ where: { subsidiaryId: id } }),
+        db.periodLock.count({ where: { subsidiaryId: id } }),
+        db.target.count({ where: { subsidiaryId: id } }),
+        db.subsidiaryDenominator.count({ where: { subsidiaryId: id } }),
+      ]);
+    return {
+      terminalRecords,
+      reviewRecords,
+      openRecords,
+      locations,
+      periodLocks,
+      targets,
+      denominators,
+    };
+  }
+
+  /**
+   * Read-only view of the same counts, for the control panel.
+   *
+   * Tenant-scoped but NOT role-gated, matching `get()` and SUB-2's note that
+   * "reads remain tenant-scoped for other roles" — it exposes nothing a caller
+   * could not already obtain by listing the child collections they can see,
+   * only far more cheaply.
+   */
+  async summary(user: RequestUser, id: string): Promise<SubsidiarySummaryDTO> {
+    await this.loadScoped(user, id);
+    const counts = await this.countDependents(
+      this.prisma as unknown as Prisma.TransactionClient,
+      id,
+    );
+    return {
+      subsidiaryId: id,
+      ...counts,
+      // Derived here, from the guard's own numbers, so a client never has to
+      // reimplement the rule and never has to guess.
+      deletable: Object.values(counts).every((n) => n === 0),
+    };
   }
 
   /**
@@ -165,28 +239,15 @@ export class SubsidiariesService {
     db: Prisma.TransactionClient,
     id: string,
   ): Promise<void> {
-    // Annotated, not inferred: assignability is what catches a status that no
-    // longer exists in the Prisma enum, and it names the bad one. The same trap
-    // period-locks.service.ts documents — an index-lookup form would only be
-    // guarded by TS7053, which this package has switched off.
-    const reviewable: ActivityRecordStatus[] = [...PENDING_REVIEW_STATUSES];
-    const editable: ActivityRecordStatus[] = [...EDITABLE_STATUSES];
-    const [terminalRecords, reviewRecords, openRecords, locations, periodLocks, targets, denominators] =
-      await Promise.all([
-        db.activityRecord.count({
-          where: { subsidiaryId: id, status: { notIn: [...editable, ...reviewable] } },
-        }),
-        db.activityRecord.count({
-          where: { subsidiaryId: id, status: { in: reviewable } },
-        }),
-        db.activityRecord.count({
-          where: { subsidiaryId: id, status: { in: editable } },
-        }),
-        db.location.count({ where: { subsidiaryId: id } }),
-        db.periodLock.count({ where: { subsidiaryId: id } }),
-        db.target.count({ where: { subsidiaryId: id } }),
-        db.subsidiaryDenominator.count({ where: { subsidiaryId: id } }),
-      ]);
+    const {
+      terminalRecords,
+      reviewRecords,
+      openRecords,
+      locations,
+      periodLocks,
+      targets,
+      denominators,
+    } = await this.countDependents(db, id);
 
     if (terminalRecords > 0) {
       throw new ConflictException(
