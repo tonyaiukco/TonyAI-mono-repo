@@ -305,7 +305,7 @@ Run from the repo root (Turborepo fans out to each package):
 | `pnpm setup` | One‑command local bootstrap (deps, Supabase, `.env` sync, migrate, seed) |
 | `pnpm dev` | Run web + api in watch mode |
 | `pnpm build` | Build all packages |
-| `pnpm typecheck` | Type‑check the whole repo |
+| `pnpm typecheck` | Type‑check the whole repo, `e2e/` and `playwright.config.ts` included (`tsconfig.e2e.json` — Playwright's own runner strips types without checking them) |
 | `pnpm test` | Unit tests (Vitest) |
 | `pnpm e2e` | Playwright E2E: demo flow, gates, RBAC, smoke (requires Supabase running) |
 | `pnpm rls:probe` | Live RLS containment probes via PostgREST (requires Supabase running) |
