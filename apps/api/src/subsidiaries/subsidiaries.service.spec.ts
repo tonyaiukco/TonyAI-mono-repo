@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { SubsidiariesService } from './subsidiaries.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -409,6 +409,33 @@ describe('SubsidiariesService', () => {
       await expect(refusal(service.remove(user, 'sub-1'))).resolves.toMatch(
         /1 location\(s\)/,
       );
+    });
+
+    it.each([
+      'terminalRecords', 'reviewRecords', 'openRecords',
+      'locations', 'periodLocks', 'targets', 'denominators',
+    ] as const)('%s alone blocks the delete, so it belongs in the blocker list', async (key) => {
+      // `BLOCKING_DEPENDENTS` currently lists all seven, so the design guard is
+      // about the future: add a count to the summary, forget the array, and it
+      // would promise a delete the API then 409s. This pins the two together by
+      // setting each dependent to 1 ON ITS OWN and asserting both answers.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      const byKey: Record<string, () => void> = {
+        terminalRecords: () => countRecords(prisma, ['approved']),
+        reviewRecords: () => countRecords(prisma, ['submitted']),
+        openRecords: () => countRecords(prisma, ['draft']),
+        locations: () => prisma.location.count.mockResolvedValue(1),
+        periodLocks: () => prisma.periodLock.count.mockResolvedValue(1),
+        targets: () => prisma.target.count.mockResolvedValue(1),
+        denominators: () => prisma.subsidiaryDenominator.count.mockResolvedValue(1),
+      };
+      byKey[key]();
+
+      expect((await service.summary(user, 'sub-1')).hasBlockingDependents).toBe(true);
+      await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
     });
 
     it('refuses an id outside the access set WITHOUT counting anything', async () => {

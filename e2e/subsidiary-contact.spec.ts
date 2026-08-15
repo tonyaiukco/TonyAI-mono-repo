@@ -145,6 +145,49 @@ test('summary counts every dependent, and agrees with the delete guard', async (
   expect(await deleteStatus()).toBe(200);
 });
 
+test('summary tells a non-admin nothing they could not already count themselves', async ({ request }) => {
+  // The justification for leaving this endpoint tenant-scoped but NOT
+  // role-gated is that it is a cheaper form of what the caller already had.
+  // That is a property of SEVEN other services, not of this one — narrow any
+  // of those lists later (author-scoping a data_entry user's record list is a
+  // plausible ask) and the summary silently becomes a leak with nothing to
+  // catch it. So the equivalence is asserted, not asserted-in-a-comment.
+  const entryToken = await getAccessToken(request, ENTRY_EMAIL);
+  const subs = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(entryToken) })).json();
+  expect(subs.length).toBeGreaterThan(0);
+  const target = subs[0].id;
+
+  const summary = await (await request.get(`${API_BASE}/subsidiaries/${target}/summary`, {
+    headers: bearer(entryToken),
+  })).json();
+
+  const listCount = async (path: string) =>
+    ((await (await request.get(`${API_BASE}${path}`, { headers: bearer(entryToken) })).json()) as unknown[]).length;
+
+  const records = (await (await request.get(
+    `${API_BASE}/activity-records?subsidiaryId=${target}`, { headers: bearer(entryToken) },
+  )).json()) as { status: string }[];
+  const tier = (statuses: string[]) => records.filter((r) => statuses.includes(r.status)).length;
+
+  expect({
+    terminalRecords: summary.terminalRecords,
+    reviewRecords: summary.reviewRecords,
+    openRecords: summary.openRecords,
+    locations: summary.locations,
+    periodLocks: summary.periodLocks,
+    targets: summary.targets,
+    denominators: summary.denominators,
+  }).toEqual({
+    terminalRecords: tier(['approved', 'locked']),
+    reviewRecords: tier(['submitted', 'under_review']),
+    openRecords: tier(['draft', 'rejected']),
+    locations: await listCount(`/locations?subsidiaryId=${target}`),
+    periodLocks: await listCount(`/period-locks?subsidiaryId=${target}`),
+    targets: await listCount(`/targets?subsidiaryId=${target}`),
+    denominators: await listCount(`/denominators?subsidiaryId=${target}`),
+  });
+});
+
 test('summary is tenant-scoped, and a bad id is a 400 not a 500', async ({ request }) => {
   const adminToken = await getAccessToken(request, ADMIN_EMAIL);
   const entryToken = await getAccessToken(request, ENTRY_EMAIL);

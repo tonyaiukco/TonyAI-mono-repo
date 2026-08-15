@@ -46,7 +46,6 @@ const BLOCKING_DEPENDENTS: (keyof SubsidiaryDependentCounts)[] = [
   'denominators',
 ];
 
-
 @Injectable()
 export class SubsidiariesService {
   constructor(

@@ -50,6 +50,12 @@ const ADMIN_EMAIL = 'admin@tonyai.local';
 const CONSULTANT_EMAIL = 'review@tonyai.local';
 const PASSWORD = 'TonyAI!2026';
 const TENANT_TABLES = [
+  // `subsidiaries` was missing here until WP16 PR 2a, which is when it started
+  // carrying contact PII (a named person's work email and phone). The blanket
+  // "every table has RLS enabled" check at the end of this script covers only
+  // the ENABLE bit, not what the policy actually returns — so the one table
+  // holding personal data was the one whose containment was never asserted.
+  'subsidiaries',
   'activity_records',
   'locations',
   'evidence',
@@ -67,6 +73,8 @@ const ACC = `(${ENERGY},${LOGISTICS})`;
 // tenants — the exact set entry must see. evidence has no subsidiary_id, so it is
 // scoped through an inner-joined parent record.
 const ACCESSIBLE_QUERY = {
+  // `subsidiaries` IS the tenant, so it scopes on `id`, not `subsidiary_id`.
+  subsidiaries: `select=id&id=in.${ACC}`,
   activity_records: `select=id&subsidiary_id=in.${ACC}`,
   locations: `select=id&subsidiary_id=in.${ACC}`,
   evidence: `select=id,activity_records!inner(subsidiary_id)&activity_records.subsidiary_id=in.${ACC}`,
@@ -157,6 +165,45 @@ async function cleanupAuditRows() {
   await svc('DELETE', `audit_log?entity=eq.${AUDIT_PROBE_ENTITY}`);
 }
 
+// A subsidiary filed under a FOREIGN organisation. The seed has exactly one
+// organisation, so without this the cross-ORG half of the subsidiaries policy
+// is untestable — `data_entry` seeing 2 of 5 proves intra-org scoping only,
+// and a policy that leaked every organisation's rows to a super_admin would
+// still pass it. Carries contact values, so a leak would be visible as PII
+// rather than as a bare count.
+const FOREIGN_SUB_ID = '99999999-0000-0000-0000-000000000001';
+async function seedForeignSubsidiary() {
+  const now = new Date().toISOString();
+  const org = await svc('POST', 'organisations', [
+    {
+      id: FOREIGN_ORG,
+      legal_name: 'RLS probe — foreign organisation',
+      country: 'GB',
+      geography_code: 'UK',
+      updated_at: now,
+    },
+  ]);
+  if (!org.ok) throw new Error(`foreign organisation seed failed: ${org.status} ${await org.text()}`);
+  const res = await svc('POST', 'subsidiaries', [
+    {
+      id: FOREIGN_SUB_ID,
+      organisation_id: FOREIGN_ORG,
+      legal_name: 'RLS probe — foreign subsidiary',
+      geography_code: 'UK',
+      contact_email: 'rls-probe@example.com',
+      contact_phone: '+44 7700 900999',
+      // `@updatedAt` is applied by Prisma, not by a DB default, so a direct
+      // PostgREST insert has to supply it.
+      updated_at: now,
+    },
+  ]);
+  if (!res.ok) throw new Error(`foreign subsidiary seed failed: ${res.status} ${await res.text()}`);
+}
+async function cleanupForeignSubsidiary() {
+  await svc('DELETE', `subsidiaries?id=eq.${FOREIGN_SUB_ID}`);
+  await svc('DELETE', `organisations?id=eq.${FOREIGN_ORG}`);
+}
+
 // --- run ---------------------------------------------------------------------
 const failures = [];
 function check(name, ok, detail) {
@@ -170,6 +217,8 @@ async function main() {
   await cleanupPeriodLocks(); // in case a previous run aborted
   await seedPeriodLocks();
 
+  await cleanupForeignSubsidiary(); // in case a previous run aborted
+  await seedForeignSubsidiary();
   try {
     for (const table of TENANT_TABLES) {
       console.log(`▸ ${table}`);
@@ -194,8 +243,41 @@ async function main() {
         );
       }
     }
+    // The contact columns specifically, not just `id`: they are the reason
+    // `subsidiaries` joined this list, and a column-level grant slip would be
+    // invisible to a `select=id` probe.
+    const anonContacts = await count('subsidiaries', { query: 'select=id,contact_email,contact_phone' });
+    const entryContacts = await count('subsidiaries', {
+      token,
+      query: 'select=id,contact_email,contact_phone',
+    });
+    check(
+      'subsidiaries: contact PII is contained exactly like the row itself',
+      anonContacts.total === 0 && entryContacts.total === 2,
+      `anon=${anonContacts.total}, entry=${entryContacts.total}`,
+    );
+
+    // Cross-ORGANISATION containment. `data_entry` seeing 2 of 5 proves only
+    // intra-org scoping; a policy handing every organisation's rows to a
+    // super_admin would pass that and fail this.
+    const adminTokenForSubs = await getToken(ADMIN_EMAIL);
+    const adminSees = await count('subsidiaries', {
+      token: adminTokenForSubs,
+      query: `select=id&id=eq.${FOREIGN_SUB_ID}`,
+    });
+    const foreignExists = await count('subsidiaries', {
+      token: SERVICE,
+      key: SERVICE,
+      query: `select=id&id=eq.${FOREIGN_SUB_ID}`,
+    });
+    check(
+      'subsidiaries: a super_admin cannot read another organisation',
+      foreignExists.total === 1 && adminSees.total === 0,
+      `foreign rows exist=${foreignExists.total}, visible to admin=${adminSees.total}`,
+    );
   } finally {
     await cleanupPeriodLocks();
+    await cleanupForeignSubsidiary();
   }
 
   // audit_log does NOT follow the tenant-table shape: its policy is role-gated
