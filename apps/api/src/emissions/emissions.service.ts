@@ -4,6 +4,7 @@ import {
   CATEGORIES,
   CATEGORY_SCOPE_MAP,
   isEvidenceRequired,
+  type ActivityCalculationSnapshot,
   type CalculationResult,
   type Category,
   type DataStatus,
@@ -113,6 +114,7 @@ export class EmissionsService {
       bySubsidiary: [],
       trend: { monthly: [], quarterly: [], yearly: [] },
       recordCount: 0,
+      uncalculatedRecordCount: 0,
       statusesIncluded: COUNTED_STATUSES,
     };
   }
@@ -184,10 +186,27 @@ export class EmissionsService {
       this.addScope(bucket.point, scope, tCo2e);
     };
 
+    let uncalculatedRecordCount = 0;
+
     for (const r of rows) {
-      const calc = r.calculation as unknown as CalculationResult | null;
-      const tCo2e =
-        calc && Number.isFinite(calc.tCo2e) ? calc.tCo2e : 0;
+      const calc = r.calculation as unknown as ActivityCalculationSnapshot | null;
+      // A record with no factor produced no figure, so it is not part of the
+      // inventory and must not enter the aggregation at all — not even as a
+      // zero. Counting it would put a "Water — 0 tCO₂e, 1 record" row in the
+      // category breakdown, which reads as "we measured water and it was zero"
+      // rather than "water is not calculable yet". It is surfaced instead as
+      // `uncalculatedRecordCount`, so the entries are declared, not hidden.
+      //
+      // The test is "carries a usable figure", not "is calculated": same answer
+      // for the new shape (it has no `tCo2e` at all), but it leaves a legacy row
+      // that somehow has the number without the factor id aggregating exactly as
+      // it did before this type existed. Same rule as the anomaly baseline.
+      const raw = (calc as CalculationResult | null)?.tCo2e;
+      if (!Number.isFinite(raw)) {
+        uncalculatedRecordCount += 1;
+        continue;
+      }
+      const tCo2e = raw as number;
       const scope = r.scope;
 
       this.addScope(totals, scope, tCo2e);
@@ -278,7 +297,11 @@ export class EmissionsService {
         quarterly: toSortedPoints(quarterly),
         yearly: toSortedPoints(yearly),
       },
-      recordCount: rows.length,
+      // `rows.length` minus the uncalculated ones: recordCount describes what
+      // the totals above were built from, so counting entries that contributed
+      // nothing would make the two disagree without saying so.
+      recordCount: rows.length - uncalculatedRecordCount,
+      uncalculatedRecordCount,
       statusesIncluded: COUNTED_STATUSES,
     };
   }

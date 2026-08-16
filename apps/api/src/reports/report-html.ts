@@ -48,7 +48,11 @@ export function buildReportHtml(data: ReportData): string {
               ? `${fmt.format(r.normalizedValue)} ${esc(r.normalizedUnit ?? '')} <span class="note">(&times;${r.conversionFactor})</span>`
               : '&mdash;'
           }</td>
-          <td class="num">${fmt.format(r.tCo2e)}</td><td>${esc(r.status)}</td>
+          <td class="num">${
+            r.tCo2e === null
+              ? '<span class="note">Not calculated</span>'
+              : fmt.format(r.tCo2e)
+          }</td><td>${esc(r.status)}</td>
           <td class="num">${r.evidenceCount}</td></tr>`,
         )
         .join('')

@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
-import { PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
+import { isCalculated, PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
 import type { CalculationResult } from '@tonyai/shared-types';
 import { ActivityRecordsService } from './activity-records.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -104,7 +104,12 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     activityValue: 45000,
     activityUnit: 'kWh',
     input: null,
-    calculation: { tCo2e: 19.8 } as unknown,
+    // `factorId` is not decoration: a STORED record that was calculated always
+    // carries one, and `isCalculated()` keys on it to decide whether the record
+    // has a figure worth comparing. Without it here the fixture describes a
+    // record that cannot exist, and the anomaly gate silently skipped every
+    // spec in this file.
+    calculation: { tCo2e: 19.8, factorId: 'factor-1' } as unknown,
     createdBy: 'user-entry',
     anomalyFlag: false,
     varianceReason: null,
@@ -300,7 +305,11 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
     expect(createArg.data.calculation).toEqual(calc.snapshot);
     expect(createArg.data.status).toBe(ActivityRecordStatus.draft);
     expect(createArg.data.createdBy).toBe('user-entry');
-    expect(dto.calculation.tCo2e).toBeCloseTo(19.8, 6);
+    // Narrowed, not cast: an `as CalculationResult` would still compile if the
+    // service regressed to storing the uncalculated shape here, and the
+    // assertion below would then compare `undefined` and pass nothing.
+    expect(isCalculated(dto.calculation)).toBe(true);
+    expect((dto.calculation as CalculationResult).tCo2e).toBeCloseTo(19.8, 6);
     // Audit written.
     expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({ id: expect.any(String) }),
@@ -1177,7 +1186,10 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       status: ActivityRecordStatus.draft,
       reportingPeriod: 'monthly',
       periodValue: 'March',
-      calculation: { tCo2e: 19.8 },
+      // Same reason as makeRecord's default: the submit gate only evaluates a
+      // record that HAS a figure, and a stored calculated record always carries
+      // the factor it used.
+      calculation: { tCo2e: 19.8, factorId: 'factor-1' },
       varianceReason: null,
       ...over,
     });
@@ -1200,6 +1212,46 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     const dto = await service.submit(dataEntry(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(true);
+  });
+
+  it('a record with no calculated figure is never anomalous, so submit is not blocked', async () => {
+    const { prisma, service } = build(2);
+    // An invoice-tracked category with no factor (WP17): the snapshot carries
+    // no tCO₂e at all. Substituting 0 — what a plain `?? 0` does — reads as a
+    // 100% drop against this baseline and would demand a variance comment for a
+    // value that was never computed.
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      draftForSubmit({
+        category: 'Water',
+        varianceReason: null,
+        calculation: {
+          category: 'Water',
+          geographyCode: 'TR',
+          reportingYear: 2024,
+          scope: 3,
+          inputValue: 100,
+          inputUnit: 'cubic_metres',
+          reasonCode: 'no_emission_factor',
+          reason: 'No emission factor is available for "Water"',
+        },
+      }),
+    );
+    prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('January', 500),
+      priorMonth('February', 500),
+    ]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-s', ...data }),
+    );
+
+    const dto = await service.submit(dataEntry(), 'rec-s');
+
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+    expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(false);
+    // The baseline was never even queried: detection is skipped, not merely
+    // survived. Without this leg the test would still pass if the comparison
+    // happened and simply came out under the threshold.
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
   });
 
   it('does not trust a stale stored flag: submit passes when the current baseline is not anomalous', async () => {

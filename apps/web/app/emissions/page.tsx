@@ -50,8 +50,9 @@ import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
-import { CATEGORIES } from '@/lib/types';
+import { CATEGORIES, isCalculated } from '@/lib/types';
 import { DEFAULT_REPORTING_YEAR } from '@/lib/types';
+import { NOT_CALCULATED_LABEL, NO_FACTOR_LABEL } from '@/lib/calculation-display';
 import type {
   ActivityRecordDTO,
   ActivityRecordStatus,
@@ -824,7 +825,13 @@ export default function EmissionsAnalysisPage() {
                             </TableCell>
                             <TableCell className="text-muted-foreground">{record.activityUnit}</TableCell>
                             <TableCell className="text-right font-medium">
-                              {formatNumber(record.calculation.tCo2e, 2)}
+                              {isCalculated(record.calculation) ? (
+                                formatNumber(record.calculation.tCo2e, 2)
+                              ) : (
+                                <span className="text-xs font-normal text-muted-foreground">
+                                  {NOT_CALCULATED_LABEL}
+                                </span>
+                              )}
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
@@ -1029,7 +1036,11 @@ export default function EmissionsAnalysisPage() {
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">Calculated Emissions</p>
-                    <p className="font-medium">{formatNumber(selectedRecord.calculation.tCo2e, 3)} tCO₂e</p>
+                    {isCalculated(selectedRecord.calculation) ? (
+                      <p className="font-medium">{formatNumber(selectedRecord.calculation.tCo2e, 3)} tCO₂e</p>
+                    ) : (
+                      <p className="font-medium text-muted-foreground">{NOT_CALCULATED_LABEL}</p>
+                    )}
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">Reporting Period</p>
@@ -1045,14 +1056,31 @@ export default function EmissionsAnalysisPage() {
 
                 <div className="border-t border-border pt-4">
                   <h4 className="text-sm font-medium mb-3">Methodology &amp; Factor</h4>
-                  <div className="space-y-3 text-sm">
-                    <Row label="Emission Factor" value={`${selectedRecord.calculation.factorValue} ${selectedRecord.calculation.factorUnit}`} />
-                    <Row label="Methodology" value={selectedRecord.calculation.methodology} />
-                    <Row label="Geography" value={selectedRecord.calculation.geographyCode} />
-                    <Row label="Normalised" value={`${formatNumber(selectedRecord.calculation.normalizedValue)} ${selectedRecord.calculation.normalizedUnit}`} />
-                    <Row label="Source" value={selectedRecord.calculation.source} />
-                    <Row label="Factor Version" value={selectedRecord.calculation.version} />
-                  </div>
+                  {isCalculated(selectedRecord.calculation) ? (
+                    <div className="space-y-3 text-sm">
+                      <Row label="Emission Factor" value={`${selectedRecord.calculation.factorValue} ${selectedRecord.calculation.factorUnit}`} />
+                      <Row label="Methodology" value={selectedRecord.calculation.methodology} />
+                      <Row label="Geography" value={selectedRecord.calculation.geographyCode} />
+                      <Row label="Normalised" value={`${formatNumber(selectedRecord.calculation.normalizedValue)} ${selectedRecord.calculation.normalizedUnit}`} />
+                      <Row label="Source" value={selectedRecord.calculation.source} />
+                      <Row label="Factor Version" value={selectedRecord.calculation.version} />
+                    </div>
+                  ) : (
+                    // The reason is read from the stored snapshot, not composed
+                    // here: what the user sees is what the API recorded at write
+                    // time, so the explanation cannot drift from the data.
+                    <div className="space-y-3 text-sm">
+                      <Row label="Emission Factor" value={NO_FACTOR_LABEL} />
+                      <Row label="Geography" value={selectedRecord.calculation.geographyCode} />
+                      <Row
+                        label="Recorded as"
+                        value={`${formatNumber(selectedRecord.calculation.inputValue)} ${selectedRecord.calculation.inputUnit} (not converted)`}
+                      />
+                      <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">
+                        {selectedRecord.calculation.reason}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="border-t border-border pt-4">

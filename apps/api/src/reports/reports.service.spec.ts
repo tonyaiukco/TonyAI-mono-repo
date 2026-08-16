@@ -30,6 +30,7 @@ const SUMMARY = {
   ],
   trend: { monthly: [], quarterly: [], yearly: [] },
   recordCount: 3,
+  uncalculatedRecordCount: 0,
   statusesIncluded: ['submitted', 'under_review', 'approved', 'locked'] as ActivityRecordStatus[],
 } satisfies EmissionsSummary;
 
@@ -285,6 +286,79 @@ describe('ReportsService', () => {
       'Raw Activity Data',
       'Factors Used',
     ]);
+  });
+
+  describe('a record with no emission factor (WP17 — Water)', () => {
+    // The snapshot a factor-less category stores: no tCo2e, no factorId.
+    const waterRecord = () =>
+      makeRecord({
+        id: 'rec-water',
+        category: 'Water',
+        scope: 3,
+        activityValue: 250,
+        activityUnit: 'cubic_metres',
+        evidence: [{ fileName: 'water-jan.pdf' }],
+        calculation: {
+          category: 'Water',
+          geographyCode: 'TR',
+          reportingYear: 2024,
+          scope: 3,
+          inputValue: 250,
+          inputUnit: 'cubic_metres',
+          reasonCode: 'no_emission_factor',
+          reason: 'No emission factor is available for "Water"',
+        },
+      });
+
+    it('the ledger carries null, not 0 — a report must not assert an unmeasured zero', async () => {
+      prisma.activityRecord.findMany.mockResolvedValue([waterRecord()]);
+
+      const meta = await service.assemble(admin, q);
+      const row = meta.records.find((r) => r.category === 'Water');
+
+      expect(row).toBeDefined();
+      expect(row!.tCo2e).toBeNull();
+      // The distinction that matters: `0` and `null` are both falsy, so a test
+      // asserting "not truthy" would pass on the very bug this replaces.
+      expect(row!.tCo2e).not.toBe(0);
+    });
+
+    it('the CSV writes "Not calculated" rather than an empty numeric cell', async () => {
+      prisma.activityRecord.findMany.mockResolvedValue([waterRecord()]);
+
+      const csv = await service.generateCsv(admin, q);
+      const dataLine = csv.trim().split('\n')[1];
+
+      expect(dataLine).toContain('Not calculated');
+      // An empty cell in a numeric column sums as zero downstream, which is the
+      // same misstatement wearing a different hat.
+      expect(dataLine).not.toMatch(/,,/);
+    });
+
+    it('the PDF ledger prints "Not calculated" where the figure would go', async () => {
+      prisma.activityRecord.findMany.mockResolvedValue([waterRecord()]);
+      const data = await service.assemble(admin, {
+        ...q,
+        template: 'ghg_protocol_detail',
+      } as typeof q);
+
+      const html = buildReportHtml(data);
+
+      expect(html).toContain('Not calculated');
+      // The PDF is the artifact an auditor keeps, so the absence has to be
+      // legible in it — not just correct in the object behind it.
+      expect(html).not.toMatch(/<td class="num">0<\/td><td>submitted/);
+    });
+
+    it('a factor-less record contributes no row to the Factors Used appendix', async () => {
+      prisma.activityRecord.findMany.mockResolvedValue([waterRecord()]);
+
+      const meta = await service.assemble(admin, q);
+
+      // Nothing to be traceable to — an appendix row here would claim a
+      // provenance the figure never had.
+      expect(meta.factors).toHaveLength(0);
+    });
   });
 
   it('generateCsv neutralizes spreadsheet formula injection', async () => {

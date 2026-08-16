@@ -1,9 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { EmissionFactor } from '@tonyai/db';
-import { CATEGORY_UNITS } from '@tonyai/shared-types';
+import {
+  CATEGORY_SCOPE_MAP,
+  CATEGORY_UNITS,
+  isRecordableWithoutFactor,
+} from '@tonyai/shared-types';
 import type {
+  ActivityCalculationSnapshot,
   CalculationInput,
-  CalculationResult,
   Category,
   EmissionFactorDTO,
 } from '@tonyai/shared-types';
@@ -75,16 +79,26 @@ export class CalculationsService {
     geographyCode: string,
     reportingYear: number,
   ): Promise<EmissionFactor> {
-    const factor = await this.prisma.emissionFactor.findFirst({
-      where: { category, geographyCode, reportingYear },
-      orderBy: { version: 'desc' },
-    });
+    const factor = await this.findFactor(category, geographyCode, reportingYear);
     if (!factor) {
       throw new NotFoundException(
         `No emission factor found for category "${category}", geography "${geographyCode}", year ${reportingYear}`,
       );
     }
     return factor;
+  }
+
+  /** The same lookup without the refusal — for the one caller allowed to
+   *  proceed when nothing is found (see `compute`). */
+  private async findFactor(
+    category: string,
+    geographyCode: string,
+    reportingYear: number,
+  ): Promise<EmissionFactor | null> {
+    return this.prisma.emissionFactor.findFirst({
+      where: { category, geographyCode, reportingYear },
+      orderBy: { version: 'desc' },
+    });
   }
 
   /**
@@ -99,7 +113,7 @@ export class CalculationsService {
      *  MWh, say) would otherwise 400 on any edit — including one that never
      *  touched the unit — and tell the user to change a historical figure. */
     options: { enforceCategoryUnit?: boolean } = {},
-  ): Promise<CalculationResult> {
+  ): Promise<ActivityCalculationSnapshot> {
     if (!Number.isFinite(input.value)) {
       throw new BadRequestException('value must be a finite number');
     }
@@ -135,6 +149,45 @@ export class CalculationsService {
       );
     }
 
+    // The factor is resolved BEFORE normalization, not after, because when
+    // there is no factor there is nothing to normalise TOWARDS — and running
+    // normalize() anyway would not be merely pointless, it would be wrong:
+    // it is category-blind and converts any `cubic_metres` at the natural-gas
+    // calorific multiplier, so a water meter reading would be frozen into the
+    // record as kWh. See UncalculatedSnapshot in @tonyai/shared-types.
+    const factor = await this.findFactor(
+      input.category,
+      input.geographyCode,
+      input.reportingYear,
+    );
+
+    if (!factor) {
+      // Only a named category may be stored without a figure — see
+      // FACTORLESS_RECORDABLE_CATEGORIES for why this is a list rather than
+      // "invoice-tracked and unresolved" (that broader rule would have absorbed
+      // a missing Electricity factor). Every other case still refuses, which is
+      // what keeps DE-4 (refrigerants) and DE-5 (mobile combustion) honestly
+      // unreportable instead of quietly accepting data nobody can calculate.
+      if (!isRecordableWithoutFactor(input.category)) {
+        throw new NotFoundException(
+          `No emission factor found for category "${input.category}", geography "${input.geographyCode}", year ${input.reportingYear}`,
+        );
+      }
+      return {
+        category: input.category,
+        geographyCode: input.geographyCode,
+        reportingYear: input.reportingYear,
+        scope: CATEGORY_SCOPE_MAP[input.category as Category],
+        inputValue: input.value,
+        inputUnit: input.unit,
+        reasonCode: 'no_emission_factor',
+        reason:
+          `No emission factor is available for "${input.category}" (${input.geographyCode}, ${input.reportingYear}), ` +
+          `so no tCO₂e figure is produced. The entry is still recorded because this category is tracked ` +
+          `by invoice for data-completeness purposes.`,
+      };
+    }
+
     const {
       normalizedValue,
       normalizedUnit,
@@ -142,12 +195,6 @@ export class CalculationsService {
       conversionFactor,
       conversionBasis,
     } = normalize(input.value, input.unit);
-
-    const factor = await this.resolveFactor(
-      input.category,
-      input.geographyCode,
-      input.reportingYear,
-    );
 
     // Guard: the normalized unit must match the unit the factor expects.
     if (normalizedUnit !== factor.normalizedUnit) {

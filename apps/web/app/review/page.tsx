@@ -43,11 +43,18 @@ import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
+  isCalculated,
   PENDING_REVIEW_STATUSES,
   type ActivityRecordDTO,
   type EvidenceDTO,
   type SubsidiaryDTO,
 } from "@/lib/types";
+import {
+  formatTCo2e,
+  notCalculatedReason,
+  NOT_CALCULATED_LABEL,
+  NO_FACTOR_LABEL,
+} from "@/lib/calculation-display";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
@@ -397,9 +404,11 @@ export default function ReviewPage() {
                               {row.activityUnit}
                             </TableCell>
                             <TableCell className="text-right text-sm font-mono">
-                              {row.calculation.tCo2e.toLocaleString("en-GB", {
-                                maximumFractionDigits: 3,
-                              })}
+                              {formatTCo2e(row.calculation, (v) =>
+                                v.toLocaleString("en-GB", {
+                                  maximumFractionDigits: 3,
+                                }),
+                              )}
                             </TableCell>
                             <TableCell>
                               <Badge
@@ -485,16 +494,26 @@ export default function ReviewPage() {
                 </span>
                 <span className="text-muted-foreground">Emissions</span>
                 <span className="col-span-2 font-mono">
-                  {selected.calculation.tCo2e.toLocaleString("en-GB", {
-                    maximumFractionDigits: 3,
-                  })}{" "}
-                  tCO₂e
+                  {isCalculated(selected.calculation) ? (
+                    `${selected.calculation.tCo2e.toLocaleString("en-GB", {
+                      maximumFractionDigits: 3,
+                    })} tCO₂e`
+                  ) : (
+                    <span className="font-sans text-muted-foreground">
+                      {NOT_CALCULATED_LABEL}
+                    </span>
+                  )}
                 </span>
                 <span className="text-muted-foreground">Factor</span>
                 <span className="col-span-2 text-xs">
                   {/* The reviewer is signing off on a number, so the provenance
-                      of that number belongs on this screen, not one click away. */}
-                  {selected.calculation.source} v{selected.calculation.version}
+                      of that number belongs on this screen, not one click away.
+                      When there is no number, that is the single most important
+                      thing on the screen: an approval here commits an entry to
+                      the inventory that carries no emissions figure at all. */}
+                  {isCalculated(selected.calculation)
+                    ? `${selected.calculation.source} v${selected.calculation.version}`
+                    : NO_FACTOR_LABEL}
                 </span>
                 {/* `createdAt` is when the DRAFT was created, not when it was
                     submitted — there is no `submittedAt` column yet. Labelling it
@@ -504,6 +523,21 @@ export default function ReviewPage() {
                   {formatDate(selected.createdAt)}
                 </span>
               </div>
+
+              {/* Stated as its own block, not a dash in the table: approving
+                  this record admits an entry to the inventory with no emissions
+                  figure, and the reviewer has to make that call knowingly. */}
+              {notCalculatedReason(selected.calculation) && (
+                <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 space-y-1">
+                  <p className="flex items-center gap-2 font-medium text-sky-900">
+                    <AlertTriangle className="h-4 w-4" />
+                    No emissions figure for this entry
+                  </p>
+                  <p className="text-xs text-sky-900/80">
+                    {notCalculatedReason(selected.calculation)}
+                  </p>
+                </div>
+              )}
 
               {selected.anomalyFlag && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-1">

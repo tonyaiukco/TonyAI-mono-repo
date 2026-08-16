@@ -1,5 +1,8 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
-import type { CalculationResult, EmissionFactorDTO } from '@tonyai/shared-types';
+import type {
+  ActivityCalculationSnapshot,
+  EmissionFactorDTO,
+} from '@tonyai/shared-types';
 import { CalculationsService } from './calculations.service';
 import { CalculationInputDto } from './dto/calculation-input.dto';
 import { ListFactorsQueryDto } from './dto/list-factors-query.dto';
@@ -12,7 +15,10 @@ export class CalculationsController {
 
   @Post('calculations/preview')
   @HttpCode(HttpStatus.OK)
-  preview(@Body() dto: CalculationInputDto): Promise<CalculationResult> {
+  // The preview mirrors what would be STORED, so it returns the same union the
+  // record does: an invoice-tracked category with no factor previews as the
+  // explicit "not calculated" shape rather than 404-ing the Data Entry form.
+  preview(@Body() dto: CalculationInputDto): Promise<ActivityCalculationSnapshot> {
     return this.service.compute(dto);
   }
 

@@ -40,13 +40,18 @@ import {
   CATEGORIES,
   GEOGRAPHY_LABELS,
   DEFAULT_REPORTING_YEAR,
+  isCalculated,
   REPORTING_YEARS,
   unitsForCategory,
 } from "@/lib/types";
+import {
+  NOT_CALCULATED_LABEL,
+  NO_FACTOR_LABEL,
+} from "@/lib/calculation-display";
 import type {
+  ActivityCalculationSnapshot,
   ActivityRecordDTO,
   ActivityRecordStatus,
-  CalculationResult,
   Category,
   LocationDTO,
   PeriodLockDTO,
@@ -195,7 +200,7 @@ function DataEntryPageInner() {
   const [context, setContext] = useState<ContextValues>({});
 
   // Preview
-  const [preview, setPreview] = useState<CalculationResult | null>(null);
+  const [preview, setPreview] = useState<ActivityCalculationSnapshot | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
@@ -1144,7 +1149,9 @@ function DataEntryPageInner() {
                               </div>
                               <div className="text-xs text-muted-foreground">
                                 {r.category} ·{" "}
-                                {numberFmt.format(r.calculation.tCo2e)} tCO₂e
+                                {isCalculated(r.calculation)
+                                  ? `${numberFmt.format(r.calculation.tCo2e)} tCO₂e`
+                                  : NOT_CALCULATED_LABEL}
                               </div>
                             </div>
                           </button>
@@ -1172,7 +1179,7 @@ function PreviewCard({
   geographyCode,
 }: {
   previewing: boolean;
-  preview: CalculationResult | null;
+  preview: ActivityCalculationSnapshot | null;
   error: string | null;
   hasValidInput: boolean;
   geographyCode: string | null;
@@ -1204,6 +1211,32 @@ function PreviewCard({
             <Skeleton className="h-10 w-32" />
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-2/3" />
+          </div>
+        ) : !isCalculated(preview) ? (
+          // The moment that has to be unambiguous: the user typed a valid
+          // reading and no number came back. Saying so plainly — with the API's
+          // own reason and what WILL still happen — is the difference between
+          // "the app is broken" and "this category is tracked by invoice".
+          <div className="space-y-4">
+            <div className="flex items-start gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-sm text-sky-900">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="space-y-1">
+                <p className="font-medium">{NOT_CALCULATED_LABEL}</p>
+                <p className="text-xs text-sky-900/80">{preview.reason}</p>
+              </div>
+            </div>
+            <dl className="space-y-2 text-sm">
+              <Row label="Emission factor" value={NO_FACTOR_LABEL} />
+              <Row
+                label="Recorded as"
+                value={`${numberFmt.format(preview.inputValue)} ${preview.inputUnit}`}
+              />
+              {geographyCode && <Row label="Geography" value={geographyCode} />}
+            </dl>
+            <p className="text-xs text-muted-foreground">
+              You can still save and submit this entry — it counts towards data
+              completeness, and evidence can be attached as usual.
+            </p>
           </div>
         ) : (
           <div className="space-y-4">

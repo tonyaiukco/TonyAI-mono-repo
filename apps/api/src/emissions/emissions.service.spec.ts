@@ -144,6 +144,7 @@ describe('EmissionsService.summary', () => {
       bySubsidiary: [],
       trend: { monthly: [], quarterly: [], yearly: [] },
       recordCount: 0,
+      uncalculatedRecordCount: 0,
       statusesIncluded: [
         ActivityRecordStatus.submitted,
         ActivityRecordStatus.under_review,
@@ -182,6 +183,45 @@ describe('EmissionsService.summary', () => {
       { subsidiaryId: 'sub-1', subsidiaryName: 'Energy Co', tCo2e: 90, recordCount: 2, percentOfTotal: 90 },
       { subsidiaryId: 'sub-2', subsidiaryName: 'Gas Co', tCo2e: 10, recordCount: 1, percentOfTotal: 10 },
     ]);
+  });
+
+  it('excludes a record with no calculated figure from every total, and declares it', async () => {
+    const user = superAdmin();
+    prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, calculation: { tCo2e: 60 } }),
+      // An invoice-tracked category with no factor (WP17 — Water): the snapshot
+      // carries no tCO₂e at all.
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Water',
+        scope: 3,
+        calculation: {
+          category: 'Water',
+          scope: 3,
+          inputValue: 250,
+          inputUnit: 'cubic_metres',
+          reasonCode: 'no_emission_factor',
+          reason: 'No emission factor is available for "Water"',
+        },
+      }),
+    ]);
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', tradingName: 'Energy Co' }),
+    ]);
+
+    const s = await service.summary(user, {});
+
+    expect(s.totals).toEqual({ scope1: 0, scope2: 60, scope3: 0, total: 60 });
+    // The assertion that matters: NO Water row. A `Water, 0 tCO₂e, 1 record`
+    // entry in the breakdown reads as "we measured water and it was zero",
+    // which is a claim nobody made.
+    expect(s.byCategory.map((c) => c.category)).toEqual(['Electricity']);
+    // recordCount describes what the totals were built from...
+    expect(s.recordCount).toBe(1);
+    // ...and the excluded entry is declared rather than silently dropped, so
+    // "2 committed records" and "1 counted" stay reconcilable.
+    expect(s.uncalculatedRecordCount).toBe(1);
+    expect(s.bySubsidiary[0].recordCount).toBe(1);
   });
 
   it('buckets monthly records into monthly, quarterly and yearly trends', async () => {

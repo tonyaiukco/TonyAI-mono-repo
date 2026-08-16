@@ -21,6 +21,13 @@ import { buildReportHtml } from './report-html';
 const COMMITTED_STATUSES = COUNTED_STATUSES;
 
 /** One ledger row for the detail template / Excel raw-data sheet / CSV. */
+/**
+ * What every export writes where a tCO₂e figure would go when the record's
+ * category has no emission factor. One constant so the PDF, the Excel sheet and
+ * the CSV cannot say three different things about the same row.
+ */
+const NOT_CALCULATED = 'Not calculated';
+
 export interface ReportLedgerRow {
   subsidiaryName: string;
   category: string;
@@ -36,7 +43,12 @@ export interface ReportLedgerRow {
   normalizedValue?: number;
   normalizedUnit?: string;
   conversionFactor?: number;
-  tCo2e: number;
+  /** `null` when the record's category has no emission factor and therefore
+   *  produced no figure (WP17 — Water). Deliberately not `0`: an audit-ready
+   *  ledger that prints a measured zero where nothing was measured cannot be
+   *  told apart from a genuine zero afterwards, and the report is the artifact
+   *  an auditor keeps. Every writer renders it as "Not calculated". */
+  tCo2e: number | null;
   status: string;
   evidenceCount: number;
   anomalyFlag: boolean;
@@ -275,7 +287,10 @@ export class ReportsService implements OnModuleDestroy {
         normalizedValue: calc.normalizedValue,
         normalizedUnit: calc.normalizedUnit,
         conversionFactor: calc.conversionFactor,
-        tCo2e: calc.tCo2e ?? 0,
+        // `?? 0` was the previous line and it is the exact misstatement this
+        // type now prevents: a record with no factor has no figure, and a
+        // report that prints 0 for it asserts a measurement nobody made.
+        tCo2e: Number.isFinite(calc.tCo2e) ? (calc.tCo2e as number) : null,
         status: r.status,
         evidenceCount: withEvidence.evidence?.length ?? 0,
         anomalyFlag: r.anomalyFlag,
@@ -398,7 +413,10 @@ export class ReportsService implements OnModuleDestroy {
     for (const r of data.records) {
       s2.addRow([
         r.subsidiaryName, r.category, r.reportingPeriod, r.periodValue,
-        r.activityValue, r.activityUnit, r.tCo2e, r.status, r.evidenceCount,
+        // A text cell, not an empty numeric one: a blank in a tCO₂e column
+        // sums as zero the moment someone drags a SUM over it, which is the
+        // same misstatement as writing 0 — only harder to notice.
+        r.activityValue, r.activityUnit, r.tCo2e ?? NOT_CALCULATED, r.status, r.evidenceCount,
         r.anomalyFlag ? 'yes' : '',
       ]);
     }
@@ -434,7 +452,9 @@ export class ReportsService implements OnModuleDestroy {
       ...data.records.map((r) =>
         [
           r.subsidiaryName, r.category, r.reportingPeriod, r.periodValue,
-          r.activityValue, r.activityUnit, r.tCo2e, r.status, r.evidenceCount,
+          // Same reasoning as the Excel sheet: an empty cell in a numeric
+          // column is read as zero by whatever consumes the CSV next.
+          r.activityValue, r.activityUnit, r.tCo2e ?? NOT_CALCULATED, r.status, r.evidenceCount,
           r.anomalyFlag,
         ]
           .map(cell)

@@ -166,6 +166,11 @@ export const CATEGORY_UNITS: Partial<Record<Category, readonly string[]>> = {
     'gj',
   ],
   Fuel: ['litres', 'uk_gallons', 'us_gallons'],
+  // Water is billed in cubic metres and has no factor yet, so nothing is
+  // normalised or calculated from it (see UncalculatedSnapshot). Pinning the
+  // unit anyway keeps the invoice figure comparable across locations — left
+  // unconstrained, the same meter could be filed in litres, kWh or gallons.
+  Water: ['cubic_metres'],
 };
 
 /**
@@ -1018,6 +1023,73 @@ export interface CalculationResult {
   version: string;
 }
 
+/**
+ * The snapshot written when a record's category is INVOICE-TRACKED but has no
+ * seeded emission factor — today that is `Water` alone (WP17 / round-1 DASH-3).
+ *
+ * Why this exists: completeness is measured in invoices, not in tonnes. The
+ * product owner's rule counts one water invoice per location per month, so the
+ * record has to be storable; but no authoritative water factor exists, and
+ * inventing one is forbidden. So the record is stored and the snapshot says,
+ * in the row itself, that no figure was produced and why.
+ *
+ * What is deliberately ABSENT is the point of the type:
+ * - no `tCo2e` / `kgCo2e` — a missing number must not be readable as zero, and
+ *   every consumer already guards with `Number.isFinite`, so an absent field
+ *   drops out of sums instead of deflating them.
+ * - no factor fields — there is no factor to be traceable to.
+ * - **no `normalizedValue` / `normalizedUnit`.** Normalization exists to reach
+ *   the unit a factor expects; with no factor there is no target, and running it
+ *   anyway would be actively wrong here: `normalize()` is category-blind and
+ *   turns any `cubic_metres` into kWh at the natural-gas calorific multiplier,
+ *   so 100 m³ of WATER would have been frozen into the record as 1,136 kWh.
+ *   The raw input is kept exactly as submitted.
+ *
+ * There is no `calculated: false` discriminant on purpose: the 100+ snapshots
+ * already in the database were written before this type existed, so a required
+ * flag would make every historic row read as uncalculated. `isCalculated()`
+ * keys on `factorId`, which every real snapshot has always carried.
+ */
+export interface UncalculatedSnapshot {
+  category: string;
+  geographyCode: string;
+  reportingYear: number;
+  /** From CATEGORY_SCOPE_MAP — a factor would normally supply this. */
+  scope: number;
+  /** Raw activity input as submitted, un-normalised (see above). */
+  inputValue: number;
+  inputUnit: string;
+  /** Machine-readable cause, so a UI can branch without parsing prose. */
+  reasonCode: 'no_emission_factor';
+  /** Human-readable cause, rendered verbatim to the user. */
+  reason: string;
+}
+
+/**
+ * What an activity record's immutable `calculation` column can hold. A record
+ * either has a full factor-backed result, or an explicit statement that no
+ * figure was produced.
+ */
+export type ActivityCalculationSnapshot =
+  | CalculationResult
+  | UncalculatedSnapshot;
+
+/**
+ * True when the snapshot carries a real, factor-backed emissions figure.
+ *
+ * Keyed on `factorId` rather than a discriminant flag so it is correct for rows
+ * written before `UncalculatedSnapshot` existed — see the note on that type.
+ */
+export function isCalculated(
+  snapshot: ActivityCalculationSnapshot | null | undefined,
+): snapshot is CalculationResult {
+  return (
+    !!snapshot &&
+    typeof (snapshot as CalculationResult).factorId === 'string' &&
+    (snapshot as CalculationResult).factorId.length > 0
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Activity records + review workflow (Phase 1, PR2)
 // ---------------------------------------------------------------------------
@@ -1063,7 +1135,11 @@ export interface ActivityRecordDTO {
   activityValue: number;
   activityUnit: string;
   input: Record<string, unknown> | null;
-  calculation: CalculationResult;
+  /** Immutable snapshot written at create/update time. Narrow it with
+   *  `isCalculated()` before reading `tCo2e` or any factor field — an
+   *  invoice-tracked category with no seeded factor stores the explicit
+   *  "not calculated" shape instead. */
+  calculation: ActivityCalculationSnapshot;
   createdBy: string;
   anomalyFlag: boolean;
   /** The AUTHOR's justification for an anomalous value (VAR §4). */
@@ -1181,6 +1257,66 @@ export function isEvidenceRequired(category: string): boolean {
   return (EVIDENCE_REQUIRED_CATEGORIES as string[]).includes(category);
 }
 
+/**
+ * Categories tracked at INVOICE level for completeness: one invoice per
+ * location per month (WP17 / round-1 DASH-3, product decision 2026-07-31).
+ * Every other category stays a simple complete/incomplete.
+ *
+ * **This is deliberately NOT `EVIDENCE_REQUIRED_CATEGORIES`, despite the
+ * overlap.** They answer different questions and the two sets genuinely differ:
+ *
+ * | Category    | Evidence-required (submit gate) | Invoice-tracked (denominator) |
+ * | ----------- | ------------------------------- | ----------------------------- |
+ * | Electricity | yes                             | yes                           |
+ * | Natural Gas | yes                             | yes                           |
+ * | Fuel        | yes                             | **no** — not a metered utility |
+ * | Water       | **no** — no factor to gate on   | yes                           |
+ *
+ * Reusing one constant for both is the obvious shortcut and it is wrong in both
+ * directions: Fuel would inherit a `locations × 12` denominator it should not
+ * have, and Water would not be counted at all.
+ */
+export const INVOICE_TRACKED_CATEGORIES: Category[] = [
+  'Electricity',
+  'Natural Gas',
+  'Water',
+];
+
+/**
+ * True when completeness for this category is measured in monthly invoices per
+ * location rather than a simple yes/no.
+ */
+export function isInvoiceTracked(category: string): boolean {
+  return (INVOICE_TRACKED_CATEGORIES as string[]).includes(category);
+}
+
+/**
+ * Categories that may be RECORDED even though no emission factor resolves —
+ * the entry is stored with an `UncalculatedSnapshot` instead of being refused.
+ *
+ * An explicit list, not the rule "invoice-tracked and no factor found". That
+ * broader rule reads well and is wrong: `Electricity` is invoice-tracked, so a
+ * request for a geography the library does not cover (`ZZ`, or a year before
+ * the factor set) would have been quietly accepted with no emissions figure.
+ * Electricity is the core of the inventory; a missing factor there is a gap to
+ * refuse loudly, not to absorb.
+ *
+ * What is on this list is a category the product tracks by invoice while
+ * *nothing anywhere* can calculate it. Today that is Water alone.
+ *
+ * This is a PERMISSION, not a claim: it never fires while a factor resolves. So
+ * when the Phase-4 library seeds Water, water records calculate normally and
+ * this entry simply stops being reached — but it should still be removed then,
+ * together with the `normalize()` fix that Water will need (m³ is currently
+ * converted at the natural-gas calorific value, which is wrong for water).
+ */
+export const FACTORLESS_RECORDABLE_CATEGORIES: Category[] = ['Water'];
+
+/** True when a record in this category may be stored without a calculated figure. */
+export function isRecordableWithoutFactor(category: string): boolean {
+  return (FACTORLESS_RECORDABLE_CATEGORIES as string[]).includes(category);
+}
+
 /** Allowed evidence file MIME types (mirrors the `evidence` bucket config). */
 export const EVIDENCE_ALLOWED_MIME_TYPES = [
   'application/pdf',
@@ -1268,8 +1404,20 @@ export interface EmissionsSummary {
     quarterly: EmissionsTrendPoint[];
     yearly: EmissionsTrendPoint[];
   };
-  /** Number of activity records counted into this summary. */
+  /** Number of activity records counted into this summary — i.e. those that
+   *  actually contributed a figure to `totals`. */
   recordCount: number;
+  /**
+   * Committed records that were EXCLUDED because their category has no emission
+   * factor and they carry no figure (WP17 — Water).
+   *
+   * Declared rather than silently dropped: those entries exist, they count
+   * towards data completeness, and a user comparing "12 water invoices filed"
+   * against a breakdown that never mentions water needs the two numbers to be
+   * reconcilable. They are kept OUT of `byCategory` on purpose — a "Water,
+   * 0 tCO₂e" row asserts a measurement nobody made.
+   */
+  uncalculatedRecordCount: number;
   /** Statuses included in the aggregation (drafts/rejected are excluded). */
   statusesIncluded: ActivityRecordStatus[];
 }
