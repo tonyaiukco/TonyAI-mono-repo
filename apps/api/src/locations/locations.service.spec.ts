@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
-import { LocationsService } from './locations.service';
+import { LocationsService, TrustedParent } from './locations.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   createPrismaMock,
@@ -121,8 +121,55 @@ describe('LocationsService', () => {
         // in between left a location with no trail — the failure the audit
         // service's own docblock records. Sharing the writer with the
         // subsidiary create fixed it here as a side effect, and this pins it.
-        prisma,
+        prisma.txClient,
       );
+    });
+
+    it('carries every field through to the row, not just the required ones', async () => {
+      // Nothing asserted that `address`/`authorizedPerson` arrive with a VALUE
+      // — only that a blank becomes null — so hardcoding them to null in the
+      // writer passed 401 unit tests and 71 E2E. Silent data loss on both
+      // create paths, in code this PR introduced.
+      const user = makeSuperAdmin();
+      prisma.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
+
+      await service.create(user, {
+        subsidiaryId: 'sub-1',
+        name: 'Istanbul HQ',
+        geographyCode: 'TR',
+        address: 'Levent, Istanbul',
+        authorizedPerson: 'Aylin Demir',
+      });
+
+      expect(prisma.location.create).toHaveBeenCalledWith({
+        data: {
+          subsidiaryId: 'sub-1',
+          name: 'Istanbul HQ',
+          geographyCode: 'TR',
+          address: 'Levent, Istanbul',
+          authorizedPerson: 'Aylin Demir',
+        },
+      });
+    });
+
+    it('writes against the TrustedParent, never a parent id in the input', async () => {
+      // The writer's docblock claims that even if the nested DTO regained a
+      // `subsidiaryId`, it would not be read — `Omit<>` erases at runtime, so
+      // that structural property is the real defence and nothing asserted it.
+      // Driven against the writer itself, because `create()`'s own dto id IS
+      // the parameter; only the shared writer can be handed a mismatch.
+      const user = makeSuperAdmin();
+      prisma.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
+      const parent = TrustedParent.becauseInAccessibleSet(user, 'sub-1');
+
+      await service.writeLocationForTrustedParent(
+        prisma.txClient as never,
+        user,
+        parent,
+        { name: 'HQ', geographyCode: 'TR', subsidiaryId: 'sub-OTHER' } as never,
+      );
+
+      expect(prisma.location.create.mock.calls[0][0].data.subsidiaryId).toBe('sub-1');
     });
 
     it('writes the row and its audit entry in ONE transaction', async () => {
@@ -132,6 +179,15 @@ describe('LocationsService', () => {
       await service.create(user, { subsidiaryId: 'sub-1', name: 'HQ', geographyCode: 'TR' });
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // …and on the transaction's client, not the default one. Before the mock
+      // handed out a distinct object this was unassertable.
+      expect(prisma.location.create).toHaveBeenCalled();
+      expect(audit.record.mock.calls[0][2]).toBe(prisma.txClient);
+      // EXACTLY one row. A writer that audited twice passed the unit suite and
+      // the whole E2E run, because every assertion read `calls[0]` or
+      // `items[0]` and never a count.
+      expect(audit.record).toHaveBeenCalledTimes(1);
+      expect(prisma.location.create).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -164,7 +220,7 @@ describe('LocationsService', () => {
         // already atomic; update wrote its audit row afterwards on the default
         // client, so a crash in between lost the trail for exactly one of the
         // three verbs — the sort of half-state that reads as safe.
-        prisma,
+        prisma.txClient,
       );
     });
 
@@ -198,7 +254,7 @@ describe('LocationsService', () => {
       expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({ id: expect.any(String) }),
         expect.objectContaining({ action: 'delete', entity: 'location' }),
-        prisma,
+        prisma.txClient,
       );
     });
 

@@ -214,6 +214,14 @@ describe('SubsidiariesService', () => {
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       expect(locations.writeLocationForTrustedParent).toHaveBeenCalledTimes(2);
+      // On the TRANSACTION's client. `$transaction` being called once proves
+      // nothing here — the subsidiary's own create opens it regardless — so
+      // writing the locations on `this.prisma` instead passed until the mock
+      // started handing out a distinct object.
+      for (const call of locations.writeLocationForTrustedParent.mock.calls) {
+        expect(call[0]).toBe(prisma.txClient);
+      }
+      expect(audit.record.mock.calls[0][2]).toBe(prisma.txClient);
       // The parent id is the one this transaction just minted — it cannot come
       // from the caller, and it is not yet in `accessibleSubsidiaryIds`, which
       // is why this path cannot go through `LocationsService.create`.
@@ -362,6 +370,21 @@ describe('SubsidiariesService', () => {
       };
       expect(diff.before.geographyCode).toBe('UK');
       expect(diff.after.geographyCode).toBe('TR');
+    });
+
+    it('mutates and audits in ONE transaction', async () => {
+      // Reverting this to a bare update plus a two-argument audit call passed
+      // the entire unit suite: the existing test reads `calls[0][1]` and never
+      // looks at the client. Create and delete were transactional and update
+      // was not — one of three verbs able to lose its trail.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+
+      await service.update(user, 'sub-1', { sector: 'Energy' });
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(audit.record.mock.calls[0][2]).toBe(prisma.txClient);
     });
 
     it('only includes explicitly-provided fields in the update payload', async () => {
@@ -783,7 +806,7 @@ describe('SubsidiariesService', () => {
       expect(auditArg.diff).toHaveProperty('before');
       // Written through the transaction client — a delete whose audit row fails
       // must roll back, or the subsidiary is gone with no trail at all.
-      expect(audit.record.mock.calls[0][2]).toBe(prisma);
+      expect(audit.record.mock.calls[0][2]).toBe(prisma.txClient);
     });
   });
 });

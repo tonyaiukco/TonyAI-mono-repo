@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
-  login, bearer, getAccessToken, cleanupE2ESubsidiaries,
+  login, bearer, getAccessToken, cleanupE2ESubsidiaries, cleanupE2ELocations,
   ADMIN_EMAIL, API_BASE,
 } from './helpers';
 
@@ -8,15 +8,20 @@ import {
  * WP16 PR 3 — locations in the subsidiary create flow (round-1 UAT SUB-3,
  * Google Places deliberately out of scope).
  *
- * Every location created here is named `E2E …` so the service-role teardown
- * reclaims it; a stray one survives permanently and breaks every spec that
- * asserts an absolute count.
+ * Teardown reclaims the subsidiaries, and their locations go with them through
+ * `locations_subsidiary_id_fkey … ON DELETE CASCADE` — NOT through the `E2E …`
+ * naming convention, which buys nothing here because this file never calls
+ * `cleanupE2ELocations`. The names are kept for legibility, and
+ * `cleanupE2ELocations` is called too, so that a location ever added to a
+ * SEEDED subsidiary in this file is still reclaimed rather than surviving to
+ * pollute every spec that follows.
  */
 
 test.afterAll(async ({ playwright }) => {
   const ctx = await playwright.request.newContext();
   try {
     await cleanupE2ESubsidiaries(ctx);
+    await cleanupE2ELocations(ctx);
   } finally {
     await ctx.dispose();
   }
@@ -48,6 +53,10 @@ test('a subsidiary and its locations are created in one call', async ({ request 
   // Each one keeps its OWN geography, not the parent's — that value decides the
   // emission factor for records at that site.
   expect(locations.find((l: { name: string }) => l.name === 'E2E Nested Depot').geographyCode).toBe('UK');
+  // …and the optional fields arrive with their VALUES. Hardcoding these to
+  // null in the writer passed 401 unit tests and 71 E2E: nothing asserted a
+  // non-blank address anywhere.
+  expect(locations.find((l: { name: string }) => l.name === 'E2E Nested HQ').address).toBe('Levent');
 
   // The summary — and therefore the delete guard — sees them immediately.
   const summary = await (await request.get(
@@ -81,6 +90,9 @@ test('a location created this way is indistinguishable in the audit trail', asyn
       `${API_BASE}/audit?entity=location&action=create&entityId=${id}`,
       { headers: bearer(token) },
     )).json();
+    // Exactly one. Reading `items[0]` alone let a writer that audited TWICE
+    // pass both this and the whole E2E suite.
+    expect(page.total, 'one create row per location, never two').toBe(1);
     return page.items[0];
   };
   const a = await rowFor((await (await request.get(
@@ -95,6 +107,14 @@ test('a location created this way is indistinguishable in the audit trail', asyn
   // Same diff SHAPE — the keys, not the values.
   expect(Object.keys(a.diff).sort()).toEqual(Object.keys(b.diff).sort());
   expect(Object.keys(a.diff.after).sort()).toEqual(Object.keys(b.diff.after).sort());
+  // The VALUES too, which is the half the name implies. Everything except the
+  // fields that must differ between two distinct rows.
+  const comparable = (d: Record<string, unknown>) => {
+    const { id, name, createdAt, updatedAt, ...rest } = d;
+    void id; void name; void createdAt; void updatedAt;
+    return rest;
+  };
+  expect(comparable(a.diff.after)).toEqual(comparable(b.diff.after));
 });
 
 test('both create paths normalise a location identically', async ({ request }) => {
@@ -139,14 +159,7 @@ test('one invalid location fails the whole create', async ({ request }) => {
   // completeness denominator that is quietly wrong rather than obviously
   // missing.
   //
-  // Precise about what this proves: the bad geography is rejected by DTO
-  // validation, BEFORE the transaction opens, so this pins "invalid input
-  // writes nothing" rather than a database rollback. The rollback itself is
-  // covered where it can be forced — the unit spec makes the location writer
-  // reject mid-transaction and asserts the create fails — and structurally by
-  // everything running inside one `$transaction`. I could not construct an
-  // input that passes validation and then fails at the DB, so that path is
-  // reasoned, not measured.
+  // Two failures, at two different layers, because they prove different things.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const name = `E2E Test Co Atomic ${Date.now()}`;
   const res = await request.post(`${API_BASE}/subsidiaries`, {
@@ -166,6 +179,32 @@ test('one invalid location fails the whole create', async ({ request }) => {
   expect(
     all.find((s: { legalName: string }) => s.legalName === name),
     'the subsidiary must not exist at all',
+  ).toBeUndefined();
+
+  // …and a REAL rollback. A NUL byte passes `@IsString`/`@MinLength(1)` and
+  // dies at Postgres (22021, invalid byte sequence for UTF8), so the failure
+  // lands mid-transaction rather than at the validation layer — which is the
+  // only way to measure that the subsidiary insert is undone rather than
+  // merely never attempted. I had written that this input could not be
+  // constructed; it can.
+  const rollbackName = `E2E Test Co Rollback ${Date.now()}`;
+  const midFlight = await request.post(`${API_BASE}/subsidiaries`, {
+    headers: bearer(token),
+    data: {
+      legalName: rollbackName,
+      geographyCode: 'TR',
+      locations: [
+        { name: 'E2E Rollback Good', geographyCode: 'TR' },
+        { name: 'E2E Rollback Bad\u0000', geographyCode: 'TR' },
+      ],
+    },
+  });
+  expect(midFlight.status()).toBe(500);
+
+  const after = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
+  expect(
+    after.find((s: { legalName: string }) => s.legalName === rollbackName),
+    'the subsidiary insert must be rolled back, not just skipped',
   ).toBeUndefined();
 });
 
@@ -256,4 +295,19 @@ test('a draft location can be removed before the subsidiary exists', async ({ pa
   await dialog.getByLabel('Location name').fill('E2E Draft Two');
   await dialog.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.getByText(/is already in the list/)).toBeVisible();
+
+  // Removing the last one composes with the "at least one" rule — neither test
+  // covered the two together, so a removed draft silently surviving into the
+  // POST body, or the guard reading a stale count, had nowhere to fail.
+  await dialog.getByRole('button', { name: 'Remove E2E Draft Two' }).click();
+  await dialog.getByRole('textbox').first().fill(`E2E Test Co Emptied ${Date.now()}`);
+  await dialog.getByRole('button', { name: 'Create' }).click();
+  await expect(page.getByText('Add at least one operational location')).toBeVisible();
+
+  // The dialog resets on reopen. The reset lives in `openAdd`, a different
+  // function from the close, so nothing guaranteed they stayed in step.
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Add Subsidiary' }).click();
+  await expect(page.getByRole('dialog').getByText('E2E Draft Two')).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByRole('textbox').first()).toHaveValue('');
 });

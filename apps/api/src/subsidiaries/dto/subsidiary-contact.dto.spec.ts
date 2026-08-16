@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { describe, expect, it } from 'vitest';
+import { MAX_LOCATIONS_PER_CREATE } from '@tonyai/shared-types';
 import { CreateSubsidiaryDto, CreateSubsidiaryLocationDto } from './create-subsidiary.dto';
 import { UpdateSubsidiaryDto } from './update-subsidiary.dto';
 
@@ -110,6 +111,19 @@ describe('CreateSubsidiaryDto — nested locations', () => {
         forbidNonWhitelisted: true,
       }),
     ).toHaveLength(1);
+  });
+
+  it('caps the array at exactly MAX_LOCATIONS_PER_CREATE, from the shared constant', () => {
+    // The bound had no CI gate: CI runs unit tests only, so replacing the
+    // constant with a literal — or widening it — was visible to E2E alone.
+    // Asserted against the exported value rather than a number, so the web form
+    // and the API cannot drift apart.
+    const many = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ name: `Site ${i}`, geographyCode: 'TR' }));
+    const opts = { whitelist: true, forbidNonWhitelisted: true } as const;
+
+    expect(validateSync(parse(many(MAX_LOCATIONS_PER_CREATE)), opts)).toHaveLength(0);
+    expect(validateSync(parse(many(MAX_LOCATIONS_PER_CREATE + 1)), opts)).toHaveLength(1);
   });
 
   it('accepts none at all — the FORM requires one, the contract does not', () => {
