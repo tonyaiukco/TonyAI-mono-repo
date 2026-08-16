@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { NotFoundException } from '@nestjs/common';
 import {
   ActivityRecordStatus,
   type ActivityRecord,
@@ -16,6 +17,10 @@ function createPrismaMock() {
       findMany: vi.fn(),
     },
     subsidiary: {
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+    },
+    location: {
       findMany: vi.fn(),
     },
   };
@@ -99,6 +104,147 @@ function dataEntry(overrides: Partial<RequestUser> = {}): RequestUser {
     ...overrides,
   };
 }
+
+describe('EmissionsService.completeness (drill-down)', () => {
+  let prisma: PrismaMock;
+  let service: EmissionsService;
+
+  const LOCATIONS = [
+    { id: 'loc-1', name: 'Ankara Power Plant' },
+    { id: 'loc-2', name: 'Istanbul HQ' },
+  ];
+
+  beforeEach(() => {
+    seq = 0;
+    prisma = createPrismaMock();
+    service = new EmissionsService(prisma as unknown as PrismaService);
+    prisma.location.findMany.mockResolvedValue(LOCATIONS);
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.subsidiary.findUnique.mockResolvedValue({ trackingGranularity: 'location' });
+  });
+
+  const invoice = (locationId: string, periodValue: string, over: Partial<ActivityRecord> = {}) =>
+    makeRecord({
+      subsidiaryId: 'sub-1',
+      category: 'Electricity',
+      reportingPeriod: 'monthly',
+      periodValue,
+      locationId,
+      status: ActivityRecordStatus.approved,
+      _count: { evidence: 1 },
+      ...over,
+    } as Partial<ActivityRecord>);
+
+  it('is not found for a subsidiary outside the access set, and never queries', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+
+    await expect(
+      service.completeness(user, { subsidiaryId: 'sub-999', year: 2024 }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    // Not found rather than forbidden, and refused before any query, so the
+    // response cannot confirm the row exists.
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+    expect(prisma.location.findMany).not.toHaveBeenCalled();
+  });
+
+  it('returns no categories for a subsidiary measured as a whole', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findUnique.mockResolvedValue({ trackingGranularity: 'subsidiary' });
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    // Empty is the honest answer, not zeroes: the rule does not apply, and the
+    // granularity comes back so a caller can say which of those it is seeing.
+    expect(d.categories).toEqual([]);
+    expect(d.trackingGranularity).toBe('subsidiary');
+    expect(d.locationCount).toBe(2);
+  });
+
+  it('marks each (location, month) slot, closed and open', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice('loc-1', 'January'),
+      invoice('loc-1', 'March'),
+      invoice('loc-2', 'January'),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+    const ankara = electricity.locations.find((l) => l.locationId === 'loc-1')!;
+
+    expect(ankara.locationName).toBe('Ankara Power Plant');
+    expect(ankara.months).toHaveLength(12);
+    expect(ankara.months.filter((m) => m.covered).map((m) => m.month)).toEqual([
+      'January',
+      'March',
+    ]);
+    // The open months are what the drawer renders; February must be one of them.
+    expect(ankara.months.find((m) => m.month === 'February')!.covered).toBe(false);
+  });
+
+  it('agrees with the matrix cell it drills into', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const records = [invoice('loc-1', 'January'), invoice('loc-2', 'February')];
+    prisma.activityRecord.findMany.mockResolvedValue(records);
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({
+        id: 'sub-1',
+        trackingGranularity: 'location',
+        _count: { locations: 2 },
+      } as Partial<Subsidiary>),
+    ]);
+
+    const drill = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const matrix = await service.trackingMatrix(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    const drillElectricity = drill.categories.find((c) => c.category === 'Electricity')!;
+    const cell = matrix.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+    // Both read the same `computeInvoiceCoverage`. This assertion is what makes
+    // that structural fact observable: a drill-down free to disagree with the
+    // cell that opened it is a second implementation of a compliance
+    // denominator, and the user would have no way to know which is right.
+    expect(drillElectricity.covered).toBe(cell.coverage!.covered);
+    expect(drillElectricity.required).toBe(cell.coverage!.required);
+    // ...and the slot grid must sum to the same figure.
+    const closedSlots = drillElectricity.locations
+      .flatMap((l) => l.months)
+      .filter((m) => m.covered).length;
+    expect(closedSlots).toBe(cell.coverage!.covered);
+  });
+
+  it('counts only locations that existed by the end of the reported year', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+
+    await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    // Same rule as the matrix multiplier, for the same reason: a grid with a
+    // row for a site that did not exist asks the user to explain an absence
+    // that was never possible.
+    expect(prisma.location.findMany.mock.calls[0][0].where).toEqual({
+      subsidiaryId: 'sub-1',
+      createdAt: { lte: new Date('2024-12-31T23:59:59.999Z') },
+    });
+  });
+
+  it('reports every invoice-tracked category, including one with nothing recorded', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    expect(d.categories.map((c) => c.category)).toEqual([
+      'Electricity',
+      'Natural Gas',
+      'Water',
+    ]);
+    // A category nobody has started still shows its shape: 2 locations x 12
+    // open months. "0 of 24" tells the user the size of the job.
+    const water = d.categories.find((c) => c.category === 'Water')!;
+    expect(water.required).toBe(24);
+    expect(water.covered).toBe(0);
+    expect(water.locations.flatMap((l) => l.months).every((m) => !m.covered)).toBe(true);
+  });
+});
 
 describe('EmissionsService.summary', () => {
   let prisma: PrismaMock;

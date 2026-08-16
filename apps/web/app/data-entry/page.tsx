@@ -231,7 +231,18 @@ function DataEntryPageInner() {
   // What the deep link asked for, kept so the records effect below can act on it
   // once they arrive. A ref, not state: it must fire exactly once, and it is not
   // rendered.
-  const deepLink = useRef<{ category: string; year: number } | null>(null);
+  /**
+   * A deep link from the dashboard. The matrix cell can only say "this category,
+   * this year"; the WP17 invoice grid also names the SITE and the MONTH, which
+   * is exactly the ambiguity the resolver below has to give up on otherwise.
+   */
+  const deepLink = useRef<{
+    category: string;
+    year: number;
+    locationId?: string;
+    period?: ReportingPeriod;
+    periodValue?: string;
+  } | null>(null);
   const deepLinkHandled = useRef(false);
   const [subsLoading, setSubsLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -338,12 +349,47 @@ function DataEntryPageInner() {
         if ((REPORTING_YEARS as readonly number[]).includes(wantedYear)) {
           setReportingYear(wantedYear);
         }
+        // The invoice grid's extra coordinates, validated the same way as the
+        // rest: an unknown location or a non-canonical month is dropped rather
+        // than trusted, so a hand-edited URL cannot put the form somewhere it
+        // could not otherwise reach.
+        const wantedLocation = searchParams.get("locationId");
+        const wantedPeriod = searchParams.get("period");
+        const wantedPeriodValue = searchParams.get("periodValue");
+        const validPeriod =
+          wantedPeriod && (PERIODS as { value: ReportingPeriod }[]).some((p) => p.value === wantedPeriod)
+            ? (wantedPeriod as ReportingPeriod)
+            : undefined;
+        const validPeriodValue =
+          validPeriod && wantedPeriodValue &&
+          PERIOD_VALUES[validPeriod].includes(wantedPeriodValue)
+            ? wantedPeriodValue
+            : undefined;
+
+        if (validPeriod) setReportingPeriod(validPeriod);
+        if (validPeriodValue) setPeriodValue(validPeriodValue);
+        // Validated against the locations this user can actually see, and
+        // against the resolved subsidiary — the same reason the subsidiary id
+        // is checked above: a Select bound to a value with no matching item
+        // renders as a silently blank control rather than an error. Applied
+        // here, with `locs` in hand, so the form is already pointed at the site
+        // whose month the user clicked.
+        if (
+          wantedLocation &&
+          locs.some((l) => l.id === wantedLocation && l.subsidiaryId === resolvedSub)
+        ) {
+          setLocationId(wantedLocation);
+        }
+
         if (wantedCategory && (CATEGORIES as readonly string[]).includes(wantedCategory)) {
           deepLink.current = {
             category: wantedCategory,
             year: (REPORTING_YEARS as readonly number[]).includes(wantedYear)
               ? wantedYear
               : DEFAULT_REPORTING_YEAR,
+            ...(wantedLocation ? { locationId: wantedLocation } : {}),
+            ...(validPeriod ? { period: validPeriod } : {}),
+            ...(validPeriodValue ? { periodValue: validPeriodValue } : {}),
           };
         }
       } catch (e) {
@@ -376,8 +422,17 @@ function DataEntryPageInner() {
     if (recordsLoading || !subsidiaryId || recordsFetchedFor !== subsidiaryId) return;
     deepLinkHandled.current = true;
 
+    // Narrowed by whatever the link actually named. A grid slot names all four,
+    // so "several records exist" — the answer a matrix cell has to settle for —
+    // stops being the outcome for the one caller that knows precisely which
+    // record it means.
     const matches = records.filter(
-      (r) => r.category === wanted.category && r.reportingYear === wanted.year,
+      (r) =>
+        r.category === wanted.category &&
+        r.reportingYear === wanted.year &&
+        (wanted.locationId === undefined || r.locationId === wanted.locationId) &&
+        (wanted.period === undefined || r.reportingPeriod === wanted.period) &&
+        (wanted.periodValue === undefined || r.periodValue === wanted.periodValue),
     );
     if (matches.length === 1) {
       loadRecord(matches[0]);

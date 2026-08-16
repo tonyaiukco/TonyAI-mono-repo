@@ -27,6 +27,7 @@ import type {
   ReportParams,
   TargetDTO,
   TargetProgressDTO,
+  SubsidiaryCompletenessDTO,
   TrackingMatrixDTO,
   RejectInput,
   SubsidiaryDTO,
@@ -371,12 +372,32 @@ export const api = {
       `/emissions/summary${qs ? `?${qs}` : ""}`,
     );
   },
-  trackingMatrix: (params: { year?: number } = {}) => {
+  trackingMatrix: (params: { year?: number; subsidiaryId?: string } = {}) => {
     const search = new URLSearchParams();
     if (params.year !== undefined) search.set("year", String(params.year));
+    // The server DTO has accepted this since WP17 PR 2; the client simply did
+    // not pass it, so a caller wanting one subsidiary had to download the
+    // whole matrix.
+    if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
     const qs = search.toString();
     return apiFetch<TrackingMatrixDTO>(
       `/emissions/tracking-matrix${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  /**
+   * Which invoice slots are open for one subsidiary and year (WP17 / DASH-3).
+   *
+   * Both params are required — the invoice rule is twelve months for one year
+   * at one subsidiary, and this endpoint has no yes/no fallback to offer.
+   */
+  completeness: (params: { subsidiaryId: string; year: number }) => {
+    const search = new URLSearchParams({
+      subsidiaryId: params.subsidiaryId,
+      year: String(params.year),
+    });
+    return apiFetch<SubsidiaryCompletenessDTO>(
+      `/emissions/completeness?${search.toString()}`,
     );
   },
 };

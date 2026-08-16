@@ -4,6 +4,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { EmissionsService } from './emissions.service';
 import { EmissionsSummaryQueryDto } from './dto/emissions-summary-query.dto';
 import { TrackingMatrixQueryDto } from './dto/tracking-matrix-query.dto';
+import { CompletenessQueryDto } from './dto/completeness-query.dto';
 
 @Controller('emissions')
 export class EmissionsController {
@@ -25,5 +26,18 @@ export class EmissionsController {
     @Query() query: TrackingMatrixQueryDto,
   ) {
     return this.service.trackingMatrix(user, query);
+  }
+
+  /**
+   * Which invoice slots are open for one subsidiary and year — the drill-down
+   * behind a matrix cell (round-1 DASH-3: "reveal what is keyed in and what is
+   * missing"). Read-only and tenant-scoped like everything else here.
+   */
+  @Get('completeness')
+  completeness(
+    @CurrentUser() user: RequestUser,
+    @Query() query: CompletenessQueryDto,
+  ) {
+    return this.service.completeness(user, query);
   }
 }

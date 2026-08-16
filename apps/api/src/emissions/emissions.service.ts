@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import {
   CATEGORIES,
   CATEGORY_SCOPE_MAP,
   isCalculated,
+  INVOICE_TRACKED_CATEGORIES,
   isEvidenceRequired,
   isInvoiceTracked,
   type ActivityCalculationSnapshot,
@@ -16,12 +17,15 @@ import {
   type EmissionsTrendPoint,
   type TrackingMatrixCell,
   type TrackingMatrixDTO,
+  type CategoryCompleteness,
+  type SubsidiaryCompletenessDTO,
   type TrackingMatrixRow,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { EmissionsSummaryQueryDto } from './dto/emissions-summary-query.dto';
 import { TrackingMatrixQueryDto } from './dto/tracking-matrix-query.dto';
+import { CompletenessQueryDto } from './dto/completeness-query.dto';
 
 /**
  * Only "committed" records feed the emissions inventory. Drafts are
@@ -604,5 +608,115 @@ export class EmissionsService {
     });
 
     return { reportingYear: query.year ?? null, rows: matrixRows, totals };
+  }
+
+  /**
+   * Which `(location, month)` invoice slots are open for one subsidiary and
+   * year — the drill-down behind a matrix cell (round-1 DASH-3).
+   *
+   * Reads the SAME `computeInvoiceCoverage()` the matrix reduces to a count,
+   * and enumerates the COMPLEMENT of the set it returns. That is why the rule
+   * was extracted in PR 2: a drill-down that re-derived "what closes a slot"
+   * would be a second implementation of a compliance denominator, free to
+   * disagree with the cell the user just clicked.
+   *
+   * A `subsidiary`-granularity subsidiary returns `categories: []` — not an
+   * error and not zeroes. The rule does not apply to it, and the granularity
+   * is returned alongside so a caller can say so.
+   */
+  async completeness(
+    user: RequestUser,
+    query: CompletenessQueryDto,
+  ): Promise<SubsidiaryCompletenessDTO> {
+    // Same "never leak existence" rule as every other tenant-scoped read: an
+    // id outside the accessible set is not found, never forbidden.
+    if (!user.accessibleSubsidiaryIds.includes(query.subsidiaryId)) {
+      throw new NotFoundException('Subsidiary not found');
+    }
+
+    // Contemporaneous with the reported year, exactly as the matrix multiplier
+    // is — otherwise the grid would show rows for sites that did not exist.
+    const yearEnd = new Date(Date.UTC(query.year + 1, 0, 1) - 1);
+
+    const [subsidiary, locations, records] = await Promise.all([
+      this.prisma.subsidiary.findUnique({
+        where: { id: query.subsidiaryId },
+        select: { trackingGranularity: true },
+      }),
+      this.prisma.location.findMany({
+        where: {
+          subsidiaryId: query.subsidiaryId,
+          createdAt: { lte: yearEnd },
+        },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.activityRecord.findMany({
+        where: {
+          subsidiaryId: query.subsidiaryId,
+          reportingYear: query.year,
+          category: { in: INVOICE_TRACKED_CATEGORIES },
+          status: { in: COUNTED_STATUSES },
+        },
+        include: { _count: { select: { evidence: true } } },
+      }),
+    ]);
+
+    if (!subsidiary) throw new NotFoundException('Subsidiary not found');
+
+    const empty: SubsidiaryCompletenessDTO = {
+      subsidiaryId: query.subsidiaryId,
+      reportingYear: query.year,
+      trackingGranularity: subsidiary.trackingGranularity,
+      locationCount: locations.length,
+      categories: [],
+    };
+    if (subsidiary.trackingGranularity !== 'location') return empty;
+
+    const byCategory = new Map<string, typeof records>();
+    for (const r of records) {
+      const bucket = byCategory.get(r.category);
+      if (bucket) bucket.push(r);
+      else byCategory.set(r.category, [r]);
+    }
+
+    const categories: CategoryCompleteness[] = INVOICE_TRACKED_CATEGORIES.map(
+      (category) => {
+        const recs = byCategory.get(category) ?? [];
+        const coverage = computeInvoiceCoverage(
+          recs.map((r) => ({
+            locationId: r.locationId,
+            reportingPeriod: r.reportingPeriod,
+            periodValue: r.periodValue,
+            evidenceCount: r._count.evidence,
+          })),
+          locations.length,
+        );
+
+        return {
+          category,
+          required: coverage.required,
+          covered: coverage.covered.size,
+          unattributedRecords: coverage.unattributedRecords,
+          nonMonthlyRecords: coverage.nonMonthlyRecords,
+          missingEvidenceRecords: coverage.missingEvidenceRecords,
+          locations: locations.map((loc) => ({
+            locationId: loc.id,
+            locationName: loc.name,
+            // The complement, month by month. Keyed identically to the set the
+            // rule builds, so "covered here" and "covered in the cell" cannot
+            // drift apart.
+            months: MONTH_LABEL.map((month) => ({
+              month,
+              covered: coverage.covered.has(
+                `${loc.id}\u0000${month.toLowerCase()}`,
+              ),
+            })),
+          })),
+        };
+      },
+    );
+
+    return { ...empty, categories };
   }
 }

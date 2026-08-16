@@ -1,6 +1,6 @@
 'use client';
 
-import { CategoryData, DataStatus } from '@/lib/types';
+import type { DataStatus, TrackingMatrixCell } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import {
   Tooltip,
@@ -11,7 +11,18 @@ import {
 import { formatDistanceToNow } from 'date-fns';
 
 interface StatusCellProps {
-  data: CategoryData;
+  /**
+   * The API's cell, not the mock-era `CategoryData` it used to take.
+   *
+   * WP17 gave the cell `coverage`, `recordCount` and `uncalculatedRecordCount`,
+   * and all three died at `lib/dashboard-view.ts`, which maps the real DTO onto
+   * a view model designed before any of this existed. Adding parallel fields to
+   * that model would have meant paying the same tax again for every field the
+   * rule grows.
+   */
+  cell: TrackingMatrixCell;
+  /** Row-level, so it stays a prop rather than being copied onto every cell. */
+  responsible: string;
   onClick?: () => void;
   compact?: boolean;
   /** Identity part of the accessible name (subsidiary + category). The status
@@ -23,8 +34,8 @@ interface StatusCellProps {
 }
 
 // Apple-style status colors
-const statusConfig: Record<DataStatus, { 
-  bg: string; 
+const statusConfig: Record<DataStatus, {
+  bg: string;
   hoverBg: string;
   text: string;
   label: string;
@@ -71,9 +82,60 @@ function formatEmission(value: number): string {
   return value.toString();
 }
 
-export function StatusCell({ data, onClick, compact = false, label }: StatusCellProps) {
-  const config = statusConfig[data.status];
-  const hasEmission = data.calculationComplete && data.emission !== null;
+/**
+ * Why an invoice-tracked cell is short, in the user's terms.
+ *
+ * Built from the four counters the API returns precisely so this can be said
+ * rather than guessed. They exhaust the committed records, so a reader can
+ * always reconcile "N records exist" with "M invoices counted" — which is the
+ * difference between understanding the shortfall and assuming the app lost
+ * data.
+ */
+function shortfallReasons(cell: TrackingMatrixCell): string[] {
+  const c = cell.coverage;
+  if (!c) return [];
+  const reasons: string[] = [];
+  const plural = (n: number, one: string, many: string) =>
+    `${n} ${n === 1 ? one : many}`;
+  if (c.unattributedRecords > 0) {
+    reasons.push(
+      `${plural(c.unattributedRecords, 'entry is', 'entries are')} recorded for the whole company, not a site`,
+    );
+  }
+  if (c.nonMonthlyRecords > 0) {
+    reasons.push(
+      `${plural(c.nonMonthlyRecords, 'entry is', 'entries are')} not monthly — one invoice per month is expected`,
+    );
+  }
+  if (c.missingEvidenceRecords > 0) {
+    reasons.push(
+      `${plural(c.missingEvidenceRecords, 'entry has', 'entries have')} no invoice attached`,
+    );
+  }
+  return reasons;
+}
+
+export function StatusCell({
+  cell,
+  responsible,
+  onClick,
+  compact = false,
+  label,
+}: StatusCellProps) {
+  const config = statusConfig[cell.status];
+  const hasEmission = cell.tCo2e !== null;
+  const emission = cell.tCo2e === null ? null : Math.round(cell.tCo2e);
+  const coverage = cell.coverage;
+  const reasons = shortfallReasons(cell);
+
+  // On an invoice-tracked cell the fraction IS the status, so it takes the
+  // cell face and the tonnage moves into the tooltip. A cell showing "818"
+  // where the answer is "3 of 24 invoices" answers a question nobody asked.
+  const faceText = coverage
+    ? `${coverage.covered}/${coverage.required}`
+    : hasEmission
+      ? formatEmission(emission!)
+      : null;
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -81,10 +143,17 @@ export function StatusCell({ data, onClick, compact = false, label }: StatusCell
         <TooltipTrigger asChild>
           <button
             onClick={onClick}
+            // The identity stays the PREFIX. Three E2E selectors match this by
+            // substring (`getByRole('button', {name: 'TonyAI Energy Fuel'})`),
+            // so anything appended is safe and anything prepended is not.
             aria-label={
               label
                 ? `${label}: ${config.label}${
-                    hasEmission ? `, ${formatEmission(data.emission!)} tCO2e` : ''
+                    coverage
+                      ? `, ${coverage.covered} of ${coverage.required} invoices`
+                      : hasEmission
+                        ? `, ${formatEmission(emission!)} tCO2e`
+                        : ''
                   }`
                 : undefined
             }
@@ -96,13 +165,13 @@ export function StatusCell({ data, onClick, compact = false, label }: StatusCell
               compact ? 'h-10 w-full min-w-[72px]' : 'h-12 w-full min-w-[84px]'
             )}
           >
-            {hasEmission ? (
+            {faceText !== null ? (
               <span className={cn(
                 'font-mono font-bold tabular-nums',
                 config.text,
                 compact ? 'text-sm' : 'text-base'
               )}>
-                {formatEmission(data.emission!)}
+                {faceText}
               </span>
             ) : (
               <div className={cn(
@@ -113,8 +182,8 @@ export function StatusCell({ data, onClick, compact = false, label }: StatusCell
             )}
           </button>
         </TooltipTrigger>
-        <TooltipContent 
-          side="top" 
+        <TooltipContent
+          side="top"
           className="max-w-xs border-[#D2D2D7] bg-white shadow-xl p-0 overflow-hidden rounded-xl"
           sideOffset={8}
         >
@@ -123,49 +192,83 @@ export function StatusCell({ data, onClick, compact = false, label }: StatusCell
             config.bg
           )}>
             <div className="flex items-center justify-between gap-4">
-              <span className="font-bold text-[#1D1D1F]">{data.category}</span>
+              <span className="font-bold text-[#1D1D1F]">{cell.category}</span>
               <span className={cn(
-                'text-xs font-bold px-2.5 py-1 rounded-full', 
-                config.badgeBg, 
+                'text-xs font-bold px-2.5 py-1 rounded-full',
+                config.badgeBg,
                 config.badgeText
               )}>
                 {config.label}
               </span>
             </div>
           </div>
-          
+
           <div className="p-4 space-y-3 text-sm bg-white">
+            {coverage && (
+              <div className="flex items-baseline justify-between">
+                <span className="font-medium text-[#6E6E73]">Invoices</span>
+                <span className="font-bold text-[#1D1D1F] font-mono text-base">
+                  {coverage.covered}
+                  <span className="text-[#6E6E73] text-xs font-medium">
+                    {' '}of {coverage.required}
+                  </span>
+                </span>
+              </div>
+            )}
+
             {hasEmission && (
               <div className="flex items-baseline justify-between">
                 <span className="font-medium text-[#6E6E73]">Emissions</span>
                 <span className="font-bold text-[#1D1D1F] font-mono text-base">
-                  {data.emission!.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} <span className="text-[#6E6E73] text-xs font-medium">tCO₂e</span>
+                  {emission!.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} <span className="text-[#6E6E73] text-xs font-medium">tCO₂e</span>
                 </span>
               </div>
             )}
-            
+
+            {/* Stated, not implied. A cell can hold committed records worth real
+                tonnes and still be short of its invoices, and without this line
+                the two facts look like a contradiction. */}
+            {coverage && cell.recordCount > 0 && (
+              <div className="flex justify-between">
+                <span className="font-medium text-[#6E6E73]">Entries</span>
+                <span className="font-semibold text-[#1D1D1F]">{cell.recordCount}</span>
+              </div>
+            )}
+
             <div className="flex justify-between">
               <span className="font-medium text-[#6E6E73]">Owner</span>
-              <span className="font-semibold text-[#1D1D1F]">{data.responsible}</span>
+              <span className="font-semibold text-[#1D1D1F]">{responsible}</span>
             </div>
-            
-            {data.lastUpdate && (
+
+            {cell.lastUpdate && (
               <div className="flex justify-between">
                 <span className="font-medium text-[#6E6E73]">Updated</span>
                 <span className="font-semibold text-[#1D1D1F]">
-                  {formatDistanceToNow(new Date(data.lastUpdate), { addSuffix: true })}
+                  {formatDistanceToNow(new Date(cell.lastUpdate), { addSuffix: true })}
                 </span>
               </div>
             )}
-            
-            {data.missingFields && data.missingFields.length > 0 && (
-              <div className="pt-3 mt-3 border-t border-[#E5E5EA]">
-                <span className="text-[#92400E] text-sm font-semibold">
-                  Missing: {data.missingFields.join(', ')}
-                </span>
+
+            {reasons.length > 0 && (
+              <div className="pt-3 mt-3 border-t border-[#E5E5EA] space-y-1">
+                {reasons.map((reason) => (
+                  <p key={reason} className="text-[#92400E] text-xs font-medium">
+                    {reason}
+                  </p>
+                ))}
               </div>
             )}
-            
+
+            {/* An entry with no emission factor is not a gap in the data — it is
+                a gap in the factor library, and the two must not read alike. */}
+            {cell.uncalculatedRecordCount > 0 && (
+              <p className="text-xs text-[#6E6E73]">
+                {cell.uncalculatedRecordCount}{' '}
+                of these produced no tCO₂e figure — no emission factor is
+                available for this category yet.
+              </p>
+            )}
+
             <p className="text-sm text-[#007AFF] font-medium pt-1">Click to view details</p>
           </div>
         </TooltipContent>

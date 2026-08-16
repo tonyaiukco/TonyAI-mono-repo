@@ -1,22 +1,30 @@
 'use client';
 
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Subsidiary, CATEGORIES } from '@/lib/types';
+import { CATEGORIES, type TrackingMatrixRow } from '@/lib/types';
 import { StatusCell } from './status-cell';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { ChevronRight } from 'lucide-react';
 
 interface TrackingMatrixProps {
-  subsidiaries: Subsidiary[];
+  /**
+   * The API's rows, not the mock-era `Subsidiary` view model.
+   *
+   * `coverage`, `trackingGranularity` and `locationCount` were all dropped by
+   * `lib/dashboard-view.ts`, which still maps onto a shape designed before the
+   * completeness rule existed. This component is the one that needs them, so
+   * it reads the contract directly.
+   */
+  rows: TrackingMatrixRow[];
   /** The year these cells describe. Null means the caller asked for every year
    *  at once, which makes a completeness cell meaningless — say so rather than
    *  printing a confident status over mixed years. */
   reportingYear: number | null;
-  onSubsidiaryClick: (subsidiary: Subsidiary) => void;
+  onSubsidiaryClick: (row: TrackingMatrixRow) => void;
   /** A cell is a (subsidiary, category) pair; the row name and the chevron stay
    *  on `onSubsidiaryClick`. */
-  onCategoryClick: (subsidiary: Subsidiary, category: string) => void;
+  onCategoryClick: (row: TrackingMatrixRow, category: string) => void;
 }
 
 const categoryShortNames: Record<string, string> = {
@@ -39,7 +47,7 @@ function getCompletionColor(rate: number): string {
   return 'text-[#B91C1C]';
 }
 
-export function TrackingMatrix({ subsidiaries, reportingYear, onSubsidiaryClick, onCategoryClick }: TrackingMatrixProps) {
+export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCategoryClick }: TrackingMatrixProps) {
   return (
     <Card className="border-[#D2D2D7] bg-white rounded-xl shadow-sm overflow-hidden">
       <CardHeader className="pb-0 pt-5 px-6">
@@ -97,48 +105,59 @@ export function TrackingMatrix({ subsidiaries, reportingYear, onSubsidiaryClick,
 
             {/* Data Rows */}
             <div className="divide-y divide-[#E5E5EA]">
-              {subsidiaries.map((sub) => {
-                const completedCount = sub.categories.filter(c => c.status === 'complete').length;
-                const totalCount = sub.categories.length;
-                
+              {rows.map((row) => {
+                const byLocation = row.trackingGranularity === 'location';
+
                 return (
                   <div
-                    key={sub.id}
+                    key={row.subsidiaryId}
                     className="grid grid-cols-[200px_repeat(11,1fr)_40px] gap-2 px-6 py-3 transition-colors duration-200 hover:bg-[#F5F5F7] group"
                   >
                     {/* Subsidiary Info */}
                     <button
-                      onClick={() => onSubsidiaryClick(sub)}
+                      onClick={() => onSubsidiaryClick(row)}
                       className="flex flex-col items-start text-left pr-3"
                     >
                       <span className="font-bold text-[#1D1D1F] group-hover:text-[#007AFF] transition-colors text-sm">
-                        {sub.shortName}
+                        {row.subsidiaryName}
                       </span>
                       <div className="flex items-center gap-2 mt-1">
                         <span className={cn(
                           'text-sm font-bold tabular-nums font-mono',
-                          getCompletionColor((completedCount / totalCount) * 100)
+                          getCompletionColor((row.completeCount / row.categoryCount) * 100)
                         )}>
-                          {completedCount}/{totalCount}
+                          {row.completeCount}/{row.categoryCount}
                         </span>
-                        <span className="text-xs font-medium text-[#8E8E93]">{sub.sector}</span>
+                        <span className="text-xs font-medium text-[#8E8E93]">
+                          {row.sector ?? '—'}
+                        </span>
                       </div>
+                      {/* Which rule this row is measured by. Two subsidiaries
+                          can show the same fraction and mean different things,
+                          and without this the user has no way to tell. */}
+                      {byLocation && (
+                        <span className="mt-0.5 text-[10px] font-medium text-[#8E8E93]">
+                          per location · {row.locationCount}{' '}
+                          {row.locationCount === 1 ? 'site' : 'sites'}
+                        </span>
+                      )}
                     </button>
 
                     {/* Status Cells */}
-                    {sub.categories.map((cat) => (
+                    {row.cells.map((cell) => (
                       <StatusCell
-                        key={`${sub.id}-${cat.category}`}
-                        data={cat}
-                        label={`${sub.shortName} ${cat.category}`}
-                        onClick={() => onCategoryClick(sub, cat.category)}
+                        key={`${row.subsidiaryId}-${cell.category}`}
+                        cell={cell}
+                        responsible={row.designatedPerson ?? '—'}
+                        label={`${row.subsidiaryName} ${cell.category}`}
+                        onClick={() => onCategoryClick(row, cell.category)}
                         compact
                       />
                     ))}
 
                     {/* Row Action */}
                     <button
-                      onClick={() => onSubsidiaryClick(sub)}
+                      onClick={() => onSubsidiaryClick(row)}
                       className="flex items-center justify-center text-[#8E8E93] hover:text-[#007AFF] transition-colors"
                     >
                       <ChevronRight className="h-5 w-5" />

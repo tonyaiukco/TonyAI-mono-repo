@@ -1688,6 +1688,60 @@ export interface TrackingMatrixRow {
   cells: TrackingMatrixCell[];
 }
 
+/**
+ * One `(location, month)` slot of the invoice rule, for the drill-down.
+ *
+ * The matrix answers "how many are missing"; this answers "which ones", which
+ * is the half of round-1 DASH-3 that asks a subsidiary to show *what is keyed
+ * in and what is missing* rather than just a fraction.
+ */
+export interface CompletenessSlot {
+  /** Canonical month name, as stored on the record (`January` … `December`). */
+  month: string;
+  /** True when a committed monthly record with a file closes this slot. */
+  covered: boolean;
+}
+
+/** One location's twelve slots for a single invoice-tracked category. */
+export interface CompletenessLocationRow {
+  locationId: string;
+  locationName: string;
+  months: CompletenessSlot[];
+}
+
+/**
+ * One invoice-tracked category's completeness for a subsidiary and year.
+ *
+ * `covered`/`required` are the same numbers the matrix cell reports — computed
+ * by the same function, so the drill-down cannot disagree with the cell that
+ * opened it.
+ */
+export interface CategoryCompleteness {
+  category: Category;
+  required: number;
+  covered: number;
+  unattributedRecords: number;
+  nonMonthlyRecords: number;
+  missingEvidenceRecords: number;
+  locations: CompletenessLocationRow[];
+}
+
+/**
+ * The drill-down behind a subsidiary in the tracking matrix.
+ *
+ * `categories` is EMPTY for a `subsidiary`-granularity subsidiary — not an
+ * error and not a zero, but "this entity is measured as a whole, so there are
+ * no per-location slots to show". The granularity is returned alongside so a
+ * caller can say which of those two it is looking at.
+ */
+export interface SubsidiaryCompletenessDTO {
+  subsidiaryId: string;
+  reportingYear: number;
+  trackingGranularity: TrackingGranularity;
+  locationCount: number;
+  categories: CategoryCompleteness[];
+}
+
 /** Tenant-scoped tracking matrix for the caller's accessible subsidiaries. */
 export interface TrackingMatrixDTO {
   reportingYear: number | null;
