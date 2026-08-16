@@ -12,8 +12,9 @@
 --
 -- The column is NOT NULL with a default rather than nullable: "how is this
 -- subsidiary measured" always has an answer, and `subsidiary` is the answer for
--- every row that predates the question. No backfill is needed and no dashboard
--- changes colour on deploy. No RLS migration either — `subsidiaries` policies
+-- every row that predates the question. No backfill is needed, and this DDL
+-- alone changes no dashboard — every row keeps the historic rule until someone
+-- opts a subsidiary in. No RLS migration either — `subsidiaries` policies
 -- already exist from 20260630204830_rls_policies, and adding a column does not
 -- change which rows a client role can see.
 

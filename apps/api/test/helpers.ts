@@ -162,6 +162,12 @@ export function makeSubsidiary(overrides: Partial<Subsidiary> = {}): Subsidiary 
     contactPhone: null,
     reportingStatus: 'pending',
     includedScopes: [1, 2],
+    // Listed for the same reason as the contact columns above, and it was
+    // missed once already: `SubsidiaryDTO` types this non-optional, but an
+    // omitted column here becomes `undefined`, `toDTO` copies it, and
+    // `toEqual` ignores undefined-valued keys — so every assertion over this
+    // fixture passed while the DTO silently lacked the field.
+    trackingGranularity: 'subsidiary',
     createdAt: now,
     updatedAt: now,
     ...overrides,

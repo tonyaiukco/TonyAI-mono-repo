@@ -95,22 +95,37 @@ type SameKeys<A, B> = [keyof A] extends [keyof B]
     ? true
     : false
   : false;
-/**
- * `trackingGranularity` is the one field update accepts and create does not,
- * and the exception is named here rather than the assertion being loosened:
- * switching a subsidiary to `location` requires it to already own a location,
- * which at create time is being written in the same transaction. Naming it
- * keeps the guard armed for every OTHER field — widening this to
- * `Partial<SameKeys<...>>` would have disarmed the check entirely.
- *
- * The shared contract states the same asymmetry on `UpdateSubsidiaryInput`.
- */
 type _UpdateMirrorsCreate = Assert<
-  SameKeys<
-    Omit<UpdateSubsidiaryDto, 'trackingGranularity'>,
-    Omit<CreateSubsidiaryDto, 'locations'>
-  >
+  SameKeys<UpdateSubsidiaryDto, Omit<CreateSubsidiaryDto, 'locations'>>
 >;
+
+describe('trackingGranularity validation', () => {
+  it('rejects a value outside the enum on both DTOs', () => {
+    // Deleting `@IsIn(TRACKING_GRANULARITIES)` was a surviving mutant: any
+    // string reached Prisma, where the column is a Postgres enum.
+    for (const [, Dto] of [
+      ['create', CreateSubsidiaryDto],
+      ['update', UpdateSubsidiaryDto],
+    ] as const) {
+      const errors = validateSync(
+        plainToInstance(Dto, {
+          legalName: 'New Co',
+          geographyCode: 'UK',
+          trackingGranularity: 'banana',
+        }),
+      );
+      expect(errors).toHaveLength(1);
+    }
+  });
+
+  it('accepts both declared values', () => {
+    for (const value of ['subsidiary', 'location']) {
+      expect(
+        validateSync(plainToInstance(UpdateSubsidiaryDto, { trackingGranularity: value })),
+      ).toHaveLength(0);
+    }
+  });
+});
 
 describe('CreateSubsidiaryDto — nested locations', () => {
   const parse = (locations: unknown) =>

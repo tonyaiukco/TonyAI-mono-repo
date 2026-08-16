@@ -11,6 +11,7 @@ import {
   isInvoiceTracked,
   isRecordableWithoutFactor,
   isUncalculated,
+  TRACKING_GRANULARITIES,
   unitSymbol,
   unitsForCategory,
   type CalculationResult,
@@ -180,6 +181,14 @@ describe('unitsForCategory', () => {
     const units = unitsForCategory('Business Travel');
     expect(units.length).toBeGreaterThan(1);
     expect(units.every((u) => !u.blocked)).toBe(true);
+  });
+});
+
+describe('TRACKING_GRANULARITIES', () => {
+  it('offers exactly the two the Prisma enum declares', () => {
+    // The DTO validates against this list, and deleting the `@IsIn` that reads
+    // it was a surviving mutant — any string was accepted as a granularity.
+    expect([...TRACKING_GRANULARITIES]).toEqual(['subsidiary', 'location']);
   });
 });
 

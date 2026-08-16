@@ -40,8 +40,9 @@ enum SubsidiaryStatus {
 /// itself on whenever a subsidiary happens to own locations would report almost
 /// every existing tenant as incomplete overnight, and would leave the user with
 /// no way to see WHY. Defaulting to `subsidiary` keeps every existing dashboard
-/// exactly as it was; a super_admin opts a subsidiary in when its data is
-/// actually keyed by location.
+/// exactly as it was; a super_admin will opt a subsidiary in when its data is
+/// actually keyed by location (API: PATCH /subsidiaries/:id — the UI arrives
+/// with the coverage display in WP17 PR 3).
 enum TrackingGranularity {
   subsidiary
   location
@@ -108,10 +109,10 @@ model Subsidiary {
   contactPhone     String?                @map("contact_phone")
   reportingStatus  SubsidiaryStatus       @default(pending) @map("reporting_status")
   includedScopes   Int[]                  @default([1, 2]) @map("included_scopes")
-  // Defaults to `subsidiary` so no existing row changes meaning. The API
-  // refuses to switch a subsidiary with no locations to `location`: the
-  // denominator would be `0 × 12 = 0`, and "0 of 0 slots covered" reads as
-  // complete — a subsidiary with no data at all would go green.
+  // Defaults to `subsidiary` so no existing row changes meaning. Both write
+  // paths refuse `location` without at least one location: the denominator
+  // would be `0 × 12 = 0`, every slot is then vacuously covered, and a
+  // subsidiary holding one stray record would read as complete.
   trackingGranularity TrackingGranularity @default(subsidiary) @map("tracking_granularity")
   locations        Location[]
   access           UserSubsidiaryAccess[]

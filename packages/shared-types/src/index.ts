@@ -818,6 +818,13 @@ export interface CreateSubsidiaryInput {
   reportingStatus?: SubsidiaryStatus;
   includedScopes?: number[];
   /**
+   * Defaults to `subsidiary`. Setting `location` requires at least one
+   * location — supplied inline here, or already present when this arrives via
+   * PATCH — because the denominator is `locations × 12` and a zero multiplier
+   * makes a subsidiary with no data whatsoever read as complete.
+   */
+  trackingGranularity?: TrackingGranularity;
+  /**
    * Operational locations to create with the subsidiary, in one transaction.
    *
    * Note the neighbour: `location` (singular, above) is a free-text address
@@ -838,23 +845,7 @@ export interface CreateSubsidiaryInput {
  * especially easy here, where `location` and `locations` are one keystroke
  * apart. Locations are managed through `/locations`.
  */
-/**
- * Update accepts everything create does, minus the nested locations, PLUS the
- * tracking granularity.
- *
- * The asymmetry is deliberate and stated rather than derived. Switching to
- * `location` requires the subsidiary to already own at least one location, and
- * at create time the locations are being written in the same transaction — so
- * the check would have to run mid-transaction against rows that do not exist
- * yet. A subsidiary is therefore created in the default `subsidiary` mode and
- * switched afterwards, once there is something to measure.
- */
-export type UpdateSubsidiaryInput = Omit<
-  Partial<CreateSubsidiaryInput>,
-  'locations'
-> & {
-  trackingGranularity?: TrackingGranularity;
-};
+export type UpdateSubsidiaryInput = Omit<Partial<CreateSubsidiaryInput>, 'locations'>;
 
 /**
  * Everything hanging off one subsidiary, counted server-side.
@@ -1581,8 +1572,14 @@ export interface EmissionsSummary {
 //   incomplete — a record exists but is draft/rejected, or flagged as anomaly
 //   complete   — all records are committed (submitted/under_review/approved/
 //                locked) and none are flagged
-// NOTE: the FR "required evidence attached" condition for `complete` is
-// deferred until the evidence backend ships (tracked in the roadmap).
+// The FR "required evidence attached" condition IS implemented (it shipped with
+// the evidence backend in Phase 1) — a committed record with no file in an
+// evidence-required category holds its cell below `complete`.
+//
+// WP17 adds a second reading of `complete` for the three invoice-tracked
+// categories on a location-measured subsidiary: `locations × 12` monthly
+// invoices. `missing` keeps its meaning in BOTH — no record exists for the cell
+// — so a cell holding records whose slots are not closed is `incomplete`.
 // ---------------------------------------------------------------------------
 
 /**
@@ -1594,7 +1591,15 @@ export interface EmissionsSummary {
  * "0/0" for a category the rule does not apply to.
  */
 export interface CellCoverage {
-  /** `locations × 12 months` for this one category. */
+  /**
+   * `locations × 12 months` for this one category, for ONE reporting year.
+   *
+   * Only present on a year-scoped query. Without a year every year's records
+   * fold into one cell while `required` stays twelve months' worth, so a
+   * subsidiary with a complete 2024 and an empty 2025 would report 24 of 24.
+   * The location count is likewise taken as at the end of that year, so a site
+   * opened later does not retroactively make a closed year incomplete.
+   */
   required: number;
   /** Slots closed by a committed monthly record carrying at least one file. */
   covered: number;
@@ -1616,6 +1621,15 @@ export interface CellCoverage {
    * leaving the user staring at a shortfall they can see no cause for.
    */
   nonMonthlyRecords: number;
+  /**
+   * Committed monthly records at a location that carry no file.
+   *
+   * The fourth counter exists so the four numbers EXHAUST the committed
+   * records: without it a record that was monthly, attributed and simply
+   * unevidenced fell through every bucket, and the coverage object could not
+   * explain its own shortfall — which is the single thing it is for.
+   */
+  missingEvidenceRecords: number;
 }
 
 /** One subsidiary × category cell of the tracking matrix. */
@@ -1624,9 +1638,10 @@ export interface TrackingMatrixCell {
   scope: number;
   status: DataStatus;
   /**
-   * Sum of committed records' tCO₂e in this cell (drafts excluded), or **null**
-   * when nothing in the cell produced a figure — no records at all, or only
-   * records whose category has no emission factor (WP17 — Water).
+   * Sum of committed records' tCO₂e in this cell, or **null** when no COMMITTED
+   * record produced a usable figure. That covers three cases, not the two an
+   * earlier draft of this comment listed: no records at all, only drafts, or
+   * only records whose category has no emission factor (WP17 — Water).
    *
    * `null` and `0` are different claims: `0` means something was measured and
    * came to zero. This was a plain `number` until the factor-less path shipped,
@@ -1652,8 +1667,17 @@ export interface TrackingMatrixRow {
   subsidiaryName: string;
   sector: string | null;
   designatedPerson: string | null;
-  /** Sum of committed tCO₂e across the row. */
+  /**
+   * Sum of the row's MEASURED cells. Stays a plain number, deliberately, even
+   * though a cell's `tCo2e` is nullable: this mirrors `EmissionsSummary`, which
+   * keeps numeric totals and reports the excluded records alongside them. The
+   * pairing is what makes `0` readable — a zero total next to a non-zero
+   * `uncalculatedRecordCount` is "nothing was calculable", not "we measured
+   * zero".
+   */
   totalTCo2e: number;
+  /** Committed records across the row that produced no figure. */
+  uncalculatedRecordCount: number;
   completeCount: number;
   categoryCount: number;
   /** How this row's completeness was measured — the denominator behind its

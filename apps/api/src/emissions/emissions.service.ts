@@ -73,6 +73,67 @@ const MONTH_LABEL = [
   'December',
 ];
 
+/**
+ * The WP17 invoice rule, as a pure function over records already loaded.
+ *
+ * Extracted rather than inlined because PR 3's drill-down needs a DIFFERENT
+ * PROJECTION of this same computation — the OPEN `(location, month)` slots, to
+ * render "January: missing at Ankara Power Plant". The matrix reduces the slot
+ * set to a count and throws the set away; a drill-down that re-derived the rule
+ * from scratch is exactly the drift the shared endpoint was meant to prevent.
+ * One implementation, two readings of it.
+ *
+ * Every clause is load-bearing and each was a surviving mutant before it had a
+ * test: an invoice covers one MONTH, a subsidiary-level entry covers no site, a
+ * DRAFT is not an invoice anyone has accepted, and without the file there is
+ * nothing to have covered the slot with.
+ */
+export interface InvoiceCoverage {
+  required: number;
+  /** The closed slots themselves, keyed `locationId\u0000month`. PR 3 renders
+   *  the complement of this set; the matrix only needs its size. */
+  covered: Set<string>;
+  unattributedRecords: number;
+  nonMonthlyRecords: number;
+  missingEvidenceRecords: number;
+}
+
+export function computeInvoiceCoverage(
+  records: { locationId: string | null; reportingPeriod: string; periodValue: string; evidenceCount: number }[],
+  locationCount: number,
+): InvoiceCoverage {
+  const covered = new Set<string>();
+  let unattributedRecords = 0;
+  let nonMonthlyRecords = 0;
+  let missingEvidenceRecords = 0;
+
+  for (const r of records) {
+    if (!r.locationId) {
+      unattributedRecords += 1;
+    } else if (r.reportingPeriod !== 'monthly') {
+      nonMonthlyRecords += 1;
+    } else if (r.evidenceCount === 0) {
+      missingEvidenceRecords += 1;
+    } else {
+      const month = r.periodValue.trim().toLowerCase();
+      // Only a real month closes a slot. Without this the denominator rests on
+      // a rule enforced in ANOTHER module (`isValidPeriodValue`), and 24
+      // records at one location could report 24-of-24 while the second location
+      // held nothing. `covered <= required` is an invariant here, not a hope.
+      if (MONTH_INDEX[month] !== undefined) covered.add(`${r.locationId}\u0000${month}`);
+      else nonMonthlyRecords += 1;
+    }
+  }
+
+  return {
+    required: locationCount * MONTH_LABEL.length,
+    covered,
+    unattributedRecords,
+    nonMonthlyRecords,
+    missingEvidenceRecords,
+  };
+}
+
 /** Mutable accumulator behind an EmissionsTrendPoint, carrying a sort key. */
 interface TrendBucket {
   point: EmissionsTrendPoint;
@@ -311,8 +372,14 @@ export class EmissionsService {
   /**
    * Subsidiary × category completeness matrix (FR §2.2). Every accessible
    * subsidiary gets a row; every canonical category gets a cell — cells with
-   * no records are "missing". The "required evidence" condition for
-   * `complete` is deferred until the evidence backend ships.
+   * no records are "missing", in both readings of `complete` below.
+   *
+   * Two rules live here, chosen per cell:
+   *   - the yes/no rule: committed records, evidence attached where the
+   *     category requires it, nothing pending and nothing flagged;
+   *   - the WP17 invoice rule, for the three invoice-tracked categories on a
+   *     `location`-measured subsidiary IN A GIVEN YEAR: `locations × 12`
+   *     monthly invoices, then the same three caps applied on top.
    */
   async trackingMatrix(
     user: RequestUser,
@@ -338,6 +405,13 @@ export class EmissionsService {
       subsidiaryFilter = { in: user.accessibleSubsidiaryIds };
     }
 
+    // End of the requested reporting year, in UTC. Used to keep the location
+    // multiplier contemporaneous with the period being measured.
+    const yearEnd =
+      query.year === undefined
+        ? null
+        : new Date(Date.UTC(query.year + 1, 0, 1) - 1);
+
     const [records, subs] = await Promise.all([
       // All statuses on purpose: drafts/rejected make a cell "incomplete".
       // Evidence count feeds the FR §2.2 rule (green needs evidence where required).
@@ -359,7 +433,21 @@ export class EmissionsService {
           trackingGranularity: true,
           // The denominator's multiplier. Counted rather than fetched: the rule
           // needs how many locations exist, not which ones.
-          _count: { select: { locations: true } },
+          //
+          // Scoped to the reporting year when one is given. The multiplier is
+          // otherwise CURRENT state applied to a PAST period, and it moves with
+          // no decision by anyone: open a third site in 2027 and the 2024
+          // matrix silently starts demanding 36 invoices instead of 24 — twelve
+          // slots that could never have been filled — turning a closed year red
+          // on its own. `createdAt` is when the site was entered into the
+          // system rather than when it opened, so this is a floor, not a
+          // reconstruction; it is strictly better than counting sites that did
+          // not exist yet.
+          _count: {
+            select: {
+              locations: yearEnd ? { where: { createdAt: { lte: yearEnd } } } : true,
+            },
+          },
         },
         orderBy: { legalName: 'asc' },
       }),
@@ -382,9 +470,12 @@ export class EmissionsService {
       const locationCount = sub._count.locations;
       const byLocation = sub.trackingGranularity === 'location';
 
+      let uncalculatedRowCount = 0;
+
       const cells: TrackingMatrixCell[] = CATEGORIES.map((category) => {
         const recs = byCell.get(`${sub.id}\u0000${category}`) ?? [];
 
+        let coverage: InvoiceCoverage | null = null;
         let status: DataStatus;
         // `null` until something actually contributes a figure — see the note
         // on TrackingMatrixCell.tCo2e. A cell whose only records are
@@ -395,17 +486,22 @@ export class EmissionsService {
         let anomaly = false;
 
         // The invoice rule (WP17 / round-1 DASH-3) applies to three categories,
-        // and only where the subsidiary is measured by location.
-        const invoiceTracked = byLocation && isInvoiceTracked(category);
-        const covered = new Set<string>();
-        let unattributedRecords = 0;
-        let nonMonthlyRecords = 0;
+        // on a location-measured subsidiary, FOR ONE REPORTING YEAR.
+        //
+        // The year is not optional decoration: `required` is twelve months'
+        // worth, so without a year filter every year's records fold into one
+        // cell and a subsidiary with a complete 2024 and an empty 2025 reports
+        // 24-of-24. An unscoped query therefore falls back to the yes/no rule
+        // rather than answering a question the numbers cannot support.
+        const invoiceTracked =
+          byLocation && isInvoiceTracked(category) && query.year !== undefined;
 
-        // An invoice-tracked cell still has a denominator with no records at
-        // all, so it cannot short-circuit to "missing" on `recs.length === 0`
-        // the way a yes/no category can — it has to fall through and report
-        // 0-of-N.
-        if (recs.length === 0 && !invoiceTracked) {
+        // Computed even for an empty cell: "0 of 24" is the whole point of the
+        // rule for a category nobody has started, and it is what tells a user
+        // the size of the job rather than just that it is unfinished.
+        if (invoiceTracked) coverage = computeInvoiceCoverage([], locationCount);
+
+        if (recs.length === 0) {
           status = 'missing';
         } else {
           let hasPending = false;
@@ -414,6 +510,12 @@ export class EmissionsService {
           // record lacking a file leaves the cell short of "complete" (FR §2.2).
           const evidenceRequired = isEvidenceRequired(category);
           let evidenceMissing = false;
+          const committed: {
+            locationId: string | null;
+            reportingPeriod: string;
+            periodValue: string;
+            evidenceCount: number;
+          }[] = [];
           for (const r of recs) {
             if (PENDING_STATUSES.has(r.status)) hasPending = true;
             if (r.anomalyFlag) anomaly = true;
@@ -424,40 +526,34 @@ export class EmissionsService {
               if (evidenceRequired && r._count.evidence === 0) {
                 evidenceMissing = true;
               }
-              if (invoiceTracked) {
-                // A slot is (location, month) for this category, and it closes
-                // only on a committed MONTHLY record carrying a file. Every
-                // clause is load-bearing: an invoice covers one month, a
-                // subsidiary-level entry covers no site, and without the file
-                // there is nothing to have covered it with. A Set, because two
-                // records for the same location and month are one invoice's
-                // worth of coverage, not two.
-                if (!r.locationId) unattributedRecords += 1;
-                else if (r.reportingPeriod !== 'monthly') nonMonthlyRecords += 1;
-                else if (r._count.evidence > 0) {
-                  covered.add(
-                    `${r.locationId}\u0000${r.periodValue.trim().toLowerCase()}`,
-                  );
-                }
-              }
+              committed.push({
+                locationId: r.locationId,
+                reportingPeriod: r.reportingPeriod,
+                periodValue: r.periodValue,
+                evidenceCount: r._count.evidence,
+              });
             }
             const t = r.updatedAt.getTime();
             if (t > latest) latest = t;
           }
-          if (recs.length > 0) lastUpdate = new Date(latest).toISOString();
+          lastUpdate = new Date(latest).toISOString();
 
           if (invoiceTracked) {
-            const required = locationCount * MONTH_LABEL.length;
+            coverage = computeInvoiceCoverage(committed, locationCount);
+            // `missing` means "no record exists for this cell" — the contract's
+            // own definition. A cell holding twelve approved, evidence-backed
+            // records whose slots simply are not closed is INCOMPLETE, not
+            // missing: the seed produced exactly that and the dashboard
+            // rendered a red "Missing" cell displaying 198 tCO2e.
             status =
-              covered.size === 0
-                ? 'missing'
-                : covered.size >= required
-                  ? 'complete'
-                  : 'incomplete';
-            // An anomaly still caps the cell below complete, exactly as it does
-            // everywhere else: FR §2.2's yellow means "there is something to
-            // look at here", and a full set of invoices does not answer it.
-            if (status === 'complete' && anomaly) status = 'incomplete';
+              coverage.covered.size >= coverage.required ? 'complete' : 'incomplete';
+            // The same three caps the yes/no branch applies. Full invoice
+            // coverage does not answer "there is an unfinished record here" or
+            // "one of these has no document", and FR §2.2's yellow means
+            // exactly that there is something left to look at.
+            if (status === 'complete' && (hasPending || anomaly || evidenceMissing)) {
+              status = 'incomplete';
+            }
           } else {
             status =
               hasPending || anomaly || evidenceMissing ? 'incomplete' : 'complete';
@@ -467,6 +563,7 @@ export class EmissionsService {
         totals[status] += 1;
         if (status === 'complete') completeCount += 1;
         if (tCo2e !== null) totalTCo2e += tCo2e;
+        uncalculatedRowCount += uncalculatedRecordCount;
 
         return {
           category: category as Category,
@@ -475,13 +572,14 @@ export class EmissionsService {
           tCo2e,
           recordCount: recs.length,
           uncalculatedRecordCount,
-          ...(invoiceTracked
+          ...(coverage
             ? {
                 coverage: {
-                  required: locationCount * MONTH_LABEL.length,
-                  covered: covered.size,
-                  unattributedRecords,
-                  nonMonthlyRecords,
+                  required: coverage.required,
+                  covered: coverage.covered.size,
+                  unattributedRecords: coverage.unattributedRecords,
+                  nonMonthlyRecords: coverage.nonMonthlyRecords,
+                  missingEvidenceRecords: coverage.missingEvidenceRecords,
                 },
               }
             : {}),
@@ -500,6 +598,7 @@ export class EmissionsService {
         categoryCount: CATEGORIES.length,
         trackingGranularity: sub.trackingGranularity,
         locationCount,
+        uncalculatedRecordCount: uncalculatedRowCount,
         cells,
       };
     });

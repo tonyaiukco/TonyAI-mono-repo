@@ -412,6 +412,46 @@ describe('SubsidiariesService', () => {
         where: { id: 'sub-1' },
         data: { trackingGranularity: 'location' },
       });
+      // The count must be SCOPED. Asserting only its return value let
+      // `count({})` through, where another tenant's locations would unlock
+      // `location` mode for a subsidiary that owns none.
+      expect(prisma.location.count).toHaveBeenCalledWith({
+        where: { subsidiaryId: 'sub-1' },
+      });
+    });
+
+    it('refuses location granularity at CREATE without inline locations', async () => {
+      const user = makeSuperAdmin();
+
+      // The same invariant on the other write path. Stating it here as pure
+      // input validation is what let `UpdateSubsidiaryInput` stay derived and
+      // the DTO key-parity guard stay unmodified.
+      await expect(
+        service.create(user, {
+          legalName: 'No Sites Ltd.',
+          geographyCode: 'UK',
+          trackingGranularity: 'location',
+        } as never),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.txClient.subsidiary.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts location granularity at CREATE when locations come with it', async () => {
+      const user = makeSuperAdmin();
+      prisma.txClient.subsidiary.create.mockResolvedValue(
+        makeSubsidiary({ id: 'sub-new', trackingGranularity: 'location' } as Partial<Subsidiary>),
+      );
+
+      const created = await service.create(user, {
+        legalName: 'Two Sites Ltd.',
+        geographyCode: 'UK',
+        trackingGranularity: 'location',
+        locations: [{ name: 'Site A', geographyCode: 'UK' }],
+      } as never);
+
+      expect(created.trackingGranularity).toBe('location');
+      // No DB read for the check: the locations are in the request.
+      expect(prisma.location.count).not.toHaveBeenCalled();
     });
 
     it('never counts locations when switching BACK to subsidiary granularity', async () => {
