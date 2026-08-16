@@ -770,6 +770,18 @@ export interface SubsidiarySummaryDTO {
   targets: number;
   denominators: number;
   /**
+   * Why a delete would be refused, in the words the 409 itself uses.
+   *
+   * Composed by the same function that builds the refusal message, so the panel
+   * explaining the block and the endpoint enforcing it cannot describe the same
+   * rule two different ways. Empty when nothing blocks.
+   *
+   * A terminal-records refusal is a single sentence (the subsidiary stays, and
+   * `reportingStatus: 'inactive'` is how it is retired); everything else is one
+   * short phrase per remaining dependent, in the order they should be cleared.
+   */
+  blockers: string[];
+  /**
    * True while anything above still hangs off the subsidiary — a statement
    * about DEPENDENCIES only.
    *

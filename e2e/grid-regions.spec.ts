@@ -11,8 +11,24 @@ import { login, bearer, getAccessToken, ADMIN_EMAIL, API_BASE, SUB } from './hel
  * Data Entry states the geography it will actually use.
  */
 
-const geoCombo = (scope: import('@playwright/test').Locator, page: import('@playwright/test').Page) =>
-  scope.locator('div.space-y-2').filter({ has: page.getByText('Geography', { exact: false }) }).last().getByRole('combobox');
+/**
+ * The geography select inside a given scope.
+ *
+ * `label` is explicit now. It used to match `Geography` loosely and take
+ * `.last()`, which was fine while the only surface was a dialog with one such
+ * field — but `/subsidiaries/[id]` carries the subsidiary's "Reporting
+ * geography" AND the locations panel's "Geography *", and the loose match would
+ * silently have picked the wrong one.
+ */
+const geoCombo = (
+  scope: import('@playwright/test').Locator | import('@playwright/test').Page,
+  page: import('@playwright/test').Page,
+  label: string,
+) =>
+  scope
+    .locator('div.space-y-2')
+    .filter({ has: page.getByText(label, { exact: true }) })
+    .getByRole('combobox');
 
 test('geography pickers offer UK + Türkiye by name, not raw codes', async ({ page }) => {
   await login(page, ADMIN_EMAIL);
@@ -20,7 +36,7 @@ test('geography pickers offer UK + Türkiye by name, not raw codes', async ({ pa
   await page.getByRole('button', { name: 'Add Subsidiary' }).click();
 
   const dialog = page.getByRole('dialog');
-  await geoCombo(dialog, page).click();
+  await geoCombo(dialog, page, 'Geography').click();
   expect(await page.getByRole('option').allTextContents()).toEqual([
     'United Kingdom (UK)',
     'Türkiye (TR)',
@@ -37,39 +53,41 @@ test('a subsidiary on a hidden geography opens on it, and a mis-click is reversi
   // item renders EMPTY — no error, no placeholder — and a blind save still
   // submits the old value. Exercised on a record this test owns, so the seeded
   // Munich subsidiary keeps its audit history clean.
+  //
+  // Driven through `/subsidiaries/[id]` since WP16 PR 2b retired the row-level
+  // edit dialog.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const created = await request.post(`${API_BASE}/subsidiaries`, {
     headers: bearer(token),
     data: { legalName: 'E2E Test Co Hidden Geo', geographyCode: 'EU', reportingStatus: 'pending' },
   });
   expect(created.status()).toBe(201);
+  const sub = await created.json();
 
   await login(page, ADMIN_EMAIL);
-  await page.goto('/subsidiaries');
-  await page
-    .locator('tr', { hasText: 'E2E Test Co Hidden Geo' })
-    .getByRole('button', { name: 'Edit subsidiary' })
-    .click();
+  await page.goto(`/subsidiaries/${sub.id}`);
 
-  const dialog = page.getByRole('dialog');
-  await expect(geoCombo(dialog, page)).toContainText('European Union (EU)');
+  const combo = geoCombo(page, page, 'Reporting geography');
+  await expect(combo).toContainText('European Union (EU)');
 
   // Change it away and back: the hidden code must not disappear from the list
-  // the moment you leave it, or Cancel — which discards every other edit — is
-  // the only way home.
-  await geoCombo(dialog, page).click();
+  // the moment you leave it, or discarding every other edit is the only way
+  // home.
+  await combo.click();
   await page.getByRole('option', { name: 'United Kingdom (UK)' }).click();
-  await geoCombo(dialog, page).click();
+  await combo.click();
   await expect(page.getByRole('option', { name: 'European Union (EU)' })).toBeVisible();
   await page.getByRole('option', { name: 'European Union (EU)' }).click();
 
-  await dialog.getByRole('button', { name: 'Save changes' }).click();
-  await expect(page.getByText('Subsidiary settings updated successfully.')).toBeVisible();
+  // Back on its original value, so nothing is dirty and there is nothing to
+  // confirm — the geography dialog only fires on an actual change.
+  await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled();
 
-  const subs = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
-  const row = subs.find((s: { legalName: string }) => s.legalName === 'E2E Test Co Hidden Geo');
+  const row = await (await request.get(`${API_BASE}/subsidiaries/${sub.id}`, {
+    headers: bearer(token),
+  })).json();
   expect(row.geographyCode).toBe('EU');
-  await request.delete(`${API_BASE}/subsidiaries/${row.id}`, { headers: bearer(token) });
+  await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
 });
 
 test('the locations drawer keeps a hidden geography reachable too', async ({ page, request }) => {
@@ -87,7 +105,7 @@ test('the locations drawer keeps a hidden geography reachable too', async ({ pag
 
   const drawer = page.getByRole('dialog');
   // The ADD form seeds the parent's geography — the case that would blank.
-  await expect(geoCombo(drawer, page)).toContainText('European Union (EU)');
+  await expect(geoCombo(drawer, page, 'Geography *')).toContainText('European Union (EU)');
   await expect(page.getByRole('button', { name: /^Add location$/ })).toBeVisible();
   void token;
 });

@@ -383,6 +383,16 @@ describe('SubsidiariesService', () => {
         targets: 3,
         denominators: 4,
         hasBlockingDependents: true,
+        // Two approved/locked records are present, so the terminal branch wins
+        // and the answer is one sentence rather than a list of things to clear.
+        // The counts are still all reported — the panel shows them; only the
+        // ADVICE collapses, because nothing the caller clears would help.
+        blockers: [
+          '2 approved or locked activity record(s) belong to this subsidiary, and ' +
+            'deleting it would permanently destroy them along with their evidence. ' +
+            'Those records cannot be deleted at any point, so a subsidiary that has ' +
+            'reported data stays. Set its status to "inactive" to retire it instead.',
+        ],
       });
     });
 
@@ -477,6 +487,56 @@ describe('SubsidiariesService', () => {
 
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('reports the SAME sentences the 409 uses — they cannot diverge', async () => {
+      // The reason `describeBlockers` exists. If the panel's explanation and
+      // the endpoint's refusal were written separately, two slightly different
+      // accounts of one rule would read like two rules — prose drift, which is
+      // worse than the numeric drift `countDependents` was extracted to stop,
+      // because nothing typechecks a sentence.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, ['submitted', 'draft']);
+      prisma.location.count.mockResolvedValue(1);
+      prisma.periodLock.count.mockResolvedValue(1);
+
+      const { blockers } = await service.summary(user, 'sub-1');
+      const message = await refusal(service.remove(user, 'sub-1'));
+
+      expect(blockers.length).toBeGreaterThan(0);
+      for (const phrase of blockers) {
+        expect(message, `the 409 must contain "${phrase}"`).toContain(phrase);
+      }
+      // …and the ordering advice the counts alone cannot carry.
+      expect(message).toMatch(/reopen any closed period rather than deleting its lock/);
+      expect(message).toMatch(/sent back by a reviewer/);
+    });
+
+    it('gives the terminal refusal as one sentence, not a shopping list', async () => {
+      // An approved record is not an item to clear — the answer is that the
+      // subsidiary stays. Splitting it into a phrase like the others would
+      // invite a UI to render it as a to-do.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, ['approved', 'locked']);
+      prisma.location.count.mockResolvedValue(3);
+
+      const { blockers } = await service.summary(user, 'sub-1');
+      expect(blockers).toHaveLength(1);
+      expect(blockers[0]).toMatch(/2 approved or locked activity record\(s\)/);
+      expect(blockers[0]).toMatch(/"inactive"/);
+      // The locations are real but irrelevant: nothing the caller clears will
+      // make this subsidiary deletable, so listing them would be a false lead.
+      expect(blockers[0]).not.toMatch(/location/);
+    });
+
+    it('is empty when nothing blocks', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+
+      expect((await service.summary(user, 'sub-1')).blockers).toEqual([]);
     });
 
     it('refuses an id outside the access set WITHOUT counting anything', async () => {

@@ -63,7 +63,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (388 unit + 56 E2E) + live RLS containment probes (30) | ✅ |
+| Automated tests (391 unit + 61 E2E) + live RLS containment probes (30) | ✅ |
 | Reporting years 2015–2026 (WP15/DE-9); the demo dataset and factor library live in one `DEMO_YEAR`, and any year without factors says so instead of failing silently | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
@@ -328,7 +328,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `GET` | `/me` | Current user + role + `accessibleSubsidiaryIds` | any |
 | `GET` | `/subsidiaries` | List (tenant‑scoped). Includes the reporting contact (`designatedPerson` / `contactEmail` / `contactPhone`), which is **deliberately visible to every role in the tenant** — see `permissions_and_roles.md` §6.4 for the decision and its consequences | any |
 | `GET` | `/subsidiaries/:id` | Get one (404 if outside access set) | any |
-| `GET` | `/subsidiaries/:id/summary` | Counts of everything hanging off it (locations, records split into approved/locked · awaiting review · draft/rejected, period locks, targets, denominators) plus `hasBlockingDependents`. Exists so a caller can show "36 records" without downloading 36 records, and can see **why** a delete would be refused without attempting it | any |
+| `GET` | `/subsidiaries/:id/summary` | Counts of everything hanging off it (locations, records split into approved/locked · awaiting review · draft/rejected, period locks, targets, denominators), plus `hasBlockingDependents` and `blockers[]` — the delete guard's own sentences, so a UI never restates them. Exists so a caller can show "36 records" without downloading 36 records, and can see **why** a delete would be refused without attempting it | any |
 | `POST` | `/subsidiaries` | Create | `super_admin` |
 | `PATCH` | `/subsidiaries/:id` | Update | `super_admin` |
 | `DELETE` | `/subsidiaries/:id` | Delete — refused (409) while anything still hangs off it (records, locations, targets, denominators, closed periods), because every child relation is `ON DELETE CASCADE`; a subsidiary holding an `approved`/`locked` record is retired via `reportingStatus: 'inactive'` instead, since those records can never be deleted | `super_admin` |

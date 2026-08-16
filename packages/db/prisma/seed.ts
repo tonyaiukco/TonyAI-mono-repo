@@ -346,7 +346,22 @@ async function main() {
   for (const s of SUBSIDIARIES) {
     await prisma.subsidiary.upsert({
       where: { id: s.id },
-      update: {},
+      // Narrowly not `{}`. The upsert is create-only by design — re-seeding
+      // must not overwrite anything a UAT tester has edited — but the three
+      // contact columns arrived in WP16 PR 2a, AFTER these rows existed, so on
+      // every already-seeded database they stayed NULL and `designatedPerson`
+      // kept the literal string "Seed Admin". A demo dataset that shows a
+      // placeholder where the feature under test should be is worse than no
+      // demo data at all, and the alternative was telling everyone to
+      // `db:reset` and lose their UAT work.
+      //
+      // Scoped to exactly those three columns, and only for the five seeded
+      // ids, so nothing a tester typed anywhere else is touched.
+      update: {
+        designatedPerson: s.designatedPerson,
+        contactEmail: s.contactEmail,
+        contactPhone: s.contactPhone,
+      },
       create: {
         id: s.id,
         organisationId: ORG_ID,

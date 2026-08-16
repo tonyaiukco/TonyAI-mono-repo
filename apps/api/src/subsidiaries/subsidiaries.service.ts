@@ -23,6 +23,12 @@ import { UpdateSubsidiaryDto } from './dto/update-subsidiary.dto';
  * The counts, on their own. Named as its own type rather than derived from the
  * summary DTO so that adding an INFORMATIONAL field to the DTO later cannot
  * silently enrol it as a delete blocker.
+ *
+ * There used to be a `BLOCKING_DEPENDENTS` array beside this, listing which of
+ * these actually stop a delete. It is gone: `describeBlockers` is now the only
+ * thing that decides, and `hasBlockingDependents` is simply "did it refuse".
+ * A list that has to be kept in sync with a function is strictly worse than
+ * having no second list at all.
  */
 type SubsidiaryDependentCounts = Pick<
   SubsidiarySummaryDTO,
@@ -35,16 +41,6 @@ type SubsidiaryDependentCounts = Pick<
   | 'denominators'
 >;
 
-/** Exactly the counts that stop a delete — listed, not inferred. */
-const BLOCKING_DEPENDENTS: (keyof SubsidiaryDependentCounts)[] = [
-  'terminalRecords',
-  'reviewRecords',
-  'openRecords',
-  'locations',
-  'periodLocks',
-  'targets',
-  'denominators',
-];
 
 @Injectable()
 export class SubsidiariesService {
@@ -222,15 +218,18 @@ export class SubsidiariesService {
     // `this.prisma` is directly assignable — the delegates a transaction client
     // exposes are the ones used here. Verified: removing the cast typechecks.
     const counts = await this.countDependents(this.prisma, id);
+    const refusal = SubsidiariesService.describeBlockers(counts);
     return {
       subsidiaryId: id,
       ...counts,
+      // The guard's own sentences, not a second set written for the UI.
+      blockers: refusal?.blockers ?? [],
       // Named explicitly rather than `Object.values(counts).every(...)`. That
       // form made the dependency run backwards: because `counts` was typed off
       // the DTO, every future summary field would have been forced into the
       // blocking computation, so adding an informational count (evidence files,
       // records this year) would silently turn it into a delete blocker.
-      hasBlockingDependents: BLOCKING_DEPENDENTS.some((k) => counts[k] > 0),
+      hasBlockingDependents: refusal !== null,
     };
   }
 
@@ -264,51 +263,64 @@ export class SubsidiariesService {
    * is the same error as promising a delete that cannot happen, pointing the
    * other way.
    */
-  private async assertDeletable(
-    db: Prisma.TransactionClient,
-    id: string,
-  ): Promise<void> {
-    const {
-      terminalRecords,
-      reviewRecords,
-      openRecords,
-      locations,
-      periodLocks,
-      targets,
-      denominators,
-    } = await this.countDependents(db, id);
-
-    if (terminalRecords > 0) {
-      throw new ConflictException(
-        `${terminalRecords} approved or locked activity record(s) belong to this ` +
-          'subsidiary, and deleting it would permanently destroy them along with ' +
-          'their evidence. Those records cannot be deleted at any point, so a ' +
-          'subsidiary that has reported data stays. Set its status to "inactive" ' +
-          'to retire it instead.',
-      );
+  /**
+   * Compose the refusal from a set of counts — the ONE place the wording lives.
+   *
+   * Returns `null` when nothing blocks. Both consumers read it: the guard turns
+   * it into the 409, and `summary()` returns the same sentences so a control
+   * panel can explain the refusal without attempting it. Splitting them would
+   * reintroduce, at the level of prose, exactly the drift that extracting
+   * `countDependents` removed at the level of numbers — and prose drift is
+   * worse, because two slightly different explanations of the same rule read
+   * like two different rules.
+   */
+  private static describeBlockers(c: SubsidiaryDependentCounts): {
+    message: string;
+    blockers: string[];
+  } | null {
+    if (c.terminalRecords > 0) {
+      const message =
+        `${c.terminalRecords} approved or locked activity record(s) belong to this ` +
+        'subsidiary, and deleting it would permanently destroy them along with ' +
+        'their evidence. Those records cannot be deleted at any point, so a ' +
+        'subsidiary that has reported data stays. Set its status to "inactive" ' +
+        'to retire it instead.';
+      return { message, blockers: [message] };
     }
 
     // Nothing terminal — so everything below IS removable, and the message
     // should say how rather than send the user to "inactive" for a subsidiary
     // that is genuinely disposable (a typo in the create form, most often).
     const blockers: string[] = [];
-    if (reviewRecords > 0) blockers.push(`${reviewRecords} record(s) awaiting review`);
-    if (openRecords > 0) blockers.push(`${openRecords} draft or rejected record(s)`);
-    if (locations > 0) blockers.push(`${locations} location(s)`);
-    if (periodLocks > 0) blockers.push(`${periodLocks} closed reporting period(s)`);
-    if (targets > 0) blockers.push(`${targets} reduction target(s)`);
-    if (denominators > 0) blockers.push(`${denominators} intensity denominator(s)`);
-    if (blockers.length > 0) {
-      throw new ConflictException(
+    if (c.reviewRecords > 0) blockers.push(`${c.reviewRecords} record(s) awaiting review`);
+    if (c.openRecords > 0) blockers.push(`${c.openRecords} draft or rejected record(s)`);
+    if (c.locations > 0) blockers.push(`${c.locations} location(s)`);
+    if (c.periodLocks > 0) blockers.push(`${c.periodLocks} closed reporting period(s)`);
+    if (c.targets > 0) blockers.push(`${c.targets} reduction target(s)`);
+    if (c.denominators > 0) blockers.push(`${c.denominators} intensity denominator(s)`);
+    if (blockers.length === 0) return null;
+
+    return {
+      blockers,
+      message:
         `This subsidiary still holds ${blockers.join(', ')}. Deleting it would ` +
-          'destroy them without an audit entry for each. Remove them first ' +
-          '(reopen any closed period rather than deleting its lock' +
-          (reviewRecords > 0
-            ? '; a record awaiting review must be sent back by a reviewer before it can be removed'
-            : '') +
-          '), then delete the subsidiary.',
-      );
-    }
+        'destroy them without an audit entry for each. Remove them first ' +
+        '(reopen any closed period rather than deleting its lock' +
+        (c.reviewRecords > 0
+          ? '; a record awaiting review must be sent back by a reviewer before it can be removed'
+          : '') +
+        '), then delete the subsidiary.',
+    };
+  }
+
+  private async assertDeletable(
+    db: Prisma.TransactionClient,
+    id: string,
+  ): Promise<void> {
+    const refusal = SubsidiariesService.describeBlockers(
+      await this.countDependents(db, id),
+    );
+    if (refusal) throw new ConflictException(refusal.message);
   }
 
   async remove(user: RequestUser, id: string): Promise<{ id: string; deleted: true }> {
