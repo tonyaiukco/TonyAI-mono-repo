@@ -41,7 +41,6 @@ type SubsidiaryDependentCounts = Pick<
   | 'denominators'
 >;
 
-
 @Injectable()
 export class SubsidiariesService {
   constructor(

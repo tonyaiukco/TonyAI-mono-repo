@@ -83,10 +83,9 @@ test('a subsidiary on a hidden geography opens on it, and a mis-click is reversi
   // confirm — the geography dialog only fires on an actual change.
   await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled();
 
-  const row = await (await request.get(`${API_BASE}/subsidiaries/${sub.id}`, {
-    headers: bearer(token),
-  })).json();
-  expect(row.geographyCode).toBe('EU');
+  // No API re-read here: nothing has been written, so comparing the fixture to
+  // itself would look like an assertion and prove nothing. What this test is
+  // for is the PICKER — that a hidden code stays reachable once you leave it.
   await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
 });
 

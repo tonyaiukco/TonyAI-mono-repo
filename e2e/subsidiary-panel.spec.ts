@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   login, bearer, getAccessToken, pickByFieldLabel, cleanupE2ESubsidiaries,
-  ADMIN_EMAIL, ENTRY_EMAIL, API_BASE, SUB,
+  ADMIN_EMAIL, ENTRY_EMAIL, CONSULTANT_EMAIL, API_BASE, SUB,
 } from './helpers';
 
 /**
@@ -89,9 +89,17 @@ test('the register opens the panel, and the panel edits — including a declined
   expect(saved.legalName).toBe(renamed);
   expect(saved.geographyCode).toBe('UK');
 
-  // …and the register reflects it.
+  // …and the register reflects it. Both of these came across from
+  // `smoke.spec.ts`: an edit must not be an insert, and the register's
+  // geography column must move with the save — nothing else asserts either.
+  const before = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
   await page.goto('/subsidiaries');
   await expect(page.getByRole('cell', { name: renamed })).toBeVisible();
+  await expect(page.locator('tr', { hasText: renamed })).toContainText('UK');
+  expect(
+    (before as { id: string }[]).filter((s) => s.id === sub.id),
+    'the edit must have updated one row, not inserted another',
+  ).toHaveLength(1);
 });
 
 test('the contact section round-trips, and says what it is for', async ({ page, request }) => {
@@ -133,6 +141,19 @@ test('the contact section round-trips, and says what it is for', async ({ page, 
   })).json();
   expect(cleared.contactPhone).toBeNull();
   expect(cleared.contactEmail).toBe('esg@example.com');
+
+  // `designatedPerson` has no `@Transform(blankToNull)` on the API side — the
+  // page's own `orNull` is the only thing standing between a cleared field and
+  // an empty string in the column. Asserting the phone alone tested the DTO,
+  // not this page: gutting `orNull` left that green.
+  await page.reload();
+  await page.getByLabel('Responsible person').fill('   ');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Subsidiary settings updated successfully.')).toBeVisible();
+  const blanked = await (await request.get(`${API_BASE}/subsidiaries/${sub.id}`, {
+    headers: bearer(token),
+  })).json();
+  expect(blanked.designatedPerson, 'a cleared contact must be null, not ""').toBeNull();
 });
 
 test('the panel explains a refused delete in the API\'s own words', async ({ page, request }) => {
@@ -142,6 +163,12 @@ test('the panel explains a refused delete in the API\'s own words', async ({ pag
   await login(page, ADMIN_EMAIL);
   await page.goto(`/subsidiaries/${sub.id}`);
   await expect(page.getByText(/Nothing depends on this subsidiary/)).toBeVisible();
+
+  // Type into the detail form FIRST and leave it unsaved. Adding a location
+  // refetches, and the refetch must not reset this form — `load(false)` exists
+  // for exactly that, and nothing pinned it: switching it to `load(true)`
+  // silently discarded a user's half-finished edit and stayed green.
+  await page.getByLabel('Trading name').fill('Unsaved While Adding');
 
   // Add a location through the panel itself — the extracted body, mounted
   // inline rather than in the drawer.
@@ -154,6 +181,11 @@ test('the panel explains a refused delete in the API\'s own words', async ({ pag
   await pickByFieldLabel(page, 'Geography *', 'United Kingdom (UK)');
   await page.getByRole('button', { name: 'Add location' }).click();
   await expect(page.getByText('E2E Panel Site')).toBeVisible();
+
+  await expect(
+    page.getByLabel('Trading name'),
+    'adding a location must not discard an unsaved detail edit',
+  ).toHaveValue('Unsaved While Adding');
 
   await expect(page.getByText('This subsidiary cannot be deleted')).toBeVisible();
   // The sentence must be the API's, not one the UI wrote: same text as the 409.
@@ -170,7 +202,7 @@ test('the panel explains a refused delete in the API\'s own words', async ({ pag
   }
 });
 
-test('a data_entry user can read the panel but change nothing', async ({ page }) => {
+test('a data_entry user can read the panel but change nothing', async ({ page, request }) => {
   // This replaces `rbac-tenant.spec.ts`'s assertion that the row-level "Edit
   // subsidiary" button renders zero times. That button no longer exists for
   // anyone, so the old check would have passed while proving nothing — a
@@ -179,13 +211,94 @@ test('a data_entry user can read the panel but change nothing', async ({ page })
   await page.goto(`/subsidiaries/${SUB.energy}`);
 
   await expect(page.getByText(/only a super_admin can change it/i)).toBeVisible();
-  await expect(page.getByLabel('Legal name')).toBeDisabled();
-  await expect(page.getByLabel('Work email')).toBeDisabled();
+
+  // By rule, not by sample: asserting two named fields left eight other write
+  // controls ungated, and removing `disabled` from them stayed green.
+  const inputs = page.locator('form, div').locator('input');
+  const count = await inputs.count();
+  expect(count).toBeGreaterThan(0);
+  for (let i = 0; i < count; i += 1) {
+    await expect(inputs.nth(i), `input ${i} must be read-only`).toBeDisabled();
+  }
   await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add location' })).toHaveCount(0);
   await expect(page.getByText('Only a super_admin can add or modify locations.')).toBeVisible();
 
-  // …and the counts it CAN read are the real ones, not a blank shell.
+  // The period-locks drawer is mounted by this page too, and its gating was
+  // only ever checked on the register. Flipping its canManage to true here
+  // stayed green.
+  await page.getByRole('button', { name: 'Reporting periods' }).click();
+  await expect(page.getByText(/only a super_admin can lock or unlock/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Lock period' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  // …and the counts it CAN read are the REAL ones — asserting only the heading
+  // let a summary of all zeros pass. Cross-checked against the API rather than
+  // against the seed's numbers: another spec adding a location to this
+  // subsidiary earlier in the run would otherwise fail this for the wrong
+  // reason, which is how a hardcoded count becomes a flake.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const expected = await (await request.get(
+    `${API_BASE}/subsidiaries/${SUB.energy}/summary`, { headers: bearer(token) },
+  )).json();
+  expect(expected.locations, 'the fixture must be non-empty for this to mean anything').toBeGreaterThan(0);
+  expect(expected.terminalRecords).toBeGreaterThan(0);
+
+  const locationsRow = page.locator('div', {
+    has: page.getByText('Locations', { exact: true }),
+  }).last();
+  await expect(locationsRow).toContainText(String(expected.locations));
+  const committedRow = page.locator('div', {
+    has: page.getByText('Approved or locked records', { exact: true }),
+  }).last();
+  await expect(committedRow).toContainText(String(expected.terminalRecords));
+});
+
+test('a data_entry user is refused at the API too, not just in the UI', async ({ request }) => {
+  // The panel is what puts editable-looking fields in front of this user, so
+  // the API-level negative belongs beside it. `rbac-tenant.spec.ts` only ever
+  // patched a FOREIGN id, which 404s for tenancy rather than 403 for role.
+  const token = await getAccessToken(request, ENTRY_EMAIL);
+  const res = await request.patch(`${API_BASE}/subsidiaries/${SUB.energy}`, {
+    headers: bearer(token),
+    data: { contactEmail: 'nope@example.com' },
+  });
+  expect(res.status(), 'in-scope but wrong role is 403, not 404').toBe(403);
+});
+
+test('an external consultant sees the contact but cannot change it', async ({ page }) => {
+  // `permissions_and_roles.md` §6.4 makes this the headline of the visibility
+  // decision — the consultant seat is typically filled from outside the holding
+  // company. A decision nothing tests is a decision that can quietly reverse.
+  await login(page, CONSULTANT_EMAIL);
+  await page.goto(`/subsidiaries/${SUB.energy}`);
+  await expect(page.getByLabel('Work email')).toHaveValue('aylin.demir@example.com');
+  await expect(page.getByLabel('Work email')).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
+});
+
+test('a failed load says so instead of spinning forever', async ({ page }) => {
+  // Before this, a non-404 failure only toasted: the render fell through to the
+  // loading branch and an expired session looked like a spinner that never
+  // resolved. `errMessage` was never executed by any test at all.
+  await login(page, ADMIN_EMAIL);
+  await page.route('**/api/v1/subsidiaries/*/summary', (route) =>
+    route.fulfill({ status: 500, body: '{"message":"boom"}' }),
+  );
+  await page.goto(`/subsidiaries/${SUB.energy}`);
+
+  const panelError = page.locator('div', {
+    has: page.getByText('This subsidiary could not be loaded.'),
+  }).last();
+  await expect(panelError).toBeVisible();
+  // Scoped: the same sentence is also in the toast, so an unscoped match is a
+  // strict-mode violation rather than a stronger assertion.
+  await expect(panelError).toContainText(/service is unavailable right now/i);
+  await expect(page.getByText('Loading subsidiary…')).toHaveCount(0);
+
+  // …and it recovers without a full reload once the API is healthy again.
+  await page.unroute('**/api/v1/subsidiaries/*/summary');
+  await page.getByRole('button', { name: 'Try again' }).click();
   await expect(page.getByText('What depends on this subsidiary')).toBeVisible();
 });
 

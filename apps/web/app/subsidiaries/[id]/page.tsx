@@ -104,6 +104,7 @@ export default function SubsidiaryDetailPage() {
   const [summary, setSummary] = useState<SubsidiarySummaryDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [form, setForm] = useState<Form | null>(null);
   const [saving, setSaving] = useState(false);
   const [geoConfirm, setGeoConfirm] = useState<{ from: string; to: string } | null>(
@@ -115,6 +116,7 @@ export default function SubsidiaryDetailPage() {
 
   const load = useCallback(
     async (resetForm: boolean) => {
+      setLoadError(null);
       try {
         const [s, locs, sum] = await Promise.all([
           api.getSubsidiary(id),
@@ -129,7 +131,13 @@ export default function SubsidiaryDetailPage() {
         // A subsidiary outside the caller's scope answers 404, never 403 — the
         // project-wide rule, so this covers "gone" and "never yours" alike.
         if (e instanceof ApiError && e.status === 404) setNotFound(true);
-        else toast.error(errMessage(e));
+        else {
+          // Not just a toast: without this the render falls back to the
+          // loading branch and an expired session looks like a spinner that
+          // never resolves. The page has to say what happened.
+          setLoadError(errMessage(e));
+          toast.error(errMessage(e));
+        }
       } finally {
         setLoading(false);
       }
@@ -138,6 +146,14 @@ export default function SubsidiaryDetailPage() {
   );
 
   useEffect(() => {
+    // Reset per-id, not just on first mount. Without this a nav from a bad id
+    // to a good one keeps the not-found screen, and panel→panel renders the
+    // previous subsidiary as the new one until the fetch lands. Latent today —
+    // no in-app link does either — but this is the repo's first dynamic route
+    // and the next one will be copied from it.
+    setNotFound(false);
+    setLoadError(null);
+    setLoading(true);
     api
       .me()
       .then(setUser)
@@ -256,7 +272,17 @@ export default function SubsidiaryDetailPage() {
             </p>
           )}
 
-          {loading || !form || !subsidiary ? (
+          {loadError ? (
+            <div className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4">
+              <p className="text-sm font-medium text-destructive">
+                This subsidiary could not be loaded.
+              </p>
+              <p className="text-sm text-muted-foreground">{loadError}</p>
+              <Button variant="outline" onClick={() => void load(true)}>
+                Try again
+              </Button>
+            </div>
+          ) : loading || !form || !subsidiary ? (
             <p className="text-sm text-muted-foreground">Loading subsidiary…</p>
           ) : (
             <>

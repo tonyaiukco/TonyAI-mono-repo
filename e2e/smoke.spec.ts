@@ -1,7 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
   login,
-  pickByFieldLabel,
   subsidiaryRows,
   ADMIN_EMAIL,
   ENTRY_EMAIL,
@@ -42,17 +41,15 @@ test.describe('Milestone-1 slice', () => {
     // EDIT moved to `subsidiary-panel.spec.ts` (WP16 PR 2b): a subsidiary is
     // now edited on its own page, not in a dialog on the register. What stays
     // here is the register's own job — create, list, delete.
-    const renamed = uniqueName;
-
     // DELETE: trigger the delete on the new row, confirm in the alert dialog.
-    const newRow = page.locator('tr', { hasText: renamed });
+    const newRow = page.locator('tr', { hasText: uniqueName });
     await newRow.getByRole('button', { name: 'Delete subsidiary' }).click();
     const alert = page.getByRole('alertdialog');
     await expect(alert.getByText('Delete subsidiary?')).toBeVisible();
     await alert.getByRole('button', { name: 'Delete' }).click();
 
     // The row is gone and the count returns to 5.
-    await expect(page.getByRole('cell', { name: renamed })).toHaveCount(0);
+    await expect(page.getByRole('cell', { name: uniqueName })).toHaveCount(0);
     await expect(subsidiaryRows(page)).toHaveCount(5);
   });
 

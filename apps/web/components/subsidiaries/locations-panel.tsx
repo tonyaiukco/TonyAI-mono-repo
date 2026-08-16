@@ -287,7 +287,7 @@ export function LocationsPanel({
             </div>
             <Button onClick={handleSave} disabled={saving} className="w-full gap-2">
               <Plus className="h-4 w-4" />
-              {saving ? 'Saving…' : editingId ? 'Save changes' : 'Add location'}
+              {saving ? 'Saving…' : editingId ? 'Save location' : 'Add location'}
             </Button>
           </div>
         ) : (

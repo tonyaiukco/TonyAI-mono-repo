@@ -425,10 +425,10 @@ describe('SubsidiariesService', () => {
       'terminalRecords', 'reviewRecords', 'openRecords',
       'locations', 'periodLocks', 'targets', 'denominators',
     ] as const)('%s alone blocks the delete, so it belongs in the blocker list', async (key) => {
-      // `BLOCKING_DEPENDENTS` currently lists all seven, so the design guard is
-      // about the future: add a count to the summary, forget the array, and it
-      // would promise a delete the API then 409s. This pins the two together by
-      // setting each dependent to 1 ON ITS OWN and asserting both answers.
+      // `describeBlockers` is now the only thing that decides, so this pins the
+      // summary and the guard to it by setting each dependent to 1 ON ITS OWN
+      // and asserting both answers. (It replaced a `BLOCKING_DEPENDENTS` array
+      // that had to be kept in sync by hand — the array is gone, this is not.)
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);

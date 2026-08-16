@@ -74,11 +74,16 @@ Conventions: run as `admin@tonyai.local` unless the TC says otherwise. Mark each
 | SUBS-03 | As admin: open **Manage locations** (map-pin icon) | Drawer lists that subsidiary's locations; add + delete a location works | |
 | SUBS-04 | Sign in as `entry@tonyai.local`: count rows | Exactly **2** rows; **no** Add/Delete controls rendered | |
 | SUBS-05 | As entry: open **Manage period locks** (padlock) | Drawer opens read-only: no *Lock period* form, "only a super_admin" note | |
-| SUBS-06 | As admin: click the **pencil** on a subsidiary | Dialog opens titled *Edit subsidiary*, **pre-filled** with that subsidiary's current values (round-1 **SUB-1**) | |
-| SUBS-07 | Change the legal name only → **Save changes** | Saves straight away with *Subsidiary settings updated successfully.*; the row shows the new name | |
-| SUBS-08 | Edit again, change **Geography** → **Save changes** | A confirmation appears first, naming the old and new geography, warning about the factor basis **and** stating that already-committed records keep their existing factor — their figures do not change | |
-| SUBS-09 | Press **Cancel** in that confirmation | Nothing is saved — the row still shows the old geography | |
-| SUBS-10 | Repeat and press **Continue** | Saved; the row shows the new geography. Then check `/emissions` → **History**: the tCO₂e of existing records for that subsidiary is **unchanged** | |
+| SUBS-06 | As admin: click the **pencil** on a subsidiary | Its own page opens at `/subsidiaries/<id>`, **pre-filled** with that subsidiary's current values (round-1 **SUB-1**, **SUB-2**). Editing moved off the register in WP16 PR 2b — there is no longer an *Edit subsidiary* dialog | |
+| SUBS-07 | Change the legal name only → **Save changes** | Saves with *Subsidiary settings updated successfully.*; go back to the register and the row shows the new name | |
+| SUBS-08 | Change **Reporting geography** → **Save changes** | A confirmation appears first, naming the old and new geography, warning about the factor basis **and** stating that already-committed records keep their existing factor — their figures do not change | |
+| SUBS-09 | Press **Cancel** in that confirmation, then **Discard changes** | Nothing is saved. Reload the page: the old geography is still there. (A page has no Cancel-to-close, so discarding is explicit) | |
+| SUBS-10 | Repeat and press **Continue** | Saved; the register row shows the new geography. Then check `/emissions` → **History**: the tCO₂e of existing records for that subsidiary is **unchanged** | |
+| SUBS-11 | On the same page, fill **Reporting contact** (responsible person, work email, work phone) → **Save changes** | Saved. Note the wording: this is the person who *prepares* the inventory, not who signs it off, and it is visible to everyone in the organisation — including an external consultant — so a **role mailbox** is preferred over a personal number (round-1 **SUB-2**) | |
+| SUBS-12 | Clear the work phone and save | The field comes back empty, not as a blank-looking value. Re-open the page to confirm | |
+| SUBS-13 | In **Operational locations** on that page, add a location | It appears in the list without leaving the page. Changing an existing location's geography asks for the same confirmation as the subsidiary's | |
+| SUBS-14 | Scroll to **What depends on this subsidiary** | Counts for locations, records by state, closed periods, targets and denominators. If it cannot be deleted, the reason is spelled out — and it is the **same sentence** the API gives if you try (round-1 **SUB-2**) | |
+| SUBS-15 | As `entry@tonyai.local`, open a subsidiary you can see | The page is readable but every field is disabled, there is no **Save changes**, and locations say *Only a super_admin can add or modify locations* | |
 | SUBS-11 | Sign in as `entry@tonyai.local` | **No pencil icon** on any row (and none as `review@tonyai.local`) | |
 
 ### 3.4 Data entry lifecycle (`/data-entry`) — the core flow
