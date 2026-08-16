@@ -48,7 +48,11 @@ export function buildReportHtml(data: ReportData): string {
               ? `${fmt.format(r.normalizedValue)} ${esc(r.normalizedUnit ?? '')} <span class="note">(&times;${r.conversionFactor})</span>`
               : '&mdash;'
           }</td>
-          <td class="num">${fmt.format(r.tCo2e)}</td><td>${esc(r.status)}</td>
+          <td class="num">${
+            r.tCo2e === null
+              ? '<span class="note">Not calculated</span>'
+              : fmt.format(r.tCo2e)
+          }</td><td>${esc(r.status)}</td>
           <td class="num">${r.evidenceCount}</td></tr>`,
         )
         .join('')
@@ -113,6 +117,11 @@ export function buildReportHtml(data: ReportData): string {
     <div class="tile"><div class="l">Total</div><div class="v">${fmt.format(data.summary.totals.total)} tCO₂e</div></div>
     <div class="tile"><div class="l">Committed records</div><div class="v">${data.summary.recordCount}</div></div>
   </div>
+  ${
+    data.summary.uncalculatedRecordCount > 0
+      ? `<p class="note"><strong>${data.summary.uncalculatedRecordCount}</strong> of these ${data.summary.recordCount} records carry no emissions figure, because no emission factor is available for their category. They are listed in the detail ledger as &ldquo;Not calculated&rdquo; and contribute nothing to the totals above.</p>`
+      : ''
+  }
   <p class="note">Scope 3 is out of scope for Phase 1. Figures are computed from committed activity records using prototype demo emission factors — not authoritative DEFRA/AIB values.</p>
 
   <h2>Emissions by category</h2>

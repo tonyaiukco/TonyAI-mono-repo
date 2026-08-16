@@ -12,10 +12,12 @@ import {
 } from '@tonyai/db';
 import {
   CATEGORY_SCOPE_MAP,
+  isCalculated,
   isEvidenceRequired,
+  type ActivityCalculationSnapshot,
   type ActivityRecordDTO,
-  type CalculationResult,
   type AuditAction,
+  type CalculationResult,
   type Category,
   type ReportingPeriod,
 } from '@tonyai/shared-types';
@@ -27,6 +29,18 @@ import { EvidenceService } from '../evidence/evidence.service';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
+
+/** Inputs to the VAR §4 rolling-baseline check, minus the figure itself. */
+interface AnomalyParams {
+  subsidiaryId: string;
+  locationId: string | null;
+  category: string;
+  reportingPeriod: string;
+  reportingYear: number;
+  periodValue: string;
+  currentTCo2e: number;
+  excludeId?: string;
+}
 
 // Roles allowed to create/update/delete/submit their own records.
 // A consultant is NOT among them (decision 2026-07-30): the permissions matrix
@@ -153,7 +167,7 @@ export class ActivityRecordsService {
       activityValue: r.activityValue,
       activityUnit: r.activityUnit,
       input: (r.input as Record<string, unknown> | null) ?? null,
-      calculation: r.calculation as unknown as CalculationResult,
+      calculation: r.calculation as unknown as ActivityCalculationSnapshot,
       createdBy: r.createdBy,
       anomalyFlag: r.anomalyFlag,
       varianceReason: r.varianceReason,
@@ -238,7 +252,7 @@ export class ActivityRecordsService {
     locationId?: string | null,
     /** False when `activityUnit` came from the stored record, not this request. */
     unitChosenNow = true,
-  ): Promise<{ calculation: CalculationResult; scope: number }> {
+  ): Promise<{ calculation: ActivityCalculationSnapshot; scope: number }> {
     if (!accessibleSubsidiaryIds.includes(subsidiaryId)) {
       // Tenant isolation: cannot attach a record to an inaccessible subsidiary.
       throw new NotFoundException('Subsidiary not found');
@@ -298,21 +312,30 @@ export class ActivityRecordsService {
   }
 
   /**
+   * Anomaly check for a record whose figure comes from a snapshot.
+   *
+   * VAR §4 defines the deviation on the **calculated tCO₂e**, so a record that
+   * produced no figure has nothing to deviate from and is never anomalous.
+   * Substituting 0 — which is what a plain `?? 0` does — reads as a 100% drop
+   * against any real baseline and would demand a variance comment for a value
+   * that was never computed. Every write path goes through here so the three
+   * of them cannot drift on that rule.
+   */
+  private async detectAnomalyFor(
+    calculation: ActivityCalculationSnapshot,
+    params: Omit<AnomalyParams, 'currentTCo2e'>,
+  ): Promise<boolean> {
+    if (!isCalculated(calculation)) return false;
+    return this.detectAnomaly({ ...params, currentTCo2e: calculation.tCo2e });
+  }
+
+  /**
    * Anomaly check (VAR §4): true when `currentTCo2e` deviates > ±50% from the
    * rolling average of the previous (up to 3) committed periods for the same
    * reporting entity (subsidiary + location + category) at the same granularity.
    * No prior periods (or a zero baseline) → not anomalous. Warning-only.
    */
-  private async detectAnomaly(params: {
-    subsidiaryId: string;
-    locationId: string | null;
-    category: string;
-    reportingPeriod: string;
-    reportingYear: number;
-    periodValue: string;
-    currentTCo2e: number;
-    excludeId?: string;
-  }): Promise<boolean> {
+  private async detectAnomaly(params: AnomalyParams): Promise<boolean> {
     const rows = await this.prisma.activityRecord.findMany({
       where: {
         subsidiaryId: params.subsidiaryId,
@@ -330,14 +353,15 @@ export class ActivityRecordsService {
     const priorValues = rows
       .map((r) => ({
         key: r.reportingYear * 100 + periodOrdinal(r.reportingPeriod, r.periodValue),
-        calc: r.calculation as unknown as CalculationResult | null,
+        calc: r.calculation as unknown as ActivityCalculationSnapshot | null,
       }))
       .filter((x) => x.key < currentKey) // strictly earlier periods only
       .sort((a, b) => b.key - a.key)
       .slice(0, BASELINE_MAX_PERIODS)
-      .map((x) => (x.calc && Number.isFinite(x.calc.tCo2e) ? x.calc.tCo2e : null))
+      .map((x) => (isCalculated(x.calc) ? x.calc.tCo2e : null))
       // Drop (rather than zero-fill) priors without a usable tCO₂e so they don't
-      // deflate the average and manufacture false anomalies.
+      // deflate the average and manufacture false anomalies. A record with no
+      // factor is one such prior. One predicate everywhere — see isCalculated().
       .filter((v): v is number => v !== null);
 
     if (priorValues.length === 0) return false; // no baseline to deviate from
@@ -419,14 +443,13 @@ export class ActivityRecordsService {
       dto.locationId,
     );
 
-    const anomalyFlag = await this.detectAnomaly({
+    const anomalyFlag = await this.detectAnomalyFor(calculation, {
       subsidiaryId: dto.subsidiaryId,
       locationId: dto.locationId ?? null,
       category: dto.category,
       reportingPeriod: dto.reportingPeriod,
       reportingYear: dto.reportingYear,
       periodValue: dto.periodValue,
-      currentTCo2e: calculation.tCo2e,
     });
 
     let created: ActivityRecord & { location: { name: string } | null };
@@ -527,17 +550,26 @@ export class ActivityRecordsService {
       activityValue,
       activityUnit,
       locationId,
-      dto.activityUnit !== undefined,
+      // Enforce the category/unit map when the unit was chosen NOW **or when
+      // the category changed**. The second half was missing and it was a live
+      // path to a fabricated figure: a PATCH that sends only `{category}` left
+      // the stored unit unchecked against the new category, so a 250 m³ WATER
+      // reading re-filed as Electricity was normalised at the natural-gas
+      // calorific value (×11.36) and multiplied by the grid factor — a fully
+      // provenanced 2,840 kWh of electricity that no one ever measured. The
+      // leniency exists for records predating the map being edited without
+      // touching the unit; re-interpreting a stored unit under a different
+      // category is the opposite of that case.
+      dto.activityUnit !== undefined || category !== existing.category,
     );
 
-    const anomalyFlag = await this.detectAnomaly({
+    const anomalyFlag = await this.detectAnomalyFor(calculation, {
       subsidiaryId: existing.subsidiaryId,
       locationId,
       category,
       reportingPeriod,
       reportingYear,
       periodValue,
-      currentTCo2e: calculation.tCo2e,
       excludeId: id, // the record's own row must not seed its baseline
     });
 
@@ -671,15 +703,20 @@ export class ActivityRecordsService {
     // submit time — a comparable period may have been committed since the draft
     // was saved. The API is the final enforcement layer, so it recomputes rather
     // than trusting the write-time flag, and persists the fresh value.
-    const calc = record.calculation as unknown as CalculationResult | null;
-    const anomalous = await this.detectAnomaly({
+    // A record with no calculated figure is not comparable to anything, so it
+    // is not evaluated at all. Passing 0 instead — which is what a naive
+    // `?? 0` does — reads as a 100% drop against any real baseline and would
+    // block the submit demanding a variance comment for a value that was never
+    // computed. Harmless while a category is uniformly factor-less, and a live
+    // bug the day a factor lands mid-year and the priors become calculable.
+    const calc = record.calculation as unknown as ActivityCalculationSnapshot;
+    const anomalous = await this.detectAnomalyFor(calc, {
       subsidiaryId: record.subsidiaryId,
       locationId: record.locationId,
       category: record.category,
       reportingPeriod: record.reportingPeriod,
       reportingYear: record.reportingYear,
       periodValue: record.periodValue,
-      currentTCo2e: calc && Number.isFinite(calc.tCo2e) ? calc.tCo2e : 0,
       excludeId: record.id,
     });
     if (anomalous && !record.varianceReason?.trim()) {

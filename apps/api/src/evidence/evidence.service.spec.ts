@@ -58,7 +58,7 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     activityValue: 1000,
     activityUnit: 'kWh',
     input: null,
-    calculation: { tCo2e: 10 } as unknown,
+    calculation: { tCo2e: 10, factorId: 'f-1' } as unknown,
     createdBy: 'user-entry',
     anomalyFlag: false,
     varianceReason: null,

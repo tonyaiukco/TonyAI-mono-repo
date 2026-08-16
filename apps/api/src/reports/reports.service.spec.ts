@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import ExcelJS from 'exceljs';
 import { ReportsService } from './reports.service';
 import { buildReportHtml } from './report-html';
 import { PrismaService } from '../prisma/prisma.service';
@@ -30,6 +31,8 @@ const SUMMARY = {
   ],
   trend: { monthly: [], quarterly: [], yearly: [] },
   recordCount: 3,
+  calculatedRecordCount: 3,
+  uncalculatedRecordCount: 0,
   statusesIncluded: ['submitted', 'under_review', 'approved', 'locked'] as ActivityRecordStatus[],
 } satisfies EmissionsSummary;
 
@@ -285,6 +288,133 @@ describe('ReportsService', () => {
       'Raw Activity Data',
       'Factors Used',
     ]);
+  });
+
+  describe('a record with no emission factor (WP17 — Water)', () => {
+    // These specs mock TWO records, so the summary the assembler receives has
+    // to describe two as well — otherwise the tile-vs-ledger reconciliation
+    // below would be asserted against a fixture that cannot occur.
+    beforeEach(() => {
+      emissions.summary.mockResolvedValue({
+        ...SUMMARY,
+        recordCount: 2,
+        calculatedRecordCount: 1,
+        uncalculatedRecordCount: 1,
+      });
+    });
+
+    // The snapshot a factor-less category stores: no tCo2e, no factorId.
+    const waterRecord = () =>
+      makeRecord({
+        id: 'rec-water',
+        category: 'Water',
+        scope: 3,
+        activityValue: 250,
+        activityUnit: 'cubic_metres',
+        evidence: [{ fileName: 'water-jan.pdf' }],
+        calculation: {
+          category: 'Water',
+          geographyCode: 'TR',
+          reportingYear: 2024,
+          scope: 3,
+          inputValue: 250,
+          inputUnit: 'cubic_metres',
+          reasonCode: 'no_emission_factor',
+          reason: 'No emission factor is available for "Water"',
+        },
+      });
+
+    it('the ledger carries null, not 0 — a report must not assert an unmeasured zero', async () => {
+      prisma.activityRecord.findMany.mockResolvedValue([waterRecord()]);
+
+      const meta = await service.assemble(admin, q);
+      const row = meta.records.find((r) => r.category === 'Water');
+
+      expect(row).toBeDefined();
+      expect(row!.tCo2e).toBeNull();
+      // The distinction that matters: `0` and `null` are both falsy, so a test
+      // asserting "not truthy" would pass on the very bug this replaces.
+      expect(row!.tCo2e).not.toBe(0);
+    });
+
+    it('the CSV writes "Not calculated" for the water row and a NUMBER for the calculated one', async () => {
+      // Two records on purpose. Asserting only that the water row says the
+      // label passes just as happily against a writer that prints the label for
+      // EVERY row — i.e. against a destroyed tCO₂e column.
+      prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), waterRecord()]);
+
+      const csv = await service.generateCsv(admin, q);
+      const lines = csv.trim().split('\n');
+      const electricity = lines.find((l) => l.includes('Electricity'))!;
+      const water = lines.find((l) => l.includes('Water'))!;
+
+      expect(water).toContain('Not calculated');
+      expect(electricity).not.toContain('Not calculated');
+      expect(electricity.split(',')).toContain('0.44');
+      // An empty cell in a numeric column sums as zero downstream, which is the
+      // same misstatement wearing a different hat.
+      expect(water).not.toMatch(/,,/);
+    });
+
+    it('the Excel ledger writes the label for water and a numeric cell for the calculated row', async () => {
+      prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), waterRecord()]);
+
+      const buffer = await service.generateExcel(admin, q);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+      const sheet = wb.getWorksheet('Raw Activity Data')!;
+
+      const cellsByCategory = new Map<string, ExcelJS.CellValue>();
+      sheet.eachRow((row, i) => {
+        if (i === 1) return; // header
+        cellsByCategory.set(String(row.getCell(2).value), row.getCell(7).value);
+      });
+
+      expect(cellsByCategory.get('Water')).toBe('Not calculated');
+      // The one that was silently broken: `?? 0` here writes a literal 0 into
+      // an audit spreadsheet, and `?? ''` leaves a blank that SUMs as zero.
+      expect(cellsByCategory.get('Electricity')).toBe(0.44);
+      expect(typeof cellsByCategory.get('Electricity')).toBe('number');
+    });
+
+    it('the PDF prints the label for water, a number for the calculated row, and reconciles its own tile', async () => {
+      prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), waterRecord()]);
+      const data = await service.assemble(admin, {
+        ...q,
+        template: 'ghg_protocol_detail',
+      } as typeof q);
+
+      const html = buildReportHtml(data);
+
+      // The PDF is the artifact an auditor keeps, so the absence has to be
+      // legible in it — not just correct in the object behind it.
+      expect(html).toContain('Not calculated');
+      // ...in exactly one LEDGER CELL: a writer that labelled every row would
+      // satisfy the assertion above while destroying the whole tCO₂e column.
+      // Matched on the cell, not the bare string, because the reconciliation
+      // note above the table quotes the same label.
+      const labelledCells = html.match(
+        /<td class="num"><span class="note">Not calculated<\/span><\/td>/g,
+      );
+      expect(labelledCells).toHaveLength(1);
+      // 0.44 rounded by the report's own 1-decimal formatter.
+      expect(html).toContain('<td class="num">0.4</td>');
+      // The "Committed records" tile counts every committed row, so it must not
+      // disagree with the ledger printed directly beneath it.
+      expect(data.summary.recordCount).toBe(2);
+      expect(data.records).toHaveLength(2);
+      expect(html).toContain('carry no emissions figure');
+    });
+
+    it('a factor-less record contributes no row to the Factors Used appendix', async () => {
+      prisma.activityRecord.findMany.mockResolvedValue([waterRecord()]);
+
+      const meta = await service.assemble(admin, q);
+
+      // Nothing to be traceable to — an appendix row here would claim a
+      // provenance the figure never had.
+      expect(meta.factors).toHaveLength(0);
+    });
   });
 
   it('generateCsv neutralizes spreadsheet formula injection', async () => {

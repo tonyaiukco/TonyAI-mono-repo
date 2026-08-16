@@ -1,9 +1,30 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { EmissionFactor } from '@tonyai/db';
+import {
+  isCalculated,
+  type ActivityCalculationSnapshot,
+  type CalculationResult,
+  type UncalculatedSnapshot,
+} from '@tonyai/shared-types';
 import { CalculationsService } from './calculations.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { isKnownUnit, normalize } from './normalization';
+
+/**
+ * Assert the snapshot carries a real figure, and narrow to it.
+ *
+ * Deliberately an assertion rather than a cast: `as CalculationResult` would
+ * compile against the uncalculated shape too, so a regression that silently
+ * stopped calculating Electricity would keep every one of these specs green
+ * while every `expect(...).toBeCloseTo` compared `undefined` to a number.
+ */
+function expectCalculated(
+  snapshot: ActivityCalculationSnapshot,
+): CalculationResult {
+  expect(isCalculated(snapshot)).toBe(true);
+  return snapshot as CalculationResult;
+}
 
 // Local Prisma mock: only the emissionFactor surface the service touches. No DB.
 function createFactorPrismaMock() {
@@ -99,13 +120,13 @@ describe('CalculationsService.compute', () => {
       makeFactor({ geographyCode: 'TR', factorValue: 0.44, reportingYear: 2024 }),
     );
 
-    const result = await service.compute({
+    const result = expectCalculated(await service.compute({
       category: 'Electricity',
       geographyCode: 'TR',
       reportingYear: 2024,
       value: 45000,
       unit: 'kWh',
-    });
+    }));
 
     expect(result.kgCo2e).toBeCloseTo(19800, 6);
     expect(result.tCo2e).toBeCloseTo(19.8, 6);
@@ -118,13 +139,13 @@ describe('CalculationsService.compute', () => {
       makeFactor({ geographyCode: 'TR', factorValue: 0.44 }),
     );
 
-    const result = await service.compute({
+    const result = expectCalculated(await service.compute({
       category: 'Electricity',
       geographyCode: 'TR',
       reportingYear: 2024,
       value: 5,
       unit: 'mwh',
-    });
+    }));
 
     expect(result.normalizedValue).toBe(5000);
     expect(result.kgCo2e).toBeCloseTo(2200, 6);
@@ -143,13 +164,13 @@ describe('CalculationsService.compute', () => {
     });
     prisma.emissionFactor.findFirst.mockResolvedValue(factor);
 
-    const result = await service.compute({
+    const result = expectCalculated(await service.compute({
       category: 'Electricity',
       geographyCode: 'TR',
       reportingYear: 2024,
       value: 100,
       unit: 'kWh',
-    });
+    }));
 
     expect(result.factorId).toBe('factor-snap');
     expect(result.factorValue).toBe(0.44);
@@ -166,13 +187,13 @@ describe('CalculationsService.compute', () => {
       makeFactor({ reportingYear: 2023, factorValue: 0.2123, geographyCode: 'UK', version: '2023.1' }),
     );
 
-    const result = await service.compute({
+    const result = expectCalculated(await service.compute({
       category: 'Electricity',
       geographyCode: 'UK',
       reportingYear: 2023,
       value: 1000,
       unit: 'kWh',
-    });
+    }));
 
     // Confirms the year filter is passed to the DB and the returned factor is used.
     expect(prisma.emissionFactor.findFirst).toHaveBeenCalledWith({
@@ -194,13 +215,13 @@ describe('CalculationsService.compute', () => {
       }),
     );
 
-    const result = await service.compute({
+    const result = expectCalculated(await service.compute({
       category: 'Natural Gas',
       geographyCode: 'UK',
       reportingYear: 2024,
       value: 100,
       unit: 'cubic_metres',
-    });
+    }));
 
     // 100 m³ × 11.36 = 1136 kWh ; × 0.1829 = 207.7744 kgCO2e
     expect(result.normalizedValue).toBeCloseTo(1136, 6);
@@ -238,13 +259,13 @@ describe('CalculationsService.compute', () => {
       }),
     );
 
-    const result = await service.compute({
+    const result = expectCalculated(await service.compute({
       category: 'Natural Gas',
       geographyCode: 'UK',
       reportingYear: 2026,
       value: 100,
       unit: 'cubic_metres',
-    });
+    }));
 
     expect(result.conversionApplied).toBe(true);
     expect(result.conversionFactor).toBe(11.36);
@@ -256,13 +277,13 @@ describe('CalculationsService.compute', () => {
       makeFactor({ normalizedUnit: 'kWh' }),
     );
 
-    const result = await service.compute({
+    const result = expectCalculated(await service.compute({
       category: 'Electricity',
       geographyCode: 'UK',
       reportingYear: 2026,
       value: 10,
       unit: 'kWh',
-    });
+    }));
 
     expect(result.conversionApplied).toBe(false);
     expect(result.conversionFactor).toBeUndefined();
@@ -297,6 +318,143 @@ describe('CalculationsService.compute', () => {
         unit: 'kWh',
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  describe('a category with no factor at all (WP17 — Water)', () => {
+    it('records the entry instead of refusing, and says why in the snapshot', async () => {
+      prisma.emissionFactor.findFirst.mockResolvedValue(null);
+
+      const result = await service.compute({
+        category: 'Water',
+        geographyCode: 'TR',
+        reportingYear: 2026,
+        value: 100,
+        unit: 'cubic_metres',
+      });
+
+      expect(isCalculated(result)).toBe(false);
+      const uncalculated = result as UncalculatedSnapshot;
+      expect(uncalculated.reasonCode).toBe('no_emission_factor');
+      expect(uncalculated.reason).toMatch(/no emission factor/i);
+      // Scope still comes from the canonical map, so the record files itself
+      // under Scope 3 rather than defaulting to 0.
+      expect(uncalculated.scope).toBe(3);
+      expect(uncalculated.inputValue).toBe(100);
+      expect(uncalculated.inputUnit).toBe('cubic_metres');
+    });
+
+    it('does NOT normalise — 100 m³ of water must not become 1,136 kWh', async () => {
+      prisma.emissionFactor.findFirst.mockResolvedValue(null);
+
+      const result = (await service.compute({
+        category: 'Water',
+        geographyCode: 'TR',
+        reportingYear: 2026,
+        value: 100,
+        unit: 'cubic_metres',
+      })) as UncalculatedSnapshot & { normalizedValue?: number };
+
+      // The guard that matters: normalize() is category-blind and converts any
+      // cubic_metres at the NATURAL GAS calorific value (×11.36). Running it
+      // here would freeze a nonsense figure into an immutable record.
+      expect(result.normalizedValue).toBeUndefined();
+      expect('normalizedUnit' in result).toBe(false);
+      expect(normalize(100, 'cubic_metres').normalizedValue).toBeCloseTo(1136, 6);
+    });
+
+    it('carries no figure and no factor, so nothing can read it as zero', async () => {
+      prisma.emissionFactor.findFirst.mockResolvedValue(null);
+
+      const result = (await service.compute({
+        category: 'Water',
+        geographyCode: 'UK',
+        reportingYear: 2026,
+        value: 42,
+        unit: 'cubic_metres',
+      })) as UncalculatedSnapshot & { tCo2e?: number; factorId?: string };
+
+      expect(result.tCo2e).toBeUndefined();
+      expect(result.factorId).toBeUndefined();
+      // Every consumer sums with a finite check, so an absent figure drops out
+      // of totals rather than deflating them.
+      expect(Number.isFinite(result.tCo2e)).toBe(false);
+    });
+
+    it('the exception stops firing the moment a factor resolves', async () => {
+      // Deliberately a kWh-based factor: this proves only that the allow-list
+      // is a permission and not an assertion — the `!factor` branch is checked
+      // first, so a resolvable factor takes the normal path. It says nothing
+      // about whether that path is CORRECT for water; see the next spec.
+      prisma.emissionFactor.findFirst.mockResolvedValue(
+        makeFactor({
+          category: 'Water',
+          scope: 3,
+          factorValue: 0.149,
+          normalizedUnit: 'kWh',
+          geographyCode: 'UK',
+        }),
+      );
+
+      const result = await service.compute({
+        category: 'Water',
+        geographyCode: 'UK',
+        reportingYear: 2026,
+        value: 100,
+        unit: 'cubic_metres',
+      });
+
+      expect(isCalculated(result)).toBe(true);
+    });
+
+    it('a CORRECTLY-seeded water factor cannot be applied yet — normalize() is category-blind', async () => {
+      // The safe seeding: a water factor is quoted per cubic metre, not per kWh.
+      prisma.emissionFactor.findFirst.mockResolvedValue(
+        makeFactor({
+          category: 'Water',
+          scope: 3,
+          factorValue: 0.149,
+          factorUnit: 'kgCO2e/m3',
+          normalizedUnit: 'cubic_metres',
+          geographyCode: 'UK',
+        }),
+      );
+
+      // This is the honest state of affairs and the reason it must be a test
+      // rather than a comment: `normalize()` converts ANY cubic_metres at the
+      // natural-gas calorific value, so the input arrives as 1,136 "kWh" and
+      // the unit guard refuses it. Seeding a water factor is therefore NOT
+      // sufficient to make water calculable — `normalize(value, unit, category)`
+      // has to land first (recorded in the roadmap's open questions).
+      await expect(
+        service.compute({
+          category: 'Water',
+          geographyCode: 'UK',
+          reportingYear: 2026,
+          value: 100,
+          unit: 'cubic_metres',
+        }),
+      ).rejects.toThrow(/normalises to "kWh" but the factor .* expects "cubic_metres"/);
+
+      // And the failure is loud, not a silently fabricated number.
+      expect(normalize(100, 'cubic_metres').normalizedValue).toBeCloseTo(1136, 6);
+    });
+
+    it('a missing ELECTRICITY factor still refuses — the exception is one named category', async () => {
+      prisma.emissionFactor.findFirst.mockResolvedValue(null);
+
+      // Electricity is invoice-tracked too, so a rule keyed on "invoice-tracked
+      // and unresolved" would have silently accepted this with no figure. The
+      // core of the inventory must fail loudly instead.
+      await expect(
+        service.compute({
+          category: 'Electricity',
+          geographyCode: 'ZZ',
+          reportingYear: 2026,
+          value: 1000,
+          unit: 'kWh',
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
   });
 
   it('throws BadRequest for an unsupported unit before any DB lookup', async () => {

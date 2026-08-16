@@ -5,8 +5,8 @@ import type {
   ListAuditParams,
   ListActivityRecordsParams,
   Paginated,
+  ActivityCalculationSnapshot,
   CalculationInput,
-  CalculationResult,
   Category,
   CreateActivityRecordInput,
   CreateDenominatorInput,
@@ -139,7 +139,10 @@ export const api = {
 
   // --- Calculation engine ---
   previewCalculation: (input: CalculationInput) =>
-    apiFetch<CalculationResult>("/calculations/preview", {
+    // Union, not CalculationResult: the preview mirrors what would be stored,
+    // and an invoice-tracked category with no factor previews as the explicit
+    // "not calculated" shape. Typed narrowly this compiled fine and lied.
+    apiFetch<ActivityCalculationSnapshot>("/calculations/preview", {
       method: "POST",
       body: JSON.stringify(input),
     }),

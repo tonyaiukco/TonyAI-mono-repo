@@ -37,16 +37,23 @@ import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import {
   ACTIVITY_UNITS,
+  appliesUnitConversion,
   CATEGORIES,
   GEOGRAPHY_LABELS,
   DEFAULT_REPORTING_YEAR,
+  isCalculated,
   REPORTING_YEARS,
+  unitSymbol,
   unitsForCategory,
 } from "@/lib/types";
+import {
+  NOT_CALCULATED_LABEL,
+  NO_FACTOR_LABEL,
+} from "@/lib/calculation-display";
 import type {
+  ActivityCalculationSnapshot,
   ActivityRecordDTO,
   ActivityRecordStatus,
-  CalculationResult,
   Category,
   LocationDTO,
   PeriodLockDTO,
@@ -195,7 +202,7 @@ function DataEntryPageInner() {
   const [context, setContext] = useState<ContextValues>({});
 
   // Preview
-  const [preview, setPreview] = useState<CalculationResult | null>(null);
+  const [preview, setPreview] = useState<ActivityCalculationSnapshot | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
@@ -912,7 +919,15 @@ function DataEntryPageInner() {
                         </p>
                       );
                     }
-                    if (activityUnit === "cubic_metres") {
+                    // Keyed on the unit AND the category. On the unit alone this
+                    // note was correct only while m³ meant natural gas: for a
+                    // category with no factor nothing is converted at all, and
+                    // the note was telling the user their water meter had been
+                    // multiplied by the natural-gas calorific value.
+                    if (
+                      activityUnit === "cubic_metres" &&
+                      appliesUnitConversion(activityUnit, category)
+                    ) {
                       // The 11.36 in calculation_logic.md §2.1 has no citation,
                       // no calorific basis and no stated reference conditions.
                       // It has been converting silently; on a compliance product
@@ -924,6 +939,15 @@ function DataEntryPageInner() {
                           assumption with no cited source, and no stated calorific
                           basis or reference conditions. It will be replaced by a
                           sourced factor in the Phase-4 factor library.
+                        </p>
+                      );
+                    }
+                    if (activityUnit === "cubic_metres") {
+                      return (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Recorded exactly as entered, in m³. No conversion is
+                          applied, because {category} has no emission factor to
+                          convert towards.
                         </p>
                       );
                     }
@@ -1144,7 +1168,9 @@ function DataEntryPageInner() {
                               </div>
                               <div className="text-xs text-muted-foreground">
                                 {r.category} ·{" "}
-                                {numberFmt.format(r.calculation.tCo2e)} tCO₂e
+                                {isCalculated(r.calculation)
+                                  ? `${numberFmt.format(r.calculation.tCo2e)} tCO₂e`
+                                  : NOT_CALCULATED_LABEL}
                               </div>
                             </div>
                           </button>
@@ -1172,7 +1198,7 @@ function PreviewCard({
   geographyCode,
 }: {
   previewing: boolean;
-  preview: CalculationResult | null;
+  preview: ActivityCalculationSnapshot | null;
   error: string | null;
   hasValidInput: boolean;
   geographyCode: string | null;
@@ -1205,6 +1231,37 @@ function PreviewCard({
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-2/3" />
           </div>
+        ) : !isCalculated(preview) ? (
+          // The moment that has to be unambiguous: the user typed a valid
+          // reading and no number came back. Saying so plainly — with the API's
+          // own reason and what WILL still happen — is the difference between
+          // "the app is broken" and "this category is tracked by invoice".
+          <div className="space-y-4">
+            <div className="flex items-start gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-sm text-sky-900">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="space-y-1">
+                <p className="font-medium">{NOT_CALCULATED_LABEL}</p>
+                <p className="text-xs text-sky-900/80">{preview.reason}</p>
+              </div>
+            </div>
+            <dl className="space-y-2 text-sm">
+              <Row label="Emission factor" value={NO_FACTOR_LABEL} />
+              <Row
+                label="Recorded as"
+                value={`${numberFmt.format(preview.inputValue)} ${unitSymbol(preview.inputUnit)}`}
+              />
+              {geographyCode && <Row label="Geography" value={geographyCode} />}
+            </dl>
+            {/* Says only what is true today. "It counts towards data
+                completeness" was the first wording and it described a feature
+                that has not shipped yet — the completeness engine is the next
+                work package. */}
+            <p className="text-xs text-muted-foreground">
+              You can still save and submit this entry. An invoice is required
+              before it can be submitted, since without an emission factor the
+              invoice is the only record of what was consumed.
+            </p>
+          </div>
         ) : (
           <div className="space-y-4">
             <div>
@@ -1232,7 +1289,7 @@ function PreviewCard({
               />
               <Row
                 label="Normalised input"
-                value={`${numberFmt.format(preview.normalizedValue)} ${preview.normalizedUnit}`}
+                value={`${numberFmt.format(preview.normalizedValue)} ${unitSymbol(preview.normalizedUnit)}`}
               />
               <Row label="Methodology" value={preview.methodology} />
               <Row
@@ -1248,8 +1305,8 @@ function PreviewCard({
               <div className="flex items-start gap-2 rounded-lg bg-secondary/60 p-2.5 text-xs text-muted-foreground">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
-                  Unit converted from {preview.inputUnit} to{" "}
-                  {preview.normalizedUnit} before applying the factor.
+                  Unit converted from {unitSymbol(preview.inputUnit)} to{" "}
+                  {unitSymbol(preview.normalizedUnit)} before applying the factor.
                 </span>
               </div>
             )}
