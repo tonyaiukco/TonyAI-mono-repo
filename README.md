@@ -22,10 +22,12 @@ Track Scope 1/2/3 emissions across subsidiaries with audit‑ready, tenant‑iso
 - [How it works (request lifecycle)](#how-it-works-request-lifecycle)
 - [Security model](#security-model)
 - [Getting started](#getting-started)
+- [Troubleshooting](#troubleshooting)
 - [Scripts](#scripts)
 - [API reference (current slice)](#api-reference-current-slice)
 - [Data model](#data-model)
 - [Roles (RBAC)](#roles-rbac)
+- [Observability](#observability)
 - [Testing](#testing)
 - [Environment variables](#environment-variables)
 - [Roadmap](#roadmap)
@@ -49,7 +51,7 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 
 ## Project status
 
-This repository currently delivers **Milestone 0 (foundation)** and the **Milestone 1 vertical slice** — a working end‑to‑end path running entirely on a local machine.
+**Phase 1 (Scope 1 & 2 core MVP) is complete** and running end‑to‑end on a local machine; UAT round 1 is closed and **Phase 3** is active — WP7 (audit viewer, reviewer UI, subsidiary edit), WP15 (UAT quick wins) and WP16 (locations in the subsidiary flow) have all shipped. Phase 2 (staging on Azure) is waiting on the cloud credit; its cloud‑independent prep is done. The checkbox‑level plan lives in [`docs/roadmap_docs/project-status.md`](docs/roadmap_docs/project-status.md).
 
 | Area | Status |
 | --- | --- |
@@ -57,10 +59,12 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | Supabase Auth login + route‑protecting proxy (Next.js `proxy` convention) | ✅ |
 | NestJS API with JWT auth guard + **tenant isolation** | ✅ |
 | Subsidiaries CRUD + dashboard KPIs wired to live data | ✅ |
-| Operational locations (Holding › Subsidiary › Location) — tenant‑scoped CRUD + subsidiary drawer; records can target a location, which drives the factor geography (FR §5.2) | ✅ |
+| Operational locations (Holding › Subsidiary › Location) — tenant‑scoped CRUD, managed in place on the subsidiary's own page or from the register's drawer, and creatable **inline with the subsidiary**; records can target a location, which drives the factor geography (FR §5.2) | ✅ |
 | Evidence upload (Supabase Storage) — files linked to records, required before submit for billed categories (FR §4.1) | ✅ |
 | Period locking (FR §4.2) — super_admin closes a reporting period; locked periods reject new/edited/submitted records | ✅ |
-| RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
+| RBAC — org structure (subsidiaries, locations, factors, approvals) is `super_admin`‑only; `data_entry` writes activity data for its own subsidiaries; `consultant` is review‑only — + **audit logging** on every mutation | ✅ |
+| Destructive operations **refuse instead of cascading** — a subsidiary or location holding committed data returns 409 with counts and named blockers; record‑free locations go with their subsidiary, one audit row each | ✅ |
+| Evidence files are reclaimed when their rows go (record delete, `db:reset`, E2E teardown, `pnpm evidence:reclaim`) — a retention obligation, not disk housekeeping | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
 | Automated tests (409 unit + 73 E2E) + live RLS containment probes (30) | ✅ |
@@ -132,15 +136,23 @@ flowchart LR
 TonyAI-mono-repo/
 ├── apps/
 │   ├── web/                 # Next.js frontend
-│   │   ├── app/             # routes: /login, / (dashboard), /subsidiaries, /emissions, …
+│   │   ├── app/             # /login · / (dashboard) · /subsidiaries · /subsidiaries/[id]
+│   │   │                    # /data-entry · /emissions · /review · /audit · /reports
 │   │   ├── components/      # shadcn/ui + feature components
 │   │   └── lib/             # api client, supabase client, zustand store, types
 │   └── api/                 # NestJS backend
 │       └── src/
-│           ├── auth/        # SupabaseAuthGuard, /me, decorators
-│           ├── subsidiaries/# CRUD + tenant-scoped service
-│           ├── kpi/         # dashboard summary
-│           └── prisma/      # PrismaService
+│           ├── auth/            # SupabaseAuthGuard, token verifier, /me, decorators
+│           ├── subsidiaries/    # CRUD + summary + delete guards (tenant-scoped)
+│           ├── locations/       # CRUD + the shared writer the nested create reuses
+│           ├── activity-records/# lifecycle, gates, anomaly detection
+│           ├── calculations/    # factor resolution + unit normalization
+│           ├── evidence/ storage/  # upload-through-API, signed URLs, blob reclaim
+│           ├── emissions/ kpi/ targets/ intensity/  # aggregation + goals
+│           ├── period-locks/ reports/ audit/        # closing, exports, trail
+│           ├── observability/   # JSON logs, request context, exception filter
+│           ├── common/          # shared pipes/transforms
+│           └── prisma/          # PrismaService
 ├── packages/
 │   ├── shared-types/        # single source of truth for TS types
 │   └── db/                  # Prisma schema, migrations, seed
@@ -179,7 +191,11 @@ Recurring procedures are packaged as **skills** in [`.claude/skills/`](.claude/s
 | Skill | What it does |
 | --- | --- |
 | **tenant-api-module** | Scaffold a new tenant-scoped, RBAC-guarded, audit-logged NestJS resource (+ DTOs, shared types, Vitest spec) |
+| **aggregation-endpoint** | Add a server-side rollup endpoint (the status/total math lives in the API, never in the browser) |
 | **rls-for-table** | Add Supabase RLS to a new table (enable-not-force, `auth.uid()` policies, shadow-DB shim, verification) |
+| **wire-page** | Wire a page to live API data with real loading / empty / error (incl. 401/403) states |
+| **supabase-storage** | Add a private-bucket file capability: upload through the API, signed-URL download, RLS, reclaim on delete |
+| **workflow-gate** | Add a lifecycle gate (status/lock/authorship) that refuses consistently across every affected route |
 | **e2e-flow** | Add a Playwright E2E spec or an RLS/API probe against the running local stack (shared login / API-token / safe-period / evidence-upload / teardown helpers) |
 | **report-generation** | Add a server-generated, tenant-scoped file artifact (PDF via Puppeteer / Excel / CSV) streamed as an audited download |
 
@@ -193,7 +209,7 @@ The relevant subagents (`backend-integrator`, `architect`, `security-rls`) have 
 2. **`proxy.ts`** protects every route — unauthenticated users are redirected to `/login`. (Next.js 16 renamed the `middleware` file convention to `proxy`; same behaviour.)
 3. The frontend calls the API through **`apps/web/lib/api.ts`**, attaching `Authorization: Bearer <access_token>`.
 4. The NestJS **`SupabaseAuthGuard`** verifies the JWT (shared HS256 secret or asymmetric via JWKS — see Security model), loads the user's `Profile`, and computes **`accessibleSubsidiaryIds`** (a `data_entry` user is limited to explicit access rows; other roles get organisation‑wide visibility).
-5. Services scope **every query** to that set; only `super_admin` may create/update/delete; each mutation writes an `audit_log` row.
+5. Services scope **every query** to that set. Write authority splits by what is being written: **organisation structure** (subsidiaries, locations, period locks, targets, denominators) is `super_admin`‑only, **activity data + evidence** is `data_entry` or `super_admin`, **review/reject** is `consultant` or `super_admin`, and **approve** is `super_admin` alone. Each mutation writes an `audit_log` row.
 6. **Row Level Security** in Postgres independently denies cross‑tenant reads, so even a direct database/PostgREST client is contained.
 
 ---
@@ -210,7 +226,7 @@ Tenant isolation is enforced in **two independent layers** — neither replaces 
 Additional guarantees:
 
 - **Token verification** — Supabase access tokens are accepted under both signing schemes: the legacy shared **HS256** secret and **asymmetric** keys (ES256/RS256) fetched from the project's JWKS. The key material fixes the algorithm allow‑list on each path, so a token can never downgrade a public key into an HMAC secret, and `alg: none` matches neither path. Tokens must carry `aud: authenticated`, `sub` and `exp`, which is what keeps the anon/service‑role keys (JWTs signed with the same secret) from being replayed as user tokens. `SUPABASE_JWT_SCHEME` pins the accepted scheme; a boot-time check **refuses to start** with an unpinned scheme or the public demo secret. That check is on by default and is relaxed only by an explicit `ALLOW_INSECURE_LOCAL_AUTH=true` **together with** a loopback `SUPABASE_URL` — deliberately not keyed on `NODE_ENV`, since the container image sets it locally and a plain `node dist/main.js` deployment sets nothing, so a copied `.env` pointed at a real project always fails closed.
-- **RBAC** — writes require `super_admin`; reads are tenant‑scoped for everyone.
+- **RBAC** — reads are tenant‑scoped for everyone; writes are split by object, not blanket‑`super_admin` (see the request lifecycle above and the Roles table below). The one rule that never bends: **only `super_admin` approves**, and only `super_admin` mutates organisation structure.
 - **Audit immutability** — `audit_log` has SELECT‑only policies (super_admin) and **no** UPDATE/DELETE; it is append‑only.
 - **No secrets in git** — all `.env*` files are git‑ignored; only `.env.example` templates are committed.
 - The backend connects as the Postgres **owner role**, which bypasses RLS by design; the seeded service path is therefore unaffected while client‑side access stays locked down.
@@ -250,7 +266,9 @@ supabase start
 
 # 4. Create the schema and seed demo data
 pnpm db:migrate     # applies Prisma migrations (incl. RLS policies)
-pnpm db:seed        # 1 org, 5 subsidiaries, 8 locations, 2 users, factors + 102 Scope 1&2 records (incl. 6 location-level) + demo evidence
+pnpm db:seed        # 1 org, 5 subsidiaries, 8 locations, 3 users, demo factors for DEMO_YEAR (2026)
+                    # + 102 approved Scope 1&2 records (96 subsidiary-level monthly, 6 location-level),
+                    # one demo evidence file each, 3 targets + 10 intensity denominators
 
 # 5. Run everything
 pnpm dev            # web -> http://localhost:3000   api -> http://localhost:3001/api/v1
@@ -378,7 +396,7 @@ Reporting entity: a record targets either the whole subsidiary or one of its **o
 
 Anomaly detection (VAR §4): on every create/update the server compares the record's tCO₂e to the **rolling average of the previous 3 committed periods** for the same reporting entity + category; a deviation **> ±50%** sets `anomalyFlag`. It's warning‑based — at submit, a flagged record must carry a `varianceReason` (the gate re‑evaluates the baseline as of submit time, so it never trusts a stale flag). The Data Entry page surfaces a warning banner + a mandatory variance field.
 
-Period locking (FR §4.2): a `super_admin` closes one subsidiary's reporting period (e.g. `2024/Q1`) from the subsidiaries page. While locked, **no record in that period can be created, edited, deleted, submitted, approved or rejected** (409). Locking requires every record in the period to be reviewed first (no `submitted`/`under_review` left), flips `approved` records to `locked`, and unlocking reverts them — both bulk flips are audited inside the same transaction (`entity: 'period_lock'`).
+Period locking (FR §4.2): a `super_admin` closes one subsidiary's reporting period (e.g. `2026/Q1`) from the subsidiaries page. While locked, **no record in that period can be created, edited, deleted, submitted, approved or rejected** (409). Locking requires every record in the period to be reviewed first (no `submitted`/`under_review` left), flips `approved` records to `locked`, and unlocking reverts them — both bulk flips are audited inside the same transaction (`entity: 'period_lock'`).
 
 ---
 
@@ -395,7 +413,11 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | `user_subsidiary_access` | Which subsidiaries a `data_entry` user may access (tenant‑isolation source) |
 | `audit_log` | Append‑only record of every mutation (`action`, `entity`, `entityId`, `diff`) |
 | `emission_factors` | Reference data (not tenant‑scoped): Scope 1 & 2 factors by category / geography / reporting year / version, with `source` + `methodology` for traceability |
-| `activity_records` | Core data‑entry unit (child of `subsidiaries`): one activity input per (subsidiary, period, category) with a derived `scope`, an immutable `calculation` snapshot, and a `status` workflow (`draft` → `submitted` → `under_review` → `approved`/`rejected`/`locked`) |
+| `activity_records` | Core data‑entry unit (child of `subsidiaries`): one activity input per (subsidiary, location, period, category) with a derived `scope`, an immutable `calculation` snapshot, and a `status` workflow (`draft` → `submitted` → `under_review` → `approved`/`rejected`/`locked`) |
+| `evidence` | Files backing a record (private Storage object key + original filename); uploaded through the API, never browser→Storage |
+| `period_locks` | One closed reporting period for one subsidiary `(subsidiary, year, period, periodValue)` — period‑level state, because record status alone cannot block a *new* record |
+| `targets` | Subsidiary‑level reduction targets with a **declared** baseline (never a computed one) |
+| `subsidiary_denominators` | Per‑year intensity denominators `(subsidiary, year, metric)` so intensity over time stays comparable |
 
 ---
 
@@ -430,11 +452,11 @@ The web app has route (`error.tsx`), root (`global-error.tsx`) and 404 boundarie
 
 ## Testing
 
-- **Unit (Vitest, DB‑free):** 245 tests in `apps/api` covering the calculation engine, tenant scoping, RBAC, lifecycle gates, targets/intensity math, report assembly, request logging and JWT verification (both signing schemes, incl. algorithm‑confusion and `alg: none` forgeries) with a mocked Prisma client. Run `pnpm test`.
-- **E2E (Playwright):** 21 tests across 9 specs against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
+- **Unit (Vitest, DB‑free):** **409 tests across 22 files** in `apps/api` covering the calculation engine, tenant scoping, RBAC, lifecycle gates, delete guards, targets/intensity math, report assembly, DTO validation, request logging and JWT verification (both signing schemes, incl. algorithm‑confusion and `alg: none` forgeries) with a mocked Prisma client. The mock hands `$transaction` callbacks a **separate client with its own spies**, so "this write happened inside the transaction" is an assertion that can actually fail. Run `pnpm test`.
+- **E2E (Playwright):** **73 tests across 18 specs** against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, the review queue and audit trail, locations + the subsidiary control panel + the nested create, evidence retention, Turkish filenames, grid regions, targets, reports, and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
 - **RLS containment probes:** `pnpm rls:probe` hits Supabase PostgREST directly (anon + a data_entry JWT) and asserts, per tenant table, that anon sees nothing, the user sees its own rows, and it sees **exactly** its own tenants' rows and no others (cross-tenant rows hidden — even a partial leak fails) — proving the database-layer defence holds independently of the API guard.
 
-CI (`.github/workflows/ci.yml`) runs install → Prisma generate → typecheck → build → unit tests on every push/PR. E2E + RLS probes are intentionally kept out of the default CI pipeline (they need a live Supabase); **wiring them into CI is deferred to Phase 2** (staging smoke E2E), per the roadmap.
+CI (`.github/workflows/ci.yml`, Node 22) runs install → Prisma generate → typecheck → build → unit tests on every push/PR, and builds both Docker images. E2E + RLS probes are intentionally kept out of it (they need a live Supabase). **Read that as a real gap, not just a deferral:** behaviour covered by E2E alone — locations, the subsidiary control panel, the nested create, evidence retention — has no automated gate on a merge today. Two separate fixes are planned (Phase 2): the full suite gating merges via `supabase start` in Actions, and a post-deploy staging smoke subset.
 
 ---
 
@@ -455,7 +477,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 - **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
 - **Phase 1 — Core MVP (Scope 1 & 2)** ✅: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅, Targets & intensity ✅, Reports ✅ — **Phase 1 complete**.
 - **Phase 2 — Staging cloud & CI/CD** *(target: **Azure** — provider switched from GCP 2026-07-29, credit expected; cloud-independent prep is done)*: Supabase cloud (Frankfurt), **Azure Container Apps** deploy via GitHub Actions **OIDC** + **ACR**, Key Vault secrets, Log Analytics for the JSON logs + Sentry for errors, KVKK/GDPR EU residency (Germany West Central), staging smoke E2E in CI.
-- **Phase 3 — Advanced** *(active, reordered WP7–WP14)*: UAT backlog & reviewer UI → bulk upload → email notifications + report sharing (Resend) → Scope 3 + supplier management → i18n/dark mode → Python/FastAPI analytics microservice.
+- **Phase 3 — Advanced** *(active)*: **WP7 UAT backlog & reviewer UI ✅ → WP15 UAT quick wins ✅ → WP16 locations in the subsidiary flow ✅ → WP17 completeness engine (next)** → bulk upload → email notifications + report sharing (Resend) → Scope 3 + supplier management → i18n/dark mode. A Python/FastAPI analytics microservice was **demoted to conditional** (2026-07-29): analytics lands in the existing API unless a concrete Python-library need is demonstrated.
 - **Phase 4 — Production launch:** authoritative emission-factor data, security/pen-test + load test, backup/DR, user lifecycle, legal (KVKK/GDPR), go-live.
 
 The detailed, checkbox-level plan lives in [`docs/roadmap_docs/project-status.md`](docs/roadmap_docs/project-status.md).
