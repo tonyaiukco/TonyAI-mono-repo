@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ACTIVITY_UNITS,
+  appliesUnitConversion,
   CATEGORIES,
   EVIDENCE_REQUIRED_CATEGORIES,
   FACTORLESS_RECORDABLE_CATEGORIES,
@@ -9,6 +11,7 @@ import {
   isInvoiceTracked,
   isRecordableWithoutFactor,
   isUncalculated,
+  unitSymbol,
   unitsForCategory,
   type CalculationResult,
   type UncalculatedSnapshot,
@@ -177,5 +180,65 @@ describe('unitsForCategory', () => {
     const units = unitsForCategory('Business Travel');
     expect(units.length).toBeGreaterThan(1);
     expect(units.every((u) => !u.blocked)).toBe(true);
+  });
+});
+
+describe('unitSymbol', () => {
+  it('writes the m³ token as a unit, not as a storage key', () => {
+    // "Recorded as 250 cubic_metres" reached three screens. The token is how
+    // the value is stored; it is not how a unit is written next to a number.
+    expect(unitSymbol('cubic_metres')).toBe('m³');
+    expect(unitSymbol('standard_cubic_metres')).toBe('Sm³');
+    expect(unitSymbol('uk_gallons')).toBe('UK gal');
+    expect(unitSymbol('passenger_kilometres')).toBe('p-km');
+  });
+
+  it('never leaves an underscore in a symbol', () => {
+    for (const unit of ACTIVITY_UNITS) {
+      expect(unit.symbol).not.toMatch(/_/);
+      expect(unit.symbol.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('falls back to the raw token for an unknown unit', () => {
+    // Preferable to rendering nothing at all beside a number.
+    expect(unitSymbol('furlongs')).toBe('furlongs');
+  });
+});
+
+describe('appliesUnitConversion', () => {
+  it('is true for natural gas in m³ — the ×11.36 case the note describes', () => {
+    expect(appliesUnitConversion('cubic_metres', 'Natural Gas')).toBe(true);
+  });
+
+  it('is FALSE for water in m³, which is the bug this predicate exists for', () => {
+    // Keyed on the unit alone, Data Entry told the user their water meter had
+    // been converted to kWh at the natural-gas calorific value. Nothing about a
+    // water reading is converted: with no factor there is nothing to convert
+    // towards, and the stored snapshot carries the raw input by design.
+    expect(appliesUnitConversion('cubic_metres', 'Water')).toBe(false);
+  });
+
+  it('is false when the unit is already the base unit', () => {
+    expect(appliesUnitConversion('kWh', 'Electricity')).toBe(false);
+    expect(appliesUnitConversion('litres', 'Fuel')).toBe(false);
+  });
+
+  it('is false for a blocked unit — it is refused before any arithmetic', () => {
+    expect(appliesUnitConversion('standard_cubic_metres', 'Natural Gas')).toBe(false);
+  });
+
+  it('is false for a unit this build does not know', () => {
+    expect(appliesUnitConversion('furlongs', 'Natural Gas')).toBe(false);
+  });
+
+  it('never claims a conversion for any factor-less category', () => {
+    // The invariant, rather than one example: whatever ends up on the
+    // factor-less list, no unit may be described as converting for it.
+    for (const category of FACTORLESS_RECORDABLE_CATEGORIES) {
+      for (const unit of ACTIVITY_UNITS) {
+        expect(appliesUnitConversion(unit.value, category)).toBe(false);
+      }
+    }
   });
 });

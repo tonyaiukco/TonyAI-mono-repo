@@ -45,6 +45,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   isCalculated,
   PENDING_REVIEW_STATUSES,
+  unitSymbol,
   type ActivityRecordDTO,
   type EvidenceDTO,
   type SubsidiaryDTO,
@@ -401,7 +402,7 @@ export default function ReviewPage() {
                             </TableCell>
                             <TableCell className="text-right text-sm font-mono">
                               {row.activityValue.toLocaleString("en-GB")}{" "}
-                              {row.activityUnit}
+                              {unitSymbol(row.activityUnit)}
                             </TableCell>
                             <TableCell className="text-right text-sm font-mono">
                               {formatTCo2e(row.calculation, (v) =>
@@ -490,7 +491,7 @@ export default function ReviewPage() {
                 <span className="text-muted-foreground">Activity</span>
                 <span className="col-span-2 font-mono">
                   {selected.activityValue.toLocaleString("en-GB")}{" "}
-                  {selected.activityUnit}
+                  {unitSymbol(selected.activityUnit)}
                 </span>
                 <span className="text-muted-foreground">Emissions</span>
                 <span className="col-span-2 font-mono">

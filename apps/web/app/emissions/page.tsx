@@ -50,7 +50,7 @@ import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
-import { CATEGORIES, isCalculated } from '@/lib/types';
+import { CATEGORIES, isCalculated, unitSymbol } from '@/lib/types';
 import { DEFAULT_REPORTING_YEAR } from '@/lib/types';
 import { NOT_CALCULATED_LABEL, NO_FACTOR_LABEL } from '@/lib/calculation-display';
 import type {
@@ -823,7 +823,7 @@ export default function EmissionsAnalysisPage() {
                             <TableCell className="text-right font-mono">
                               {formatNumber(record.activityValue)}
                             </TableCell>
-                            <TableCell className="text-muted-foreground">{record.activityUnit}</TableCell>
+                            <TableCell className="text-muted-foreground">{unitSymbol(record.activityUnit)}</TableCell>
                             <TableCell className="text-right font-medium">
                               {isCalculated(record.calculation) ? (
                                 formatNumber(record.calculation.tCo2e, 2)
@@ -1031,7 +1031,7 @@ export default function EmissionsAnalysisPage() {
                   <div>
                     <p className="text-xs text-muted-foreground">Activity Value</p>
                     <p className="font-medium">
-                      {formatNumber(selectedRecord.activityValue)} {selectedRecord.activityUnit}
+                      {formatNumber(selectedRecord.activityValue)} {unitSymbol(selectedRecord.activityUnit)}
                     </p>
                   </div>
                   <div>
@@ -1061,7 +1061,7 @@ export default function EmissionsAnalysisPage() {
                       <Row label="Emission Factor" value={`${selectedRecord.calculation.factorValue} ${selectedRecord.calculation.factorUnit}`} />
                       <Row label="Methodology" value={selectedRecord.calculation.methodology} />
                       <Row label="Geography" value={selectedRecord.calculation.geographyCode} />
-                      <Row label="Normalised" value={`${formatNumber(selectedRecord.calculation.normalizedValue)} ${selectedRecord.calculation.normalizedUnit}`} />
+                      <Row label="Normalised" value={`${formatNumber(selectedRecord.calculation.normalizedValue)} ${unitSymbol(selectedRecord.calculation.normalizedUnit)}`} />
                       <Row label="Source" value={selectedRecord.calculation.source} />
                       <Row label="Factor Version" value={selectedRecord.calculation.version} />
                     </div>
@@ -1074,7 +1074,7 @@ export default function EmissionsAnalysisPage() {
                       <Row label="Geography" value={selectedRecord.calculation.geographyCode} />
                       <Row
                         label="Recorded as"
-                        value={`${formatNumber(selectedRecord.calculation.inputValue)} ${selectedRecord.calculation.inputUnit} (not converted)`}
+                        value={`${formatNumber(selectedRecord.calculation.inputValue)} ${unitSymbol(selectedRecord.calculation.inputUnit)} (not converted)`}
                       />
                       <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">
                         {selectedRecord.calculation.reason}

@@ -37,11 +37,13 @@ import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import {
   ACTIVITY_UNITS,
+  appliesUnitConversion,
   CATEGORIES,
   GEOGRAPHY_LABELS,
   DEFAULT_REPORTING_YEAR,
   isCalculated,
   REPORTING_YEARS,
+  unitSymbol,
   unitsForCategory,
 } from "@/lib/types";
 import {
@@ -917,7 +919,15 @@ function DataEntryPageInner() {
                         </p>
                       );
                     }
-                    if (activityUnit === "cubic_metres") {
+                    // Keyed on the unit AND the category. On the unit alone this
+                    // note was correct only while m³ meant natural gas: for a
+                    // category with no factor nothing is converted at all, and
+                    // the note was telling the user their water meter had been
+                    // multiplied by the natural-gas calorific value.
+                    if (
+                      activityUnit === "cubic_metres" &&
+                      appliesUnitConversion(activityUnit, category)
+                    ) {
                       // The 11.36 in calculation_logic.md §2.1 has no citation,
                       // no calorific basis and no stated reference conditions.
                       // It has been converting silently; on a compliance product
@@ -929,6 +939,15 @@ function DataEntryPageInner() {
                           assumption with no cited source, and no stated calorific
                           basis or reference conditions. It will be replaced by a
                           sourced factor in the Phase-4 factor library.
+                        </p>
+                      );
+                    }
+                    if (activityUnit === "cubic_metres") {
+                      return (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Recorded exactly as entered, in m³. No conversion is
+                          applied, because {category} has no emission factor to
+                          convert towards.
                         </p>
                       );
                     }
@@ -1229,7 +1248,7 @@ function PreviewCard({
               <Row label="Emission factor" value={NO_FACTOR_LABEL} />
               <Row
                 label="Recorded as"
-                value={`${numberFmt.format(preview.inputValue)} ${preview.inputUnit}`}
+                value={`${numberFmt.format(preview.inputValue)} ${unitSymbol(preview.inputUnit)}`}
               />
               {geographyCode && <Row label="Geography" value={geographyCode} />}
             </dl>
@@ -1270,7 +1289,7 @@ function PreviewCard({
               />
               <Row
                 label="Normalised input"
-                value={`${numberFmt.format(preview.normalizedValue)} ${preview.normalizedUnit}`}
+                value={`${numberFmt.format(preview.normalizedValue)} ${unitSymbol(preview.normalizedUnit)}`}
               />
               <Row label="Methodology" value={preview.methodology} />
               <Row
@@ -1286,8 +1305,8 @@ function PreviewCard({
               <div className="flex items-start gap-2 rounded-lg bg-secondary/60 p-2.5 text-xs text-muted-foreground">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
-                  Unit converted from {preview.inputUnit} to{" "}
-                  {preview.normalizedUnit} before applying the factor.
+                  Unit converted from {unitSymbol(preview.inputUnit)} to{" "}
+                  {unitSymbol(preview.normalizedUnit)} before applying the factor.
                 </span>
               </div>
             )}

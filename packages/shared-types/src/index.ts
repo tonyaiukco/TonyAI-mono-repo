@@ -104,14 +104,23 @@ export type Category = typeof CATEGORIES[number];
 export interface ActivityUnitSpec {
   value: string;
   label: string;
+  /**
+   * How the unit is written when it appears NEXT TO a value ("250 m³"), as
+   * opposed to `label`, which names it in a dropdown ("Cubic metres — m³").
+   *
+   * Exists because the raw `value` was being printed to users: "Recorded as 250
+   * cubic_metres" is a storage token, not a unit, and it reached the screen in
+   * the places where a value and its unit are shown together.
+   */
+  symbol: string;
   target: 'kWh' | 'litres' | 'kilometres' | 'passenger_kilometres' | 'tonnes';
   /** Present when the unit is selectable but not yet calculable. */
   blocked?: string;
 }
 
 export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
-  { value: 'kWh', label: 'kWh (electricity / gas)', target: 'kWh' },
-  { value: 'MWh', label: 'MWh (electricity)', target: 'kWh' },
+  { value: 'kWh', label: 'kWh (electricity / gas)', symbol: 'kWh', target: 'kWh' },
+  { value: 'MWh', label: 'MWh (electricity)', symbol: 'MWh', target: 'kWh' },
   {
     value: 'cubic_metres',
     // No parenthetical: the same token is offered for Natural Gas and for Water,
@@ -119,6 +128,7 @@ export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
     // where it is the ONLY option. `target` describes the natural-gas path only;
     // a Water record is never normalised (see UncalculatedSnapshot).
     label: 'Cubic metres — m³',
+    symbol: 'm³',
     target: 'kWh',
   },
   {
@@ -129,22 +139,24 @@ export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
     // number into an inventory, so it is offered and refused, with the reason.
     value: 'standard_cubic_metres',
     label: 'Standard cubic metres — Sm³ (natural gas)',
+    symbol: 'Sm³',
     target: 'kWh',
     blocked:
       'Standard cubic metres need a sourced calorific value to become kWh, and this prototype does not have one yet — it arrives with the Phase-4 factor library. Enter the volume in m³, or the energy in kWh.',
   },
-  { value: 'therms', label: 'Therms (natural gas)', target: 'kWh' },
-  { value: 'gj', label: 'GJ (natural gas)', target: 'kWh' },
-  { value: 'litres', label: 'Litres (liquid fuel)', target: 'litres' },
-  { value: 'uk_gallons', label: 'UK gallons (liquid fuel)', target: 'litres' },
-  { value: 'us_gallons', label: 'US gallons (liquid fuel)', target: 'litres' },
-  { value: 'kilometres', label: 'Kilometres', target: 'kilometres' },
+  { value: 'therms', label: 'Therms (natural gas)', symbol: 'therms', target: 'kWh' },
+  { value: 'gj', label: 'GJ (natural gas)', symbol: 'GJ', target: 'kWh' },
+  { value: 'litres', label: 'Litres (liquid fuel)', symbol: 'L', target: 'litres' },
+  { value: 'uk_gallons', label: 'UK gallons (liquid fuel)', symbol: 'UK gal', target: 'litres' },
+  { value: 'us_gallons', label: 'US gallons (liquid fuel)', symbol: 'US gal', target: 'litres' },
+  { value: 'kilometres', label: 'Kilometres', symbol: 'km', target: 'kilometres' },
   {
     value: 'passenger_kilometres',
     label: 'Passenger-km',
+    symbol: 'p-km',
     target: 'passenger_kilometres',
   },
-  { value: 'tonnes', label: 'Tonnes', target: 'tonnes' },
+  { value: 'tonnes', label: 'Tonnes', symbol: 't', target: 'tonnes' },
 ] as const;
 
 /**
@@ -189,6 +201,36 @@ export function unitsForCategory(category: string): readonly ActivityUnitSpec[] 
   return allowed
     ? ACTIVITY_UNITS.filter((u) => allowed.includes(u.value))
     : ACTIVITY_UNITS.filter((u) => !u.blocked);
+}
+
+/**
+ * How to write a unit beside a value. Falls back to the raw token for a unit
+ * this build does not know, which is preferable to rendering nothing at all
+ * next to a number.
+ */
+export function unitSymbol(unit: string): string {
+  return ACTIVITY_UNITS.find((u) => u.value === unit)?.symbol ?? unit;
+}
+
+/**
+ * True when the calculation engine will CONVERT this input before applying a
+ * factor to it — i.e. when a UI may honestly say "m³ is converted to kWh".
+ *
+ * The category half is the part that was missing and it is not cosmetic. Data
+ * Entry keyed its ×11.36 conversion note on the unit alone, which was correct
+ * while `cubic_metres` meant natural gas and became false the moment Water
+ * could be recorded: nothing about a water reading is converted, because with
+ * no factor there is nothing to convert TOWARDS. The note was telling users
+ * their water meter had been multiplied by the natural-gas calorific value.
+ *
+ * Blocked units convert nothing either — they are refused before any
+ * arithmetic happens, with their own explanation.
+ */
+export function appliesUnitConversion(unit: string, category: string): boolean {
+  if (isRecordableWithoutFactor(category)) return false;
+  const spec = ACTIVITY_UNITS.find((u) => u.value === unit);
+  if (!spec || spec.blocked) return false;
+  return spec.value !== spec.target;
 }
 
 
