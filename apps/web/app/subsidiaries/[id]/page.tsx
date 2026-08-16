@@ -535,7 +535,6 @@ export default function SubsidiaryDetailPage() {
 function DependentsCard({ summary }: { summary: SubsidiarySummaryDTO }) {
   const rows: [string, number][] = [
     ["Locations", summary.locations],
-    ["…of which hold records", summary.locationsWithRecords],
     ["Approved or locked records", summary.terminalRecords],
     ["Records awaiting review", summary.reviewRecords],
     ["Draft or rejected records", summary.openRecords],

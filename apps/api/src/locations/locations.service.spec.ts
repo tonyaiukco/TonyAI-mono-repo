@@ -256,6 +256,16 @@ describe('LocationsService', () => {
         expect.objectContaining({ action: 'delete', entity: 'location' }),
         prisma.txClient,
       );
+      // …and the DELETE itself, which that comment describes but never checked.
+      // Swapping `db.location.delete` for `this.prisma.location.delete` left
+      // 409 tests green — and it destroys the row OUTSIDE the transaction while
+      // its audit row stays inside, so a later failure commits the destruction
+      // and rolls back the trail. The unaudited cascade WP16 PR 1 exists to
+      // stop, reintroduced through the fix for it.
+      expect(prisma.txClient.location.delete).toHaveBeenCalledWith({
+        where: { id: existing.id },
+      });
+      expect(prisma.location.delete).not.toHaveBeenCalled();
     });
 
     it('treats deleting a location outside the access set as not found', async () => {

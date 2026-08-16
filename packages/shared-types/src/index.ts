@@ -796,15 +796,6 @@ export interface SubsidiarySummaryDTO {
   /** Informational, not a blocker: deleting the subsidiary now removes its own
    *  record-free locations, with an audit row each. */
   locations: number;
-  /**
-   * Locations of this subsidiary that hold activity records — which DO block.
-   *
-   * Should always be 0 while the record counts are 0: a record at a location
-   * belongs to that location's subsidiary. But that is an application
-   * invariant with no composite FK behind it, and a delete is the wrong place
-   * to trust an unenforced rule, so it is counted and refused on.
-   */
-  locationsWithRecords: number;
   /** `approved`/`locked` — these can never be deleted, at any point. */
   terminalRecords: number;
   /** `submitted`/`under_review` — a reviewer can send them back, and then they can. */
