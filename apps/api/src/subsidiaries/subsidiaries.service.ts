@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -7,6 +8,7 @@ import {
 import {
   Prisma,
   SubsidiaryStatus,
+  TrackingGranularity,
   type ActivityRecordStatus,
   type Subsidiary,
 } from '@tonyai/db';
@@ -82,6 +84,7 @@ export class SubsidiariesService {
       contactPhone: s.contactPhone,
       reportingStatus: s.reportingStatus,
       includedScopes: s.includedScopes,
+      trackingGranularity: s.trackingGranularity,
       createdAt: s.createdAt.toISOString(),
       updatedAt: s.updatedAt.toISOString(),
     };
@@ -211,6 +214,10 @@ export class SubsidiariesService {
       data.reportingStatus = dto.reportingStatus as SubsidiaryStatus;
     }
     if (dto.includedScopes !== undefined) data.includedScopes = dto.includedScopes;
+    if (dto.trackingGranularity !== undefined) {
+      await this.assertGranularityIsUsable(id, dto.trackingGranularity);
+      data.trackingGranularity = dto.trackingGranularity as TrackingGranularity;
+    }
 
     // In a transaction like create and delete. It was not, which left this
     // class half-atomic — a crash between the row write and the audit insert
@@ -230,6 +237,33 @@ export class SubsidiariesService {
       return row;
     });
     return this.toDTO(updated);
+  }
+
+  /**
+   * Refuse `location` granularity for a subsidiary that owns no locations.
+   *
+   * The denominator is `locations × 12`, so with none the cell needs 0 invoices
+   * and "0 of 0 covered" is vacuously complete: a subsidiary holding no data at
+   * all would turn green, on the one screen whose whole job is to show where
+   * data is missing. Refusing here rather than special-casing it downstream
+   * keeps the invariant where it can be stated once — a subsidiary measured by
+   * location has locations to measure.
+   */
+  private async assertGranularityIsUsable(
+    subsidiaryId: string,
+    granularity: string,
+  ): Promise<void> {
+    if (granularity !== 'location') return;
+    const locations = await this.prisma.location.count({
+      where: { subsidiaryId },
+    });
+    if (locations === 0) {
+      throw new BadRequestException(
+        'Add at least one location before tracking this subsidiary by location — ' +
+          'the completeness rule counts one invoice per location per month, and ' +
+          'with no locations it would report a subsidiary with no data as complete.',
+      );
+    }
   }
 
   /**

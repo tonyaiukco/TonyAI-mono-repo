@@ -19,8 +19,13 @@ function rowToViewModel(row: TrackingMatrixRow): Subsidiary {
     responsible: row.designatedPerson ?? "—",
     // Show the committed tCO₂e figure inside the cell when there is one
     // (rounded — StatusCell prints sub-1000 values verbatim).
-    calculationComplete: cell.tCo2e > 0,
-    emission: cell.tCo2e > 0 ? Math.round(cell.tCo2e) : null,
+    //
+    // Keyed on `!== null`, not `> 0`. The old test conflated three different
+    // states — no records, a factor-less record, and a genuine zero — and the
+    // last of those is a real measurement that was being hidden. `null` now
+    // means "nothing produced a figure" and the API says so explicitly.
+    calculationComplete: cell.tCo2e !== null,
+    emission: cell.tCo2e !== null ? Math.round(cell.tCo2e) : null,
   }));
 
   return {

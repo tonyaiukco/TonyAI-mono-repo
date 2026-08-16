@@ -28,6 +28,25 @@ enum SubsidiaryStatus {
   pending
 }
 
+/// How completeness is measured for a subsidiary (WP17 / round-1 DE-2 + DASH-3).
+///
+/// `subsidiary` — the historic behaviour: a category is complete once it holds a
+/// committed record with its evidence, whatever the entity that record names.
+/// `location`  — the invoice rule: each invoice-tracked category needs one
+/// monthly invoice per LOCATION, so the denominator is `locations × 12`.
+///
+/// An explicit setting rather than an inference. Measured before choosing: 96 of
+/// the 102 seeded records carry no `location_id` at all, so a rule that switched
+/// itself on whenever a subsidiary happens to own locations would report almost
+/// every existing tenant as incomplete overnight, and would leave the user with
+/// no way to see WHY. Defaulting to `subsidiary` keeps every existing dashboard
+/// exactly as it was; a super_admin opts a subsidiary in when its data is
+/// actually keyed by location.
+enum TrackingGranularity {
+  subsidiary
+  location
+}
+
 enum ActivityRecordStatus {
   draft
   submitted
@@ -89,6 +108,11 @@ model Subsidiary {
   contactPhone     String?                @map("contact_phone")
   reportingStatus  SubsidiaryStatus       @default(pending) @map("reporting_status")
   includedScopes   Int[]                  @default([1, 2]) @map("included_scopes")
+  // Defaults to `subsidiary` so no existing row changes meaning. The API
+  // refuses to switch a subsidiary with no locations to `location`: the
+  // denominator would be `0 × 12 = 0`, and "0 of 0 slots covered" reads as
+  // complete — a subsidiary with no data at all would go green.
+  trackingGranularity TrackingGranularity @default(subsidiary) @map("tracking_granularity")
   locations        Location[]
   access           UserSubsidiaryAccess[]
   activityRecords  ActivityRecord[]

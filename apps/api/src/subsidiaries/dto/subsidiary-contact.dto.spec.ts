@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { plainToInstance } from 'class-transformer';
+import { plainToInstance, type ClassConstructor } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { describe, expect, it } from 'vitest';
 import { MAX_LOCATIONS_PER_CREATE } from '@tonyai/shared-types';
@@ -31,10 +31,20 @@ function updateErrors(body: Record<string, unknown>) {
   return validateSync(plainToInstance(UpdateSubsidiaryDto, body));
 }
 
-const DTOS = [
+/**
+ * Typed to the two fields these cases exercise rather than left to inference.
+ * The two classes are no longer key-identical (update alone carries
+ * `trackingGranularity`), so an inferred union stopped resolving
+ * `plainToInstance`'s overload and every `dto.contactPhone` below became an
+ * error on an array type. Naming the shape keeps the twin-DTO coverage — which
+ * exists because removing `@Transform` from the update side alone once survived
+ * the whole CI gate — instead of quietly dropping to one class.
+ */
+type ContactBearingDto = { contactEmail?: string | null; contactPhone?: string | null };
+const DTOS: [string, ClassConstructor<ContactBearingDto>][] = [
   ['CreateSubsidiaryDto', CreateSubsidiaryDto],
   ['UpdateSubsidiaryDto', UpdateSubsidiaryDto],
-] as const;
+];
 
 const CASES: [string, Record<string, unknown>, boolean][] = [
   ['a plain address', { contactEmail: 'aylin.demir@example.com' }, true],
@@ -85,8 +95,21 @@ type SameKeys<A, B> = [keyof A] extends [keyof B]
     ? true
     : false
   : false;
+/**
+ * `trackingGranularity` is the one field update accepts and create does not,
+ * and the exception is named here rather than the assertion being loosened:
+ * switching a subsidiary to `location` requires it to already own a location,
+ * which at create time is being written in the same transaction. Naming it
+ * keeps the guard armed for every OTHER field — widening this to
+ * `Partial<SameKeys<...>>` would have disarmed the check entirely.
+ *
+ * The shared contract states the same asymmetry on `UpdateSubsidiaryInput`.
+ */
 type _UpdateMirrorsCreate = Assert<
-  SameKeys<UpdateSubsidiaryDto, Omit<CreateSubsidiaryDto, 'locations'>>
+  SameKeys<
+    Omit<UpdateSubsidiaryDto, 'trackingGranularity'>,
+    Omit<CreateSubsidiaryDto, 'locations'>
+  >
 >;
 
 describe('CreateSubsidiaryDto — nested locations', () => {

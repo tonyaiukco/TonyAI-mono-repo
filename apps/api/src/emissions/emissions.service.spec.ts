@@ -65,6 +65,13 @@ function makeSubsidiary(overrides: Partial<Subsidiary> = {}): Subsidiary {
     designatedPerson: null,
     reportingStatus: 'active',
     includedScopes: [1, 2],
+    // The matrix selects both of these now: the granularity decides which rule
+    // a row is measured by, and `_count.locations` is the denominator's
+    // multiplier. Defaulted to what every seeded row actually holds — the
+    // historic behaviour — so a spec that means "measured by location" has to
+    // say so out loud.
+    trackingGranularity: 'subsidiary',
+    _count: { locations: 0 },
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -401,10 +408,182 @@ describe('EmissionsService.trackingMatrix', () => {
     // figure means the anomaly baseline never sees it either. The invoice is
     // the only check such a record can carry.
     expect(water.status).toBe('incomplete');
-    // And the cell reports no emissions, rather than a measured zero that
-    // happens to look the same in a total.
-    expect(water.tCo2e).toBe(0);
+    // `null`, not `0` — this assertion said `0` when it was written, which is
+    // the misstatement WP17 PR 2 closed at the contract level: a hard zero in a
+    // `number`-typed field is indistinguishable from a measurement.
+    expect(water.tCo2e).toBeNull();
     expect(water.recordCount).toBe(1);
+    expect(water.uncalculatedRecordCount).toBe(1);
+  });
+
+  describe('location granularity — the invoice denominator (WP17 / DASH-3)', () => {
+    const LOCATION_SUB = () =>
+      makeSubsidiary({
+        id: 'sub-1',
+        trackingGranularity: 'location',
+        _count: { locations: 2 },
+      } as Partial<Subsidiary>);
+
+    /** A committed monthly invoice for one location. */
+    const invoice = (
+      locationId: string,
+      periodValue: string,
+      over: Partial<ActivityRecord> = {},
+    ) =>
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        scope: 2,
+        status: ActivityRecordStatus.approved,
+        reportingPeriod: 'monthly',
+        periodValue,
+        locationId,
+        _count: { evidence: 1 },
+        ...over,
+      } as Partial<ActivityRecord>);
+
+    it('requires locations × 12 per invoice-tracked category, and reports the shortfall', async () => {
+      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
+      prisma.activityRecord.findMany.mockResolvedValue([
+        invoice('loc-1', 'January'),
+        invoice('loc-1', 'February'),
+        invoice('loc-2', 'January'),
+      ]);
+
+      const m = await service.trackingMatrix(user, {});
+      const cell = (c: string) => m.rows[0].cells.find((x) => x.category === c)!;
+
+      // 2 locations × 12 months = 24 slots per category; 3 are closed.
+      expect(cell('Electricity').coverage).toMatchObject({ required: 24, covered: 3 });
+      expect(cell('Electricity').status).toBe('incomplete');
+      // The other two invoice categories have nothing at all — and they still
+      // carry a denominator, which is what makes "0 of 24" expressible. A cell
+      // that short-circuited on "no records" would report `missing` with no
+      // numbers and the user could not tell 24 from 240.
+      expect(cell('Water').coverage).toMatchObject({ required: 24, covered: 0 });
+      expect(cell('Water').status).toBe('missing');
+      expect(cell('Natural Gas').coverage).toMatchObject({ required: 24, covered: 0 });
+      // A category outside the invoice rule keeps the yes/no shape — no
+      // coverage object at all, so a UI cannot render "0/0" for it.
+      expect(cell('Fuel').coverage).toBeUndefined();
+      expect(m.rows[0].trackingGranularity).toBe('location');
+      expect(m.rows[0].locationCount).toBe(2);
+    });
+
+    it('turns complete only when every location has all twelve months', async () => {
+      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      prisma.subsidiary.findMany.mockResolvedValue([
+        makeSubsidiary({
+          id: 'sub-1',
+          trackingGranularity: 'location',
+          _count: { locations: 1 },
+        } as Partial<Subsidiary>),
+      ]);
+      const months = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December',
+      ];
+      prisma.activityRecord.findMany.mockResolvedValue(
+        months.map((mth) => invoice('loc-1', mth)),
+      );
+
+      const m = await service.trackingMatrix(user, {});
+      const electricity = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+      expect(electricity.coverage).toMatchObject({ required: 12, covered: 12 });
+      expect(electricity.status).toBe('complete');
+    });
+
+    it('counts a second invoice for the same location and month once', async () => {
+      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
+      prisma.activityRecord.findMany.mockResolvedValue([
+        invoice('loc-1', 'January'),
+        // Same slot, different casing/whitespace — one month's coverage, not two.
+        invoice('loc-1', ' january '),
+      ]);
+
+      const m = await service.trackingMatrix(user, {});
+      expect(
+        m.rows[0].cells.find((c) => c.category === 'Electricity')!.coverage,
+      ).toMatchObject({ covered: 1 });
+    });
+
+    it('closes no slot without an invoice attached', async () => {
+      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
+      prisma.activityRecord.findMany.mockResolvedValue([
+        invoice('loc-1', 'January', { _count: { evidence: 0 } } as Partial<ActivityRecord>),
+      ]);
+
+      const m = await service.trackingMatrix(user, {});
+      // The invoice IS the unit of completeness — a reading with no document
+      // behind it is exactly what the rule exists to distinguish.
+      expect(
+        m.rows[0].cells.find((c) => c.category === 'Electricity')!.coverage,
+      ).toMatchObject({ covered: 0 });
+    });
+
+    it('reports subsidiary-level and non-monthly records instead of silently ignoring them', async () => {
+      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
+      prisma.activityRecord.findMany.mockResolvedValue([
+        // Attached to no location: 96 of the 102 seeded records look like this.
+        invoice(null as unknown as string, 'January'),
+        // Quarterly: one invoice per MONTH cannot live inside a quarter.
+        invoice('loc-1', 'Q1', { reportingPeriod: 'quarterly' } as Partial<ActivityRecord>),
+      ]);
+
+      const m = await service.trackingMatrix(user, {});
+      const cell = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+      expect(cell.coverage).toMatchObject({
+        covered: 0,
+        unattributedRecords: 1,
+        nonMonthlyRecords: 1,
+      });
+      // Both are counted rather than dropped: a user looking at "0 of 24
+      // covered" beside "2 records exist" needs the two numbers reconciled, or
+      // the screen reads as data loss.
+      expect(cell.recordCount).toBe(2);
+    });
+
+    it('leaves a subsidiary-granularity row on the old rule entirely', async () => {
+      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      prisma.subsidiary.findMany.mockResolvedValue([
+        makeSubsidiary({ id: 'sub-1', _count: { locations: 4 } } as Partial<Subsidiary>),
+      ]);
+      prisma.activityRecord.findMany.mockResolvedValue([
+        // One committed record with its file — complete under the old rule,
+        // and nowhere near 4 × 12 invoices under the new one.
+        invoice(null as unknown as string, 'January'),
+      ]);
+
+      const m = await service.trackingMatrix(user, {});
+      const electricity = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+      // Owning locations must not switch the rule on by itself — that is the
+      // whole reason granularity is an explicit setting.
+      expect(electricity.status).toBe('complete');
+      expect(electricity.coverage).toBeUndefined();
+      expect(m.rows[0].trackingGranularity).toBe('subsidiary');
+    });
+
+    it('scopes to one subsidiary, and returns empty for one outside the access set', async () => {
+      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
+      prisma.activityRecord.findMany.mockResolvedValue([]);
+
+      await service.trackingMatrix(user, { subsidiaryId: 'sub-1' });
+      expect(prisma.activityRecord.findMany.mock.calls[0][0].where.subsidiaryId).toBe('sub-1');
+
+      prisma.activityRecord.findMany.mockClear();
+      const denied = await service.trackingMatrix(user, { subsidiaryId: 'sub-999' });
+      expect(denied.rows).toEqual([]);
+      // Never a 403, and never a query: the response cannot confirm the row exists.
+      expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+    });
   });
 
   it('gives every accessible subsidiary a row even with zero records', async () => {

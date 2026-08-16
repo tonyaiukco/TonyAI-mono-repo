@@ -4,6 +4,7 @@ import {
   PrismaClient,
   UserRole,
   SubsidiaryStatus,
+  TrackingGranularity,
   ActivityRecordStatus,
 } from '../generated/client';
 
@@ -42,7 +43,7 @@ const ORG_ID = '11111111-1111-1111-1111-111111111111';
 // keeps its NULL contacts until `pnpm db:reset`. That is the seed's long-
 // standing idempotency contract and this change does not alter it.
 const SUBSIDIARIES = [
-  { id: '22222222-2222-2222-2222-222222220001', designatedPerson: 'Aylin Demir', contactEmail: 'aylin.demir@example.com', contactPhone: '+90 555 000 000', legalName: 'TonyAI Energy A.Ş.', tradingName: 'TonyAI Energy', location: 'Istanbul, Turkey', geographyCode: 'TR', sector: 'Energy', businessArea: 'Power Generation', status: SubsidiaryStatus.active },
+  { id: '22222222-2222-2222-2222-222222220001', designatedPerson: 'Aylin Demir', contactEmail: 'aylin.demir@example.com', contactPhone: '+90 555 000 000', legalName: 'TonyAI Energy A.Ş.', tradingName: 'TonyAI Energy', location: 'Istanbul, Turkey', geographyCode: 'TR', sector: 'Energy', businessArea: 'Power Generation', status: SubsidiaryStatus.active, trackingGranularity: TrackingGranularity.location },
   { id: '22222222-2222-2222-2222-222222220002', designatedPerson: 'James Carter', contactEmail: 'james.carter@example.com', contactPhone: '+44 7700 900002', legalName: 'TonyAI Gas Ltd.', tradingName: 'TonyAI Gas', location: 'London, UK', geographyCode: 'UK', sector: 'Utilities', businessArea: 'Gas Distribution', status: SubsidiaryStatus.active },
   { id: '22222222-2222-2222-2222-222222220003', designatedPerson: 'Lena Brandt', contactEmail: 'lena.brandt@example.com', contactPhone: '+49 30 000000', legalName: 'TonyAI Manufacturing GmbH', tradingName: 'TonyAI Mfg', location: 'Munich, Germany', geographyCode: 'EU', sector: 'Manufacturing', businessArea: 'Industrial Production', status: SubsidiaryStatus.active },
   { id: '22222222-2222-2222-2222-222222220004', designatedPerson: 'Murat Aksoy', contactEmail: 'murat.aksoy@example.com', contactPhone: '+90 555 000 004', legalName: 'TonyAI Logistics A.Ş.', tradingName: 'TonyAI Logistics', location: 'Izmir, Turkey', geographyCode: 'TR', sector: 'Transportation', businessArea: 'Freight & Logistics', status: SubsidiaryStatus.pending },
@@ -357,10 +358,16 @@ async function main() {
       //
       // Scoped to exactly those three columns, and only for the five seeded
       // ids, so nothing a tester typed anywhere else is touched.
+      // `trackingGranularity` joins them for the same reason, one package
+      // later: WP17 needs at least one subsidiary measured by location for the
+      // rule to be visible at all, and on an already-seeded database every row
+      // would otherwise keep the `subsidiary` default and the feature would
+      // look unimplemented.
       update: {
         designatedPerson: s.designatedPerson,
         contactEmail: s.contactEmail,
         contactPhone: s.contactPhone,
+        trackingGranularity: s.trackingGranularity ?? TrackingGranularity.subsidiary,
       },
       create: {
         id: s.id,
@@ -376,6 +383,7 @@ async function main() {
         contactPhone: s.contactPhone,
         reportingStatus: s.status,
         includedScopes: [1, 2],
+        trackingGranularity: s.trackingGranularity ?? TrackingGranularity.subsidiary,
       },
     });
   }

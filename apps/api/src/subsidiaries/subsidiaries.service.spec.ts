@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import type { Subsidiary } from '@tonyai/db';
 import { SubsidiariesService } from './subsidiaries.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -372,6 +378,55 @@ describe('SubsidiariesService', () => {
       expect(auditArg.action).toBe('update');
       expect(auditArg.diff).toHaveProperty('before');
       expect(auditArg.diff).toHaveProperty('after');
+    });
+
+    it('refuses location granularity for a subsidiary with no locations', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.location.count.mockResolvedValue(0);
+
+      // Allowing it would make the denominator `0 × 12 = 0`, and "0 of 0
+      // covered" is vacuously complete — a subsidiary holding no data at all
+      // would turn green on the screen whose job is to show missing data.
+      await expect(
+        service.update(user, 'sub-1', { trackingGranularity: 'location' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
+    });
+
+    it('allows location granularity once a location exists', async () => {
+      const user = makeSuperAdmin();
+      const before = makeSubsidiary({ id: 'sub-1' });
+      prisma.subsidiary.findUnique.mockResolvedValue(before);
+      prisma.location.count.mockResolvedValue(2);
+      prisma.txClient.subsidiary.update.mockResolvedValue(
+        makeSubsidiary({ id: 'sub-1', trackingGranularity: 'location' } as Partial<Subsidiary>),
+      );
+
+      const result = await service.update(user, 'sub-1', {
+        trackingGranularity: 'location',
+      });
+
+      expect(result.trackingGranularity).toBe('location');
+      expect(prisma.txClient.subsidiary.update).toHaveBeenCalledWith({
+        where: { id: 'sub-1' },
+        data: { trackingGranularity: 'location' },
+      });
+    });
+
+    it('never counts locations when switching BACK to subsidiary granularity', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(
+        makeSubsidiary({ id: 'sub-1', trackingGranularity: 'location' } as Partial<Subsidiary>),
+      );
+      prisma.txClient.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+
+      await service.update(user, 'sub-1', { trackingGranularity: 'subsidiary' });
+
+      // The guard is one-directional on purpose: a subsidiary can always be
+      // taken back off the invoice rule, including one whose locations were
+      // since removed. Gating that too would strand it.
+      expect(prisma.location.count).not.toHaveBeenCalled();
     });
 
     it('a geography change touches ONLY the subsidiary — no record is recalculated', async () => {

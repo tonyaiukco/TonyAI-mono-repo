@@ -5,6 +5,7 @@ import {
   CATEGORY_SCOPE_MAP,
   isCalculated,
   isEvidenceRequired,
+  isInvoiceTracked,
   type ActivityCalculationSnapshot,
   type CalculationResult,
   type Category,
@@ -324,24 +325,41 @@ export class EmissionsService {
     };
     if (user.accessibleSubsidiaryIds.length === 0) return empty;
 
+    // A requested subsidiary outside the accessible set returns the empty
+    // matrix, never a 403 — the same "never leak existence" rule the rest of the
+    // tenant surface follows.
+    let subsidiaryFilter: Prisma.StringFilter | string;
+    if (query.subsidiaryId) {
+      if (!user.accessibleSubsidiaryIds.includes(query.subsidiaryId)) {
+        return empty;
+      }
+      subsidiaryFilter = query.subsidiaryId;
+    } else {
+      subsidiaryFilter = { in: user.accessibleSubsidiaryIds };
+    }
+
     const [records, subs] = await Promise.all([
       // All statuses on purpose: drafts/rejected make a cell "incomplete".
       // Evidence count feeds the FR §2.2 rule (green needs evidence where required).
       this.prisma.activityRecord.findMany({
         where: {
-          subsidiaryId: { in: user.accessibleSubsidiaryIds },
+          subsidiaryId: subsidiaryFilter,
           reportingYear: query.year,
         },
         include: { _count: { select: { evidence: true } } },
       }),
       this.prisma.subsidiary.findMany({
-        where: { id: { in: user.accessibleSubsidiaryIds } },
+        where: { id: subsidiaryFilter },
         select: {
           id: true,
           tradingName: true,
           legalName: true,
           sector: true,
           designatedPerson: true,
+          trackingGranularity: true,
+          // The denominator's multiplier. Counted rather than fetched: the rule
+          // needs how many locations exist, not which ones.
+          _count: { select: { locations: true } },
         },
         orderBy: { legalName: 'asc' },
       }),
@@ -361,16 +379,33 @@ export class EmissionsService {
     const matrixRows: TrackingMatrixRow[] = subs.map((sub) => {
       let totalTCo2e = 0;
       let completeCount = 0;
+      const locationCount = sub._count.locations;
+      const byLocation = sub.trackingGranularity === 'location';
 
       const cells: TrackingMatrixCell[] = CATEGORIES.map((category) => {
         const recs = byCell.get(`${sub.id}\u0000${category}`) ?? [];
 
         let status: DataStatus;
-        let tCo2e = 0;
+        // `null` until something actually contributes a figure — see the note
+        // on TrackingMatrixCell.tCo2e. A cell whose only records are
+        // factor-less must not report a measured zero.
+        let tCo2e: number | null = null;
+        let uncalculatedRecordCount = 0;
         let lastUpdate: string | null = null;
         let anomaly = false;
 
-        if (recs.length === 0) {
+        // The invoice rule (WP17 / round-1 DASH-3) applies to three categories,
+        // and only where the subsidiary is measured by location.
+        const invoiceTracked = byLocation && isInvoiceTracked(category);
+        const covered = new Set<string>();
+        let unattributedRecords = 0;
+        let nonMonthlyRecords = 0;
+
+        // An invoice-tracked cell still has a denominator with no records at
+        // all, so it cannot short-circuit to "missing" on `recs.length === 0`
+        // the way a yes/no category can — it has to fall through and report
+        // 0-of-N.
+        if (recs.length === 0 && !invoiceTracked) {
           status = 'missing';
         } else {
           let hasPending = false;
@@ -383,23 +418,55 @@ export class EmissionsService {
             if (PENDING_STATUSES.has(r.status)) hasPending = true;
             if (r.anomalyFlag) anomaly = true;
             if (COUNTED_SET.has(r.status)) {
-              const calc = r.calculation as unknown as CalculationResult | null;
-              if (calc && Number.isFinite(calc.tCo2e)) tCo2e += calc.tCo2e;
+              const calc = r.calculation as unknown as ActivityCalculationSnapshot | null;
+              if (isCalculated(calc)) tCo2e = (tCo2e ?? 0) + calc.tCo2e;
+              else uncalculatedRecordCount += 1;
               if (evidenceRequired && r._count.evidence === 0) {
                 evidenceMissing = true;
+              }
+              if (invoiceTracked) {
+                // A slot is (location, month) for this category, and it closes
+                // only on a committed MONTHLY record carrying a file. Every
+                // clause is load-bearing: an invoice covers one month, a
+                // subsidiary-level entry covers no site, and without the file
+                // there is nothing to have covered it with. A Set, because two
+                // records for the same location and month are one invoice's
+                // worth of coverage, not two.
+                if (!r.locationId) unattributedRecords += 1;
+                else if (r.reportingPeriod !== 'monthly') nonMonthlyRecords += 1;
+                else if (r._count.evidence > 0) {
+                  covered.add(
+                    `${r.locationId}\u0000${r.periodValue.trim().toLowerCase()}`,
+                  );
+                }
               }
             }
             const t = r.updatedAt.getTime();
             if (t > latest) latest = t;
           }
-          lastUpdate = new Date(latest).toISOString();
-          status =
-            hasPending || anomaly || evidenceMissing ? 'incomplete' : 'complete';
+          if (recs.length > 0) lastUpdate = new Date(latest).toISOString();
+
+          if (invoiceTracked) {
+            const required = locationCount * MONTH_LABEL.length;
+            status =
+              covered.size === 0
+                ? 'missing'
+                : covered.size >= required
+                  ? 'complete'
+                  : 'incomplete';
+            // An anomaly still caps the cell below complete, exactly as it does
+            // everywhere else: FR §2.2's yellow means "there is something to
+            // look at here", and a full set of invoices does not answer it.
+            if (status === 'complete' && anomaly) status = 'incomplete';
+          } else {
+            status =
+              hasPending || anomaly || evidenceMissing ? 'incomplete' : 'complete';
+          }
         }
 
         totals[status] += 1;
         if (status === 'complete') completeCount += 1;
-        totalTCo2e += tCo2e;
+        if (tCo2e !== null) totalTCo2e += tCo2e;
 
         return {
           category: category as Category,
@@ -407,6 +474,17 @@ export class EmissionsService {
           status,
           tCo2e,
           recordCount: recs.length,
+          uncalculatedRecordCount,
+          ...(invoiceTracked
+            ? {
+                coverage: {
+                  required: locationCount * MONTH_LABEL.length,
+                  covered: covered.size,
+                  unattributedRecords,
+                  nonMonthlyRecords,
+                },
+              }
+            : {}),
           lastUpdate,
           anomaly,
         };
@@ -420,6 +498,8 @@ export class EmissionsService {
         totalTCo2e,
         completeCount,
         categoryCount: CATEGORIES.length,
+        trackingGranularity: sub.trackingGranularity,
+        locationCount,
         cells,
       };
     });
