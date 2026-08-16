@@ -63,7 +63,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | RBAC (only `super_admin` may mutate) + **audit logging** | ✅ |
 | Postgres **Row Level Security** (defense‑in‑depth) | ✅ |
 | Prisma schema + migrations + idempotent seed | ✅ |
-| Automated tests (388 unit + 56 E2E) + live RLS containment probes (30) | ✅ |
+| Automated tests (391 unit + 64 E2E) + live RLS containment probes (30) | ✅ |
 | Reporting years 2015–2026 (WP15/DE-9); the demo dataset and factor library live in one `DEMO_YEAR`, and any year without factors says so instead of failing silently | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
@@ -74,7 +74,7 @@ This repository currently delivers **Milestone 0 (foundation)** and the **Milest
 | Reports (WP6) — audit-ready PDF (Puppeteer) + Excel/CSV export, year+subsidiary scoped (FR §5.3 partial), audited generation | ✅ |
 | Audit-trail viewer (WP7) — read-only `/audit`, tenant-scoped and paginated, showing each actor's role **as recorded at the time** | ✅ |
 | Review queue (WP7) — `/review` turns the submit → review → approve/reject API into a screen: evidence and factor provenance in the detail sheet, rejection reason returned to the submitter | ✅ |
-| Subsidiary editing (WP7) — Edit dialog with a confirmed geography change that states what does **not** move (committed records keep their factor snapshot) | ✅ |
+| Subsidiary control panel at `/subsidiaries/[id]` (WP16) — detail, reporting contact, locations managed in place, and a dependents card that explains a refused delete in the API's own words. The geography change is confirmed and states what does **not** move (committed records keep their factor snapshot) | ✅ |
 | Dashboard matrix drill-in (WP7) — a cell opens Data Entry for that subsidiary **and** category, reopening the existing record when there is one; the grid is scoped to one reporting year | ✅ |
 
 **What's proven by tests today:** an `admin` sees all 5 seeded subsidiaries, a `data_entry` user sees only their 2, non‑admins are blocked from writes (HTTP 403), unauthenticated requests are rejected (HTTP 401), and every mutation writes an immutable `audit_log` row — verified at the API layer **and** the database (RLS) layer.
@@ -326,9 +326,9 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | --- | --- | --- | --- |
 | `GET` | `/health` | Liveness check | public |
 | `GET` | `/me` | Current user + role + `accessibleSubsidiaryIds` | any |
-| `GET` | `/subsidiaries` | List (tenant‑scoped) | any |
+| `GET` | `/subsidiaries` | List (tenant‑scoped). Includes the reporting contact (`designatedPerson` / `contactEmail` / `contactPhone`), which is **deliberately visible to every role in the tenant** — see `permissions_and_roles.md` §6.4 for the decision and its consequences | any |
 | `GET` | `/subsidiaries/:id` | Get one (404 if outside access set) | any |
-| `GET` | `/subsidiaries/:id/summary` | Counts of everything hanging off it (locations, records split into approved/locked · awaiting review · draft/rejected, period locks, targets, denominators) plus `hasBlockingDependents`. Exists so a caller can show "36 records" without downloading 36 records, and can see **why** a delete would be refused without attempting it | any |
+| `GET` | `/subsidiaries/:id/summary` | Counts of everything hanging off it (locations, records split into approved/locked · awaiting review · draft/rejected, period locks, targets, denominators), plus `hasBlockingDependents` and `blockers[]` — the delete guard's own sentences, so a UI never restates them. Exists so a caller can show "36 records" without downloading 36 records, and can see **why** a delete would be refused without attempting it | any |
 | `POST` | `/subsidiaries` | Create | `super_admin` |
 | `PATCH` | `/subsidiaries/:id` | Update | `super_admin` |
 | `DELETE` | `/subsidiaries/:id` | Delete — refused (409) while anything still hangs off it (records, locations, targets, denominators, closed periods), because every child relation is `ON DELETE CASCADE`; a subsidiary holding an `approved`/`locked` record is retired via `reportingStatus: 'inactive'` instead, since those records can never be deleted | `super_admin` |

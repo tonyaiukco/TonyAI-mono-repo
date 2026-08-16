@@ -30,6 +30,7 @@ import type {
   TrackingMatrixDTO,
   RejectInput,
   SubsidiaryDTO,
+  SubsidiarySummaryDTO,
   UpdateActivityRecordInput,
   UpdateDenominatorInput,
   UpdateLocationInput,
@@ -96,6 +97,10 @@ export const api = {
   me: () => apiFetch<AuthUser>("/me"),
   listSubsidiaries: () => apiFetch<SubsidiaryDTO[]>("/subsidiaries"),
   getSubsidiary: (id: string) => apiFetch<SubsidiaryDTO>(`/subsidiaries/${id}`),
+  /** Counts of everything hanging off a subsidiary, plus why a delete would be
+   *  refused — the guard's own sentences, so the panel never restates them. */
+  getSubsidiarySummary: (id: string) =>
+    apiFetch<SubsidiarySummaryDTO>(`/subsidiaries/${id}/summary`),
   createSubsidiary: (body: CreateSubsidiaryInput) =>
     apiFetch<SubsidiaryDTO>("/subsidiaries", {
       method: "POST",

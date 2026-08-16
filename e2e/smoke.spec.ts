@@ -1,7 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
   login,
-  pickByFieldLabel,
   subsidiaryRows,
   ADMIN_EMAIL,
   ENTRY_EMAIL,
@@ -39,61 +38,18 @@ test.describe('Milestone-1 slice', () => {
     await expect(page.getByRole('cell', { name: uniqueName })).toBeVisible();
     await expect(subsidiaryRows(page)).toHaveCount(6);
 
-    // EDIT (WP7 PR 4 / round-1 UAT SUB-1): a subsidiary must be editable.
-    const renamed = `${uniqueName} Renamed`;
-    await page.locator('tr', { hasText: uniqueName }).getByRole('button', { name: 'Edit subsidiary' }).click();
-    await expect(dialog.getByText('Edit subsidiary')).toBeVisible();
-    // The dialog opens populated, not blank — otherwise "edit" silently means
-    // "retype everything", and any field left alone would be wiped.
-    await expect(dialog.getByRole('textbox').first()).toHaveValue(uniqueName);
-    await dialog.getByRole('textbox').first().fill(renamed);
-
-    // Changing the geography must be confirmed, not saved silently.
-    await pickByFieldLabel(page, 'Geography', 'United Kingdom (UK)');
-    await dialog.getByRole('button', { name: 'Save changes' }).click();
-    const geoAlert = page.getByRole('alertdialog');
-    await expect(geoAlert.getByText(/Change geography from TR to UK\?/)).toBeVisible();
-    await expect(
-      geoAlert.getByText(/will change the configured factor basis/),
-    ).toBeVisible();
-    // The reassurance that makes the warning safe to accept.
-    await expect(
-      geoAlert.getByText(/records already committed keep the emission factor/i),
-    ).toBeVisible();
-
-    // Cancelling must not save — a warning the user declined is not a save.
-    // Asserted against the SERVER, not the table still on screen: the dialog
-    // does not refresh on cancel, so checking the current DOM passes even if the
-    // cancel button wrote to the API (proven by mutation — that exact test was
-    // green while a cancelled edit persisted).
-    await geoAlert.getByRole('button', { name: 'Cancel' }).click();
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
-    await page.reload();
-    await expect(page.getByRole('cell', { name: uniqueName })).toBeVisible();
-    await expect(page.getByRole('cell', { name: renamed })).toHaveCount(0);
-    await expect(page.locator('tr', { hasText: uniqueName })).toContainText('TR');
-
-    // Re-open and redo the edit, this time confirming it.
-    await page.locator('tr', { hasText: uniqueName }).getByRole('button', { name: 'Edit subsidiary' }).click();
-    await dialog.getByRole('textbox').first().fill(renamed);
-    await pickByFieldLabel(page, 'Geography', 'United Kingdom (UK)');
-
-    await dialog.getByRole('button', { name: 'Save changes' }).click();
-    await page.getByRole('alertdialog').getByRole('button', { name: 'Continue' }).click();
-    await expect(page.getByText('Subsidiary settings updated successfully.')).toBeVisible();
-    await expect(page.getByRole('cell', { name: renamed })).toBeVisible();
-    await expect(page.locator('tr', { hasText: renamed })).toContainText('UK');
-    await expect(subsidiaryRows(page)).toHaveCount(6);
-
+    // EDIT moved to `subsidiary-panel.spec.ts` (WP16 PR 2b): a subsidiary is
+    // now edited on its own page, not in a dialog on the register. What stays
+    // here is the register's own job — create, list, delete.
     // DELETE: trigger the delete on the new row, confirm in the alert dialog.
-    const newRow = page.locator('tr', { hasText: renamed });
+    const newRow = page.locator('tr', { hasText: uniqueName });
     await newRow.getByRole('button', { name: 'Delete subsidiary' }).click();
     const alert = page.getByRole('alertdialog');
     await expect(alert.getByText('Delete subsidiary?')).toBeVisible();
     await alert.getByRole('button', { name: 'Delete' }).click();
 
     // The row is gone and the count returns to 5.
-    await expect(page.getByRole('cell', { name: renamed })).toHaveCount(0);
+    await expect(page.getByRole('cell', { name: uniqueName })).toHaveCount(0);
     await expect(subsidiaryRows(page)).toHaveCount(5);
   });
 

@@ -29,7 +29,13 @@ test('data_entry: scoped reads + period-lock write gated in the UI', async ({ pa
   // Admin visibility of these is covered by smoke.spec's create/delete flow.
   await expect(page.getByRole('button', { name: 'Add Subsidiary' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Delete subsidiary' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Edit subsidiary' })).toHaveCount(0);
+  // "Edit subsidiary" used to be asserted here. WP16 PR 2b removed that button
+  // for EVERY role — editing moved to `/subsidiaries/[id]` — so the assertion
+  // would have kept passing while proving nothing about permissions. The real
+  // question, "can a data_entry user change a subsidiary", is now answered
+  // against the panel in `subsidiary-panel.spec.ts`; what belongs here is that
+  // the register does not offer them a way in.
+  await expect(page.getByRole('button', { name: 'Open subsidiary' })).toHaveCount(0);
 
   // The read-only drawers stay available: the period-locks drawer opens (locked
   // list) but the lock/unlock form is gated — no "Lock period" button, and an
