@@ -735,9 +735,6 @@ export interface SubsidiaryDTO {
  */
 export const MAX_LOCATIONS_PER_CREATE = 50;
 
-/** One location supplied while creating its parent (round-1 UAT SUB-3). */
-export type CreateSubsidiaryLocationInput = Omit<CreateLocationInput, 'subsidiaryId'>;
-
 export interface CreateSubsidiaryInput {
   legalName: string;
   tradingName?: string | null;
@@ -853,16 +850,38 @@ export interface LocationDTO {
   updatedAt: string;
 }
 
-export interface CreateLocationInput {
-  subsidiaryId: string;
+/**
+ * Everything that describes WHAT a location is. The base, on purpose.
+ *
+ * `CreateLocationInput` extends this with the one field that describes how a
+ * location ATTACHES to a parent, and the nested form used by
+ * `POST /subsidiaries` is this type unchanged.
+ *
+ * The derivation used to run the other way — the nested type was
+ * `Omit<CreateLocationInput, 'subsidiaryId'>` — which made the two edits
+ * indistinguishable. A field added to describe a location would silently reach
+ * the nested input, a web caller would compile code that sends it, and the API
+ * would answer `400 property … should not exist` and fail the ENTIRE subsidiary
+ * create. That is the same failure class already fixed for
+ * `UpdateSubsidiaryInput`; it was simply left latent in the opposite direction.
+ *
+ * Inverted, the two kinds of change are distinguishable: add a field here and
+ * both forms get it; add one to the extension and only the standalone endpoint
+ * does.
+ */
+export interface CreateSubsidiaryLocationInput {
   name: string;
   geographyCode: string;
   address?: string | null;
   authorizedPerson?: string | null;
 }
 
+export type CreateLocationInput = CreateSubsidiaryLocationInput & {
+  subsidiaryId: string;
+};
+
 /** `subsidiaryId` is immutable — a location cannot move between subsidiaries. */
-export type UpdateLocationInput = Partial<Omit<CreateLocationInput, 'subsidiaryId'>>;
+export type UpdateLocationInput = Partial<CreateSubsidiaryLocationInput>;
 
 /** Dashboard KPI summary returned by GET /api/v1/kpi */
 export interface DashboardKpi {

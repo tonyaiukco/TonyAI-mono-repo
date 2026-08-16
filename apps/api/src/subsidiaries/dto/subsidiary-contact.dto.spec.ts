@@ -3,7 +3,8 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { describe, expect, it } from 'vitest';
 import { MAX_LOCATIONS_PER_CREATE } from '@tonyai/shared-types';
-import { CreateSubsidiaryDto, CreateSubsidiaryLocationDto } from './create-subsidiary.dto';
+import { CreateSubsidiaryDto } from './create-subsidiary.dto';
+import { CreateSubsidiaryLocationDto } from '../../locations/dto/create-location.dto';
 import { UpdateSubsidiaryDto } from './update-subsidiary.dto';
 
 /**
@@ -67,6 +68,27 @@ const CASES: [string, Record<string, unknown>, boolean][] = [
  * subsidiary is created without them, and nothing anywhere says so. Removing
  * `@ValidateNested`/`@Type` passed the entire unit suite until this existed.
  */
+/**
+ * `UpdateSubsidiaryDto` is hand-written, not `PartialType(CreateSubsidiaryDto)`
+ * — `@nestjs/mapped-types` is deliberately not a dependency, and the update
+ * class carries its own reasoning in its docblocks. The cost is that the two
+ * can drift, and the shared `UpdateSubsidiaryInput` claims they do not.
+ *
+ * This costs nothing at runtime and fails `pnpm typecheck` the day someone adds
+ * a field to one and forgets the other — at the layer where the mistake is
+ * made. It does NOT catch validator drift, or the `| null` mismatch the update
+ * DTO's own docblock confesses to; those are a separate cleanup.
+ */
+type Assert<T extends true> = T;
+type SameKeys<A, B> = [keyof A] extends [keyof B]
+  ? [keyof B] extends [keyof A]
+    ? true
+    : false
+  : false;
+type _UpdateMirrorsCreate = Assert<
+  SameKeys<UpdateSubsidiaryDto, Omit<CreateSubsidiaryDto, 'locations'>>
+>;
+
 describe('CreateSubsidiaryDto — nested locations', () => {
   const parse = (locations: unknown) =>
     plainToInstance(

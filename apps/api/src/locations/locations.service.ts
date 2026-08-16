@@ -9,7 +9,14 @@ import type { LocationDTO } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
-import { CreateLocationDto } from './dto/create-location.dto';
+// `CreateSubsidiaryLocationDto` is the base of `CreateLocationDto` and is what
+// the shared writer takes: the parameter used to build its own
+// `Omit<CreateLocationDto, 'subsidiaryId'>`, which made the shape's THIRD
+// declaration. One contract type and one validator class is the floor.
+import {
+  CreateLocationDto,
+  CreateSubsidiaryLocationDto,
+} from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 
 /**
@@ -148,7 +155,7 @@ export class LocationsService {
     db: Prisma.TransactionClient,
     user: RequestUser,
     parent: TrustedParent,
-    input: Omit<CreateLocationDto, 'subsidiaryId'>,
+    input: CreateSubsidiaryLocationDto,
   ): Promise<LocationDTO> {
     const created = await db.location.create({
       data: {
