@@ -15,7 +15,7 @@ import type { SubsidiaryDTO, SubsidiarySummaryDTO } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
-import { LocationsService } from '../locations/locations.service';
+import { LocationsService, TrustedParent } from '../locations/locations.service';
 import { EDITABLE_STATUSES } from '../activity-records/activity-records.service';
 import { CreateSubsidiaryDto } from './dto/create-subsidiary.dto';
 import { UpdateSubsidiaryDto } from './dto/update-subsidiary.dto';
@@ -115,7 +115,12 @@ export class SubsidiariesService {
    */
   async create(user: RequestUser, dto: CreateSubsidiaryDto): Promise<SubsidiaryDTO> {
     this.assertCanWrite(user);
-    return this.prisma.$transaction(async (tx) => this.createInTx(tx, user, dto));
+    // The timeout is stated, not inherited. Prisma's default is 5s; the DTO
+    // caps `locations` so the work fits well inside it, and naming the number
+    // here means a future raise of that cap has to confront this line.
+    return this.prisma.$transaction(async (tx) => this.createInTx(tx, user, dto), {
+      timeout: 10_000,
+    });
   }
 
   private async createInTx(
@@ -153,7 +158,12 @@ export class SubsidiariesService {
     // never a single batched row, or a location's history would depend on how
     // it was created.
     for (const loc of dto.locations ?? []) {
-      await this.locations.writeLocationForTrustedParent(tx, user, created.id, loc);
+      await this.locations.writeLocationForTrustedParent(
+        tx,
+        user,
+        TrustedParent.becauseJustCreated(created),
+        loc,
+      );
     }
     return this.toDTO(created);
   }
@@ -185,12 +195,22 @@ export class SubsidiariesService {
     }
     if (dto.includedScopes !== undefined) data.includedScopes = dto.includedScopes;
 
-    const updated = await this.prisma.subsidiary.update({ where: { id }, data });
-    await this.audit.record(user, {
-      action: 'update',
-      entity: 'subsidiary',
-      entityId: id,
-      diff: { before: this.toDTO(existing), after: this.toDTO(updated) },
+    // In a transaction like create and delete. It was not, which left this
+    // class half-atomic — a crash between the row write and the audit insert
+    // lost the trail for an update while create and delete were safe.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.subsidiary.update({ where: { id }, data });
+      await this.audit.record(
+        user,
+        {
+          action: 'update',
+          entity: 'subsidiary',
+          entityId: id,
+          diff: { before: this.toDTO(existing), after: this.toDTO(row) },
+        },
+        tx,
+      );
+      return row;
     });
     return this.toDTO(updated);
   }

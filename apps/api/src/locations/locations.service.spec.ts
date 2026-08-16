@@ -160,6 +160,11 @@ describe('LocationsService', () => {
       expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({ id: expect.any(String) }),
         expect.objectContaining({ action: 'update', entity: 'location' }),
+        // Third argument: the transaction client. Create and delete were
+        // already atomic; update wrote its audit row afterwards on the default
+        // client, so a crash in between lost the trail for exactly one of the
+        // three verbs — the sort of half-state that reads as safe.
+        prisma,
       );
     });
 

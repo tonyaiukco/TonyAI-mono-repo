@@ -749,7 +749,14 @@ export interface CreateSubsidiaryInput {
   locations?: CreateSubsidiaryLocationInput[];
 }
 
-export type UpdateSubsidiaryInput = Partial<CreateSubsidiaryInput>;
+/**
+ * `locations` is omitted deliberately. `PATCH /subsidiaries/:id` rejects it with
+ * a 400 (`UpdateSubsidiaryDto` is hand-written, not derived), so leaving it in
+ * would let a typed client write code that compiles and fails at runtime —
+ * especially easy here, where `location` and `locations` are one keystroke
+ * apart. Locations are managed through `/locations`.
+ */
+export type UpdateSubsidiaryInput = Omit<Partial<CreateSubsidiaryInput>, 'locations'>;
 
 /**
  * Everything hanging off one subsidiary, counted server-side.

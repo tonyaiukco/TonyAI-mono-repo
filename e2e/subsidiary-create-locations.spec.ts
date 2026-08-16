@@ -155,6 +155,47 @@ test('the create form asks for a location, and the API does not', async ({ page,
   expect(after.filter((s: { legalName: string }) => s.legalName.startsWith('E2E Test Co Form Rule'))).toHaveLength(0);
 });
 
+test('too many locations is a 400 naming the limit, and too large a body is a 413', async ({ request }) => {
+  // Both are about the transaction, not the product. Each location is two
+  // sequential statements inside ONE interactive transaction, so an unbounded
+  // array becomes thousands of round trips: measured locally 2000 locations
+  // took ~1s, but at a managed database's RTT the same payload runs 20-60s and
+  // blows Prisma's 5s default, holding a pooled connection every attempt.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ name: `E2E Bulk ${i}`, geographyCode: 'TR' }));
+
+  const overCap = await request.post(`${API_BASE}/subsidiaries`, {
+    headers: bearer(token),
+    data: { legalName: `E2E Test Co Cap ${Date.now()}`, geographyCode: 'TR', locations: many(51) },
+  });
+  expect(overCap.status()).toBe(400);
+  expect(JSON.stringify(await overCap.json())).toMatch(/locations/);
+
+  const atCap = await request.post(`${API_BASE}/subsidiaries`, {
+    headers: bearer(token),
+    data: { legalName: `E2E Test Co At Cap ${Date.now()}`, geographyCode: 'TR', locations: many(50) },
+  });
+  expect(atCap.status(), 'the cap itself must be usable').toBe(201);
+
+  // An oversized body used to surface as a 500 — logged at error and shipped to
+  // Sentry as a defect — because body-parser throws before any Nest middleware
+  // runs. It is a client sending too much, and this endpoint is the first where
+  // a large body is a plausible legitimate request.
+  const huge = await request.post(`${API_BASE}/subsidiaries`, {
+    headers: bearer(token),
+    data: {
+      legalName: `E2E Test Co Huge ${Date.now()}`,
+      geographyCode: 'TR',
+      locations: Array.from({ length: 400 }, (_, i) => ({
+        name: `E2E Huge ${i} ${'x'.repeat(400)}`,
+        geographyCode: 'TR',
+      })),
+    },
+  });
+  expect(huge.status(), 'a client sending too much is not a server defect').toBe(413);
+});
+
 test('a draft location can be removed before the subsidiary exists', async ({ page }) => {
   await login(page, ADMIN_EMAIL);
   await page.goto('/subsidiaries');

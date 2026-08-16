@@ -30,12 +30,33 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const response = http.getResponse();
 
     const isHttp = exception instanceof HttpException;
+    // body-parser throws before any Nest pipe or middleware runs, so this
+    // arrives as a plain Error with a `status` and no request context — and
+    // without this branch it collapsed to a 500, logged at ERROR and shipped to
+    // Sentry as a defect. It is a client sending too much, not a server fault,
+    // and WP16 PR 3 made an oversized body a plausible LEGITIMATE request for
+    // the first time (a subsidiary create carries its locations).
+    const isTooLarge =
+      !isHttp &&
+      typeof exception === 'object' &&
+      exception !== null &&
+      (exception as { type?: string }).type === 'entity.too.large';
+
     const status = isHttp
       ? exception.getStatus()
-      : HttpStatus.INTERNAL_SERVER_ERROR;
+      : isTooLarge
+        ? HttpStatus.PAYLOAD_TOO_LARGE
+        : HttpStatus.INTERNAL_SERVER_ERROR;
     const body = isHttp
       ? exception.getResponse()
-      : { statusCode: status, message: 'Internal server error' };
+      : isTooLarge
+        ? {
+            statusCode: status,
+            message:
+              'Request body is too large. If you are creating a subsidiary with many locations, add them in smaller batches.',
+            error: 'Payload Too Large',
+          }
+        : { statusCode: status, message: 'Internal server error' };
 
     const ctx = currentRequestContext();
     const path = String(request?.originalUrl ?? request?.url ?? '');

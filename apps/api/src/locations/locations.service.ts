@@ -12,6 +12,32 @@ import { AuditService } from '../audit/audit.service';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 
+/**
+ * A subsidiary that some caller has already established the right to write to.
+ *
+ * The point is the private constructor: a third caller cannot simply pass a
+ * string, it has to ADD a factory here — a visible, reviewable act rather than
+ * an injection and one more argument. The safety of
+ * `writeLocationForTrustedParent` was otherwise carried entirely by its name.
+ */
+export class TrustedParent {
+  private constructor(readonly subsidiaryId: string) {}
+
+  /** The caller checked the role AND `accessibleSubsidiaryIds` first. */
+  static becauseInAccessibleSet(user: RequestUser, subsidiaryId: string): TrustedParent {
+    if (!user.accessibleSubsidiaryIds.includes(subsidiaryId)) {
+      throw new NotFoundException('Subsidiary not found');
+    }
+    return new TrustedParent(subsidiaryId);
+  }
+
+  /** The caller is creating the parent, in this transaction, under its own
+   *  organisation — so there is no accessible set to consult yet. */
+  static becauseJustCreated(created: { id: string }): TrustedParent {
+    return new TrustedParent(created.id);
+  }
+}
+
 @Injectable()
 export class LocationsService {
   constructor(
@@ -82,22 +108,21 @@ export class LocationsService {
   }
 
   /**
-   * Write one location row and its audit entry, against a parent the CALLER has
-   * already established the right to write to.
+   * Write one location row and its audit entry against an already-authorised
+   * parent.
    *
-   * Exported for `POST /subsidiaries`, which creates a subsidiary and its
-   * locations in a single transaction. That path cannot go through `create()`
-   * below: `accessibleSubsidiaryIds` is computed at authentication time, so it
-   * does not contain a subsidiary created moments earlier in the same request —
-   * the tenant check would 404 against the row the very same transaction just
-   * inserted.
+   * The parent id comes from `parent`, NEVER from `input` — the nested create
+   * DTO has no `subsidiaryId` field, and even if a future edit added one back
+   * it would not be read. That structural property, not the DTO's shape, is
+   * what stops a caller attaching a location to somebody else's subsidiary.
    *
-   * So this deliberately performs NO authorisation of its own, and the name is
-   * meant to make that impossible to miss. It is `public` only because Nest
-   * services are injected across module boundaries; the two callers are
-   * `create()` (which checks the role AND the accessible set first) and the
-   * subsidiary create (which is creating the parent, so the parent is the
-   * actor's own organisation by construction).
+   * This performs no authorisation of its own, which is why the parent has to
+   * arrive as a `TrustedParent` rather than a string. It exists because
+   * `POST /subsidiaries` creates a subsidiary and its locations in a single
+   * transaction, and `accessibleSubsidiaryIds` is computed at authentication
+   * time — it cannot contain a subsidiary created moments earlier in the same
+   * request, so `create()` below would 404 against the row that very
+   * transaction just inserted.
    *
    * Living here rather than in the subsidiary service is the point: the audit
    * row's shape is defined once. A location created during a subsidiary create
@@ -108,12 +133,12 @@ export class LocationsService {
   async writeLocationForTrustedParent(
     db: Prisma.TransactionClient,
     user: RequestUser,
-    subsidiaryId: string,
+    parent: TrustedParent,
     input: Omit<CreateLocationDto, 'subsidiaryId'>,
   ): Promise<LocationDTO> {
     const created = await db.location.create({
       data: {
-        subsidiaryId,
+        subsidiaryId: parent.subsidiaryId,
         name: input.name,
         geographyCode: input.geographyCode,
         address: input.address ?? null,
@@ -136,15 +161,18 @@ export class LocationsService {
   async create(user: RequestUser, dto: CreateLocationDto): Promise<LocationDTO> {
     this.assertCanWrite(user);
     // Tenant isolation: cannot attach a location to an inaccessible subsidiary.
-    if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
-      throw new NotFoundException('Subsidiary not found');
-    }
+    // The factory performs that check and is the only way to obtain the token
+    // the writer demands.
+    const parent = TrustedParent.becauseInAccessibleSet(
+      user,
+      dto.subsidiaryId,
+    );
     // Same writer the subsidiary create uses, so the two produce byte-identical
     // rows and audit entries. Wrapped in a transaction here too — this endpoint
     // used to write its audit row outside the mutation, so a crash between them
     // left a location with no trail.
     return this.prisma.$transaction((tx) =>
-      this.writeLocationForTrustedParent(tx, user, dto.subsidiaryId, dto),
+      this.writeLocationForTrustedParent(tx, user, parent, dto),
     );
   }
 
@@ -164,15 +192,20 @@ export class LocationsService {
       data.authorizedPerson = dto.authorizedPerson;
     }
 
-    const updated = await this.prisma.location.update({ where: { id }, data });
-    await this.audit.record(user, {
-      action: 'update',
-      entity: 'location',
-      entityId: id,
-      diff: {
-      before: this.toDTO(existing),
-      after: this.toDTO(updated),
-    },
+    // Same as create and delete now: mutation and audit in one transaction.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.location.update({ where: { id }, data });
+      await this.audit.record(
+        user,
+        {
+          action: 'update',
+          entity: 'location',
+          entityId: id,
+          diff: { before: this.toDTO(existing), after: this.toDTO(row) },
+        },
+        tx,
+      );
+      return row;
     });
     return this.toDTO(updated);
   }

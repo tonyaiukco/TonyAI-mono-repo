@@ -11,7 +11,7 @@ import {
 } from '../../test/helpers';
 
 import { AuditService } from '../audit/audit.service';
-import { LocationsService } from '../locations/locations.service';
+import { LocationsService, TrustedParent } from '../locations/locations.service';
 
 /**
  * Audit writes go through the shared AuditService. A single shared spy lets the
@@ -217,8 +217,11 @@ describe('SubsidiariesService', () => {
       // The parent id is the one this transaction just minted — it cannot come
       // from the caller, and it is not yet in `accessibleSubsidiaryIds`, which
       // is why this path cannot go through `LocationsService.create`.
+      // The parent arrives as a TrustedParent token, not a raw id — a third
+      // caller cannot obtain one without adding a factory, which is the point.
       for (const call of locations.writeLocationForTrustedParent.mock.calls) {
-        expect(call[2]).toBe('sub-new');
+        expect(call[2]).toBeInstanceOf(TrustedParent);
+        expect(call[2].subsidiaryId).toBe('sub-new');
       }
       expect(locations.writeLocationForTrustedParent.mock.calls[0][3]).toMatchObject({
         name: 'Istanbul HQ',

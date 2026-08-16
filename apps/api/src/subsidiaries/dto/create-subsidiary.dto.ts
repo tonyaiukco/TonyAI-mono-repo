@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayNotEmpty,
   IsArray,
   ValidateNested,
@@ -12,6 +13,19 @@ import {
   MinLength,
 } from 'class-validator';
 import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
+
+/**
+ * Upper bound on locations supplied in one create.
+ *
+ * Not a product limit — it is the transaction's. Each location is two
+ * sequential statements (insert + audit), so a large array becomes thousands of
+ * round trips inside ONE interactive transaction: measured locally, 2000
+ * locations took ~1s, but at a managed database's 5–15ms RTT the same payload
+ * runs 20–60s and blows Prisma's default 5s transaction timeout, holding a
+ * pooled connection for every attempt. Bounded here so the refusal is a 400
+ * naming the limit rather than a timeout under load.
+ */
+export const MAX_LOCATIONS_PER_CREATE = 50;
 
 /**
  * One location supplied while creating its parent subsidiary.
@@ -140,6 +154,7 @@ export class CreateSubsidiaryDto {
    */
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(MAX_LOCATIONS_PER_CREATE)
   @ValidateNested({ each: true })
   @Type(() => CreateSubsidiaryLocationDto)
   locations?: CreateSubsidiaryLocationDto[];
