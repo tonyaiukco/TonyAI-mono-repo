@@ -14,35 +14,9 @@ import {
 } from 'class-validator';
 import { GEOGRAPHY_CODES, MAX_LOCATIONS_PER_CREATE } from '@tonyai/shared-types';
 import { blankToNull } from '../../common/blank-to-null';
-
-
-/**
- * One location supplied while creating its parent subsidiary.
- *
- * `CreateLocationDto` minus `subsidiaryId`: the parent does not exist yet, and
- * accepting an id here would let a caller attach a location to somebody else's
- * subsidiary through the create endpoint.
- */
-export class CreateSubsidiaryLocationDto {
-  @Transform(blankToNull)
-  @IsString()
-  @MinLength(1)
-  name!: string;
-
-  @IsString()
-  @IsIn(GEOGRAPHY_CODES)
-  geographyCode!: string;
-
-  @IsOptional()
-  @Transform(blankToNull)
-  @IsString()
-  address?: string | null;
-
-  @IsOptional()
-  @Transform(blankToNull)
-  @IsString()
-  authorizedPerson?: string | null;
-}
+// Owned by the locations module — it is a location shape, and the module edge
+// already runs subsidiaries → locations.
+import { CreateSubsidiaryLocationDto } from '../../locations/dto/create-location.dto';
 
 
 export class CreateSubsidiaryDto {
