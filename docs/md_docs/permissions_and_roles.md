@@ -144,6 +144,52 @@ plus a scoping decision (which subsidiary does a `report` row with a null
 ## 6.3 Context Filtering Rule
 All list and search results must be filtered by the user’s authorised organisation and subsidiary scope before being returned to the frontend.
 
+## 6.4 Personal Data in Tenant-Scoped Reads
+
+**Decision 2026-08-16 — the reporting contact is visible to every role in the
+tenant, deliberately.**
+
+WP16 PR 2a added `contactEmail` and `contactPhone` to `Subsidiary` and returned
+them through `toDTO`. `SubsidiariesService.list()` carries no role gate — it is
+tenant-scoped only — so `GET /subsidiaries` now hands a named individual's work
+email and phone to `data_entry`, `consultant` and `executive_viewer`, not just
+`super_admin`. That was a side effect of adding fields to a shared serialiser
+rather than a decision, and it is a wider surface than the audit-trail question
+that PR did consider. Recorded here so it reads as intended rather than
+accidental.
+
+**Why it is intended.** The point of recording a reporting contact is that
+people can reach them. A `data_entry` user preparing figures for a subsidiary
+needs to know who owns them; an `executive_viewer` reading a dashboard needs to
+know who to ask.
+
+**The non-obvious part is `consultant`.** That seat is typically filled from
+*outside* the holding company — it is why approval stays with the client's own
+`super_admin` (§3, and the rationale in `activity-records.service.ts`). So this
+decision does disclose a named employee's work contact to an external advisor.
+It is still the right call: reviewing data and flagging anomalies is exactly the
+work that requires asking the preparer a question. It is disclosure to an
+engaged professional within the scope of that engagement, not publication.
+
+**Scope of the disclosure.** Work contact details of an identified individual
+acting in a professional capacity, within one tenant. Not private contact
+details, not visible across organisations (RLS `subsidiaries_select_scoped` is
+row-level and organisation-bounded; verified by the containment probes in
+`scripts/rls-probes.mjs`).
+
+**What follows from it:**
+- UI labels must say **"work contact"**, and placeholder text should steer users
+  toward a role mailbox (`esg@company.com`) rather than a personal mobile. These
+  values also land in the append-only `audit_log`, where there is no erasure
+  path once written.
+- RLS is **not** the control here and never could be: the policy is row-level
+  with no column list, so it contains cross-tenant exposure only. Narrowing this
+  later means a projection change in `toDTO` — a partial DTO or a second
+  serialiser, since `list()` and `get()` share it — not a policy change.
+- `audit_log` retention and the lawful basis for keeping these values
+  indefinitely are still unrecorded, and must be settled before staging holds
+  real customer data.
+
 ---
 
 ## 7. Audit Trail Requirements

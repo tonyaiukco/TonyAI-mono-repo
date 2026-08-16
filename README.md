@@ -326,7 +326,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | --- | --- | --- | --- |
 | `GET` | `/health` | Liveness check | public |
 | `GET` | `/me` | Current user + role + `accessibleSubsidiaryIds` | any |
-| `GET` | `/subsidiaries` | List (tenant‑scoped) | any |
+| `GET` | `/subsidiaries` | List (tenant‑scoped). Includes the reporting contact (`designatedPerson` / `contactEmail` / `contactPhone`), which is **deliberately visible to every role in the tenant** — see `permissions_and_roles.md` §6.4 for the decision and its consequences | any |
 | `GET` | `/subsidiaries/:id` | Get one (404 if outside access set) | any |
 | `GET` | `/subsidiaries/:id/summary` | Counts of everything hanging off it (locations, records split into approved/locked · awaiting review · draft/rejected, period locks, targets, denominators) plus `hasBlockingDependents`. Exists so a caller can show "36 records" without downloading 36 records, and can see **why** a delete would be refused without attempting it | any |
 | `POST` | `/subsidiaries` | Create | `super_admin` |
