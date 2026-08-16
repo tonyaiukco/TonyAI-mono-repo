@@ -341,6 +341,23 @@ export interface DataSubmission {
 // Subsidiary & Location Management Types
 export type SubsidiaryStatus = 'active' | 'inactive' | 'pending';
 
+/**
+ * How completeness is measured for one subsidiary (WP17 / round-1 DE-2 + DASH-3).
+ *
+ * `subsidiary` — a category is complete once it holds a committed record with
+ *   its evidence, whichever entity that record names. The behaviour every row
+ *   had before WP17, and the default.
+ * `location`  — the invoice rule: each invoice-tracked category expects one
+ *   monthly invoice per LOCATION, so the denominator is `locations × 12`.
+ *
+ * An explicit setting rather than an inference from "does this subsidiary own
+ * locations". Measured before choosing: 96 of the 102 seeded records carry no
+ * `locationId` at all, so an automatic rule would report almost every existing
+ * tenant as incomplete overnight and leave the user no way to see why.
+ */
+export const TRACKING_GRANULARITIES = ['subsidiary', 'location'] as const;
+export type TrackingGranularity = (typeof TRACKING_GRANULARITIES)[number];
+
 export interface Location {
   id: string;
   name: string;
@@ -767,6 +784,8 @@ export interface SubsidiaryDTO {
   contactPhone: string | null;
   reportingStatus: SubsidiaryStatus;
   includedScopes: number[];
+  /** How this subsidiary's completeness is measured (WP17). */
+  trackingGranularity: TrackingGranularity;
   createdAt: string;
   updatedAt: string;
 }
@@ -798,6 +817,13 @@ export interface CreateSubsidiaryInput {
   contactPhone?: string | null;
   reportingStatus?: SubsidiaryStatus;
   includedScopes?: number[];
+  /**
+   * Defaults to `subsidiary`. Setting `location` requires at least one
+   * location — supplied inline here, or already present when this arrives via
+   * PATCH — because the denominator is `locations × 12` and a zero multiplier
+   * makes a subsidiary with no data whatsoever read as complete.
+   */
+  trackingGranularity?: TrackingGranularity;
   /**
    * Operational locations to create with the subsidiary, in one transaction.
    *
@@ -1546,19 +1572,89 @@ export interface EmissionsSummary {
 //   incomplete — a record exists but is draft/rejected, or flagged as anomaly
 //   complete   — all records are committed (submitted/under_review/approved/
 //                locked) and none are flagged
-// NOTE: the FR "required evidence attached" condition for `complete` is
-// deferred until the evidence backend ships (tracked in the roadmap).
+// The FR "required evidence attached" condition IS implemented (it shipped with
+// the evidence backend in Phase 1) — a committed record with no file in an
+// evidence-required category holds its cell below `complete`.
+//
+// WP17 adds a second reading of `complete` for the three invoice-tracked
+// categories on a location-measured subsidiary: `locations × 12` monthly
+// invoices. `missing` keeps its meaning in BOTH — no record exists for the cell
+// — so a cell holding records whose slots are not closed is `incomplete`.
 // ---------------------------------------------------------------------------
+
+/**
+ * How many of the invoices a cell expects are actually in.
+ *
+ * Present ONLY on an invoice-tracked category of a `location`-granularity
+ * subsidiary — the one case where completeness is a fraction rather than a
+ * yes/no. Everywhere else it is absent, which is what stops a UI from rendering
+ * "0/0" for a category the rule does not apply to.
+ */
+export interface CellCoverage {
+  /**
+   * `locations × 12 months` for this one category, for ONE reporting year.
+   *
+   * Only present on a year-scoped query. Without a year every year's records
+   * fold into one cell while `required` stays twelve months' worth, so a
+   * subsidiary with a complete 2024 and an empty 2025 would report 24 of 24.
+   * The location count is likewise taken as at the end of that year, so a site
+   * opened later does not retroactively make a closed year incomplete.
+   */
+  required: number;
+  /** Slots closed by a committed monthly record carrying at least one file. */
+  covered: number;
+  /**
+   * Committed records in this cell attached to NO location.
+   *
+   * They close nothing, and this is why the count is reported rather than
+   * quietly ignored: on a database where 96 of 102 records are subsidiary-level,
+   * "0 of 24 covered" next to "12 records exist" is the difference between a
+   * user thinking the app lost their data and understanding that those entries
+   * are not attributed to a site.
+   */
+  unattributedRecords: number;
+  /**
+   * Committed records here reported quarterly or annually.
+   *
+   * The rule counts one invoice per MONTH, which a quarterly entry cannot
+   * satisfy — it closes no slot. Counted so the UI can say why, instead of
+   * leaving the user staring at a shortfall they can see no cause for.
+   */
+  nonMonthlyRecords: number;
+  /**
+   * Committed monthly records at a location that carry no file.
+   *
+   * The fourth counter exists so the four numbers EXHAUST the committed
+   * records: without it a record that was monthly, attributed and simply
+   * unevidenced fell through every bucket, and the coverage object could not
+   * explain its own shortfall — which is the single thing it is for.
+   */
+  missingEvidenceRecords: number;
+}
 
 /** One subsidiary × category cell of the tracking matrix. */
 export interface TrackingMatrixCell {
   category: Category;
   scope: number;
   status: DataStatus;
-  /** Sum of committed records' tCO₂e in this cell (drafts excluded). */
-  tCo2e: number;
+  /**
+   * Sum of committed records' tCO₂e in this cell, or **null** when no COMMITTED
+   * record produced a usable figure. That covers three cases, not the two an
+   * earlier draft of this comment listed: no records at all, only drafts, or
+   * only records whose category has no emission factor (WP17 — Water).
+   *
+   * `null` and `0` are different claims: `0` means something was measured and
+   * came to zero. This was a plain `number` until the factor-less path shipped,
+   * at which point a water cell reported a hard `0` and any consumer other than
+   * the dashboard would have read it as a measurement.
+   */
+  tCo2e: number | null;
   /** All records touching this cell, any status. */
   recordCount: number;
+  /** Of the committed ones, how many carried no usable figure. */
+  uncalculatedRecordCount: number;
+  /** Invoice coverage — see CellCoverage. Absent unless the rule applies. */
+  coverage?: CellCoverage;
   /** ISO timestamp of the most recent record update, or null when missing. */
   lastUpdate: string | null;
   /** true when any record in the cell carries an anomaly flag. */
@@ -1571,10 +1667,24 @@ export interface TrackingMatrixRow {
   subsidiaryName: string;
   sector: string | null;
   designatedPerson: string | null;
-  /** Sum of committed tCO₂e across the row. */
+  /**
+   * Sum of the row's MEASURED cells. Stays a plain number, deliberately, even
+   * though a cell's `tCo2e` is nullable: this mirrors `EmissionsSummary`, which
+   * keeps numeric totals and reports the excluded records alongside them. The
+   * pairing is what makes `0` readable — a zero total next to a non-zero
+   * `uncalculatedRecordCount` is "nothing was calculable", not "we measured
+   * zero".
+   */
   totalTCo2e: number;
+  /** Committed records across the row that produced no figure. */
+  uncalculatedRecordCount: number;
   completeCount: number;
   categoryCount: number;
+  /** How this row's completeness was measured — the denominator behind its
+   *  cells, so a UI never has to guess why a subsidiary reads incomplete. */
+  trackingGranularity: TrackingGranularity;
+  /** Locations owned by this subsidiary; the multiplier in `CellCoverage`. */
+  locationCount: number;
   cells: TrackingMatrixCell[];
 }
 

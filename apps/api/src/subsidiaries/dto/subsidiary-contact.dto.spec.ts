@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { plainToInstance } from 'class-transformer';
+import { plainToInstance, type ClassConstructor } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { describe, expect, it } from 'vitest';
 import { MAX_LOCATIONS_PER_CREATE } from '@tonyai/shared-types';
@@ -31,10 +31,20 @@ function updateErrors(body: Record<string, unknown>) {
   return validateSync(plainToInstance(UpdateSubsidiaryDto, body));
 }
 
-const DTOS = [
+/**
+ * Typed to the two fields these cases exercise rather than left to inference.
+ * The two classes are no longer key-identical (update alone carries
+ * `trackingGranularity`), so an inferred union stopped resolving
+ * `plainToInstance`'s overload and every `dto.contactPhone` below became an
+ * error on an array type. Naming the shape keeps the twin-DTO coverage — which
+ * exists because removing `@Transform` from the update side alone once survived
+ * the whole CI gate — instead of quietly dropping to one class.
+ */
+type ContactBearingDto = { contactEmail?: string | null; contactPhone?: string | null };
+const DTOS: [string, ClassConstructor<ContactBearingDto>][] = [
   ['CreateSubsidiaryDto', CreateSubsidiaryDto],
   ['UpdateSubsidiaryDto', UpdateSubsidiaryDto],
-] as const;
+];
 
 const CASES: [string, Record<string, unknown>, boolean][] = [
   ['a plain address', { contactEmail: 'aylin.demir@example.com' }, true],
@@ -88,6 +98,34 @@ type SameKeys<A, B> = [keyof A] extends [keyof B]
 type _UpdateMirrorsCreate = Assert<
   SameKeys<UpdateSubsidiaryDto, Omit<CreateSubsidiaryDto, 'locations'>>
 >;
+
+describe('trackingGranularity validation', () => {
+  it('rejects a value outside the enum on both DTOs', () => {
+    // Deleting `@IsIn(TRACKING_GRANULARITIES)` was a surviving mutant: any
+    // string reached Prisma, where the column is a Postgres enum.
+    for (const [, Dto] of [
+      ['create', CreateSubsidiaryDto],
+      ['update', UpdateSubsidiaryDto],
+    ] as const) {
+      const errors = validateSync(
+        plainToInstance(Dto, {
+          legalName: 'New Co',
+          geographyCode: 'UK',
+          trackingGranularity: 'banana',
+        }),
+      );
+      expect(errors).toHaveLength(1);
+    }
+  });
+
+  it('accepts both declared values', () => {
+    for (const value of ['subsidiary', 'location']) {
+      expect(
+        validateSync(plainToInstance(UpdateSubsidiaryDto, { trackingGranularity: value })),
+      ).toHaveLength(0);
+    }
+  });
+});
 
 describe('CreateSubsidiaryDto — nested locations', () => {
   const parse = (locations: unknown) =>

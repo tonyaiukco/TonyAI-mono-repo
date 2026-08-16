@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -7,6 +8,7 @@ import {
 import {
   Prisma,
   SubsidiaryStatus,
+  TrackingGranularity,
   type ActivityRecordStatus,
   type Subsidiary,
 } from '@tonyai/db';
@@ -82,6 +84,7 @@ export class SubsidiariesService {
       contactPhone: s.contactPhone,
       reportingStatus: s.reportingStatus,
       includedScopes: s.includedScopes,
+      trackingGranularity: s.trackingGranularity,
       createdAt: s.createdAt.toISOString(),
       updatedAt: s.updatedAt.toISOString(),
     };
@@ -145,6 +148,14 @@ export class SubsidiariesService {
     user: RequestUser,
     dto: CreateSubsidiaryDto,
   ): Promise<SubsidiaryDTO> {
+    // Pure input validation, before anything is written: the locations for this
+    // subsidiary are in the request, so the invariant needs no DB read and no
+    // ordering inside the transaction. An earlier cut refused the field on
+    // create for exactly that supposed reason — which was wrong, and cost the
+    // derived `UpdateSubsidiaryInput` and a hole in the key-parity guard.
+    if (dto.trackingGranularity === 'location') {
+      this.assertHasLocations(dto.locations?.length ?? 0);
+    }
     const created = await tx.subsidiary.create({
       data: {
         organisationId: user.organisationId as string,
@@ -159,6 +170,8 @@ export class SubsidiariesService {
         contactPhone: dto.contactPhone ?? null,
         reportingStatus: (dto.reportingStatus ?? 'pending') as SubsidiaryStatus,
         includedScopes: dto.includedScopes ?? [1, 2],
+        trackingGranularity: (dto.trackingGranularity ??
+          'subsidiary') as TrackingGranularity,
       },
     });
     await this.audit.record(
@@ -211,6 +224,10 @@ export class SubsidiariesService {
       data.reportingStatus = dto.reportingStatus as SubsidiaryStatus;
     }
     if (dto.includedScopes !== undefined) data.includedScopes = dto.includedScopes;
+    if (dto.trackingGranularity !== undefined) {
+      await this.assertGranularityIsUsable(id, dto.trackingGranularity);
+      data.trackingGranularity = dto.trackingGranularity as TrackingGranularity;
+    }
 
     // In a transaction like create and delete. It was not, which left this
     // class half-atomic — a crash between the row write and the audit insert
@@ -230,6 +247,41 @@ export class SubsidiariesService {
       return row;
     });
     return this.toDTO(updated);
+  }
+
+  /**
+   * Refuse `location` granularity for a subsidiary that owns no locations.
+   *
+   * The denominator is `locations × 12`, so with none every slot is vacuously
+   * covered and any cell holding a record reads as complete — on the one screen
+   * whose whole job is to show where data is missing. (A cell with no records
+   * at all still reads `missing`, so the failure needs one stray record to
+   * surface; that is a narrower hole, not an absent one.) Refusing here rather
+   * than special-casing it downstream keeps the invariant where it can be
+   * stated once — a subsidiary measured by location has locations to measure.
+   */
+  private async assertGranularityIsUsable(
+    subsidiaryId: string,
+    granularity: string,
+  ): Promise<void> {
+    if (granularity !== 'location') return;
+    this.assertHasLocations(
+      await this.prisma.location.count({ where: { subsidiaryId } }),
+    );
+  }
+
+  /** The same invariant stated for the create path, where the locations are in
+   *  the request rather than the database. Both callers land here so the rule
+   *  cannot be enforced on one write path and not the other. */
+  private assertHasLocations(count: number): void {
+    if (count === 0) {
+      throw new BadRequestException(
+        'Add at least one location before tracking this subsidiary by location — ' +
+          'the completeness rule counts one invoice per location per month, and ' +
+          'with no locations every slot is vacuously covered — a subsidiary ' +
+          'holding no data at all would read as complete.',
+      );
+    }
   }
 
   /**

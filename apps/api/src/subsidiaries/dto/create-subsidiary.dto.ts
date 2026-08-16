@@ -12,7 +12,12 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { GEOGRAPHY_CODES, MAX_LOCATIONS_PER_CREATE } from '@tonyai/shared-types';
+import {
+  GEOGRAPHY_CODES,
+  MAX_LOCATIONS_PER_CREATE,
+  TRACKING_GRANULARITIES,
+  type TrackingGranularity,
+} from '@tonyai/shared-types';
 import { blankToNull } from '../../common/blank-to-null';
 // Owned by the locations module — it is a location shape, and the module edge
 // already runs subsidiaries → locations.
@@ -113,4 +118,13 @@ export class CreateSubsidiaryDto {
   @ValidateNested({ each: true })
   @Type(() => CreateSubsidiaryLocationDto)
   locations?: CreateSubsidiaryLocationDto[];
+
+  /**
+   * How completeness is measured (WP17). `location` requires at least one
+   * location in `locations[]` above — validated in the service, where both
+   * write paths can state the same invariant.
+   */
+  @IsOptional()
+  @IsIn(TRACKING_GRANULARITIES as readonly string[])
+  trackingGranularity?: TrackingGranularity;
 }

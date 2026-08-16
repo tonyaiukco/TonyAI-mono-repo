@@ -10,7 +10,11 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
+import {
+  GEOGRAPHY_CODES,
+  TRACKING_GRANULARITIES,
+  type TrackingGranularity,
+} from '@tonyai/shared-types';
 import { blankToNull } from '../../common/blank-to-null';
 
 export class UpdateSubsidiaryDto {
@@ -88,4 +92,16 @@ export class UpdateSubsidiaryDto {
   @IsInt({ each: true })
   @IsIn([1, 2, 3], { each: true })
   includedScopes?: number[];
+
+  /**
+   * How this subsidiary's completeness is measured (WP17).
+   *
+   * Update-only — `CreateSubsidiaryDto` deliberately does not accept it. See
+   * `UpdateSubsidiaryInput` in the shared contract for why: switching to
+   * `location` requires locations to exist, and at create time they are being
+   * written in the same transaction.
+   */
+  @IsOptional()
+  @IsIn(TRACKING_GRANULARITIES as readonly string[])
+  trackingGranularity?: TrackingGranularity;
 }
