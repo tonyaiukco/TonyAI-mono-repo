@@ -89,7 +89,7 @@ describe('LocationsService', () => {
       await expect(
         service.create(user, { subsidiaryId: 'sub-1', name: 'HQ', geographyCode: 'TR' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(prisma.location.create).not.toHaveBeenCalled();
+      expect(prisma.txClient.location.create).not.toHaveBeenCalled();
     });
 
     it('rejects attaching to an inaccessible subsidiary as not found', async () => {
@@ -98,13 +98,13 @@ describe('LocationsService', () => {
       await expect(
         service.create(user, { subsidiaryId: 'sub-999', name: 'HQ', geographyCode: 'TR' }),
       ).rejects.toBeInstanceOf(NotFoundException);
-      expect(prisma.location.create).not.toHaveBeenCalled();
+      expect(prisma.txClient.location.create).not.toHaveBeenCalled();
     });
 
     it('creates and writes an audit row', async () => {
       const user = makeSuperAdmin();
       const created = makeLocation({ subsidiaryId: 'sub-1', name: 'HQ' });
-      prisma.location.create.mockResolvedValue(created);
+      prisma.txClient.location.create.mockResolvedValue(created);
 
       const dto = await service.create(user, { subsidiaryId: 'sub-1', name: 'HQ', geographyCode: 'TR' });
 
@@ -131,7 +131,7 @@ describe('LocationsService', () => {
       // writer passed 401 unit tests and 71 E2E. Silent data loss on both
       // create paths, in code this PR introduced.
       const user = makeSuperAdmin();
-      prisma.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
+      prisma.txClient.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
 
       await service.create(user, {
         subsidiaryId: 'sub-1',
@@ -141,7 +141,7 @@ describe('LocationsService', () => {
         authorizedPerson: 'Aylin Demir',
       });
 
-      expect(prisma.location.create).toHaveBeenCalledWith({
+      expect(prisma.txClient.location.create).toHaveBeenCalledWith({
         data: {
           subsidiaryId: 'sub-1',
           name: 'Istanbul HQ',
@@ -159,7 +159,7 @@ describe('LocationsService', () => {
       // Driven against the writer itself, because `create()`'s own dto id IS
       // the parameter; only the shared writer can be handed a mismatch.
       const user = makeSuperAdmin();
-      prisma.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
+      prisma.txClient.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
       const parent = TrustedParent.becauseInAccessibleSet(user, 'sub-1');
 
       await service.writeLocationForTrustedParent(
@@ -169,25 +169,25 @@ describe('LocationsService', () => {
         { name: 'HQ', geographyCode: 'TR', subsidiaryId: 'sub-OTHER' } as never,
       );
 
-      expect(prisma.location.create.mock.calls[0][0].data.subsidiaryId).toBe('sub-1');
+      expect(prisma.txClient.location.create.mock.calls[0][0].data.subsidiaryId).toBe('sub-1');
     });
 
     it('writes the row and its audit entry in ONE transaction', async () => {
       const user = makeSuperAdmin();
-      prisma.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
+      prisma.txClient.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
 
       await service.create(user, { subsidiaryId: 'sub-1', name: 'HQ', geographyCode: 'TR' });
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       // …and on the transaction's client, not the default one. Before the mock
       // handed out a distinct object this was unassertable.
-      expect(prisma.location.create).toHaveBeenCalled();
+      expect(prisma.txClient.location.create).toHaveBeenCalled();
       expect(audit.record.mock.calls[0][2]).toBe(prisma.txClient);
       // EXACTLY one row. A writer that audited twice passed the unit suite and
       // the whole E2E run, because every assertion read `calls[0]` or
       // `items[0]` and never a count.
       expect(audit.record).toHaveBeenCalledTimes(1);
-      expect(prisma.location.create).toHaveBeenCalledTimes(1);
+      expect(prisma.txClient.location.create).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -204,11 +204,11 @@ describe('LocationsService', () => {
       const user = makeSuperAdmin();
       const existing = makeLocation({ subsidiaryId: 'sub-1', name: 'Old' });
       prisma.location.findUnique.mockResolvedValue(existing);
-      prisma.location.update.mockResolvedValue({ ...existing, name: 'New' });
+      prisma.txClient.location.update.mockResolvedValue({ ...existing, name: 'New' });
 
       const dto = await service.update(user, existing.id, { name: 'New' });
 
-      expect(prisma.location.update).toHaveBeenCalledWith({
+      expect(prisma.txClient.location.update).toHaveBeenCalledWith({
         where: { id: existing.id },
         data: { name: 'New' },
       });
@@ -235,7 +235,7 @@ describe('LocationsService', () => {
       prisma.activityRecord.count.mockResolvedValue(3);
 
       await expect(service.remove(user, existing.id)).rejects.toThrow(/3 activity record/);
-      expect(prisma.location.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.location.delete).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
 
@@ -244,7 +244,7 @@ describe('LocationsService', () => {
       const existing = makeLocation({ subsidiaryId: 'sub-1' });
       prisma.location.findUnique.mockResolvedValue(existing);
       prisma.activityRecord.count.mockResolvedValue(0);
-      prisma.location.delete.mockResolvedValue(existing);
+      prisma.txClient.location.delete.mockResolvedValue(existing);
 
       const res = await service.remove(user, existing.id);
 
@@ -267,7 +267,7 @@ describe('LocationsService', () => {
       await expect(service.remove(user, 'loc-x')).rejects.toBeInstanceOf(
         NotFoundException,
       );
-      expect(prisma.location.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.location.delete).not.toHaveBeenCalled();
     });
   });
 });

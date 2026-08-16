@@ -4,6 +4,7 @@ import { SubsidiariesService } from './subsidiaries.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   createPrismaMock,
+  stubRead,
   makeSubsidiary,
   makeSuperAdmin,
   makeDataEntry,
@@ -47,11 +48,17 @@ async function refusal(call: Promise<unknown>): Promise<string> {
  * let one record be seen by two queries. It has to be one set, filtered.
  */
 function countRecords(prisma: PrismaMock, statuses: string[]): void {
-  prisma.activityRecord.count.mockImplementation(async ({ where }: any) => {
+  // Both clients: `summary()` counts on the default one and the delete guard
+  // counts on the transaction's, and a test that means "the database contains
+  // these records" should not have to know which path it is exercising. Reads
+  // are client-agnostic; mutations are not, and those are asserted per-client.
+  const impl = async ({ where }: any) => {
     const f = where.status;
     return statuses.filter((s) => (f.in ? f.in.includes(s) : !f.notIn.includes(s)))
       .length;
-  });
+  };
+  prisma.activityRecord.count.mockImplementation(impl);
+  prisma.txClient.activityRecord.count.mockImplementation(impl);
 }
 
 describe('SubsidiariesService', () => {
@@ -162,7 +169,7 @@ describe('SubsidiariesService', () => {
       const user = makeDataEntry();
 
       await expect(service.create(user, dto)).rejects.toBeInstanceOf(ForbiddenException);
-      expect(prisma.subsidiary.create).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.create).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
 
@@ -170,17 +177,17 @@ describe('SubsidiariesService', () => {
       const user = makeSuperAdmin({ organisationId: null });
 
       await expect(service.create(user, dto)).rejects.toBeInstanceOf(ForbiddenException);
-      expect(prisma.subsidiary.create).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.create).not.toHaveBeenCalled();
     });
 
     it('creates and writes an audit log for super_admin', async () => {
       const user = makeSuperAdmin();
       const created = makeSubsidiary({ id: 'sub-new', legalName: 'New Co' });
-      prisma.subsidiary.create.mockResolvedValue(created);
+      prisma.txClient.subsidiary.create.mockResolvedValue(created);
             const result = await service.create(user, dto);
 
       expect(result.id).toBe('sub-new');
-      expect(prisma.subsidiary.create).toHaveBeenCalledTimes(1);
+      expect(prisma.txClient.subsidiary.create).toHaveBeenCalledTimes(1);
       // One row for the subsidiary. With locations it is one MORE per location
       // — see the SUB-3 tests below; never a single batched row, or a
       // location's history would depend on how it was created.
@@ -201,7 +208,7 @@ describe('SubsidiariesService', () => {
       // reporting borders, and a partial set is a completeness denominator
       // that is quietly wrong rather than obviously missing.
       const user = makeSuperAdmin();
-      prisma.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
+      prisma.txClient.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
 
       await service.create(user, {
         legalName: 'New Co',
@@ -242,7 +249,7 @@ describe('SubsidiariesService', () => {
       // the failure must propagate out of `create`, not be swallowed into a
       // subsidiary with a missing location.
       const user = makeSuperAdmin();
-      prisma.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
+      prisma.txClient.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
       locations.writeLocationForTrustedParent.mockRejectedValueOnce(
         new Error('location insert failed'),
       );
@@ -261,7 +268,7 @@ describe('SubsidiariesService', () => {
       // making it mandatory in the contract would break every existing caller,
       // and a holding entity with no distinct site is a real thing.
       const user = makeSuperAdmin();
-      prisma.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
+      prisma.txClient.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
 
       await service.create(user, { legalName: 'New Co', geographyCode: 'UK' });
 
@@ -271,10 +278,10 @@ describe('SubsidiariesService', () => {
 
     it('applies documented defaults (pending status, scopes [1,2]) for optional fields', async () => {
       const user = makeSuperAdmin();
-      prisma.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
+      prisma.txClient.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
             await service.create(user, dto);
 
-      const createArg = prisma.subsidiary.create.mock.calls[0][0];
+      const createArg = prisma.txClient.subsidiary.create.mock.calls[0][0];
       expect(createArg.data.reportingStatus).toBe('pending');
       expect(createArg.data.includedScopes).toEqual([1, 2]);
       expect(createArg.data.organisationId).toBe(user.organisationId);
@@ -288,7 +295,7 @@ describe('SubsidiariesService', () => {
       await expect(
         service.update(user, 'sub-1', { legalName: 'Renamed' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(prisma.subsidiary.update).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
 
@@ -304,7 +311,7 @@ describe('SubsidiariesService', () => {
         service.update(user, 'sub-of-another-org', { legalName: 'Hijacked' }),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
-      expect(prisma.subsidiary.update).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
 
@@ -315,7 +322,7 @@ describe('SubsidiariesService', () => {
       await expect(
         service.update(user, 'sub-1', { legalName: 'Renamed' }),
       ).rejects.toBeInstanceOf(NotFoundException);
-      expect(prisma.subsidiary.update).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
     });
 
     it('updates and audits with before/after diff for super_admin', async () => {
@@ -323,11 +330,11 @@ describe('SubsidiariesService', () => {
       const before = makeSubsidiary({ id: 'sub-1', legalName: 'Old' });
       const after = makeSubsidiary({ id: 'sub-1', legalName: 'New' });
       prisma.subsidiary.findUnique.mockResolvedValue(before);
-      prisma.subsidiary.update.mockResolvedValue(after);
+      prisma.txClient.subsidiary.update.mockResolvedValue(after);
             const result = await service.update(user, 'sub-1', { legalName: 'New' });
 
       expect(result.legalName).toBe('New');
-      expect(prisma.subsidiary.update).toHaveBeenCalledWith({
+      expect(prisma.txClient.subsidiary.update).toHaveBeenCalledWith({
         where: { id: 'sub-1' },
         data: { legalName: 'New' },
       });
@@ -348,14 +355,14 @@ describe('SubsidiariesService', () => {
       const before = makeSubsidiary({ id: 'sub-1', geographyCode: 'UK' });
       const after = makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' });
       prisma.subsidiary.findUnique.mockResolvedValue(before);
-      prisma.subsidiary.update.mockResolvedValue(after);
+      prisma.txClient.subsidiary.update.mockResolvedValue(after);
 
       const result = await service.update(user, 'sub-1', { geographyCode: 'TR' });
 
       // Assert the PAYLOAD, not just the returned row: the row comes from the
       // mocked resolution, so dropping `geographyCode` from the update data
       // left this green (found by mutation).
-      expect(prisma.subsidiary.update.mock.calls[0][0].data).toEqual({
+      expect(prisma.txClient.subsidiary.update.mock.calls[0][0].data).toEqual({
         geographyCode: 'TR',
       });
       expect(result.geographyCode).toBe('TR');
@@ -379,7 +386,7 @@ describe('SubsidiariesService', () => {
       // was not — one of three verbs able to lose its trail.
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      prisma.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.txClient.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
 
       await service.update(user, 'sub-1', { sector: 'Energy' });
 
@@ -390,10 +397,10 @@ describe('SubsidiariesService', () => {
     it('only includes explicitly-provided fields in the update payload', async () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      prisma.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.txClient.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
             await service.update(user, 'sub-1', { reportingStatus: 'active' });
 
-      const updateArg = prisma.subsidiary.update.mock.calls[0][0];
+      const updateArg = prisma.txClient.subsidiary.update.mock.calls[0][0];
       expect(updateArg.data).toEqual({ reportingStatus: 'active' });
     });
   });
@@ -411,7 +418,7 @@ describe('SubsidiariesService', () => {
         contactEmail: 'aylin.demir@example.com',
         contactPhone: '+90 555 000 0001',
       });
-      prisma.subsidiary.create.mockResolvedValue(created);
+      prisma.txClient.subsidiary.create.mockResolvedValue(created);
 
       const dto = await service.create(user, {
         legalName: 'New Co',
@@ -420,7 +427,7 @@ describe('SubsidiariesService', () => {
         contactPhone: '+90 555 000 0001',
       });
 
-      expect(prisma.subsidiary.create.mock.calls[0][0].data).toMatchObject({
+      expect(prisma.txClient.subsidiary.create.mock.calls[0][0].data).toMatchObject({
         contactEmail: 'aylin.demir@example.com',
         contactPhone: '+90 555 000 0001',
       });
@@ -438,11 +445,11 @@ describe('SubsidiariesService', () => {
       // not tell "no contact recorded" from "this API version has no such
       // field". Every other optional column on this entity answers `null`.
       const user = makeSuperAdmin();
-      prisma.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
+      prisma.txClient.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
 
       const dto = await service.create(user, { legalName: 'New Co', geographyCode: 'UK' });
 
-      expect(prisma.subsidiary.create.mock.calls[0][0].data).toMatchObject({
+      expect(prisma.txClient.subsidiary.create.mock.calls[0][0].data).toMatchObject({
         contactEmail: null,
         contactPhone: null,
       });
@@ -456,11 +463,11 @@ describe('SubsidiariesService', () => {
       // check here would make a contact impossible to remove once set.
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      prisma.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.txClient.subsidiary.update.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
 
       await service.update(user, 'sub-1', { contactEmail: null });
 
-      expect(prisma.subsidiary.update.mock.calls[0][0].data).toEqual({
+      expect(prisma.txClient.subsidiary.update.mock.calls[0][0].data).toEqual({
         contactEmail: null,
       });
     });
@@ -471,10 +478,10 @@ describe('SubsidiariesService', () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['approved', 'locked', 'submitted', 'draft', 'draft']);
-      prisma.location.count.mockResolvedValue(2);
-      prisma.periodLock.count.mockResolvedValue(1);
-      prisma.target.count.mockResolvedValue(3);
-      prisma.subsidiaryDenominator.count.mockResolvedValue(4);
+      stubRead(prisma, (c) => c.location.count, 2);
+      stubRead(prisma, (c) => c.periodLock.count, 1);
+      stubRead(prisma, (c) => c.target.count, 3);
+      stubRead(prisma, (c) => c.subsidiaryDenominator.count, 4);
 
       const s = await service.summary(user, 'sub-1');
 
@@ -516,7 +523,7 @@ describe('SubsidiariesService', () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
-      prisma.location.count.mockResolvedValue(1);
+      stubRead(prisma, (c) => c.location.count, 1);
 
       const s = await service.summary(user, 'sub-1');
       expect(s.hasBlockingDependents).toBe(true);
@@ -541,16 +548,16 @@ describe('SubsidiariesService', () => {
         terminalRecords: () => countRecords(prisma, ['approved']),
         reviewRecords: () => countRecords(prisma, ['submitted']),
         openRecords: () => countRecords(prisma, ['draft']),
-        locations: () => prisma.location.count.mockResolvedValue(1),
-        periodLocks: () => prisma.periodLock.count.mockResolvedValue(1),
-        targets: () => prisma.target.count.mockResolvedValue(1),
-        denominators: () => prisma.subsidiaryDenominator.count.mockResolvedValue(1),
+        locations: () => stubRead(prisma, (c) => c.location.count, 1),
+        periodLocks: () => stubRead(prisma, (c) => c.periodLock.count, 1),
+        targets: () => stubRead(prisma, (c) => c.target.count, 1),
+        denominators: () => stubRead(prisma, (c) => c.subsidiaryDenominator.count, 1),
       };
       byKey[key]();
 
       expect((await service.summary(user, 'sub-1')).hasBlockingDependents).toBe(true);
       await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(ConflictException);
-      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
     it('scopes EVERY count to this subsidiary, not just the record ones', async () => {
@@ -603,8 +610,8 @@ describe('SubsidiariesService', () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['submitted', 'draft']);
-      prisma.location.count.mockResolvedValue(1);
-      prisma.periodLock.count.mockResolvedValue(1);
+      stubRead(prisma, (c) => c.location.count, 1);
+      stubRead(prisma, (c) => c.periodLock.count, 1);
 
       const { blockers } = await service.summary(user, 'sub-1');
       const message = await refusal(service.remove(user, 'sub-1'));
@@ -625,7 +632,7 @@ describe('SubsidiariesService', () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['approved', 'locked']);
-      prisma.location.count.mockResolvedValue(3);
+      stubRead(prisma, (c) => c.location.count, 3);
 
       const { blockers } = await service.summary(user, 'sub-1');
       expect(blockers).toHaveLength(1);
@@ -671,7 +678,7 @@ describe('SubsidiariesService', () => {
       const user = makeDataEntry();
 
       await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(ForbiddenException);
-      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
 
@@ -682,7 +689,7 @@ describe('SubsidiariesService', () => {
         NotFoundException,
       );
       expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
-      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
 
@@ -691,7 +698,7 @@ describe('SubsidiariesService', () => {
       prisma.subsidiary.findUnique.mockResolvedValue(null);
 
       await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(NotFoundException);
-      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
     it('does NOT tell the caller a reviewable record is permanent', async () => {
@@ -708,7 +715,7 @@ describe('SubsidiariesService', () => {
       expect(message).toMatch(/2 record\(s\) awaiting review/);
       expect(message).toMatch(/sent back by a reviewer/);
       expect(message).not.toMatch(/"inactive"/);
-      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
     it('counts the subsidiary row BEFORE anything can be added to it', async () => {
@@ -718,7 +725,7 @@ describe('SubsidiariesService', () => {
       // that race is not an error, it is a row the FK cascades away silently.
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-      prisma.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
 
       await service.remove(user, 'sub-1');
 
@@ -730,7 +737,12 @@ describe('SubsidiariesService', () => {
       const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
         fn.mock.invocationCallOrder[0];
       expect(order(prisma.$transaction)).toBeLessThan(order(prisma.$queryRaw));
-      expect(order(prisma.$queryRaw)).toBeLessThan(order(prisma.activityRecord.count));
+      // The counts happen on the TRANSACTION's client — naming it here is the
+      // assertion, not an implementation detail: counting on the default client
+      // would be a read outside the lock, which is the race this pins.
+      expect(order(prisma.$queryRaw)).toBeLessThan(
+        order(prisma.txClient.activityRecord.count),
+      );
       // Transaction MEMBERSHIP is not assertable here and this test does not
       // pretend otherwise: `$transaction` hands the callback the same mock
       // object, by design, so `tx.x` and `prisma.x` are one spy. That the
@@ -753,7 +765,7 @@ describe('SubsidiariesService', () => {
       // Committed records cannot be deleted at all, so "inactive" is the only
       // thing the caller can actually do — the message must say so.
       await expect(service.remove(user, 'sub-1')).rejects.toThrow(/"inactive"/);
-      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
     it('blocks on drafts, but tells the caller they can be removed', async () => {
@@ -768,7 +780,7 @@ describe('SubsidiariesService', () => {
       const message = await refusal(service.remove(user, 'sub-1'));
       expect(message).toMatch(/3 draft or rejected record\(s\)/);
       expect(message).not.toMatch(/"inactive"/);
-      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
     it('blocks on a closed period, and on locations/targets/denominators', async () => {
@@ -779,28 +791,28 @@ describe('SubsidiariesService', () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
-      prisma.periodLock.count.mockResolvedValue(1);
-      prisma.location.count.mockResolvedValue(2);
-      prisma.target.count.mockResolvedValue(1);
-      prisma.subsidiaryDenominator.count.mockResolvedValue(1);
+      stubRead(prisma, (c) => c.periodLock.count, 1);
+      stubRead(prisma, (c) => c.location.count, 2);
+      stubRead(prisma, (c) => c.target.count, 1);
+      stubRead(prisma, (c) => c.subsidiaryDenominator.count, 1);
 
       const message = await refusal(service.remove(user, 'sub-1'));
       expect(message).toMatch(/2 location\(s\)/);
       expect(message).toMatch(/1 closed reporting period\(s\)/);
       expect(message).toMatch(/1 reduction target\(s\)/);
       expect(message).toMatch(/1 intensity denominator\(s\)/);
-      expect(prisma.subsidiary.delete).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
     it('deletes and audits with the before snapshot for super_admin', async () => {
       const user = makeSuperAdmin();
       const before = makeSubsidiary({ id: 'sub-1' });
       prisma.subsidiary.findUnique.mockResolvedValue(before);
-      prisma.subsidiary.delete.mockResolvedValue(before);
+      prisma.txClient.subsidiary.delete.mockResolvedValue(before);
             const result = await service.remove(user, 'sub-1');
 
       expect(result).toEqual({ id: 'sub-1', deleted: true });
-      expect(prisma.subsidiary.delete).toHaveBeenCalledWith({ where: { id: 'sub-1' } });
+      expect(prisma.txClient.subsidiary.delete).toHaveBeenCalledWith({ where: { id: 'sub-1' } });
       const auditArg = audit.record.mock.calls[0][1];
       expect(auditArg.action).toBe('delete');
       expect(auditArg.diff).toHaveProperty('before');

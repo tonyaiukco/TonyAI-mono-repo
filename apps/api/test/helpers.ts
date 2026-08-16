@@ -3,6 +3,63 @@ import type { Subsidiary } from '@tonyai/db';
 import type { RequestUser } from '../src/auth/auth.types';
 
 /**
+ * The client `$transaction` hands its callback — a separate object with its own
+ * spies for every model.
+ *
+ * Two rounds of getting this wrong, both measured:
+ *
+ * 1. Originally the callback received the mock ITSELF, so `tx === prisma`. No
+ *    assertion could tell "wrote on the transaction client" from "wrote on the
+ *    default client", and every `toHaveBeenCalledWith(..., prisma)` third-arg
+ *    check pinned ARITY and nothing else. Reverting a service to write outside
+ *    its transaction passed the whole suite.
+ * 2. The first fix gave the callback a distinct object that re-exported the
+ *    SAME model spies. That fixed the audit-client question and left the row
+ *    question open: `this.prisma.location.create(...)` and `db.location.create(...)`
+ *    still landed on one spy, so a writer that mutated on the wrong client was
+ *    invisible.
+ *
+ * Hence separate spies. A spec asserting an in-transaction mutation must now
+ * name `prisma.txClient.<model>.<verb>`, and asserting the plain
+ * `prisma.<model>.<verb>` for the same call fails — which is the point. Any
+ * stubbed resolution has to be set on the client the code will actually use.
+ */
+function createTxClient(mock: Record<string, unknown>): never {
+  const tx: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(mock)) {
+    if (key === 'txClient') continue;
+    if (value && typeof value === 'object' && !('mock' in (value as object))) {
+      // A model namespace: fresh spies, same verbs.
+      const model: Record<string, unknown> = {};
+      for (const verb of Object.keys(value as object)) model[verb] = vi.fn();
+      tx[key] = model;
+    } else {
+      tx[key] = value;
+    }
+  }
+  return tx as never;
+}
+
+/**
+ * Stub a READ on both clients at once.
+ *
+ * Reads are client-agnostic — the same rows exist whichever connection asks —
+ * so a spec that means "the database contains N of these" should not have to
+ * know whether the code under test happens to be inside a transaction at that
+ * moment. Mutations are the opposite: which client performed them is exactly
+ * what the separate spies exist to expose, so those are asserted per-client and
+ * deliberately have no helper.
+ */
+export function stubRead(
+  prisma: PrismaMock,
+  pick: (client: PrismaMock) => { mockResolvedValue: (v: unknown) => unknown },
+  value: unknown,
+): void {
+  pick(prisma).mockResolvedValue(value);
+  pick(prisma.txClient).mockResolvedValue(value);
+}
+
+/**
  * A minimal mock of PrismaService that only implements the methods the
  * services under test actually call. Each method is a vi.fn() so individual
  * tests can stub return values and assert call arguments. No DB is touched.
@@ -43,23 +100,15 @@ export function createPrismaMock() {
     periodLock: { count: vi.fn() },
     target: { count: vi.fn() },
     subsidiaryDenominator: { count: vi.fn() },
-    // A DISTINCT object handed to `$transaction` callbacks. It re-exports the
-    // same model spies, so a mutation inside a transaction is still observable
-    // as `prisma.<model>.delete(...)` — but because it is not `mock` itself, a
-    // spec can finally tell "used the transaction client" from "used the
-    // default client".
-    //
-    // It could not before: the callback received `mock`, so `tx === prisma` and
-    // every `toHaveBeenCalledWith(..., prisma)` third-argument assertion in this
-    // repo pinned ARITY and nothing else. Reverting a service to write on the
-    // default client passed the whole suite.
+    // The object handed to `$transaction` callbacks, with its OWN spies for
+    // every model — see `createTxClient` below.
     txClient: null as unknown as typeof mock,
     // The subsidiary delete locks its row (`SELECT … FOR UPDATE`) before
     // counting children, so the guard cannot be raced by a concurrent insert.
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
-  mock.txClient = { ...mock, txClient: undefined } as unknown as typeof mock;
+  mock.txClient = createTxClient(mock);
   mock.$transaction.mockImplementation(
     async (cb: (tx: typeof mock) => unknown) => cb(mock.txClient),
   );
@@ -67,14 +116,16 @@ export function createPrismaMock() {
   // to `undefined` — which makes `count > 0` quietly false, i.e. a disarmed
   // guard that still looks green. Default every counter to "nothing there", so
   // a spec that means "there IS something" has to say so out loud.
-  for (const model of [
-    mock.location,
-    mock.activityRecord,
-    mock.periodLock,
-    mock.target,
-    mock.subsidiaryDenominator,
-  ]) {
-    model.count.mockResolvedValue(0);
+  for (const client of [mock, mock.txClient]) {
+    for (const model of [
+      client.location,
+      client.activityRecord,
+      client.periodLock,
+      client.target,
+      client.subsidiaryDenominator,
+    ]) {
+      model.count.mockResolvedValue(0);
+    }
   }
   return mock;
 }
