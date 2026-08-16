@@ -1,4 +1,6 @@
+import { Transform } from 'class-transformer';
 import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { blankToNull } from '../../common/blank-to-null';
 import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
 
 /**
@@ -12,6 +14,7 @@ export class CreateLocationDto {
   @MinLength(1)
   subsidiaryId!: string;
 
+  @Transform(blankToNull)
   @IsString()
   @MinLength(1)
   name!: string;
@@ -21,10 +24,12 @@ export class CreateLocationDto {
   geographyCode!: string;
 
   @IsOptional()
+  @Transform(blankToNull)
   @IsString()
   address?: string | null;
 
   @IsOptional()
+  @Transform(blankToNull)
   @IsString()
   authorizedPerson?: string | null;
 }

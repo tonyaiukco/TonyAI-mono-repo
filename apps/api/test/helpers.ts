@@ -43,16 +43,26 @@ export function createPrismaMock() {
     periodLock: { count: vi.fn() },
     target: { count: vi.fn() },
     subsidiaryDenominator: { count: vi.fn() },
-    // Runs the callback against the SAME mock, so a mutation performed inside a
-    // transaction is still observable as `prisma.<model>.delete(...)`, while the
-    // audit spy receives this object as its third argument — which is what
-    // proves the audit row commits with the mutation rather than after it.
+    // A DISTINCT object handed to `$transaction` callbacks. It re-exports the
+    // same model spies, so a mutation inside a transaction is still observable
+    // as `prisma.<model>.delete(...)` — but because it is not `mock` itself, a
+    // spec can finally tell "used the transaction client" from "used the
+    // default client".
+    //
+    // It could not before: the callback received `mock`, so `tx === prisma` and
+    // every `toHaveBeenCalledWith(..., prisma)` third-argument assertion in this
+    // repo pinned ARITY and nothing else. Reverting a service to write on the
+    // default client passed the whole suite.
+    txClient: null as unknown as typeof mock,
     // The subsidiary delete locks its row (`SELECT … FOR UPDATE`) before
     // counting children, so the guard cannot be raced by a concurrent insert.
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
-  mock.$transaction.mockImplementation(async (cb: (tx: typeof mock) => unknown) => cb(mock));
+  mock.txClient = { ...mock, txClient: undefined } as unknown as typeof mock;
+  mock.$transaction.mockImplementation(
+    async (cb: (tx: typeof mock) => unknown) => cb(mock.txClient),
+  );
   // Counting is how the delete guards decide, and an unmocked `count` resolves
   // to `undefined` — which makes `count > 0` quietly false, i.e. a disarmed
   // guard that still looks green. Default every counter to "nothing there", so

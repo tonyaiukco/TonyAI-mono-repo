@@ -11,7 +11,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
-import { blankToNull } from './create-subsidiary.dto';
+import { blankToNull } from '../../common/blank-to-null';
 
 export class UpdateSubsidiaryDto {
   @IsOptional()

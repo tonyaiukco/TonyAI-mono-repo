@@ -48,7 +48,12 @@ import { useAuthStore } from "@/lib/store";
 import { LocationsDrawer } from "@/components/subsidiaries/locations-drawer";
 import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
 import { geographyLabel, geographyOptions } from "@/lib/types";
-import type { LocationDTO, SubsidiaryDTO } from "@/lib/types";
+import { MAX_LOCATIONS_PER_CREATE } from "@/lib/types";
+import type {
+  CreateSubsidiaryLocationInput,
+  LocationDTO,
+  SubsidiaryDTO,
+} from "@/lib/types";
 
 const STATUSES = ["pending", "active", "inactive"] as const;
 
@@ -78,6 +83,18 @@ export default function SubsidiariesPage() {
   // the confirm action rather than being re-driven through handleSave.
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  /**
+   * Locations collected before the subsidiary exists, sent with the create.
+   *
+   * Not `<LocationsPanel>`: that component persists every change immediately
+   * and is keyed on ids that only exist server-side. Its two confirmations —
+   * geography change, delete — protect committed records, and a row that has
+   * never existed has none, so reusing it would mean flags switching off
+   * exactly the guards that justify it.
+   */
+  const [draftLocations, setDraftLocations] = useState<CreateSubsidiaryLocationInput[]>([]);
+  const [draftName, setDraftName] = useState("");
+  const [draftGeo, setDraftGeo] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [locSubsidiaryId, setLocSubsidiaryId] = useState<string | null>(null);
   const [lockSubsidiaryId, setLockSubsidiaryId] = useState<string | null>(null);
@@ -123,12 +140,49 @@ export default function SubsidiariesPage() {
 
   function openAdd() {
     setForm(emptyForm);
+    setDraftLocations([]);
+    setDraftName("");
+    setDraftGeo("");
     setAddOpen(true);
+  }
+
+  function addDraftLocation() {
+    const name = draftName.trim();
+    if (name.length === 0) {
+      toast.error("A location needs a name");
+      return;
+    }
+    if (draftLocations.some((l) => l.name.toLowerCase() === name.toLowerCase())) {
+      toast.error(`"${name}" is already in the list`);
+      return;
+    }
+    // The same number the API enforces, from the same constant — a cap the
+    // client cannot see is a 400 that arrives after the rows are typed.
+    if (draftLocations.length >= MAX_LOCATIONS_PER_CREATE) {
+      toast.error(
+        `A subsidiary can be created with at most ${MAX_LOCATIONS_PER_CREATE} locations. Add the rest from its page.`,
+      );
+      return;
+    }
+    setDraftLocations([
+      ...draftLocations,
+      { name, geographyCode: draftGeo || form.geographyCode },
+    ]);
+    setDraftName("");
+    setDraftGeo("");
   }
 
   async function handleSave() {
     if (form.legalName.trim().length < 2) {
       toast.error("Legal name is required");
+      return;
+    }
+    // Round-1 SUB-3: locations are the subsidiary's operational borders, and
+    // WP17's completeness denominator is their count — so the form asks for one
+    // rather than letting a subsidiary start life with undefined borders. The
+    // API stays permissive, deliberately (see CreateSubsidiaryDto).
+    if (draftLocations.length === 0) {
+      toast.error("Add at least one operational location");
       return;
     }
     await persist();
@@ -145,11 +199,15 @@ export default function SubsidiariesPage() {
         sector: form.sector || null,
         reportingStatus: form.reportingStatus,
       };
-      await api.createSubsidiary(body);
+      const created = await api.createSubsidiary({ ...body, locations: draftLocations });
       toast.success("Subsidiary created");
       setAddOpen(false);
       setForm(emptyForm);
-      await refresh();
+      setDraftLocations([]);
+      // Straight to its own page: everything else about a subsidiary — contact,
+      // more locations, what depends on it — lives there, and landing on the
+      // register would mean finding the row you just made.
+      router.push(`/subsidiaries/${created.id}`);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -381,6 +439,78 @@ export default function SubsidiariesPage() {
               />
             </Field>
           </div>
+
+          {/* Operational locations, collected as a draft and written with the
+              subsidiary in one transaction (round-1 SUB-3). The geography
+              select is labelled "Site geography" so it cannot be confused with
+              the subsidiary's own "Geography" — they sit in one dialog, and a
+              label-scoped selector matching both would be ambiguous. */}
+          <div className="space-y-3 rounded-lg border border-border p-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <MapPin className="h-4 w-4 text-primary" />
+              Operational locations
+            </div>
+            <p className="text-xs text-muted-foreground">
+              A subsidiary&apos;s locations are its reporting borders — add at
+              least one. You can add more later on its page.
+            </p>
+
+            {draftLocations.length > 0 && (
+              <ul className="space-y-1">
+                {draftLocations.map((l, i) => (
+                  <li
+                    key={`${l.name}-${i}`}
+                    className="flex items-center justify-between rounded-md bg-muted/60 px-3 py-2 text-sm"
+                  >
+                    <span>
+                      {l.name}{" "}
+                      <span className="text-muted-foreground">
+                        · {geographyLabel(l.geographyCode)}
+                      </span>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Remove ${l.name}`}
+                      onClick={() =>
+                        setDraftLocations(draftLocations.filter((_, j) => j !== i))
+                      }
+                    >
+                      <Trash2 className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+              <Input
+                aria-label="Location name"
+                placeholder="Istanbul HQ"
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+              />
+              <Select
+                value={draftGeo || form.geographyCode}
+                onValueChange={setDraftGeo}
+              >
+                <SelectTrigger aria-label="Site geography" className="sm:w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {geographyOptions(draftGeo || form.geographyCode).map((code) => (
+                    <SelectItem key={code} value={code}>
+                      {geographyLabel(code)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button variant="outline" onClick={addDraftLocation}>
+                <Plus className="h-4 w-4" /> Add
+              </Button>
+            </div>
+          </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>
               Cancel

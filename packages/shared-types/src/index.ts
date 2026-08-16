@@ -720,6 +720,24 @@ export interface SubsidiaryDTO {
   updatedAt: string;
 }
 
+/**
+ * Upper bound on locations supplied in ONE subsidiary create.
+ *
+ * A transaction bound, not a product one: each location is two sequential
+ * statements inside a single interactive transaction, so a large array becomes
+ * thousands of round trips. Measured — 2000 locations ran in ~1s locally, but
+ * at a managed database's 5-15ms RTT the same payload takes 20-60s and blows
+ * Prisma's default 5s timeout while holding a pooled connection.
+ *
+ * Here rather than in the API's DTO so the create form can enforce the same
+ * number. A cap the client cannot see is a 400 that arrives after the user has
+ * already typed the rows.
+ */
+export const MAX_LOCATIONS_PER_CREATE = 50;
+
+/** One location supplied while creating its parent (round-1 UAT SUB-3). */
+export type CreateSubsidiaryLocationInput = Omit<CreateLocationInput, 'subsidiaryId'>;
+
 export interface CreateSubsidiaryInput {
   legalName: string;
   tradingName?: string | null;
@@ -732,9 +750,28 @@ export interface CreateSubsidiaryInput {
   contactPhone?: string | null;
   reportingStatus?: SubsidiaryStatus;
   includedScopes?: number[];
+  /**
+   * Operational locations to create with the subsidiary, in one transaction.
+   *
+   * Note the neighbour: `location` (singular, above) is a free-text address
+   * line on the subsidiary itself and has nothing to do with these rows. They
+   * are one keystroke apart, so read the plural as "the `locations` table".
+   *
+   * Optional here even though the create FORM requires at least one — making it
+   * mandatory would be a breaking change for every existing caller, and a
+   * holding entity with no distinct site is a real thing.
+   */
+  locations?: CreateSubsidiaryLocationInput[];
 }
 
-export type UpdateSubsidiaryInput = Partial<CreateSubsidiaryInput>;
+/**
+ * `locations` is omitted deliberately. `PATCH /subsidiaries/:id` rejects it with
+ * a 400 (`UpdateSubsidiaryDto` is hand-written, not derived), so leaving it in
+ * would let a typed client write code that compiles and fails at runtime —
+ * especially easy here, where `location` and `locations` are one keystroke
+ * apart. Locations are managed through `/locations`.
+ */
+export type UpdateSubsidiaryInput = Omit<Partial<CreateSubsidiaryInput>, 'locations'>;
 
 /**
  * Everything hanging off one subsidiary, counted server-side.

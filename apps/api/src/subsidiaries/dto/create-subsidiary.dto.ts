@@ -1,7 +1,9 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayNotEmpty,
   IsArray,
+  ValidateNested,
   IsEmail,
   IsIn,
   IsInt,
@@ -10,24 +12,38 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
+import { GEOGRAPHY_CODES, MAX_LOCATIONS_PER_CREATE } from '@tonyai/shared-types';
+import { blankToNull } from '../../common/blank-to-null';
+
 
 /**
- * Trim, and turn a blank into `null`.
+ * One location supplied while creating its parent subsidiary.
  *
- * Without it the phone column ends up with THREE representations of "no phone"
- * — `null`, `''` and `'   '` — because `@IsOptional` only skips null/undefined
- * and `@IsString` happily accepts whitespace. A panel then renders an empty
- * string where it should render its empty state, and "clear this field" behaves
- * differently depending on whether the user pressed space. Email escapes the
- * same fate only because `@IsEmail` rejects whitespace; it is trimmed here too,
- * so a pasted address with a trailing space is saved rather than refused.
+ * `CreateLocationDto` minus `subsidiaryId`: the parent does not exist yet, and
+ * accepting an id here would let a caller attach a location to somebody else's
+ * subsidiary through the create endpoint.
  */
-export function blankToNull({ value }: { value: unknown }): unknown {
-  if (typeof value !== 'string') return value;
-  const trimmed = value.trim();
-  return trimmed.length === 0 ? null : trimmed;
+export class CreateSubsidiaryLocationDto {
+  @Transform(blankToNull)
+  @IsString()
+  @MinLength(1)
+  name!: string;
+
+  @IsString()
+  @IsIn(GEOGRAPHY_CODES)
+  geographyCode!: string;
+
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsString()
+  address?: string | null;
+
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsString()
+  authorizedPerson?: string | null;
 }
+
 
 export class CreateSubsidiaryDto {
   @IsString()
@@ -102,4 +118,25 @@ export class CreateSubsidiaryDto {
   @IsInt({ each: true })
   @IsIn([1, 2, 3], { each: true })
   includedScopes?: number[];
+
+  /**
+   * Locations to create alongside the subsidiary, in one transaction (round-1
+   * UAT SUB-3).
+   *
+   * Optional at this layer on purpose. The create FORM requires at least one —
+   * a subsidiary's locations are its operational borders, and WP17's
+   * completeness denominator is that count — but making it mandatory here would
+   * be a breaking contract change for every existing caller, and a holding
+   * entity with no distinct site is a real thing.
+   *
+   * `@ValidateNested` + `@Type` are load-bearing: without them the global
+   * `whitelist` pipe strips these into bare objects and the per-location rules
+   * never run.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_LOCATIONS_PER_CREATE)
+  @ValidateNested({ each: true })
+  @Type(() => CreateSubsidiaryLocationDto)
+  locations?: CreateSubsidiaryLocationDto[];
 }

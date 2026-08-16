@@ -15,6 +15,7 @@ import type { SubsidiaryDTO, SubsidiarySummaryDTO } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
+import { LocationsService, TrustedParent } from '../locations/locations.service';
 import { EDITABLE_STATUSES } from '../activity-records/activity-records.service';
 import { CreateSubsidiaryDto } from './dto/create-subsidiary.dto';
 import { UpdateSubsidiaryDto } from './dto/update-subsidiary.dto';
@@ -46,6 +47,7 @@ export class SubsidiariesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly locations: LocationsService,
   ) {}
 
   private toDTO(s: Subsidiary): SubsidiaryDTO {
@@ -95,9 +97,38 @@ export class SubsidiariesService {
     return this.toDTO(s);
   }
 
+  /**
+   * Create a subsidiary and, optionally, its operational locations — all in one
+   * transaction (round-1 UAT SUB-3).
+   *
+   * Atomic on purpose: a half-created subsidiary is worse than a failed create,
+   * because its locations are its reporting borders and a partial set produces
+   * a completeness denominator that is quietly wrong rather than obviously
+   * missing.
+   *
+   * The locations go through `LocationsService.writeLocationForTrustedParent`
+   * rather than `LocationsService.create`, because the latter checks
+   * `accessibleSubsidiaryIds` — computed at authentication time, so it cannot
+   * contain the subsidiary this very transaction just inserted. Using the
+   * shared writer also means each location's audit row is byte-identical to one
+   * created later through `POST /locations`.
+   */
   async create(user: RequestUser, dto: CreateSubsidiaryDto): Promise<SubsidiaryDTO> {
     this.assertCanWrite(user);
-    const created = await this.prisma.subsidiary.create({
+    // The timeout is stated, not inherited. Prisma's default is 5s; the DTO
+    // caps `locations` so the work fits well inside it, and naming the number
+    // here means a future raise of that cap has to confront this line.
+    return this.prisma.$transaction(async (tx) => this.createInTx(tx, user, dto), {
+      timeout: 10_000,
+    });
+  }
+
+  private async createInTx(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    dto: CreateSubsidiaryDto,
+  ): Promise<SubsidiaryDTO> {
+    const created = await tx.subsidiary.create({
       data: {
         organisationId: user.organisationId as string,
         legalName: dto.legalName,
@@ -113,12 +144,27 @@ export class SubsidiariesService {
         includedScopes: dto.includedScopes ?? [1, 2],
       },
     });
-    await this.audit.record(user, {
-      action: 'create',
-      entity: 'subsidiary',
-      entityId: created.id,
-      diff: { after: this.toDTO(created) },
-    });
+    await this.audit.record(
+      user,
+      {
+        action: 'create',
+        entity: 'subsidiary',
+        entityId: created.id,
+        diff: { after: this.toDTO(created) },
+      },
+      tx,
+    );
+    // One audit row per location, exactly as `POST /locations` writes them —
+    // never a single batched row, or a location's history would depend on how
+    // it was created.
+    for (const loc of dto.locations ?? []) {
+      await this.locations.writeLocationForTrustedParent(
+        tx,
+        user,
+        TrustedParent.becauseJustCreated(created),
+        loc,
+      );
+    }
     return this.toDTO(created);
   }
 
@@ -149,12 +195,22 @@ export class SubsidiariesService {
     }
     if (dto.includedScopes !== undefined) data.includedScopes = dto.includedScopes;
 
-    const updated = await this.prisma.subsidiary.update({ where: { id }, data });
-    await this.audit.record(user, {
-      action: 'update',
-      entity: 'subsidiary',
-      entityId: id,
-      diff: { before: this.toDTO(existing), after: this.toDTO(updated) },
+    // In a transaction like create and delete. It was not, which left this
+    // class half-atomic — a crash between the row write and the audit insert
+    // lost the trail for an update while create and delete were safe.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.subsidiary.update({ where: { id }, data });
+      await this.audit.record(
+        user,
+        {
+          action: 'update',
+          entity: 'subsidiary',
+          entityId: id,
+          diff: { before: this.toDTO(existing), after: this.toDTO(row) },
+        },
+        tx,
+      );
+      return row;
     });
     return this.toDTO(updated);
   }

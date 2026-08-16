@@ -4,13 +4,47 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, type Location } from '@tonyai/db';
+import { Prisma, type Location, type Subsidiary } from '@tonyai/db';
 import type { LocationDTO } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
+
+/**
+ * A subsidiary that some caller has already established the right to write to.
+ *
+ * The point is the private constructor: a third caller cannot simply pass a
+ * string, it has to ADD a factory here — a visible, reviewable act rather than
+ * an injection and one more argument. The safety of
+ * `writeLocationForTrustedParent` was otherwise carried entirely by its name.
+ */
+export class TrustedParent {
+  private constructor(readonly subsidiaryId: string) {}
+
+  /** The caller checked the role AND `accessibleSubsidiaryIds` first. */
+  static becauseInAccessibleSet(user: RequestUser, subsidiaryId: string): TrustedParent {
+    if (!user.accessibleSubsidiaryIds.includes(subsidiaryId)) {
+      throw new NotFoundException('Subsidiary not found');
+    }
+    return new TrustedParent(subsidiaryId);
+  }
+
+  /**
+   * The caller is creating the parent, in this transaction, under its own
+   * organisation — so there is no accessible set to consult yet.
+   *
+   * Typed against the Prisma model, not `{ id: string }`. The looser signature
+   * accepted a location, an activity record, or a subsidiary fetched from
+   * anywhere including another organisation, which made the brand assert a
+   * proof it had never performed — worse than a raw string, because the next
+   * reader sees `TrustedParent` and stops checking.
+   */
+  static becauseJustCreated(created: Subsidiary): TrustedParent {
+    return new TrustedParent(created.id);
+  }
+}
 
 @Injectable()
 export class LocationsService {
@@ -81,30 +115,79 @@ export class LocationsService {
     return this.toDTO(location);
   }
 
+  /**
+   * Write one location row and its audit entry against an already-authorised
+   * parent.
+   *
+   * The parent id comes from `parent`, NEVER from `input` — the nested create
+   * DTO has no `subsidiaryId` field, and even if a future edit added one back
+   * it would not be read. That structural property, not the DTO's shape, is
+   * what stops a caller attaching a location to somebody else's subsidiary.
+   *
+   * This performs no authorisation of its own, which is why the parent has to
+   * arrive as a `TrustedParent` rather than a string. It exists because
+   * `POST /subsidiaries` creates a subsidiary and its locations in a single
+   * transaction, and `accessibleSubsidiaryIds` is computed at authentication
+   * time — it cannot contain a subsidiary created moments earlier in the same
+   * request, so `create()` below would 404 against the row that very
+   * transaction just inserted.
+   *
+   * Living here rather than in the subsidiary service is the point: the audit
+   * row's shape is defined once. A location created during a subsidiary create
+   * must be indistinguishable in the trail from one added later, or the meaning
+   * of the audit log depends on which screen was used — the exact defect WP16
+   * PR 1 fixed for the geography confirmation.
+   *
+   * "Indistinguishable" covers the VALUES too, not just the shape, and it did
+   * not at first: the nested DTO trimmed and nulled blank fields while the
+   * standalone one did not, so the same input produced different rows depending
+   * on the endpoint. Both normalise through `blankToNull` now, asserted by an
+   * end-to-end test that writes the same location through both paths.
+   */
+  async writeLocationForTrustedParent(
+    db: Prisma.TransactionClient,
+    user: RequestUser,
+    parent: TrustedParent,
+    input: Omit<CreateLocationDto, 'subsidiaryId'>,
+  ): Promise<LocationDTO> {
+    const created = await db.location.create({
+      data: {
+        subsidiaryId: parent.subsidiaryId,
+        name: input.name,
+        geographyCode: input.geographyCode,
+        address: input.address ?? null,
+        authorizedPerson: input.authorizedPerson ?? null,
+      },
+    });
+    await this.audit.record(
+      user,
+      {
+        action: 'create',
+        entity: 'location',
+        entityId: created.id,
+        diff: { after: this.toDTO(created) },
+      },
+      db,
+    );
+    return this.toDTO(created);
+  }
+
   async create(user: RequestUser, dto: CreateLocationDto): Promise<LocationDTO> {
     this.assertCanWrite(user);
     // Tenant isolation: cannot attach a location to an inaccessible subsidiary.
-    if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
-      throw new NotFoundException('Subsidiary not found');
-    }
-    const created = await this.prisma.location.create({
-      data: {
-        subsidiaryId: dto.subsidiaryId,
-        name: dto.name,
-        geographyCode: dto.geographyCode,
-        address: dto.address ?? null,
-        authorizedPerson: dto.authorizedPerson ?? null,
-      },
-    });
-    await this.audit.record(user, {
-      action: 'create',
-      entity: 'location',
-      entityId: created.id,
-      diff: {
-      after: this.toDTO(created),
-    },
-    });
-    return this.toDTO(created);
+    // The factory performs that check and is the only way to obtain the token
+    // the writer demands.
+    const parent = TrustedParent.becauseInAccessibleSet(
+      user,
+      dto.subsidiaryId,
+    );
+    // Same writer the subsidiary create uses, so the two produce byte-identical
+    // rows and audit entries. Wrapped in a transaction here too — this endpoint
+    // used to write its audit row outside the mutation, so a crash between them
+    // left a location with no trail.
+    return this.prisma.$transaction((tx) =>
+      this.writeLocationForTrustedParent(tx, user, parent, dto),
+    );
   }
 
   async update(
@@ -123,15 +206,20 @@ export class LocationsService {
       data.authorizedPerson = dto.authorizedPerson;
     }
 
-    const updated = await this.prisma.location.update({ where: { id }, data });
-    await this.audit.record(user, {
-      action: 'update',
-      entity: 'location',
-      entityId: id,
-      diff: {
-      before: this.toDTO(existing),
-      after: this.toDTO(updated),
-    },
+    // Same as create and delete now: mutation and audit in one transaction.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.location.update({ where: { id }, data });
+      await this.audit.record(
+        user,
+        {
+          action: 'update',
+          entity: 'location',
+          entityId: id,
+          diff: { before: this.toDTO(existing), after: this.toDTO(row) },
+        },
+        tx,
+      );
+      return row;
     });
     return this.toDTO(updated);
   }
