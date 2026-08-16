@@ -37,6 +37,7 @@ type SubsidiaryDependentCounts = Pick<
   | 'reviewRecords'
   | 'openRecords'
   | 'locations'
+  | 'locationsWithRecords'
   | 'periodLocks'
   | 'targets'
   | 'denominators'
@@ -233,7 +234,16 @@ export class SubsidiariesService {
     // guarded by TS7053, which this package has switched off.
     const reviewable: ActivityRecordStatus[] = [...PENDING_REVIEW_STATUSES];
     const editable: ActivityRecordStatus[] = [...EDITABLE_STATUSES];
-    const [terminalRecords, reviewRecords, openRecords, locations, periodLocks, targets, denominators] =
+    const [
+      terminalRecords,
+      reviewRecords,
+      openRecords,
+      locations,
+      locationsWithRecords,
+      periodLocks,
+      targets,
+      denominators,
+    ] =
       await Promise.all([
         db.activityRecord.count({
           where: { subsidiaryId: id, status: { notIn: [...editable, ...reviewable] } },
@@ -245,6 +255,9 @@ export class SubsidiariesService {
           where: { subsidiaryId: id, status: { in: editable } },
         }),
         db.location.count({ where: { subsidiaryId: id } }),
+        db.location.count({
+          where: { subsidiaryId: id, activityRecords: { some: {} } },
+        }),
         db.periodLock.count({ where: { subsidiaryId: id } }),
         db.target.count({ where: { subsidiaryId: id } }),
         db.subsidiaryDenominator.count({ where: { subsidiaryId: id } }),
@@ -254,6 +267,7 @@ export class SubsidiariesService {
       reviewRecords,
       openRecords,
       locations,
+      locationsWithRecords,
       periodLocks,
       targets,
       denominators,
@@ -349,7 +363,15 @@ export class SubsidiariesService {
     const blockers: string[] = [];
     if (c.reviewRecords > 0) blockers.push(`${c.reviewRecords} record(s) awaiting review`);
     if (c.openRecords > 0) blockers.push(`${c.openRecords} draft or rejected record(s)`);
-    if (c.locations > 0) blockers.push(`${c.locations} location(s)`);
+    // `c.locations` is deliberately absent: deleting the subsidiary removes its
+    // own record-free locations, audited, so they are never something the user
+    // must clear first. Only ones holding records block, and for a different
+    // reason — see below.
+    if (c.locationsWithRecords > 0) {
+      blockers.push(
+        `${c.locationsWithRecords} location(s) that activity records are attached to`,
+      );
+    }
     if (c.periodLocks > 0) blockers.push(`${c.periodLocks} closed reporting period(s)`);
     if (c.targets > 0) blockers.push(`${c.targets} reduction target(s)`);
     if (c.denominators > 0) blockers.push(`${c.denominators} intensity denominator(s)`);
@@ -361,6 +383,9 @@ export class SubsidiariesService {
         `This subsidiary still holds ${blockers.join(', ')}. Deleting it would ` +
         'destroy them without an audit entry for each. Remove them first ' +
         '(reopen any closed period rather than deleting its lock' +
+        (c.locationsWithRecords > 0
+          ? '; a location with records attached stays, because those figures were calculated with its geography'
+          : '') +
         (c.reviewRecords > 0
           ? '; a record awaiting review must be sent back by a reviewer before it can be removed'
           : '') +
@@ -378,6 +403,38 @@ export class SubsidiariesService {
     if (refusal) throw new ConflictException(refusal.message);
   }
 
+  /**
+   * Remove the subsidiary's own locations as part of deleting it, with an audit
+   * row each — so undoing a mistyped subsidiary is one action, not a scavenger
+   * hunt.
+   *
+   * PR 1's refusal was never "locations are precious". It was that the FK
+   * cascade destroyed them UNAUDITED, behind a single "delete subsidiary" row.
+   * Writing each row removes that objection entirely, so the guard keeps its
+   * thesis and loses friction that had become routine: PR 3 made the create
+   * form require a location, so every subsidiary made through the UI was
+   * immediately undeletable — the case the guard's own message calls "a typo in
+   * the create form, most often".
+   *
+   * Called AFTER the guard, never before. A location holding activity records
+   * still blocks (`locationsWithRecords`), because a record's frozen snapshot
+   * was computed from its location's geography and detaching it would leave the
+   * figure claiming a geography it was not calculated with. Clearing first
+   * would delete that location before anything refused, and the record it
+   * belongs to would be silently detached — a record belonging to ANOTHER
+   * subsidiary, since this one has none.
+   */
+  private async clearOwnLocations(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    id: string,
+  ): Promise<void> {
+    const locations = await tx.location.findMany({ where: { subsidiaryId: id } });
+    for (const location of locations) {
+      await this.locations.deleteLocationForTrustedParent(tx, user, location);
+    }
+  }
+
   async remove(user: RequestUser, id: string): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
@@ -391,7 +448,11 @@ export class SubsidiariesService {
       // loser is not an error — the FK cascades the newcomer away silently,
       // which is the exact loss this whole guard exists to prevent.
       await tx.$queryRaw`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR UPDATE`;
+      // Guard first. It refuses on anything that must survive — including a
+      // location that holds records — so by the time the clear runs, every
+      // remaining location is provably record-free.
       await this.assertDeletable(tx, id);
+      await this.clearOwnLocations(tx, user, id);
       await tx.subsidiary.delete({ where: { id } });
       await this.audit.record(
         user,

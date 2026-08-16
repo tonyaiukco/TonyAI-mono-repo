@@ -58,12 +58,14 @@ test('a subsidiary and its locations are created in one call', async ({ request 
   // non-blank address anywhere.
   expect(locations.find((l: { name: string }) => l.name === 'E2E Nested HQ').address).toBe('Levent');
 
-  // The summary — and therefore the delete guard — sees them immediately.
+  // The summary sees them immediately — counted, but not blocking: a
+  // record-free location goes with the subsidiary when it is deleted.
   const summary = await (await request.get(
     `${API_BASE}/subsidiaries/${sub.id}/summary`, { headers: bearer(token) },
   )).json();
   expect(summary.locations).toBe(2);
-  expect(summary.hasBlockingDependents).toBe(true);
+  expect(summary.locationsWithRecords).toBe(0);
+  expect(summary.hasBlockingDependents).toBe(false);
 });
 
 test('a location created this way is indistinguishable in the audit trail', async ({ request }) => {

@@ -142,6 +142,73 @@ test('a record awaiting review blocks the delete WITHOUT calling it permanent', 
   expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);
 });
 
+test('deleting a subsidiary takes its own locations, with an audit row each', async ({ request }) => {
+  // The refusal existed because the FK cascade destroyed locations UNAUDITED,
+  // behind one "delete subsidiary" row. Writing a row each removes the
+  // objection, so a record-free location no longer blocks — and PR 3 made that
+  // friction routine by requiring a location at create time.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const sub = await makeSubsidiary(request, token, 'E2E Test Co Cascade Audit');
+  const made = [];
+  for (const name of ['E2E Cascade A', 'E2E Cascade B']) {
+    made.push(await (await request.post(`${API_BASE}/locations`, {
+      headers: bearer(token),
+      data: { subsidiaryId: sub.id, name, geographyCode: 'TR' },
+    })).json());
+  }
+
+  // The panel and the guard agree that this is deletable.
+  const summary = await (await request.get(`${API_BASE}/subsidiaries/${sub.id}/summary`, {
+    headers: bearer(token),
+  })).json();
+  expect(summary.locations).toBe(2);
+  expect(summary.locationsWithRecords).toBe(0);
+  expect(summary.hasBlockingDependents, 'a record-free location is not a blocker').toBe(false);
+  expect(summary.blockers).toEqual([]);
+
+  expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);
+
+  // One `delete location` row per location — the whole point. A batched row, or
+  // none at all, is the unaudited cascade this guard was built to stop.
+  for (const loc of made) {
+    const audit = await (await request.get(
+      `${API_BASE}/audit?entity=location&action=delete&entityId=${loc.id}`,
+      { headers: bearer(token) },
+    )).json();
+    expect(audit.total, `one delete row for ${loc.name}`).toBe(1);
+    expect(audit.items[0].diff.before.name).toBe(loc.name);
+  }
+  // …and they really are gone.
+  expect((await request.get(`${API_BASE}/locations/${made[0].id}`, { headers: bearer(token) })).status()).toBe(404);
+});
+
+test('a location holding records still stops the subsidiary delete', async ({ request }) => {
+  // A different reason from the audit one: the record's frozen snapshot was
+  // computed from this location's geography, so detaching it would leave the
+  // figure claiming a geography it was not calculated with.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const sub = await makeSubsidiary(request, token, 'E2E Test Co Loc With Records');
+  const loc = await (await request.post(`${API_BASE}/locations`, {
+    headers: bearer(token),
+    data: { subsidiaryId: sub.id, name: 'E2E Held Site', geographyCode: 'UK' },
+  })).json();
+  await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: { subsidiaryId: sub.id, locationId: loc.id, reportingYear: E2E_YEAR,
+      reportingPeriod: E2E_PERIOD, periodValue: 'Q3', category: 'Electricity',
+      activityValue: 12, activityUnit: 'kWh', varianceReason: null, input: null },
+  });
+
+  const refused = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
+  expect(refused.status()).toBe(409);
+  // The draft record is what the user must clear; the location is named as the
+  // reason it cannot simply be swept up.
+  expect((await refused.json()).message).toMatch(/1 draft or rejected record/);
+
+  const still = await request.get(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
+  expect(still.status(), 'the location must survive the refused delete').toBe(200);
+});
+
 test('a disposable subsidiary can still be emptied and deleted', async ({ request }) => {
   // The counterpart to the test above. Everything under a subsidiary is ON
   // DELETE CASCADE — locations included — so the guard blocks on all of it, not
@@ -165,15 +232,18 @@ test('a disposable subsidiary can still be emptied and deleted', async ({ reques
   expect(blocked.status()).toBe(409);
   const message = (await blocked.json()).message as string;
   expect(message).toMatch(/1 draft or rejected record\(s\)/);
-  expect(message).toMatch(/1 location\(s\)/);
+  // The location is NOT listed: the delete clears record-free locations itself,
+  // so naming it would be advice the user does not need to act on.
+  expect(message).not.toMatch(/1 location\(s\)\./);
   // Nothing here is committed, so "retire it as inactive" would be the wrong
   // advice — this subsidiary really can go.
   expect(message).not.toMatch(/inactive/);
 
-  // Follow the advice, in the order it implies.
+  // Follow the advice — which is now just the record; the location goes with
+  // the subsidiary.
   expect((await request.delete(`${API_BASE}/activity-records/${draft.id}`, { headers: bearer(token) })).status()).toBe(200);
-  expect((await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) })).status()).toBe(200);
   expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);
+  expect((await request.get(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) })).status()).toBe(404);
   expect((await request.get(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(404);
 });
 

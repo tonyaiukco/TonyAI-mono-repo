@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   login, bearer, getAccessToken, pickByFieldLabel, cleanupE2ESubsidiaries,
-  ADMIN_EMAIL, ENTRY_EMAIL, CONSULTANT_EMAIL, API_BASE, SUB,
+  ADMIN_EMAIL, ENTRY_EMAIL, CONSULTANT_EMAIL, API_BASE, SUB, E2E_YEAR, E2E_PERIOD,
 } from './helpers';
 
 /**
@@ -187,13 +187,29 @@ test('the panel explains a refused delete in the API\'s own words', async ({ pag
     'adding a location must not discard an unsaved detail edit',
   ).toHaveValue('Unsaved While Adding');
 
+  // A record-free location does not block: the panel says the subsidiary can
+  // still go, and names what would go with it.
+  await expect(page.getByText(/1 location would go with it/)).toBeVisible();
+  await expect(page.getByText('This subsidiary cannot be deleted')).toHaveCount(0);
+
+  // Add a draft record, and now something DOES block — in the API's own words,
+  // not a sentence the UI wrote.
+  const subs = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
+  void subs;
+  await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: { subsidiaryId: sub.id, locationId: null, reportingYear: E2E_YEAR,
+      reportingPeriod: E2E_PERIOD, periodValue: 'Q2', category: 'Electricity',
+      activityValue: 9, activityUnit: 'kWh', varianceReason: null, input: null },
+  });
+  await page.reload();
   await expect(page.getByText('This subsidiary cannot be deleted')).toBeVisible();
-  // The sentence must be the API's, not one the UI wrote: same text as the 409.
+
   const blockers = await (await request.get(`${API_BASE}/subsidiaries/${sub.id}/summary`, {
     headers: bearer(token),
   })).json();
-  expect(blockers.blockers).toContain('1 location(s)');
-  await expect(page.getByText('1 location(s)', { exact: false })).toBeVisible();
+  expect(blockers.blockers).toContain('1 draft or rejected record(s)');
+  await expect(page.getByText('1 draft or rejected record(s)', { exact: false })).toBeVisible();
 
   const refused = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
   expect(refused.status()).toBe(409);

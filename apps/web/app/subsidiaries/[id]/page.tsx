@@ -535,6 +535,7 @@ export default function SubsidiaryDetailPage() {
 function DependentsCard({ summary }: { summary: SubsidiarySummaryDTO }) {
   const rows: [string, number][] = [
     ["Locations", summary.locations],
+    ["…of which hold records", summary.locationsWithRecords],
     ["Approved or locked records", summary.terminalRecords],
     ["Records awaiting review", summary.reviewRecords],
     ["Draft or rejected records", summary.openRecords],
@@ -570,8 +571,9 @@ function DependentsCard({ summary }: { summary: SubsidiarySummaryDTO }) {
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            Nothing depends on this subsidiary, so it can be deleted from the
-            register.
+            {summary.locations > 0
+              ? `This subsidiary can be deleted from the register. Its ${summary.locations} location${summary.locations === 1 ? "" : "s"} would go with it, each recorded in the audit log.`
+              : "Nothing depends on this subsidiary, so it can be deleted from the register."}
           </p>
         )}
       </CardContent>
