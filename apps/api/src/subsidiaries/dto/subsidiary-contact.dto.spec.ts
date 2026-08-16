@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { describe, expect, it } from 'vitest';
-import { CreateSubsidiaryDto } from './create-subsidiary.dto';
+import { CreateSubsidiaryDto, CreateSubsidiaryLocationDto } from './create-subsidiary.dto';
 import { UpdateSubsidiaryDto } from './update-subsidiary.dto';
 
 /**
@@ -56,6 +56,73 @@ const CASES: [string, Record<string, unknown>, boolean][] = [
   ['a local part at the RFC limit (64)', { contactEmail: `${'a'.repeat(64)}@example.com` }, true],
   ['a local part one over the limit', { contactEmail: `${'a'.repeat(65)}@example.com` }, false],
 ];
+
+/**
+ * The nested `locations[]` of a subsidiary create (round-1 SUB-3).
+ *
+ * Driven through the REAL pipe options, because the failure mode here is
+ * silence: `whitelist: true` strips any nested object that has no `@Type`, so a
+ * missing decorator does not error — the locations simply vanish, the
+ * subsidiary is created without them, and nothing anywhere says so. Removing
+ * `@ValidateNested`/`@Type` passed the entire unit suite until this existed.
+ */
+describe('CreateSubsidiaryDto — nested locations', () => {
+  const parse = (locations: unknown) =>
+    plainToInstance(
+      CreateSubsidiaryDto,
+      { legalName: 'New Co', geographyCode: 'UK', locations },
+      { excludeExtraneousValues: false },
+    );
+
+  it('keeps the nested objects as validated instances, not bare objects', () => {
+    const dto = parse([{ name: 'Istanbul HQ', geographyCode: 'TR' }]);
+    expect(validateSync(dto, { whitelist: true, forbidNonWhitelisted: true })).toHaveLength(0);
+    expect(dto.locations).toHaveLength(1);
+    // The `@Type` is what makes this an instance rather than a plain object —
+    // and an instance is what the per-location rules run against.
+    expect(dto.locations?.[0]).toBeInstanceOf(CreateSubsidiaryLocationDto);
+  });
+
+  it('rejects a location with no name', () => {
+    const errors = validateSync(parse([{ name: '', geographyCode: 'TR' }]), {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+    expect(errors).toHaveLength(1);
+  });
+
+  it('rejects a geography the contract does not know', () => {
+    expect(
+      validateSync(parse([{ name: 'HQ', geographyCode: 'XX' }]), {
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    ).toHaveLength(1);
+  });
+
+  it('rejects a nested subsidiaryId — a location cannot name its own parent here', () => {
+    // Accepting one would let a caller attach a location to somebody else's
+    // subsidiary through the create endpoint, which performs no accessible-set
+    // check on the nested rows (the parent is being created, so there is none).
+    expect(
+      validateSync(parse([{ name: 'HQ', geographyCode: 'TR', subsidiaryId: 'sub-1' }]), {
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    ).toHaveLength(1);
+  });
+
+  it('accepts none at all — the FORM requires one, the contract does not', () => {
+    const dto = plainToInstance(CreateSubsidiaryDto, { legalName: 'New Co', geographyCode: 'UK' });
+    expect(validateSync(dto, { whitelist: true, forbidNonWhitelisted: true })).toHaveLength(0);
+  });
+
+  it('collapses a blank address to null inside a nested location too', () => {
+    const dto = parse([{ name: 'HQ', geographyCode: 'TR', address: '   ' }]);
+    expect(validateSync(dto)).toHaveLength(0);
+    expect(dto.locations?.[0].address).toBeNull();
+  });
+});
 
 describe('subsidiary contact fields — validation', () => {
   it.each(CASES)('create: %s', (_label, body, valid) => {

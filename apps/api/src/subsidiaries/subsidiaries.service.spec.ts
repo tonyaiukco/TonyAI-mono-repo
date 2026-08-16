@@ -11,6 +11,7 @@ import {
 } from '../../test/helpers';
 
 import { AuditService } from '../audit/audit.service';
+import { LocationsService } from '../locations/locations.service';
 
 /**
  * Audit writes go through the shared AuditService. A single shared spy lets the
@@ -56,6 +57,14 @@ function countRecords(prisma: PrismaMock, statuses: string[]): void {
 describe('SubsidiariesService', () => {
   let prisma: PrismaMock;
   let service: SubsidiariesService;
+  /**
+   * The shared location writer, mocked. The real one lives in
+   * `LocationsService` so a location created during a subsidiary create writes
+   * the SAME audit row as one added later; that shape is pinned by
+   * `locations.service.spec.ts`, and what belongs here is that this service
+   * calls it once per location, inside the transaction, with the new id.
+   */
+  let locations: { writeLocationForTrustedParent: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
 
@@ -63,7 +72,12 @@ describe('SubsidiariesService', () => {
     prisma = createPrismaMock();
     // Direct instantiation with the mock — the service only depends on the
     // narrow PrismaService surface, so no Nest container / DB is needed.
-    service = new SubsidiariesService(prisma as unknown as PrismaService, auditMock());
+    locations = { writeLocationForTrustedParent: vi.fn() };
+    service = new SubsidiariesService(
+      prisma as unknown as PrismaService,
+      auditMock(),
+      locations as unknown as LocationsService,
+    );
   });
 
   describe('list — tenant isolation', () => {
@@ -167,6 +181,9 @@ describe('SubsidiariesService', () => {
 
       expect(result.id).toBe('sub-new');
       expect(prisma.subsidiary.create).toHaveBeenCalledTimes(1);
+      // One row for the subsidiary. With locations it is one MORE per location
+      // — see the SUB-3 tests below; never a single batched row, or a
+      // location's history would depend on how it was created.
       expect(audit.record).toHaveBeenCalledTimes(1);
       // The actor is the first argument now; the entry describes the change.
       expect(audit.record.mock.calls[0][0]).toMatchObject({ id: user.id });
@@ -177,6 +194,68 @@ describe('SubsidiariesService', () => {
         entityId: 'sub-new',
       });
       expect(auditArg.diff).toHaveProperty('after');
+    });
+
+    it('creates its locations in the SAME transaction, one audit row each', async () => {
+      // Round-1 SUB-3. Atomic on purpose: a subsidiary's locations are its
+      // reporting borders, and a partial set is a completeness denominator
+      // that is quietly wrong rather than obviously missing.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
+
+      await service.create(user, {
+        legalName: 'New Co',
+        geographyCode: 'UK',
+        locations: [
+          { name: 'Istanbul HQ', geographyCode: 'TR' },
+          { name: 'Leeds Depot', geographyCode: 'UK', address: 'Holbeck' },
+        ],
+      });
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(locations.writeLocationForTrustedParent).toHaveBeenCalledTimes(2);
+      // The parent id is the one this transaction just minted — it cannot come
+      // from the caller, and it is not yet in `accessibleSubsidiaryIds`, which
+      // is why this path cannot go through `LocationsService.create`.
+      for (const call of locations.writeLocationForTrustedParent.mock.calls) {
+        expect(call[2]).toBe('sub-new');
+      }
+      expect(locations.writeLocationForTrustedParent.mock.calls[0][3]).toMatchObject({
+        name: 'Istanbul HQ',
+      });
+    });
+
+    it('writes nothing at all when a location fails', async () => {
+      // The whole point of one transaction. Asserted through the mock's
+      // rejection rather than a real rollback, but the shape is what matters:
+      // the failure must propagate out of `create`, not be swallowed into a
+      // subsidiary with a missing location.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
+      locations.writeLocationForTrustedParent.mockRejectedValueOnce(
+        new Error('location insert failed'),
+      );
+
+      await expect(
+        service.create(user, {
+          legalName: 'New Co',
+          geographyCode: 'UK',
+          locations: [{ name: 'Istanbul HQ', geographyCode: 'TR' }],
+        }),
+      ).rejects.toThrow(/location insert failed/);
+    });
+
+    it('is unchanged when no locations are supplied', async () => {
+      // Optional at this layer deliberately: the create FORM requires one, but
+      // making it mandatory in the contract would break every existing caller,
+      // and a holding entity with no distinct site is a real thing.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.create.mockResolvedValue(makeSubsidiary({ id: 'sub-new' }));
+
+      await service.create(user, { legalName: 'New Co', geographyCode: 'UK' });
+
+      expect(locations.writeLocationForTrustedParent).not.toHaveBeenCalled();
+      expect(audit.record).toHaveBeenCalledTimes(1);
     });
 
     it('applies documented defaults (pending status, scopes [1,2]) for optional fields', async () => {

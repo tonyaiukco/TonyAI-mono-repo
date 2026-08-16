@@ -1,7 +1,8 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
+  ValidateNested,
   IsEmail,
   IsIn,
   IsInt,
@@ -11,6 +12,33 @@ import {
   MinLength,
 } from 'class-validator';
 import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
+
+/**
+ * One location supplied while creating its parent subsidiary.
+ *
+ * `CreateLocationDto` minus `subsidiaryId`: the parent does not exist yet, and
+ * accepting an id here would let a caller attach a location to somebody else's
+ * subsidiary through the create endpoint.
+ */
+export class CreateSubsidiaryLocationDto {
+  @IsString()
+  @MinLength(1)
+  name!: string;
+
+  @IsString()
+  @IsIn(GEOGRAPHY_CODES)
+  geographyCode!: string;
+
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsString()
+  address?: string | null;
+
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsString()
+  authorizedPerson?: string | null;
+}
 
 /**
  * Trim, and turn a blank into `null`.
@@ -96,6 +124,26 @@ export class CreateSubsidiaryDto {
   /** Only the three GHG Protocol scopes exist. Unbounded integers were accepted
    *  and stored (`[99]` returned 200), which the Edit dialog now makes a
    *  first-class UI path rather than an API-only curiosity. */
+  /**
+   * Locations to create alongside the subsidiary, in one transaction (round-1
+   * UAT SUB-3).
+   *
+   * Optional at this layer on purpose. The create FORM requires at least one —
+   * a subsidiary's locations are its operational borders, and WP17's
+   * completeness denominator is that count — but making it mandatory here would
+   * be a breaking contract change for every existing caller, and a holding
+   * entity with no distinct site is a real thing.
+   *
+   * `@ValidateNested` + `@Type` are load-bearing: without them the global
+   * `whitelist` pipe strips these into bare objects and the per-location rules
+   * never run.
+   */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateSubsidiaryLocationDto)
+  locations?: CreateSubsidiaryLocationDto[];
+
   @IsOptional()
   @IsArray()
   @ArrayNotEmpty()

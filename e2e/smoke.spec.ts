@@ -25,28 +25,57 @@ test.describe('Milestone-1 slice', () => {
     await expect(page.getByRole('heading', { name: 'Subsidiaries' })).toBeVisible();
     await expect(subsidiaryRows(page)).toHaveCount(5);
 
-    // CREATE: open the dialog, fill the form, submit.
+    // CREATE: open the dialog, fill the form, add a location, submit.
     const uniqueName = `E2E Test Co ${Date.now()}`;
     await page.getByRole('button', { name: 'Add Subsidiary' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Add subsidiary')).toBeVisible();
     // First text input in the dialog is "Legal name *".
     await dialog.getByRole('textbox').first().fill(uniqueName);
+    // Round-1 SUB-3: the form asks for at least one operational location, and
+    // refuses without one.
+    await dialog.getByRole('button', { name: 'Create' }).click();
+    await expect(page.getByText('Add at least one operational location')).toBeVisible();
+    await dialog.getByLabel('Location name').fill('E2E Smoke Site');
+    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
     await dialog.getByRole('button', { name: 'Create' }).click();
 
-    // The new row appears and the count grows to 6.
+    // Creating lands on the new subsidiary's own page, with the location it was
+    // created with already there — one transaction, not a follow-up write.
+    await expect(page).toHaveURL(/\/subsidiaries\/[0-9a-f-]{36}$/);
+    await expect(page.getByRole('heading', { name: uniqueName })).toBeVisible();
+    await expect(page.getByText('E2E Smoke Site')).toBeVisible();
+
+    // Back on the register the new row is there and the count grows to 6.
+    await page.goto('/subsidiaries');
     await expect(page.getByRole('cell', { name: uniqueName })).toBeVisible();
     await expect(subsidiaryRows(page)).toHaveCount(6);
 
     // EDIT moved to `subsidiary-panel.spec.ts` (WP16 PR 2b): a subsidiary is
     // now edited on its own page, not in a dialog on the register. What stays
     // here is the register's own job — create, list, delete.
-    // DELETE: trigger the delete on the new row, confirm in the alert dialog.
+
+    // DELETE is now a two-step, and that IS the product: a subsidiary created
+    // with locations cannot be deleted until they are gone (WP16 PR 1 counts a
+    // location as a blocker, because the delete would cascade it away
+    // unaudited). So the register refuses first, and says why.
     const newRow = page.locator('tr', { hasText: uniqueName });
     await newRow.getByRole('button', { name: 'Delete subsidiary' }).click();
     const alert = page.getByRole('alertdialog');
     await expect(alert.getByText('Delete subsidiary?')).toBeVisible();
     await alert.getByRole('button', { name: 'Delete' }).click();
+    await expect(page.getByText(/1 location\(s\)/)).toBeVisible();
+    await expect(subsidiaryRows(page)).toHaveCount(6);
+
+    // Clear the blocker on the subsidiary's page, then the delete goes through.
+    await page.locator('tr', { hasText: uniqueName }).getByRole('button', { name: 'Open subsidiary' }).click();
+    await page.getByRole('button', { name: 'Delete location' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete' }).click();
+    await expect(page.getByText('E2E Smoke Site')).toHaveCount(0);
+
+    await page.goto('/subsidiaries');
+    await page.locator('tr', { hasText: uniqueName }).getByRole('button', { name: 'Delete subsidiary' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete' }).click();
 
     // The row is gone and the count returns to 5.
     await expect(page.getByRole('cell', { name: uniqueName })).toHaveCount(0);

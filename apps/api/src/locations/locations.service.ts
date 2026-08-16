@@ -81,30 +81,71 @@ export class LocationsService {
     return this.toDTO(location);
   }
 
+  /**
+   * Write one location row and its audit entry, against a parent the CALLER has
+   * already established the right to write to.
+   *
+   * Exported for `POST /subsidiaries`, which creates a subsidiary and its
+   * locations in a single transaction. That path cannot go through `create()`
+   * below: `accessibleSubsidiaryIds` is computed at authentication time, so it
+   * does not contain a subsidiary created moments earlier in the same request —
+   * the tenant check would 404 against the row the very same transaction just
+   * inserted.
+   *
+   * So this deliberately performs NO authorisation of its own, and the name is
+   * meant to make that impossible to miss. It is `public` only because Nest
+   * services are injected across module boundaries; the two callers are
+   * `create()` (which checks the role AND the accessible set first) and the
+   * subsidiary create (which is creating the parent, so the parent is the
+   * actor's own organisation by construction).
+   *
+   * Living here rather than in the subsidiary service is the point: the audit
+   * row's shape is defined once. A location created during a subsidiary create
+   * must be indistinguishable in the trail from one added later, or the meaning
+   * of the audit log depends on which screen was used — the exact defect WP16
+   * PR 1 fixed for the geography confirmation.
+   */
+  async writeLocationForTrustedParent(
+    db: Prisma.TransactionClient,
+    user: RequestUser,
+    subsidiaryId: string,
+    input: Omit<CreateLocationDto, 'subsidiaryId'>,
+  ): Promise<LocationDTO> {
+    const created = await db.location.create({
+      data: {
+        subsidiaryId,
+        name: input.name,
+        geographyCode: input.geographyCode,
+        address: input.address ?? null,
+        authorizedPerson: input.authorizedPerson ?? null,
+      },
+    });
+    await this.audit.record(
+      user,
+      {
+        action: 'create',
+        entity: 'location',
+        entityId: created.id,
+        diff: { after: this.toDTO(created) },
+      },
+      db,
+    );
+    return this.toDTO(created);
+  }
+
   async create(user: RequestUser, dto: CreateLocationDto): Promise<LocationDTO> {
     this.assertCanWrite(user);
     // Tenant isolation: cannot attach a location to an inaccessible subsidiary.
     if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
       throw new NotFoundException('Subsidiary not found');
     }
-    const created = await this.prisma.location.create({
-      data: {
-        subsidiaryId: dto.subsidiaryId,
-        name: dto.name,
-        geographyCode: dto.geographyCode,
-        address: dto.address ?? null,
-        authorizedPerson: dto.authorizedPerson ?? null,
-      },
-    });
-    await this.audit.record(user, {
-      action: 'create',
-      entity: 'location',
-      entityId: created.id,
-      diff: {
-      after: this.toDTO(created),
-    },
-    });
-    return this.toDTO(created);
+    // Same writer the subsidiary create uses, so the two produce byte-identical
+    // rows and audit entries. Wrapped in a transaction here too — this endpoint
+    // used to write its audit row outside the mutation, so a crash between them
+    // left a location with no trail.
+    return this.prisma.$transaction((tx) =>
+      this.writeLocationForTrustedParent(tx, user, dto.subsidiaryId, dto),
+    );
   }
 
   async update(

@@ -112,11 +112,26 @@ describe('LocationsService', () => {
       expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({ id: expect.any(String) }),
         expect.objectContaining({
-            action: 'create',
-            entity: 'location',
-            entityId: created.id,
-          }),
+          action: 'create',
+          entity: 'location',
+          entityId: created.id,
+        }),
+        // Third argument: the transaction client. This endpoint used to write
+        // its audit row AFTER the mutation, on the default client, so a crash
+        // in between left a location with no trail — the failure the audit
+        // service's own docblock records. Sharing the writer with the
+        // subsidiary create fixed it here as a side effect, and this pins it.
+        prisma,
       );
+    });
+
+    it('writes the row and its audit entry in ONE transaction', async () => {
+      const user = makeSuperAdmin();
+      prisma.location.create.mockResolvedValue(makeLocation({ subsidiaryId: 'sub-1' }));
+
+      await service.create(user, { subsidiaryId: 'sub-1', name: 'HQ', geographyCode: 'TR' });
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
   });
 
