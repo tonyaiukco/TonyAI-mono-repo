@@ -126,6 +126,12 @@ export function createPrismaMock() {
     ]) {
       model.count.mockResolvedValue(0);
     }
+    // Same reasoning one step further: an unstubbed `findMany` resolves to
+    // `undefined`, and a service that iterates it dies with "not iterable" —
+    // which reads as a broken test rather than the missing default it is.
+    client.subsidiary.findMany.mockResolvedValue([]);
+    client.location.findMany.mockResolvedValue([]);
+    client.activityRecord.findMany.mockResolvedValue([]);
   }
   return mock;
 }

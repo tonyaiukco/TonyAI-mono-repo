@@ -55,27 +55,14 @@ test.describe('Milestone-1 slice', () => {
     // now edited on its own page, not in a dialog on the register. What stays
     // here is the register's own job — create, list, delete.
 
-    // DELETE is now a two-step, and that IS the product: a subsidiary created
-    // with locations cannot be deleted until they are gone (WP16 PR 1 counts a
-    // location as a blocker, because the delete would cascade it away
-    // unaudited). So the register refuses first, and says why.
+    // DELETE: one step again. The subsidiary's own record-free locations go
+    // with it, each with its own audit row — so the "typo in the create form"
+    // the guard's message names is undone in one action, not six.
     const newRow = page.locator('tr', { hasText: uniqueName });
     await newRow.getByRole('button', { name: 'Delete subsidiary' }).click();
     const alert = page.getByRole('alertdialog');
     await expect(alert.getByText('Delete subsidiary?')).toBeVisible();
     await alert.getByRole('button', { name: 'Delete' }).click();
-    await expect(page.getByText(/1 location\(s\)/)).toBeVisible();
-    await expect(subsidiaryRows(page)).toHaveCount(6);
-
-    // Clear the blocker on the subsidiary's page, then the delete goes through.
-    await page.locator('tr', { hasText: uniqueName }).getByRole('button', { name: 'Open subsidiary' }).click();
-    await page.getByRole('button', { name: 'Delete location' }).click();
-    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete' }).click();
-    await expect(page.getByText('E2E Smoke Site')).toHaveCount(0);
-
-    await page.goto('/subsidiaries');
-    await page.locator('tr', { hasText: uniqueName }).getByRole('button', { name: 'Delete subsidiary' }).click();
-    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete' }).click();
 
     // The row is gone and the count returns to 5.
     await expect(page.getByRole('cell', { name: uniqueName })).toHaveCount(0);

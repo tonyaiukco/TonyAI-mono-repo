@@ -255,6 +255,38 @@ export class LocationsService {
     }
   }
 
+  /**
+   * Delete one location row and write its audit entry, for a caller that has
+   * already established the right to remove it AND that it holds no records.
+   *
+   * The mirror of `writeLocationForTrustedParent`, and here for the same
+   * reason: a location cleared while its subsidiary is being deleted must leave
+   * exactly the row `DELETE /locations/:id` leaves. Otherwise the audit trail
+   * would say something different about the same event depending on which
+   * endpoint the user happened to reach for — the defect WP16 PR 1 fixed for
+   * the geography confirmation, and PR 3 for location creation.
+   *
+   * Performs no authorisation and no record check: both callers do them first,
+   * with different reasons and different messages.
+   */
+  async deleteLocationForTrustedParent(
+    db: Prisma.TransactionClient,
+    user: RequestUser,
+    location: Location,
+  ): Promise<void> {
+    await db.location.delete({ where: { id: location.id } });
+    await this.audit.record(
+      user,
+      {
+        action: 'delete',
+        entity: 'location',
+        entityId: location.id,
+        diff: { before: this.toDTO(location) },
+      },
+      db,
+    );
+  }
+
   async remove(
     user: RequestUser,
     id: string,
@@ -263,14 +295,9 @@ export class LocationsService {
     const existing = await this.loadScoped(user, id);
     await this.assertNoRecords(id);
     // Delete + audit in one transaction (see subsidiaries.remove).
-    await this.prisma.$transaction(async (tx) => {
-      await tx.location.delete({ where: { id } });
-      await this.audit.record(
-        user,
-        { action: 'delete', entity: 'location', entityId: id, diff: { before: this.toDTO(existing) } },
-        tx,
-      );
-    });
+    await this.prisma.$transaction((tx) =>
+      this.deleteLocationForTrustedParent(tx, user, existing),
+    );
     return { id, deleted: true };
   }
 

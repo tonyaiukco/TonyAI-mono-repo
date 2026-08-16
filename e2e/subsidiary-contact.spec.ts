@@ -117,16 +117,15 @@ test('summary counts every dependent, and agrees with the delete guard', async (
     periodLocks: 0, targets: 0, denominators: 0, hasBlockingDependents: false,
   });
 
-  // One location: still no records at all, but the delete now cascades
-  // something away — the tier easiest to forget.
+  // One location: counted, but NOT a blocker — the delete takes the
+  // subsidiary's own record-free locations with it, audited.
   const loc = await (await request.post(`${API_BASE}/locations`, {
     headers: bearer(token),
     data: { subsidiaryId: sub.id, name: 'E2E Summary Site', geographyCode: 'TR' },
   })).json();
   s = await read();
   expect(s.locations).toBe(1);
-  expect(s.hasBlockingDependents).toBe(true);
-  expect(await deleteStatus(), 'summary and guard must agree').toBe(409);
+  expect(s.hasBlockingDependents).toBe(false);
 
   // A draft record moves the open tier, not the terminal one.
   const rec = await (await request.post(`${API_BASE}/activity-records`, {
@@ -137,6 +136,8 @@ test('summary counts every dependent, and agrees with the delete guard', async (
   })).json();
   s = await read();
   expect(s).toMatchObject({ openRecords: 1, reviewRecords: 0, terminalRecords: 0 });
+  expect(s.hasBlockingDependents).toBe(true);
+  expect(await deleteStatus(), 'summary and guard must agree').toBe(409);
 
   // A period lock, on a period this subsidiary has no record in. Non-negotiable
   // coverage: the seed ships ZERO period locks, so every other assertion about
@@ -159,9 +160,10 @@ test('summary counts every dependent, and agrees with the delete guard', async (
   await request.delete(`${API_BASE}/subsidiaries/${other.id}`, { headers: bearer(token) });
 
   // Clear it the way the 409 tells you to, and the two answers flip together.
+  // The location is NOT on that list — it goes with the subsidiary.
   expect((await request.delete(`${API_BASE}/period-locks/${lockId}`, { headers: bearer(token) })).status()).toBe(200);
   await request.delete(`${API_BASE}/activity-records/${rec.id}`, { headers: bearer(token) });
-  await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
+  void loc;
   s = await read();
   expect(s.hasBlockingDependents).toBe(false);
   expect(await deleteStatus()).toBe(200);

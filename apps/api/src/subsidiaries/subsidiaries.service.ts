@@ -31,16 +31,33 @@ import { UpdateSubsidiaryDto } from './dto/update-subsidiary.dto';
  * A list that has to be kept in sync with a function is strictly worse than
  * having no second list at all.
  */
-type SubsidiaryDependentCounts = Pick<
-  SubsidiarySummaryDTO,
-  | 'terminalRecords'
-  | 'reviewRecords'
-  | 'openRecords'
-  | 'locations'
-  | 'periodLocks'
-  | 'targets'
-  | 'denominators'
->;
+interface SubsidiaryDependentCounts {
+  terminalRecords: number;
+  reviewRecords: number;
+  openRecords: number;
+  locations: number;
+  /**
+   * Locations of this subsidiary holding a record that belongs to a DIFFERENT
+   * subsidiary — an integrity alarm, not a dependency anyone manages.
+   *
+   * It should be impossible: `computeSnapshot` refuses to attach a record to a
+   * location outside its own subsidiary. But there is no composite FK or CHECK
+   * behind that rule, PR 1's security review said so in as many words, and this
+   * is the one place where trusting it would silently detach another
+   * subsidiary's record.
+   *
+   * Counted with `subsidiaryId: { not: id }` deliberately. Counting ALL records
+   * at the location — which is what this did first — double-reports the
+   * subsidiary's own records, since those are already in the three tiers above.
+   * It produced a 409 that told the user to remove a location AND that the
+   * location would stay, and neither was true: deleting just the record made
+   * the delete succeed with the location swept.
+   */
+  locationsHoldingForeignRecords: number;
+  periodLocks: number;
+  targets: number;
+  denominators: number;
+}
 
 @Injectable()
 export class SubsidiariesService {
@@ -233,7 +250,16 @@ export class SubsidiariesService {
     // guarded by TS7053, which this package has switched off.
     const reviewable: ActivityRecordStatus[] = [...PENDING_REVIEW_STATUSES];
     const editable: ActivityRecordStatus[] = [...EDITABLE_STATUSES];
-    const [terminalRecords, reviewRecords, openRecords, locations, periodLocks, targets, denominators] =
+    const [
+      terminalRecords,
+      reviewRecords,
+      openRecords,
+      locations,
+      locationsHoldingForeignRecords,
+      periodLocks,
+      targets,
+      denominators,
+    ] =
       await Promise.all([
         db.activityRecord.count({
           where: { subsidiaryId: id, status: { notIn: [...editable, ...reviewable] } },
@@ -245,6 +271,12 @@ export class SubsidiariesService {
           where: { subsidiaryId: id, status: { in: editable } },
         }),
         db.location.count({ where: { subsidiaryId: id } }),
+        db.location.count({
+          where: {
+            subsidiaryId: id,
+            activityRecords: { some: { subsidiaryId: { not: id } } },
+          },
+        }),
         db.periodLock.count({ where: { subsidiaryId: id } }),
         db.target.count({ where: { subsidiaryId: id } }),
         db.subsidiaryDenominator.count({ where: { subsidiaryId: id } }),
@@ -254,6 +286,7 @@ export class SubsidiariesService {
       reviewRecords,
       openRecords,
       locations,
+      locationsHoldingForeignRecords,
       periodLocks,
       targets,
       denominators,
@@ -274,9 +307,11 @@ export class SubsidiariesService {
     // exposes are the ones used here. Verified: removing the cast typechecks.
     const counts = await this.countDependents(this.prisma, id);
     const refusal = SubsidiariesService.describeBlockers(counts);
+    const { locationsHoldingForeignRecords: _alarm, ...reportable } = counts;
+    void _alarm;
     return {
       subsidiaryId: id,
-      ...counts,
+      ...reportable,
       // The guard's own sentences, not a second set written for the UI.
       blockers: refusal?.blockers ?? [],
       // Named explicitly rather than `Object.values(counts).every(...)`. That
@@ -349,7 +384,15 @@ export class SubsidiariesService {
     const blockers: string[] = [];
     if (c.reviewRecords > 0) blockers.push(`${c.reviewRecords} record(s) awaiting review`);
     if (c.openRecords > 0) blockers.push(`${c.openRecords} draft or rejected record(s)`);
-    if (c.locations > 0) blockers.push(`${c.locations} location(s)`);
+    // `c.locations` is deliberately absent: deleting the subsidiary removes its
+    // own record-free locations, audited, so they are never something the user
+    // must clear first. Only ones holding records block, and for a different
+    // reason — see below.
+    if (c.locationsHoldingForeignRecords > 0) {
+      blockers.push(
+        `${c.locationsHoldingForeignRecords} location(s) holding a record that belongs to another subsidiary`,
+      );
+    }
     if (c.periodLocks > 0) blockers.push(`${c.periodLocks} closed reporting period(s)`);
     if (c.targets > 0) blockers.push(`${c.targets} reduction target(s)`);
     if (c.denominators > 0) blockers.push(`${c.denominators} intensity denominator(s)`);
@@ -361,6 +404,9 @@ export class SubsidiariesService {
         `This subsidiary still holds ${blockers.join(', ')}. Deleting it would ` +
         'destroy them without an audit entry for each. Remove them first ' +
         '(reopen any closed period rather than deleting its lock' +
+        (c.locationsHoldingForeignRecords > 0
+          ? '; a location holding another subsidiary\'s record cannot be swept up, because that figure was calculated with its geography — the record has to move or go first'
+          : '') +
         (c.reviewRecords > 0
           ? '; a record awaiting review must be sent back by a reviewer before it can be removed'
           : '') +
@@ -378,11 +424,50 @@ export class SubsidiariesService {
     if (refusal) throw new ConflictException(refusal.message);
   }
 
+  /**
+   * Remove the subsidiary's own locations as part of deleting it, with an audit
+   * row each — so undoing a mistyped subsidiary is one action, not a scavenger
+   * hunt.
+   *
+   * PR 1's refusal was never "locations are precious". It was that the FK
+   * cascade destroyed them UNAUDITED, behind a single "delete subsidiary" row.
+   * Writing each row removes that objection entirely, so the guard keeps its
+   * thesis and loses friction that had become routine: PR 3 made the create
+   * form require a location, so every subsidiary made through the UI was
+   * immediately undeletable — the case the guard's own message calls "a typo in
+   * the create form, most often".
+   *
+   * Called AFTER the guard, never before — and the reason is stronger than
+   * "the refusal would come too late". Everything is in one transaction, so a
+   * premature delete would simply roll back. The danger is that this method
+   * destroys the very evidence the guard reads: run it first and
+   * `locationsHoldingForeignRecords` counts ZERO, because the location is
+   * already gone in that snapshot. `describeBlockers` returns null, the
+   * transaction COMMITS, and another subsidiary's record is permanently
+   * detached. The guard would not be late — it would be structurally incapable
+   * of ever firing.
+   */
+  private async clearOwnLocations(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    id: string,
+  ): Promise<void> {
+    const locations = await tx.location.findMany({ where: { subsidiaryId: id } });
+    for (const location of locations) {
+      await this.locations.deleteLocationForTrustedParent(tx, user, location);
+    }
+  }
+
   async remove(user: RequestUser, id: string): Promise<{ id: string; deleted: true }> {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
     // Delete + audit in one transaction: the row is gone afterwards, so a
     // failed audit insert would leave a deletion with no trail at all.
+    // Stated, not inherited — the same argument the create path makes. This
+    // now does a findMany plus two round trips per location while holding the
+    // parent row exclusively, and `POST /locations` puts no cap on how many a
+    // subsidiary may have. Prisma's 5s default would surface as an opaque
+    // timeout at a managed database's latency.
     await this.prisma.$transaction(async (tx) => {
       // Lock the parent row BEFORE counting. Inserting any child takes a
       // FOR KEY SHARE lock on the row it references, so FOR UPDATE here
@@ -391,14 +476,18 @@ export class SubsidiariesService {
       // loser is not an error — the FK cascades the newcomer away silently,
       // which is the exact loss this whole guard exists to prevent.
       await tx.$queryRaw`SELECT id FROM subsidiaries WHERE id = ${id}::uuid FOR UPDATE`;
+      // Guard first. It refuses on anything that must survive — including a
+      // location that holds records — so by the time the clear runs, every
+      // remaining location is provably record-free.
       await this.assertDeletable(tx, id);
+      await this.clearOwnLocations(tx, user, id);
       await tx.subsidiary.delete({ where: { id } });
       await this.audit.record(
         user,
         { action: 'delete', entity: 'subsidiary', entityId: id, diff: { before: this.toDTO(existing) } },
         tx,
       );
-    });
+    }, { timeout: 15_000 });
     return { id, deleted: true };
   }
 

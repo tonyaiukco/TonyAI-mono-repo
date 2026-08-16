@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   createPrismaMock,
   stubRead,
+  makeLocation,
   makeSubsidiary,
   makeSuperAdmin,
   makeDataEntry,
@@ -47,6 +48,29 @@ async function refusal(call: Promise<unknown>): Promise<string> {
  * grading exists to fix — left the suite green, because the obliging mock never
  * let one record be seen by two queries. It has to be one set, filtered.
  */
+/**
+ * The guard asks `location.count` twice with different filters — all of them,
+ * and only the ones holding activity records. A single `mockResolvedValue`
+ * answers both, which made a subsidiary with two plain locations look like a
+ * subsidiary with two locations full of records. Route by the filter, the way
+ * `countRecords` does for statuses.
+ */
+function countLocations(
+  prisma: PrismaMock,
+  { total = 0, holdingForeign = 0 }: { total?: number; holdingForeign?: number },
+): void {
+  // Routes on the FILTER's contents, not merely on the key being present. The
+  // earlier version answered any `activityRecords` clause the same way, so
+  // narrowing the query from "records of another subsidiary" to "records of
+  // this one" — which is the whole meaning of the tier — was invisible.
+  const impl = async ({ where }: any) => {
+    if (!where.activityRecords) return total;
+    return where.activityRecords.some?.subsidiaryId?.not ? holdingForeign : 0;
+  };
+  prisma.location.count.mockImplementation(impl);
+  prisma.txClient.location.count.mockImplementation(impl);
+}
+
 function countRecords(prisma: PrismaMock, statuses: string[]): void {
   // Both clients: `summary()` counts on the default one and the delete guard
   // counts on the transaction's, and a test that means "the database contains
@@ -71,7 +95,10 @@ describe('SubsidiariesService', () => {
    * `locations.service.spec.ts`, and what belongs here is that this service
    * calls it once per location, inside the transaction, with the new id.
    */
-  let locations: { writeLocationForTrustedParent: ReturnType<typeof vi.fn> };
+  let locations: {
+    writeLocationForTrustedParent: ReturnType<typeof vi.fn>;
+    deleteLocationForTrustedParent: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
 
@@ -79,7 +106,10 @@ describe('SubsidiariesService', () => {
     prisma = createPrismaMock();
     // Direct instantiation with the mock — the service only depends on the
     // narrow PrismaService surface, so no Nest container / DB is needed.
-    locations = { writeLocationForTrustedParent: vi.fn() };
+    locations = {
+      writeLocationForTrustedParent: vi.fn(),
+      deleteLocationForTrustedParent: vi.fn(),
+    };
     service = new SubsidiariesService(
       prisma as unknown as PrismaService,
       auditMock(),
@@ -478,7 +508,7 @@ describe('SubsidiariesService', () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['approved', 'locked', 'submitted', 'draft', 'draft']);
-      stubRead(prisma, (c) => c.location.count, 2);
+      countLocations(prisma, { total: 2 });
       stubRead(prisma, (c) => c.periodLock.count, 1);
       stubRead(prisma, (c) => c.target.count, 3);
       stubRead(prisma, (c) => c.subsidiaryDenominator.count, 4);
@@ -516,26 +546,77 @@ describe('SubsidiariesService', () => {
       expect((await service.summary(user, 'sub-1')).hasBlockingDependents).toBe(false);
     });
 
-    it('a single location alone is enough to block the delete', async () => {
-      // The tier that is easiest to forget: no records at all, but the delete
-      // still cascades the location away unaudited. If `deletable` and the
-      // guard ever disagreed, this is where it would show first.
+    it('a record-free location does NOT block — the delete clears it, audited', async () => {
+      // It used to. The refusal existed because the FK cascade destroyed
+      // locations unaudited; writing a row each removes the objection, and PR 3
+      // made the friction routine by requiring a location at create time.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      prisma.txClient.subsidiary.delete.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      countLocations(prisma, { total: 1 });
+      const loc = makeLocation({ id: 'loc-1', subsidiaryId: 'sub-1' });
+      prisma.txClient.location.findMany.mockResolvedValue([loc]);
+
+      const s = await service.summary(user, 'sub-1');
+      expect(s.locations).toBe(1);
+      expect(s.hasBlockingDependents, 'the panel must agree with the guard').toBe(false);
+
+      await expect(service.remove(user, 'sub-1')).resolves.toEqual({
+        id: 'sub-1',
+        deleted: true,
+      });
+      expect(locations.deleteLocationForTrustedParent).toHaveBeenCalledTimes(1);
+      expect(locations.deleteLocationForTrustedParent.mock.calls[0][2]).toBe(loc);
+      // On the TRANSACTION's client. Handing the deleter `this.prisma` instead
+      // survived the whole suite — the assertion above reads argument 2 and
+      // never argument 0.
+      expect(locations.deleteLocationForTrustedParent.mock.calls[0][0]).toBe(
+        prisma.txClient,
+      );
+      // And scoped to THIS subsidiary. Dropping the `where` from the findMany
+      // left 409 tests green while deleting every location in the database,
+      // across every organisation — the single most destructive query this
+      // change adds, and nothing pinned it.
+      expect(prisma.txClient.location.findMany).toHaveBeenCalledWith({
+        where: { subsidiaryId: 'sub-1' },
+      });
+    });
+
+    it('a location holding ANOTHER subsidiary\'s record blocks', async () => {
+      // Not the audit reason — the geography one, and only for the invariant
+      // violation. Counting every record at the location instead double-counted
+      // this subsidiary's own (already in the three tiers) and produced advice
+      // that contradicted itself: remove the location, and the location stays.
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
-      stubRead(prisma, (c) => c.location.count, 1);
+      countLocations(prisma, { total: 1 });
+      // The invariant says this cannot happen while the record counts are zero.
+      // There is no composite FK enforcing it, so the delete checks anyway.
+      countLocations(prisma, { total: 1, holdingForeign: 1 });
+      // The location must actually be IN the list the clear would walk —
+      // otherwise "clear before guard" and "guard before clear" behave
+      // identically and the ordering is untested. Swapping the two lines
+      // survived the whole suite until this stub existed.
+      prisma.txClient.location.findMany.mockResolvedValue([
+        makeLocation({ id: 'loc-held', subsidiaryId: 'sub-1' }),
+      ]);
 
-      const s = await service.summary(user, 'sub-1');
-      expect(s.hasBlockingDependents).toBe(true);
-      // …and the guard agrees, because both read the same counter.
-      await expect(refusal(service.remove(user, 'sub-1'))).resolves.toMatch(
-        /1 location\(s\)/,
-      );
+      const message = await refusal(service.remove(user, 'sub-1'));
+      expect(message).toMatch(/1 location\(s\) holding a record that belongs to another subsidiary/);
+      expect(message).toMatch(/the record has to move or go first/);
+      expect(locations.deleteLocationForTrustedParent).not.toHaveBeenCalled();
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
     it.each([
       'terminalRecords', 'reviewRecords', 'openRecords',
-      'locations', 'periodLocks', 'targets', 'denominators',
+      // `locations` is deliberately absent: a record-free location is cleared
+      // by the delete now, audited, so it is never something the user must
+      // remove first. `locationsWithRecords` took its place, and blocks for the
+      // geography reason rather than the audit one.
+      'locationsHoldingForeignRecords', 'periodLocks', 'targets', 'denominators',
     ] as const)('%s alone blocks the delete, so it belongs in the blocker list', async (key) => {
       // `describeBlockers` is now the only thing that decides, so this pins the
       // summary and the guard to it by setting each dependent to 1 ON ITS OWN
@@ -548,7 +629,8 @@ describe('SubsidiariesService', () => {
         terminalRecords: () => countRecords(prisma, ['approved']),
         reviewRecords: () => countRecords(prisma, ['submitted']),
         openRecords: () => countRecords(prisma, ['draft']),
-        locations: () => stubRead(prisma, (c) => c.location.count, 1),
+        locationsHoldingForeignRecords: () =>
+          countLocations(prisma, { total: 1, holdingForeign: 1 }),
         periodLocks: () => stubRead(prisma, (c) => c.periodLock.count, 1),
         targets: () => stubRead(prisma, (c) => c.target.count, 1),
         denominators: () => stubRead(prisma, (c) => c.subsidiaryDenominator.count, 1),
@@ -610,7 +692,7 @@ describe('SubsidiariesService', () => {
       const user = makeSuperAdmin();
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, ['submitted', 'draft']);
-      stubRead(prisma, (c) => c.location.count, 1);
+      countLocations(prisma, { total: 1 });
       stubRead(prisma, (c) => c.periodLock.count, 1);
 
       const { blockers } = await service.summary(user, 'sub-1');
@@ -792,12 +874,14 @@ describe('SubsidiariesService', () => {
       prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
       countRecords(prisma, []);
       stubRead(prisma, (c) => c.periodLock.count, 1);
-      stubRead(prisma, (c) => c.location.count, 2);
+      countLocations(prisma, { total: 2 });
       stubRead(prisma, (c) => c.target.count, 1);
       stubRead(prisma, (c) => c.subsidiaryDenominator.count, 1);
 
       const message = await refusal(service.remove(user, 'sub-1'));
-      expect(message).toMatch(/2 location\(s\)/);
+      // Plain locations are absent on purpose — the delete clears them, so
+      // listing them would be advice the user does not need to act on.
+      expect(message).not.toMatch(/2 location\(s\)/);
       expect(message).toMatch(/1 closed reporting period\(s\)/);
       expect(message).toMatch(/1 reduction target\(s\)/);
       expect(message).toMatch(/1 intensity denominator\(s\)/);

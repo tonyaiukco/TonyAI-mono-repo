@@ -142,6 +142,85 @@ test('a record awaiting review blocks the delete WITHOUT calling it permanent', 
   expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);
 });
 
+test('deleting a subsidiary takes its own locations, with an audit row each', async ({ request }) => {
+  // The refusal existed because the FK cascade destroyed locations UNAUDITED,
+  // behind one "delete subsidiary" row. Writing a row each removes the
+  // objection, so a record-free location no longer blocks — and PR 3 made that
+  // friction routine by requiring a location at create time.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const sub = await makeSubsidiary(request, token, 'E2E Test Co Cascade Audit');
+  const made = [];
+  for (const name of ['E2E Cascade A', 'E2E Cascade B']) {
+    made.push(await (await request.post(`${API_BASE}/locations`, {
+      headers: bearer(token),
+      data: { subsidiaryId: sub.id, name, geographyCode: 'TR' },
+    })).json());
+  }
+
+  // The panel and the guard agree that this is deletable.
+  const summary = await (await request.get(`${API_BASE}/subsidiaries/${sub.id}/summary`, {
+    headers: bearer(token),
+  })).json();
+  expect(summary.locations).toBe(2);
+  expect(summary.hasBlockingDependents, 'a record-free location is not a blocker').toBe(false);
+  expect(summary.blockers).toEqual([]);
+
+  expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);
+
+  // One `delete location` row per location — the whole point. A batched row, or
+  // none at all, is the unaudited cascade this guard was built to stop.
+  for (const loc of made) {
+    const audit = await (await request.get(
+      `${API_BASE}/audit?entity=location&action=delete&entityId=${loc.id}`,
+      { headers: bearer(token) },
+    )).json();
+    expect(audit.total, `one delete row for ${loc.name}`).toBe(1);
+    expect(audit.items[0].diff.before.name).toBe(loc.name);
+  }
+  // …and they really are gone.
+  expect((await request.get(`${API_BASE}/locations/${made[0].id}`, { headers: bearer(token) })).status()).toBe(404);
+});
+
+test('a location holding a record blocks only through that record', async ({ request }) => {
+  // The tier that refuses on a location is for the INVARIANT VIOLATION — a
+  // record of another subsidiary pointing here — which the API refuses to
+  // create and no test can reach without raw SQL. What a normal draft record at
+  // a location does is block through the record tier, and clearing the record
+  // is enough: the location then goes with the subsidiary.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const sub = await makeSubsidiary(request, token, 'E2E Test Co Loc With Records');
+  const loc = await (await request.post(`${API_BASE}/locations`, {
+    headers: bearer(token),
+    data: { subsidiaryId: sub.id, name: 'E2E Held Site', geographyCode: 'UK' },
+  })).json();
+  await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: { subsidiaryId: sub.id, locationId: loc.id, reportingYear: E2E_YEAR,
+      reportingPeriod: E2E_PERIOD, periodValue: 'Q3', category: 'Electricity',
+      activityValue: 12, activityUnit: 'kWh', varianceReason: null, input: null },
+  });
+
+  const refused = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
+  expect(refused.status()).toBe(409);
+  const message = (await refused.json()).message as string;
+  expect(message).toMatch(/1 draft or rejected record/);
+  // The location is NOT named. It used to be, which produced advice that
+  // contradicted itself — remove the location, and the location stays — and
+  // neither was true.
+  expect(message).not.toMatch(/location\(s\)/);
+
+  const still = await request.get(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
+  expect(still.status(), 'the location must survive the refused delete').toBe(200);
+
+  // Clear only the record, and the delete goes through with the location swept.
+  const records = await (await request.get(
+    `${API_BASE}/activity-records?subsidiaryId=${sub.id}`, { headers: bearer(token) },
+  )).json();
+  await request.delete(`${API_BASE}/activity-records/${records[0].id}`, { headers: bearer(token) });
+  expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);
+  expect((await request.get(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) })).status()).toBe(404);
+});
+
 test('a disposable subsidiary can still be emptied and deleted', async ({ request }) => {
   // The counterpart to the test above. Everything under a subsidiary is ON
   // DELETE CASCADE — locations included — so the guard blocks on all of it, not
@@ -165,15 +244,21 @@ test('a disposable subsidiary can still be emptied and deleted', async ({ reques
   expect(blocked.status()).toBe(409);
   const message = (await blocked.json()).message as string;
   expect(message).toMatch(/1 draft or rejected record\(s\)/);
-  expect(message).toMatch(/1 location\(s\)/);
+  // The location is NOT listed. This assertion used to carry a trailing `\.`
+  // and passed for the wrong reason: the message DID name the location, and
+  // dropping the dot showed it. The advice was self-contradictory too — remove
+  // the location, and also the location stays — because the tier counted every
+  // record at a location rather than only ones belonging to another subsidiary.
+  expect(message).not.toMatch(/location\(s\)/);
   // Nothing here is committed, so "retire it as inactive" would be the wrong
   // advice — this subsidiary really can go.
   expect(message).not.toMatch(/inactive/);
 
-  // Follow the advice, in the order it implies.
+  // Follow the advice — which is now just the record; the location goes with
+  // the subsidiary.
   expect((await request.delete(`${API_BASE}/activity-records/${draft.id}`, { headers: bearer(token) })).status()).toBe(200);
-  expect((await request.delete(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) })).status()).toBe(200);
   expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);
+  expect((await request.get(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) })).status()).toBe(404);
   expect((await request.get(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(404);
 });
 

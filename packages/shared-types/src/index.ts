@@ -796,6 +796,8 @@ export type UpdateSubsidiaryInput = Omit<Partial<CreateSubsidiaryInput>, 'locati
  */
 export interface SubsidiarySummaryDTO {
   subsidiaryId: string;
+  /** Informational, not a blocker: deleting the subsidiary now removes its own
+   *  record-free locations, with an audit row each. */
   locations: number;
   /** `approved`/`locked` — these can never be deleted, at any point. */
   terminalRecords: number;
