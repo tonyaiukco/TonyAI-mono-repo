@@ -48,7 +48,12 @@ import { useAuthStore } from "@/lib/store";
 import { LocationsDrawer } from "@/components/subsidiaries/locations-drawer";
 import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
 import { geographyLabel, geographyOptions } from "@/lib/types";
-import type { LocationDTO, SubsidiaryDTO } from "@/lib/types";
+import { MAX_LOCATIONS_PER_CREATE } from "@/lib/types";
+import type {
+  CreateSubsidiaryLocationInput,
+  LocationDTO,
+  SubsidiaryDTO,
+} from "@/lib/types";
 
 const STATUSES = ["pending", "active", "inactive"] as const;
 
@@ -87,9 +92,7 @@ export default function SubsidiariesPage() {
    * never existed has none, so reusing it would mean flags switching off
    * exactly the guards that justify it.
    */
-  const [draftLocations, setDraftLocations] = useState<
-    { name: string; geographyCode: string }[]
-  >([]);
+  const [draftLocations, setDraftLocations] = useState<CreateSubsidiaryLocationInput[]>([]);
   const [draftName, setDraftName] = useState("");
   const [draftGeo, setDraftGeo] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -151,6 +154,14 @@ export default function SubsidiariesPage() {
     }
     if (draftLocations.some((l) => l.name.toLowerCase() === name.toLowerCase())) {
       toast.error(`"${name}" is already in the list`);
+      return;
+    }
+    // The same number the API enforces, from the same constant — a cap the
+    // client cannot see is a 400 that arrives after the rows are typed.
+    if (draftLocations.length >= MAX_LOCATIONS_PER_CREATE) {
+      toast.error(
+        `A subsidiary can be created with at most ${MAX_LOCATIONS_PER_CREATE} locations. Add the rest from its page.`,
+      );
       return;
     }
     setDraftLocations([

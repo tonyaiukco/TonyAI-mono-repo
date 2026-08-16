@@ -12,20 +12,9 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { GEOGRAPHY_CODES } from '@tonyai/shared-types';
+import { GEOGRAPHY_CODES, MAX_LOCATIONS_PER_CREATE } from '@tonyai/shared-types';
+import { blankToNull } from '../../common/blank-to-null';
 
-/**
- * Upper bound on locations supplied in one create.
- *
- * Not a product limit — it is the transaction's. Each location is two
- * sequential statements (insert + audit), so a large array becomes thousands of
- * round trips inside ONE interactive transaction: measured locally, 2000
- * locations took ~1s, but at a managed database's 5–15ms RTT the same payload
- * runs 20–60s and blows Prisma's default 5s transaction timeout, holding a
- * pooled connection for every attempt. Bounded here so the refusal is a 400
- * naming the limit rather than a timeout under load.
- */
-export const MAX_LOCATIONS_PER_CREATE = 50;
 
 /**
  * One location supplied while creating its parent subsidiary.
@@ -35,6 +24,7 @@ export const MAX_LOCATIONS_PER_CREATE = 50;
  * subsidiary through the create endpoint.
  */
 export class CreateSubsidiaryLocationDto {
+  @Transform(blankToNull)
   @IsString()
   @MinLength(1)
   name!: string;
@@ -54,22 +44,6 @@ export class CreateSubsidiaryLocationDto {
   authorizedPerson?: string | null;
 }
 
-/**
- * Trim, and turn a blank into `null`.
- *
- * Without it the phone column ends up with THREE representations of "no phone"
- * — `null`, `''` and `'   '` — because `@IsOptional` only skips null/undefined
- * and `@IsString` happily accepts whitespace. A panel then renders an empty
- * string where it should render its empty state, and "clear this field" behaves
- * differently depending on whether the user pressed space. Email escapes the
- * same fate only because `@IsEmail` rejects whitespace; it is trimmed here too,
- * so a pasted address with a trailing space is saved rather than refused.
- */
-export function blankToNull({ value }: { value: unknown }): unknown {
-  if (typeof value !== 'string') return value;
-  const trimmed = value.trim();
-  return trimmed.length === 0 ? null : trimmed;
-}
 
 export class CreateSubsidiaryDto {
   @IsString()
@@ -138,6 +112,13 @@ export class CreateSubsidiaryDto {
   /** Only the three GHG Protocol scopes exist. Unbounded integers were accepted
    *  and stored (`[99]` returned 200), which the Edit dialog now makes a
    *  first-class UI path rather than an API-only curiosity. */
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsInt({ each: true })
+  @IsIn([1, 2, 3], { each: true })
+  includedScopes?: number[];
+
   /**
    * Locations to create alongside the subsidiary, in one transaction (round-1
    * UAT SUB-3).
@@ -158,11 +139,4 @@ export class CreateSubsidiaryDto {
   @ValidateNested({ each: true })
   @Type(() => CreateSubsidiaryLocationDto)
   locations?: CreateSubsidiaryLocationDto[];
-
-  @IsOptional()
-  @IsArray()
-  @ArrayNotEmpty()
-  @IsInt({ each: true })
-  @IsIn([1, 2, 3], { each: true })
-  includedScopes?: number[];
 }

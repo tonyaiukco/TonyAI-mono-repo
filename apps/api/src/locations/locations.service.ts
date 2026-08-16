@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, type Location } from '@tonyai/db';
+import { Prisma, type Location, type Subsidiary } from '@tonyai/db';
 import type { LocationDTO } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -31,9 +31,17 @@ export class TrustedParent {
     return new TrustedParent(subsidiaryId);
   }
 
-  /** The caller is creating the parent, in this transaction, under its own
-   *  organisation — so there is no accessible set to consult yet. */
-  static becauseJustCreated(created: { id: string }): TrustedParent {
+  /**
+   * The caller is creating the parent, in this transaction, under its own
+   * organisation — so there is no accessible set to consult yet.
+   *
+   * Typed against the Prisma model, not `{ id: string }`. The looser signature
+   * accepted a location, an activity record, or a subsidiary fetched from
+   * anywhere including another organisation, which made the brand assert a
+   * proof it had never performed — worse than a raw string, because the next
+   * reader sees `TrustedParent` and stops checking.
+   */
+  static becauseJustCreated(created: Subsidiary): TrustedParent {
     return new TrustedParent(created.id);
   }
 }
@@ -129,6 +137,12 @@ export class LocationsService {
    * must be indistinguishable in the trail from one added later, or the meaning
    * of the audit log depends on which screen was used — the exact defect WP16
    * PR 1 fixed for the geography confirmation.
+   *
+   * "Indistinguishable" covers the VALUES too, not just the shape, and it did
+   * not at first: the nested DTO trimmed and nulled blank fields while the
+   * standalone one did not, so the same input produced different rows depending
+   * on the endpoint. Both normalise through `blankToNull` now, asserted by an
+   * end-to-end test that writes the same location through both paths.
    */
   async writeLocationForTrustedParent(
     db: Prisma.TransactionClient,

@@ -97,6 +97,43 @@ test('a location created this way is indistinguishable in the audit trail', asyn
   expect(Object.keys(a.diff.after).sort()).toEqual(Object.keys(b.diff.after).sort());
 });
 
+test('both create paths normalise a location identically', async ({ request }) => {
+  // The docblock on the shared writer claims the two paths produce identical
+  // rows. It was false: the nested DTO trimmed and nulled blanks, the
+  // standalone one stored "   " and " Holbeck " verbatim — three spellings of
+  // "no address" in one column, the exact defect `blankToNull` was written to
+  // prevent. Asserted here so the claim cannot quietly stop being true.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const sub = await (await request.post(`${API_BASE}/subsidiaries`, {
+    headers: bearer(token),
+    data: {
+      legalName: `E2E Test Co Normalise ${Date.now()}`,
+      geographyCode: 'TR',
+      locations: [{ name: '  E2E Norm Nested  ', geographyCode: 'TR', address: '   ' }],
+    },
+  })).json();
+
+  await request.post(`${API_BASE}/locations`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: sub.id,
+      name: '  E2E Norm Separate  ',
+      geographyCode: 'TR',
+      address: '   ',
+    },
+  });
+
+  const rows = await (await request.get(
+    `${API_BASE}/locations?subsidiaryId=${sub.id}`, { headers: bearer(token) },
+  )).json();
+  expect(rows).toHaveLength(2);
+  for (const row of rows as { name: string; address: string | null }[]) {
+    expect(row.address, 'a blank address is null on BOTH paths').toBeNull();
+    expect(row.name, 'the name is trimmed on BOTH paths').toMatch(/^E2E Norm/);
+    expect(row.name.endsWith(' ')).toBe(false);
+  }
+});
+
 test('one invalid location fails the whole create', async ({ request }) => {
   // Atomic on purpose: a subsidiary whose location set is partial has a
   // completeness denominator that is quietly wrong rather than obviously

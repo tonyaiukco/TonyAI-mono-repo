@@ -720,6 +720,21 @@ export interface SubsidiaryDTO {
   updatedAt: string;
 }
 
+/**
+ * Upper bound on locations supplied in ONE subsidiary create.
+ *
+ * A transaction bound, not a product one: each location is two sequential
+ * statements inside a single interactive transaction, so a large array becomes
+ * thousands of round trips. Measured — 2000 locations ran in ~1s locally, but
+ * at a managed database's 5-15ms RTT the same payload takes 20-60s and blows
+ * Prisma's default 5s timeout while holding a pooled connection.
+ *
+ * Here rather than in the API's DTO so the create form can enforce the same
+ * number. A cap the client cannot see is a 400 that arrives after the user has
+ * already typed the rows.
+ */
+export const MAX_LOCATIONS_PER_CREATE = 50;
+
 /** One location supplied while creating its parent (round-1 UAT SUB-3). */
 export type CreateSubsidiaryLocationInput = Omit<CreateLocationInput, 'subsidiaryId'>;
 
