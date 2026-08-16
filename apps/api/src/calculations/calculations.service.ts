@@ -3,6 +3,7 @@ import type { EmissionFactor } from '@tonyai/db';
 import {
   CATEGORY_SCOPE_MAP,
   CATEGORY_UNITS,
+  isInvoiceTracked,
   isRecordableWithoutFactor,
 } from '@tonyai/shared-types';
 import type {
@@ -168,12 +169,22 @@ export class CalculationsService {
       // a missing Electricity factor). Every other case still refuses, which is
       // what keeps DE-4 (refrigerants) and DE-5 (mobile combustion) honestly
       // unreportable instead of quietly accepting data nobody can calculate.
-      if (!isRecordableWithoutFactor(input.category)) {
+      //
+      // BOTH conditions, because the `reason` below is frozen into an immutable
+      // column and says the entry is kept for invoice-level completeness. Gated
+      // on the allow-list alone, adding a factor-less category that is NOT
+      // invoice-tracked would write that sentence — permanently — into rows
+      // where it is false.
+      if (
+        !isRecordableWithoutFactor(input.category) ||
+        !isInvoiceTracked(input.category)
+      ) {
         throw new NotFoundException(
           `No emission factor found for category "${input.category}", geography "${input.geographyCode}", year ${input.reportingYear}`,
         );
       }
       return {
+        snapshotSchema: 1,
         category: input.category,
         geographyCode: input.geographyCode,
         reportingYear: input.reportingYear,

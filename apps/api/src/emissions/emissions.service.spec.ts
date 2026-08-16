@@ -38,7 +38,7 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     activityValue: 1000,
     activityUnit: 'kWh',
     input: null,
-    calculation: { tCo2e: 10 } as unknown,
+    calculation: { tCo2e: 10, factorId: 'f-1' } as unknown,
     createdBy: 'user-entry',
     anomalyFlag: false,
     varianceReason: null,
@@ -144,6 +144,7 @@ describe('EmissionsService.summary', () => {
       bySubsidiary: [],
       trend: { monthly: [], quarterly: [], yearly: [] },
       recordCount: 0,
+      calculatedRecordCount: 0,
       uncalculatedRecordCount: 0,
       statusesIncluded: [
         ActivityRecordStatus.submitted,
@@ -157,9 +158,9 @@ describe('EmissionsService.summary', () => {
   it('aggregates scope totals, category and subsidiary breakdowns (known input -> known output)', async () => {
     const user = superAdmin();
     prisma.activityRecord.findMany.mockResolvedValue([
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, calculation: { tCo2e: 60 } }),
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Natural Gas', scope: 1, calculation: { tCo2e: 30 } }),
-      makeRecord({ subsidiaryId: 'sub-2', category: 'Electricity', scope: 2, calculation: { tCo2e: 10 } }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, calculation: { tCo2e: 60, factorId: 'f-1' } }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Natural Gas', scope: 1, calculation: { tCo2e: 30, factorId: 'f-1' } }),
+      makeRecord({ subsidiaryId: 'sub-2', category: 'Electricity', scope: 2, calculation: { tCo2e: 10, factorId: 'f-1' } }),
     ]);
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({ id: 'sub-1', tradingName: 'Energy Co' }),
@@ -188,7 +189,7 @@ describe('EmissionsService.summary', () => {
   it('excludes a record with no calculated figure from every total, and declares it', async () => {
     const user = superAdmin();
     prisma.activityRecord.findMany.mockResolvedValue([
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, calculation: { tCo2e: 60 } }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', scope: 2, calculation: { tCo2e: 60, factorId: 'f-1' } }),
       // An invoice-tracked category with no factor (WP17 — Water): the snapshot
       // carries no tCO₂e at all.
       makeRecord({
@@ -216,8 +217,11 @@ describe('EmissionsService.summary', () => {
     // entry in the breakdown reads as "we measured water and it was zero",
     // which is a claim nobody made.
     expect(s.byCategory.map((c) => c.category)).toEqual(['Electricity']);
-    // recordCount describes what the totals were built from...
-    expect(s.recordCount).toBe(1);
+    // recordCount stays the true committed-row count (the report tile and the
+    // generation audit row both read it), and the split is explicit.
+    expect(s.recordCount).toBe(2);
+    expect(s.calculatedRecordCount).toBe(1);
+    expect(s.recordCount).toBe(s.calculatedRecordCount + s.uncalculatedRecordCount);
     // ...and the excluded entry is declared rather than silently dropped, so
     // "2 committed records" and "1 counted" stay reconcilable.
     expect(s.uncalculatedRecordCount).toBe(1);
@@ -227,9 +231,9 @@ describe('EmissionsService.summary', () => {
   it('buckets monthly records into monthly, quarterly and yearly trends', async () => {
     const user = superAdmin();
     prisma.activityRecord.findMany.mockResolvedValue([
-      makeRecord({ reportingPeriod: 'monthly', periodValue: 'January', scope: 2, calculation: { tCo2e: 5 } }),
-      makeRecord({ reportingPeriod: 'monthly', periodValue: 'February', scope: 1, calculation: { tCo2e: 7 } }),
-      makeRecord({ reportingPeriod: 'monthly', periodValue: 'April', scope: 2, calculation: { tCo2e: 3 } }),
+      makeRecord({ reportingPeriod: 'monthly', periodValue: 'January', scope: 2, calculation: { tCo2e: 5, factorId: 'f-1' } }),
+      makeRecord({ reportingPeriod: 'monthly', periodValue: 'February', scope: 1, calculation: { tCo2e: 7, factorId: 'f-1' } }),
+      makeRecord({ reportingPeriod: 'monthly', periodValue: 'April', scope: 2, calculation: { tCo2e: 3, factorId: 'f-1' } }),
     ]);
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);
 
@@ -255,7 +259,7 @@ describe('EmissionsService.summary', () => {
   it('includes annual records in the yearly trend but not monthly/quarterly', async () => {
     const user = superAdmin();
     prisma.activityRecord.findMany.mockResolvedValue([
-      makeRecord({ reportingPeriod: 'annual', periodValue: 'Annual', scope: 1, calculation: { tCo2e: 40 } }),
+      makeRecord({ reportingPeriod: 'annual', periodValue: 'Annual', scope: 1, calculation: { tCo2e: 40, factorId: 'f-1' } }),
     ]);
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);
 
@@ -310,12 +314,12 @@ describe('EmissionsService.trackingMatrix', () => {
     ]);
     prisma.activityRecord.findMany.mockResolvedValue([
       // Electricity: one approved record -> complete, tCo2e counted
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', status: ActivityRecordStatus.approved, calculation: { tCo2e: 12 } }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', status: ActivityRecordStatus.approved, calculation: { tCo2e: 12, factorId: 'f-1' } }),
       // Natural Gas: approved + a draft -> incomplete; only approved tCo2e counted
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Natural Gas', status: ActivityRecordStatus.approved, calculation: { tCo2e: 5 } }),
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Natural Gas', status: ActivityRecordStatus.draft, calculation: { tCo2e: 999 } }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Natural Gas', status: ActivityRecordStatus.approved, calculation: { tCo2e: 5, factorId: 'f-1' } }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Natural Gas', status: ActivityRecordStatus.draft, calculation: { tCo2e: 999, factorId: 'f-1' } }),
       // Fuel: submitted but anomaly-flagged -> incomplete, tCo2e still counted
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Fuel', status: ActivityRecordStatus.submitted, anomalyFlag: true, calculation: { tCo2e: 7 } }),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Fuel', status: ActivityRecordStatus.submitted, anomalyFlag: true, calculation: { tCo2e: 7, factorId: 'f-1' } }),
     ]);
 
     const m = await service.trackingMatrix(user, {});
@@ -351,9 +355,11 @@ describe('EmissionsService.trackingMatrix', () => {
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);
     prisma.activityRecord.findMany.mockResolvedValue([
       // Approved Electricity (evidence-required) with NO evidence -> incomplete.
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', status: ActivityRecordStatus.approved, calculation: { tCo2e: 12 }, _count: { evidence: 0 } } as Partial<ActivityRecord>),
-      // Approved Water (NOT evidence-required) with no evidence -> still complete.
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Water', scope: 3, status: ActivityRecordStatus.approved, calculation: { tCo2e: 4 }, _count: { evidence: 0 } } as Partial<ActivityRecord>),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', status: ActivityRecordStatus.approved, calculation: { tCo2e: 12, factorId: 'f-1' }, _count: { evidence: 0 } } as Partial<ActivityRecord>),
+      // Approved Purchased Goods (NOT evidence-required) with no evidence ->
+      // still complete. Water used to play this role and no longer can: it is
+      // evidence-required as of WP17, and it can no longer carry a tCO₂e at all.
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Purchased Goods', scope: 3, status: ActivityRecordStatus.approved, calculation: { tCo2e: 4, factorId: 'f-1' }, _count: { evidence: 0 } } as Partial<ActivityRecord>),
     ]);
 
     const m = await service.trackingMatrix(user, {});
@@ -361,7 +367,44 @@ describe('EmissionsService.trackingMatrix', () => {
 
     expect(cell('Electricity').status).toBe('incomplete'); // evidence required, none attached
     expect(cell('Electricity').tCo2e).toBe(12); // tCo2e still counted
-    expect(cell('Water').status).toBe('complete'); // evidence not required
+    expect(cell('Purchased Goods').status).toBe('complete'); // evidence not required
+  });
+
+  it('a factor-less record leaves its cell short of complete until the invoice is attached', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      // What a real Water record looks like post-WP17: approved, no figure.
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Water',
+        scope: 3,
+        status: ActivityRecordStatus.approved,
+        calculation: {
+          snapshotSchema: 1,
+          category: 'Water',
+          scope: 3,
+          inputValue: 250,
+          inputUnit: 'cubic_metres',
+          reasonCode: 'no_emission_factor',
+          reason: 'No emission factor is available for "Water"',
+        },
+        _count: { evidence: 0 },
+      } as Partial<ActivityRecord>),
+    ]);
+
+    const m = await service.trackingMatrix(user, {});
+    const water = m.rows[0].cells.find((c) => c.category === 'Water')!;
+
+    // Water joined EVIDENCE_REQUIRED_CATEGORIES precisely so this cell cannot
+    // go green on an unverifiable number: no factor means no figure, and no
+    // figure means the anomaly baseline never sees it either. The invoice is
+    // the only check such a record can carry.
+    expect(water.status).toBe('incomplete');
+    // And the cell reports no emissions, rather than a measured zero that
+    // happens to look the same in a total.
+    expect(water.tCo2e).toBe(0);
+    expect(water.recordCount).toBe(1);
   });
 
   it('gives every accessible subsidiary a row even with zero records', async () => {

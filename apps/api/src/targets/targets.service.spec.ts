@@ -189,7 +189,7 @@ describe('TargetsService', () => {
   it('progress computes at_risk from committed emissions after the baseline', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget({ baselineTCo2e: 900, targetTCo2e: 350 })]);
     prisma.activityRecord.findFirst.mockResolvedValue({ reportingYear: 2024 });
-    emissions.summary.mockResolvedValue({ totals: { total: 582 } });
+    emissions.summary.mockResolvedValue({ totals: { total: 582 }, calculatedRecordCount: 3 });
     const [p] = await service.progress(admin);
     // (900-582)/(900-350)*100 = 57.8% → at_risk
     expect(p.currentYear).toBe(2024);
@@ -200,10 +200,36 @@ describe('TargetsService', () => {
   it('progress clamps to 100 and reports on_track when already past target', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget({ baselineTCo2e: 5000, targetTCo2e: 2000 })]);
     prisma.activityRecord.findFirst.mockResolvedValue({ reportingYear: 2024 });
-    emissions.summary.mockResolvedValue({ totals: { total: 1000 } });
+    emissions.summary.mockResolvedValue({ totals: { total: 1000 }, calculatedRecordCount: 3 });
     const [p] = await service.progress(admin);
     expect(p.progressPercent).toBe(100);
     expect(p.status).toBe('on_track');
+  });
+
+  it('progress stays n/a when the only records in scope carry no figure', async () => {
+    prisma.target.findMany.mockResolvedValue([
+      makeTarget({ scope: 'scope3', baselineYear: 2025, baselineTCo2e: 900, targetTCo2e: 350 }),
+    ]);
+    // A factor-less Water invoice is scope 3, so it satisfies "records exist in
+    // this scope" — the guard the year lookup relies on — while contributing
+    // nothing to the total. Before WP17 no scope-3 record could exist at all,
+    // which is why that guard was sufficient.
+    prisma.activityRecord.findFirst.mockResolvedValue({ reportingYear: 2026 });
+    emissions.summary.mockResolvedValue({
+      totals: { total: 0 },
+      recordCount: 1,
+      calculatedRecordCount: 0,
+      uncalculatedRecordCount: 1,
+    });
+
+    const [p] = await service.progress(admin);
+
+    // Without the second guard this reports 0 tCO₂e against a 900 baseline:
+    // 100% complete, "on_track", from a single water bill.
+    expect(p.currentTCo2e).toBeNull();
+    expect(p.progressPercent).toBeNull();
+    expect(p.status).toBeNull();
+    expect(p.currentYear).toBe(2025); // falls back to the baseline year
   });
 
   it('progress filters the current-year lookup by the target scope (no fabricated zero)', async () => {
@@ -220,7 +246,7 @@ describe('TargetsService', () => {
   it('progress passes the target scope through to the summary query', async () => {
     prisma.target.findMany.mockResolvedValue([makeTarget({ scope: 'scope1' })]);
     prisma.activityRecord.findFirst.mockResolvedValue({ reportingYear: 2024 });
-    emissions.summary.mockResolvedValue({ totals: { total: 100 } });
+    emissions.summary.mockResolvedValue({ totals: { total: 100 }, calculatedRecordCount: 3 });
     await service.progress(admin);
     expect(emissions.summary).toHaveBeenCalledWith(
       admin,

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import ExcelJS from 'exceljs';
 import { ReportsService } from './reports.service';
 import { buildReportHtml } from './report-html';
 import { PrismaService } from '../prisma/prisma.service';
@@ -30,6 +31,7 @@ const SUMMARY = {
   ],
   trend: { monthly: [], quarterly: [], yearly: [] },
   recordCount: 3,
+  calculatedRecordCount: 3,
   uncalculatedRecordCount: 0,
   statusesIncluded: ['submitted', 'under_review', 'approved', 'locked'] as ActivityRecordStatus[],
 } satisfies EmissionsSummary;
@@ -289,6 +291,18 @@ describe('ReportsService', () => {
   });
 
   describe('a record with no emission factor (WP17 — Water)', () => {
+    // These specs mock TWO records, so the summary the assembler receives has
+    // to describe two as well — otherwise the tile-vs-ledger reconciliation
+    // below would be asserted against a fixture that cannot occur.
+    beforeEach(() => {
+      emissions.summary.mockResolvedValue({
+        ...SUMMARY,
+        recordCount: 2,
+        calculatedRecordCount: 1,
+        uncalculatedRecordCount: 1,
+      });
+    });
+
     // The snapshot a factor-less category stores: no tCo2e, no factorId.
     const waterRecord = () =>
       makeRecord({
@@ -323,20 +337,48 @@ describe('ReportsService', () => {
       expect(row!.tCo2e).not.toBe(0);
     });
 
-    it('the CSV writes "Not calculated" rather than an empty numeric cell', async () => {
-      prisma.activityRecord.findMany.mockResolvedValue([waterRecord()]);
+    it('the CSV writes "Not calculated" for the water row and a NUMBER for the calculated one', async () => {
+      // Two records on purpose. Asserting only that the water row says the
+      // label passes just as happily against a writer that prints the label for
+      // EVERY row — i.e. against a destroyed tCO₂e column.
+      prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), waterRecord()]);
 
       const csv = await service.generateCsv(admin, q);
-      const dataLine = csv.trim().split('\n')[1];
+      const lines = csv.trim().split('\n');
+      const electricity = lines.find((l) => l.includes('Electricity'))!;
+      const water = lines.find((l) => l.includes('Water'))!;
 
-      expect(dataLine).toContain('Not calculated');
+      expect(water).toContain('Not calculated');
+      expect(electricity).not.toContain('Not calculated');
+      expect(electricity.split(',')).toContain('0.44');
       // An empty cell in a numeric column sums as zero downstream, which is the
       // same misstatement wearing a different hat.
-      expect(dataLine).not.toMatch(/,,/);
+      expect(water).not.toMatch(/,,/);
     });
 
-    it('the PDF ledger prints "Not calculated" where the figure would go', async () => {
-      prisma.activityRecord.findMany.mockResolvedValue([waterRecord()]);
+    it('the Excel ledger writes the label for water and a numeric cell for the calculated row', async () => {
+      prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), waterRecord()]);
+
+      const buffer = await service.generateExcel(admin, q);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+      const sheet = wb.getWorksheet('Raw Activity Data')!;
+
+      const cellsByCategory = new Map<string, ExcelJS.CellValue>();
+      sheet.eachRow((row, i) => {
+        if (i === 1) return; // header
+        cellsByCategory.set(String(row.getCell(2).value), row.getCell(7).value);
+      });
+
+      expect(cellsByCategory.get('Water')).toBe('Not calculated');
+      // The one that was silently broken: `?? 0` here writes a literal 0 into
+      // an audit spreadsheet, and `?? ''` leaves a blank that SUMs as zero.
+      expect(cellsByCategory.get('Electricity')).toBe(0.44);
+      expect(typeof cellsByCategory.get('Electricity')).toBe('number');
+    });
+
+    it('the PDF prints the label for water, a number for the calculated row, and reconciles its own tile', async () => {
+      prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), waterRecord()]);
       const data = await service.assemble(admin, {
         ...q,
         template: 'ghg_protocol_detail',
@@ -344,10 +386,24 @@ describe('ReportsService', () => {
 
       const html = buildReportHtml(data);
 
-      expect(html).toContain('Not calculated');
       // The PDF is the artifact an auditor keeps, so the absence has to be
       // legible in it — not just correct in the object behind it.
-      expect(html).not.toMatch(/<td class="num">0<\/td><td>submitted/);
+      expect(html).toContain('Not calculated');
+      // ...in exactly one LEDGER CELL: a writer that labelled every row would
+      // satisfy the assertion above while destroying the whole tCO₂e column.
+      // Matched on the cell, not the bare string, because the reconciliation
+      // note above the table quotes the same label.
+      const labelledCells = html.match(
+        /<td class="num"><span class="note">Not calculated<\/span><\/td>/g,
+      );
+      expect(labelledCells).toHaveLength(1);
+      // 0.44 rounded by the report's own 1-decimal formatter.
+      expect(html).toContain('<td class="num">0.4</td>');
+      // The "Committed records" tile counts every committed row, so it must not
+      // disagree with the ledger printed directly beneath it.
+      expect(data.summary.recordCount).toBe(2);
+      expect(data.records).toHaveLength(2);
+      expect(html).toContain('carry no emissions figure');
     });
 
     it('a factor-less record contributes no row to the Factors Used appendix', async () => {

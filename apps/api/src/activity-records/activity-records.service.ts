@@ -358,17 +358,10 @@ export class ActivityRecordsService {
       .filter((x) => x.key < currentKey) // strictly earlier periods only
       .sort((a, b) => b.key - a.key)
       .slice(0, BASELINE_MAX_PERIODS)
-      .map((x) => {
-        const tCo2e = (x.calc as CalculationResult | null)?.tCo2e;
-        return Number.isFinite(tCo2e) ? (tCo2e as number) : null;
-      })
+      .map((x) => (isCalculated(x.calc) ? x.calc.tCo2e : null))
       // Drop (rather than zero-fill) priors without a usable tCO₂e so they don't
-      // deflate the average and manufacture false anomalies. An uncalculated
-      // snapshot (invoice-tracked category, no factor) carries no `tCo2e` at
-      // all, so it drops out here for free — the test is deliberately "has a
-      // usable figure", not "is calculated", so a legacy row that somehow has
-      // the number but not the factor id still contributes to its own baseline
-      // exactly as it did before this type existed.
+      // deflate the average and manufacture false anomalies. A record with no
+      // factor is one such prior. One predicate everywhere — see isCalculated().
       .filter((v): v is number => v !== null);
 
     if (priorValues.length === 0) return false; // no baseline to deviate from
@@ -557,7 +550,17 @@ export class ActivityRecordsService {
       activityValue,
       activityUnit,
       locationId,
-      dto.activityUnit !== undefined,
+      // Enforce the category/unit map when the unit was chosen NOW **or when
+      // the category changed**. The second half was missing and it was a live
+      // path to a fabricated figure: a PATCH that sends only `{category}` left
+      // the stored unit unchecked against the new category, so a 250 m³ WATER
+      // reading re-filed as Electricity was normalised at the natural-gas
+      // calorific value (×11.36) and multiplied by the grid factor — a fully
+      // provenanced 2,840 kWh of electricity that no one ever measured. The
+      // leniency exists for records predating the map being edited without
+      // touching the unit; re-interpreting a stored unit under a different
+      // category is the opposite of that case.
+      dto.activityUnit !== undefined || category !== existing.category,
     );
 
     const anomalyFlag = await this.detectAnomalyFor(calculation, {

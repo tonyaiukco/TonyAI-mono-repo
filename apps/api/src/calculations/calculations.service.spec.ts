@@ -380,7 +380,11 @@ describe('CalculationsService.compute', () => {
       expect(Number.isFinite(result.tCo2e)).toBe(false);
     });
 
-    it('the exception never fires while a factor DOES resolve (Phase 4 self-heals)', async () => {
+    it('the exception stops firing the moment a factor resolves', async () => {
+      // Deliberately a kWh-based factor: this proves only that the allow-list
+      // is a permission and not an assertion — the `!factor` branch is checked
+      // first, so a resolvable factor takes the normal path. It says nothing
+      // about whether that path is CORRECT for water; see the next spec.
       prisma.emissionFactor.findFirst.mockResolvedValue(
         makeFactor({
           category: 'Water',
@@ -400,6 +404,39 @@ describe('CalculationsService.compute', () => {
       });
 
       expect(isCalculated(result)).toBe(true);
+    });
+
+    it('a CORRECTLY-seeded water factor cannot be applied yet — normalize() is category-blind', async () => {
+      // The safe seeding: a water factor is quoted per cubic metre, not per kWh.
+      prisma.emissionFactor.findFirst.mockResolvedValue(
+        makeFactor({
+          category: 'Water',
+          scope: 3,
+          factorValue: 0.149,
+          factorUnit: 'kgCO2e/m3',
+          normalizedUnit: 'cubic_metres',
+          geographyCode: 'UK',
+        }),
+      );
+
+      // This is the honest state of affairs and the reason it must be a test
+      // rather than a comment: `normalize()` converts ANY cubic_metres at the
+      // natural-gas calorific value, so the input arrives as 1,136 "kWh" and
+      // the unit guard refuses it. Seeding a water factor is therefore NOT
+      // sufficient to make water calculable — `normalize(value, unit, category)`
+      // has to land first (recorded in the roadmap's open questions).
+      await expect(
+        service.compute({
+          category: 'Water',
+          geographyCode: 'UK',
+          reportingYear: 2026,
+          value: 100,
+          unit: 'cubic_metres',
+        }),
+      ).rejects.toThrow(/normalises to "kWh" but the factor .* expects "cubic_metres"/);
+
+      // And the failure is loud, not a silently fabricated number.
+      expect(normalize(100, 'cubic_metres').normalizedValue).toBeCloseTo(1136, 6);
     });
 
     it('a missing ELECTRICITY factor still refuses — the exception is one named category', async () => {

@@ -114,7 +114,11 @@ export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
   { value: 'MWh', label: 'MWh (electricity)', target: 'kWh' },
   {
     value: 'cubic_metres',
-    label: 'Cubic metres — m³ (natural gas)',
+    // No parenthetical: the same token is offered for Natural Gas and for Water,
+    // and it read as "Cubic metres — m³ (natural gas)" in the Water dropdown,
+    // where it is the ONLY option. `target` describes the natural-gas path only;
+    // a Water record is never normalised (see UncalculatedSnapshot).
+    label: 'Cubic metres — m³',
     target: 'kWh',
   },
   {
@@ -1051,6 +1055,16 @@ export interface CalculationResult {
  * keys on `factorId`, which every real snapshot has always carried.
  */
 export interface UncalculatedSnapshot {
+  /**
+   * Schema tag for THIS shape only.
+   *
+   * Added at introduction because it is free here and expensive later: no row
+   * written before WP17 is uncalculated, so unlike `CalculationResult` this side
+   * of the union can require a version from its first row. `CalculationResult`
+   * deliberately does not have one — retrofitting a required field there would
+   * misdescribe every historic snapshot.
+   */
+  snapshotSchema: 1;
   category: string;
   geographyCode: string;
   reportingYear: number;
@@ -1060,10 +1074,17 @@ export interface UncalculatedSnapshot {
   inputValue: number;
   inputUnit: string;
   /** Machine-readable cause, so a UI can branch without parsing prose. */
-  reasonCode: 'no_emission_factor';
+  reasonCode: UncalculatedReasonCode;
   /** Human-readable cause, rendered verbatim to the user. */
   reason: string;
 }
+
+/**
+ * Why a record carries no figure. Exported as a named type because both apps
+ * will switch on it; widening an inline literal later would be a breaking
+ * change in two packages at once.
+ */
+export type UncalculatedReasonCode = 'no_emission_factor';
 
 /**
  * What an activity record's immutable `calculation` column can hold. A record
@@ -1077,16 +1098,48 @@ export type ActivityCalculationSnapshot =
 /**
  * True when the snapshot carries a real, factor-backed emissions figure.
  *
+ * **This is the single rule.** An earlier cut of WP17 used this on the display
+ * paths but `Number.isFinite(tCo2e)` alone in the aggregations, to keep any
+ * hypothetical legacy row counting exactly as before. The two disagree on
+ * precisely one shape — a figure with no factor id — and that shape would have
+ * counted its tonnes into the dashboard totals and printed its number in the
+ * report ledger while every screen rendered it as "Not calculated": the mirror
+ * image of the misstatement this type exists to prevent. Measured against the
+ * database before deleting the second rule: 102 rows, 0 without `factorId`,
+ * 0 in the disagreeing set. There was nothing to preserve.
+ *
  * Keyed on `factorId` rather than a discriminant flag so it is correct for rows
  * written before `UncalculatedSnapshot` existed — see the note on that type.
+ * `tCo2e` is checked too so the predicate fails SAFE: a malformed or
+ * JSON-round-tripped snapshot (`NaN` serialises to `null`) narrows to "no
+ * figure" instead of reaching a formatter that would throw on it.
  */
 export function isCalculated(
   snapshot: ActivityCalculationSnapshot | null | undefined,
 ): snapshot is CalculationResult {
+  const candidate = snapshot as CalculationResult | null | undefined;
+  return (
+    !!candidate &&
+    typeof candidate.factorId === 'string' &&
+    candidate.factorId.length > 0 &&
+    Number.isFinite(candidate.tCo2e)
+  );
+}
+
+/**
+ * True when the snapshot explicitly records that no figure was produced.
+ *
+ * Not simply `!isCalculated(...)`: that folds in a third case — a snapshot that
+ * is neither, i.e. malformed — and the display paths should be able to tell
+ * "the API said why" from "this row is broken". Keyed on `reasonCode`, which is
+ * required on the shape this codebase writes.
+ */
+export function isUncalculated(
+  snapshot: ActivityCalculationSnapshot | null | undefined,
+): snapshot is UncalculatedSnapshot {
   return (
     !!snapshot &&
-    typeof (snapshot as CalculationResult).factorId === 'string' &&
-    (snapshot as CalculationResult).factorId.length > 0
+    typeof (snapshot as UncalculatedSnapshot).reasonCode === 'string'
   );
 }
 
@@ -1245,11 +1298,25 @@ export interface CreatePeriodLockInput {
  * Categories that require at least one evidence file before a record may be
  * submitted / counted as "complete" (FR §4.1 "categories configured as evidence
  * required"). Scope 1 & 2 billed inputs are invoice/meter/fuel-log backed.
+ *
+ * `Water` was added in WP17, and the reasoning is worth keeping because the
+ * first cut got it wrong. It was left out on the grounds that there is "no
+ * factor to gate on" — which conflates two different gates. The evidence gate
+ * is about proof of the READING, not about the factor. And a water record has
+ * no other check at all: no factor means no figure, no figure means the anomaly
+ * baseline skips it, so without the invoice any number whatsoever could be
+ * typed in and nothing in the system could contradict it. The invoice is the
+ * only verification such a record can ever carry — and it is the same artifact
+ * the completeness engine counts.
+ *
+ * Adding it here rather than later is deliberate: a water draft saved while the
+ * gate was absent would become unsubmittable the moment it appeared.
  */
 export const EVIDENCE_REQUIRED_CATEGORIES: Category[] = [
   'Electricity',
   'Natural Gas',
   'Fuel',
+  'Water',
 ];
 
 /** True when the given category must have evidence attached to be complete. */
@@ -1263,18 +1330,23 @@ export function isEvidenceRequired(category: string): boolean {
  * Every other category stays a simple complete/incomplete.
  *
  * **This is deliberately NOT `EVIDENCE_REQUIRED_CATEGORIES`, despite the
- * overlap.** They answer different questions and the two sets genuinely differ:
+ * overlap.** They answer different questions, and Fuel is the case that proves
+ * the two sets are not the same one:
  *
- * | Category    | Evidence-required (submit gate) | Invoice-tracked (denominator) |
- * | ----------- | ------------------------------- | ----------------------------- |
- * | Electricity | yes                             | yes                           |
- * | Natural Gas | yes                             | yes                           |
+ * | Category    | Evidence-required (submit gate) | Invoice-tracked (denominator)  |
+ * | ----------- | ------------------------------- | ------------------------------ |
+ * | Electricity | yes                             | yes                            |
+ * | Natural Gas | yes                             | yes                            |
  * | Fuel        | yes                             | **no** — not a metered utility |
- * | Water       | **no** — no factor to gate on   | yes                           |
+ * | Water       | yes                             | yes                            |
  *
- * Reusing one constant for both is the obvious shortcut and it is wrong in both
- * directions: Fuel would inherit a `locations × 12` denominator it should not
- * have, and Water would not be counted at all.
+ * Reusing the evidence list as the denominator would give Fuel a
+ * `locations × 12 months` requirement it should not have.
+ *
+ * The completeness engine that consumes this ships in the next PR. It is
+ * declared here because `compute()` already depends on it: the invariant
+ * "recordable without a factor ⇒ invoice-tracked" is enforced at that call
+ * site, which is what makes the stored `reason` string true.
  */
 export const INVOICE_TRACKED_CATEGORIES: Category[] = [
   'Electricity',
@@ -1404,12 +1476,15 @@ export interface EmissionsSummary {
     quarterly: EmissionsTrendPoint[];
     yearly: EmissionsTrendPoint[];
   };
-  /** Number of activity records counted into this summary — i.e. those that
-   *  actually contributed a figure to `totals`. */
+  /** Every committed activity record in scope, whether or not it produced a
+   *  figure. Always equals `calculatedRecordCount + uncalculatedRecordCount`. */
   recordCount: number;
+  /** Of those, the ones that contributed to `totals`. */
+  calculatedRecordCount: number;
   /**
-   * Committed records that were EXCLUDED because their category has no emission
-   * factor and they carry no figure (WP17 — Water).
+   * Of those, the ones EXCLUDED from every total because their stored snapshot
+   * carries no usable figure — in practice a category with no emission factor
+   * (WP17 — Water), but the test is the snapshot, not the category.
    *
    * Declared rather than silently dropped: those entries exist, they count
    * towards data completeness, and a user comparing "12 water invoices filed"

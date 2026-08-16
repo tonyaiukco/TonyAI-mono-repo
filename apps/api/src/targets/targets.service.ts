@@ -258,6 +258,24 @@ export class TargetsService {
       year: latest.reportingYear,
       scope: SCOPE_TO_NUMBER[t.scope],
     });
+
+    // The scope filter above answers "are there records in this scope?", which
+    // stopped being the same question as "is there anything to compare?" once a
+    // record could exist without a figure. A single factor-less Water invoice
+    // (scope 3) satisfies the query, contributes nothing to the total, and the
+    // arithmetic below then reports 0 tCO₂e → 100% → "on_track" against a
+    // declared baseline: exactly the fabricated placeholder the guard above was
+    // written to prevent, reached through a new door.
+    if (summary.calculatedRecordCount === 0) {
+      return {
+        targetId: t.id,
+        currentYear: t.baselineYear,
+        currentTCo2e: null,
+        progressPercent: null,
+        status: null,
+      };
+    }
+
     const current = summary.totals.total;
 
     const neededReduction = t.baselineTCo2e - t.targetTCo2e;

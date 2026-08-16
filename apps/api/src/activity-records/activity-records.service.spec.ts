@@ -1022,7 +1022,10 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       reportingPeriod: 'monthly',
       periodValue,
       status: ActivityRecordStatus.approved,
-      calculation: { tCo2e },
+      // `factorId` for the same reason as makeRecord's default: a stored,
+      // calculated prior always carries the factor it used, and isCalculated()
+      // is what decides whether a prior can seed the baseline.
+      calculation: { tCo2e, factorId: 'f-1' },
     });
 
   it('flags an anomaly when tCO₂e deviates >50% from the rolling 3-period baseline', async () => {
@@ -1138,9 +1141,9 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     const { prisma, service } = build(2);
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
     prisma.activityRecord.findMany.mockResolvedValue([
-      makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q1', status: ActivityRecordStatus.approved, calculation: { tCo2e: 10 } }),
-      makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q2', status: ActivityRecordStatus.approved, calculation: { tCo2e: 10 } }),
-      makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q4', status: ActivityRecordStatus.approved, calculation: { tCo2e: 19 } }), // later → excluded
+      makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q1', status: ActivityRecordStatus.approved, calculation: { tCo2e: 10, factorId: 'f-1' } }),
+      makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q2', status: ActivityRecordStatus.approved, calculation: { tCo2e: 10, factorId: 'f-1' } }),
+      makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q4', status: ActivityRecordStatus.approved, calculation: { tCo2e: 19, factorId: 'f-1' } }), // later → excluded
     ]);
     prisma.activityRecord.create.mockImplementation(({ data }: any) =>
       makeRecord({ ...data, id: 'rec-new' }),
@@ -1168,6 +1171,98 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     const updateArg = prisma.activityRecord.update.mock.calls[0][0];
     expect(updateArg.data.anomalyFlag).toBe(true);
     expect(prisma.activityRecord.findMany.mock.calls[0][0].where.id).toEqual({ not: 'rec-u' });
+  });
+
+  it('create skips the anomaly check for a record with no figure', async () => {
+    const { prisma, service, calc } = build(3);
+    // The calc engine hands back the factor-less shape for this write.
+    calc.compute.mockResolvedValue({
+      snapshotSchema: 1,
+      category: 'Water',
+      geographyCode: 'TR',
+      reportingYear: 2024,
+      scope: 3,
+      inputValue: 250,
+      inputUnit: 'cubic_metres',
+      reasonCode: 'no_emission_factor',
+      reason: 'No emission factor is available for "Water"',
+    });
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    await service.create(dataEntry(), {
+      ...MONTHLY_DTO,
+      category: 'Water',
+      activityUnit: 'cubic_metres',
+    } as unknown as typeof MONTHLY_DTO);
+
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(false);
+    // The baseline query never runs: detection is skipped, not survived.
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+  });
+
+  it('update skips the anomaly check when the recomputed snapshot has no figure', async () => {
+    const { prisma, service, calc } = build(3);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1', reportingPeriod: 'monthly', periodValue: 'March', createdBy: 'user-entry' }),
+    );
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    // Editing a record into a factor-less category: calculated -> uncalculated.
+    calc.compute.mockResolvedValue({
+      snapshotSchema: 1,
+      category: 'Water',
+      geographyCode: 'TR',
+      reportingYear: 2024,
+      scope: 3,
+      inputValue: 250,
+      inputUnit: 'cubic_metres',
+      reasonCode: 'no_emission_factor',
+      reason: 'No emission factor is available for "Water"',
+    });
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-u', ...data }),
+    );
+
+    await service.update(dataEntry(), 'rec-u', {
+      category: 'Water',
+      activityUnit: 'cubic_metres',
+    } as never);
+
+    const updateArg = prisma.activityRecord.update.mock.calls[0][0];
+    expect(updateArg.data.anomalyFlag).toBe(false);
+    expect(updateArg.data.calculation).toMatchObject({
+      reasonCode: 'no_emission_factor',
+    });
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+  });
+
+  it('a category change re-enforces the unit map even when the unit is not resent', async () => {
+    const { prisma, service, calc } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-w',
+        subsidiaryId: 'sub-1',
+        category: 'Water',
+        activityUnit: 'cubic_metres',
+        createdBy: 'user-entry',
+      }),
+    );
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-w', ...data }),
+    );
+
+    await service.update(dataEntry(), 'rec-w', { category: 'Electricity' } as never);
+
+    // Without this the stored `cubic_metres` was re-read under Electricity,
+    // normalised at the natural-gas calorific value and multiplied by the grid
+    // factor — a fabricated figure carrying full factor provenance.
+    expect(calc.compute).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'Electricity', unit: 'cubic_metres' }),
+      { enforceCategoryUnit: true },
+    );
   });
 
   it('rejects a non-canonical periodValue for its granularity (VAR data integrity)', async () => {

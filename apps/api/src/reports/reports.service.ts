@@ -461,12 +461,17 @@ export class ReportsService implements OnModuleDestroy {
           .join(','),
       ),
     ];
-    await this.audit(user, q, 'csv', data.records.length);
+    await this.audit(user, q, 'csv', data.summary.recordCount);
     return lines.join('\n') + '\n';
   }
 
-  /** Generation log (report_page.md §10): one audit row per generated artifact. */
-  /** Report generation IS the §10 generation log — no dedicated table. */
+  /** Generation log (report_page.md §10): one audit row per generated artifact.
+   *
+   *  All three formats log `summary.recordCount` — the CSV used to log
+   *  `records.length` instead. The two were provably equal (same query, same
+   *  instant) until WP17 briefly narrowed `recordCount`, at which point two
+   *  exports of the same selection wrote different counts into an append-only
+   *  compliance log. One expression, so they cannot diverge again. */
   private async audit(
     user: RequestUser,
     q: ReportQueryDto,

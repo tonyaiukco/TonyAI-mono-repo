@@ -1233,9 +1233,14 @@ function PreviewCard({
               />
               {geographyCode && <Row label="Geography" value={geographyCode} />}
             </dl>
+            {/* Says only what is true today. "It counts towards data
+                completeness" was the first wording and it described a feature
+                that has not shipped yet — the completeness engine is the next
+                work package. */}
             <p className="text-xs text-muted-foreground">
-              You can still save and submit this entry — it counts towards data
-              completeness, and evidence can be attached as usual.
+              You can still save and submit this entry. An invoice is required
+              before it can be submitted, since without an emission factor the
+              invoice is the only record of what was consumed.
             </p>
           </div>
         ) : (

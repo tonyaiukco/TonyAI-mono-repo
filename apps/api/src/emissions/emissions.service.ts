@@ -3,6 +3,7 @@ import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import {
   CATEGORIES,
   CATEGORY_SCOPE_MAP,
+  isCalculated,
   isEvidenceRequired,
   type ActivityCalculationSnapshot,
   type CalculationResult,
@@ -114,6 +115,7 @@ export class EmissionsService {
       bySubsidiary: [],
       trend: { monthly: [], quarterly: [], yearly: [] },
       recordCount: 0,
+      calculatedRecordCount: 0,
       uncalculatedRecordCount: 0,
       statusesIncluded: COUNTED_STATUSES,
     };
@@ -196,17 +198,11 @@ export class EmissionsService {
       // category breakdown, which reads as "we measured water and it was zero"
       // rather than "water is not calculable yet". It is surfaced instead as
       // `uncalculatedRecordCount`, so the entries are declared, not hidden.
-      //
-      // The test is "carries a usable figure", not "is calculated": same answer
-      // for the new shape (it has no `tCo2e` at all), but it leaves a legacy row
-      // that somehow has the number without the factor id aggregating exactly as
-      // it did before this type existed. Same rule as the anomaly baseline.
-      const raw = (calc as CalculationResult | null)?.tCo2e;
-      if (!Number.isFinite(raw)) {
+      if (!isCalculated(calc)) {
         uncalculatedRecordCount += 1;
         continue;
       }
-      const tCo2e = raw as number;
+      const tCo2e = calc.tCo2e;
       const scope = r.scope;
 
       this.addScope(totals, scope, tCo2e);
@@ -297,10 +293,15 @@ export class EmissionsService {
         quarterly: toSortedPoints(quarterly),
         yearly: toSortedPoints(yearly),
       },
-      // `rows.length` minus the uncalculated ones: recordCount describes what
-      // the totals above were built from, so counting entries that contributed
-      // nothing would make the two disagree without saying so.
-      recordCount: rows.length - uncalculatedRecordCount,
+      // `recordCount` keeps its original meaning — every committed record in
+      // scope — because it is what the report's "Committed records" tile shows
+      // and what the generation audit row logs. Narrowing it silently to "the
+      // ones that produced a figure" made that tile disagree with the ledger
+      // printed directly beneath it, and made the PDF and CSV exports of the
+      // same selection write two different counts into the append-only log.
+      // The split is expressed by the two fields below, which always sum to it.
+      recordCount: rows.length,
+      calculatedRecordCount: rows.length - uncalculatedRecordCount,
       uncalculatedRecordCount,
       statusesIncluded: COUNTED_STATUSES,
     };
@@ -350,7 +351,7 @@ export class EmissionsService {
     type RecordWithEvidence = ActivityRecord & { _count: { evidence: number } };
     const byCell = new Map<string, RecordWithEvidence[]>();
     for (const r of records) {
-      const key = `${r.subsidiaryId} ${r.category}`;
+      const key = `${r.subsidiaryId}\u0000${r.category}`;
       const bucket = byCell.get(key);
       if (bucket) bucket.push(r);
       else byCell.set(key, [r]);
@@ -362,7 +363,7 @@ export class EmissionsService {
       let completeCount = 0;
 
       const cells: TrackingMatrixCell[] = CATEGORIES.map((category) => {
-        const recs = byCell.get(`${sub.id} ${category}`) ?? [];
+        const recs = byCell.get(`${sub.id}\u0000${category}`) ?? [];
 
         let status: DataStatus;
         let tCo2e = 0;
