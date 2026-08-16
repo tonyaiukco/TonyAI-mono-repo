@@ -162,7 +162,6 @@ test('deleting a subsidiary takes its own locations, with an audit row each', as
     headers: bearer(token),
   })).json();
   expect(summary.locations).toBe(2);
-  expect(summary.locationsWithRecords).toBe(0);
   expect(summary.hasBlockingDependents, 'a record-free location is not a blocker').toBe(false);
   expect(summary.blockers).toEqual([]);
 
@@ -182,10 +181,12 @@ test('deleting a subsidiary takes its own locations, with an audit row each', as
   expect((await request.get(`${API_BASE}/locations/${made[0].id}`, { headers: bearer(token) })).status()).toBe(404);
 });
 
-test('a location holding records still stops the subsidiary delete', async ({ request }) => {
-  // A different reason from the audit one: the record's frozen snapshot was
-  // computed from this location's geography, so detaching it would leave the
-  // figure claiming a geography it was not calculated with.
+test('a location holding a record blocks only through that record', async ({ request }) => {
+  // The tier that refuses on a location is for the INVARIANT VIOLATION — a
+  // record of another subsidiary pointing here — which the API refuses to
+  // create and no test can reach without raw SQL. What a normal draft record at
+  // a location does is block through the record tier, and clearing the record
+  // is enough: the location then goes with the subsidiary.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const sub = await makeSubsidiary(request, token, 'E2E Test Co Loc With Records');
   const loc = await (await request.post(`${API_BASE}/locations`, {
@@ -201,12 +202,23 @@ test('a location holding records still stops the subsidiary delete', async ({ re
 
   const refused = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });
   expect(refused.status()).toBe(409);
-  // The draft record is what the user must clear; the location is named as the
-  // reason it cannot simply be swept up.
-  expect((await refused.json()).message).toMatch(/1 draft or rejected record/);
+  const message = (await refused.json()).message as string;
+  expect(message).toMatch(/1 draft or rejected record/);
+  // The location is NOT named. It used to be, which produced advice that
+  // contradicted itself — remove the location, and the location stays — and
+  // neither was true.
+  expect(message).not.toMatch(/location\(s\)/);
 
   const still = await request.get(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) });
   expect(still.status(), 'the location must survive the refused delete').toBe(200);
+
+  // Clear only the record, and the delete goes through with the location swept.
+  const records = await (await request.get(
+    `${API_BASE}/activity-records?subsidiaryId=${sub.id}`, { headers: bearer(token) },
+  )).json();
+  await request.delete(`${API_BASE}/activity-records/${records[0].id}`, { headers: bearer(token) });
+  expect((await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) })).status()).toBe(200);
+  expect((await request.get(`${API_BASE}/locations/${loc.id}`, { headers: bearer(token) })).status()).toBe(404);
 });
 
 test('a disposable subsidiary can still be emptied and deleted', async ({ request }) => {
@@ -232,9 +244,12 @@ test('a disposable subsidiary can still be emptied and deleted', async ({ reques
   expect(blocked.status()).toBe(409);
   const message = (await blocked.json()).message as string;
   expect(message).toMatch(/1 draft or rejected record\(s\)/);
-  // The location is NOT listed: the delete clears record-free locations itself,
-  // so naming it would be advice the user does not need to act on.
-  expect(message).not.toMatch(/1 location\(s\)\./);
+  // The location is NOT listed. This assertion used to carry a trailing `\.`
+  // and passed for the wrong reason: the message DID name the location, and
+  // dropping the dot showed it. The advice was self-contradictory too — remove
+  // the location, and also the location stays — because the tier counted every
+  // record at a location rather than only ones belonging to another subsidiary.
+  expect(message).not.toMatch(/location\(s\)/);
   // Nothing here is committed, so "retire it as inactive" would be the wrong
   // advice — this subsidiary really can go.
   expect(message).not.toMatch(/inactive/);

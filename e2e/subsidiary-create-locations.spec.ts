@@ -64,7 +64,6 @@ test('a subsidiary and its locations are created in one call', async ({ request 
     `${API_BASE}/subsidiaries/${sub.id}/summary`, { headers: bearer(token) },
   )).json();
   expect(summary.locations).toBe(2);
-  expect(summary.locationsWithRecords).toBe(0);
   expect(summary.hasBlockingDependents).toBe(false);
 });
 
