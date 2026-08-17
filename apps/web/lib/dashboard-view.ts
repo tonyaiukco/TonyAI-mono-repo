@@ -1,6 +1,11 @@
-// Maps live API DTOs onto the dashboard's existing view models so the
-// polished components (TrackingMatrix, KPICards, EmissionsCharts,
-// AlertsPanel, SubsidiaryDetail) render live data unchanged.
+// Maps live API DTOs onto the dashboard's mock-era view models.
+//
+// The list of consumers has shrunk: `TrackingMatrix`, `StatusCell` and
+// `SubsidiaryDetail` now read the contract directly, because WP17's per-cell
+// `coverage` and per-row `trackingGranularity` died at this boundary. What is
+// still mapped here is what `EmissionsCharts` (matrixToSubsidiaries),
+// `KPICards` (buildKpiData) and `AlertsPanel` (matrixToAlerts) consume.
+// Retiring the remaining three view models is a separate change.
 import type {
   Alert,
   CategoryData,

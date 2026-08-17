@@ -36,6 +36,8 @@ interface SubsidiaryDetailProps {
   reportingYear: number | null;
   open: boolean;
   onClose: () => void;
+  /** Whether this seat may create activity records at all. */
+  canEnter?: boolean;
   /** Route to Data Entry for one open slot (location + month + category). */
   onSlotClick?: (params: {
     subsidiaryId: string;
@@ -90,7 +92,7 @@ const statusConfig: Record<DataStatus, {
   },
 };
 
-export function SubsidiaryDetail({ row, reportingYear, open, onClose, onSlotClick }: SubsidiaryDetailProps) {
+export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter = false, onSlotClick }: SubsidiaryDetailProps) {
   if (!row) return null;
 
   const completionRate = Math.round((row.completeCount / row.categoryCount) * 100);
@@ -256,6 +258,7 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, onSlotClic
                   subsidiaryId={row.subsidiaryId}
                   subsidiaryName={row.subsidiaryName}
                   reportingYear={reportingYear}
+                  canEnter={canEnter}
                   onSlotClick={({ category, locationId, month }) =>
                     onSlotClick?.({
                       subsidiaryId: row.subsidiaryId,

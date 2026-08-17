@@ -11,6 +11,11 @@ interface InvoiceCoverageGridProps {
   subsidiaryId: string;
   subsidiaryName: string;
   reportingYear: number;
+  /** False for a seat the API refuses writes from (`consultant`,
+   *  `executive_viewer`). The grid still SHOWS what is missing — that is the
+   *  point of the panel for a reviewer — but it stops inviting a click that
+   *  ends in a 403 two screens later. */
+  canEnter: boolean;
   /** Called when an OPEN slot is clicked, so the caller can route to Data Entry
    *  with the location and month already chosen. */
   onSlotClick: (params: {
@@ -19,6 +24,9 @@ interface InvoiceCoverageGridProps {
     month: string;
   }) => void;
 }
+
+/** "1 entry" / "3 entries" — the count needs its noun, and its plural. */
+const entries = (n: number) => `${n} ${n === 1 ? 'entry is' : 'entries are'}`;
 
 /** Three letters is enough to read a twelve-column header at this width. */
 const SHORT_MONTH = (month: string) => month.slice(0, 3);
@@ -36,6 +44,7 @@ export function InvoiceCoverageGrid({
   subsidiaryId,
   subsidiaryName,
   reportingYear,
+  canEnter,
   onSlotClick,
 }: InvoiceCoverageGridProps) {
   const [data, setData] = useState<SubsidiaryCompletenessDTO | null>(null);
@@ -86,20 +95,49 @@ export function InvoiceCoverageGrid({
     );
   }
 
-  // A subsidiary measured as a whole has no per-location slots — say which of
-  // the two it is, rather than rendering an empty table that reads as "nothing
-  // is missing".
+  // Defensive, and deliberately terse: `SubsidiaryDetail` only mounts this for
+  // a location-measured subsidiary, so this branch is unreachable through the
+  // UI. An earlier version filled it with advice about switching granularity —
+  // naming a control that does not exist in the app and a precondition the API
+  // does not have. A dead branch that lies is worse than a dead branch.
   if (data.categories.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
         {subsidiaryName} is measured as a whole company, so there is no
-        per-location invoice breakdown. A super_admin can switch it to
-        location-level tracking once its data is keyed in by site.
+        per-location invoice breakdown.
       </p>
     );
   }
 
   const category = data.categories.find((c) => c.category === selected);
+  const slots = category?.locations.flatMap((l) => l.months) ?? [];
+  const openSlots = slots.filter(
+    (m) =>
+      !m.covered &&
+      !category?.companyLevelMonths.includes(m.month.toLowerCase()),
+  ).length;
+  const hasCompanyLevel = (category?.companyLevelMonths.length ?? 0) > 0;
+  const reasons: string[] = [];
+  if (category) {
+    if (category.unattributedRecords > 0) {
+      reasons.push(
+        `${entries(category.unattributedRecords)} recorded for the whole company rather than a site, so they close no site's month.`,
+      );
+    }
+    if (category.outOfScopeRecords > 0) {
+      reasons.push(
+        `${entries(category.outOfScopeRecords)} at a site that did not exist yet at the end of ${data.reportingYear}, so there is no row above for them.`,
+      );
+    }
+    if (category.nonMonthlyRecords > 0) {
+      reasons.push(
+        `${entries(category.nonMonthlyRecords)} not reported as a single month, so none of them stands in for a monthly invoice.`,
+      );
+    }
+    if (category.missingEvidenceRecords > 0) {
+      reasons.push(`${entries(category.missingEvidenceRecords)} with no invoice attached.`);
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -130,8 +168,8 @@ export function InvoiceCoverageGrid({
       {category && (
         <>
           <ScrollArea className="w-full">
-            <div className="min-w-[560px] space-y-1">
-              <div className="grid grid-cols-[120px_repeat(12,1fr)] gap-1">
+            <div className="min-w-[420px] space-y-1">
+              <div className="grid grid-cols-[96px_repeat(12,1fr)] gap-0.5">
                 <span />
                 {category.locations[0]?.months.map((m) => (
                   <span
@@ -154,67 +192,104 @@ export function InvoiceCoverageGrid({
                   >
                     {loc.locationName}
                   </span>
-                  {loc.months.map((m) => (
-                    <button
-                      key={m.month}
-                      disabled={m.covered}
-                      onClick={() =>
-                        onSlotClick({
-                          category: category.category,
-                          locationId: loc.locationId,
-                          month: m.month,
-                        })
-                      }
-                      // The covered ones are a record of what is done, not a
-                      // control: there is nothing to go and do about them.
-                      aria-label={`${loc.locationName} ${m.month}: ${
-                        m.covered ? 'invoice attached' : 'missing'
-                      }`}
-                      className={cn(
-                        'h-5 rounded-sm transition-colors',
-                        m.covered
-                          ? 'cursor-default bg-[#34C759]/70'
-                          : 'bg-[#FEE2E2] hover:bg-[#FECACA] focus:outline-none focus:ring-2 focus:ring-[#007AFF]/40',
-                      )}
-                    />
-                  ))}
+                  {loc.months.map((m) => {
+                    // Three states, not two. A month already recorded for the
+                    // WHOLE COMPANY closes no site slot — but inviting the user
+                    // to key a site invoice for it produces a second row for
+                    // that month, and BOTH feed the emissions total. The
+                    // uniqueness index cannot stop it (different location id)
+                    // and nothing downstream deduplicates, so the only thing
+                    // standing between a tester and a double-counted month is
+                    // this screen saying so.
+                    const atCompanyLevel =
+                      !m.covered &&
+                      category.companyLevelMonths.includes(m.month.toLowerCase());
+                    const state = m.covered
+                      ? 'covered'
+                      : atCompanyLevel
+                        ? 'company'
+                        : 'open';
+                    const description = {
+                      covered: 'invoice attached',
+                      company: 'recorded for the whole company — entering a site invoice would count this month twice',
+                      open: 'missing',
+                    }[state];
+                    return (
+                      <button
+                        key={m.month}
+                        disabled={state !== 'open' || !canEnter}
+                        onClick={() =>
+                          onSlotClick({
+                            category: category.category,
+                            locationId: loc.locationId,
+                            month: m.month,
+                          })
+                        }
+                        aria-label={`${loc.locationName} ${m.month}: ${description}`}
+                        title={description}
+                        className={cn(
+                          'flex h-5 items-center justify-center rounded-[3px] border text-[9px] font-bold leading-none transition-colors',
+                          state === 'covered' &&
+                            'cursor-default border-status-complete-text/40 bg-status-complete-bg text-status-complete-text',
+                          state === 'company' &&
+                            'cursor-default border-status-incomplete-text/40 bg-status-incomplete-bg text-status-incomplete-text',
+                          state === 'open' &&
+                            'border-status-missing-text/40 bg-status-missing-bg text-status-missing-text hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                        )}
+                      >
+                        {/* Never colour alone: at 20px with no text this panel
+                            is unreadable in greyscale or with low vision, and
+                            the palette's own tints sit near 1.2:1 on white. */}
+                        {state === 'covered' ? '✓' : state === 'company' ? '◆' : '·'}
+                      </button>
+                    );
+                  })}
                 </div>
               ))}
             </div>
             <ScrollBar orientation="horizontal" />
           </ScrollArea>
 
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-complete-text/40 bg-status-complete-bg text-[8px] font-bold text-status-complete-text">
+                ✓
+              </span>
+              invoice attached
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-missing-text/40 bg-status-missing-bg text-[8px] font-bold text-status-missing-text">
+                ·
+              </span>
+              missing
+            </span>
+            {hasCompanyLevel && (
+              <span className="flex items-center gap-1">
+                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-incomplete-text/40 bg-status-incomplete-bg text-[8px] font-bold text-status-incomplete-text">
+                  ◆
+                </span>
+                already recorded company-wide
+              </span>
+            )}
+          </div>
+
           <p className="text-[11px] text-muted-foreground">
-            One invoice per site per month. Click a missing month to enter it.
+            One invoice per site per month.
+            {canEnter && openSlots > 0 && ' Click a missing month to enter it.'}
+            {hasCompanyLevel &&
+              ' Months marked ◆ are already recorded for the whole company — entering them again per site would count that month twice.'}
           </p>
 
-          {/* The counters, in words. Without them a user reading "0 of 24"
-              beside twelve existing entries has every reason to think the app
-              lost their data. */}
-          {(category.unattributedRecords > 0 ||
-            category.nonMonthlyRecords > 0 ||
-            category.missingEvidenceRecords > 0) && (
+          {/* The counters, in words.
+              Built as STRINGS, not as JSX text: `{expr}` followed by a newline
+              loses the separator, and this exact list shipped reading
+              "12 entries arerecorded" twice — once before review caught it and
+              once after I rewrote the lines. Strings have no whitespace rules. */}
+          {reasons.length > 0 && (
             <ul className="space-y-1 border-t border-border pt-2 text-[11px] text-muted-foreground">
-              {category.unattributedRecords > 0 && (
-                <li>
-                  {category.unattributedRecords}{' '}
-                  recorded for the whole company rather than a site — those cannot count towards a site&apos;s
-                  months.
-                </li>
-              )}
-              {category.nonMonthlyRecords > 0 && (
-                <li>
-                  {category.nonMonthlyRecords}{' '}
-                  not reported monthly — a quarterly entry cannot stand in for
-                  three monthly invoices.
-                </li>
-              )}
-              {category.missingEvidenceRecords > 0 && (
-                <li>
-                  {category.missingEvidenceRecords}{' '}
-                  with no invoice attached.
-                </li>
-              )}
+              {reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
             </ul>
           )}
         </>

@@ -85,11 +85,13 @@ function formatEmission(value: number): string {
 /**
  * Why an invoice-tracked cell is short, in the user's terms.
  *
- * Built from the four counters the API returns precisely so this can be said
- * rather than guessed. They exhaust the committed records, so a reader can
- * always reconcile "N records exist" with "M invoices counted" — which is the
- * difference between understanding the shortfall and assuming the app lost
- * data.
+ * Built from the counters the API returns precisely so this can be said rather
+ * than guessed.
+ *
+ * They do NOT add up to the entry count, and the copy must not imply they do:
+ * `covered` counts SLOTS (two entries for one site-month are one invoice's
+ * worth), and the entry count includes drafts, which no counter explains. What
+ * these lines are is a list of REASONS entries did not close a slot.
  */
 function shortfallReasons(cell: TrackingMatrixCell): string[] {
   const c = cell.coverage;
@@ -104,7 +106,12 @@ function shortfallReasons(cell: TrackingMatrixCell): string[] {
   }
   if (c.nonMonthlyRecords > 0) {
     reasons.push(
-      `${plural(c.nonMonthlyRecords, 'entry is', 'entries are')} not monthly — one invoice per month is expected`,
+      `${plural(c.nonMonthlyRecords, 'entry is', 'entries are')} not reported as a single month, so none stands in for a monthly invoice`,
+    );
+  }
+  if (c.outOfScopeRecords > 0) {
+    reasons.push(
+      `${plural(c.outOfScopeRecords, 'entry is', 'entries are')} at a site that did not exist yet in this year`,
     );
   }
   if (c.missingEvidenceRecords > 0) {
@@ -230,7 +237,11 @@ export function StatusCell({
                 the two facts look like a contradiction. */}
             {coverage && cell.recordCount > 0 && (
               <div className="flex justify-between">
-                <span className="font-medium text-[#6E6E73]">Entries</span>
+                {/* Labelled precisely: this counts every status, including
+                    drafts, while the reasons below explain committed entries
+                    only. "Entries" alone invited the reader to subtract one
+                    from the other and find a discrepancy that is not there. */}
+                <span className="font-medium text-[#6E6E73]">Entries (all statuses)</span>
                 <span className="font-semibold text-[#1D1D1F]">{cell.recordCount}</span>
               </div>
             )}
@@ -264,8 +275,8 @@ export function StatusCell({
             {cell.uncalculatedRecordCount > 0 && (
               <p className="text-xs text-[#6E6E73]">
                 {cell.uncalculatedRecordCount}{' '}
-                of these produced no tCO₂e figure — no emission factor is
-                available for this category yet.
+                of the committed entries here produced no tCO₂e figure. Today
+                that means the category has no emission factor yet.
               </p>
             )}
 

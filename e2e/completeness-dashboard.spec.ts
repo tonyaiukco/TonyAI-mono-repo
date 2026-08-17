@@ -57,16 +57,33 @@ test('the drawer names every open month, and says why the count is short', async
 
   // The three seeded invoices, and the twenty-one that are not there.
   await expect(
-    drawer.getByRole('button', { name: 'Istanbul HQ January: invoice attached' }),
+    drawer.getByRole('button', { name: /Istanbul HQ January: invoice attached/ }),
   ).toBeDisabled();
+  // Electricity has NO honestly-open slot on the seed: all twelve months are
+  // already recorded company-wide, so every uncovered cell is a `◆`. That is
+  // the guard working, and it is why the click test below uses Water — the one
+  // invoice category with nothing recorded at any level.
   await expect(
-    drawer.getByRole('button', { name: 'Ankara Power Plant July: missing' }),
-  ).toBeEnabled();
+    drawer.getByRole('button', { name: /Ankara Power Plant July: recorded for the whole company/ }),
+  ).toBeDisabled();
 
   // The reconciliation line. Without it, "0 of 24" beside twelve existing
   // entries reads as the app having lost data.
   await expect(
-    drawer.getByText(/12 recorded for the whole company rather than a site/),
+    drawer.getByText(
+      /12 entries are recorded for the whole company rather than a site/,
+    ),
+  ).toBeVisible();
+
+  // The double-counting guard: those twelve months are already recorded
+  // company-wide, so the grid marks them and refuses the click rather than
+  // inviting a second row for the same month.
+  const february = drawer.getByRole('button', {
+    name: /Ankara Power Plant February: recorded for the whole company/,
+  });
+  await expect(february).toBeDisabled();
+  await expect(
+    drawer.getByText(/would count that month twice/),
   ).toBeVisible();
 });
 
@@ -74,14 +91,16 @@ test('clicking an open month opens Data Entry on that exact slot', async ({ page
   await login(page, ADMIN_EMAIL);
   await page.getByRole('button', { name: /TonyAI Energy.*per location/s }).click();
 
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: 'Ankara Power Plant July: missing' })
+  const drawer = page.getByRole('dialog');
+  // Water: no records at any level, so its slots are genuinely open.
+  await drawer.getByRole('button', { name: /^Water/ }).click();
+  await drawer
+    .getByRole('button', { name: /Ankara Power Plant July: missing/ })
     .click();
 
   await page.waitForURL(/\/data-entry\?/);
   const url = new URL(page.url());
-  expect(url.searchParams.get('category')).toBe('Electricity');
+  expect(url.searchParams.get('category')).toBe('Water');
   expect(url.searchParams.get('period')).toBe('monthly');
   expect(url.searchParams.get('periodValue')).toBe('July');
   expect(url.searchParams.get('locationId')).toBeTruthy();

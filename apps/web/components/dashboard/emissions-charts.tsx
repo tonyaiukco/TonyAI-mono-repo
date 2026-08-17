@@ -51,9 +51,9 @@ export function EmissionsCharts({ subsidiaries }: EmissionsChartsProps) {
   const total = statusCounts.complete + statusCounts.incomplete + statusCounts.missing;
 
   const statusDistribution = [
-    { name: 'Complete', value: statusCounts.complete, color: COLORS.complete, percent: Math.round((statusCounts.complete / total) * 100) },
-    { name: 'Partial', value: statusCounts.incomplete, color: COLORS.incomplete, percent: Math.round((statusCounts.incomplete / total) * 100) },
-    { name: 'Missing', value: statusCounts.missing, color: COLORS.missing, percent: Math.round((statusCounts.missing / total) * 100) },
+    { name: 'Complete', value: statusCounts.complete, color: COLORS.complete, percent: total > 0 ? Math.round((statusCounts.complete / total) * 100) : 0 },
+    { name: 'Partial', value: statusCounts.incomplete, color: COLORS.incomplete, percent: total > 0 ? Math.round((statusCounts.incomplete / total) * 100) : 0 },
+    { name: 'Missing', value: statusCounts.missing, color: COLORS.missing, percent: total > 0 ? Math.round((statusCounts.missing / total) * 100) : 0 },
   ];
 
   const CustomTooltip = ({ active, payload, label }: any) => {

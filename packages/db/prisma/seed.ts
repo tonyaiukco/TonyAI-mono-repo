@@ -369,7 +369,6 @@ async function main() {
         designatedPerson: s.designatedPerson,
         contactEmail: s.contactEmail,
         contactPhone: s.contactPhone,
-        trackingGranularity: s.trackingGranularity ?? TrackingGranularity.subsidiary,
       },
       create: {
         id: s.id,
@@ -385,7 +384,6 @@ async function main() {
         contactPhone: s.contactPhone,
         reportingStatus: s.status,
         includedScopes: [1, 2],
-        trackingGranularity: s.trackingGranularity ?? TrackingGranularity.subsidiary,
       },
     });
   }
@@ -396,6 +394,19 @@ async function main() {
       where: { id: l.id },
       update: { geographyCode: l.geographyCode },
       create: l,
+    });
+  }
+
+  // AFTER the locations exist, never before. `location` granularity is only
+  // legal for a subsidiary that owns at least one location — the API refuses
+  // the switch otherwise — and a seed that died between the two writes would
+  // leave a state the product itself cannot create, in which every invoice cell
+  // reports N/0 and goes green.
+  for (const s of SUBSIDIARIES) {
+    if (!s.trackingGranularity) continue;
+    await prisma.subsidiary.update({
+      where: { id: s.id },
+      data: { trackingGranularity: s.trackingGranularity },
     });
   }
 

@@ -229,7 +229,10 @@ export default function CarbonDashboard() {
     const params = new URLSearchParams({
       subsidiaryId,
       category,
-      year: String(DEFAULT_REPORTING_YEAR),
+      // The year the GRID was fetched for, not the module default. Equal today;
+      // the first year picker would otherwise send the user to a different year
+      // than the one they were looking at.
+      year: String(matrix?.reportingYear ?? DEFAULT_REPORTING_YEAR),
       locationId,
       period: 'monthly',
       periodValue: month,
@@ -455,6 +458,7 @@ export default function CarbonDashboard() {
         reportingYear={matrix?.reportingYear ?? null}
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
+        canEnter={user?.role === 'super_admin' || user?.role === 'data_entry'}
         onSlotClick={handleSlotClick}
       />
     </div>

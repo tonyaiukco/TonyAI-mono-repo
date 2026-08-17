@@ -100,41 +100,61 @@ export interface InvoiceCoverage {
   unattributedRecords: number;
   nonMonthlyRecords: number;
   missingEvidenceRecords: number;
+  outOfScopeRecords: number;
 }
 
 export function computeInvoiceCoverage(
   records: { locationId: string | null; reportingPeriod: string; periodValue: string; evidenceCount: number }[],
-  locationCount: number,
+  /**
+   * The locations the denominator is built from — the SET, not just its size.
+   *
+   * The count alone was not enough and the gap was reachable: the denominator
+   * drops a location created after the reported year ended, while the numerator
+   * keyed on the record's own `locationId` and happily counted its invoices. A
+   * subsidiary whose only 2025 invoice sits at a site created in 2026 reported
+   * `covered 1, required 0` — a green "Complete" cell reading `1/0`, and the
+   * drill-down beneath it rendering no rows at all. Restricting the numerator to
+   * the same set is what makes `covered <= required` true rather than hoped for.
+   */
+  locationIds: readonly string[],
 ): InvoiceCoverage {
+  const inScope = new Set(locationIds);
   const covered = new Set<string>();
   let unattributedRecords = 0;
   let nonMonthlyRecords = 0;
   let missingEvidenceRecords = 0;
+  let outOfScopeRecords = 0;
 
   for (const r of records) {
     if (!r.locationId) {
       unattributedRecords += 1;
+    } else if (!inScope.has(r.locationId)) {
+      // Attributed, but to a site outside this year's denominator. Counted
+      // rather than dropped: it is the only signal that an invoice exists for a
+      // site the grid cannot show a row for.
+      outOfScopeRecords += 1;
     } else if (r.reportingPeriod !== 'monthly') {
       nonMonthlyRecords += 1;
     } else if (r.evidenceCount === 0) {
       missingEvidenceRecords += 1;
     } else {
       const month = r.periodValue.trim().toLowerCase();
-      // Only a real month closes a slot. Without this the denominator rests on
-      // a rule enforced in ANOTHER module (`isValidPeriodValue`), and 24
+      // Only a real month closes a slot. Without this the denominator would rest
+      // on a rule enforced in ANOTHER module (`isValidPeriodValue`), and 24
       // records at one location could report 24-of-24 while the second location
-      // held nothing. `covered <= required` is an invariant here, not a hope.
+      // held nothing.
       if (MONTH_INDEX[month] !== undefined) covered.add(`${r.locationId}\u0000${month}`);
       else nonMonthlyRecords += 1;
     }
   }
 
   return {
-    required: locationCount * MONTH_LABEL.length,
+    required: locationIds.length * MONTH_LABEL.length,
     covered,
     unattributedRecords,
     nonMonthlyRecords,
     missingEvidenceRecords,
+    outOfScopeRecords,
   };
 }
 
@@ -447,10 +467,11 @@ export class EmissionsService {
           // system rather than when it opened, so this is a floor, not a
           // reconstruction; it is strictly better than counting sites that did
           // not exist yet.
-          _count: {
-            select: {
-              locations: yearEnd ? { where: { createdAt: { lte: yearEnd } } } : true,
-            },
+          // The IDS, not a count: the numerator has to be restricted to the
+          // same set the denominator is built from (see computeInvoiceCoverage).
+          locations: {
+            select: { id: true },
+            ...(yearEnd ? { where: { createdAt: { lte: yearEnd } } } : {}),
           },
         },
         orderBy: { legalName: 'asc' },
@@ -471,7 +492,8 @@ export class EmissionsService {
     const matrixRows: TrackingMatrixRow[] = subs.map((sub) => {
       let totalTCo2e = 0;
       let completeCount = 0;
-      const locationCount = sub._count.locations;
+      const locationIds = sub.locations.map((l) => l.id);
+      const locationCount = locationIds.length;
       const byLocation = sub.trackingGranularity === 'location';
 
       let uncalculatedRowCount = 0;
@@ -503,7 +525,7 @@ export class EmissionsService {
         // Computed even for an empty cell: "0 of 24" is the whole point of the
         // rule for a category nobody has started, and it is what tells a user
         // the size of the job rather than just that it is unfinished.
-        if (invoiceTracked) coverage = computeInvoiceCoverage([], locationCount);
+        if (invoiceTracked) coverage = computeInvoiceCoverage([], locationIds);
 
         if (recs.length === 0) {
           status = 'missing';
@@ -543,7 +565,7 @@ export class EmissionsService {
           lastUpdate = new Date(latest).toISOString();
 
           if (invoiceTracked) {
-            coverage = computeInvoiceCoverage(committed, locationCount);
+            coverage = computeInvoiceCoverage(committed, locationIds);
             // `missing` means "no record exists for this cell" — the contract's
             // own definition. A cell holding twelve approved, evidence-backed
             // records whose slots simply are not closed is INCOMPLETE, not
@@ -584,6 +606,7 @@ export class EmissionsService {
                   unattributedRecords: coverage.unattributedRecords,
                   nonMonthlyRecords: coverage.nonMonthlyRecords,
                   missingEvidenceRecords: coverage.missingEvidenceRecords,
+                  outOfScopeRecords: coverage.outOfScopeRecords,
                 },
               }
             : {}),
@@ -690,7 +713,7 @@ export class EmissionsService {
             periodValue: r.periodValue,
             evidenceCount: r._count.evidence,
           })),
-          locations.length,
+          locations.map((l) => l.id),
         );
 
         return {
@@ -700,6 +723,20 @@ export class EmissionsService {
           unattributedRecords: coverage.unattributedRecords,
           nonMonthlyRecords: coverage.nonMonthlyRecords,
           missingEvidenceRecords: coverage.missingEvidenceRecords,
+          outOfScopeRecords: coverage.outOfScopeRecords,
+          // Which months already hold a WHOLE-COMPANY entry. Without this the
+          // grid invites the user to key a site invoice for a month that is
+          // already recorded at company level, and both rows then feed the
+          // total — the same month counted twice, with nothing anywhere saying
+          // so. The rule cannot count them, but the screen must not pretend
+          // they do not exist.
+          companyLevelMonths: [
+            ...new Set(
+              recs
+                .filter((r) => !r.locationId && r.reportingPeriod === 'monthly')
+                .map((r) => r.periodValue.trim().toLowerCase()),
+            ),
+          ],
           locations: locations.map((loc) => ({
             locationId: loc.id,
             locationName: loc.name,

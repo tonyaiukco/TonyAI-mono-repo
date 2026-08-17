@@ -1630,6 +1630,17 @@ export interface CellCoverage {
    * explain its own shortfall — which is the single thing it is for.
    */
   missingEvidenceRecords: number;
+  /**
+   * Committed entries attributed to a site that is NOT in this year's
+   * denominator — in practice a location created after the year ended.
+   *
+   * Reported rather than dropped: the grid cannot show a row for such a site,
+   * so without this the invoice simply vanishes. It is also what keeps
+   * `covered <= required` true: an earlier cut counted these into the numerator
+   * while the denominator excluded their site, and produced a green "Complete"
+   * cell reading `1/0`.
+   */
+  outOfScopeRecords: number;
 }
 
 /** One subsidiary × category cell of the tracking matrix. */
@@ -1723,6 +1734,19 @@ export interface CategoryCompleteness {
   unattributedRecords: number;
   nonMonthlyRecords: number;
   missingEvidenceRecords: number;
+  outOfScopeRecords: number;
+  /**
+   * Months (lower-cased) that already hold a WHOLE-COMPANY entry for this
+   * category and year.
+   *
+   * They close no site slot — the rule counts one invoice per SITE — but the
+   * screen has to know about them, because inviting a user to key a site
+   * invoice for a month already recorded at company level produces two rows for
+   * one month, both of which feed the emissions total. The uniqueness index
+   * cannot stop it (different `location_id`, different key), and nothing
+   * downstream deduplicates.
+   */
+  companyLevelMonths: string[];
   locations: CompletenessLocationRow[];
 }
 

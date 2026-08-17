@@ -76,7 +76,9 @@ function makeSubsidiary(overrides: Partial<Subsidiary> = {}): Subsidiary {
     // historic behaviour — so a spec that means "measured by location" has to
     // say so out loud.
     trackingGranularity: 'subsidiary',
-    _count: { locations: 0 },
+    // The matrix selects the location IDS now, not a count: the numerator is
+    // restricted to the same set the denominator is built from.
+    locations: [],
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -190,7 +192,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
       makeSubsidiary({
         id: 'sub-1',
         trackingGranularity: 'location',
-        _count: { locations: 2 },
+        locations: [{ id: 'loc-1' }, { id: 'loc-2' }],
       } as Partial<Subsidiary>),
     ]);
 
@@ -225,6 +227,71 @@ describe('EmissionsService.completeness (drill-down)', () => {
       subsidiaryId: 'sub-1',
       createdAt: { lte: new Date('2024-12-31T23:59:59.999Z') },
     });
+  });
+
+  it('queries only the reported year and only committed statuses', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+
+    await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    // Both clauses were surviving mutants. Dropping the year folds every year's
+    // records into one grid — precisely what the mandatory `year` param exists
+    // to prevent. Dropping the status filter lets a DRAFT close a slot, and
+    // note that this method filters statuses in SQL while `trackingMatrix`
+    // filters them in memory: two mechanisms, and this is the assertion that
+    // stops them drifting.
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.reportingYear).toBe(2024);
+    expect(where.status).toEqual({
+      in: [
+        ActivityRecordStatus.submitted,
+        ActivityRecordStatus.under_review,
+        ActivityRecordStatus.approved,
+        ActivityRecordStatus.locked,
+      ],
+    });
+    expect(where.subsidiaryId).toBe('sub-1');
+  });
+
+  it('names the months that already hold a whole-company entry', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice('loc-1', 'January'),
+      // Company-level: closes no site slot, but the screen must not invite the
+      // user to key a site invoice for a month that is already recorded — both
+      // rows would feed the emissions total for that month.
+      invoice(null as unknown as string, 'February'),
+      invoice(null as unknown as string, 'February'),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+
+    expect(electricity.companyLevelMonths).toEqual(['february']);
+    expect(electricity.unattributedRecords).toBe(2);
+    // ...and February is still an OPEN site slot, because the rule counts sites.
+    const ankara = electricity.locations.find((l) => l.locationId === 'loc-1')!;
+    expect(ankara.months.find((m) => m.month === 'February')!.covered).toBe(false);
+  });
+
+  it('never counts an invoice at a site outside the denominator', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    // A location created after the year ended is dropped from the denominator.
+    // Its invoices used to count into the numerator anyway, giving
+    // `covered 1, required 0` — a green "Complete" cell reading 1/0, over a
+    // grid with no row to explain it.
+    prisma.location.findMany.mockResolvedValue([]);
+    prisma.activityRecord.findMany.mockResolvedValue([invoice('loc-future', 'January')]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+
+    expect(electricity.required).toBe(0);
+    expect(electricity.covered).toBe(0);
+    expect(electricity.covered).toBeLessThanOrEqual(electricity.required);
+    // Declared rather than silently dropped — it is the only trace of an
+    // invoice the grid cannot draw a row for.
+    expect(electricity.outOfScopeRecords).toBe(1);
   });
 
   it('reports every invoice-tracked category, including one with nothing recorded', async () => {
@@ -567,7 +634,7 @@ describe('EmissionsService.trackingMatrix', () => {
       makeSubsidiary({
         id: 'sub-1',
         trackingGranularity: 'location',
-        _count: { locations: 2 },
+        locations: [{ id: 'loc-1' }, { id: 'loc-2' }],
       } as Partial<Subsidiary>);
 
     /** A committed monthly invoice for one location. */
@@ -623,7 +690,7 @@ describe('EmissionsService.trackingMatrix', () => {
         makeSubsidiary({
           id: 'sub-1',
           trackingGranularity: 'location',
-          _count: { locations: 1 },
+          locations: [{ id: 'loc-1' }],
         } as Partial<Subsidiary>),
       ]);
       const months = [
@@ -698,7 +765,10 @@ describe('EmissionsService.trackingMatrix', () => {
     it('leaves a subsidiary-granularity row on the old rule entirely', async () => {
       const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([
-        makeSubsidiary({ id: 'sub-1', _count: { locations: 4 } } as Partial<Subsidiary>),
+        makeSubsidiary({
+        id: 'sub-1',
+        locations: [{ id: 'l1' }, { id: 'l2' }, { id: 'l3' }, { id: 'l4' }],
+      } as Partial<Subsidiary>),
       ]);
       prisma.activityRecord.findMany.mockResolvedValue([
         // One committed record with its file — complete under the old rule,
@@ -822,7 +892,8 @@ describe('EmissionsService.trackingMatrix', () => {
       // filled — and a closed year turns red with nobody having decided
       // anything.
       const select = prisma.subsidiary.findMany.mock.calls[0][0].select;
-      expect(select._count.select.locations).toEqual({
+      expect(select.locations).toEqual({
+        select: { id: true },
         where: { createdAt: { lte: new Date('2024-12-31T23:59:59.999Z') } },
       });
     });

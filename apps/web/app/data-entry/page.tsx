@@ -374,12 +374,12 @@ function DataEntryPageInner() {
         // renders as a silently blank control rather than an error. Applied
         // here, with `locs` in hand, so the form is already pointed at the site
         // whose month the user clicked.
-        if (
+        const validLocation =
           wantedLocation &&
           locs.some((l) => l.id === wantedLocation && l.subsidiaryId === resolvedSub)
-        ) {
-          setLocationId(wantedLocation);
-        }
+            ? wantedLocation
+            : undefined;
+        if (validLocation) setLocationId(validLocation);
 
         if (wantedCategory && (CATEGORIES as readonly string[]).includes(wantedCategory)) {
           deepLink.current = {
@@ -387,7 +387,12 @@ function DataEntryPageInner() {
             year: (REPORTING_YEARS as readonly number[]).includes(wantedYear)
               ? wantedYear
               : DEFAULT_REPORTING_YEAR,
-            ...(wantedLocation ? { locationId: wantedLocation } : {}),
+            // The VALIDATED value, not the raw one. They diverged: the form
+            // control used the checked value while the matcher below narrowed
+            // on whatever the URL said, so a rejected foreign location silently
+            // suppressed the "records already exist" notice and served a blank
+            // form instead.
+            ...(validLocation ? { locationId: validLocation } : {}),
             ...(validPeriod ? { period: validPeriod } : {}),
             ...(validPeriodValue ? { periodValue: validPeriodValue } : {}),
           };
@@ -422,6 +427,11 @@ function DataEntryPageInner() {
     if (recordsLoading || !subsidiaryId || recordsFetchedFor !== subsidiaryId) return;
     deepLinkHandled.current = true;
 
+    // Compared case-insensitively, like the coverage rule: the grid keys slots
+    // on a normalised month while this matched exactly, so a record stored as
+    // "july" left the slot looking open AND gave a blank form on the click —
+    // two rows for one month.
+    //
     // Narrowed by whatever the link actually named. A grid slot names all four,
     // so "several records exist" — the answer a matrix cell has to settle for —
     // stops being the outcome for the one caller that knows precisely which
@@ -432,7 +442,8 @@ function DataEntryPageInner() {
         r.reportingYear === wanted.year &&
         (wanted.locationId === undefined || r.locationId === wanted.locationId) &&
         (wanted.period === undefined || r.reportingPeriod === wanted.period) &&
-        (wanted.periodValue === undefined || r.periodValue === wanted.periodValue),
+        (wanted.periodValue === undefined ||
+          r.periodValue.trim().toLowerCase() === wanted.periodValue.toLowerCase()),
     );
     if (matches.length === 1) {
       loadRecord(matches[0]);

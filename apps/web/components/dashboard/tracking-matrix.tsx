@@ -111,7 +111,7 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCateg
                 return (
                   <div
                     key={row.subsidiaryId}
-                    className="grid grid-cols-[200px_repeat(11,1fr)_40px] gap-2 px-6 py-3 transition-colors duration-200 hover:bg-[#F5F5F7] group"
+                    className="grid grid-cols-[200px_repeat(11,1fr)_40px] items-center gap-2 px-6 py-3 transition-colors duration-200 hover:bg-[#F5F5F7] group"
                   >
                     {/* Subsidiary Info */}
                     <button
