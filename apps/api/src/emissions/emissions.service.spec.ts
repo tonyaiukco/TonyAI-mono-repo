@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { NotFoundException } from '@nestjs/common';
 import {
   ActivityRecordStatus,
   type ActivityRecord,
@@ -16,6 +17,10 @@ function createPrismaMock() {
       findMany: vi.fn(),
     },
     subsidiary: {
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+    },
+    location: {
       findMany: vi.fn(),
     },
   };
@@ -71,7 +76,9 @@ function makeSubsidiary(overrides: Partial<Subsidiary> = {}): Subsidiary {
     // historic behaviour — so a spec that means "measured by location" has to
     // say so out loud.
     trackingGranularity: 'subsidiary',
-    _count: { locations: 0 },
+    // The matrix selects the location IDS now, not a count: the numerator is
+    // restricted to the same set the denominator is built from.
+    locations: [],
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -99,6 +106,212 @@ function dataEntry(overrides: Partial<RequestUser> = {}): RequestUser {
     ...overrides,
   };
 }
+
+describe('EmissionsService.completeness (drill-down)', () => {
+  let prisma: PrismaMock;
+  let service: EmissionsService;
+
+  const LOCATIONS = [
+    { id: 'loc-1', name: 'Ankara Power Plant' },
+    { id: 'loc-2', name: 'Istanbul HQ' },
+  ];
+
+  beforeEach(() => {
+    seq = 0;
+    prisma = createPrismaMock();
+    service = new EmissionsService(prisma as unknown as PrismaService);
+    prisma.location.findMany.mockResolvedValue(LOCATIONS);
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.subsidiary.findUnique.mockResolvedValue({ trackingGranularity: 'location' });
+  });
+
+  const invoice = (locationId: string, periodValue: string, over: Partial<ActivityRecord> = {}) =>
+    makeRecord({
+      subsidiaryId: 'sub-1',
+      category: 'Electricity',
+      reportingPeriod: 'monthly',
+      periodValue,
+      locationId,
+      status: ActivityRecordStatus.approved,
+      _count: { evidence: 1 },
+      ...over,
+    } as Partial<ActivityRecord>);
+
+  it('is not found for a subsidiary outside the access set, and never queries', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+
+    await expect(
+      service.completeness(user, { subsidiaryId: 'sub-999', year: 2024 }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    // Not found rather than forbidden, and refused before any query, so the
+    // response cannot confirm the row exists.
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+    expect(prisma.location.findMany).not.toHaveBeenCalled();
+  });
+
+  it('returns no categories for a subsidiary measured as a whole', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findUnique.mockResolvedValue({ trackingGranularity: 'subsidiary' });
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    // Empty is the honest answer, not zeroes: the rule does not apply, and the
+    // granularity comes back so a caller can say which of those it is seeing.
+    expect(d.categories).toEqual([]);
+    expect(d.trackingGranularity).toBe('subsidiary');
+    expect(d.locationCount).toBe(2);
+  });
+
+  it('marks each (location, month) slot, closed and open', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice('loc-1', 'January'),
+      invoice('loc-1', 'March'),
+      invoice('loc-2', 'January'),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+    const ankara = electricity.locations.find((l) => l.locationId === 'loc-1')!;
+
+    expect(ankara.locationName).toBe('Ankara Power Plant');
+    expect(ankara.months).toHaveLength(12);
+    expect(ankara.months.filter((m) => m.covered).map((m) => m.month)).toEqual([
+      'January',
+      'March',
+    ]);
+    // The open months are what the drawer renders; February must be one of them.
+    expect(ankara.months.find((m) => m.month === 'February')!.covered).toBe(false);
+  });
+
+  it('agrees with the matrix cell it drills into', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const records = [invoice('loc-1', 'January'), invoice('loc-2', 'February')];
+    prisma.activityRecord.findMany.mockResolvedValue(records);
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({
+        id: 'sub-1',
+        trackingGranularity: 'location',
+        locations: [{ id: 'loc-1' }, { id: 'loc-2' }],
+      } as Partial<Subsidiary>),
+    ]);
+
+    const drill = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const matrix = await service.trackingMatrix(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    const drillElectricity = drill.categories.find((c) => c.category === 'Electricity')!;
+    const cell = matrix.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+    // Both read the same `computeInvoiceCoverage`. This assertion is what makes
+    // that structural fact observable: a drill-down free to disagree with the
+    // cell that opened it is a second implementation of a compliance
+    // denominator, and the user would have no way to know which is right.
+    expect(drillElectricity.covered).toBe(cell.coverage!.covered);
+    expect(drillElectricity.required).toBe(cell.coverage!.required);
+    // ...and the slot grid must sum to the same figure.
+    const closedSlots = drillElectricity.locations
+      .flatMap((l) => l.months)
+      .filter((m) => m.covered).length;
+    expect(closedSlots).toBe(cell.coverage!.covered);
+  });
+
+  it('counts only locations that existed by the end of the reported year', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+
+    await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    // Same rule as the matrix multiplier, for the same reason: a grid with a
+    // row for a site that did not exist asks the user to explain an absence
+    // that was never possible.
+    expect(prisma.location.findMany.mock.calls[0][0].where).toEqual({
+      subsidiaryId: 'sub-1',
+      createdAt: { lte: new Date('2024-12-31T23:59:59.999Z') },
+    });
+  });
+
+  it('queries only the reported year and only committed statuses', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+
+    await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    // Both clauses were surviving mutants. Dropping the year folds every year's
+    // records into one grid — precisely what the mandatory `year` param exists
+    // to prevent. Dropping the status filter lets a DRAFT close a slot, and
+    // note that this method filters statuses in SQL while `trackingMatrix`
+    // filters them in memory: two mechanisms, and this is the assertion that
+    // stops them drifting.
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.reportingYear).toBe(2024);
+    expect(where.status).toEqual({
+      in: [
+        ActivityRecordStatus.submitted,
+        ActivityRecordStatus.under_review,
+        ActivityRecordStatus.approved,
+        ActivityRecordStatus.locked,
+      ],
+    });
+    expect(where.subsidiaryId).toBe('sub-1');
+  });
+
+  it('names the months that already hold a whole-company entry', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice('loc-1', 'January'),
+      // Company-level: closes no site slot, but the screen must not invite the
+      // user to key a site invoice for a month that is already recorded — both
+      // rows would feed the emissions total for that month.
+      invoice(null as unknown as string, 'February'),
+      invoice(null as unknown as string, 'February'),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+
+    expect(electricity.companyLevelMonths).toEqual(['february']);
+    expect(electricity.unattributedRecords).toBe(2);
+    // ...and February is still an OPEN site slot, because the rule counts sites.
+    const ankara = electricity.locations.find((l) => l.locationId === 'loc-1')!;
+    expect(ankara.months.find((m) => m.month === 'February')!.covered).toBe(false);
+  });
+
+  it('never counts an invoice at a site outside the denominator', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    // A location created after the year ended is dropped from the denominator.
+    // Its invoices used to count into the numerator anyway, giving
+    // `covered 1, required 0` — a green "Complete" cell reading 1/0, over a
+    // grid with no row to explain it.
+    prisma.location.findMany.mockResolvedValue([]);
+    prisma.activityRecord.findMany.mockResolvedValue([invoice('loc-future', 'January')]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+
+    expect(electricity.required).toBe(0);
+    expect(electricity.covered).toBe(0);
+    expect(electricity.covered).toBeLessThanOrEqual(electricity.required);
+    // Declared rather than silently dropped — it is the only trace of an
+    // invoice the grid cannot draw a row for.
+    expect(electricity.outOfScopeRecords).toBe(1);
+  });
+
+  it('reports every invoice-tracked category, including one with nothing recorded', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    expect(d.categories.map((c) => c.category)).toEqual([
+      'Electricity',
+      'Natural Gas',
+      'Water',
+    ]);
+    // A category nobody has started still shows its shape: 2 locations x 12
+    // open months. "0 of 24" tells the user the size of the job.
+    const water = d.categories.find((c) => c.category === 'Water')!;
+    expect(water.required).toBe(24);
+    expect(water.covered).toBe(0);
+    expect(water.locations.flatMap((l) => l.months).every((m) => !m.covered)).toBe(true);
+  });
+});
 
 describe('EmissionsService.summary', () => {
   let prisma: PrismaMock;
@@ -421,7 +634,7 @@ describe('EmissionsService.trackingMatrix', () => {
       makeSubsidiary({
         id: 'sub-1',
         trackingGranularity: 'location',
-        _count: { locations: 2 },
+        locations: [{ id: 'loc-1' }, { id: 'loc-2' }],
       } as Partial<Subsidiary>);
 
     /** A committed monthly invoice for one location. */
@@ -477,7 +690,7 @@ describe('EmissionsService.trackingMatrix', () => {
         makeSubsidiary({
           id: 'sub-1',
           trackingGranularity: 'location',
-          _count: { locations: 1 },
+          locations: [{ id: 'loc-1' }],
         } as Partial<Subsidiary>),
       ]);
       const months = [
@@ -552,7 +765,10 @@ describe('EmissionsService.trackingMatrix', () => {
     it('leaves a subsidiary-granularity row on the old rule entirely', async () => {
       const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([
-        makeSubsidiary({ id: 'sub-1', _count: { locations: 4 } } as Partial<Subsidiary>),
+        makeSubsidiary({
+        id: 'sub-1',
+        locations: [{ id: 'l1' }, { id: 'l2' }, { id: 'l3' }, { id: 'l4' }],
+      } as Partial<Subsidiary>),
       ]);
       prisma.activityRecord.findMany.mockResolvedValue([
         // One committed record with its file — complete under the old rule,
@@ -676,7 +892,8 @@ describe('EmissionsService.trackingMatrix', () => {
       // filled — and a closed year turns red with nobody having decided
       // anything.
       const select = prisma.subsidiary.findMany.mock.calls[0][0].select;
-      expect(select._count.select.locations).toEqual({
+      expect(select.locations).toEqual({
+        select: { id: true },
         where: { createdAt: { lte: new Date('2024-12-31T23:59:59.999Z') } },
       });
     });

@@ -11,6 +11,9 @@ interface KPICardsProps {
    *  carries the same title WITH a year, so leaving this one bare puts two
    *  identically-titled blocks on the page, only one of them dated. */
   reportingYear?: number | null;
+  /** How many rows are measured by the WP17 invoice rule. The completion
+   *  percentage means something different for those, so the card says so. */
+  byLocationCount?: number;
 }
 
 function formatEmissions(value: number): string {
@@ -95,12 +98,18 @@ interface DataStatusCardProps {
   locations: number | null;
   completionRate: number;
   reportingYear?: number | null;
+  /** How many rows are measured by the invoice rule — the denominator behind
+   *  `completionRate` differs for those, and the card has to say so. */
+  byLocationCount: number;
 }
 
-function DataStatusCard({ complete, partial, missing, subsidiaries, locations, completionRate, reportingYear }: DataStatusCardProps) {
+function DataStatusCard({ complete, partial, missing, subsidiaries, locations, completionRate, reportingYear, byLocationCount }: DataStatusCardProps) {
   const total = complete + partial + missing;
-  const completePercent = (complete / total) * 100;
-  const partialPercent = (partial / total) * 100;
+  // `total === 0` happens on a tenant with no subsidiaries yet, and produced a
+  // literal `NaN%` bar width. Untested edge, so it survived until the matrix
+  // was rebuilt around it.
+  const completePercent = total > 0 ? (complete / total) * 100 : 0;
+  const partialPercent = total > 0 ? (partial / total) * 100 : 0;
   
   return (
     <div className="rounded-xl border border-border bg-white p-5 shadow-sm">
@@ -121,6 +130,22 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
         </span>
       </div>
       
+      {/* Says what the percentage is a percentage OF. A subsidiary switched to
+          location-level tracking replaces one yes/no verdict with a count of
+          monthly invoices, so this figure can fall without any data changing —
+          and a number that drops on its own reads as a fault unless the screen
+          says otherwise. */}
+      {byLocationCount > 0 && (
+        <p className="-mt-2 mb-4 text-xs text-[#6E6E73]">
+          {byLocationCount === 1
+            ? '1 company is'
+            : `${byLocationCount} companies are`}{' '}
+          measured per location: their electricity, gas and water need one
+          invoice per site per month, so those categories count as complete only
+          when every month is in.
+        </p>
+      )}
+
       {/* Progress bar */}
       <div className="h-4 rounded-full bg-[#F5F5F7] overflow-hidden mb-5">
         <div className="h-full flex">
@@ -177,7 +202,7 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
   );
 }
 
-export function KPICards({ data, reportingYear }: KPICardsProps) {
+export function KPICards({ data, reportingYear, byLocationCount = 0 }: KPICardsProps) {
   return (
     <div className="space-y-5">
       {/* Emissions KPIs - Executive Level */}
@@ -221,6 +246,7 @@ export function KPICards({ data, reportingYear }: KPICardsProps) {
         locations={data.totalLocations}
         completionRate={data.calculationCompletionRate}
         reportingYear={reportingYear}
+        byLocationCount={byLocationCount}
       />
     </div>
   );

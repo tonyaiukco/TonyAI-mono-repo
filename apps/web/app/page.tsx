@@ -42,6 +42,7 @@ import type {
   DashboardKpi,
   EmissionsSummary,
   Subsidiary,
+  TrackingMatrixRow,
   SubsidiaryDTO,
   TrackingMatrixDTO,
 } from '@/lib/types';
@@ -65,7 +66,10 @@ export default function CarbonDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Drill-down detail sheet (view model mapped from the live tracking matrix)
-  const [selectedSubsidiary, setSelectedSubsidiary] = useState<Subsidiary | null>(null);
+  // The matrix ROW, not the mock view model: the drawer needs `coverage`,
+  // `trackingGranularity` and `locationCount`, all of which
+  // `matrixToSubsidiaries` drops.
+  const [selectedRow, setSelectedRow] = useState<TrackingMatrixRow | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [refreshFailures, setRefreshFailures] = useState(0);
   const inFlight = useRef(false);
@@ -187,8 +191,8 @@ export default function CarbonDashboard() {
   );
   const liveAlerts = useMemo(() => (matrix ? matrixToAlerts(matrix) : []), [matrix]);
 
-  const handleMatrixSubsidiaryClick = (subsidiary: Subsidiary) => {
-    setSelectedSubsidiary(subsidiary);
+  const handleMatrixSubsidiaryClick = (row: TrackingMatrixRow) => {
+    setSelectedRow(row);
     setDetailOpen(true);
   };
 
@@ -196,11 +200,42 @@ export default function CarbonDashboard() {
   // pair is acted on rather than opening the same subsidiary drawer as the row
   // name. Round-1 UAT (DASH-2): the cells advertise "click to view details" and
   // did nothing distinguishable.
-  const handleMatrixCategoryClick = (subsidiary: Subsidiary, category: string) => {
+  const handleMatrixCategoryClick = (row: TrackingMatrixRow, category: string) => {
     const params = new URLSearchParams({
-      subsidiaryId: subsidiary.id,
+      subsidiaryId: row.subsidiaryId,
       category,
       year: String(DEFAULT_REPORTING_YEAR),
+    });
+    router.push(`/data-entry?${params.toString()}`);
+  };
+
+  /**
+   * An open invoice slot names the location, the month and the category, so the
+   * deep link can carry all three. The matrix cell can only offer category +
+   * year, which is why Data Entry answers it with "several records exist, pick
+   * one" — from the grid there is nothing left to guess.
+   */
+  const handleSlotClick = ({
+    subsidiaryId,
+    category,
+    locationId,
+    month,
+  }: {
+    subsidiaryId: string;
+    category: string;
+    locationId: string;
+    month: string;
+  }) => {
+    const params = new URLSearchParams({
+      subsidiaryId,
+      category,
+      // The year the GRID was fetched for, not the module default. Equal today;
+      // the first year picker would otherwise send the user to a different year
+      // than the one they were looking at.
+      year: String(matrix?.reportingYear ?? DEFAULT_REPORTING_YEAR),
+      locationId,
+      period: 'monthly',
+      periodValue: month,
     });
     router.push(`/data-entry?${params.toString()}`);
   };
@@ -388,10 +423,15 @@ export default function CarbonDashboard() {
                 <KPICards
                   data={emissionsKpiData}
                   reportingYear={matrix?.reportingYear ?? null}
+                  byLocationCount={
+                    matrix?.rows.filter(
+                      (r) => r.trackingGranularity === 'location',
+                    ).length ?? 0
+                  }
                 />
 
                 <TrackingMatrix
-                  subsidiaries={matrixSubsidiaries}
+                  rows={matrix?.rows ?? []}
                   reportingYear={matrix?.reportingYear ?? null}
                   onSubsidiaryClick={handleMatrixSubsidiaryClick}
                   onCategoryClick={handleMatrixCategoryClick}
@@ -411,11 +451,15 @@ export default function CarbonDashboard() {
         </div>
       </main>
 
-      {/* Drill-down detail sheet (live matrix view model) */}
+      {/* Drill-down detail sheet — reads the matrix row, and fetches the
+          per-location invoice grid on open (round-1 DASH-3). */}
       <SubsidiaryDetail
-        subsidiary={selectedSubsidiary}
+        row={selectedRow}
+        reportingYear={matrix?.reportingYear ?? null}
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
+        canEnter={user?.role === 'super_admin' || user?.role === 'data_entry'}
+        onSlotClick={handleSlotClick}
       />
     </div>
   );

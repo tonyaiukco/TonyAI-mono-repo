@@ -7,13 +7,12 @@ import {
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet';
-import { Subsidiary, DataStatus } from '@/lib/types';
+import type { Category, DataStatus, TrackingMatrixRow } from '@/lib/types';
+import { InvoiceCoverageGrid } from './invoice-coverage-grid';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Building2,
   Factory,
@@ -23,16 +22,29 @@ import {
   Clock,
   User,
   FileText,
-  MessageSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
-import { useState } from 'react';
 
 interface SubsidiaryDetailProps {
-  subsidiary: Subsidiary | null;
+  /** The matrix row, not the mock view model — the invoice grid needs
+   *  `trackingGranularity` and the per-cell `coverage`, both of which
+   *  `matrixToSubsidiaries` drops. */
+  row: TrackingMatrixRow | null;
+  /** Null when the matrix was fetched without a year; the invoice rule is
+   *  per-year, so the grid is not offered in that case. */
+  reportingYear: number | null;
   open: boolean;
   onClose: () => void;
+  /** Whether this seat may create activity records at all. */
+  canEnter?: boolean;
+  /** Route to Data Entry for one open slot (location + month + category). */
+  onSlotClick?: (params: {
+    subsidiaryId: string;
+    category: Category;
+    locationId: string;
+    month: string;
+  }) => void;
 }
 
 // TonyAI Premium Status Colors
@@ -80,12 +92,12 @@ const statusConfig: Record<DataStatus, {
   },
 };
 
-export function SubsidiaryDetail({ subsidiary, open, onClose }: SubsidiaryDetailProps) {
-  const [notes, setNotes] = useState('');
+export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter = false, onSlotClick }: SubsidiaryDetailProps) {
+  if (!row) return null;
 
-  if (!subsidiary) return null;
-
-  const totalCalculated = subsidiary.categories.filter(c => c.calculationComplete).length;
+  const completionRate = Math.round((row.completeCount / row.categoryCount) * 100);
+  const totalCalculated = row.cells.filter((c) => c.tCo2e !== null).length;
+  const byLocation = row.trackingGranularity === 'location';
 
   const getCompletionColor = (rate: number) => {
     if (rate >= 75) return STATUS_COLORS.complete.text;
@@ -102,11 +114,15 @@ export function SubsidiaryDetail({ subsidiary, open, onClose }: SubsidiaryDetail
               <Building2 className="h-6 w-6 text-primary" />
             </div>
             <div className="flex-1">
-              <SheetTitle className="text-xl text-foreground">{subsidiary.name}</SheetTitle>
+              <SheetTitle className="text-xl text-foreground">{row.subsidiaryName}</SheetTitle>
               <SheetDescription className="flex items-center gap-2 text-muted-foreground">
-                <span>{subsidiary.sector}</span>
+                <span>{row.sector ?? '—'}</span>
                 <span>•</span>
-                <span>{subsidiary.shortName}</span>
+                <span>
+                  {byLocation
+                    ? `Measured per location · ${row.locationCount} ${row.locationCount === 1 ? 'site' : 'sites'}`
+                    : 'Measured as a whole company'}
+                </span>
               </SheetDescription>
             </div>
           </div>
@@ -120,12 +136,12 @@ export function SubsidiaryDetail({ subsidiary, open, onClose }: SubsidiaryDetail
                 <span className="text-sm font-medium text-foreground">Overall Completion</span>
                 <span 
                   className="text-sm font-semibold font-mono"
-                  style={{ color: getCompletionColor(subsidiary.completionRate) }}
+                  style={{ color: getCompletionColor(completionRate) }}
                 >
-                  {subsidiary.completionRate}%
+                  {completionRate}%
                 </span>
               </div>
-              <Progress value={subsidiary.completionRate} className="h-2.5" />
+              <Progress value={completionRate} className="h-2.5" />
             </div>
 
             {/* Quick Stats */}
@@ -136,7 +152,7 @@ export function SubsidiaryDetail({ subsidiary, open, onClose }: SubsidiaryDetail
                   <span className="text-xs">Total Emissions</span>
                 </div>
                 <p className="mt-1.5 text-lg font-semibold text-foreground font-mono">
-                  {subsidiary.totalEmissions.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                  {row.totalTCo2e.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
                   <span className="ml-1 text-xs font-normal text-muted-foreground font-sans">tCO₂e</span>
                 </p>
               </div>
@@ -148,7 +164,7 @@ export function SubsidiaryDetail({ subsidiary, open, onClose }: SubsidiaryDetail
                 <p className="mt-1.5 text-lg font-semibold text-foreground font-mono">
                   {totalCalculated}
                   <span className="ml-1 text-xs font-normal text-muted-foreground font-sans">
-                    / {subsidiary.categories.length} categories
+                    / {row.categoryCount} categories
                   </span>
                 </p>
               </div>
@@ -163,7 +179,7 @@ export function SubsidiaryDetail({ subsidiary, open, onClose }: SubsidiaryDetail
                 Category Status
               </h3>
               <div className="space-y-2">
-                {subsidiary.categories.map((cat) => {
+                {row.cells.map((cat) => {
                   const config = statusConfig[cat.status];
                   const Icon = config.icon;
                   
@@ -178,7 +194,7 @@ export function SubsidiaryDetail({ subsidiary, open, onClose }: SubsidiaryDetail
                           <p className="text-sm font-medium text-foreground">{cat.category}</p>
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <User className="h-3 w-3" />
-                            <span>{cat.responsible}</span>
+                            <span>{row.designatedPerson ?? '—'}</span>
                             {cat.lastUpdate && (
                               <>
                                 <span>•</span>
@@ -192,10 +208,17 @@ export function SubsidiaryDetail({ subsidiary, open, onClose }: SubsidiaryDetail
                         </div>
                       </div>
                       <div className="text-right">
-                        {cat.emission !== null ? (
+                        {cat.coverage ? (
+                          <div>
+                            <p className="text-sm font-semibold text-foreground font-mono tabular-nums">
+                              {cat.coverage.covered}/{cat.coverage.required}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground">invoices</p>
+                          </div>
+                        ) : cat.tCo2e !== null ? (
                           <div>
                             <p className="text-sm font-semibold text-primary font-mono">
-                              {cat.emission.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                              {Math.round(cat.tCo2e).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
                             </p>
                             <p className="text-[10px] text-muted-foreground">tCO₂e</p>
                           </div>
@@ -217,52 +240,37 @@ export function SubsidiaryDetail({ subsidiary, open, onClose }: SubsidiaryDetail
 
             <Separator className="bg-border" />
 
-            {/* Missing Data Points */}
-            {subsidiary.categories.some(c => c.missingFields && c.missingFields.length > 0) && (
+            {/* Which invoices are in, and which are missing (round-1 DASH-3).
+                Only offered for a location-measured subsidiary on a year-scoped
+                matrix — the rule is `locations × 12 months` for ONE year, and
+                offering a grid the numbers cannot support would be worse than
+                offering none. */}
+            {byLocation && reportingYear !== null && (
               <div className="space-y-3">
                 <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <AlertCircle className="h-4 w-4" style={{ color: STATUS_COLORS.incomplete.text }} />
-                  Missing Data Points
+                  <AlertCircle
+                    className="h-4 w-4"
+                    style={{ color: STATUS_COLORS.incomplete.text }}
+                  />
+                  Invoices by site and month
                 </h3>
-                <div className="rounded-xl border p-4" style={{ 
-                  backgroundColor: 'rgba(246, 223, 161, 0.15)',
-                  borderColor: 'rgba(246, 223, 161, 0.4)'
-                }}>
-                  <ul className="space-y-1.5 text-sm text-muted-foreground">
-                    {subsidiary.categories
-                      .filter(c => c.missingFields && c.missingFields.length > 0)
-                      .map((cat) => (
-                        <li key={cat.category} className="flex items-start gap-2">
-                          <span className="font-medium text-foreground">{cat.category}:</span>
-                          <span>{cat.missingFields?.join(', ')}</span>
-                        </li>
-                      ))}
-                  </ul>
-                </div>
+                <InvoiceCoverageGrid
+                  subsidiaryId={row.subsidiaryId}
+                  subsidiaryName={row.subsidiaryName}
+                  reportingYear={reportingYear}
+                  canEnter={canEnter}
+                  onSlotClick={({ category, locationId, month }) =>
+                    onSlotClick?.({
+                      subsidiaryId: row.subsidiaryId,
+                      category,
+                      locationId,
+                      month,
+                    })
+                  }
+                />
               </div>
             )}
 
-            {/* Notes */}
-            <div className="space-y-3">
-              <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <MessageSquare className="h-4 w-4" />
-                Notes & Comments
-              </h3>
-              {subsidiary.notes && (
-                <div className="rounded-xl border border-border bg-secondary/50 p-4 text-sm text-muted-foreground">
-                  {subsidiary.notes}
-                </div>
-              )}
-              <Textarea
-                placeholder="Add a note..."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="min-h-[80px] border-border bg-white text-foreground placeholder:text-[#8A94A6] rounded-xl focus:ring-ring/40"
-              />
-              <Button size="sm" className="w-full rounded-xl bg-primary hover:bg-primary/90">
-                Save Note
-              </Button>
-            </div>
           </div>
         </ScrollArea>
       </SheetContent>
