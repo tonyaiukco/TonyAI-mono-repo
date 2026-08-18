@@ -137,7 +137,7 @@ const statusBadge: Record<
   },
   // Deliberately muted rather than red. A voided record is not a failure or a
   // rejection — it is a figure a reviewer accepted and someone later withdrew
-  // under FR §4.3. Red would read as "this went wrong"; `rejected` already owns
+  // by an audited void. Red would read as "this went wrong"; `rejected` already owns
   // that colour and means something different.
   voided: {
     label: "Voided",
@@ -1385,7 +1385,15 @@ function DataEntryPageInner() {
                                   double-counted month could not tell which one
                                   they were opening. Built as one string: the
                                   same JSX whitespace trap as above. */}
-                              <div className="text-xs text-muted-foreground">
+                              {/* A withdrawn figure is struck through here too:
+                                  the badge already says "Voided", but the
+                                  tonnes beside it read like any other row. */}
+                              <div
+                                className={cn(
+                                  'text-xs text-muted-foreground',
+                                  r.status === 'voided' && 'line-through',
+                                )}
+                              >
                                 {[
                                   r.category,
                                   // `locationName` is optional on the contract,

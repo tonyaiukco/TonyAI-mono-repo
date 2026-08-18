@@ -31,16 +31,14 @@ import { CompletenessQueryDto } from './dto/completeness-query.dto';
 /**
  * Only "committed" records feed the emissions inventory. Drafts are
  * work-in-progress, rejected records are invalid, and VOIDED records have been
- * withdrawn under FR §4.3 — all three are excluded, which keeps analytics
+ * withdrawn by an audited void — all three are excluded, which keeps analytics
  * consistent with the authoritative dataset.
  *
  * Re-exported, not restated. The list itself now lives in `@tonyai/shared-types`
  * beside the status enum, because `targets.service.ts` kept a second copy and
  * nothing tied the two together.
  */
-export const COUNTED_STATUSES: ActivityRecordStatus[] = [
-  ...SHARED_COUNTED_STATUSES,
-] as ActivityRecordStatus[];
+export const COUNTED_STATUSES: ActivityRecordStatus[] = [...SHARED_COUNTED_STATUSES];
 
 /** Statuses that make a tracking-matrix cell "incomplete" (FR §2.2 yellow):
  * the record exists but is not (yet) valid committed data. */

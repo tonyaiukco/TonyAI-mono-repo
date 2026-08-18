@@ -445,7 +445,7 @@ describe('EmissionsService.summary', () => {
     });
   });
 
-  it('counts a VOIDED record towards nothing, anywhere (FR 4.3)', async () => {
+  it('counts a VOIDED record towards nothing, anywhere (the void path)', async () => {
     // The central claim of WP18 PR 2a, asserted by name rather than left to the
     // shape of a status list. A voided record is a figure a reviewer once
     // ACCEPTED and someone later withdrew: if any total still included it, the
@@ -490,6 +490,47 @@ describe('EmissionsService.summary', () => {
     // than pretending nothing was ever there.
     expect(cell.voidedRecordCount).toBe(1);
     expect(cell.recordCount).toBe(1);
+  });
+
+  it('separates the live and withdrawn records in a cell that holds both', async () => {
+    // The single-record test could not tell `recs.length - live.length` from
+    // `recs.length` — both are 1 when the only record is voided. A mixed cell
+    // is what distinguishes them, and it also pins the three things a voided
+    // row must not leak into: the tonnage, the anomaly flag, and "Updated".
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
+    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        status: ActivityRecordStatus.approved,
+        calculation: { tCo2e: 12, factorId: 'f-1' },
+        updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        status: ActivityRecordStatus.voided,
+        anomalyFlag: true,
+        calculation: { tCo2e: 999, factorId: 'f-1' },
+        updatedAt: new Date('2026-06-01T00:00:00.000Z'),
+      }),
+    ]);
+
+    const m = await service.trackingMatrix(user, { year: 2024 });
+    const cell = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+    expect(cell.recordCount).toBe(2);
+    expect(cell.voidedRecordCount).toBe(1);
+    // Only the live figure.
+    expect(cell.tCo2e).toBe(12);
+    // A withdrawn record's anomaly flag describes data that no longer counts.
+    expect(cell.anomaly).toBe(false);
+    // ...and withdrawing something is not an update to what remains, so the
+    // cell must not read "updated in June" because of it.
+    expect(cell.lastUpdate).toBe('2026-01-01T00:00:00.000Z');
   });
 
   it('returns an empty summary for an inaccessible subsidiary without hitting the DB', async () => {

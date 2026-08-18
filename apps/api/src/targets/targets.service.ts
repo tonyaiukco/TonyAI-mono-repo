@@ -25,9 +25,7 @@ import { UpdateTargetDto } from './dto/update-target.dto';
 // standalone literal; a status added to one and forgotten in the other would
 // have a target reporting progress against a different number from the
 // dashboard showing that progress.
-const COMMITTED_STATUSES: ActivityRecordStatus[] = [
-  ...SHARED_COUNTED_STATUSES,
-] as ActivityRecordStatus[];
+const COMMITTED_STATUSES: ActivityRecordStatus[] = [...SHARED_COUNTED_STATUSES];
 
 // Target scope filter → the numeric scope the emissions summary understands.
 const SCOPE_TO_NUMBER: Record<EmissionsScope, number | undefined> = {

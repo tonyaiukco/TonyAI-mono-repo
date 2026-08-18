@@ -203,7 +203,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  /** Withdraw an approved figure from the inventory (FR §4.3), super_admin only. */
+  /** Withdraw an approved figure from the inventory (the void path), super_admin only. */
   voidActivityRecord: (id: string, body: VoidInput) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/void`, {
       method: "POST",

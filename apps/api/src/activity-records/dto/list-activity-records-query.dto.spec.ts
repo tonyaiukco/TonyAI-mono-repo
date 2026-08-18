@@ -58,6 +58,15 @@ describe('ListActivityRecordsQueryDto — status', () => {
     expect(errors).toHaveLength(1);
   });
 
+  it('accepts a filter naming every status that exists', () => {
+    // The upper bound alone left the limit free to be NARROWED without a test
+    // failing — and a limit one short silently 400s a legitimate "show me
+    // everything" filter. Both edges are pinned now, and both derive from the
+    // enum so neither goes stale when a status is added.
+    const { errors } = parse({ status: ACTIVITY_RECORD_STATUSES.join(',') });
+    expect(errors).toHaveLength(0);
+  });
+
   it('rejects a set longer than the number of statuses that exist', () => {
     // DERIVED from the enum, not a hardcoded run of sevens. The literal version
     // silently stopped testing anything the moment `voided` was added: seven

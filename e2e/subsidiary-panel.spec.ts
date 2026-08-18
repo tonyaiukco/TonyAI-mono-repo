@@ -265,7 +265,7 @@ test('a data_entry user can read the panel but change nothing', async ({ page, r
   }).last();
   await expect(locationsRow).toContainText(String(expected.locations));
   const committedRow = page.locator('div', {
-    has: page.getByText('Approved or locked records', { exact: true }),
+    has: page.getByText('Approved, locked or voided records', { exact: true }),
   }).last();
   await expect(committedRow).toContainText(String(expected.terminalRecords));
 });

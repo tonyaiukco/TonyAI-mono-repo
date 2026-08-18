@@ -79,7 +79,7 @@ const STATUS_COLORS: Record<ActivityRecordStatus, string> = {
   approved: 'bg-[#D1F2EB] text-[#1D7A5F] font-semibold',
   rejected: 'bg-[#FEE2E2] text-[#B91C1C] font-semibold',
   locked: 'bg-[#F3E8FF] text-[#7C3AED] font-semibold',
-  // Withdrawn from the inventory (FR §4.3): shown in the neutral grey the
+  // Withdrawn from the inventory (the void path): shown in the neutral grey the
   // draft state uses, struck through, because it contributes to no total on
   // this page and must not read as a figure anyone is still counting.
   voided: 'bg-[#F5F5F7] text-[#6E6E73] font-semibold line-through',
@@ -828,7 +828,19 @@ export default function EmissionsAnalysisPage() {
                               {formatNumber(record.activityValue)}
                             </TableCell>
                             <TableCell className="text-muted-foreground">{unitSymbol(record.activityUnit)}</TableCell>
-                            <TableCell className="text-right font-medium">
+                            {/* A WITHDRAWN figure is struck through and muted
+                                here too, not only on its status badge. The
+                                badge carried the strikethrough while the tonnes
+                                sat in the same weight as every live row, so a
+                                number that counts towards nothing read exactly
+                                like one that counts. */}
+                            <TableCell
+                              className={cn(
+                                'text-right font-medium',
+                                record.status === 'voided' &&
+                                  'font-normal text-muted-foreground line-through',
+                              )}
+                            >
                               {isCalculated(record.calculation) ? (
                                 formatNumber(record.calculation.tCo2e, 2)
                               ) : (
@@ -1111,6 +1123,27 @@ export default function EmissionsAnalysisPage() {
                     with no way to learn why. Kept separate from the variance
                     reason above — one is the submitter's own explanation, this
                     is the reviewer's answer to it. */}
+                {/* A withdrawal, in the reader's terms. Without this a voided
+                    record opens showing its original figure and nothing about
+                    why it left the inventory — the audit trail has the reason,
+                    but `/audit` is super_admin-only, so for every other seat
+                    the record itself is the only place it could appear. */}
+                {selectedRecord.status === "voided" && (
+                  <div className="border-t border-border pt-4">
+                    <h4 className="text-sm font-medium mb-2">
+                      Why this figure was withdrawn
+                    </h4>
+                    <p className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
+                      {selectedRecord.voidReason?.trim() ||
+                        "No reason was recorded — this predates the requirement."}
+                    </p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      It stays on record for the audit trail and counts towards
+                      no total.
+                    </p>
+                  </div>
+                )}
+
                 {selectedRecord.status === "rejected" &&
                   selectedRecord.reviewNote?.trim() && (
                   <div className="border-t border-border pt-4">

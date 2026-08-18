@@ -133,6 +133,37 @@ describe('ReportsService', () => {
     expect(m.incompleteRatio).toBe(0);
   });
 
+  it('leaves withdrawn records out of the denominator, so the ratio still means something', async () => {
+    prisma.activityRecord.groupBy.mockResolvedValue([
+      { status: 'approved', _count: { _all: 10 } },
+      { status: 'draft', _count: { _all: 2 } },
+      { status: 'voided', _count: { _all: 5 } },
+    ]);
+
+    const m = await service.meta(admin, 2024);
+
+    // `committed + incomplete` is meant to EXHAUST `totalCount` — that identity
+    // is what makes `incompleteRatio` a ratio of anything. A voided record
+    // belongs to neither, and the report's own ledger does not contain it, so
+    // leaving it in the denominator would dilute the data-quality figure with
+    // records the document never shows.
+    expect(m.totalCount).toBe(12);
+    expect(m.committedCount + m.incompleteCount).toBe(m.totalCount);
+    expect(m.incompleteRatio).toBeCloseTo(2 / 12);
+  });
+
+  it('does not call a year approved when every record in it was withdrawn', async () => {
+    prisma.activityRecord.groupBy.mockResolvedValue([
+      { status: 'voided', _count: { _all: 3 } },
+    ]);
+
+    // Nothing is reported for the year, so "approved" would be a compliance
+    // claim about an empty inventory.
+    const m = await service.meta(admin, 2024);
+    expect(m.totalCount).toBe(0);
+    expect(m.status).toBe('contains_incomplete_data');
+  });
+
   it('meta reports draft when records await review (none incomplete)', async () => {
     prisma.activityRecord.groupBy.mockResolvedValue([
       { status: 'approved', _count: { _all: 8 } },

@@ -5,7 +5,7 @@ import { IsString, MaxLength, MinLength } from 'class-validator';
  * The body of POST /api/v1/activity-records/:id/void.
  * Mirrors `VoidInput` in `@tonyai/shared-types`.
  *
- * The reason is REQUIRED, and that is FR §4.3 rather than politeness: a
+ * The reason is REQUIRED, and that is a compliance control rather than politeness: a
  * withdrawal removes a figure a reviewer accepted from the reported inventory,
  * and an unexplained one is indistinguishable in the audit trail from a
  * mistake. `MinLength(10)` for the same reason a rejection carries a mandatory

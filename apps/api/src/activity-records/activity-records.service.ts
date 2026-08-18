@@ -12,6 +12,7 @@ import {
 } from '@tonyai/db';
 import {
   CATEGORY_SCOPE_MAP,
+  COUNTED_STATUSES,
   isCalculated,
   isEvidenceRequired,
   type ActivityCalculationSnapshot,
@@ -86,12 +87,11 @@ const SUBMITTABLE_STATUSES = new Set<ActivityRecordStatus>([
 // would add noise). Warning-based, never auto-rejection (VAR §8).
 const ANOMALY_THRESHOLD = 0.5;
 const BASELINE_MAX_PERIODS = 3;
-const BASELINE_STATUSES: ActivityRecordStatus[] = [
-  ActivityRecordStatus.submitted,
-  ActivityRecordStatus.under_review,
-  ActivityRecordStatus.approved,
-  ActivityRecordStatus.locked,
-];
+// The SAME list the inventory counts — a sixth hand-written copy of it lived
+// here, character-identical, in the file this rule is most likely to be edited
+// from. A record that counts towards the totals is exactly a record that should
+// inform the baseline, so the two can never legitimately differ.
+const BASELINE_STATUSES: ActivityRecordStatus[] = [...COUNTED_STATUSES];
 
 const MONTHS = [
   'january', 'february', 'march', 'april', 'may', 'june',
@@ -796,7 +796,7 @@ export class ActivityRecordsService {
   }
 
   /**
-   * Withdraw an APPROVED figure from the inventory — FR §4.3's revision rule.
+   * Withdraw an APPROVED figure from the inventory — the revision elements FR §4.3 requires.
    *
    * `approved` and `locked` are immutable, and that is correct: a figure a
    * reviewer accepted must not be quietly edited away. But it left a record
@@ -939,7 +939,7 @@ export class ActivityRecordsService {
       status === ActivityRecordStatus.approved ||
       status === ActivityRecordStatus.rejected ||
       status === ActivityRecordStatus.under_review;
-    // FR §4.3 wants three things recorded for a withdrawal — reason, actor,
+    // a revision entry needs three things recorded for a withdrawal — reason, actor,
     // timestamp — and they are stamped here for the same reason a review
     // outcome is: so the screen does not have to reconstruct them from the
     // audit log, and so a row carries its own provenance.
@@ -992,7 +992,7 @@ export class ActivityRecordsService {
           ? { varianceReason: extra.varianceReason }
           : {}),
         // A void takes a figure OUT of the inventory, so the trail has to hold
-        // what the figure was — FR §4.3's "original value must remain visible".
+        // what the figure was — FR §4.3's "original value visibility".
         // Every other transition leaves the number where anyone can still read
         // it; this one is the only case where the audit row is the last place
         // the withdrawn value is reported alongside the reason.

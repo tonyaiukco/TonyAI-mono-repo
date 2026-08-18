@@ -239,6 +239,24 @@ export function StatusCell({
               </div>
             )}
 
+            {/* Without this a cell reads "Missing", "0 of 24" and "Entries
+                (all statuses) 1" at once, with nothing accounting for the
+                record the reader can plainly see in the list. The row exists;
+                it was withdrawn, and the cell has to be able to say so rather
+                than look like it lost count. */}
+            {cell.voidedRecordCount > 0 && (
+              <div className="flex justify-between">
+                <span className="font-medium text-[#6E6E73]">
+                  {cell.voidedRecordCount === 1
+                    ? 'Withdrawn (counts towards nothing)'
+                    : 'Withdrawn entries (count towards nothing)'}
+                </span>
+                <span className="font-semibold text-[#1D1D1F]">
+                  {cell.voidedRecordCount}
+                </span>
+              </div>
+            )}
+
             <div className="flex justify-between">
               <span className="font-medium text-[#6E6E73]">Owner</span>
               <span className="font-semibold text-[#1D1D1F]">{responsible}</span>

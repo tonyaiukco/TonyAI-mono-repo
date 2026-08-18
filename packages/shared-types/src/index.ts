@@ -873,7 +873,9 @@ export interface SubsidiarySummaryDTO {
   /** Informational, not a blocker: deleting the subsidiary now removes its own
    *  record-free locations, with an audit row each. */
   locations: number;
-  /** `approved`/`locked` — these can never be deleted, at any point. */
+  /** `approved`, `locked` or `voided` — these can never be deleted, at any
+   *  point. A voided record is included because it is the only trace that a
+   *  figure was withdrawn, and a subsidiary delete would cascade it away. */
   terminalRecords: number;
   /** `submitted`/`under_review` — a reviewer can send them back, and then they can. */
   reviewRecords: number;
@@ -1229,8 +1231,14 @@ export const ACTIVITY_RECORD_STATUSES = [
   'rejected',
   'locked',
   /**
-   * FR §4.3's revision outcome: an approved figure withdrawn from the inventory
-   * with a mandatory reason, WITHOUT deleting the row.
+   * An approved figure withdrawn from the inventory with a mandatory reason,
+   * WITHOUT deleting the row.
+   *
+   * Carries the four elements FR §4.3 lists for a revision entry (comment, user,
+   * timestamp, original-value visibility) but does **not** implement §4.3 — that
+   * rule governs LOCKED records, which a void refuses; a closed period still
+   * reopens only by unlocking it. Nor is there yet a revision *link* from a
+   * correction to what it corrects, so a restatement is two unrelated rows.
    *
    * `approved` and `locked` are immutable, and rightly so — but that left a
    * record entered in error with no exit whatsoever, since the API refuses
@@ -1287,7 +1295,7 @@ export interface ActivityRecordDTO {
   reviewedAt: string | null;
   reviewNote: string | null;
   /**
-   * FR §4.3: why an approved figure was withdrawn, by whom, and when. Null on
+   * Why an approved figure was withdrawn, by whom, and when. Null on
    * every record that has not been voided.
    *
    * Separate from `reviewNote` deliberately — that is a reviewer's verdict on
@@ -1329,7 +1337,7 @@ export interface RejectInput {
 }
 
 /**
- * Body of POST /activity-records/:id/void — FR §4.3's mandatory reason for
+ * Body of POST /activity-records/:id/void — the mandatory reason a revision entry requires for
  * withdrawing an approved figure from the inventory.
  *
  * A separate type from `RejectInput` despite the identical shape, because they
@@ -1625,7 +1633,8 @@ export interface EmissionsSummary {
    * 0 tCO₂e" row asserts a measurement nobody made.
    */
   uncalculatedRecordCount: number;
-  /** Statuses included in the aggregation (drafts/rejected are excluded). */
+  /** Statuses included in the aggregation — drafts, rejected and voided
+   *  records are all excluded. */
   statusesIncluded: ActivityRecordStatus[];
 }
 
@@ -1753,7 +1762,7 @@ export interface TrackingMatrixCell {
   /** Of the committed ones, how many carried no usable figure. */
   uncalculatedRecordCount: number;
   /**
-   * Committed records in this cell that were later WITHDRAWN under FR §4.3.
+   * Committed records in this cell that were later WITHDRAWN by an audited void.
    *
    * Reported so the cell can account for rows a reader can see in the record
    * list but not in any total. Excluded from the verdict entirely: a cell whose
@@ -1764,9 +1773,19 @@ export interface TrackingMatrixCell {
   voidedRecordCount: number;
   /** Invoice coverage — see CellCoverage. Absent unless the rule applies. */
   coverage?: CellCoverage;
-  /** ISO timestamp of the most recent record update, or null when missing. */
+  /**
+   * ISO timestamp of the most recent update among the cell's LIVE records, or
+   * null when it has none.
+   *
+   * Voided rows do not bump it, and that is a deliberate narrowing rather than
+   * an oversight: withdrawing a figure is not an update to the data anyone is
+   * still counting, and a cell reading "updated 2 minutes ago" because
+   * something was REMOVED from it would point a reader at work that does not
+   * exist.
+   */
   lastUpdate: string | null;
-  /** true when any record in the cell carries an anomaly flag. */
+  /** true when any LIVE record in the cell carries an anomaly flag. A voided
+   *  record's flag is ignored — it describes data that no longer counts. */
   anomaly: boolean;
 }
 
@@ -1914,7 +1933,7 @@ export const AUDIT_ACTIONS = [
   'reject',
   'lock',
   'unlock',
-  /** FR §4.3: an approved figure withdrawn from the inventory, with a reason.
+  /** An approved figure withdrawn from the inventory, with a reason.
    *  Its own verb rather than a generic `update`, so "what was restated and
    *  why" is filterable in the audit trail instead of buried in a diff. */
   'void',

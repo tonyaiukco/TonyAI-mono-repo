@@ -926,7 +926,23 @@ describe('SubsidiariesService', () => {
       // counts run on `tx` is structural, and was verified against a live API.
     });
 
-    it('refuses to delete a subsidiary that still holds terminal records', async () => {
+    it('refuses to delete a subsidiary whose only records were VOIDED', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, ['voided']);
+
+    // A voided record contributes to no total, so "it counts towards nothing"
+    // could easily have been read as "it is disposable". It is not: the row is
+    // the only trace that a figure was withdrawn and why, and deleting the
+    // subsidiary would cascade it away along with the restatement it records.
+    // Same answer as approved and locked — a subsidiary that has reported data
+    // is retired, not deleted.
+      await expect(service.remove(user, 'sub-1')).rejects.toThrow(
+        /1 approved, locked or voided/,
+      );
+    });
+
+  it('refuses to delete a subsidiary that still holds terminal records', async () => {
       // `ActivityRecord.subsidiary` is ON DELETE CASCADE, so a delete did not
       // detach those records — it DESTROYED them with their evidence, targets
       // and period locks. Measured: a record taken through submit AND approve

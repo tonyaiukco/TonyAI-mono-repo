@@ -1134,13 +1134,13 @@ describe('ActivityRecordsService — transition rules', () => {
   });
 
   /**
-   * FR §4.3's revision rule (WP18 PR 2a) — withdrawing an approved figure.
+   * the revision elements FR §4.3 requires (WP18 PR 2a) — withdrawing an approved figure.
    *
    * The only transition out of `approved` other than the lock/unlock cycle, so
    * every guard here is load-bearing: this is the one path that can remove a
    * reviewed number from the reported inventory.
    */
-  describe('void — withdrawing an approved figure (FR 4.3)', () => {
+  describe('void — withdrawing an approved figure (the void path)', () => {
     const approved = (over: Partial<ActivityRecord> = {}) =>
       makeRecord({
         id: 'rec-v',
@@ -1165,11 +1165,66 @@ describe('ActivityRecordsService — transition rules', () => {
       const data = prisma.activityRecord.update.mock.calls[0][0].data;
       expect(data.status).toBe(ActivityRecordStatus.voided);
       expect(data.calculation).toBeUndefined();
-      // FR 4.3's three requirements, stamped on the row rather than left for a
+      // three of the four elements FR §4.3 lists, stamped on the row rather than left for a
       // screen to reconstruct from the audit log.
       expect(data.voidReason).toBe('Duplicate of the site invoice for January');
       expect(data.voidedBy).toBe('user-admin');
       expect(data.voidedAt).toBeInstanceOf(Date);
+    });
+
+    it('refuses a record outside the caller\'s accessible set, as NOT FOUND', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        approved({ subsidiaryId: 'sub-other' } as Partial<ActivityRecord>),
+      );
+
+      // Tenant isolation on the newest mutation endpoint, which had none. Not
+      // found rather than forbidden, and refused before any write, so a
+      // super_admin of one tenant cannot use the response to confirm that a
+      // record exists in another.
+      await expect(
+        service.void(
+          superAdmin({ accessibleSubsidiaryIds: ['sub-1'] }),
+          'rec-v',
+          'A reason long enough to pass',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('checks tenancy BEFORE the role, so a 403 cannot confirm existence', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        approved({ subsidiaryId: 'sub-other' } as Partial<ActivityRecord>),
+      );
+
+      // A consultant asking about someone else's record must get the same
+      // answer as a consultant asking about a record that does not exist.
+      // Ordering the role gate first would leak existence through the
+      // difference between 403 and 404.
+      await expect(
+        service.void(
+          consultant({ accessibleSubsidiaryIds: ['sub-1'] }),
+          'rec-v',
+          'A reason long enough to pass',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('returns the withdrawal on the record itself, not only in the audit log', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+      prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+        makeRecord({ id: 'rec-v', ...data }),
+      );
+
+      const dto = await service.void(superAdmin(), 'rec-v', 'Superseded by the site invoice');
+
+      // `/audit` is super_admin-only, so for every other seat the record itself
+      // is the only place the withdrawal is visible at all.
+      expect(dto.voidReason).toBe('Superseded by the site invoice');
+      expect(dto.voidedBy).toBe('user-admin');
+      expect(dto.voidedAt).not.toBeNull();
     });
 
     it('is super_admin only — a consultant may reject, never withdraw', async () => {
@@ -1301,7 +1356,7 @@ describe('ActivityRecordsService — transition rules', () => {
       expect(call.diff.transition).toEqual({ from: 'approved', to: 'voided' });
       expect(call.diff.voidReason).toBe('Duplicate of the site invoice');
       // The audit row is the last place the withdrawn figure is reported
-      // alongside the reason — FR 4.3's "original value must remain visible".
+      // alongside the reason — FR §4.3's "original value visibility".
       expect(call.diff.before.calculation).toEqual({ tCo2e: 19.8, factorId: 'factor-1' });
       expect(call.diff.before.status).toBe('approved');
     });
