@@ -188,6 +188,27 @@ describe('EmissionsService.completeness (drill-down)', () => {
     expect(ankara.months.find((m) => m.month === 'February')!.covered).toBe(false);
   });
 
+  it('agrees with the matrix about a cell whose only records were voided', async () => {
+    // Both surfaces answer from `deriveCellStatus`, but they build its inputs
+    // separately — so "one rule, two readings" only holds if both feed it the
+    // same records. Reading a voided row as presence here (and its stale
+    // anomaly flag) put `incomplete` on this panel against `missing` on the
+    // dashboard, for the same cell.
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice('loc-1', 'January', {
+        status: ActivityRecordStatus.voided,
+        anomalyFlag: true,
+      } as Partial<ActivityRecord>),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+
+    expect(electricity.status).toBe('missing');
+    expect(electricity.covered).toBe(0);
+  });
+
   it('separates a month awaiting review from one that is accepted (DE-2)', async () => {
     const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.activityRecord.findMany.mockResolvedValue([

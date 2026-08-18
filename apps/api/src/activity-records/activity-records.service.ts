@@ -845,9 +845,25 @@ export class ActivityRecordsService {
       record.reportingPeriod,
       record.periodValue,
     );
-    return this.transition(user, record, ActivityRecordStatus.voided, {
-      voidReason: reason,
-    });
+    try {
+      return await this.transition(user, record, ActivityRecordStatus.voided, {
+        voidReason: reason,
+      });
+    } catch (e) {
+      // P2025 = the row stopped being `approved` between the check above and
+      // the write. In practice that means a period lock committed in the
+      // window, so the honest answer is the lock's own refusal rather than a
+      // 500 about a record that plainly exists.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2025'
+      ) {
+        throw new ConflictException(
+          'This record changed while it was being voided — it is most likely inside a period that has just been locked. Reload and try again.',
+        );
+      }
+      throw e;
+    }
   }
 
   async reject(
@@ -929,8 +945,19 @@ export class ActivityRecordsService {
     // audit log, and so a row carries its own provenance.
     const isVoid = status === ActivityRecordStatus.voided;
 
+    // The status is part of the WHERE for a void, not just the guard above it.
+    // Every other transition reads its pre-state, checks it, then writes on the
+    // id alone — and for them the window is harmless, because `lock` refuses to
+    // run while a pending-review record exists, so their pre-state cannot be
+    // flipped concurrently. `approved` is the one status `lock` DOES mutate: a
+    // lock committing between the check and this write would be silently
+    // overwritten, leaving the record `voided` inside a closed period with no
+    // unlock to reopen it. Prisma raises P2025 when the row no longer matches,
+    // which the caller maps to the same 409 the lock itself would have given.
     const updated = await this.prisma.activityRecord.update({
-      where: { id: record.id },
+      where: isVoid
+        ? { id: record.id, status: ActivityRecordStatus.approved }
+        : { id: record.id },
       data: {
         status,
         ...(extra.varianceReason !== undefined

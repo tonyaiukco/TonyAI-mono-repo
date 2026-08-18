@@ -302,8 +302,9 @@ export class SubsidiariesService {
     // guarded by TS7053, which this package has switched off.
     const reviewable: ActivityRecordStatus[] = [...PENDING_REVIEW_STATUSES];
     const editable: ActivityRecordStatus[] = [...EDITABLE_STATUSES];
-    // `terminal` is everything else, so `voided` lands here — and that is the
-    // intended answer, stated rather than inherited from a `notIn`. A voided
+    // `terminal` is everything else — the count below really is a `notIn`, and
+    // `voided` lands in it by construction. Saying so plainly because the
+    // outcome IS the intended one and should not read as an accident: a voided
     // record contributes to no total, but it IS the record that a figure was
     // withdrawn and why; deleting the subsidiary would cascade it away and take
     // the only trace of the restatement with it. Same reasoning as approved and

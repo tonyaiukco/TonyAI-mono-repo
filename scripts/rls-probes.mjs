@@ -414,7 +414,14 @@ async function main() {
   const [afterVoidRow] = await afterVoid.json();
   check(
     'activity_records: consultant cannot VOID a figure through RLS',
-    (!voidPatch.ok || (Array.isArray(voidPatched) && voidPatched.length === 0)) &&
+    // `voidPatch.status === 200` is pinned, not just `!ok`. A rejected BODY
+    // (stale PostgREST schema cache -> 400 PGRST204) would also leave the row
+    // unchanged, and the probe would pass while proving nothing about RLS. 200
+    // with zero rows is the only result that means "PostgREST understood the
+    // write and the POLICY refused it".
+    voidPatch.status === 200 &&
+      Array.isArray(voidPatched) &&
+      voidPatched.length === 0 &&
       afterVoidRow.status === sampleRow.status &&
       afterVoidRow.void_reason === null,
     `status=${voidPatch.status}, row status ${sampleRow.status} -> ${afterVoidRow.status}, ` +

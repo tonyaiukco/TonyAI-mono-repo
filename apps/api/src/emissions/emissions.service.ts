@@ -842,7 +842,14 @@ export class EmissionsService {
         let anomaly = false;
         let evidenceMissing = false;
         const committed: CoverageRecord[] = [];
-        for (const r of recs) {
+        // The SAME `live` filter the matrix applies. Without it this panel
+        // reads a voided record's stale anomaly flag and counts the row as
+        // presence, so a category whose only records were withdrawn shows
+        // `incomplete` here while the dashboard cell shows `missing` — two
+        // surfaces disagreeing about one cell, which is exactly what this
+        // method's own comment promises cannot happen.
+        const live = recs.filter((r) => r.status !== ActivityRecordStatus.voided);
+        for (const r of live) {
           if (PENDING_STATUSES.has(r.status)) hasPending = true;
           if (r.anomalyFlag) anomaly = true;
           if (!COUNTED_SET.has(r.status)) continue;
@@ -866,7 +873,7 @@ export class EmissionsService {
           // FR §2.2's verdict, from the shared derivation rather than from the
           // caller's arithmetic over the counters below.
           status: deriveCellStatus({
-            hasRecords: recs.length > 0,
+            hasRecords: live.length > 0,
             hasPending,
             anomaly,
             evidenceMissing,

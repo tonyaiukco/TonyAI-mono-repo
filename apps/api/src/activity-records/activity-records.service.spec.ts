@@ -1245,6 +1245,46 @@ describe('ActivityRecordsService — transition rules', () => {
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     });
 
+    it('writes only while the record is still approved, so a lock cannot be overwritten', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+      prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+        makeRecord({ id: 'rec-v', ...data }),
+      );
+
+      await service.void(superAdmin(), 'rec-v', 'A reason long enough to pass');
+
+      // The status is part of the WHERE, not just the guard above it. Every
+      // other transition writes on the id alone and is safe doing so, because
+      // `lock` refuses to run while a pending-review record exists — but
+      // `approved` is the one status `lock` DOES mutate. A lock committing
+      // between the check and the write would otherwise be silently
+      // overwritten, leaving the record voided inside a closed period with no
+      // unlock able to reopen it.
+      expect(prisma.activityRecord.update.mock.calls[0][0].where).toEqual({
+        id: 'rec-v',
+        status: ActivityRecordStatus.approved,
+      });
+    });
+
+    it('answers 409, not 500, when the record moves out from under the write', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+      prisma.activityRecord.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      // The row plainly exists — it was just read. P2025 here means it stopped
+      // being `approved`, in practice because a lock landed in the window, so
+      // the honest answer is the lock's own refusal rather than a server error.
+      await expect(
+        service.void(superAdmin(), 'rec-v', 'A reason long enough to pass'),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
     it('audits the withdrawal under its own verb, carrying the figure it removed', async () => {
       const { prisma, service } = build();
       prisma.activityRecord.findUnique.mockResolvedValue(approved());
