@@ -13,7 +13,6 @@
 //                built for: opening a Fuel Q3 draft, switching to Electricity
 //                Q1 and saving overwrote the Fuel record with the Electricity
 //                numbers and reported "Draft saved".
-import { isRecordableWithoutFactor } from "@tonyai/shared-types";
 import { NOT_CALCULATED_LABEL } from "@/lib/calculation-display";
 import type { ReportingPeriod } from "@/lib/types";
 
@@ -73,6 +72,17 @@ export function describeMove(
   form: Pick<RecordIdentity, "locationId">,
   /** Site names by id, for the subsidiary currently selected. */
   locationNames: ReadonlyMap<string, string>,
+  /**
+   * Whether the open record actually holds a calculated figure right now.
+   *
+   * Read from the record's own snapshot rather than inferred from its category.
+   * `isRecordableWithoutFactor` is a **permission** — it says Water MAY be
+   * recorded without a factor, not that it currently lacks one — so keying the
+   * sentence on it would start promising "stays Not calculated" for a move that
+   * does produce a number the day a Water factor is seeded. That is the same
+   * on-screen contradiction this branch exists to remove, pointed the other way.
+   */
+  recordHasFigure: boolean,
 ): string | null {
   if (!opened) return null;
   if (opened.locationId === form.locationId) return null;
@@ -80,11 +90,10 @@ export function describeMove(
     id ? (locationNames.get(id) ?? "another site") : "the whole company";
   const to = nameOf(form.locationId);
   const move = `Saving moves this record from ${nameOf(opened.locationId)} to ${to}. It is not copied`;
-  // The second clause is only true where a factor exists. `Water` is recordable
-  // without one and stores an explicit "not calculated" snapshot, so promising
-  // a recalculated emission factor would contradict the figure shown for the
-  // same record two cards away.
-  return isRecordableWithoutFactor(opened.category)
-    ? `${move} — and it still has no emission factor, so its figure stays "${NOT_CALCULATED_LABEL}".`
-    : `${move} — the emission factor is recalculated for its geography.`;
+  // The second clause is only true where a factor exists. A record with no
+  // figure has none to recalculate, and promising one would contradict the
+  // "not calculated" value shown for the same record two cards away.
+  return recordHasFigure
+    ? `${move} — the emission factor is recalculated for its geography.`
+    : `${move} — and no emission factor resolves for it today, so it stays "${NOT_CALCULATED_LABEL}".`;
 }

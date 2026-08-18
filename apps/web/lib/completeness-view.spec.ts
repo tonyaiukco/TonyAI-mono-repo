@@ -463,6 +463,20 @@ describe('deriveEntryCoverage — warnings about what is being keyed in', () => 
     expect(view.warnings.every((w) => !w.includes('would count it twice'))).toBe(true);
   });
 
+  it('STILL warns when a record moves between two SITES over a company-held month', () => {
+    // The exclusion must be "the record is leaving company level", not merely
+    // "a move is pending". Ankara → Izmir still lands a site invoice on a month
+    // the whole company already holds, so the double count is real and the
+    // warning has to survive. Written because the looser predicate
+    // (`movingFrom !== null`) passed every other test in this file.
+    const view = derive(
+      dto({ categories: [category({ companyLevelMonths: ['january'] })] }),
+      { locationId: 'loc-2', movingFrom: 'loc-1', periodValue: 'January' },
+    );
+    if (view.kind !== 'tracked') throw new Error(`expected tracked, got ${view.kind}`);
+    expect(view.warnings.some((w) => w.includes('count that month twice'))).toBe(true);
+  });
+
   it('STILL warns about a different site that holds the month, during a move', () => {
     // The move must be excluded from the duplicate check, not the check
     // suppressed. Moving loc-1's January to the whole company genuinely does

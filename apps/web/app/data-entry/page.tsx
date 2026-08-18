@@ -146,6 +146,13 @@ const numberFmt = new Intl.NumberFormat("en-GB", {
  * still claimed it was "a bare 500", so the one case it existed to explain was
  * the one case it no longer caught. 5xx keeps a generic hint because an
  * unexpected server error tells the user nothing on its own. */
+/** A record's reporting entity, in prose. Degrades on `locationId` because
+ *  `locationName` is optional on the contract — a bare `??` would call a site
+ *  row "the whole company" if the include were ever dropped. */
+function entityLabel(rec: ActivityRecordDTO): string {
+  return rec.locationId ? (rec.locationName ?? "a site") : "the whole company";
+}
+
 function saveErrorMessage(e: unknown, moving = false): string {
   if (e instanceof ApiError && e.status === 409) {
     // Three things return 409: a duplicate reporting entity, and two period-lock
@@ -286,15 +293,18 @@ function DataEntryPageInner() {
    * Built as one finished sentence rather than as JSX with `{expr}` on its own
    * line, which drops the separating space (that bug shipped twice in WP17).
    */
-  const movingTo = useMemo(
-    () =>
-      describeMove(
-        editingId ? editingTuple : null,
-        { locationId },
-        new Map(availableLocations.map((l) => [l.id, l.name])),
-      ),
-    [editingId, editingTuple, locationId, availableLocations],
-  );
+  const movingTo = useMemo(() => {
+    // The open record's OWN snapshot decides whether a factor is being
+    // recalculated — not its category, which only says one is permitted to be
+    // absent. `records` is the list this page already holds.
+    const open = editingId ? records.find((r) => r.id === editingId) : undefined;
+    return describeMove(
+      editingId ? editingTuple : null,
+      { locationId },
+      new Map(availableLocations.map((l) => [l.id, l.name])),
+      open ? isCalculated(open.calculation) : true,
+    );
+  }, [editingId, editingTuple, locationId, availableLocations, records]);
 
   const numericValue = activityValue.trim() === "" ? NaN : Number(activityValue);
   const hasValidInput =
@@ -751,7 +761,7 @@ function DataEntryPageInner() {
         : "";
       toast.success(
         wasMoving
-          ? `Moved to ${rec.locationName ?? "the whole company"}, draft saved${anomalyNote}`
+          ? `Moved to ${entityLabel(rec)}, draft saved${anomalyNote}`
           : `Draft saved${anomalyNote}`,
       );
       await refreshRecords(subsidiaryId);
@@ -782,7 +792,14 @@ function DataEntryPageInner() {
         return;
       }
       await api.submitActivityRecord(rec.id);
-      toast.success("Submitted for review");
+      // Announced here too. Submitting a moved record re-attributes it just as
+      // a draft save does, and saying nothing made the two paths disagree about
+      // an action with the same consequence.
+      toast.success(
+        wasMoving
+          ? `Moved to ${entityLabel(rec)}, submitted for review`
+          : "Submitted for review",
+      );
       resetForm();
       await refreshRecords(subsidiaryId);
     } catch (e) {
@@ -893,16 +910,21 @@ function DataEntryPageInner() {
                         one that behaves differently has to say so — silently
                         re-attributing committed data on the next Save would be
                         worse than the duplicate this replaced. */}
-                    {/* Mounted unconditionally: a live region inserted at the
-                        same moment its text appears is announced unreliably,
-                        and this is the only consequence warning on the page a
-                        keyboard user would otherwise never hear. */}
+                    {/* Mounted unconditionally, and never `display: none`.
+                        A live region announces nothing if it is absent from the
+                        accessibility tree when its text arrives — and `hidden`
+                        removes it, so toggling that class made the region inert
+                        while looking correct. Only the CHILDREN and the margin
+                        toggle; an empty <p> occupies no space. This is the one
+                        consequence warning on the page a keyboard user would
+                        otherwise never hear, while the far less consequential
+                        abandon path already announces itself via a toast. */}
                     <p
                       id="location-move-notice"
                       role="status"
                       className={cn(
-                        "mt-1.5 flex items-start gap-1.5 text-xs text-amber-700",
-                        !movingTo && "hidden",
+                        "flex items-start gap-1.5 text-xs text-amber-700",
+                        movingTo && "mt-1.5",
                       )}
                     >
                       {movingTo && (

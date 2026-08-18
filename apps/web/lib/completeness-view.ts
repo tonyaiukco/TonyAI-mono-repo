@@ -257,13 +257,21 @@ export interface EntryCoverageInput {
    * entity it is moving **from** (`""` for the whole company). `null` when
    * nothing is being moved.
    *
-   * Load-bearing for truthfulness, not a refinement. The duplicate warnings
-   * below assume the entry being keyed is a NEW row, which was guaranteed while
-   * the client abandoned the edit on a location change. WP18 made that a move
-   * instead — so without this the panel says "keying a site invoice for it as
-   * well would count that month twice" about the very record that is leaving
-   * the whole-company slot, i.e. about a duplicate that will not exist. The
-   * sentence was true before WP18 and is false after it.
+   * The duplicate warnings below assume the entry being keyed is a NEW row,
+   * which was guaranteed while the client abandoned the edit on a location
+   * change. WP18 made that a move instead, so without this the panel would
+   * warn that "keying a site invoice for it as well would count that month
+   * twice" about the very record leaving the whole-company slot — a duplicate
+   * the save is about to REMOVE rather than create.
+   *
+   * Honest scope: on canonical data that state is unreachable, because the
+   * moving record must be a draft and `companyLevelMonths` counts only
+   * committed rows, and the uniqueness index permits just one row per entity +
+   * period + category. It is reachable through the gap the index leaves — it
+   * dedups on the RAW `period_value` while this panel matches the normalised
+   * one, so a committed "january" and an editable "January" can coexist. So
+   * this guards an invariant the screen depends on rather than repairing a
+   * falsehood users are hitting today.
    */
   movingFrom?: string | null;
 }

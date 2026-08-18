@@ -64,7 +64,7 @@ describe('describeMove', () => {
   ]);
 
   it('names both ends of the move, and says the factor is recalculated', () => {
-    const notice = describeMove(opened(), { locationId: 'loc-1' }, names);
+    const notice = describeMove(opened(), { locationId: 'loc-1' }, names, true);
     // The geography claim is not decoration: the location drives which emission
     // factor applies (data_entry_page.md §5.2), so a move can change the stored figure.
     expect(notice).toBe(
@@ -73,37 +73,50 @@ describe('describeMove', () => {
   });
 
   it('describes a detach in the same terms', () => {
-    expect(describeMove(opened({ locationId: 'loc-2' }), { locationId: '' }, names)).toContain(
+    expect(describeMove(opened({ locationId: 'loc-2' }), { locationId: '' }, names, true)).toContain(
       'from Istanbul HQ to the whole company',
     );
   });
 
-  it('does not promise a recalculated factor for a category that has none', () => {
-    // `Water` is recordable without a factor and stores an explicit
-    // "not calculated" snapshot. Promising a recalculation would contradict the
-    // figure shown for the same record two cards away on the same screen.
+  it('does not promise a recalculated factor for a record that has no figure', () => {
+    // Keyed on the RECORD's own snapshot, not on its category.
+    // `isRecordableWithoutFactor` is a permission — it says Water MAY be
+    // recorded without a factor, not that it currently lacks one — so keying on
+    // it would keep promising "stays Not calculated" the day a Water factor is
+    // seeded and the move really does produce a number.
     const notice = describeMove(
       opened({ category: 'Water' }),
       { locationId: 'loc-1' },
       names,
+      false,
     )!;
-    expect(notice).toContain('from the whole company to Ankara Power Plant');
-    expect(notice).not.toContain('emission factor is recalculated');
-    // The exact label the figure itself renders, so the sentence and the number
-    // it describes cannot drift apart.
-    expect(notice).toContain(NOT_CALCULATED_LABEL);
+    expect(notice).toBe(
+      `Saving moves this record from the whole company to Ankara Power Plant. It is not copied — and no emission factor resolves for it today, so it stays "${NOT_CALCULATED_LABEL}".`,
+    );
+  });
+
+  it('promises the recalculation once that same record does have a figure', () => {
+    // Same category, opposite snapshot state — the pair that proves the
+    // sentence follows the record rather than a category allow-list.
+    const notice = describeMove(
+      opened({ category: 'Water' }),
+      { locationId: 'loc-1' },
+      names,
+      true,
+    )!;
+    expect(notice).toContain('the emission factor is recalculated for its geography');
   });
 
   it('is silent when nothing is being moved', () => {
-    expect(describeMove(opened(), { locationId: '' }, names)).toBeNull();
+    expect(describeMove(opened(), { locationId: '' }, names, true)).toBeNull();
     // No record open — the user is creating, not moving.
-    expect(describeMove(null, { locationId: 'loc-1' }, names)).toBeNull();
+    expect(describeMove(null, { locationId: 'loc-1' }, names, true)).toBeNull();
   });
 
   it('does not print a raw id when a site name is unknown', () => {
     // Reachable while the locations list is still loading, or for a site the
     // caller cannot see. A uuid in a sentence reads as a bug.
-    const notice = describeMove(opened(), { locationId: 'loc-unknown' }, names)!;
+    const notice = describeMove(opened(), { locationId: 'loc-unknown' }, names, true)!;
     expect(notice).toContain('another site');
     expect(notice).not.toContain('loc-unknown');
   });
@@ -111,7 +124,7 @@ describe('describeMove', () => {
   it('renders with exactly one space between every word', () => {
     // The JSX whitespace trap, asserted rather than hoped for: WP17 shipped
     // "12 entries arerecorded" twice from `{expr}` on its own line.
-    const notice = describeMove(opened(), { locationId: 'loc-1' }, names)!;
+    const notice = describeMove(opened(), { locationId: 'loc-1' }, names, true)!;
     expect(notice).not.toMatch(/\s{2,}/);
     expect(notice.trim()).toBe(notice);
   });
