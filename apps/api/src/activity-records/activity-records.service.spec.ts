@@ -470,6 +470,185 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
     expect(diff.after).not.toHaveProperty('locationName');
   });
 
+  /**
+   * Re-attribution — moving a record between reporting entities (WP18).
+   *
+   * The server has accepted this since 2026-07-07 and **nothing tested it**:
+   * across all 13 `service.update()` calls in this file, not one passed
+   * `locationId`, so neither the `connect`/`disconnect` branch nor its 409 had
+   * any coverage. It matters more than an ordinary gap, because the client used
+   * to abandon the edit on a location change and POST instead — creating the
+   * second row that double-counts the month. The web fix only holds if the
+   * server behaviour it now relies on is pinned.
+   */
+  describe('re-attribution (WP18)', () => {
+    const draftAt = (locationId: string | null) => ({
+      ...makeRecord({
+        id: 'rec-move',
+        subsidiaryId: 'sub-1',
+        locationId,
+        status: ActivityRecordStatus.draft,
+        createdBy: 'user-entry',
+      }),
+      location: locationId ? { name: 'Ankara Plant' } : null,
+    });
+
+    it('moves a whole-company record onto a site, and recalculates for that site', async () => {
+      const { prisma, calc, service } = build(2);
+      withLocation(prisma);
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
+      prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+        ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
+        _count: { evidence: 0 },
+        location: { name: 'Ankara Plant' },
+      }));
+
+      await service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' });
+
+      // `connect`, not a new row. This is the whole point: the record MOVES.
+      const data = prisma.activityRecord.update.mock.calls[0][0].data;
+      expect(data.location).toEqual({ connect: { id: 'loc-1' } });
+      // And the snapshot is recomputed from the SITE's geography, not the
+      // subsidiary's — the location is what decides which factor applies
+      // (FR §5.2), so a move that kept the old factor would leave a record
+      // whose stored provenance contradicts its own reporting entity.
+      expect(calc.compute).toHaveBeenCalledWith(
+        expect.objectContaining({ geographyCode: 'UK' }),
+        expect.anything(),
+      );
+    });
+
+    it('detaches a site record back to the whole company', async () => {
+      const { prisma, calc, service } = build(2);
+      withLocation(prisma);
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt('loc-1'));
+      prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+        ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: null, ...data }),
+        _count: { evidence: 0 },
+        location: null,
+      }));
+
+      await service.update(dataEntry(), 'rec-move', { locationId: null });
+
+      expect(prisma.activityRecord.update.mock.calls[0][0].data.location).toEqual({
+        disconnect: true,
+      });
+      // Back to the SUBSIDIARY's geography. `null` and "omitted" are different
+      // requests and the DTO validator lets both through, so this is the half
+      // of the tri-state that a `@IsOptional()` reading would silently skip.
+      expect(calc.compute).toHaveBeenCalledWith(
+        expect.objectContaining({ geographyCode: 'TR' }),
+        expect.anything(),
+      );
+    });
+
+    it('leaves the location alone when the field is omitted', async () => {
+      const { prisma, calc, service } = build(2);
+      withLocation(prisma);
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt('loc-1'));
+      prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+        ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
+        _count: { evidence: 0 },
+        location: { name: 'Ankara Plant' },
+      }));
+
+      await service.update(dataEntry(), 'rec-move', { activityValue: 5000 });
+
+      // The third arm of the tri-state: no `location` key at all, so an
+      // unrelated edit cannot silently re-home the record...
+      expect(prisma.activityRecord.update.mock.calls[0][0].data).not.toHaveProperty(
+        'location',
+      );
+      // ...and the recompute still uses the location it already had.
+      expect(calc.compute).toHaveBeenCalledWith(
+        expect.objectContaining({ geographyCode: 'UK' }),
+        expect.anything(),
+      );
+    });
+
+    it('refuses to move onto an entity that already holds a record', async () => {
+      const { prisma, service } = build(2);
+      withLocation(prisma);
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
+      prisma.activityRecord.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      // Exactly the collision the six seeded duplicate pairs would produce if
+      // someone tried to resolve one by moving. A 409, never a second row —
+      // and never a silent overwrite of the record already sitting there.
+      await expect(
+        service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('refuses a location belonging to another subsidiary, before writing anything', async () => {
+      const { prisma, service } = build(2);
+      prisma.subsidiary.findUnique.mockResolvedValue(
+        makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
+      );
+      prisma.location.findUnique.mockResolvedValue({
+        id: 'loc-x',
+        subsidiaryId: 'sub-2',
+        geographyCode: 'UK',
+      });
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
+
+      await expect(
+        service.update(dataEntry(), 'rec-move', { locationId: 'loc-x' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      // Tenant isolation: a cross-tenant id must not be probeable through a
+      // half-applied write, so nothing may reach the database.
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('cannot move a committed record at all', async () => {
+      const { prisma, service } = build(2);
+      withLocation(prisma);
+      prisma.activityRecord.findUnique.mockResolvedValue({
+        ...makeRecord({
+          id: 'rec-move',
+          subsidiaryId: 'sub-1',
+          locationId: null,
+          status: ActivityRecordStatus.approved,
+          createdBy: 'user-entry',
+        }),
+        location: null,
+      });
+
+      // The limit of what PR 1 delivers, pinned so it is not mistaken for a
+      // capability: all twelve rows in the six double-counted pairs are
+      // `approved`, so the records that most need moving are exactly the ones
+      // this refuses. Repairing them needs the audited correction path (PR 3).
+      await expect(
+        service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('records both sides of the move in the audit diff', async () => {
+      const { prisma, service } = build(2);
+      withLocation(prisma);
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
+      prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+        ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
+        _count: { evidence: 0 },
+        location: { name: 'Ankara Plant' },
+      }));
+
+      await service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' });
+
+      // `audit_log` is append-only and has no correction path, so a move that
+      // was not captured on both sides would be unreconstructable.
+      const diff = audit.record.mock.calls[0][1].diff as any;
+      expect(diff.before.locationId).toBeNull();
+      expect(diff.after.locationId).toBe('loc-1');
+    });
+  });
+
   it('single-record reads carry the same include as the list (GET /:id agrees)', async () => {
     // The contract documents `locationName: null` as "subsidiary-level, or the
     // location has since been removed" — and this work package makes the second

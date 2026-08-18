@@ -26,6 +26,7 @@ import {
   Info,
   Leaf,
   LogOut,
+  MoveRight,
   Save,
   Send,
   XCircle,
@@ -66,6 +67,7 @@ import {
   categoryFieldGroups,
   defaultFieldGroups,
 } from "@/lib/data-entry-data";
+import { describeMove, hasMovedOffRecord } from "@/lib/record-identity";
 
 // --- Static option sets -----------------------------------------------------
 
@@ -143,14 +145,20 @@ const numberFmt = new Intl.NumberFormat("en-GB", {
  * still claimed it was "a bare 500", so the one case it existed to explain was
  * the one case it no longer caught. 5xx keeps a generic hint because an
  * unexpected server error tells the user nothing on its own. */
-function saveErrorMessage(e: unknown): string {
+function saveErrorMessage(e: unknown, moving = false): string {
   if (e instanceof ApiError && e.status === 409) {
     // Three things return 409: a duplicate reporting entity, and two period-lock
     // refusals. Only the first is fixed by opening the existing record, so the
     // advice is attached to the message that earns it — the lock's own sentence
     // already says what to do.
-    return /locked/i.test(e.message)
-      ? e.message
+    if (/locked/i.test(e.message)) return e.message;
+    // A MOVE that collides is a different situation from a create that
+    // collides, and the create's advice is wrong for it: there is nothing to
+    // "continue" — the record the user is holding still exists where it was.
+    // Saying only what is true, because the honest remedy (removing one of the
+    // two) is not something this screen can currently offer for committed data.
+    return moving
+      ? `${e.message} The record has not been moved, and stays where it is.`
       : `${e.message} Open it from Previous submissions to continue it.`;
   }
   if (e instanceof ApiError && e.status >= 500) {
@@ -269,6 +277,23 @@ function DataEntryPageInner() {
   // The location (when chosen) drives the factor geography; else the subsidiary.
   const effectiveGeography =
     selectedLocation?.geographyCode ?? selectedSubsidiary?.geographyCode ?? null;
+
+  /**
+   * Set while an OPEN record's location has been changed but not yet saved —
+   * i.e. the next save re-attributes it rather than creating anything (WP18).
+   *
+   * Built as one finished sentence rather than as JSX with `{expr}` on its own
+   * line, which drops the separating space (that bug shipped twice in WP17).
+   */
+  const movingTo = useMemo(
+    () =>
+      describeMove(
+        editingId ? editingTuple : null,
+        { locationId },
+        new Map(availableLocations.map((l) => [l.id, l.name])),
+      ),
+    [editingId, editingTuple, locationId, availableLocations],
+  );
 
   const numericValue = activityValue.trim() === "" ? NaN : Number(activityValue);
   const hasValidInput =
@@ -601,15 +626,27 @@ function DataEntryPageInner() {
    * with the Electricity numbers and reported "Draft saved". The Fuel record
    * simply ceased to exist. The subsidiary select already had this protection
    * (it calls `resetForm`); the rest of the tuple did not.
+   *
+   * **`locationId` is deliberately NOT in this list** (WP18). It was swept in
+   * with the rest, and the consequence was the opposite of the bug above: the
+   * API has accepted a location change on update since 2026-07-07 — it
+   * re-targets the record and recomputes the snapshot from the new entity's
+   * geography — but the client abandoned the edit first, so the save became a
+   * POST and *created a second row*. Since the uniqueness index counts
+   * `location_id`, both rows survive and BOTH feed the emissions total. The one
+   * control a user would reach for to fix a mis-attributed record was the
+   * control that manufactured the duplicate. Moving a record is now an edit,
+   * and `movingTo` below makes it visible before it is saved.
    */
   useEffect(() => {
     if (!editingId || !editingTuple) return;
-    const movedOff =
-      editingTuple.category !== category ||
-      editingTuple.reportingYear !== reportingYear ||
-      editingTuple.reportingPeriod !== reportingPeriod ||
-      editingTuple.periodValue !== periodValue ||
-      editingTuple.locationId !== locationId;
+    const movedOff = hasMovedOffRecord(editingTuple, {
+      category,
+      reportingYear,
+      reportingPeriod,
+      periodValue,
+      locationId,
+    });
     if (!movedOff) return;
     setEditingId(null);
     setEditingTuple(null);
@@ -705,7 +742,7 @@ function DataEntryPageInner() {
       );
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      toast.error(saveErrorMessage(e));
+      toast.error(saveErrorMessage(e, movingTo !== null));
     } finally {
       setSaving(null);
     }
@@ -734,7 +771,7 @@ function DataEntryPageInner() {
       resetForm();
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      toast.error(saveErrorMessage(e));
+      toast.error(saveErrorMessage(e, movingTo !== null));
     } finally {
       setSaving(null);
     }
@@ -832,6 +869,17 @@ function DataEntryPageInner() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {/* Changing this on an open record MOVES it. Every other
+                        field in this card starts a fresh record instead, so the
+                        one that behaves differently has to say so — silently
+                        re-attributing committed data on the next Save would be
+                        worse than the duplicate this replaced. */}
+                    {movingTo && (
+                      <p className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-700">
+                        <MoveRight className="mt-0.5 h-3 w-3 shrink-0" />
+                        <span>{movingTo}</span>
+                      </p>
+                    )}
                   </Field>
 
                   <Field label="Category">
@@ -1260,11 +1308,23 @@ function DataEntryPageInner() {
                                   {badge.label}
                                 </Badge>
                               </div>
+                              {/* The reporting entity, which this list did not
+                                  show. Uniqueness includes `location_id`, so a
+                                  whole-company record and a site record for the
+                                  same month and category are two different rows
+                                  — and here they were two identical-looking
+                                  lines. A user asked to resolve a
+                                  double-counted month could not tell which one
+                                  they were opening. Built as one string: the
+                                  same JSX whitespace trap as above. */}
                               <div className="text-xs text-muted-foreground">
-                                {r.category} ·{" "}
-                                {isCalculated(r.calculation)
-                                  ? `${numberFmt.format(r.calculation.tCo2e)} tCO₂e`
-                                  : NOT_CALCULATED_LABEL}
+                                {[
+                                  r.category,
+                                  r.locationName ?? "Whole subsidiary",
+                                  isCalculated(r.calculation)
+                                    ? `${numberFmt.format(r.calculation.tCo2e)} tCO₂e`
+                                    : NOT_CALCULATED_LABEL,
+                                ].join(" · ")}
                               </div>
                             </div>
                           </button>
