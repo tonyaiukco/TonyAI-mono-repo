@@ -6,9 +6,12 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import {
+  duplicateNote,
+  duplicatedMonths,
   reviewNote,
   shortfallReasons,
   slotState,
+  SHORT_MONTH,
   SLOT_DESCRIPTION,
   SLOT_GLYPH,
   type SlotState,
@@ -32,9 +35,6 @@ interface InvoiceCoverageGridProps {
     month: string;
   }) => void;
 }
-
-/** Three letters is enough to read a twelve-column header at this width. */
-const SHORT_MONTH = (month: string) => month.slice(0, 3);
 
 /**
  * Which invoices are in and which are missing, per location and month
@@ -131,6 +131,13 @@ export function InvoiceCoverageGrid({
   // introduced, and that cell's amber has no account anywhere on screen.
   const note = category ? reviewNote(category.awaitingReviewSlots) : null;
   if (note) reasons.push(note);
+  // A month held BOTH at a site and company-wide renders as a plain ✓ — the
+  // slot is closed — so `hasCompanyLevel` goes false and the "would count this
+  // month twice" line below disappears. That is precisely backwards: the
+  // warning vanished at the moment the double count actually happened. This
+  // says so in the present tense instead.
+  const dupes = category ? duplicateNote(duplicatedMonths(category)) : null;
+  if (dupes) reasons.push(dupes);
 
   return (
     <div className="space-y-3">

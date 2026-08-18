@@ -5,7 +5,11 @@ import {
   type ActivityRecord,
   type Subsidiary,
 } from '@tonyai/db';
-import { EmissionsService } from './emissions.service';
+import {
+  computeInvoiceCoverage,
+  deriveCellStatus,
+  EmissionsService,
+} from './emissions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 
@@ -232,6 +236,21 @@ describe('EmissionsService.completeness (drill-down)', () => {
     // cell that opened it is a second implementation of a compliance
     // denominator, and the user would have no way to know which is right.
     expect(drillElectricity.covered).toBe(cell.coverage!.covered);
+    // The PR added a second number and a verdict that must ALSO agree across
+    // the two endpoints — the panel shows what the cell shows, so a drift here
+    // is a user seeing "Complete" on one screen and "Partial" on the other for
+    // the same subsidiary, category and year.
+    expect(drillElectricity.awaitingReviewSlots).toBe(
+      cell.coverage!.awaitingReviewSlots,
+    );
+    expect(drillElectricity.status).toBe(cell.status);
+    // And the per-slot flags must sum to the aggregate, or the month strip
+    // contradicts the fraction printed directly above it.
+    expect(
+      drillElectricity.locations
+        .flatMap((l) => l.months)
+        .filter((m) => m.awaitingReview).length,
+    ).toBe(cell.coverage!.awaitingReviewSlots);
     expect(drillElectricity.required).toBe(cell.coverage!.required);
     // ...and the slot grid must sum to the same figure.
     const closedSlots = drillElectricity.locations
@@ -259,23 +278,61 @@ describe('EmissionsService.completeness (drill-down)', () => {
 
     await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
 
-    // Both clauses were surviving mutants. Dropping the year folds every year's
-    // records into one grid — precisely what the mandatory `year` param exists
-    // to prevent. Dropping the status filter lets a DRAFT close a slot, and
-    // note that this method filters statuses in SQL while `trackingMatrix`
-    // filters them in memory: two mechanisms, and this is the assertion that
-    // stops them drifting.
+    // Dropping the year folds every year's records into one grid — precisely
+    // what the mandatory `year` param exists to prevent.
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     expect(where.reportingYear).toBe(2024);
-    expect(where.status).toEqual({
-      in: [
-        ActivityRecordStatus.submitted,
-        ActivityRecordStatus.under_review,
-        ActivityRecordStatus.approved,
-        ActivityRecordStatus.locked,
-      ],
-    });
     expect(where.subsidiaryId).toBe('sub-1');
+    // The status filter is deliberately ABSENT now, where it used to be
+    // asserted here. The response carries FR §2.2's verdict, and two of the
+    // three caps behind it — a draft in the cell, an anomaly flag — are
+    // invisible to a query that has already dropped those rows. Committing to
+    // the JS filter also ends the split this assertion was written to police:
+    // both endpoints now take the committed subset the same way.
+    expect(where.status).toBeUndefined();
+  });
+
+  it('still refuses to let a draft close a slot, now that SQL no longer filters', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice('loc-1', 'January', {
+        status: ActivityRecordStatus.draft,
+      } as Partial<ActivityRecord>),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+
+    // The invariant the old query-shape assertion was really protecting. It is
+    // proved behaviourally now, which survives a refactor of where the filter
+    // lives — and the old assertion would not have.
+    expect(electricity.covered).toBe(0);
+    expect(electricity.awaitingReviewSlots).toBe(0);
+    expect(
+      electricity.locations.flatMap((l) => l.months).some((m) => m.covered),
+    ).toBe(false);
+    // A draft is exactly what the extra query is FOR: the cell is not
+    // "missing", because a record does exist and someone is working on it.
+    expect(electricity.status).toBe('incomplete');
+  });
+
+  it('does not warn about a whole-company month that is only a draft', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice(null as unknown as string, 'February', {
+        status: ActivityRecordStatus.draft,
+      } as Partial<ActivityRecord>),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    // A draft feeds no total, so keying a site invoice for that month would not
+    // double-count anything. Warning about it would be warning about something
+    // that has not happened and may never — a regression the unfiltered query
+    // would otherwise have introduced.
+    expect(
+      d.categories.find((c) => c.category === 'Electricity')!.companyLevelMonths,
+    ).toEqual([]);
   });
 
   it('names the months that already hold a whole-company entry', async () => {
@@ -1085,5 +1142,122 @@ describe('EmissionsService.trackingMatrix', () => {
     expect(m.rows[1].subsidiaryName).toBe('Gas Legal Ltd.'); // legalName fallback
     expect(m.rows.every((r) => r.cells.every((c) => c.status === 'missing'))).toBe(true);
     expect(m.totals).toEqual({ complete: 0, incomplete: 0, missing: 22 });
+  });
+});
+
+/**
+ * The two exported pure functions behind every completeness surface.
+ *
+ * Tested directly because both carry guards that neither endpoint can reach
+ * today: `trackingMatrix` and `completeness` both pre-filter to committed
+ * records, and neither seeds a zero denominator. Both guards survived mutation
+ * testing through the endpoints — deleting either changed no test — which is
+ * exactly the state in which a later refactor removes them as dead weight.
+ */
+describe('the shared completeness primitives', () => {
+  const coverage = (over: Partial<ReturnType<typeof computeInvoiceCoverage>> = {}) => ({
+    required: 12,
+    covered: new Set<string>(),
+    unattributedRecords: 0,
+    nonMonthlyRecords: 0,
+    missingEvidenceRecords: 0,
+    outOfScopeRecords: 0,
+    awaitingReview: new Set<string>(),
+    ...over,
+  });
+
+  const verdict = (over = {}) =>
+    deriveCellStatus({
+      hasRecords: true,
+      hasPending: false,
+      anomaly: false,
+      evidenceMissing: false,
+      coverage: null,
+      ...over,
+    });
+
+  describe('deriveCellStatus', () => {
+    it('refuses to call a zero denominator complete', () => {
+      // Reachable: a location-measured subsidiary whose sites all postdate the
+      // reported year has `required === 0`, and `0 >= 0` reported `complete` —
+      // a green tick over a year in which nothing was tracked, sitting next to
+      // records that closed nothing.
+      expect(
+        verdict({ coverage: coverage({ required: 0 }), evidenceMissing: false }),
+      ).toBe('incomplete');
+    });
+
+    it('is missing only when no record exists at all', () => {
+      expect(verdict({ hasRecords: false, coverage: coverage() })).toBe('missing');
+      // Twelve approved evidence-backed records whose slots are not closed is
+      // INCOMPLETE. The seed produced exactly that, and an earlier cut rendered
+      // a red "Missing" cell displaying 198 tCO2e.
+      expect(verdict({ coverage: coverage({ covered: new Set(['a']) }) })).toBe(
+        'incomplete',
+      );
+    });
+
+    it('applies the three shared caps to a fully covered cell', () => {
+      const full = coverage({
+        required: 1,
+        covered: new Set(['loc-1\u0000january']),
+      });
+      expect(verdict({ coverage: full })).toBe('complete');
+      expect(verdict({ coverage: full, hasPending: true })).toBe('incomplete');
+      expect(verdict({ coverage: full, anomaly: true })).toBe('incomplete');
+      expect(verdict({ coverage: full, evidenceMissing: true })).toBe('incomplete');
+    });
+
+    it('leaves the yes/no categories exactly as they were', () => {
+      // Eight of the eleven categories take this branch, and the DE-2 review
+      // gate deliberately does NOT apply to it — changing that would re-mean
+      // every category on every subsidiary.
+      expect(verdict({ coverage: null })).toBe('complete');
+      expect(verdict({ coverage: null, hasPending: true })).toBe('incomplete');
+    });
+  });
+
+  describe('computeInvoiceCoverage', () => {
+    const record = (over = {}) => ({
+      locationId: 'loc-1',
+      reportingPeriod: 'monthly',
+      periodValue: 'January',
+      evidenceCount: 1,
+      status: ActivityRecordStatus.approved,
+      ...over,
+    });
+
+    it('ignores a record no caller should have passed', () => {
+      // The function is exported and now TAKES a status, so a reader will
+      // reasonably assume the status rule lives inside it. Without this guard a
+      // third caller handing over raw rows would let a DRAFT close a slot and
+      // be counted as awaiting review at the same time.
+      const c = computeInvoiceCoverage(
+        [
+          record({ status: ActivityRecordStatus.draft }),
+          record({ periodValue: 'February', status: ActivityRecordStatus.rejected }),
+        ],
+        ['loc-1'],
+      );
+      expect(c.covered.size).toBe(0);
+      expect(c.awaitingReview.size).toBe(0);
+      // And it is not silently reclassified as some other kind of shortfall.
+      expect(c.unattributedRecords).toBe(0);
+      expect(c.nonMonthlyRecords).toBe(0);
+      expect(c.missingEvidenceRecords).toBe(0);
+    });
+
+    it('keeps awaitingReview a strict subset of covered', () => {
+      const c = computeInvoiceCoverage(
+        [
+          record(),
+          record({ periodValue: 'February', status: ActivityRecordStatus.submitted }),
+        ],
+        ['loc-1'],
+      );
+      expect(c.covered.size).toBe(2);
+      expect([...c.awaitingReview].every((s) => c.covered.has(s))).toBe(true);
+      expect(c.awaitingReview.size).toBe(1);
+    });
   });
 });

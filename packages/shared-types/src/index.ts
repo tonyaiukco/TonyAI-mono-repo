@@ -1589,6 +1589,13 @@ export interface EmissionsSummary {
  * subsidiary — the one case where completeness is a fraction rather than a
  * yes/no. Everywhere else it is absent, which is what stops a UI from rendering
  * "0/0" for a category the rule does not apply to.
+ *
+ * **The counters are not homogeneous.** The four `*Records` fields count
+ * RECORDS and are disjoint from `covered` — each names committed data that
+ * closed no slot. `awaitingReviewSlots` counts SLOTS and is a SUBSET of
+ * `covered`. A consumer that lumps all five into one "explain the shortfall"
+ * list computes nonsense; the first four explain why `covered < required`, the
+ * fifth explains why a full `covered` still is not finished.
  */
 export interface CellCoverage {
   /**
@@ -1750,17 +1757,20 @@ export interface CompletenessLocationRow {
  * by the same function, so the drill-down cannot disagree with the cell that
  * opened it.
  */
-export interface CategoryCompleteness {
+export interface CategoryCompleteness extends CellCoverage {
   category: Category;
-  required: number;
-  covered: number;
-  unattributedRecords: number;
-  nonMonthlyRecords: number;
-  missingEvidenceRecords: number;
-  outOfScopeRecords: number;
-  /** Covered slots still waiting on a reviewer — see `CellCoverage`, which
-   *  reports the same number for the matrix cell this drill-down sits behind. */
-  awaitingReviewSlots: number;
+  /**
+   * FR §2.2's verdict for this category — the SAME value the matrix cell
+   * carries, produced by the same derivation on the server.
+   *
+   * On the wire because it cannot be recomputed from the numbers beside it. Two
+   * of the three caps behind `incomplete` — a draft in the cell, an anomaly
+   * flag — correspond to no field in this object, so a client deriving its own
+   * verdict from `covered >= required` badges a cell green that the dashboard is
+   * showing amber. That is round-1 DE-2's own failure (a green that overstates),
+   * one level up.
+   */
+  status: DataStatus;
   /**
    * Months (lower-cased) that already hold a WHOLE-COMPANY entry for this
    * category and year.

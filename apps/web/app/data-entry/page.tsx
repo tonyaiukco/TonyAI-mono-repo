@@ -1199,6 +1199,12 @@ function DataEntryPageInner() {
                 locationId={locationId}
                 reportingPeriod={reportingPeriod}
                 periodValue={periodValue}
+                // The panel's warnings all say "this entry"; none of them is
+                // true before one exists. `resetForm()` runs before the refetch
+                // after a submit, so an ungated panel announced "this entry is
+                // recorded for the whole company" at the exact confirmation
+                // moment for a site invoice that had just been filed.
+                hasEntry={hasValidInput || editingId !== null}
                 refreshKey={coverageKey}
               />
 
@@ -1341,18 +1347,20 @@ function PreviewCard({
               {geographyCode && <Row label="Geography" value={geographyCode} />}
             </dl>
             {/* "It counts towards data completeness" was the first wording, cut
-                because the completeness engine had not shipped. It has now, and
-                the claim is true where it applies: `computeInvoiceCoverage`
-                never reads the calculation, so a factor-less invoice closes its
-                slot exactly like any other. Only for the three invoice-tracked
-                categories, though — hence the second sentence naming Water
-                rather than a blanket promise. */}
+                because the completeness engine had not shipped. It has now — and
+                the claim is true only under the whole rule, not merely because
+                the category is invoice-tracked. A slot closes on a MONTHLY entry
+                for a SITE of a location-measured subsidiary, so gating on the
+                category alone put this card's promise directly above the status
+                panel's "closes none of the 24 site invoices" for the screen's
+                own default form state. Two adjacent cards, opposite claims.
+                Stated conditionally instead, which is true in every case. */}
             <p className="text-xs text-muted-foreground">
               You can still save and submit this entry. An invoice is required
               before it can be submitted, since without an emission factor the
               invoice is the only record of what was consumed.
-              {isInvoiceTracked(preview.category as Category)
-                ? " It still counts towards this year's invoice completeness — that is measured from the invoice, not from the calculated figure."
+              {isInvoiceTracked(preview.category)
+                ? " Recorded against a site for a single month, it also counts towards that site's invoice completeness — which is measured from the invoice, not from the calculated figure."
                 : ""}
             </p>
           </div>

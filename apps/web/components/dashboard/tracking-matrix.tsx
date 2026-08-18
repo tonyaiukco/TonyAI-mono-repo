@@ -149,6 +149,7 @@ export function TrackingMatrix({ rows, reportingYear, onSubsidiaryClick, onCateg
                         key={`${row.subsidiaryId}-${cell.category}`}
                         cell={cell}
                         responsible={row.designatedPerson ?? '—'}
+                        reportingYear={reportingYear}
                         label={`${row.subsidiaryName} ${cell.category}`}
                         onClick={() => onCategoryClick(row, cell.category)}
                         compact

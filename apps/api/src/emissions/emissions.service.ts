@@ -121,19 +121,22 @@ export interface InvoiceCoverage {
  * allowed to call finished. Round-1 DE-2 is precisely the gap between the two —
  * submitting is not finishing.
  */
-const REVIEWED_STATUSES = new Set<string>([
+const REVIEWED_STATUSES = new Set<ActivityRecordStatus>([
   ActivityRecordStatus.approved,
   ActivityRecordStatus.locked,
 ]);
 
+/** The projection of an activity record that the invoice rule actually reads. */
+export interface CoverageRecord {
+  locationId: string | null;
+  reportingPeriod: string;
+  periodValue: string;
+  evidenceCount: number;
+  status: ActivityRecordStatus;
+}
+
 export function computeInvoiceCoverage(
-  records: {
-    locationId: string | null;
-    reportingPeriod: string;
-    periodValue: string;
-    evidenceCount: number;
-    status: string;
-  }[],
+  records: readonly CoverageRecord[],
   /**
    * The locations the denominator is built from — the SET, not just its size.
    *
@@ -159,6 +162,13 @@ export function computeInvoiceCoverage(
   let outOfScopeRecords = 0;
 
   for (const r of records) {
+    // Self-contained rather than trusting the caller to pre-filter. Both call
+    // sites already pass committed records only, so this changes nothing today
+    // — but the signature now TAKES a status, and a reader will reasonably
+    // assume the status rule lives in here. A third caller handing over raw
+    // rows would otherwise let a draft close a slot AND be counted as awaiting
+    // review, which is the one thing this function exists to prevent.
+    if (!COUNTED_SET.has(r.status)) continue;
     if (!r.locationId) {
       unattributedRecords += 1;
     } else if (!inScope.has(r.locationId)) {
@@ -200,6 +210,74 @@ export function computeInvoiceCoverage(
     outOfScopeRecords,
     awaitingReview,
   };
+}
+
+/**
+ * FR §2.2's verdict for one subsidiary × category cell.
+ *
+ * Extracted for the same reason `computeInvoiceCoverage` was: two endpoints now
+ * answer with it. The matrix puts it on the cell; `completeness()` returns it so
+ * the Data Entry panel can *show* the verdict rather than reconstruct one.
+ *
+ * Reconstruction was the actual danger, and it is subtle — the completeness
+ * response carries the invoice counters but not `hasPending`, `anomaly` or
+ * `evidenceMissing`, so a client deriving "complete" from `covered >= required`
+ * badges green over a cell the dashboard is showing amber. That is round-1
+ * DE-2's own shape (a green that overstates), one level up, and no amount of
+ * care in the client can fix it: the inputs are not on the wire.
+ */
+export function deriveCellStatus(input: {
+  hasRecords: boolean;
+  /** Any `draft`/`rejected` record in the cell. */
+  hasPending: boolean;
+  anomaly: boolean;
+  /** An evidence-required category holding a committed record with no file. */
+  evidenceMissing: boolean;
+  /** The invoice rule's result, or `null` for the yes/no categories. */
+  coverage: InvoiceCoverage | null;
+}): DataStatus {
+  // `missing` means "no record exists for this cell" — the contract's own
+  // definition. A cell holding twelve approved, evidence-backed records whose
+  // slots simply are not closed is INCOMPLETE, not missing: the seed produced
+  // exactly that and the dashboard rendered a red "Missing" cell showing
+  // 198 tCO2e.
+  if (!input.hasRecords) return 'missing';
+
+  // The three caps both branches share. Full invoice coverage does not answer
+  // "there is an unfinished record here" or "one of these has no document", and
+  // FR §2.2's yellow means exactly that there is something left to look at.
+  const somethingLeftToLookAt =
+    input.hasPending || input.anomaly || input.evidenceMissing;
+
+  if (!input.coverage) {
+    return somethingLeftToLookAt ? 'incomplete' : 'complete';
+  }
+
+  // `required > 0` is load-bearing, not defensive. A location-measured
+  // subsidiary whose sites all postdate the reported year has a denominator of
+  // zero, and `0 >= 0` reported `complete` — a green tick over a year in which
+  // nothing was tracked, next to records that closed nothing.
+  const allSlotsClosed =
+    input.coverage.required > 0 &&
+    input.coverage.covered.size >= input.coverage.required;
+  if (!allSlotsClosed) return 'incomplete';
+
+  // The fourth cap is round-1 DE-2 itself: "On submit for review, the
+  // data-collection status turns green immediately." It did, and the
+  // denominator work of PRs 2–3 did not touch it — `COUNTED_STATUSES` counts a
+  // `submitted` record as committed (rightly: the inventory must not lose data
+  // queued for review), while `PENDING_STATUSES` only catches `draft`/
+  // `rejected`. So twelve invoices sent for review and seen by nobody closed
+  // twelve slots and turned the cell green.
+  //
+  // Confined to the invoice-tracked branch on purpose. The yes/no branch above
+  // has the same property, and changing it would re-mean all eight remaining
+  // categories on every subsidiary — a separate decision, recorded as an open
+  // question rather than smuggled in here.
+  if (somethingLeftToLookAt || input.coverage.awaitingReview.size > 0) {
+    return 'incomplete';
+  }
+  return 'complete';
 }
 
 /** Mutable accumulator behind an EmissionsTrendPoint, carrying a sort key. */
@@ -580,13 +658,7 @@ export class EmissionsService {
           // record lacking a file leaves the cell short of "complete" (FR §2.2).
           const evidenceRequired = isEvidenceRequired(category);
           let evidenceMissing = false;
-          const committed: {
-            locationId: string | null;
-            reportingPeriod: string;
-            periodValue: string;
-            evidenceCount: number;
-            status: string;
-          }[] = [];
+          const committed: CoverageRecord[] = [];
           for (const r of recs) {
             if (PENDING_STATUSES.has(r.status)) hasPending = true;
             if (r.anomalyFlag) anomaly = true;
@@ -610,46 +682,14 @@ export class EmissionsService {
           }
           lastUpdate = new Date(latest).toISOString();
 
-          if (invoiceTracked) {
-            coverage = computeInvoiceCoverage(committed, locationIds);
-            // `missing` means "no record exists for this cell" — the contract's
-            // own definition. A cell holding twelve approved, evidence-backed
-            // records whose slots simply are not closed is INCOMPLETE, not
-            // missing: the seed produced exactly that and the dashboard
-            // rendered a red "Missing" cell displaying 198 tCO2e.
-            status =
-              coverage.covered.size >= coverage.required ? 'complete' : 'incomplete';
-            // The same three caps the yes/no branch applies. Full invoice
-            // coverage does not answer "there is an unfinished record here" or
-            // "one of these has no document", and FR §2.2's yellow means
-            // exactly that there is something left to look at.
-            //
-            // The fourth cap is round-1 DE-2 itself: "On submit for review, the
-            // data-collection status turns green immediately." It did, and the
-            // denominator work of PRs 2–3 did not touch it — `COUNTED_STATUSES`
-            // counts a `submitted` record as committed (rightly: the inventory
-            // must not lose data queued for review), and `PENDING_STATUSES` only
-            // catches `draft`/`rejected`, so twelve invoices sent for review and
-            // seen by nobody closed twelve slots and turned the cell green.
-            // Something is still left to look at, so the cell is yellow.
-            //
-            // Confined to the invoice-tracked branch on purpose. The yes/no
-            // branch below has the same property, and changing it would re-mean
-            // all eight remaining categories on every subsidiary — a separate
-            // decision, recorded as an open question rather than smuggled in.
-            if (
-              status === 'complete' &&
-              (hasPending ||
-                anomaly ||
-                evidenceMissing ||
-                coverage.awaitingReview.size > 0)
-            ) {
-              status = 'incomplete';
-            }
-          } else {
-            status =
-              hasPending || anomaly || evidenceMissing ? 'incomplete' : 'complete';
-          }
+          if (invoiceTracked) coverage = computeInvoiceCoverage(committed, locationIds);
+          status = deriveCellStatus({
+            hasRecords: true,
+            hasPending,
+            anomaly,
+            evidenceMissing,
+            coverage,
+          });
         }
 
         totals[status] += 1;
@@ -746,7 +786,13 @@ export class EmissionsService {
           subsidiaryId: query.subsidiaryId,
           reportingYear: query.year,
           category: { in: INVOICE_TRACKED_CATEGORIES },
-          status: { in: COUNTED_STATUSES },
+          // Deliberately UNFILTERED by status, where this once asked SQL for
+          // `COUNTED_STATUSES` only. The response now carries FR §2.2's verdict,
+          // and two of the three caps behind it — a draft sitting in the cell,
+          // an anomaly flag — are invisible to a query that has already dropped
+          // those rows. The committed subset is taken in JS below, exactly as
+          // `trackingMatrix` does it, so both reach the verdict from the same
+          // records rather than from two different queries.
         },
         include: { _count: { select: { evidence: true } } },
       }),
@@ -773,19 +819,43 @@ export class EmissionsService {
     const categories: CategoryCompleteness[] = INVOICE_TRACKED_CATEGORIES.map(
       (category) => {
         const recs = byCategory.get(category) ?? [];
-        const coverage = computeInvoiceCoverage(
-          recs.map((r) => ({
+
+        // The same three signals `trackingMatrix` reads, from the same rows.
+        const evidenceRequired = isEvidenceRequired(category);
+        let hasPending = false;
+        let anomaly = false;
+        let evidenceMissing = false;
+        const committed: CoverageRecord[] = [];
+        for (const r of recs) {
+          if (PENDING_STATUSES.has(r.status)) hasPending = true;
+          if (r.anomalyFlag) anomaly = true;
+          if (!COUNTED_SET.has(r.status)) continue;
+          if (evidenceRequired && r._count.evidence === 0) evidenceMissing = true;
+          committed.push({
             locationId: r.locationId,
             reportingPeriod: r.reportingPeriod,
             periodValue: r.periodValue,
             evidenceCount: r._count.evidence,
             status: r.status,
-          })),
+          });
+        }
+
+        const coverage = computeInvoiceCoverage(
+          committed,
           locations.map((l) => l.id),
         );
 
         return {
           category,
+          // FR §2.2's verdict, from the shared derivation rather than from the
+          // caller's arithmetic over the counters below.
+          status: deriveCellStatus({
+            hasRecords: recs.length > 0,
+            hasPending,
+            anomaly,
+            evidenceMissing,
+            coverage,
+          }),
           required: coverage.required,
           covered: coverage.covered.size,
           unattributedRecords: coverage.unattributedRecords,
@@ -799,9 +869,13 @@ export class EmissionsService {
           // total — the same month counted twice, with nothing anywhere saying
           // so. The rule cannot count them, but the screen must not pretend
           // they do not exist.
+          // COMMITTED records only, not `recs`. The query above is now
+          // unfiltered by status, and a DRAFT whole-company entry feeds no
+          // total — so warning that it would double-count a month would be
+          // warning about something that has not happened and may never.
           companyLevelMonths: [
             ...new Set(
-              recs
+              committed
                 .filter((r) => !r.locationId && r.reportingPeriod === 'monthly')
                 .map((r) => r.periodValue.trim().toLowerCase()),
             ),

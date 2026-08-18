@@ -2,6 +2,7 @@
 
 import type { DataStatus, TrackingMatrixCell } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { reviewNote, shortfallReasons } from '@/lib/completeness-view';
 import {
   Tooltip,
   TooltipContent,
@@ -23,6 +24,9 @@ interface StatusCellProps {
   cell: TrackingMatrixCell;
   /** Row-level, so it stays a prop rather than being copied onto every cell. */
   responsible: string;
+  /** The matrix's year, for the one reason line that names it. Null on an
+   *  unscoped query, where the invoice rule does not apply anyway. */
+  reportingYear: number | null;
   onClick?: () => void;
   compact?: boolean;
   /** Identity part of the accessible name (subsidiary + category). The status
@@ -93,38 +97,27 @@ function formatEmission(value: number): string {
  * worth), and the entry count includes drafts, which no counter explains. What
  * these lines are is a list of REASONS entries did not close a slot.
  */
-function shortfallReasons(cell: TrackingMatrixCell): string[] {
+function cellReasons(cell: TrackingMatrixCell, reportingYear: number | null): string[] {
   const c = cell.coverage;
   if (!c) return [];
-  const reasons: string[] = [];
-  const plural = (n: number, one: string, many: string) =>
-    `${n} ${n === 1 ? one : many}`;
-  if (c.unattributedRecords > 0) {
-    reasons.push(
-      `${plural(c.unattributedRecords, 'entry is', 'entries are')} recorded for the whole company, not a site`,
-    );
-  }
-  if (c.nonMonthlyRecords > 0) {
-    reasons.push(
-      `${plural(c.nonMonthlyRecords, 'entry is', 'entries are')} not reported as a single month, so none stands in for a monthly invoice`,
-    );
-  }
-  if (c.outOfScopeRecords > 0) {
-    reasons.push(
-      `${plural(c.outOfScopeRecords, 'entry is', 'entries are')} at a site that did not exist yet in this year`,
-    );
-  }
-  if (c.missingEvidenceRecords > 0) {
-    reasons.push(
-      `${plural(c.missingEvidenceRecords, 'entry has', 'entries have')} no invoice attached`,
-    );
-  }
+  // One phrasing of the rule, shared with the drill-down and the Data Entry
+  // panel. This function used to keep its own near-identical copy, differing in
+  // wording ("entries have" vs "entries are with") and in the order the reasons
+  // appeared — two sentences for one compliance rule on two surfaces of the
+  // same dashboard.
+  const reasons = shortfallReasons(c, reportingYear);
+  // Without this the DE-2 scenario renders a "Partial" badge above "Invoices
+  // 24 of 24" and no explanation anywhere on the cell: all four shortfall
+  // counters are zero when every slot is closed by an unreviewed invoice.
+  const note = reviewNote(c.awaitingReviewSlots);
+  if (note) reasons.push(note);
   return reasons;
 }
 
 export function StatusCell({
   cell,
   responsible,
+  reportingYear,
   onClick,
   compact = false,
   label,
@@ -133,7 +126,7 @@ export function StatusCell({
   const hasEmission = cell.tCo2e !== null;
   const emission = cell.tCo2e === null ? null : Math.round(cell.tCo2e);
   const coverage = cell.coverage;
-  const reasons = shortfallReasons(cell);
+  const reasons = cellReasons(cell, reportingYear);
 
   // On an invoice-tracked cell the fraction IS the status, so it takes the
   // cell face and the tonnage moves into the tooltip. A cell showing "818"

@@ -3,16 +3,19 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertTriangle, ClipboardList, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   deriveEntryCoverage,
+  invoiceTrackedList,
+  SHORT_MONTH,
   SLOT_DESCRIPTION,
   SLOT_GLYPH,
   type SlotState,
 } from '@/lib/completeness-view';
-import type { SubsidiaryCompletenessDTO } from '@/lib/types';
+import type { DataStatus, SubsidiaryCompletenessDTO } from '@/lib/types';
 
 interface CoveragePanelProps {
   subsidiaryId: string;
@@ -23,6 +26,13 @@ interface CoveragePanelProps {
   reportingPeriod: string;
   periodValue: string;
   /**
+   * Whether the form actually holds an entry right now.
+   *
+   * Gates the warnings only. Everything else on this card describes data that
+   * is already recorded and is true whether or not anyone is typing.
+   */
+  hasEntry: boolean;
+  /**
    * Bumped by the page after a successful save or submit.
    *
    * Without it the panel keeps showing the fraction from before the entry that
@@ -32,20 +42,35 @@ interface CoveragePanelProps {
   refreshKey: number;
 }
 
-/** Three letters is all a twelve-column strip has room for. */
-const SHORT_MONTH = (month: string) => month.slice(0, 3);
-
-const TONE_CLASS = {
+/**
+ * The dashboard's own words for the same three verdicts.
+ *
+ * Deliberately not a second vocabulary. An earlier cut said "In progress" /
+ * "Awaiting review" / "Complete", which meant one cell was called Missing on
+ * the dashboard and In progress here — two names for one state, on two screens
+ * a tester moves between.
+ */
+const TONE_CLASS: Record<DataStatus, string> = {
   complete: 'border-status-complete-text/30 bg-status-complete-bg text-status-complete-text',
   incomplete:
     'border-status-incomplete-text/30 bg-status-incomplete-bg text-status-incomplete-text',
   missing: 'border-status-missing-text/30 bg-status-missing-bg text-status-missing-text',
-} as const;
+};
 
+const STATUS_LABEL: Record<DataStatus, string> = {
+  complete: 'Complete',
+  incomplete: 'Partial',
+  missing: 'Missing',
+};
+
+// `awaiting` and `company` share the amber tokens — both mean "not done" — so
+// the glyph is the only thing separating them, and `◐` against `◆` is about
+// four pixels of shape at this size. The dashed border is a second, non-colour
+// difference that survives greyscale.
 const SLOT_CLASS: Record<SlotState, string> = {
   accepted: 'border-status-complete-text/40 bg-status-complete-bg text-status-complete-text',
   awaiting:
-    'border-status-incomplete-text/40 bg-status-incomplete-bg text-status-incomplete-text',
+    'border-dashed border-status-incomplete-text/60 bg-status-incomplete-bg text-status-incomplete-text',
   company:
     'border-status-incomplete-text/40 bg-status-incomplete-bg text-status-incomplete-text',
   open: 'border-status-missing-text/40 bg-status-missing-bg text-status-missing-text',
@@ -87,6 +112,7 @@ export function CoveragePanel({
   locationId,
   reportingPeriod,
   periodValue,
+  hasEntry,
   refreshKey,
 }: CoveragePanelProps) {
   const [data, setData] = useState<SubsidiaryCompletenessDTO | null>(null);
@@ -102,19 +128,30 @@ export function CoveragePanel({
       .then((d) => !cancelled && setData(d))
       // A failed fetch and "nothing is missing" must not look alike. Rendered as
       // an empty panel they do, and on this card that is the difference between
-      // "you are done" and "we could not check".
-      .catch((e) =>
-        !cancelled &&
+      // "you are done" and "we could not check". Kept inline rather than in a
+      // toast for the same reason — a toast vanishes and leaves a blank card.
+      .catch((e) => {
+        if (cancelled) return;
+        // An expired session is not a completeness problem, and the API's own
+        // word for it is the bare "Unauthorized" — useless on this card.
+        const expired = e instanceof ApiError && (e.status === 401 || e.status === 403);
         setError(
-          e instanceof ApiError
-            ? e.message
-            : 'Could not load the collection status.',
-        ),
-      );
+          expired
+            ? 'Your session has expired — sign in again to see the collection status.'
+            : e instanceof ApiError
+              ? e.message
+              : 'Could not load the collection status.',
+        );
+      });
     return () => {
       cancelled = true;
     };
-  }, [subsidiaryId, reportingYear, refreshKey]);
+    // `refreshKey` alone drives the refetch. It is bumped by the page's own
+    // record refresh, which also runs on a subsidiary switch — so listing
+    // `subsidiaryId` here too fired two requests for every switch, the first
+    // immediately cancelled by the second.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportingYear, refreshKey]);
 
   if (!subsidiaryId) return null;
 
@@ -145,6 +182,7 @@ export function CoveragePanel({
     locationId,
     reportingPeriod,
     periodValue,
+    hasEntry,
   });
 
   if (view.kind !== 'tracked') {
@@ -156,25 +194,24 @@ export function CoveragePanel({
         ? 'This subsidiary is measured as a whole company, so there are no per-site invoice targets to complete.'
         : view.kind === 'no_locations'
           ? `No site of this subsidiary existed at the end of ${view.year}, so there are no invoices to track for that year.`
-          : `${view.category} is not tracked by invoice. Only Electricity, Natural Gas and Water are counted one invoice per site per month.`;
+          : `${view.category} is not tracked by invoice. Only ${invoiceTrackedList()} are counted one invoice per site per month.`;
     return (
       <Shell>
-        <p className="text-sm text-muted-foreground">{message}</p>
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">{message}</p>
+          {/* Records may exist even where the rule tracks nothing — an earlier
+              cut dropped them and answered "there are no invoices to track"
+              over twelve real entries. */}
+          {view.kind === 'no_locations' &&
+            view.reasons.map((r) => (
+              <p key={r} className="text-xs text-muted-foreground">
+                {r}
+              </p>
+            ))}
+        </div>
       </Shell>
     );
   }
-
-  const tone =
-    view.status === 'complete'
-      ? 'complete'
-      : view.covered === 0
-        ? 'missing'
-        : 'incomplete';
-  const label = {
-    complete: 'Complete',
-    awaiting_review: 'Awaiting review',
-    in_progress: 'In progress',
-  }[view.status];
 
   // Built as a string. Written as JSX text with `{view.covered}` on its own
   // line, the separating space collapses and it renders "12 of 24 invoices
@@ -190,10 +227,10 @@ export function CoveragePanel({
           <span
             className={cn(
               'rounded-full border px-2.5 py-1 text-xs font-medium',
-              TONE_CLASS[tone],
+              TONE_CLASS[view.status],
             )}
           >
-            {label}
+            {STATUS_LABEL[view.status]}
           </span>
           <span className="font-mono text-sm tabular-nums text-foreground">
             {view.covered}/{view.required}
@@ -220,32 +257,53 @@ export function CoveragePanel({
             <p className="text-xs font-medium text-foreground">
               {view.selected.locationName}
             </p>
-            <div className="grid grid-cols-12 gap-0.5">
-              {view.selected.months.map((m) => (
-                <span
-                  key={m.month}
-                  title={`${m.month}: ${SLOT_DESCRIPTION[m.state]}`}
-                  aria-label={`${m.month}: ${SLOT_DESCRIPTION[m.state]}`}
-                  className={cn(
-                    'flex h-5 items-center justify-center rounded-[3px] border text-[9px] font-bold leading-none',
-                    SLOT_CLASS[m.state],
-                  )}
-                >
-                  {SLOT_GLYPH[m.state]}
-                </span>
-              ))}
-            </div>
-            <div className="grid grid-cols-12 gap-0.5">
-              {view.selected.months.map((m) => (
-                <span
-                  key={m.month}
-                  aria-hidden
-                  className="text-center text-[9px] text-muted-foreground"
-                >
-                  {SHORT_MONTH(m.month)}
-                </span>
-              ))}
-            </div>
+            {/* Scrolls rather than crushes. The right column is one of three,
+                so its content is ~168px at the `lg` breakpoint — twelve tracks
+                of 12px, against three-letter labels that need ~16. Without the
+                minimum the month row overlapped itself from 1024 to ~1200px.
+                Same protection the dashboard grid already carries. */}
+            <ScrollArea className="w-full">
+              <div
+                role="group"
+                aria-label={`${view.selected.locationName} — invoices by month`}
+                className="min-w-[240px] space-y-0.5"
+              >
+                <div className="grid grid-cols-12 gap-0.5">
+                  {view.selected.months.map((m) => (
+                    <span
+                      key={m.month}
+                      // `role="img"` is load-bearing, not decoration: a bare
+                      // `<span>` is `role=generic`, where ARIA prohibits an
+                      // accessible name, so browsers drop the label and a
+                      // screen reader announces twelve bare glyphs. The
+                      // dashboard grid escapes this only because its slots are
+                      // real buttons.
+                      role="img"
+                      title={`${m.month}: ${SLOT_DESCRIPTION[m.state]}`}
+                      aria-label={`${m.month}: ${SLOT_DESCRIPTION[m.state]}`}
+                      className={cn(
+                        'flex h-5 items-center justify-center rounded-[3px] border text-[9px] font-bold leading-none',
+                        SLOT_CLASS[m.state],
+                      )}
+                    >
+                      {SLOT_GLYPH[m.state]}
+                    </span>
+                  ))}
+                </div>
+                <div className="grid grid-cols-12 gap-0.5">
+                  {view.selected.months.map((m) => (
+                    <span
+                      key={m.month}
+                      aria-hidden
+                      className="text-center text-[9px] text-muted-foreground"
+                    >
+                      {SHORT_MONTH(m.month)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
           </div>
         )}
 
