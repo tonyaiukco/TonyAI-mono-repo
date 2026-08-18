@@ -53,7 +53,7 @@ const SUBSIDIARIES = [
 // Operational locations (FR §1.1 third tier). Fixed ids keep the seed
 // idempotent; names/addresses are demo values.
 // geographyCode defaults to the parent subsidiary's (a location determines the
-// factor geography for records attributed to it, FR §5.2).
+// factor geography for records attributed to it, data_entry_page.md §5.2).
 const LOCATIONS = [
   { id: '33333333-3333-3333-3333-333333330001', subsidiaryId: SUBSIDIARIES[0].id, name: 'Istanbul HQ', geographyCode: SUBSIDIARIES[0].geographyCode, address: 'Levent, Istanbul', authorizedPerson: 'Aylin Demir' },
   { id: '33333333-3333-3333-3333-333333330002', subsidiaryId: SUBSIDIARIES[0].id, name: 'Ankara Power Plant', geographyCode: SUBSIDIARIES[0].geographyCode, address: 'Sincan OSB, Ankara', authorizedPerson: 'Murat Aksoy' },
@@ -546,7 +546,7 @@ async function main() {
   }
 
   // A few LOCATION-level records (attributed to a specific location, not just the
-  // subsidiary) to exercise the reporting-entity dimension (FR §5.2). Same
+  // subsidiary) to exercise the reporting-entity dimension (data_entry_page.md §5.2). Same
   // subsidiary+category can coexist at subsidiary-level and per-location.
   const LOCATION_ACTIVITY = [
     { locationId: LOCATIONS[0].id, subsidiaryId: SUBSIDIARIES[0].id, geographyCode: SUBSIDIARIES[0].geographyCode, category: 'Electricity', unit: 'kWh', base: 40000 },

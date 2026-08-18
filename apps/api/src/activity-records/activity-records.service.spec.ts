@@ -320,7 +320,7 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
       );
   });
 
-  it('resolves the factor geography from the LOCATION when a locationId is given (FR §5.2)', async () => {
+  it('resolves the factor geography from the LOCATION when a locationId is given (data_entry_page.md §5.2)', async () => {
     const { prisma, calc, service } = build(2);
     // Subsidiary is TR, but the targeted location is UK -> UK must win.
     prisma.subsidiary.findUnique.mockResolvedValue(
@@ -510,7 +510,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       expect(data.location).toEqual({ connect: { id: 'loc-1' } });
       // And the snapshot is recomputed from the SITE's geography, not the
       // subsidiary's — the location is what decides which factor applies
-      // (FR §5.2), so a move that kept the old factor would leave a record
+      // (data_entry_page.md §5.2), so a move that kept the old factor would leave a record
       // whose stored provenance contradicts its own reporting entity.
       expect(calc.compute).toHaveBeenCalledWith(
         expect.objectContaining({ geographyCode: 'UK' }),

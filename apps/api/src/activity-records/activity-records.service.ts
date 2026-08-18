@@ -262,7 +262,7 @@ export class ActivityRecordsService {
     });
     if (!subsidiary) throw new NotFoundException('Subsidiary not found');
 
-    // Reporting entity (FR §5.2): when a location is targeted, it drives the
+    // Reporting entity (data_entry_page.md §5.2): when a location is targeted, it drives the
     // factor geography; otherwise the subsidiary does. A location must belong to
     // the same (accessible) subsidiary, else it is treated as not found.
     let geographyCode = subsidiary.geographyCode;

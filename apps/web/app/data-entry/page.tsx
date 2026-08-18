@@ -865,7 +865,7 @@ function DataEntryPageInner() {
                   </Field>
 
                   {/* Reporting entity: whole subsidiary or one of its locations.
-                      The chosen entity drives the factor geography (FR §5.2). */}
+                      The chosen entity drives the factor geography (data_entry_page.md §5.2). */}
                   <Field label="Location">
                     <Select
                       value={locationId || "__whole__"}
@@ -1003,7 +1003,7 @@ function DataEntryPageInner() {
                       Round-1 DE-6 asked for Türkiye as a selectable "grid
                       region"; the field they were looking at was metadata that
                       never reached the engine. The geography is not a per-record
-                      choice — it comes from the reporting entity (FR §5.2) — so
+                      choice — it comes from the reporting entity (data_entry_page.md §5.2) — so
                       the honest fix is to show it, and to say where it came
                       from, rather than offer a control that changes nothing. */}
                   {effectiveGeography && (

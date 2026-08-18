@@ -66,7 +66,7 @@ describe('describeMove', () => {
   it('names both ends of the move, and says the factor is recalculated', () => {
     const notice = describeMove(opened(), { locationId: 'loc-1' }, names);
     // The geography claim is not decoration: the location drives which emission
-    // factor applies (FR §5.2), so a move can change the stored figure.
+    // factor applies (data_entry_page.md §5.2), so a move can change the stored figure.
     expect(notice).toBe(
       'Saving moves this record from the whole company to Ankara Power Plant. It is not copied — the emission factor is recalculated for its geography.',
     );
