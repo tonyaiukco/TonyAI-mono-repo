@@ -252,6 +252,20 @@ export interface EntryCoverageInput {
    * refetches.
    */
   hasEntry: boolean;
+  /**
+   * When an OPEN record's location has been changed but not yet saved, the
+   * entity it is moving **from** (`""` for the whole company). `null` when
+   * nothing is being moved.
+   *
+   * Load-bearing for truthfulness, not a refinement. The duplicate warnings
+   * below assume the entry being keyed is a NEW row, which was guaranteed while
+   * the client abandoned the edit on a location change. WP18 made that a move
+   * instead — so without this the panel says "keying a site invoice for it as
+   * well would count that month twice" about the very record that is leaving
+   * the whole-company slot, i.e. about a duplicate that will not exist. The
+   * sentence was true before WP18 and is false after it.
+   */
+  movingFrom?: string | null;
 }
 
 export function deriveEntryCoverage({
@@ -261,6 +275,7 @@ export function deriveEntryCoverage({
   reportingPeriod,
   periodValue,
   hasEntry,
+  movingFrom = null,
 }: EntryCoverageInput): EntryCoverage {
   // The API returns no categories for a subsidiary measured as a whole. That is
   // not zero progress — the rule does not apply to it at all.
@@ -302,7 +317,12 @@ export function deriveEntryCoverage({
   const siteMonth = site?.months.find(
     (m) => m.month.trim().toLowerCase() === month,
   );
+  // A pending move is not a second row. Both warnings below must exclude the
+  // record that is moving, or they describe a duplicate that the save is about
+  // to REMOVE rather than create.
+  const movingOffCompanyLevel = movingFrom === "";
   const sitesHoldingMonth = tracked.locations
+    .filter((l) => l.locationId !== movingFrom)
     .filter((l) =>
       l.months.some((m) => m.month.toLowerCase() === month && m.covered),
     )
@@ -340,7 +360,16 @@ export function deriveEntryCoverage({
     // Both directions of the double count, checked independently of the branch
     // above. Keying the site invoice first and the company record second
     // produced no warning at all until this second clause existed.
-    if (monthly && locationId && atCompanyLevel && !siteMonth?.covered) {
+    if (
+      monthly &&
+      locationId &&
+      atCompanyLevel &&
+      !siteMonth?.covered &&
+      // ...unless the whole-company row for this month IS the record being
+      // moved onto this site. Then the save removes it from company level
+      // rather than adding a second row — the opposite of a double count.
+      !movingOffCompanyLevel
+    ) {
       warnings.push(
         `${periodValue.trim()} ${data.reportingYear} is already recorded for the whole company. Keying a site invoice for it as well would count that month twice — both rows feed the emissions total.`,
       );

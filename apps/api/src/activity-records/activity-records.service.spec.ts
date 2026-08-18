@@ -629,6 +629,62 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
     });
 
+    it('re-evaluates the anomaly against the entity it moved TO, not the one it left', async () => {
+      const { prisma, service } = build(2);
+      withLocation(prisma);
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
+      prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+        ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
+        _count: { evidence: 0 },
+        location: { name: 'Ankara Plant' },
+      }));
+
+      await service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' });
+
+      // The baseline is keyed on the reporting ENTITY (subsidiary + location +
+      // category + granularity), and whole-company records form their own pool.
+      // Measuring a moved record against the pool it just left would flag it as
+      // anomalous for differing from consumption at a different site.
+      const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+      expect(where.locationId).toBe('loc-1');
+    });
+
+    it('answers 404 for a location that does not exist, before writing anything', async () => {
+      const { prisma, service } = build(2);
+      prisma.subsidiary.findUnique.mockResolvedValue(
+        makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
+      );
+      prisma.location.findUnique.mockResolvedValue(null);
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
+
+      // Without the `!location` half of the guard this reaches `connect` and
+      // Prisma raises P2025 — a 500 for what is plainly a bad request.
+      await expect(
+        service.update(dataEntry(), 'rec-move', { locationId: 'loc-nope' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('does not report an unrelated database failure as a duplicate', async () => {
+      const { prisma, service } = build(2);
+      withLocation(prisma);
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
+      prisma.activityRecord.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      // A catch that answered 409 for everything would tell the user "an
+      // activity record already exists for this reporting entity" whenever the
+      // database failed for any reason at all — a specific, checkable claim,
+      // and a false one.
+      await expect(
+        service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' }),
+      ).rejects.not.toBeInstanceOf(ConflictException);
+    });
+
     it('records both sides of the move in the audit diff', async () => {
       const { prisma, service } = build(2);
       withLocation(prisma);

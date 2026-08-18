@@ -13,6 +13,8 @@
 //                built for: opening a Fuel Q3 draft, switching to Electricity
 //                Q1 and saving overwrote the Fuel record with the Electricity
 //                numbers and reported "Draft saved".
+import { isRecordableWithoutFactor } from "@tonyai/shared-types";
+import { NOT_CALCULATED_LABEL } from "@/lib/calculation-display";
 import type { ReportingPeriod } from "@/lib/types";
 
 /**
@@ -25,7 +27,7 @@ import type { ReportingPeriod } from "@/lib/types";
 export interface RecordIdentity {
   category: string;
   reportingYear: number;
-  reportingPeriod: ReportingPeriod | string;
+  reportingPeriod: ReportingPeriod;
   periodValue: string;
   /** `""` means the whole subsidiary; otherwise a location id. */
   locationId: string;
@@ -77,5 +79,12 @@ export function describeMove(
   const nameOf = (id: string) =>
     id ? (locationNames.get(id) ?? "another site") : "the whole company";
   const to = nameOf(form.locationId);
-  return `Saving moves this record from ${nameOf(opened.locationId)} to ${to}. It is not copied — the emission factor is recalculated for ${to}'s geography.`;
+  const move = `Saving moves this record from ${nameOf(opened.locationId)} to ${to}. It is not copied`;
+  // The second clause is only true where a factor exists. `Water` is recordable
+  // without one and stores an explicit "not calculated" snapshot, so promising
+  // a recalculated emission factor would contradict the figure shown for the
+  // same record two cards away.
+  return isRecordableWithoutFactor(opened.category)
+    ? `${move} — and it still has no emission factor, so its figure stays "${NOT_CALCULATED_LABEL}".`
+    : `${move} — the emission factor is recalculated for its geography.`;
 }

@@ -427,6 +427,67 @@ describe('deriveEntryCoverage — warnings about what is being keyed in', () => 
     expect(view.warnings.some((w) => w.includes('count that month twice'))).toBe(true);
   });
 
+  it('does NOT warn about a double count when that record is the one being moved', () => {
+    // The regression WP18 PR 1 introduced into a WP17 sentence. While the
+    // client abandoned the edit on a location change, "keying a site invoice
+    // for it as well" was guaranteed to create a second row and the warning was
+    // true. Now the save MOVES the record out of the whole-company slot, so the
+    // duplicate it warns about is the one the save is about to remove.
+    const view = derive(
+      dto({ categories: [category({ companyLevelMonths: ['january'] })] }),
+      { periodValue: 'January', locationId: 'loc-1', movingFrom: '' },
+    );
+    if (view.kind !== 'tracked') throw new Error(`expected tracked, got ${view.kind}`);
+    expect(view.warnings.every((w) => !w.includes('count that month twice'))).toBe(true);
+  });
+
+  it('does NOT warn when a site record is being moved back to the whole company', () => {
+    const view = derive(
+      dto({
+        categories: [
+          category({
+            covered: 1,
+            locations: [
+              {
+                locationId: 'loc-1',
+                locationName: 'Ankara Power Plant',
+                months: months(['January']),
+              },
+            ],
+          }),
+        ],
+      }),
+      { locationId: '', periodValue: 'January', movingFrom: 'loc-1' },
+    );
+    if (view.kind !== 'tracked') throw new Error(`expected tracked, got ${view.kind}`);
+    expect(view.warnings.every((w) => !w.includes('would count it twice'))).toBe(true);
+  });
+
+  it('STILL warns about a different site that holds the month, during a move', () => {
+    // The move must be excluded from the duplicate check, not the check
+    // suppressed. Moving loc-1's January to the whole company genuinely does
+    // create a duplicate when loc-2 also holds January.
+    const view = derive(
+      dto({
+        categories: [
+          category({
+            covered: 2,
+            locations: [
+              { locationId: 'loc-1', locationName: 'Ankara Power Plant', months: months(['January']) },
+              { locationId: 'loc-2', locationName: 'Izmir Depot', months: months(['January']) },
+            ],
+          }),
+        ],
+      }),
+      { locationId: '', periodValue: 'January', movingFrom: 'loc-1' },
+    );
+    if (view.kind !== 'tracked') throw new Error(`expected tracked, got ${view.kind}`);
+    const warning = view.warnings.find((w) => w.includes('would count it twice'));
+    expect(warning).toContain('Izmir Depot');
+    // ...and must not accuse the site the record is leaving.
+    expect(warning).not.toContain('Ankara Power Plant');
+  });
+
   it('warns in the other direction too — a company entry over a month a site already holds', () => {
     // Key the site invoice first and the company record second and nothing
     // warned at all, though the month is double-counted either way round.

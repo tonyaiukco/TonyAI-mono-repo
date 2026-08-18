@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { describeMove, hasMovedOffRecord, type RecordIdentity } from './record-identity';
+import { NOT_CALCULATED_LABEL } from './calculation-display';
 
 /**
  * These two functions decide whether the next save edits a record or creates
@@ -67,7 +68,7 @@ describe('describeMove', () => {
     // The geography claim is not decoration: the location drives which emission
     // factor applies (FR §5.2), so a move can change the stored figure.
     expect(notice).toBe(
-      "Saving moves this record from the whole company to Ankara Power Plant. It is not copied — the emission factor is recalculated for Ankara Power Plant's geography.",
+      'Saving moves this record from the whole company to Ankara Power Plant. It is not copied — the emission factor is recalculated for its geography.',
     );
   });
 
@@ -75,6 +76,22 @@ describe('describeMove', () => {
     expect(describeMove(opened({ locationId: 'loc-2' }), { locationId: '' }, names)).toContain(
       'from Istanbul HQ to the whole company',
     );
+  });
+
+  it('does not promise a recalculated factor for a category that has none', () => {
+    // `Water` is recordable without a factor and stores an explicit
+    // "not calculated" snapshot. Promising a recalculation would contradict the
+    // figure shown for the same record two cards away on the same screen.
+    const notice = describeMove(
+      opened({ category: 'Water' }),
+      { locationId: 'loc-1' },
+      names,
+    )!;
+    expect(notice).toContain('from the whole company to Ankara Power Plant');
+    expect(notice).not.toContain('emission factor is recalculated');
+    // The exact label the figure itself renders, so the sentence and the number
+    // it describes cannot drift apart.
+    expect(notice).toContain(NOT_CALCULATED_LABEL);
   });
 
   it('is silent when nothing is being moved', () => {

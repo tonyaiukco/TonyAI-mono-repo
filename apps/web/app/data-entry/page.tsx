@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
@@ -729,20 +730,33 @@ function DataEntryPageInner() {
 
   async function handleSaveDraft() {
     setSaving("draft");
+    // Read once, for use after the awaits. `movingTo` is a per-render const so
+    // it could not change mid-handler either way; naming it here is what keeps
+    // the success and failure branches describing the SAME attempt.
+    const wasMoving = movingTo !== null;
     try {
       const rec = await persist();
       if (!rec) return;
       setEditingId(rec.id);
       setEditingTuple(tupleOf(rec));
       setAnomalyFlag(rec.anomalyFlag);
+      // Composed, not branched. A move is the operation most likely to RAISE
+      // the anomaly flag — the baseline is keyed on the reporting entity, so
+      // the value is re-scored against a different pool of periods — and an
+      // either/or toast would announce the move and swallow the flag, leaving
+      // the user to meet it later as a blocked Submit. The location comes from
+      // the server's response, so it states what was actually written.
+      const anomalyNote = rec.anomalyFlag
+        ? " — value flagged as anomalous, add a variance comment"
+        : "";
       toast.success(
-        rec.anomalyFlag
-          ? "Draft saved — value flagged as anomalous, add a variance comment"
-          : "Draft saved",
+        wasMoving
+          ? `Moved to ${rec.locationName ?? "the whole company"}, draft saved${anomalyNote}`
+          : `Draft saved${anomalyNote}`,
       );
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      toast.error(saveErrorMessage(e, movingTo !== null));
+      toast.error(saveErrorMessage(e, wasMoving));
     } finally {
       setSaving(null);
     }
@@ -750,6 +764,7 @@ function DataEntryPageInner() {
 
   async function handleSubmit() {
     setSaving("submit");
+    const wasMoving = movingTo !== null;
     try {
       const rec = await persist();
       if (!rec) return;
@@ -771,7 +786,7 @@ function DataEntryPageInner() {
       resetForm();
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      toast.error(saveErrorMessage(e, movingTo !== null));
+      toast.error(saveErrorMessage(e, wasMoving));
     } finally {
       setSaving(null);
     }
@@ -857,7 +872,11 @@ function DataEntryPageInner() {
                       onValueChange={(v) => setLocationId(v === "__whole__" ? "" : v)}
                       disabled={subsLoading || !subsidiaryId}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger
+                        aria-describedby={
+                          movingTo ? "location-move-notice" : undefined
+                        }
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -874,12 +893,25 @@ function DataEntryPageInner() {
                         one that behaves differently has to say so — silently
                         re-attributing committed data on the next Save would be
                         worse than the duplicate this replaced. */}
-                    {movingTo && (
-                      <p className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-700">
-                        <MoveRight className="mt-0.5 h-3 w-3 shrink-0" />
-                        <span>{movingTo}</span>
-                      </p>
-                    )}
+                    {/* Mounted unconditionally: a live region inserted at the
+                        same moment its text appears is announced unreliably,
+                        and this is the only consequence warning on the page a
+                        keyboard user would otherwise never hear. */}
+                    <p
+                      id="location-move-notice"
+                      role="status"
+                      className={cn(
+                        "mt-1.5 flex items-start gap-1.5 text-xs text-amber-700",
+                        !movingTo && "hidden",
+                      )}
+                    >
+                      {movingTo && (
+                        <>
+                          <MoveRight className="mt-0.5 h-3 w-3 shrink-0" />
+                          <span>{movingTo}</span>
+                        </>
+                      )}
+                    </p>
                   </Field>
 
                   <Field label="Category">
@@ -1253,6 +1285,10 @@ function DataEntryPageInner() {
                 // recorded for the whole company" at the exact confirmation
                 // moment for a site invoice that had just been filed.
                 hasEntry={hasValidInput || editingId !== null}
+                // A pending move is not a second row: without this the panel
+                // warns that the record about to LEAVE the whole-company slot
+                // would double-count the month it is leaving.
+                movingFrom={movingTo ? (editingTuple?.locationId ?? null) : null}
                 refreshKey={coverageKey}
               />
 
@@ -1320,7 +1356,14 @@ function DataEntryPageInner() {
                               <div className="text-xs text-muted-foreground">
                                 {[
                                   r.category,
-                                  r.locationName ?? "Whole subsidiary",
+                                  // `locationName` is optional on the contract,
+                                  // so a bare `??` would label a site row
+                                  // "Whole subsidiary" if the include were ever
+                                  // dropped — a false claim on the one screen
+                                  // built to tell the two apart.
+                                  r.locationId
+                                    ? (r.locationName ?? "A site")
+                                    : "Whole subsidiary",
                                   isCalculated(r.calculation)
                                     ? `${numberFmt.format(r.calculation.tCo2e)} tCO₂e`
                                     : NOT_CALCULATED_LABEL,

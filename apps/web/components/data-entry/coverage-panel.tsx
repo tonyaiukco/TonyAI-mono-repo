@@ -32,6 +32,10 @@ interface CoveragePanelProps {
    * is already recorded and is true whether or not anyone is typing.
    */
   hasEntry: boolean;
+  /** The entity an open record is moving FROM (`""` = whole company), or null
+   *  when nothing is being moved. Excludes that record from the duplicate
+   *  warnings — a move removes a row from one slot, it does not add one. */
+  movingFrom: string | null;
   /**
    * Bumped by the page after a successful save or submit.
    *
@@ -113,6 +117,7 @@ export function CoveragePanel({
   reportingPeriod,
   periodValue,
   hasEntry,
+  movingFrom,
   refreshKey,
 }: CoveragePanelProps) {
   const [data, setData] = useState<SubsidiaryCompletenessDTO | null>(null);
@@ -183,6 +188,7 @@ export function CoveragePanel({
     reportingPeriod,
     periodValue,
     hasEntry,
+    movingFrom,
   });
 
   if (view.kind !== 'tracked') {
