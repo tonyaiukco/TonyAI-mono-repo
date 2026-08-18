@@ -57,7 +57,13 @@ test('the drawer names every open month, and says why the count is short', async
 
   // The three seeded invoices, and the twenty-one that are not there.
   await expect(
-    drawer.getByRole('button', { name: /Istanbul HQ January: invoice attached/ }),
+    // "and approved" is load-bearing. WP17 PR 4 split a closed slot into two
+    // states, and the bare `/invoice attached/` matches BOTH — including
+    // "invoice attached, waiting for review", which is the one this assertion
+    // exists to distinguish from an accepted invoice.
+    drawer.getByRole('button', {
+      name: /Istanbul HQ January: invoice attached and approved/,
+    }),
   ).toBeDisabled();
   // Electricity has NO honestly-open slot on the seed: all twelve months are
   // already recorded company-wide, so every uncovered cell is a `◆`. That is

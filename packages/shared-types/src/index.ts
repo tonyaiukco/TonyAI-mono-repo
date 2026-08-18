@@ -1589,6 +1589,13 @@ export interface EmissionsSummary {
  * subsidiary — the one case where completeness is a fraction rather than a
  * yes/no. Everywhere else it is absent, which is what stops a UI from rendering
  * "0/0" for a category the rule does not apply to.
+ *
+ * **The counters are not homogeneous.** The four `*Records` fields count
+ * RECORDS and are disjoint from `covered` — each names committed data that
+ * closed no slot. `awaitingReviewSlots` counts SLOTS and is a SUBSET of
+ * `covered`. A consumer that lumps all five into one "explain the shortfall"
+ * list computes nonsense; the first four explain why `covered < required`, the
+ * fifth explains why a full `covered` still is not finished.
  */
 export interface CellCoverage {
   /**
@@ -1641,6 +1648,23 @@ export interface CellCoverage {
    * cell reading `1/0`.
    */
   outOfScopeRecords: number;
+  /**
+   * Of the `covered` slots, how many are closed ONLY by a record nobody has
+   * reviewed yet — `submitted` or `under_review` rather than `approved`/`locked`.
+   *
+   * The counter round-1 **DE-2** actually asks for, and a SUBSET of `covered`,
+   * never a rival to it. `COUNTED_STATUSES` treats a submitted record as
+   * committed on purpose — the inventory must not lose data sitting in a review
+   * queue — but the side effect was that a cell turned green the moment its last
+   * invoice was *sent* for review, which is DE-2's complaint verbatim: "On submit
+   * for review, the data-collection status turns green immediately."
+   *
+   * Kept as a separate number rather than deducted from `covered` so the two
+   * claims stay independent: `covered` answers "is the data in?", this answers
+   * "has anyone accepted it?". Deducting it would have made the emissions total
+   * and the collection fraction disagree about the same records.
+   */
+  awaitingReviewSlots: number;
 }
 
 /** One subsidiary × category cell of the tracking matrix. */
@@ -1711,6 +1735,12 @@ export interface CompletenessSlot {
   month: string;
   /** True when a committed monthly record with a file closes this slot. */
   covered: boolean;
+  /**
+   * True when the record closing this slot is still awaiting review. Always
+   * `false` where `covered` is `false` — an open slot has nothing to review —
+   * so the pair reads as three states, not four: open, in review, accepted.
+   */
+  awaitingReview: boolean;
 }
 
 /** One location's twelve slots for a single invoice-tracked category. */
@@ -1727,14 +1757,20 @@ export interface CompletenessLocationRow {
  * by the same function, so the drill-down cannot disagree with the cell that
  * opened it.
  */
-export interface CategoryCompleteness {
+export interface CategoryCompleteness extends CellCoverage {
   category: Category;
-  required: number;
-  covered: number;
-  unattributedRecords: number;
-  nonMonthlyRecords: number;
-  missingEvidenceRecords: number;
-  outOfScopeRecords: number;
+  /**
+   * FR §2.2's verdict for this category — the SAME value the matrix cell
+   * carries, produced by the same derivation on the server.
+   *
+   * On the wire because it cannot be recomputed from the numbers beside it. Two
+   * of the three caps behind `incomplete` — a draft in the cell, an anomaly
+   * flag — correspond to no field in this object, so a client deriving its own
+   * verdict from `covered >= required` badges a cell green that the dashboard is
+   * showing amber. That is round-1 DE-2's own failure (a green that overstates),
+   * one level up.
+   */
+  status: DataStatus;
   /**
    * Months (lower-cased) that already hold a WHOLE-COMPANY entry for this
    * category and year.

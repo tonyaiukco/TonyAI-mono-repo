@@ -5,7 +5,11 @@ import {
   type ActivityRecord,
   type Subsidiary,
 } from '@tonyai/db';
-import { EmissionsService } from './emissions.service';
+import {
+  computeInvoiceCoverage,
+  deriveCellStatus,
+  EmissionsService,
+} from './emissions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 
@@ -184,6 +188,31 @@ describe('EmissionsService.completeness (drill-down)', () => {
     expect(ankara.months.find((m) => m.month === 'February')!.covered).toBe(false);
   });
 
+  it('separates a month awaiting review from one that is accepted (DE-2)', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice('loc-1', 'January'),
+      invoice('loc-1', 'February', {
+        status: ActivityRecordStatus.submitted,
+      } as Partial<ActivityRecord>),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+    const ankara = electricity.locations.find((l) => l.locationId === 'loc-1')!;
+    const month = (name: string) => ankara.months.find((m) => m.month === name)!;
+
+    // Three states off two booleans — the entry screen needs to tell a user
+    // which specific month is sitting in a review queue, not merely that one is.
+    expect(month('January')).toMatchObject({ covered: true, awaitingReview: false });
+    expect(month('February')).toMatchObject({ covered: true, awaitingReview: true });
+    // The fourth combination must be unreachable: nothing to review where there
+    // is nothing keyed in.
+    expect(month('March')).toMatchObject({ covered: false, awaitingReview: false });
+    expect(electricity.awaitingReviewSlots).toBe(1);
+    expect(ankara.months.every((m) => m.covered || !m.awaitingReview)).toBe(true);
+  });
+
   it('agrees with the matrix cell it drills into', async () => {
     const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
     const records = [invoice('loc-1', 'January'), invoice('loc-2', 'February')];
@@ -207,6 +236,21 @@ describe('EmissionsService.completeness (drill-down)', () => {
     // cell that opened it is a second implementation of a compliance
     // denominator, and the user would have no way to know which is right.
     expect(drillElectricity.covered).toBe(cell.coverage!.covered);
+    // The PR added a second number and a verdict that must ALSO agree across
+    // the two endpoints — the panel shows what the cell shows, so a drift here
+    // is a user seeing "Complete" on one screen and "Partial" on the other for
+    // the same subsidiary, category and year.
+    expect(drillElectricity.awaitingReviewSlots).toBe(
+      cell.coverage!.awaitingReviewSlots,
+    );
+    expect(drillElectricity.status).toBe(cell.status);
+    // And the per-slot flags must sum to the aggregate, or the month strip
+    // contradicts the fraction printed directly above it.
+    expect(
+      drillElectricity.locations
+        .flatMap((l) => l.months)
+        .filter((m) => m.awaitingReview).length,
+    ).toBe(cell.coverage!.awaitingReviewSlots);
     expect(drillElectricity.required).toBe(cell.coverage!.required);
     // ...and the slot grid must sum to the same figure.
     const closedSlots = drillElectricity.locations
@@ -234,23 +278,61 @@ describe('EmissionsService.completeness (drill-down)', () => {
 
     await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
 
-    // Both clauses were surviving mutants. Dropping the year folds every year's
-    // records into one grid — precisely what the mandatory `year` param exists
-    // to prevent. Dropping the status filter lets a DRAFT close a slot, and
-    // note that this method filters statuses in SQL while `trackingMatrix`
-    // filters them in memory: two mechanisms, and this is the assertion that
-    // stops them drifting.
+    // Dropping the year folds every year's records into one grid — precisely
+    // what the mandatory `year` param exists to prevent.
     const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
     expect(where.reportingYear).toBe(2024);
-    expect(where.status).toEqual({
-      in: [
-        ActivityRecordStatus.submitted,
-        ActivityRecordStatus.under_review,
-        ActivityRecordStatus.approved,
-        ActivityRecordStatus.locked,
-      ],
-    });
     expect(where.subsidiaryId).toBe('sub-1');
+    // The status filter is deliberately ABSENT now, where it used to be
+    // asserted here. The response carries FR §2.2's verdict, and two of the
+    // three caps behind it — a draft in the cell, an anomaly flag — are
+    // invisible to a query that has already dropped those rows. Committing to
+    // the JS filter also ends the split this assertion was written to police:
+    // both endpoints now take the committed subset the same way.
+    expect(where.status).toBeUndefined();
+  });
+
+  it('still refuses to let a draft close a slot, now that SQL no longer filters', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice('loc-1', 'January', {
+        status: ActivityRecordStatus.draft,
+      } as Partial<ActivityRecord>),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+
+    // The invariant the old query-shape assertion was really protecting. It is
+    // proved behaviourally now, which survives a refactor of where the filter
+    // lives — and the old assertion would not have.
+    expect(electricity.covered).toBe(0);
+    expect(electricity.awaitingReviewSlots).toBe(0);
+    expect(
+      electricity.locations.flatMap((l) => l.months).some((m) => m.covered),
+    ).toBe(false);
+    // A draft is exactly what the extra query is FOR: the cell is not
+    // "missing", because a record does exist and someone is working on it.
+    expect(electricity.status).toBe('incomplete');
+  });
+
+  it('does not warn about a whole-company month that is only a draft', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice(null as unknown as string, 'February', {
+        status: ActivityRecordStatus.draft,
+      } as Partial<ActivityRecord>),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+
+    // A draft feeds no total, so keying a site invoice for that month would not
+    // double-count anything. Warning about it would be warning about something
+    // that has not happened and may never — a regression the unfiltered query
+    // would otherwise have introduced.
+    expect(
+      d.categories.find((c) => c.category === 'Electricity')!.companyLevelMonths,
+    ).toEqual([]);
   });
 
   it('names the months that already hold a whole-company entry', async () => {
@@ -706,6 +788,138 @@ describe('EmissionsService.trackingMatrix', () => {
 
       expect(electricity.coverage).toMatchObject({ required: 12, covered: 12 });
       expect(electricity.status).toBe('complete');
+      // Nothing is waiting on a reviewer, which is the other half of why this
+      // cell may be green — see the DE-2 block below.
+      expect(electricity.coverage).toMatchObject({ awaitingReviewSlots: 0 });
+    });
+
+    /**
+     * Round-1 **DE-2**: "On submit for review, the data-collection status turns
+     * green immediately."
+     *
+     * It did, and PRs 2–3 did not touch it — they fixed the DENOMINATOR. The
+     * numerator counted a `submitted` record as a closed slot, because
+     * `COUNTED_STATUSES` includes it (rightly — the inventory must not lose data
+     * queued for review) while `PENDING_STATUSES` only catches draft/rejected.
+     * So twelve invoices nobody had looked at turned the cell green.
+     */
+    describe('submitting is not finishing (DE-2)', () => {
+      const ALL_MONTHS = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December',
+      ];
+
+      const oneLocationSub = () =>
+        makeSubsidiary({
+          id: 'sub-1',
+          trackingGranularity: 'location',
+          locations: [{ id: 'loc-1' }],
+        } as Partial<Subsidiary>);
+
+      const matrixFor = async (records: ActivityRecord[]) => {
+        const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+        prisma.subsidiary.findMany.mockResolvedValue([oneLocationSub()]);
+        prisma.activityRecord.findMany.mockResolvedValue(records);
+        const m = await service.trackingMatrix(user, { year: 2024 });
+        return m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+      };
+
+      it('holds a fully-keyed year yellow while every invoice awaits review', async () => {
+        const cell = await matrixFor(
+          ALL_MONTHS.map((mth) =>
+            invoice('loc-1', mth, {
+              status: ActivityRecordStatus.submitted,
+            } as Partial<ActivityRecord>),
+          ),
+        );
+
+        // Every slot IS closed — the data is all in, and the coverage fraction
+        // says so. What is not true is that the collection is finished.
+        expect(cell.coverage).toMatchObject({
+          required: 12,
+          covered: 12,
+          awaitingReviewSlots: 12,
+        });
+        expect(cell.status).toBe('incomplete');
+      });
+
+      it('holds it yellow for a single un-reviewed month among eleven approved', async () => {
+        const cell = await matrixFor([
+          ...ALL_MONTHS.slice(0, 11).map((mth) => invoice('loc-1', mth)),
+          invoice('loc-1', 'December', {
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        // A count, not a flag: the screen has to be able to say "1 of 12 still
+        // awaiting review" rather than just that something is.
+        expect(cell.coverage).toMatchObject({ covered: 12, awaitingReviewSlots: 1 });
+        expect(cell.status).toBe('incomplete');
+      });
+
+      it('counts under_review as awaiting and locked as accepted', async () => {
+        const underReview = await matrixFor(
+          ALL_MONTHS.map((mth) =>
+            invoice('loc-1', mth, {
+              status: ActivityRecordStatus.under_review,
+            } as Partial<ActivityRecord>),
+          ),
+        );
+        // A reviewer has opened it but not accepted it. Still not finished.
+        expect(underReview.coverage).toMatchObject({ awaitingReviewSlots: 12 });
+        expect(underReview.status).toBe('incomplete');
+
+        const locked = await matrixFor(
+          ALL_MONTHS.map((mth) =>
+            invoice('loc-1', mth, {
+              status: ActivityRecordStatus.locked,
+            } as Partial<ActivityRecord>),
+          ),
+        );
+        // A locked period is approved data that a lock froze — accepted, so the
+        // cell is green. Reading the set as `approved` alone would have turned
+        // every locked period yellow the moment this cap shipped.
+        expect(locked.coverage).toMatchObject({ awaitingReviewSlots: 0 });
+        expect(locked.status).toBe('complete');
+      });
+
+      it('never counts an un-reviewed record that closed no slot', async () => {
+        const cell = await matrixFor([
+          // Submitted, but with no invoice attached — it closes nothing, so it
+          // is a missing-evidence record and NOT something awaiting review.
+          // `awaitingReviewSlots` is a subset of `covered`; if it could exceed
+          // it, a cell could report "0 covered, 1 awaiting review".
+          invoice('loc-1', 'January', {
+            status: ActivityRecordStatus.submitted,
+            _count: { evidence: 0 },
+          } as Partial<ActivityRecord>),
+          // Submitted at company level: closes no site slot either.
+          invoice(null as unknown as string, 'February', {
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        expect(cell.coverage).toMatchObject({
+          covered: 0,
+          awaitingReviewSlots: 0,
+          missingEvidenceRecords: 1,
+          unattributedRecords: 1,
+        });
+      });
+
+      it('lets an approved invoice win over an un-reviewed one for the same slot', async () => {
+        const cell = await matrixFor([
+          invoice('loc-1', 'January', {
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+          invoice('loc-1', 'January'),
+        ]);
+
+        // One accepted invoice covers the month whatever else was filed against
+        // it. Tracking "awaiting" directly instead of subtracting the accepted
+        // set would have left this slot in both buckets at once.
+        expect(cell.coverage).toMatchObject({ covered: 1, awaitingReviewSlots: 0 });
+      });
     });
 
     it('counts a second invoice for the same location and month once', async () => {
@@ -928,5 +1142,122 @@ describe('EmissionsService.trackingMatrix', () => {
     expect(m.rows[1].subsidiaryName).toBe('Gas Legal Ltd.'); // legalName fallback
     expect(m.rows.every((r) => r.cells.every((c) => c.status === 'missing'))).toBe(true);
     expect(m.totals).toEqual({ complete: 0, incomplete: 0, missing: 22 });
+  });
+});
+
+/**
+ * The two exported pure functions behind every completeness surface.
+ *
+ * Tested directly because both carry guards that neither endpoint can reach
+ * today: `trackingMatrix` and `completeness` both pre-filter to committed
+ * records, and neither seeds a zero denominator. Both guards survived mutation
+ * testing through the endpoints — deleting either changed no test — which is
+ * exactly the state in which a later refactor removes them as dead weight.
+ */
+describe('the shared completeness primitives', () => {
+  const coverage = (over: Partial<ReturnType<typeof computeInvoiceCoverage>> = {}) => ({
+    required: 12,
+    covered: new Set<string>(),
+    unattributedRecords: 0,
+    nonMonthlyRecords: 0,
+    missingEvidenceRecords: 0,
+    outOfScopeRecords: 0,
+    awaitingReview: new Set<string>(),
+    ...over,
+  });
+
+  const verdict = (over = {}) =>
+    deriveCellStatus({
+      hasRecords: true,
+      hasPending: false,
+      anomaly: false,
+      evidenceMissing: false,
+      coverage: null,
+      ...over,
+    });
+
+  describe('deriveCellStatus', () => {
+    it('refuses to call a zero denominator complete', () => {
+      // Reachable: a location-measured subsidiary whose sites all postdate the
+      // reported year has `required === 0`, and `0 >= 0` reported `complete` —
+      // a green tick over a year in which nothing was tracked, sitting next to
+      // records that closed nothing.
+      expect(
+        verdict({ coverage: coverage({ required: 0 }), evidenceMissing: false }),
+      ).toBe('incomplete');
+    });
+
+    it('is missing only when no record exists at all', () => {
+      expect(verdict({ hasRecords: false, coverage: coverage() })).toBe('missing');
+      // Twelve approved evidence-backed records whose slots are not closed is
+      // INCOMPLETE. The seed produced exactly that, and an earlier cut rendered
+      // a red "Missing" cell displaying 198 tCO2e.
+      expect(verdict({ coverage: coverage({ covered: new Set(['a']) }) })).toBe(
+        'incomplete',
+      );
+    });
+
+    it('applies the three shared caps to a fully covered cell', () => {
+      const full = coverage({
+        required: 1,
+        covered: new Set(['loc-1\u0000january']),
+      });
+      expect(verdict({ coverage: full })).toBe('complete');
+      expect(verdict({ coverage: full, hasPending: true })).toBe('incomplete');
+      expect(verdict({ coverage: full, anomaly: true })).toBe('incomplete');
+      expect(verdict({ coverage: full, evidenceMissing: true })).toBe('incomplete');
+    });
+
+    it('leaves the yes/no categories exactly as they were', () => {
+      // Eight of the eleven categories take this branch, and the DE-2 review
+      // gate deliberately does NOT apply to it — changing that would re-mean
+      // every category on every subsidiary.
+      expect(verdict({ coverage: null })).toBe('complete');
+      expect(verdict({ coverage: null, hasPending: true })).toBe('incomplete');
+    });
+  });
+
+  describe('computeInvoiceCoverage', () => {
+    const record = (over = {}) => ({
+      locationId: 'loc-1',
+      reportingPeriod: 'monthly',
+      periodValue: 'January',
+      evidenceCount: 1,
+      status: ActivityRecordStatus.approved,
+      ...over,
+    });
+
+    it('ignores a record no caller should have passed', () => {
+      // The function is exported and now TAKES a status, so a reader will
+      // reasonably assume the status rule lives inside it. Without this guard a
+      // third caller handing over raw rows would let a DRAFT close a slot and
+      // be counted as awaiting review at the same time.
+      const c = computeInvoiceCoverage(
+        [
+          record({ status: ActivityRecordStatus.draft }),
+          record({ periodValue: 'February', status: ActivityRecordStatus.rejected }),
+        ],
+        ['loc-1'],
+      );
+      expect(c.covered.size).toBe(0);
+      expect(c.awaitingReview.size).toBe(0);
+      // And it is not silently reclassified as some other kind of shortfall.
+      expect(c.unattributedRecords).toBe(0);
+      expect(c.nonMonthlyRecords).toBe(0);
+      expect(c.missingEvidenceRecords).toBe(0);
+    });
+
+    it('keeps awaitingReview a strict subset of covered', () => {
+      const c = computeInvoiceCoverage(
+        [
+          record(),
+          record({ periodValue: 'February', status: ActivityRecordStatus.submitted }),
+        ],
+        ['loc-1'],
+      );
+      expect(c.covered.size).toBe(2);
+      expect([...c.awaitingReview].every((s) => c.covered.has(s))).toBe(true);
+      expect(c.awaitingReview.size).toBe(1);
+    });
   });
 });
