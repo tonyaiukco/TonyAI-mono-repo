@@ -16,6 +16,7 @@ import { ActivityRecordsService } from './activity-records.service';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { RejectActivityRecordDto } from './dto/reject-activity-record.dto';
+import { VoidActivityRecordDto } from './dto/void-activity-record.dto';
 import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
@@ -85,5 +86,16 @@ export class ActivityRecordsController {
     @Body() dto: RejectActivityRecordDto,
   ) {
     return this.service.reject(user, id, dto.varianceReason);
+  }
+
+  /** Withdraw an approved figure from the inventory (FR §4.3) — super_admin only. */
+  @Post(':id/void')
+  @HttpCode(HttpStatus.OK)
+  void(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseUuidParamPipe) id: string,
+    @Body() dto: VoidActivityRecordDto,
+  ) {
+    return this.service.void(user, id, dto.voidReason);
   }
 }

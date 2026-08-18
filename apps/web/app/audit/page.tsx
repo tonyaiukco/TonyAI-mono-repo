@@ -57,6 +57,10 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   reject: "bg-red-500/15 text-red-700 border-red-500/30",
   lock: "bg-amber-500/15 text-amber-700 border-amber-500/30",
   unlock: "bg-amber-500/15 text-amber-700 border-amber-500/30",
+  // Red, with `delete`. This map colours by CONSEQUENCE, and a void removes a
+  // reviewed figure from the reported inventory — the most destructive thing
+  // that can happen to a number in this product, even though the row survives.
+  void: "bg-red-500/15 text-red-700 border-red-500/30",
   generate: "bg-violet-500/15 text-violet-700 border-violet-500/30",
 };
 

@@ -424,6 +424,53 @@ describe('EmissionsService.summary', () => {
     });
   });
 
+  it('counts a VOIDED record towards nothing, anywhere (FR 4.3)', async () => {
+    // The central claim of WP18 PR 2a, asserted by name rather than left to the
+    // shape of a status list. A voided record is a figure a reviewer once
+    // ACCEPTED and someone later withdrew: if any total still included it, the
+    // withdrawal would be cosmetic and the inventory would be overstated by
+    // exactly the amount someone decided did not belong in it.
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.subsidiary.findMany.mockResolvedValue([]);
+
+    await service.summary(user, {});
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.status.in).not.toContain(ActivityRecordStatus.voided);
+
+    // ...and on the matrix, which queries ALL statuses and filters in memory,
+    // so a voided record reaches the loop and must be excluded there instead.
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
+    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        status: ActivityRecordStatus.voided,
+        calculation: { tCo2e: 999, factorId: 'f-1' },
+      }),
+    ]);
+
+    const m = await service.trackingMatrix(user, { year: 2024 });
+    const cell = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+    // No figure, and no contribution to the row total.
+    expect(cell.tCo2e).toBeNull();
+    expect(m.rows[0].totalTCo2e).toBe(0);
+    // `missing`, and this is the assertion that caught the bug. The cell used
+    // to read COMPLETE: `hasRecords` meant "a row exists", and a voided row is
+    // a row — so a category whose only figure had been deliberately withdrawn
+    // showed green. Nothing is reported for this cell, and that is what the
+    // colour has to say.
+    expect(cell.status).toBe('missing');
+    // The row is still accounted for, so the cell can explain itself rather
+    // than pretending nothing was ever there.
+    expect(cell.voidedRecordCount).toBe(1);
+    expect(cell.recordCount).toBe(1);
+  });
+
   it('returns an empty summary for an inaccessible subsidiary without hitting the DB', async () => {
     const user = dataEntry({ accessibleSubsidiaryIds: ['sub-1'] });
 

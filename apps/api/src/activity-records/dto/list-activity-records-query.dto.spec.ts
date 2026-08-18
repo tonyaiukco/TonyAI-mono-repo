@@ -4,6 +4,7 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { describe, expect, it } from 'vitest';
+import { ACTIVITY_RECORD_STATUSES } from '@tonyai/shared-types';
 import { ListActivityRecordsQueryDto } from './list-activity-records-query.dto';
 
 /**
@@ -58,8 +59,12 @@ describe('ListActivityRecordsQueryDto — status', () => {
   });
 
   it('rejects a set longer than the number of statuses that exist', () => {
+    // DERIVED from the enum, not a hardcoded run of sevens. The literal version
+    // silently stopped testing anything the moment `voided` was added: seven
+    // entries went from over the limit to exactly at it, and the assertion
+    // failed rather than passing vacuously only because it expected an error.
     const { errors } = parse({
-      status: 'draft,draft,draft,draft,draft,draft,draft',
+      status: new Array(ACTIVITY_RECORD_STATUSES.length + 1).fill('draft').join(','),
     });
     expect(errors).toHaveLength(1);
     expect(Object.keys(errors[0].constraints ?? {})).toContain('arrayMaxSize');

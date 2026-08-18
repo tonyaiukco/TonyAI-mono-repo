@@ -55,6 +55,14 @@ enum ActivityRecordStatus {
   approved
   rejected
   locked
+  // FR §4.3's revision outcome: an approved figure withdrawn from the
+  // inventory, with a mandatory reason, WITHOUT deleting it. `approved` and
+  // `locked` are terminal and immutable, so a record entered in error had no
+  // exit at all before this — the only remedy was deleting it, which the API
+  // rightly refuses and which would destroy the figure a reviewer accepted.
+  // A voided record still exists, is still auditable, and counts towards
+  // nothing.
+  voided
 }
 
 model Profile {
@@ -148,7 +156,9 @@ model Location {
 // snapshot produced by the calc engine at create/update time (never recomputed
 // on read, so historic results survive factor-library changes). It moves through
 // a status workflow (draft -> submitted -> under_review -> approved/rejected;
-// approved/locked are terminal & immutable). Child of `subsidiaries`, so it is
+// approved/locked are immutable, and leave only by being VOIDED — FR §4.3's
+// revision rule, which withdraws a figure from the inventory with a stated
+// reason instead of deleting it). Child of `subsidiaries`, so it is
 // tenant-scoped by `subsidiary_id`.
 model ActivityRecord {
   id             String               @id @default(uuid()) @db.Uuid
@@ -175,6 +185,13 @@ model ActivityRecord {
   reviewedBy     String?              @map("reviewed_by") @db.Uuid
   reviewedAt     DateTime?            @map("reviewed_at")
   reviewNote     String?              @map("review_note")
+  // FR §4.3: who withdrew this figure, when, and why. Separate from
+  // `reviewNote` on purpose — that is a reviewer's verdict on data still in the
+  // inventory, this is the record of taking data OUT of it, and conflating them
+  // would let a rejection reason read as a restatement.
+  voidReason     String?              @map("void_reason")
+  voidedBy       String?              @map("voided_by") @db.Uuid
+  voidedAt       DateTime?            @map("voided_at")
   evidence       Evidence[]
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")

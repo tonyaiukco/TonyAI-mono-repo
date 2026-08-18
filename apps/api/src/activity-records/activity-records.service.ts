@@ -174,6 +174,11 @@ export class ActivityRecordsService {
       reviewedBy: r.reviewedBy,
       reviewedAt: r.reviewedAt ? r.reviewedAt.toISOString() : null,
       reviewNote: r.reviewNote,
+      // Persisted columns, so they belong in the audit snapshot too — a void is
+      // the transition whose provenance matters most.
+      voidReason: r.voidReason,
+      voidedBy: r.voidedBy,
+      voidedAt: r.voidedAt ? r.voidedAt.toISOString() : null,
       evidenceCount,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
@@ -790,6 +795,61 @@ export class ActivityRecordsService {
     });
   }
 
+  /**
+   * Withdraw an APPROVED figure from the inventory — FR §4.3's revision rule.
+   *
+   * `approved` and `locked` are immutable, and that is correct: a figure a
+   * reviewer accepted must not be quietly edited away. But it left a record
+   * entered in error with no exit at all — update, remove, submit, review,
+   * approve and reject all refuse both statuses, and `super_admin` does not
+   * override it, because `assertCanMutate` checks role and status
+   * independently. Deleting was the only remedy and the API refuses that too.
+   *
+   * So this does not delete. The row stays, keeps its immutable calculation
+   * snapshot, and simply stops counting — `voided` is absent from
+   * `COUNTED_STATUSES`, so every total, export, matrix cell and anomaly
+   * baseline excludes it by construction rather than by a filter each call site
+   * has to remember.
+   *
+   * `super_admin` only, narrower than `REVIEW_ROLES` on purpose: a consultant
+   * may send a record back for revision (`reject`), but removing an accepted
+   * figure from the client's reported inventory is the holding company's own
+   * decision. Same reasoning as `APPROVE_ROLES`.
+   */
+  async void(
+    user: RequestUser,
+    id: string,
+    reason: string,
+  ): Promise<ActivityRecordDTO> {
+    const record = await this.loadScoped(user, id);
+    if (!APPROVE_ROLES.has(user.role)) {
+      throw new ForbiddenException('Only a super_admin may void records');
+    }
+    if (record.status !== ActivityRecordStatus.approved) {
+      // Deliberately `approved` alone. A `locked` record sits in a closed
+      // period, and reopening one already has its own audited path (unlock);
+      // letting a void bypass that would make the lock a suggestion. Draft and
+      // rejected records can simply be deleted, and submitted/under_review ones
+      // rejected — none of them needs this.
+      throw new BadRequestException(
+        `Only an approved record can be voided (current status "${record.status}"). ` +
+          'A locked period must be unlocked first.',
+      );
+    }
+    // Defense-in-depth, and not redundant with the status check: a period can
+    // be locked while this request is in flight, and a lock is precisely the
+    // statement that this period's figures are closed.
+    await this.assertPeriodNotLocked(
+      record.subsidiaryId,
+      record.reportingYear,
+      record.reportingPeriod,
+      record.periodValue,
+    );
+    return this.transition(user, record, ActivityRecordStatus.voided, {
+      voidReason: reason,
+    });
+  }
+
   async reject(
     user: RequestUser,
     id: string,
@@ -833,6 +893,7 @@ export class ActivityRecordsService {
     [ActivityRecordStatus.under_review]: 'review',
     [ActivityRecordStatus.approved]: 'approve',
     [ActivityRecordStatus.rejected]: 'reject',
+    [ActivityRecordStatus.voided]: 'void',
   };
 
   private async auditCreateUpdateDelete(
@@ -853,6 +914,7 @@ export class ActivityRecordsService {
       varianceReason?: string;
       anomalyFlag?: boolean;
       reviewNote?: string | null;
+      voidReason?: string;
     } = {},
   ): Promise<ActivityRecordDTO> {
     // A review outcome records WHO decided and WHEN, so the reviewer screen
@@ -861,6 +923,11 @@ export class ActivityRecordsService {
       status === ActivityRecordStatus.approved ||
       status === ActivityRecordStatus.rejected ||
       status === ActivityRecordStatus.under_review;
+    // FR §4.3 wants three things recorded for a withdrawal — reason, actor,
+    // timestamp — and they are stamped here for the same reason a review
+    // outcome is: so the screen does not have to reconstruct them from the
+    // audit log, and so a row carries its own provenance.
+    const isVoid = status === ActivityRecordStatus.voided;
 
     const updated = await this.prisma.activityRecord.update({
       where: { id: record.id },
@@ -874,6 +941,13 @@ export class ActivityRecordsService {
           : {}),
         ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
         ...(isReviewOutcome ? { reviewedBy: user.id, reviewedAt: new Date() } : {}),
+        ...(isVoid
+          ? {
+              voidReason: extra.voidReason,
+              voidedBy: user.id,
+              voidedAt: new Date(),
+            }
+          : {}),
       },
       include: {
         _count: { select: { evidence: true } },
@@ -889,6 +963,14 @@ export class ActivityRecordsService {
         ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
         ...(extra.varianceReason !== undefined
           ? { varianceReason: extra.varianceReason }
+          : {}),
+        // A void takes a figure OUT of the inventory, so the trail has to hold
+        // what the figure was — FR §4.3's "original value must remain visible".
+        // Every other transition leaves the number where anyone can still read
+        // it; this one is the only case where the audit row is the last place
+        // the withdrawn value is reported alongside the reason.
+        ...(isVoid
+          ? { voidReason: extra.voidReason, before: this.toAuditSnapshot(record) }
           : {}),
       },
     });

@@ -625,7 +625,7 @@ describe('SubsidiariesService', () => {
         // The counts are still all reported — the panel shows them; only the
         // ADVICE collapses, because nothing the caller clears would help.
         blockers: [
-          '2 approved or locked activity record(s) belong to this subsidiary, and ' +
+          '2 approved, locked or voided activity record(s) belong to this subsidiary, and ' +
             'deleting it would permanently destroy them along with their evidence. ' +
             'Those records cannot be deleted at any point, so a subsidiary that has ' +
             'reported data stays. Set its status to "inactive" to retire it instead.',
@@ -813,7 +813,7 @@ describe('SubsidiariesService', () => {
 
       const { blockers } = await service.summary(user, 'sub-1');
       expect(blockers).toHaveLength(1);
-      expect(blockers[0]).toMatch(/2 approved or locked activity record\(s\)/);
+      expect(blockers[0]).toMatch(/2 approved, locked or voided activity record\(s\)/);
       expect(blockers[0]).toMatch(/"inactive"/);
       // The locations are real but irrelevant: nothing the caller clears will
       // make this subsidiary deletable, so listing them would be a false lead.
@@ -937,7 +937,7 @@ describe('SubsidiariesService', () => {
       countRecords(prisma, Array(101).fill('approved').concat('locked'));
 
       await expect(service.remove(user, 'sub-1')).rejects.toThrow(
-        /102 approved or locked/,
+        /102 approved, locked or voided/,
       );
       // Committed records cannot be deleted at all, so "inactive" is the only
       // thing the caller can actually do — the message must say so.

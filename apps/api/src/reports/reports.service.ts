@@ -195,7 +195,16 @@ export class ReportsService implements OnModuleDestroy {
         .filter((g) => statuses.includes(g.status))
         .reduce((sum, g) => sum + g._count._all, 0);
 
-    const totalCount = grouped.reduce((s, g) => s + g._count._all, 0);
+    // VOIDED records are excluded from the denominator, not just from
+    // `committedCount`. `committed + incomplete` is meant to exhaust
+    // `totalCount` — that identity is what makes `incompleteRatio` a ratio of
+    // anything — and a withdrawn figure belongs to neither. Left in, it would
+    // silently dilute the data-quality ratio with records the report's own
+    // ledger does not contain, which is the "count quietly re-meant" trap WP17
+    // hit with `recordCount`.
+    const voidedCount = count([ActivityRecordStatus.voided]);
+    const totalCount =
+      grouped.reduce((s, g) => s + g._count._all, 0) - voidedCount;
     const committedCount = count(COMMITTED_STATUSES);
     const incompleteCount = count([
       ActivityRecordStatus.draft,

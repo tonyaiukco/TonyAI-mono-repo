@@ -79,6 +79,10 @@ const STATUS_COLORS: Record<ActivityRecordStatus, string> = {
   approved: 'bg-[#D1F2EB] text-[#1D7A5F] font-semibold',
   rejected: 'bg-[#FEE2E2] text-[#B91C1C] font-semibold',
   locked: 'bg-[#F3E8FF] text-[#7C3AED] font-semibold',
+  // Withdrawn from the inventory (FR §4.3): shown in the neutral grey the
+  // draft state uses, struck through, because it contributes to no total on
+  // this page and must not read as a figure anyone is still counting.
+  voided: 'bg-[#F5F5F7] text-[#6E6E73] font-semibold line-through',
 };
 
 // Palette for category slices / contributor bars.

@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import {
   AlertCircle,
+  Ban,
   Calculator,
   CheckCircle2,
   Clock,
@@ -133,6 +134,15 @@ const statusBadge: Record<
     label: "Locked",
     className: "bg-slate-500/15 text-slate-600 border-slate-500/30",
     icon: CheckCircle2,
+  },
+  // Deliberately muted rather than red. A voided record is not a failure or a
+  // rejection — it is a figure a reviewer accepted and someone later withdrew
+  // under FR §4.3. Red would read as "this went wrong"; `rejected` already owns
+  // that colour and means something different.
+  voided: {
+    label: "Voided",
+    className: "bg-muted text-muted-foreground border-border line-through",
+    icon: Ban,
   },
 };
 
