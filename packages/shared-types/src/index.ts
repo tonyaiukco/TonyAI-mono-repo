@@ -873,7 +873,9 @@ export interface SubsidiarySummaryDTO {
   /** Informational, not a blocker: deleting the subsidiary now removes its own
    *  record-free locations, with an audit row each. */
   locations: number;
-  /** `approved`/`locked` — these can never be deleted, at any point. */
+  /** `approved`, `locked` or `voided` — these can never be deleted, at any
+   *  point. A voided record is included because it is the only trace that a
+   *  figure was withdrawn, and a subsidiary delete would cascade it away. */
   terminalRecords: number;
   /** `submitted`/`under_review` — a reviewer can send them back, and then they can. */
   reviewRecords: number;
@@ -1228,6 +1230,28 @@ export const ACTIVITY_RECORD_STATUSES = [
   'approved',
   'rejected',
   'locked',
+  /**
+   * An approved figure withdrawn from the inventory with a mandatory reason,
+   * WITHOUT deleting the row.
+   *
+   * Carries the four elements FR §4.3 lists for a revision entry (comment, user,
+   * timestamp, original-value visibility) but does **not** implement §4.3 — that
+   * rule governs LOCKED records, which a void refuses; a closed period still
+   * reopens only by unlocking it. Nor is there yet a revision *link* from a
+   * correction to what it corrects, so a restatement is two unrelated rows.
+   *
+   * `approved` and `locked` are immutable, and rightly so — but that left a
+   * record entered in error with no exit whatsoever, since the API refuses
+   * update, delete, submit, review, approve and reject on both, and
+   * `super_admin` does not override it (the status check is independent of the
+   * role check). Deleting was the only remedy, and the API refuses that too.
+   *
+   * A voided record still exists, keeps its immutable calculation snapshot, and
+   * **counts towards nothing**: it is absent from `COUNTED_STATUSES`, so every
+   * total, export, matrix cell and anomaly baseline excludes it by
+   * construction rather than by a filter someone has to remember to add.
+   */
+  'voided',
 ] as const;
 export type ActivityRecordStatus = (typeof ACTIVITY_RECORD_STATUSES)[number];
 
@@ -1270,6 +1294,18 @@ export interface ActivityRecordDTO {
   reviewedBy: string | null;
   reviewedAt: string | null;
   reviewNote: string | null;
+  /**
+   * Why an approved figure was withdrawn, by whom, and when. Null on
+   * every record that has not been voided.
+   *
+   * Separate from `reviewNote` deliberately — that is a reviewer's verdict on
+   * data still in the inventory, this is the record of taking data OUT of it.
+   * A screen that showed one where it meant the other would report a rejection
+   * as a restatement.
+   */
+  voidReason: string | null;
+  voidedBy: string | null;
+  voidedAt: string | null;
   /** Number of evidence files linked to this record (FR §4.1). */
   evidenceCount: number;
   createdAt: string;
@@ -1301,6 +1337,19 @@ export interface RejectInput {
 }
 
 /**
+ * Body of POST /activity-records/:id/void — the mandatory reason a revision entry requires for
+ * withdrawing an approved figure from the inventory.
+ *
+ * A separate type from `RejectInput` despite the identical shape, because they
+ * are opposite acts: a rejection sends a record BACK to its author to fix, a
+ * void takes an accepted figure OUT of what the organisation reports. Sharing
+ * one type would invite sharing one screen and one sentence for the two.
+ */
+export interface VoidInput {
+  voidReason: string;
+}
+
+/**
  * The statuses a reviewer's queue is made of: a record that has left the
  * submitter's hands but has not yet been decided.
  *
@@ -1312,6 +1361,29 @@ export interface RejectInput {
  * prevent. `period-locks` uses the same list to refuse closing a period that
  * still has undecided records, so the two must never drift apart.
  */
+/**
+ * The statuses whose records are part of the emissions inventory — what every
+ * total, export, matrix cell and anomaly baseline counts.
+ *
+ * Lives here, beside the status list itself, because it was written out twice:
+ * once in `emissions.service.ts` and once as a separate literal in
+ * `targets.service.ts`, with nothing tying them together. Two hand-maintained
+ * copies of "what counts" is how a status gets added to one and forgotten in
+ * the other, and the symptom would be a target reporting progress against a
+ * different number from the dashboard.
+ *
+ * An **allow-list**, deliberately: a new status counts towards nothing until
+ * someone adds it here on purpose. That is what made `voided` safe to
+ * introduce — it is excluded from every total by construction rather than by a
+ * filter each call site had to remember.
+ */
+export const COUNTED_STATUSES = [
+  'submitted',
+  'under_review',
+  'approved',
+  'locked',
+] as const satisfies readonly ActivityRecordStatus[];
+
 export const PENDING_REVIEW_STATUSES = [
   'submitted',
   'under_review',
@@ -1561,7 +1633,8 @@ export interface EmissionsSummary {
    * 0 tCO₂e" row asserts a measurement nobody made.
    */
   uncalculatedRecordCount: number;
-  /** Statuses included in the aggregation (drafts/rejected are excluded). */
+  /** Statuses included in the aggregation — drafts, rejected and voided
+   *  records are all excluded. */
   statusesIncluded: ActivityRecordStatus[];
 }
 
@@ -1688,11 +1761,31 @@ export interface TrackingMatrixCell {
   recordCount: number;
   /** Of the committed ones, how many carried no usable figure. */
   uncalculatedRecordCount: number;
+  /**
+   * Committed records in this cell that were later WITHDRAWN by an audited void.
+   *
+   * Reported so the cell can account for rows a reader can see in the record
+   * list but not in any total. Excluded from the verdict entirely: a cell whose
+   * only record was voided is `missing`, because nothing is reported for it —
+   * treating the row as presence once produced a green "Complete" over data
+   * somebody had deliberately removed from the inventory.
+   */
+  voidedRecordCount: number;
   /** Invoice coverage — see CellCoverage. Absent unless the rule applies. */
   coverage?: CellCoverage;
-  /** ISO timestamp of the most recent record update, or null when missing. */
+  /**
+   * ISO timestamp of the most recent update among the cell's LIVE records, or
+   * null when it has none.
+   *
+   * Voided rows do not bump it, and that is a deliberate narrowing rather than
+   * an oversight: withdrawing a figure is not an update to the data anyone is
+   * still counting, and a cell reading "updated 2 minutes ago" because
+   * something was REMOVED from it would point a reader at work that does not
+   * exist.
+   */
   lastUpdate: string | null;
-  /** true when any record in the cell carries an anomaly flag. */
+  /** true when any LIVE record in the cell carries an anomaly flag. A voided
+   *  record's flag is ignored — it describes data that no longer counts. */
   anomaly: boolean;
 }
 
@@ -1840,6 +1933,10 @@ export const AUDIT_ACTIONS = [
   'reject',
   'lock',
   'unlock',
+  /** An approved figure withdrawn from the inventory, with a reason.
+   *  Its own verb rather than a generic `update`, so "what was restated and
+   *  why" is filterable in the audit trail instead of buried in a diff. */
+  'void',
   'generate',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

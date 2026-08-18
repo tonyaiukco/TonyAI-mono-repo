@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type Target } from '@tonyai/db';
+import { COUNTED_STATUSES as SHARED_COUNTED_STATUSES } from '@tonyai/shared-types';
 import type {
   EmissionsScope,
   TargetBasis,
@@ -20,12 +21,11 @@ import { CreateTargetDto } from './dto/create-target.dto';
 import { UpdateTargetDto } from './dto/update-target.dto';
 
 // Statuses that count as "committed" emissions (mirrors EmissionsService).
-const COMMITTED_STATUSES: ActivityRecordStatus[] = [
-  ActivityRecordStatus.submitted,
-  ActivityRecordStatus.under_review,
-  ActivityRecordStatus.approved,
-  ActivityRecordStatus.locked,
-];
+// The SAME list the dashboard counts, not a second copy of it. This was a
+// standalone literal; a status added to one and forgotten in the other would
+// have a target reporting progress against a different number from the
+// dashboard showing that progress.
+const COMMITTED_STATUSES: ActivityRecordStatus[] = [...SHARED_COUNTED_STATUSES];
 
 // Target scope filter → the numeric scope the emissions summary understands.
 const SCOPE_TO_NUMBER: Record<EmissionsScope, number | undefined> = {

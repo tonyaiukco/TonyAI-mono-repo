@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import {
   AlertCircle,
+  Ban,
   Calculator,
   CheckCircle2,
   Clock,
@@ -133,6 +134,15 @@ const statusBadge: Record<
     label: "Locked",
     className: "bg-slate-500/15 text-slate-600 border-slate-500/30",
     icon: CheckCircle2,
+  },
+  // Deliberately muted rather than red. A voided record is not a failure or a
+  // rejection — it is a figure a reviewer accepted and someone later withdrew
+  // by an audited void. Red would read as "this went wrong"; `rejected` already owns
+  // that colour and means something different.
+  voided: {
+    label: "Voided",
+    className: "bg-muted text-muted-foreground border-border line-through",
+    icon: Ban,
   },
 };
 
@@ -1375,7 +1385,15 @@ function DataEntryPageInner() {
                                   double-counted month could not tell which one
                                   they were opening. Built as one string: the
                                   same JSX whitespace trap as above. */}
-                              <div className="text-xs text-muted-foreground">
+                              {/* A withdrawn figure is struck through here too:
+                                  the badge already says "Voided", but the
+                                  tonnes beside it read like any other row. */}
+                              <div
+                                className={cn(
+                                  'text-xs text-muted-foreground',
+                                  r.status === 'voided' && 'line-through',
+                                )}
+                              >
                                 {[
                                   r.category,
                                   // `locationName` is optional on the contract,

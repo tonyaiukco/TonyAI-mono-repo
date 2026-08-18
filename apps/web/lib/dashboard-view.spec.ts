@@ -26,6 +26,7 @@ function cell(over: Partial<TrackingMatrixCell> = {}): TrackingMatrixCell {
     tCo2e: 12.4,
     recordCount: 1,
     uncalculatedRecordCount: 0,
+    voidedRecordCount: 0,
     lastUpdate: '2026-01-01T00:00:00.000Z',
     anomaly: false,
     ...over,

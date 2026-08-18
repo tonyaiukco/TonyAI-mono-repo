@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ACTIVITY_RECORD_STATUSES,
   ACTIVITY_UNITS,
+  COUNTED_STATUSES,
+  PENDING_REVIEW_STATUSES,
   appliesUnitConversion,
   CATEGORIES,
   EVIDENCE_REQUIRED_CATEGORIES,
@@ -248,6 +251,40 @@ describe('appliesUnitConversion', () => {
       for (const unit of ACTIVITY_UNITS) {
         expect(appliesUnitConversion(unit.value, category)).toBe(false);
       }
+    }
+  });
+});
+
+describe('COUNTED_STATUSES — what the inventory counts', () => {
+  it('is an allow-list: nothing uncommitted, and nothing withdrawn', () => {
+    // This list is the reason a new status is safe to add — it counts towards
+    // nothing until someone opts it in here. That property is invisible to the
+    // compiler (`satisfies` only proves membership of the enum), so it is
+    // asserted rather than assumed.
+    expect(COUNTED_STATUSES).not.toContain('draft');
+    expect(COUNTED_STATUSES).not.toContain('rejected');
+    expect(COUNTED_STATUSES).not.toContain('voided');
+    expect([...COUNTED_STATUSES]).toEqual([
+      'submitted',
+      'under_review',
+      'approved',
+      'locked',
+    ]);
+  });
+
+  it('contains every status the review queue is made of', () => {
+    // A real invariant, not a tautology: a submitted record BOTH counts towards
+    // the inventory and sits in the queue. If these two lists ever disagreed,
+    // the reviewer's queue and the reported totals would describe different
+    // records, and neither screen would show the discrepancy.
+    for (const status of PENDING_REVIEW_STATUSES) {
+      expect(COUNTED_STATUSES).toContain(status);
+    }
+  });
+
+  it('is a subset of the statuses that exist', () => {
+    for (const status of COUNTED_STATUSES) {
+      expect(ACTIVITY_RECORD_STATUSES).toContain(status);
     }
   });
 });

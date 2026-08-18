@@ -535,7 +535,11 @@ export default function SubsidiaryDetailPage() {
 function DependentsCard({ summary }: { summary: SubsidiarySummaryDTO }) {
   const rows: [string, number][] = [
     ["Locations", summary.locations],
-    ["Approved or locked records", summary.terminalRecords],
+    // Matches the API's own refusal sentence. `terminalRecords` counts
+    // everything that can never be deleted, and voided rows are in it — a
+    // label naming only two of the three states put a mislabelled count
+    // directly above a blocker sentence naming all three.
+    ["Approved, locked or voided records", summary.terminalRecords],
     ["Records awaiting review", summary.reviewRecords],
     ["Draft or rejected records", summary.openRecords],
     ["Closed reporting periods", summary.periodLocks],

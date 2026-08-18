@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { COUNTED_STATUSES } from '@tonyai/shared-types';
 import { TargetsService } from './targets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmissionsService } from '../emissions/emissions.service';
@@ -100,6 +101,23 @@ describe('TargetsService', () => {
       emissions as unknown as EmissionsService,
       auditMock(),
     );
+  });
+
+  it('counts exactly what the dashboard counts — one list, not a copy', async () => {
+    // This is WP18 PR 2a's own headline claim, and nothing tested it. The
+    // statuses a target measures progress against were a standalone literal
+    // here: a status added to the dashboard's list and forgotten in this one
+    // would have a target reporting progress against a different number from
+    // the dashboard showing that progress, with no test failing.
+    prisma.target.findMany.mockResolvedValue([makeTarget()]);
+    prisma.activityRecord.findFirst.mockResolvedValue(null);
+
+    await service.progress(admin);
+
+    const where = prisma.activityRecord.findFirst.mock.calls[0][0].where;
+    expect(where.status).toEqual({ in: [...COUNTED_STATUSES] });
+    // ...and a withdrawn figure is not one of them.
+    expect(where.status.in).not.toContain('voided');
   });
 
   it('list is tenant-scoped to the accessible subsidiaries', async () => {

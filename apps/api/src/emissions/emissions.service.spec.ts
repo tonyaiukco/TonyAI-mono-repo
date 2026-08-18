@@ -188,6 +188,27 @@ describe('EmissionsService.completeness (drill-down)', () => {
     expect(ankara.months.find((m) => m.month === 'February')!.covered).toBe(false);
   });
 
+  it('agrees with the matrix about a cell whose only records were voided', async () => {
+    // Both surfaces answer from `deriveCellStatus`, but they build its inputs
+    // separately — so "one rule, two readings" only holds if both feed it the
+    // same records. Reading a voided row as presence here (and its stale
+    // anomaly flag) put `incomplete` on this panel against `missing` on the
+    // dashboard, for the same cell.
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice('loc-1', 'January', {
+        status: ActivityRecordStatus.voided,
+        anomalyFlag: true,
+      } as Partial<ActivityRecord>),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+
+    expect(electricity.status).toBe('missing');
+    expect(electricity.covered).toBe(0);
+  });
+
   it('separates a month awaiting review from one that is accepted (DE-2)', async () => {
     const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.activityRecord.findMany.mockResolvedValue([
@@ -422,6 +443,94 @@ describe('EmissionsService.summary', () => {
         ActivityRecordStatus.locked,
       ],
     });
+  });
+
+  it('counts a VOIDED record towards nothing, anywhere (the void path)', async () => {
+    // The central claim of WP18 PR 2a, asserted by name rather than left to the
+    // shape of a status list. A voided record is a figure a reviewer once
+    // ACCEPTED and someone later withdrew: if any total still included it, the
+    // withdrawal would be cosmetic and the inventory would be overstated by
+    // exactly the amount someone decided did not belong in it.
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.subsidiary.findMany.mockResolvedValue([]);
+
+    await service.summary(user, {});
+
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    expect(where.status.in).not.toContain(ActivityRecordStatus.voided);
+
+    // ...and on the matrix, which queries ALL statuses and filters in memory,
+    // so a voided record reaches the loop and must be excluded there instead.
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
+    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        status: ActivityRecordStatus.voided,
+        calculation: { tCo2e: 999, factorId: 'f-1' },
+      }),
+    ]);
+
+    const m = await service.trackingMatrix(user, { year: 2024 });
+    const cell = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+    // No figure, and no contribution to the row total.
+    expect(cell.tCo2e).toBeNull();
+    expect(m.rows[0].totalTCo2e).toBe(0);
+    // `missing`, and this is the assertion that caught the bug. The cell used
+    // to read COMPLETE: `hasRecords` meant "a row exists", and a voided row is
+    // a row — so a category whose only figure had been deliberately withdrawn
+    // showed green. Nothing is reported for this cell, and that is what the
+    // colour has to say.
+    expect(cell.status).toBe('missing');
+    // The row is still accounted for, so the cell can explain itself rather
+    // than pretending nothing was ever there.
+    expect(cell.voidedRecordCount).toBe(1);
+    expect(cell.recordCount).toBe(1);
+  });
+
+  it('separates the live and withdrawn records in a cell that holds both', async () => {
+    // The single-record test could not tell `recs.length - live.length` from
+    // `recs.length` — both are 1 when the only record is voided. A mixed cell
+    // is what distinguishes them, and it also pins the three things a voided
+    // row must not leak into: the tonnage, the anomaly flag, and "Updated".
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
+    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        status: ActivityRecordStatus.approved,
+        calculation: { tCo2e: 12, factorId: 'f-1' },
+        updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      }),
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        status: ActivityRecordStatus.voided,
+        anomalyFlag: true,
+        calculation: { tCo2e: 999, factorId: 'f-1' },
+        updatedAt: new Date('2026-06-01T00:00:00.000Z'),
+      }),
+    ]);
+
+    const m = await service.trackingMatrix(user, { year: 2024 });
+    const cell = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+    expect(cell.recordCount).toBe(2);
+    expect(cell.voidedRecordCount).toBe(1);
+    // Only the live figure.
+    expect(cell.tCo2e).toBe(12);
+    // A withdrawn record's anomaly flag describes data that no longer counts.
+    expect(cell.anomaly).toBe(false);
+    // ...and withdrawing something is not an update to what remains, so the
+    // cell must not read "updated in June" because of it.
+    expect(cell.lastUpdate).toBe('2026-01-01T00:00:00.000Z');
   });
 
   it('returns an empty summary for an inaccessible subsidiary without hitting the DB', async () => {

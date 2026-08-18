@@ -4,6 +4,7 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { describe, expect, it } from 'vitest';
+import { ACTIVITY_RECORD_STATUSES } from '@tonyai/shared-types';
 import { ListActivityRecordsQueryDto } from './list-activity-records-query.dto';
 
 /**
@@ -57,9 +58,22 @@ describe('ListActivityRecordsQueryDto — status', () => {
     expect(errors).toHaveLength(1);
   });
 
+  it('accepts a filter naming every status that exists', () => {
+    // The upper bound alone left the limit free to be NARROWED without a test
+    // failing — and a limit one short silently 400s a legitimate "show me
+    // everything" filter. Both edges are pinned now, and both derive from the
+    // enum so neither goes stale when a status is added.
+    const { errors } = parse({ status: ACTIVITY_RECORD_STATUSES.join(',') });
+    expect(errors).toHaveLength(0);
+  });
+
   it('rejects a set longer than the number of statuses that exist', () => {
+    // DERIVED from the enum, not a hardcoded run of sevens. The literal version
+    // silently stopped testing anything the moment `voided` was added: seven
+    // entries went from over the limit to exactly at it, and the assertion
+    // failed rather than passing vacuously only because it expected an error.
     const { errors } = parse({
-      status: 'draft,draft,draft,draft,draft,draft,draft',
+      status: new Array(ACTIVITY_RECORD_STATUSES.length + 1).fill('draft').join(','),
     });
     expect(errors).toHaveLength(1);
     expect(Object.keys(errors[0].constraints ?? {})).toContain('arrayMaxSize');

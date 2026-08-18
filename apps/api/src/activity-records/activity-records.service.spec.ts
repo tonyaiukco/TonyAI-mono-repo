@@ -1133,6 +1133,235 @@ describe('ActivityRecordsService — transition rules', () => {
     expect('reviewNote' in data).toBe(false);
   });
 
+  /**
+   * the revision elements FR §4.3 requires (WP18 PR 2a) — withdrawing an approved figure.
+   *
+   * The only transition out of `approved` other than the lock/unlock cycle, so
+   * every guard here is load-bearing: this is the one path that can remove a
+   * reviewed number from the reported inventory.
+   */
+  describe('void — withdrawing an approved figure (the void path)', () => {
+    const approved = (over: Partial<ActivityRecord> = {}) =>
+      makeRecord({
+        id: 'rec-v',
+        status: ActivityRecordStatus.approved,
+        calculation: { tCo2e: 19.8, factorId: 'factor-1' },
+        ...over,
+      } as Partial<ActivityRecord>);
+
+    it('withdraws the figure without deleting the row', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+      prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+        makeRecord({ id: 'rec-v', ...data }),
+      );
+
+      await service.void(superAdmin(), 'rec-v', 'Duplicate of the site invoice for January');
+
+      // The whole point: an UPDATE, never a delete. The row, its evidence and
+      // its immutable calculation snapshot all survive — what changes is that
+      // it stops counting.
+      expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+      const data = prisma.activityRecord.update.mock.calls[0][0].data;
+      expect(data.status).toBe(ActivityRecordStatus.voided);
+      expect(data.calculation).toBeUndefined();
+      // three of the four elements FR §4.3 lists, stamped on the row rather than left for a
+      // screen to reconstruct from the audit log.
+      expect(data.voidReason).toBe('Duplicate of the site invoice for January');
+      expect(data.voidedBy).toBe('user-admin');
+      expect(data.voidedAt).toBeInstanceOf(Date);
+    });
+
+    it('refuses a record outside the caller\'s accessible set, as NOT FOUND', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        approved({ subsidiaryId: 'sub-other' } as Partial<ActivityRecord>),
+      );
+
+      // Tenant isolation on the newest mutation endpoint, which had none. Not
+      // found rather than forbidden, and refused before any write, so a
+      // super_admin of one tenant cannot use the response to confirm that a
+      // record exists in another.
+      await expect(
+        service.void(
+          superAdmin({ accessibleSubsidiaryIds: ['sub-1'] }),
+          'rec-v',
+          'A reason long enough to pass',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('checks tenancy BEFORE the role, so a 403 cannot confirm existence', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        approved({ subsidiaryId: 'sub-other' } as Partial<ActivityRecord>),
+      );
+
+      // A consultant asking about someone else's record must get the same
+      // answer as a consultant asking about a record that does not exist.
+      // Ordering the role gate first would leak existence through the
+      // difference between 403 and 404.
+      await expect(
+        service.void(
+          consultant({ accessibleSubsidiaryIds: ['sub-1'] }),
+          'rec-v',
+          'A reason long enough to pass',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('returns the withdrawal on the record itself, not only in the audit log', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+      prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+        makeRecord({ id: 'rec-v', ...data }),
+      );
+
+      const dto = await service.void(superAdmin(), 'rec-v', 'Superseded by the site invoice');
+
+      // `/audit` is super_admin-only, so for every other seat the record itself
+      // is the only place the withdrawal is visible at all.
+      expect(dto.voidReason).toBe('Superseded by the site invoice');
+      expect(dto.voidedBy).toBe('user-admin');
+      expect(dto.voidedAt).not.toBeNull();
+    });
+
+    it('is super_admin only — a consultant may reject, never withdraw', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+
+      // A consultant reviews and can send a record BACK. Taking an accepted
+      // figure out of the client's reported inventory is the holding company's
+      // decision, exactly as approving it is.
+      await expect(
+        service.void(consultant(), 'rec-v', 'Not my call to make'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.void(dataEntry(), 'rec-v', 'Not my call to make'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses anything that is not approved, naming the unlock path', async () => {
+      const { prisma, service } = build();
+      for (const status of [
+        ActivityRecordStatus.draft,
+        ActivityRecordStatus.rejected,
+        ActivityRecordStatus.submitted,
+        ActivityRecordStatus.under_review,
+        ActivityRecordStatus.voided,
+      ]) {
+        prisma.activityRecord.findUnique.mockResolvedValue(approved({ status }));
+        await expect(
+          service.void(superAdmin(), 'rec-v', 'A reason long enough to pass'),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      }
+      // `locked` is the one worth naming: it means the period is closed, and
+      // letting a void bypass that would make the lock a suggestion.
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        approved({ status: ActivityRecordStatus.locked }),
+      );
+      await expect(
+        service.void(superAdmin(), 'rec-v', 'A reason long enough to pass'),
+      ).rejects.toThrow(/unlocked first/i);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('cannot be undone by voiding twice, or edited back into the inventory', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        approved({ status: ActivityRecordStatus.voided }),
+      );
+
+      // A voided record is outside EDITABLE_STATUSES and SUBMITTABLE_STATUSES,
+      // so there is no route back in. That is deliberate: re-entering a figure
+      // means recording it again, with its own provenance, not resurrecting a
+      // withdrawn one.
+      await expect(
+        service.update(superAdmin(), 'rec-v', { activityValue: 5000 }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.submit(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(service.remove(superAdmin(), 'rec-v')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('refuses inside a locked period even for an approved record', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+      prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+
+      await expect(
+        service.void(superAdmin(), 'rec-v', 'A reason long enough to pass'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    });
+
+    it('writes only while the record is still approved, so a lock cannot be overwritten', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+      prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+        makeRecord({ id: 'rec-v', ...data }),
+      );
+
+      await service.void(superAdmin(), 'rec-v', 'A reason long enough to pass');
+
+      // The status is part of the WHERE, not just the guard above it. Every
+      // other transition writes on the id alone and is safe doing so, because
+      // `lock` refuses to run while a pending-review record exists — but
+      // `approved` is the one status `lock` DOES mutate. A lock committing
+      // between the check and the write would otherwise be silently
+      // overwritten, leaving the record voided inside a closed period with no
+      // unlock able to reopen it.
+      expect(prisma.activityRecord.update.mock.calls[0][0].where).toEqual({
+        id: 'rec-v',
+        status: ActivityRecordStatus.approved,
+      });
+    });
+
+    it('answers 409, not 500, when the record moves out from under the write', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+      prisma.activityRecord.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      // The row plainly exists — it was just read. P2025 here means it stopped
+      // being `approved`, in practice because a lock landed in the window, so
+      // the honest answer is the lock's own refusal rather than a server error.
+      await expect(
+        service.void(superAdmin(), 'rec-v', 'A reason long enough to pass'),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('audits the withdrawal under its own verb, carrying the figure it removed', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+      prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+        makeRecord({ id: 'rec-v', ...data }),
+      );
+
+      await service.void(superAdmin(), 'rec-v', 'Duplicate of the site invoice');
+
+      const call = audit.record.mock.calls[0][1];
+      // Its own verb, not a generic `update`: "what was restated and why" has
+      // to be filterable in the trail rather than buried in a diff.
+      expect(call.action).toBe('void');
+      expect(call.diff.transition).toEqual({ from: 'approved', to: 'voided' });
+      expect(call.diff.voidReason).toBe('Duplicate of the site invoice');
+      // The audit row is the last place the withdrawn figure is reported
+      // alongside the reason — FR §4.3's "original value visibility".
+      expect(call.diff.before.calculation).toEqual({ tCo2e: 19.8, factorId: 'factor-1' });
+      expect(call.diff.before.status).toBe('approved');
+    });
+  });
+
   it('still refuses to submit an approved record', async () => {
     // Widening submit to accept `rejected` must not have widened it to anything
     // else — an approved record is immutable.

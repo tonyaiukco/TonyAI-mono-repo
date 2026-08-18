@@ -55,6 +55,19 @@ enum ActivityRecordStatus {
   approved
   rejected
   locked
+  // An approved figure withdrawn from the inventory, with a mandatory reason,
+  // WITHOUT deleting it. Before this, `approved` had no exit at all: the only
+  // remedy was deleting the row, which the API rightly refuses and which would
+  // destroy the figure a reviewer accepted. A voided record still exists, is
+  // still auditable, and counts towards nothing.
+  //
+  // This carries the four elements FR §4.3 lists for a revision entry
+  // (mandatory comment, user reference, timestamp, original-value visibility)
+  // but it does NOT implement §4.3, which governs LOCKED records — those are
+  // refused here and still reopen only by unlocking the period. §4.3 also asks
+  // for a revision ENTRY linked to what it corrects; there is no such link yet,
+  // so a restatement is two unrelated rows.
+  voided
 }
 
 model Profile {
@@ -147,9 +160,12 @@ model Location {
 // (subsidiary, reporting period, category), plus an IMMUTABLE calculation
 // snapshot produced by the calc engine at create/update time (never recomputed
 // on read, so historic results survive factor-library changes). It moves through
-// a status workflow (draft -> submitted -> under_review -> approved/rejected;
-// approved/locked are terminal & immutable). Child of `subsidiaries`, so it is
-// tenant-scoped by `subsidiary_id`.
+// a status workflow (draft -> submitted -> under_review -> approved/rejected).
+// `approved` is immutable and leaves only by being VOIDED — an audited
+// withdrawal that takes a figure out of the inventory with a stated reason
+// instead of deleting it. `locked` leaves only by UNLOCKING the period, and a
+// void is refused on it: a closed period reopens through its own path or not at
+// all. Child of `subsidiaries`, so it is tenant-scoped by `subsidiary_id`.
 model ActivityRecord {
   id             String               @id @default(uuid()) @db.Uuid
   subsidiaryId   String               @map("subsidiary_id") @db.Uuid
@@ -175,6 +191,13 @@ model ActivityRecord {
   reviewedBy     String?              @map("reviewed_by") @db.Uuid
   reviewedAt     DateTime?            @map("reviewed_at")
   reviewNote     String?              @map("review_note")
+  // Who withdrew this figure, when, and why. Separate from
+  // `reviewNote` on purpose — that is a reviewer's verdict on data still in the
+  // inventory, this is the record of taking data OUT of it, and conflating them
+  // would let a rejection reason read as a restatement.
+  voidReason     String?              @map("void_reason")
+  voidedBy       String?              @map("voided_by") @db.Uuid
+  voidedAt       DateTime?            @map("voided_at")
   evidence       Evidence[]
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")

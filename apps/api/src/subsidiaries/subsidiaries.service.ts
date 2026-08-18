@@ -302,6 +302,14 @@ export class SubsidiariesService {
     // guarded by TS7053, which this package has switched off.
     const reviewable: ActivityRecordStatus[] = [...PENDING_REVIEW_STATUSES];
     const editable: ActivityRecordStatus[] = [...EDITABLE_STATUSES];
+    // `terminal` is everything else — the count below really is a `notIn`, and
+    // `voided` lands in it by construction. Saying so plainly because the
+    // outcome IS the intended one and should not read as an accident: a voided
+    // record contributes to no total, but it IS the record that a figure was
+    // withdrawn and why; deleting the subsidiary would cascade it away and take
+    // the only trace of the restatement with it. Same reasoning as approved and
+    // locked: a subsidiary that has reported data is retired, not deleted.
+
     const [
       terminalRecords,
       reviewRecords,
@@ -422,7 +430,7 @@ export class SubsidiariesService {
   } | null {
     if (c.terminalRecords > 0) {
       const message =
-        `${c.terminalRecords} approved or locked activity record(s) belong to this ` +
+        `${c.terminalRecords} approved, locked or voided activity record(s) belong to this ` +
         'subsidiary, and deleting it would permanently destroy them along with ' +
         'their evidence. Those records cannot be deleted at any point, so a ' +
         'subsidiary that has reported data stays. Set its status to "inactive" ' +

@@ -3,6 +3,7 @@ import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import {
   CATEGORIES,
   CATEGORY_SCOPE_MAP,
+  COUNTED_STATUSES as SHARED_COUNTED_STATUSES,
   isCalculated,
   INVOICE_TRACKED_CATEGORIES,
   isEvidenceRequired,
@@ -29,15 +30,15 @@ import { CompletenessQueryDto } from './dto/completeness-query.dto';
 
 /**
  * Only "committed" records feed the emissions inventory. Drafts are
- * work-in-progress and rejected records are invalid, so both are excluded —
- * this keeps analytics consistent with the authoritative dataset.
+ * work-in-progress, rejected records are invalid, and VOIDED records have been
+ * withdrawn by an audited void — all three are excluded, which keeps analytics
+ * consistent with the authoritative dataset.
+ *
+ * Re-exported, not restated. The list itself now lives in `@tonyai/shared-types`
+ * beside the status enum, because `targets.service.ts` kept a second copy and
+ * nothing tied the two together.
  */
-export const COUNTED_STATUSES: ActivityRecordStatus[] = [
-  ActivityRecordStatus.submitted,
-  ActivityRecordStatus.under_review,
-  ActivityRecordStatus.approved,
-  ActivityRecordStatus.locked,
-];
+export const COUNTED_STATUSES: ActivityRecordStatus[] = [...SHARED_COUNTED_STATUSES];
 
 /** Statuses that make a tracking-matrix cell "incomplete" (FR §2.2 yellow):
  * the record exists but is not (yet) valid committed data. */
@@ -630,6 +631,7 @@ export class EmissionsService {
         // factor-less must not report a measured zero.
         let tCo2e: number | null = null;
         let uncalculatedRecordCount = 0;
+        let voidedRecordCount = 0;
         let lastUpdate: string | null = null;
         let anomaly = false;
 
@@ -649,7 +651,18 @@ export class EmissionsService {
         // the size of the job rather than just that it is unfinished.
         if (invoiceTracked) coverage = computeInvoiceCoverage([], locationIds);
 
-        if (recs.length === 0) {
+        // A VOIDED record is invisible to the verdict, exactly as it is
+        // invisible to the totals. Counting it as "this cell has a record"
+        // reported `complete` for a category whose only figure had been
+        // WITHDRAWN — a green cell over data somebody deliberately removed from
+        // the inventory, which is the loudest possible version of the overstated
+        // green this product keeps having to fix. The rows are still reported in
+        // `voidedRecordCount`, so the cell can say what happened rather than
+        // pretending nothing is there.
+        const live = recs.filter((r) => r.status !== ActivityRecordStatus.voided);
+        voidedRecordCount = recs.length - live.length;
+
+        if (live.length === 0) {
           status = 'missing';
         } else {
           let hasPending = false;
@@ -659,7 +672,7 @@ export class EmissionsService {
           const evidenceRequired = isEvidenceRequired(category);
           let evidenceMissing = false;
           const committed: CoverageRecord[] = [];
-          for (const r of recs) {
+          for (const r of live) {
             if (PENDING_STATUSES.has(r.status)) hasPending = true;
             if (r.anomalyFlag) anomaly = true;
             if (COUNTED_SET.has(r.status)) {
@@ -704,6 +717,7 @@ export class EmissionsService {
           tCo2e,
           recordCount: recs.length,
           uncalculatedRecordCount,
+          voidedRecordCount,
           ...(coverage
             ? {
                 coverage: {
@@ -826,7 +840,14 @@ export class EmissionsService {
         let anomaly = false;
         let evidenceMissing = false;
         const committed: CoverageRecord[] = [];
-        for (const r of recs) {
+        // The SAME `live` filter the matrix applies. Without it this panel
+        // reads a voided record's stale anomaly flag and counts the row as
+        // presence, so a category whose only records were withdrawn shows
+        // `incomplete` here while the dashboard cell shows `missing` — two
+        // surfaces disagreeing about one cell, which is exactly what this
+        // method's own comment promises cannot happen.
+        const live = recs.filter((r) => r.status !== ActivityRecordStatus.voided);
+        for (const r of live) {
           if (PENDING_STATUSES.has(r.status)) hasPending = true;
           if (r.anomalyFlag) anomaly = true;
           if (!COUNTED_SET.has(r.status)) continue;
@@ -850,7 +871,7 @@ export class EmissionsService {
           // FR §2.2's verdict, from the shared derivation rather than from the
           // caller's arithmetic over the counters below.
           status: deriveCellStatus({
-            hasRecords: recs.length > 0,
+            hasRecords: live.length > 0,
             hasPending,
             anomaly,
             evidenceMissing,

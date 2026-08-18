@@ -384,6 +384,50 @@ async function main() {
       `row status ${sampleRow.status} -> ${afterRow.status}`,
   );
 
+  // The same probe for the VOID transition (WP18 PR 2a). Worth its own case
+  // rather than trusting the one above: `voided` is the only status that
+  // REMOVES a figure from the reported inventory, so a client role able to set
+  // it could silently delete a subsidiary's emissions without deleting a row —
+  // and it is the newest value in the enum, i.e. the one a future write policy
+  // is most likely to forget.
+  const voidPatch = await fetch(
+    `${URL_}/rest/v1/activity_records?id=eq.${sampleRow.id}`,
+    {
+      method: 'PATCH',
+      headers: {
+        apikey: ANON,
+        Authorization: `Bearer ${consultantToken}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify({
+        status: 'voided',
+        void_reason: 'written straight through PostgREST',
+      }),
+    },
+  );
+  const voidPatched = voidPatch.ok ? await voidPatch.json() : null;
+  const afterVoid = await fetch(
+    `${URL_}/rest/v1/activity_records?select=status,void_reason&id=eq.${sampleRow.id}`,
+    { headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` } },
+  );
+  const [afterVoidRow] = await afterVoid.json();
+  check(
+    'activity_records: consultant cannot VOID a figure through RLS',
+    // `voidPatch.status === 200` is pinned, not just `!ok`. A rejected BODY
+    // (stale PostgREST schema cache -> 400 PGRST204) would also leave the row
+    // unchanged, and the probe would pass while proving nothing about RLS. 200
+    // with zero rows is the only result that means "PostgREST understood the
+    // write and the POLICY refused it".
+    voidPatch.status === 200 &&
+      Array.isArray(voidPatched) &&
+      voidPatched.length === 0 &&
+      afterVoidRow.status === sampleRow.status &&
+      afterVoidRow.void_reason === null,
+    `status=${voidPatch.status}, row status ${sampleRow.status} -> ${afterVoidRow.status}, ` +
+      `void_reason=${afterVoidRow.void_reason}`,
+  );
+
   // --- Every table must carry RLS ------------------------------------------
   // The grants migration hands client roles SELECT/INSERT/UPDATE/DELETE on all
   // tables, so a table shipped with RLS off is not "invisible until wired up" —

@@ -30,6 +30,7 @@ import type {
   SubsidiaryCompletenessDTO,
   TrackingMatrixDTO,
   RejectInput,
+  VoidInput,
   SubsidiaryDTO,
   SubsidiarySummaryDTO,
   UpdateActivityRecordInput,
@@ -198,6 +199,13 @@ export const api = {
 
   rejectActivityRecord: (id: string, body: RejectInput) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Withdraw an approved figure from the inventory (the void path), super_admin only. */
+  voidActivityRecord: (id: string, body: VoidInput) =>
+    apiFetch<ActivityRecordDTO>(`/activity-records/${id}/void`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
