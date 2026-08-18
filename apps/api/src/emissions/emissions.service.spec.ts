@@ -184,6 +184,31 @@ describe('EmissionsService.completeness (drill-down)', () => {
     expect(ankara.months.find((m) => m.month === 'February')!.covered).toBe(false);
   });
 
+  it('separates a month awaiting review from one that is accepted (DE-2)', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      invoice('loc-1', 'January'),
+      invoice('loc-1', 'February', {
+        status: ActivityRecordStatus.submitted,
+      } as Partial<ActivityRecord>),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+    const ankara = electricity.locations.find((l) => l.locationId === 'loc-1')!;
+    const month = (name: string) => ankara.months.find((m) => m.month === name)!;
+
+    // Three states off two booleans — the entry screen needs to tell a user
+    // which specific month is sitting in a review queue, not merely that one is.
+    expect(month('January')).toMatchObject({ covered: true, awaitingReview: false });
+    expect(month('February')).toMatchObject({ covered: true, awaitingReview: true });
+    // The fourth combination must be unreachable: nothing to review where there
+    // is nothing keyed in.
+    expect(month('March')).toMatchObject({ covered: false, awaitingReview: false });
+    expect(electricity.awaitingReviewSlots).toBe(1);
+    expect(ankara.months.every((m) => m.covered || !m.awaitingReview)).toBe(true);
+  });
+
   it('agrees with the matrix cell it drills into', async () => {
     const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
     const records = [invoice('loc-1', 'January'), invoice('loc-2', 'February')];
@@ -706,6 +731,138 @@ describe('EmissionsService.trackingMatrix', () => {
 
       expect(electricity.coverage).toMatchObject({ required: 12, covered: 12 });
       expect(electricity.status).toBe('complete');
+      // Nothing is waiting on a reviewer, which is the other half of why this
+      // cell may be green — see the DE-2 block below.
+      expect(electricity.coverage).toMatchObject({ awaitingReviewSlots: 0 });
+    });
+
+    /**
+     * Round-1 **DE-2**: "On submit for review, the data-collection status turns
+     * green immediately."
+     *
+     * It did, and PRs 2–3 did not touch it — they fixed the DENOMINATOR. The
+     * numerator counted a `submitted` record as a closed slot, because
+     * `COUNTED_STATUSES` includes it (rightly — the inventory must not lose data
+     * queued for review) while `PENDING_STATUSES` only catches draft/rejected.
+     * So twelve invoices nobody had looked at turned the cell green.
+     */
+    describe('submitting is not finishing (DE-2)', () => {
+      const ALL_MONTHS = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December',
+      ];
+
+      const oneLocationSub = () =>
+        makeSubsidiary({
+          id: 'sub-1',
+          trackingGranularity: 'location',
+          locations: [{ id: 'loc-1' }],
+        } as Partial<Subsidiary>);
+
+      const matrixFor = async (records: ActivityRecord[]) => {
+        const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+        prisma.subsidiary.findMany.mockResolvedValue([oneLocationSub()]);
+        prisma.activityRecord.findMany.mockResolvedValue(records);
+        const m = await service.trackingMatrix(user, { year: 2024 });
+        return m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+      };
+
+      it('holds a fully-keyed year yellow while every invoice awaits review', async () => {
+        const cell = await matrixFor(
+          ALL_MONTHS.map((mth) =>
+            invoice('loc-1', mth, {
+              status: ActivityRecordStatus.submitted,
+            } as Partial<ActivityRecord>),
+          ),
+        );
+
+        // Every slot IS closed — the data is all in, and the coverage fraction
+        // says so. What is not true is that the collection is finished.
+        expect(cell.coverage).toMatchObject({
+          required: 12,
+          covered: 12,
+          awaitingReviewSlots: 12,
+        });
+        expect(cell.status).toBe('incomplete');
+      });
+
+      it('holds it yellow for a single un-reviewed month among eleven approved', async () => {
+        const cell = await matrixFor([
+          ...ALL_MONTHS.slice(0, 11).map((mth) => invoice('loc-1', mth)),
+          invoice('loc-1', 'December', {
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        // A count, not a flag: the screen has to be able to say "1 of 12 still
+        // awaiting review" rather than just that something is.
+        expect(cell.coverage).toMatchObject({ covered: 12, awaitingReviewSlots: 1 });
+        expect(cell.status).toBe('incomplete');
+      });
+
+      it('counts under_review as awaiting and locked as accepted', async () => {
+        const underReview = await matrixFor(
+          ALL_MONTHS.map((mth) =>
+            invoice('loc-1', mth, {
+              status: ActivityRecordStatus.under_review,
+            } as Partial<ActivityRecord>),
+          ),
+        );
+        // A reviewer has opened it but not accepted it. Still not finished.
+        expect(underReview.coverage).toMatchObject({ awaitingReviewSlots: 12 });
+        expect(underReview.status).toBe('incomplete');
+
+        const locked = await matrixFor(
+          ALL_MONTHS.map((mth) =>
+            invoice('loc-1', mth, {
+              status: ActivityRecordStatus.locked,
+            } as Partial<ActivityRecord>),
+          ),
+        );
+        // A locked period is approved data that a lock froze — accepted, so the
+        // cell is green. Reading the set as `approved` alone would have turned
+        // every locked period yellow the moment this cap shipped.
+        expect(locked.coverage).toMatchObject({ awaitingReviewSlots: 0 });
+        expect(locked.status).toBe('complete');
+      });
+
+      it('never counts an un-reviewed record that closed no slot', async () => {
+        const cell = await matrixFor([
+          // Submitted, but with no invoice attached — it closes nothing, so it
+          // is a missing-evidence record and NOT something awaiting review.
+          // `awaitingReviewSlots` is a subset of `covered`; if it could exceed
+          // it, a cell could report "0 covered, 1 awaiting review".
+          invoice('loc-1', 'January', {
+            status: ActivityRecordStatus.submitted,
+            _count: { evidence: 0 },
+          } as Partial<ActivityRecord>),
+          // Submitted at company level: closes no site slot either.
+          invoice(null as unknown as string, 'February', {
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        expect(cell.coverage).toMatchObject({
+          covered: 0,
+          awaitingReviewSlots: 0,
+          missingEvidenceRecords: 1,
+          unattributedRecords: 1,
+        });
+      });
+
+      it('lets an approved invoice win over an un-reviewed one for the same slot', async () => {
+        const cell = await matrixFor([
+          invoice('loc-1', 'January', {
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+          invoice('loc-1', 'January'),
+        ]);
+
+        // One accepted invoice covers the month whatever else was filed against
+        // it. Tracking "awaiting" directly instead of subtracting the accepted
+        // set would have left this slot in both buckets at once.
+        expect(cell.coverage).toMatchObject({ covered: 1, awaitingReviewSlots: 0 });
+      });
     });
 
     it('counts a second invoice for the same location and month once', async () => {

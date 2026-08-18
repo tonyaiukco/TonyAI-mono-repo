@@ -101,10 +101,39 @@ export interface InvoiceCoverage {
   nonMonthlyRecords: number;
   missingEvidenceRecords: number;
   outOfScopeRecords: number;
+  /**
+   * The subset of `covered` whose closing record nobody has reviewed yet — see
+   * `CellCoverage.awaitingReviewSlots` for why this is reported rather than
+   * deducted. A SUBSET, always: every key here is also in `covered`.
+   *
+   * Where more than one record closes a slot, an approved one wins — an accepted
+   * invoice covers the month whatever else was filed against it.
+   */
+  awaitingReview: Set<string>;
 }
 
+/**
+ * The statuses that mean a human has actually accepted the invoice.
+ *
+ * Deliberately narrower than `COUNTED_STATUSES`: that set decides what the
+ * emissions inventory counts (submitted data must not vanish from the totals
+ * while it queues for review), this one decides what the *collection status* is
+ * allowed to call finished. Round-1 DE-2 is precisely the gap between the two —
+ * submitting is not finishing.
+ */
+const REVIEWED_STATUSES = new Set<string>([
+  ActivityRecordStatus.approved,
+  ActivityRecordStatus.locked,
+]);
+
 export function computeInvoiceCoverage(
-  records: { locationId: string | null; reportingPeriod: string; periodValue: string; evidenceCount: number }[],
+  records: {
+    locationId: string | null;
+    reportingPeriod: string;
+    periodValue: string;
+    evidenceCount: number;
+    status: string;
+  }[],
   /**
    * The locations the denominator is built from — the SET, not just its size.
    *
@@ -120,6 +149,10 @@ export function computeInvoiceCoverage(
 ): InvoiceCoverage {
   const inScope = new Set(locationIds);
   const covered = new Set<string>();
+  /** Slots closed by an ACCEPTED invoice. Subtracted from `covered` at the end
+   *  rather than tracked as "awaiting" directly, so that a month closed twice —
+   *  once submitted, once approved — resolves to accepted, not to both. */
+  const reviewed = new Set<string>();
   let unattributedRecords = 0;
   let nonMonthlyRecords = 0;
   let missingEvidenceRecords = 0;
@@ -143,9 +176,19 @@ export function computeInvoiceCoverage(
       // on a rule enforced in ANOTHER module (`isValidPeriodValue`), and 24
       // records at one location could report 24-of-24 while the second location
       // held nothing.
-      if (MONTH_INDEX[month] !== undefined) covered.add(`${r.locationId}\u0000${month}`);
-      else nonMonthlyRecords += 1;
+      if (MONTH_INDEX[month] !== undefined) {
+        const slot = `${r.locationId}\u0000${month}`;
+        covered.add(slot);
+        if (REVIEWED_STATUSES.has(r.status)) reviewed.add(slot);
+      } else nonMonthlyRecords += 1;
     }
+  }
+
+  // The complement, not a second tally: derived from the two sets, so it can
+  // never count a slot the closure rule above did not actually close.
+  const awaitingReview = new Set<string>();
+  for (const slot of covered) {
+    if (!reviewed.has(slot)) awaitingReview.add(slot);
   }
 
   return {
@@ -155,6 +198,7 @@ export function computeInvoiceCoverage(
     nonMonthlyRecords,
     missingEvidenceRecords,
     outOfScopeRecords,
+    awaitingReview,
   };
 }
 
@@ -541,6 +585,7 @@ export class EmissionsService {
             reportingPeriod: string;
             periodValue: string;
             evidenceCount: number;
+            status: string;
           }[] = [];
           for (const r of recs) {
             if (PENDING_STATUSES.has(r.status)) hasPending = true;
@@ -557,6 +602,7 @@ export class EmissionsService {
                 reportingPeriod: r.reportingPeriod,
                 periodValue: r.periodValue,
                 evidenceCount: r._count.evidence,
+                status: r.status,
               });
             }
             const t = r.updatedAt.getTime();
@@ -577,7 +623,27 @@ export class EmissionsService {
             // coverage does not answer "there is an unfinished record here" or
             // "one of these has no document", and FR §2.2's yellow means
             // exactly that there is something left to look at.
-            if (status === 'complete' && (hasPending || anomaly || evidenceMissing)) {
+            //
+            // The fourth cap is round-1 DE-2 itself: "On submit for review, the
+            // data-collection status turns green immediately." It did, and the
+            // denominator work of PRs 2–3 did not touch it — `COUNTED_STATUSES`
+            // counts a `submitted` record as committed (rightly: the inventory
+            // must not lose data queued for review), and `PENDING_STATUSES` only
+            // catches `draft`/`rejected`, so twelve invoices sent for review and
+            // seen by nobody closed twelve slots and turned the cell green.
+            // Something is still left to look at, so the cell is yellow.
+            //
+            // Confined to the invoice-tracked branch on purpose. The yes/no
+            // branch below has the same property, and changing it would re-mean
+            // all eight remaining categories on every subsidiary — a separate
+            // decision, recorded as an open question rather than smuggled in.
+            if (
+              status === 'complete' &&
+              (hasPending ||
+                anomaly ||
+                evidenceMissing ||
+                coverage.awaitingReview.size > 0)
+            ) {
               status = 'incomplete';
             }
           } else {
@@ -607,6 +673,7 @@ export class EmissionsService {
                   nonMonthlyRecords: coverage.nonMonthlyRecords,
                   missingEvidenceRecords: coverage.missingEvidenceRecords,
                   outOfScopeRecords: coverage.outOfScopeRecords,
+                  awaitingReviewSlots: coverage.awaitingReview.size,
                 },
               }
             : {}),
@@ -712,6 +779,7 @@ export class EmissionsService {
             reportingPeriod: r.reportingPeriod,
             periodValue: r.periodValue,
             evidenceCount: r._count.evidence,
+            status: r.status,
           })),
           locations.map((l) => l.id),
         );
@@ -724,6 +792,7 @@ export class EmissionsService {
           nonMonthlyRecords: coverage.nonMonthlyRecords,
           missingEvidenceRecords: coverage.missingEvidenceRecords,
           outOfScopeRecords: coverage.outOfScopeRecords,
+          awaitingReviewSlots: coverage.awaitingReview.size,
           // Which months already hold a WHOLE-COMPANY entry. Without this the
           // grid invites the user to key a site invoice for a month that is
           // already recorded at company level, and both rows then feed the
@@ -743,12 +812,17 @@ export class EmissionsService {
             // The complement, month by month. Keyed identically to the set the
             // rule builds, so "covered here" and "covered in the cell" cannot
             // drift apart.
-            months: MONTH_LABEL.map((month) => ({
-              month,
-              covered: coverage.covered.has(
-                `${loc.id}\u0000${month.toLowerCase()}`,
-              ),
-            })),
+            months: MONTH_LABEL.map((month) => {
+              const slot = `${loc.id}\u0000${month.toLowerCase()}`;
+              return {
+                month,
+                covered: coverage.covered.has(slot),
+                // Read from the SUBSET, so `awaitingReview` can never be true
+                // where `covered` is false. The screen renders three states off
+                // this pair and a fourth would be unreachable nonsense.
+                awaitingReview: coverage.awaitingReview.has(slot),
+              };
+            }),
           })),
         };
       },

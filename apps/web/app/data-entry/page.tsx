@@ -35,6 +35,7 @@ import { api, ApiError } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
+import { CoveragePanel } from "@/components/data-entry/coverage-panel";
 import {
   ACTIVITY_UNITS,
   appliesUnitConversion,
@@ -42,6 +43,7 @@ import {
   GEOGRAPHY_LABELS,
   DEFAULT_REPORTING_YEAR,
   isCalculated,
+  isInvoiceTracked,
   REPORTING_YEARS,
   unitSymbol,
   unitsForCategory,
@@ -218,6 +220,9 @@ function DataEntryPageInner() {
   // cannot answer that: an empty list means both "not fetched yet" and "fetched,
   // none exist", and the deep-link effect below has to tell those apart.
   const [recordsFetchedFor, setRecordsFetchedFor] = useState<string | null>(null);
+  /** Bumped whenever records are refetched, so `CoveragePanel` re-reads the
+   *  completeness endpoint after a save, a submit or a subsidiary switch. */
+  const [coverageKey, setCoverageKey] = useState(0);
   const [locks, setLocks] = useState<PeriodLockDTO[]>([]);
   // The reporting entity the loaded record belongs to. Kept so that moving the
   // form off that tuple can stop targeting it — see the effect below.
@@ -299,6 +304,11 @@ function DataEntryPageInner() {
       setRecords(list);
       setLocks(lockList);
       setRecordsFetchedFor(subId);
+      // Every write path already funnels through here, so the collection-status
+      // panel refetches with the record list rather than needing its own hook on
+      // each of them. A panel that kept the pre-save fraction would be wrong at
+      // the one moment a user looks straight at it for confirmation.
+      setCoverageKey((n) => n + 1);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -1180,6 +1190,18 @@ function DataEntryPageInner() {
                 geographyCode={effectiveGeography}
               />
 
+              {/* Round-1 DE-2: whether this subsidiary's year is actually
+                  finished, as opposed to whether this one record saved. */}
+              <CoveragePanel
+                subsidiaryId={subsidiaryId}
+                reportingYear={reportingYear}
+                category={category}
+                locationId={locationId}
+                reportingPeriod={reportingPeriod}
+                periodValue={periodValue}
+                refreshKey={coverageKey}
+              />
+
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
@@ -1318,14 +1340,20 @@ function PreviewCard({
               />
               {geographyCode && <Row label="Geography" value={geographyCode} />}
             </dl>
-            {/* Says only what is true today. "It counts towards data
-                completeness" was the first wording and it described a feature
-                that has not shipped yet — the completeness engine is the next
-                work package. */}
+            {/* "It counts towards data completeness" was the first wording, cut
+                because the completeness engine had not shipped. It has now, and
+                the claim is true where it applies: `computeInvoiceCoverage`
+                never reads the calculation, so a factor-less invoice closes its
+                slot exactly like any other. Only for the three invoice-tracked
+                categories, though — hence the second sentence naming Water
+                rather than a blanket promise. */}
             <p className="text-xs text-muted-foreground">
               You can still save and submit this entry. An invoice is required
               before it can be submitted, since without an emission factor the
               invoice is the only record of what was consumed.
+              {isInvoiceTracked(preview.category as Category)
+                ? " It still counts towards this year's invoice completeness — that is measured from the invoice, not from the calculated figure."
+                : ""}
             </p>
           </div>
         ) : (

@@ -1641,6 +1641,23 @@ export interface CellCoverage {
    * cell reading `1/0`.
    */
   outOfScopeRecords: number;
+  /**
+   * Of the `covered` slots, how many are closed ONLY by a record nobody has
+   * reviewed yet — `submitted` or `under_review` rather than `approved`/`locked`.
+   *
+   * The counter round-1 **DE-2** actually asks for, and a SUBSET of `covered`,
+   * never a rival to it. `COUNTED_STATUSES` treats a submitted record as
+   * committed on purpose — the inventory must not lose data sitting in a review
+   * queue — but the side effect was that a cell turned green the moment its last
+   * invoice was *sent* for review, which is DE-2's complaint verbatim: "On submit
+   * for review, the data-collection status turns green immediately."
+   *
+   * Kept as a separate number rather than deducted from `covered` so the two
+   * claims stay independent: `covered` answers "is the data in?", this answers
+   * "has anyone accepted it?". Deducting it would have made the emissions total
+   * and the collection fraction disagree about the same records.
+   */
+  awaitingReviewSlots: number;
 }
 
 /** One subsidiary × category cell of the tracking matrix. */
@@ -1711,6 +1728,12 @@ export interface CompletenessSlot {
   month: string;
   /** True when a committed monthly record with a file closes this slot. */
   covered: boolean;
+  /**
+   * True when the record closing this slot is still awaiting review. Always
+   * `false` where `covered` is `false` — an open slot has nothing to review —
+   * so the pair reads as three states, not four: open, in review, accepted.
+   */
+  awaitingReview: boolean;
 }
 
 /** One location's twelve slots for a single invoice-tracked category. */
@@ -1735,6 +1758,9 @@ export interface CategoryCompleteness {
   nonMonthlyRecords: number;
   missingEvidenceRecords: number;
   outOfScopeRecords: number;
+  /** Covered slots still waiting on a reviewer — see `CellCoverage`, which
+   *  reports the same number for the matrix cell this drill-down sits behind. */
+  awaitingReviewSlots: number;
   /**
    * Months (lower-cased) that already hold a WHOLE-COMPANY entry for this
    * category and year.

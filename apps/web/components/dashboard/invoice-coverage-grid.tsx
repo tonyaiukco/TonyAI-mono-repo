@@ -5,6 +5,14 @@ import { api, ApiError } from '@/lib/api';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import {
+  reviewNote,
+  shortfallReasons,
+  slotState,
+  SLOT_DESCRIPTION,
+  SLOT_GLYPH,
+  type SlotState,
+} from '@/lib/completeness-view';
 import type { Category, SubsidiaryCompletenessDTO } from '@/lib/types';
 
 interface InvoiceCoverageGridProps {
@@ -24,9 +32,6 @@ interface InvoiceCoverageGridProps {
     month: string;
   }) => void;
 }
-
-/** "1 entry" / "3 entries" — the count needs its noun, and its plural. */
-const entries = (n: number) => `${n} ${n === 1 ? 'entry is' : 'entries are'}`;
 
 /** Three letters is enough to read a twelve-column header at this width. */
 const SHORT_MONTH = (month: string) => month.slice(0, 3);
@@ -110,34 +115,22 @@ export function InvoiceCoverageGrid({
   }
 
   const category = data.categories.find((c) => c.category === selected);
-  const slots = category?.locations.flatMap((l) => l.months) ?? [];
-  const openSlots = slots.filter(
-    (m) =>
-      !m.covered &&
-      !category?.companyLevelMonths.includes(m.month.toLowerCase()),
-  ).length;
-  const hasCompanyLevel = (category?.companyLevelMonths.length ?? 0) > 0;
-  const reasons: string[] = [];
-  if (category) {
-    if (category.unattributedRecords > 0) {
-      reasons.push(
-        `${entries(category.unattributedRecords)} recorded for the whole company rather than a site, so they close no site's month.`,
-      );
-    }
-    if (category.outOfScopeRecords > 0) {
-      reasons.push(
-        `${entries(category.outOfScopeRecords)} at a site that did not exist yet at the end of ${data.reportingYear}, so there is no row above for them.`,
-      );
-    }
-    if (category.nonMonthlyRecords > 0) {
-      reasons.push(
-        `${entries(category.nonMonthlyRecords)} not reported as a single month, so none of them stands in for a monthly invoice.`,
-      );
-    }
-    if (category.missingEvidenceRecords > 0) {
-      reasons.push(`${entries(category.missingEvidenceRecords)} with no invoice attached.`);
-    }
-  }
+  const states: SlotState[] = category
+    ? category.locations.flatMap((l) =>
+        l.months.map((m) => slotState(m, category.companyLevelMonths)),
+      )
+    : [];
+  const openSlots = states.filter((s) => s === 'open').length;
+  const hasCompanyLevel = states.includes('company');
+  const hasAwaiting = states.includes('awaiting');
+  // Both surfaces build these sentences from one module, so the drill-down and
+  // the Data Entry panel cannot describe the same rule differently.
+  const reasons = category ? shortfallReasons(category, data.reportingYear) : [];
+  // Why a category can read 24 of 24 and still not be finished. Without it the
+  // grid explains every kind of shortfall except the one the review gate
+  // introduced, and that cell's amber has no account anywhere on screen.
+  const note = category ? reviewNote(category.awaitingReviewSlots) : null;
+  if (note) reasons.push(note);
 
   return (
     <div className="space-y-3">
@@ -193,27 +186,18 @@ export function InvoiceCoverageGrid({
                     {loc.locationName}
                   </span>
                   {loc.months.map((m) => {
-                    // Three states, not two. A month already recorded for the
+                    // Four states, not two. A month already recorded for the
                     // WHOLE COMPANY closes no site slot — but inviting the user
                     // to key a site invoice for it produces a second row for
                     // that month, and BOTH feed the emissions total. The
                     // uniqueness index cannot stop it (different location id)
                     // and nothing downstream deduplicates, so the only thing
                     // standing between a tester and a double-counted month is
-                    // this screen saying so.
-                    const atCompanyLevel =
-                      !m.covered &&
-                      category.companyLevelMonths.includes(m.month.toLowerCase());
-                    const state = m.covered
-                      ? 'covered'
-                      : atCompanyLevel
-                        ? 'company'
-                        : 'open';
-                    const description = {
-                      covered: 'invoice attached',
-                      company: 'recorded for the whole company — entering a site invoice would count this month twice',
-                      open: 'missing',
-                    }[state];
+                    // this screen saying so. The fourth is round-1 DE-2: an
+                    // invoice sitting in a review queue is in, but not accepted,
+                    // and must not render identically to one that is.
+                    const state = slotState(m, category.companyLevelMonths);
+                    const description = SLOT_DESCRIPTION[state];
                     return (
                       <button
                         key={m.month}
@@ -229,9 +213,9 @@ export function InvoiceCoverageGrid({
                         title={description}
                         className={cn(
                           'flex h-5 items-center justify-center rounded-[3px] border text-[9px] font-bold leading-none transition-colors',
-                          state === 'covered' &&
+                          state === 'accepted' &&
                             'cursor-default border-status-complete-text/40 bg-status-complete-bg text-status-complete-text',
-                          state === 'company' &&
+                          (state === 'company' || state === 'awaiting') &&
                             'cursor-default border-status-incomplete-text/40 bg-status-incomplete-bg text-status-incomplete-text',
                           state === 'open' &&
                             'border-status-missing-text/40 bg-status-missing-bg text-status-missing-text hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
@@ -239,8 +223,10 @@ export function InvoiceCoverageGrid({
                       >
                         {/* Never colour alone: at 20px with no text this panel
                             is unreadable in greyscale or with low vision, and
-                            the palette's own tints sit near 1.2:1 on white. */}
-                        {state === 'covered' ? '✓' : state === 'company' ? '◆' : '·'}
+                            the palette's own tints sit near 1.2:1 on white.
+                            `awaiting` and `company` share the amber tokens but
+                            never the glyph — they mean different work. */}
+                        {SLOT_GLYPH[state]}
                       </button>
                     );
                   })}
@@ -253,20 +239,28 @@ export function InvoiceCoverageGrid({
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
             <span className="flex items-center gap-1">
               <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-complete-text/40 bg-status-complete-bg text-[8px] font-bold text-status-complete-text">
-                ✓
+                {SLOT_GLYPH.accepted}
               </span>
-              invoice attached
+              invoice attached and approved
             </span>
             <span className="flex items-center gap-1">
               <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-missing-text/40 bg-status-missing-bg text-[8px] font-bold text-status-missing-text">
-                ·
+                {SLOT_GLYPH.open}
               </span>
               missing
             </span>
+            {hasAwaiting && (
+              <span className="flex items-center gap-1">
+                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-incomplete-text/40 bg-status-incomplete-bg text-[8px] font-bold text-status-incomplete-text">
+                  {SLOT_GLYPH.awaiting}
+                </span>
+                waiting for review
+              </span>
+            )}
             {hasCompanyLevel && (
               <span className="flex items-center gap-1">
                 <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-incomplete-text/40 bg-status-incomplete-bg text-[8px] font-bold text-status-incomplete-text">
-                  ◆
+                  {SLOT_GLYPH.company}
                 </span>
                 already recorded company-wide
               </span>
