@@ -26,12 +26,14 @@ import {
   Info,
   Leaf,
   LogOut,
+  MoveRight,
   Save,
   Send,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
@@ -66,6 +68,7 @@ import {
   categoryFieldGroups,
   defaultFieldGroups,
 } from "@/lib/data-entry-data";
+import { describeMove, hasMovedOffRecord } from "@/lib/record-identity";
 
 // --- Static option sets -----------------------------------------------------
 
@@ -143,14 +146,27 @@ const numberFmt = new Intl.NumberFormat("en-GB", {
  * still claimed it was "a bare 500", so the one case it existed to explain was
  * the one case it no longer caught. 5xx keeps a generic hint because an
  * unexpected server error tells the user nothing on its own. */
-function saveErrorMessage(e: unknown): string {
+/** A record's reporting entity, in prose. Degrades on `locationId` because
+ *  `locationName` is optional on the contract — a bare `??` would call a site
+ *  row "the whole company" if the include were ever dropped. */
+function entityLabel(rec: ActivityRecordDTO): string {
+  return rec.locationId ? (rec.locationName ?? "a site") : "the whole company";
+}
+
+function saveErrorMessage(e: unknown, moving = false): string {
   if (e instanceof ApiError && e.status === 409) {
     // Three things return 409: a duplicate reporting entity, and two period-lock
     // refusals. Only the first is fixed by opening the existing record, so the
     // advice is attached to the message that earns it — the lock's own sentence
     // already says what to do.
-    return /locked/i.test(e.message)
-      ? e.message
+    if (/locked/i.test(e.message)) return e.message;
+    // A MOVE that collides is a different situation from a create that
+    // collides, and the create's advice is wrong for it: there is nothing to
+    // "continue" — the record the user is holding still exists where it was.
+    // Saying only what is true, because the honest remedy (removing one of the
+    // two) is not something this screen can currently offer for committed data.
+    return moving
+      ? `${e.message} The record has not been moved, and stays where it is.`
       : `${e.message} Open it from Previous submissions to continue it.`;
   }
   if (e instanceof ApiError && e.status >= 500) {
@@ -269,6 +285,26 @@ function DataEntryPageInner() {
   // The location (when chosen) drives the factor geography; else the subsidiary.
   const effectiveGeography =
     selectedLocation?.geographyCode ?? selectedSubsidiary?.geographyCode ?? null;
+
+  /**
+   * Set while an OPEN record's location has been changed but not yet saved —
+   * i.e. the next save re-attributes it rather than creating anything (WP18).
+   *
+   * Built as one finished sentence rather than as JSX with `{expr}` on its own
+   * line, which drops the separating space (that bug shipped twice in WP17).
+   */
+  const movingTo = useMemo(() => {
+    // The open record's OWN snapshot decides whether a factor is being
+    // recalculated — not its category, which only says one is permitted to be
+    // absent. `records` is the list this page already holds.
+    const open = editingId ? records.find((r) => r.id === editingId) : undefined;
+    return describeMove(
+      editingId ? editingTuple : null,
+      { locationId },
+      new Map(availableLocations.map((l) => [l.id, l.name])),
+      open ? isCalculated(open.calculation) : true,
+    );
+  }, [editingId, editingTuple, locationId, availableLocations, records]);
 
   const numericValue = activityValue.trim() === "" ? NaN : Number(activityValue);
   const hasValidInput =
@@ -601,15 +637,27 @@ function DataEntryPageInner() {
    * with the Electricity numbers and reported "Draft saved". The Fuel record
    * simply ceased to exist. The subsidiary select already had this protection
    * (it calls `resetForm`); the rest of the tuple did not.
+   *
+   * **`locationId` is deliberately NOT in this list** (WP18). It was swept in
+   * with the rest, and the consequence was the opposite of the bug above: the
+   * API has accepted a location change on update since 2026-07-07 — it
+   * re-targets the record and recomputes the snapshot from the new entity's
+   * geography — but the client abandoned the edit first, so the save became a
+   * POST and *created a second row*. Since the uniqueness index counts
+   * `location_id`, both rows survive and BOTH feed the emissions total. The one
+   * control a user would reach for to fix a mis-attributed record was the
+   * control that manufactured the duplicate. Moving a record is now an edit,
+   * and `movingTo` below makes it visible before it is saved.
    */
   useEffect(() => {
     if (!editingId || !editingTuple) return;
-    const movedOff =
-      editingTuple.category !== category ||
-      editingTuple.reportingYear !== reportingYear ||
-      editingTuple.reportingPeriod !== reportingPeriod ||
-      editingTuple.periodValue !== periodValue ||
-      editingTuple.locationId !== locationId;
+    const movedOff = hasMovedOffRecord(editingTuple, {
+      category,
+      reportingYear,
+      reportingPeriod,
+      periodValue,
+      locationId,
+    });
     if (!movedOff) return;
     setEditingId(null);
     setEditingTuple(null);
@@ -692,20 +740,33 @@ function DataEntryPageInner() {
 
   async function handleSaveDraft() {
     setSaving("draft");
+    // Read once, for use after the awaits. `movingTo` is a per-render const so
+    // it could not change mid-handler either way; naming it here is what keeps
+    // the success and failure branches describing the SAME attempt.
+    const wasMoving = movingTo !== null;
     try {
       const rec = await persist();
       if (!rec) return;
       setEditingId(rec.id);
       setEditingTuple(tupleOf(rec));
       setAnomalyFlag(rec.anomalyFlag);
+      // Composed, not branched. A move is the operation most likely to RAISE
+      // the anomaly flag — the baseline is keyed on the reporting entity, so
+      // the value is re-scored against a different pool of periods — and an
+      // either/or toast would announce the move and swallow the flag, leaving
+      // the user to meet it later as a blocked Submit. The location comes from
+      // the server's response, so it states what was actually written.
+      const anomalyNote = rec.anomalyFlag
+        ? " — value flagged as anomalous, add a variance comment"
+        : "";
       toast.success(
-        rec.anomalyFlag
-          ? "Draft saved — value flagged as anomalous, add a variance comment"
-          : "Draft saved",
+        wasMoving
+          ? `Moved to ${entityLabel(rec)}, draft saved${anomalyNote}`
+          : `Draft saved${anomalyNote}`,
       );
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      toast.error(saveErrorMessage(e));
+      toast.error(saveErrorMessage(e, wasMoving));
     } finally {
       setSaving(null);
     }
@@ -713,6 +774,7 @@ function DataEntryPageInner() {
 
   async function handleSubmit() {
     setSaving("submit");
+    const wasMoving = movingTo !== null;
     try {
       const rec = await persist();
       if (!rec) return;
@@ -730,11 +792,18 @@ function DataEntryPageInner() {
         return;
       }
       await api.submitActivityRecord(rec.id);
-      toast.success("Submitted for review");
+      // Announced here too. Submitting a moved record re-attributes it just as
+      // a draft save does, and saying nothing made the two paths disagree about
+      // an action with the same consequence.
+      toast.success(
+        wasMoving
+          ? `Moved to ${entityLabel(rec)}, submitted for review`
+          : "Submitted for review",
+      );
       resetForm();
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      toast.error(saveErrorMessage(e));
+      toast.error(saveErrorMessage(e, wasMoving));
     } finally {
       setSaving(null);
     }
@@ -813,14 +882,18 @@ function DataEntryPageInner() {
                   </Field>
 
                   {/* Reporting entity: whole subsidiary or one of its locations.
-                      The chosen entity drives the factor geography (FR §5.2). */}
+                      The chosen entity drives the factor geography (data_entry_page.md §5.2). */}
                   <Field label="Location">
                     <Select
                       value={locationId || "__whole__"}
                       onValueChange={(v) => setLocationId(v === "__whole__" ? "" : v)}
                       disabled={subsLoading || !subsidiaryId}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger
+                        aria-describedby={
+                          movingTo ? "location-move-notice" : undefined
+                        }
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -832,6 +905,35 @@ function DataEntryPageInner() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {/* Changing this on an open record MOVES it. Every other
+                        field in this card starts a fresh record instead, so the
+                        one that behaves differently has to say so — silently
+                        re-attributing committed data on the next Save would be
+                        worse than the duplicate this replaced. */}
+                    {/* Mounted unconditionally, and never `display: none`.
+                        A live region announces nothing if it is absent from the
+                        accessibility tree when its text arrives — and `hidden`
+                        removes it, so toggling that class made the region inert
+                        while looking correct. Only the CHILDREN and the margin
+                        toggle; an empty <p> occupies no space. This is the one
+                        consequence warning on the page a keyboard user would
+                        otherwise never hear, while the far less consequential
+                        abandon path already announces itself via a toast. */}
+                    <p
+                      id="location-move-notice"
+                      role="status"
+                      className={cn(
+                        "flex items-start gap-1.5 text-xs text-amber-700",
+                        movingTo && "mt-1.5",
+                      )}
+                    >
+                      {movingTo && (
+                        <>
+                          <MoveRight className="mt-0.5 h-3 w-3 shrink-0" />
+                          <span>{movingTo}</span>
+                        </>
+                      )}
+                    </p>
                   </Field>
 
                   <Field label="Category">
@@ -923,7 +1025,7 @@ function DataEntryPageInner() {
                       Round-1 DE-6 asked for Türkiye as a selectable "grid
                       region"; the field they were looking at was metadata that
                       never reached the engine. The geography is not a per-record
-                      choice — it comes from the reporting entity (FR §5.2) — so
+                      choice — it comes from the reporting entity (data_entry_page.md §5.2) — so
                       the honest fix is to show it, and to say where it came
                       from, rather than offer a control that changes nothing. */}
                   {effectiveGeography && (
@@ -1205,6 +1307,10 @@ function DataEntryPageInner() {
                 // recorded for the whole company" at the exact confirmation
                 // moment for a site invoice that had just been filed.
                 hasEntry={hasValidInput || editingId !== null}
+                // A pending move is not a second row: without this the panel
+                // warns that the record about to LEAVE the whole-company slot
+                // would double-count the month it is leaving.
+                movingFrom={movingTo ? (editingTuple?.locationId ?? null) : null}
                 refreshKey={coverageKey}
               />
 
@@ -1260,11 +1366,30 @@ function DataEntryPageInner() {
                                   {badge.label}
                                 </Badge>
                               </div>
+                              {/* The reporting entity, which this list did not
+                                  show. Uniqueness includes `location_id`, so a
+                                  whole-company record and a site record for the
+                                  same month and category are two different rows
+                                  — and here they were two identical-looking
+                                  lines. A user asked to resolve a
+                                  double-counted month could not tell which one
+                                  they were opening. Built as one string: the
+                                  same JSX whitespace trap as above. */}
                               <div className="text-xs text-muted-foreground">
-                                {r.category} ·{" "}
-                                {isCalculated(r.calculation)
-                                  ? `${numberFmt.format(r.calculation.tCo2e)} tCO₂e`
-                                  : NOT_CALCULATED_LABEL}
+                                {[
+                                  r.category,
+                                  // `locationName` is optional on the contract,
+                                  // so a bare `??` would label a site row
+                                  // "Whole subsidiary" if the include were ever
+                                  // dropped — a false claim on the one screen
+                                  // built to tell the two apart.
+                                  r.locationId
+                                    ? (r.locationName ?? "A site")
+                                    : "Whole subsidiary",
+                                  isCalculated(r.calculation)
+                                    ? `${numberFmt.format(r.calculation.tCo2e)} tCO₂e`
+                                    : NOT_CALCULATED_LABEL,
+                                ].join(" · ")}
                               </div>
                             </div>
                           </button>

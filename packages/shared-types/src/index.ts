@@ -919,7 +919,7 @@ export interface LocationDTO {
   id: string;
   subsidiaryId: string;
   name: string;
-  /** Determines the emission factor when a record targets this location (FR §5.2). */
+  /** Determines the emission factor when a record targets this location (data_entry_page.md §5.2). */
   geographyCode: string;
   address: string | null;
   authorizedPerson: string | null;
@@ -1239,7 +1239,7 @@ export type ActivityRecordStatus = (typeof ACTIVITY_RECORD_STATUSES)[number];
 export interface ActivityRecordDTO {
   id: string;
   subsidiaryId: string;
-  /** Optional operational location this entry is attributed to (FR §5.2). When
+  /** Optional operational location this entry is attributed to (data_entry_page.md §5.2). When
    * set, it drives the emission-factor geography instead of the subsidiary's. */
   locationId: string | null;
   /** The location's name, resolved at read time (null for subsidiary-level
