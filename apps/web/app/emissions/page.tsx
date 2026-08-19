@@ -12,6 +12,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Download,
@@ -53,6 +64,13 @@ import { useAuthStore } from '@/lib/store';
 import { CATEGORIES, isCalculated, unitSymbol } from '@/lib/types';
 import { DEFAULT_REPORTING_YEAR } from '@/lib/types';
 import { NOT_CALCULATED_LABEL, NO_FACTOR_LABEL } from '@/lib/calculation-display';
+import {
+  VOID_REASON_MAX_LENGTH,
+  canOfferVoid,
+  voidConsequence,
+  voidReasonError,
+  voidSuccessMessage,
+} from '@/lib/void-view';
 import type {
   ActivityRecordDTO,
   ActivityRecordStatus,
@@ -159,6 +177,14 @@ export default function EmissionsAnalysisPage() {
   const [recordsLoading, setRecordsLoading] = useState(true);
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
 
+  // Withdrawal (void). Kept next to the drawer it belongs to rather than in a
+  // child component, because the write has to land in three places at once —
+  // the ledger row, the open drawer and the server-side totals — and splitting
+  // that across a boundary is how one of them gets forgotten.
+  const [voidReason, setVoidReason] = useState('');
+  const [voidConfirmOpen, setVoidConfirmOpen] = useState(false);
+  const [voidBusy, setVoidBusy] = useState(false);
+
   const nameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const s of subsidiaries) m.set(s.id, s.tradingName || s.legalName);
@@ -238,6 +264,71 @@ export default function EmissionsAnalysisPage() {
     router.push('/login');
     router.refresh();
   }
+
+  /** Close the drawer without carrying a half-typed reason to the next record. */
+  function closeRecordDrawer() {
+    setSelectedRecord(null);
+    setVoidReason('');
+  }
+
+  /**
+   * Withdraw an approved figure from the inventory (WP18).
+   *
+   * The one irreversible write in the app. Everything after the request is
+   * about not leaving the user with a screen that disagrees with the server:
+   * the ledger row, the open drawer and the aggregate tiles are three separate
+   * copies of the same fact, and the withdrawal changes all three.
+   */
+  async function handleVoid(record: ActivityRecordDTO) {
+    const reason = voidReason.trim();
+    // The button that opens the confirmation is disabled while this holds, so
+    // arriving here means the text changed under the dialog. Fail closed rather
+    // than send a request the DTO will refuse.
+    if (voidReasonError(reason)) return;
+
+    setVoidBusy(true);
+    try {
+      const updated = await api.voidActivityRecord(record.id, { voidReason: reason });
+      setRecords((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      // The drawer stays open on the now-voided record rather than closing:
+      // the strikethrough, the status badge and the stored reason are the only
+      // confirmation that the text was recorded as typed.
+      setSelectedRecord(updated);
+      setVoidReason('');
+      toast.success(voidSuccessMessage(updated));
+      // Every KPI, chart and category total here comes from the server summary,
+      // not from `records`. Patching the row alone would leave the tiles
+      // reporting an inventory that still contains the figure just withdrawn.
+      await loadSummary();
+    } catch (e) {
+      toast.error(errMessage(e));
+      // 400 = the status or the period lock moved since the drawer opened;
+      // 409 = someone else voided it first. Either way this page is stale, so
+      // re-read rather than leave rows the server disagrees with.
+      if (e instanceof ApiError && (e.status === 400 || e.status === 409)) {
+        try {
+          const fresh = await api.listActivityRecords();
+          setRecords(fresh);
+          setSelectedRecord(fresh.find((r) => r.id === record.id) ?? null);
+        } catch {
+          // The toast above already told the user the withdrawal failed; a
+          // second one about the refresh would only bury it.
+        }
+      }
+    } finally {
+      // Closed either way. A failure here is not something a retry fixes — the
+      // period is locked, or the record has already gone — and a dialog left
+      // open over the toast hides the sentence that says which.
+      setVoidConfirmOpen(false);
+      setVoidBusy(false);
+    }
+  }
+
+  // What the confirmation will say, if it is opened. Computed here rather than
+  // inside the dialog so the warning is a value the drawer holds, not markup
+  // assembled at the moment of the click.
+  const voidWarning = selectedRecord ? voidConsequence(selectedRecord) : null;
+  const voidBlockedBy = voidReasonError(voidReason);
 
   const totals = summary?.totals ?? { scope1: 0, scope2: 0, scope3: 0, total: 0 };
   const byCategory = summary?.byCategory ?? [];
@@ -1019,7 +1110,7 @@ export default function EmissionsAnalysisPage() {
       </main>
 
       {/* Audit Detail Drawer */}
-      <Sheet open={!!selectedRecord} onOpenChange={() => setSelectedRecord(null)}>
+      <Sheet open={!!selectedRecord} onOpenChange={closeRecordDrawer}>
         <SheetContent className="w-[500px] sm:max-w-[500px] bg-card border-l border-border overflow-y-auto">
           {selectedRecord && (
             <>
@@ -1067,6 +1158,19 @@ export default function EmissionsAnalysisPage() {
                   <div>
                     <p className="text-xs text-muted-foreground">Scope</p>
                     <p className="font-medium">Scope {selectedRecord.scope}</p>
+                  </div>
+                  {/* The reporting entity, which the ledger has no column for.
+                      A whole-company row and its site twin differ ONLY in this
+                      field and in the activity value, and this drawer is where
+                      a super_admin decides which of the two to withdraw — so
+                      without it the choice is made by comparing two numbers and
+                      hoping. `locationName` is resolved by the API at read time
+                      rather than joined here. */}
+                  <div>
+                    <p className="text-xs text-muted-foreground">Reporting Entity</p>
+                    <p className="font-medium">
+                      {selectedRecord.locationName?.trim() || 'Whole company'}
+                    </p>
                   </div>
                 </div>
 
@@ -1155,11 +1259,112 @@ export default function EmissionsAnalysisPage() {
                     </p>
                   </div>
                 )}
+
+                {/* The withdrawal control lives last, after everything the user
+                    needs in order to be sure they are looking at the right
+                    record. This drawer is the only surface in the app that
+                    shows an approved record on its own: the review queue lists
+                    pending work only, and Data Entry loads a record into the
+                    form, which an approved record cannot enter. */}
+                {canOfferVoid(selectedRecord, isSuperAdmin) && (
+                  <div className="border-t border-border pt-4">
+                    <h4 className="text-sm font-medium mb-2">
+                      Withdraw this figure
+                    </h4>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      An approved figure cannot be edited. If it is wrong — a
+                      double count, a misread invoice — withdrawing it takes it
+                      out of every total and reopens the period, so a corrected
+                      figure can be entered in its place.
+                    </p>
+                    <label
+                      htmlFor="void-reason"
+                      className="text-xs text-muted-foreground"
+                    >
+                      Reason (required, and it goes on the permanent record)
+                    </label>
+                    <Textarea
+                      id="void-reason"
+                      value={voidReason}
+                      onChange={(e) => setVoidReason(e.target.value)}
+                      placeholder="Why is this figure being withdrawn?"
+                      rows={3}
+                      maxLength={VOID_REASON_MAX_LENGTH}
+                      className="mt-1"
+                    />
+                    {/* Rendered unconditionally so it is a live region from
+                        first paint. Mounting it only when there is a problem
+                        would put the message into the accessibility tree at the
+                        same instant as the node, which screen readers do not
+                        announce. */}
+                    <p
+                      role="status"
+                      className="mt-1 min-h-4 text-xs text-amber-700"
+                    >
+                      {voidReason.length > 0 && voidBlockedBy ? voidBlockedBy : ''}
+                    </p>
+                    <Button
+                      variant="destructive"
+                      className="mt-2"
+                      disabled={voidBusy || voidBlockedBy !== null}
+                      onClick={() => setVoidConfirmOpen(true)}
+                    >
+                      Withdraw from inventory
+                    </Button>
+                  </div>
+                )}
               </div>
             </>
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Void is the only write in the app with no way back — the API has no
+          route out of `voided` and `audit_log` is append-only — so unlike
+          approve and reject it gets a confirmation, and one that names the
+          tonnage rather than asking a generic "are you sure?". */}
+      <AlertDialog
+        open={voidConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && !voidBusy) setVoidConfirmOpen(false);
+        }}
+      >
+        <AlertDialogContent>
+          {selectedRecord && voidWarning && (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Withdraw this figure from the inventory?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {voidWarning.headline}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                {voidWarning.effects.map((effect) => (
+                  <li key={effect}>{effect}</li>
+                ))}
+              </ul>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={voidBusy}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={voidBusy}
+                  // Radix closes on click by default. The dialog has to survive
+                  // the request instead, so a failure can close it deliberately
+                  // and let the toast explaining why be the last thing on screen.
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void handleVoid(selectedRecord);
+                  }}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                >
+                  {voidBusy ? 'Withdrawing…' : 'Withdraw'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          )}
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

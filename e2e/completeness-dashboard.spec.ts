@@ -65,32 +65,40 @@ test('the drawer names every open month, and says why the count is short', async
       name: /Istanbul HQ January: invoice attached and approved/,
     }),
   ).toBeDisabled();
-  // Electricity has NO honestly-open slot on the seed: all twelve months are
-  // already recorded company-wide, so every uncovered cell is a `◆`. That is
-  // the guard working, and it is why the click test below uses Water — the one
-  // invoice category with nothing recorded at any level.
+  // Nine of Electricity's twelve months are recorded company-wide, so every
+  // uncovered slot in those months is a `◆` and the grid refuses the click
+  // rather than inviting a second row for a month that already has one.
   await expect(
     drawer.getByRole('button', { name: /Ankara Power Plant July: recorded for the whole company/ }),
   ).toBeDisabled();
 
-  // The reconciliation line. Without it, "0 of 24" beside twelve existing
-  // entries reads as the app having lost data.
+  // The reconciliation line. Without it, "0 of 24" beside existing entries
+  // reads as the app having lost data.
   await expect(
     drawer.getByText(
-      /12 entries are recorded for the whole company rather than a site/,
+      /9 entries are recorded for the whole company rather than a site/,
     ),
   ).toBeVisible();
 
-  // The double-counting guard: those twelve months are already recorded
-  // company-wide, so the grid marks them and refuses the click rather than
-  // inviting a second row for the same month.
-  const february = drawer.getByRole('button', {
-    name: /Ankara Power Plant February: recorded for the whole company/,
-  });
-  await expect(february).toBeDisabled();
+  // WP18, and the reason this file's numbers moved. January–March are reported
+  // site by site: Istanbul HQ has the invoice, and no company-level row claims
+  // those months as well. So Ankara's February is a genuinely OPEN slot — the
+  // month is counted exactly once and the second site can still key its own
+  // invoice — where before the repair it was a blocked `◆` sitting on top of a
+  // month the inventory had already counted twice.
   await expect(
-    drawer.getByText(/would count that month twice/),
-  ).toBeVisible();
+    drawer.getByRole('button', {
+      name: /Ankara Power Plant February: missing/,
+    }),
+  ).toBeEnabled();
+
+  // The sentence a real overlap prints. It has to be absent now: the six pairs
+  // it was written for are gone. This is the assertion that would fail if the
+  // seed ever went back to writing a company row and a site row for the same
+  // month — which is the whole defect, and it left no other visible trace.
+  await expect(
+    drawer.getByText(/already counted twice in the emissions total/),
+  ).toHaveCount(0);
 });
 
 test('clicking an open month opens Data Entry on that exact slot', async ({ page }) => {
@@ -98,7 +106,9 @@ test('clicking an open month opens Data Entry on that exact slot', async ({ page
   await page.getByRole('button', { name: /TonyAI Energy.*per location/s }).click();
 
   const drawer = page.getByRole('dialog');
-  // Water: no records at any level, so its slots are genuinely open.
+  // Water: no records at any level, so every one of its slots is open and the
+  // assertion below cannot be satisfied by accident. Electricity now has open
+  // slots too (January–March, see the test above), but only some of them.
   await drawer.getByRole('button', { name: /^Water/ }).click();
   await drawer
     .getByRole('button', { name: /Ankara Power Plant July: missing/ })

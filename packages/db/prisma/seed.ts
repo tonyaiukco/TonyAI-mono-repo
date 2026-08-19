@@ -475,6 +475,40 @@ async function main() {
   await ensureEvidenceBucket();
   let activityCount = 0;
   let evidenceCount = 0;
+
+  // A few LOCATION-level records (attributed to a specific location, not just the
+  // subsidiary) to exercise the reporting-entity dimension (data_entry_page.md §5.2).
+  const LOCATION_ACTIVITY = [
+    { locationId: LOCATIONS[0].id, subsidiaryId: SUBSIDIARIES[0].id, geographyCode: SUBSIDIARIES[0].geographyCode, category: 'Electricity', unit: 'kWh', base: 40000 },
+    { locationId: LOCATIONS[5].id, subsidiaryId: SUBSIDIARIES[3].id, geographyCode: SUBSIDIARIES[3].geographyCode, category: 'Fuel', unit: 'litres', base: 6000 },
+  ];
+  const LOCATION_MONTHS = ['January', 'February', 'March'];
+
+  // The two paths below describe the same consumption from two directions, and
+  // until WP18 they were written independently. Where they met on the same
+  // (subsidiary, category, month) the inventory counted that month twice: the
+  // uniqueness index keys on `location_id`, so both rows are legal, and every
+  // total simply adds them. Measured on this seed: six overlapping pairs, worth
+  // 101-270 tCO2e of surplus against a 3,176 tCO2e inventory (3-8.5%),
+  // depending on which half you call the duplicate. Nothing in the product
+  // could tell you which — the company figure came from a seasonal curve and
+  // the site figure from a flat constant, with no modelled relation.
+  //
+  // So the paths are now derived from one fact. A month a site reports is a
+  // month the company-level roll-up does not claim: it is tracked site by site
+  // instead. The invoice-coverage grid then reports those months honestly ("3
+  // of 24" — one site of two, for three months of twelve), which is what it was
+  // built in WP17 to measure. An inventory known to be incomplete is a thing a
+  // reviewer can act on; one that is silently double-counted is not.
+  const siteReportedKey = (subsidiaryId: string, category: string, month: string) =>
+    `${subsidiaryId}|${category}|${month}`;
+  const siteReportedMonths = new Set(
+    LOCATION_ACTIVITY.flatMap((spec) =>
+      LOCATION_MONTHS.map((month) => siteReportedKey(spec.subsidiaryId, spec.category, month)),
+    ),
+  );
+  let yieldedToSiteLevel = 0;
+
   for (const spec of ACTIVITY_SPECS) {
     const subsidiary = SUBSIDIARIES[spec.subsidiaryIndex];
     const factor = await resolveFactor(
@@ -495,6 +529,11 @@ async function main() {
     }
 
     for (let month = 0; month < MONTHS.length; month++) {
+      // This month belongs to the sites (see the note above the loop).
+      if (siteReportedMonths.has(siteReportedKey(subsidiary.id, spec.category, MONTHS[month]))) {
+        yieldedToSiteLevel++;
+        continue;
+      }
       const activityValue = monthlyActivity(spec, month);
       const kgCo2e = activityValue * factor.factorValue;
       const tCo2e = kgCo2e / 1000;
@@ -545,14 +584,9 @@ async function main() {
     }
   }
 
-  // A few LOCATION-level records (attributed to a specific location, not just the
-  // subsidiary) to exercise the reporting-entity dimension (data_entry_page.md §5.2). Same
-  // subsidiary+category can coexist at subsidiary-level and per-location.
-  const LOCATION_ACTIVITY = [
-    { locationId: LOCATIONS[0].id, subsidiaryId: SUBSIDIARIES[0].id, geographyCode: SUBSIDIARIES[0].geographyCode, category: 'Electricity', unit: 'kWh', base: 40000 },
-    { locationId: LOCATIONS[5].id, subsidiaryId: SUBSIDIARIES[3].id, geographyCode: SUBSIDIARIES[3].geographyCode, category: 'Fuel', unit: 'litres', base: 6000 },
-  ];
-  const LOCATION_MONTHS = ['January', 'February', 'March'];
+  // The site-level half of the split declared above. A subsidiary+category can
+  // still hold both attribution levels across the year — that is the dimension
+  // this exercises — but never for the same month.
   for (const spec of LOCATION_ACTIVITY) {
     const factor = await resolveFactor(spec.category, spec.geographyCode, ACTIVITY_YEAR);
     if (!factor) continue;
@@ -588,6 +622,12 @@ async function main() {
 
   console.log(
     `  seeded ${activityCount} monthly activity records (approved, incl. ${LOCATION_ACTIVITY.length * LOCATION_MONTHS.length} location-level) + ${evidenceCount} placeholder evidence files.`,
+  );
+  // Printed rather than left to be inferred from a count that no longer matches
+  // specs x months: a reader who does not know about the split would take the
+  // gap for a seeding failure.
+  console.log(
+    `  ${yieldedToSiteLevel} company-level months were left to the sites that report them (no month is counted twice).`,
   );
 
   // --- Targets & intensity denominators (WP5, DEMO) ------------------------

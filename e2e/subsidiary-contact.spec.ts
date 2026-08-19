@@ -202,7 +202,13 @@ test('summary tells a non-admin nothing they could not already count themselves'
     targets: summary.targets,
     denominators: summary.denominators,
   }).toEqual({
-    terminalRecords: tier(['approved', 'locked']),
+    // 'voided' belongs here because the ENDPOINT puts it here: the count is a
+    // `notIn` of the editable and reviewable statuses, deliberately, so that a
+    // subsidiary holding a withdrawal cannot be deleted and take the only
+    // record of the restatement with it. Listing only approved and locked
+    // agreed with the API for as long as no row had ever been voided, which is
+    // not the same as being right — the first real withdrawal broke it.
+    terminalRecords: tier(['approved', 'locked', 'voided']),
     reviewRecords: tier(['submitted', 'under_review']),
     openRecords: tier(['draft', 'rejected']),
     locations: await listCount(`/locations?subsidiaryId=${target}`),
