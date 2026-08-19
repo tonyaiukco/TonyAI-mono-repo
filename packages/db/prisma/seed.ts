@@ -475,6 +475,101 @@ async function main() {
   await ensureEvidenceBucket();
   let activityCount = 0;
   let evidenceCount = 0;
+
+  // A few LOCATION-level records (attributed to a specific location, not just the
+  // subsidiary) to exercise the reporting-entity dimension (data_entry_page.md §5.2).
+  //
+  // The subsidiary and geography are DERIVED from the location rather than
+  // restated beside it. Restating them meant a reordering of `LOCATIONS` could
+  // write a record whose `locationId` belonged to a different subsidiary than
+  // its `subsidiaryId` — which the API's own ownership check refuses — while
+  // the skip-set below suppressed the wrong subsidiary's month.
+  const LOCATION_ACTIVITY = [
+    { location: LOCATIONS[0], category: 'Electricity', unit: 'kWh', base: 40000 },
+    { location: LOCATIONS[5], category: 'Fuel', unit: 'litres', base: 6000 },
+  ];
+  const LOCATION_YEAR = ACTIVITY_YEAR;
+  const LOCATION_PERIOD = 'monthly';
+  const LOCATION_MONTHS = ['January', 'February', 'March'];
+
+  // The two paths below describe the same consumption from two directions, and
+  // until WP18 they were written independently. Where they met on the same
+  // (subsidiary, category, month) the inventory counted that month twice: the
+  // uniqueness index keys on `location_id`, so both rows are legal, and every
+  // total simply adds them. Measured on this seed: six overlapping pairs, worth
+  // 101-270 tCO2e of surplus against a 3,176 tCO2e inventory (3-8.5%),
+  // depending on which half you call the duplicate. Nothing in the product
+  // could tell you which — the company figure came from a seasonal curve and
+  // the site figure from a flat constant, with no modelled relation.
+  //
+  // So the paths are now derived from one fact. A month a site reports is a
+  // month the company-level roll-up does not claim: it is tracked site by site
+  // instead. The invoice-coverage grid then reports those months honestly ("3
+  // of 24" — one site of two, for three months of twelve), which is what it was
+  // built in WP17 to measure. An inventory known to be incomplete is a thing a
+  // reviewer can act on; one that is silently double-counted is not.
+  //
+  // The company figure for those months is WITHDRAWN, not redistributed: the
+  // residual it carried (~87.6k kWh/month at Energy, ~6.1k litres/month at
+  // Logistics — the consumption of the sites that do NOT report) is deliberately
+  // unreported, because inventing a number for it would be worse. The coverage
+  // grid is where that shows, and it is the only place it shows.
+  //
+  // Resolving the site factors BEFORE the company loop is what makes the skip
+  // safe. The site loop bails when a factor is missing; suppressing the company
+  // month anyway would leave that month with no row at ALL — the inventory
+  // quietly losing data while the console printed a reassuring count.
+  const siteSpecs: Array<{
+    location: (typeof LOCATIONS)[number];
+    category: string;
+    unit: string;
+    base: number;
+    subsidiary: (typeof SUBSIDIARIES)[number];
+    factor: NonNullable<Awaited<ReturnType<typeof resolveFactor>>>;
+  }> = [];
+  for (const spec of LOCATION_ACTIVITY) {
+    const subsidiary = SUBSIDIARIES.find((s) => s.id === spec.location.subsidiaryId);
+    if (!subsidiary) {
+      throw new Error(`Seed location "${spec.location.name}" points at an unknown subsidiary`);
+    }
+    const factor = await resolveFactor(spec.category, subsidiary.geographyCode, LOCATION_YEAR);
+    if (!factor) {
+      console.warn(
+        `  ! no factor for ${spec.category}/${subsidiary.geographyCode}/${LOCATION_YEAR} — ` +
+          `${spec.location.name} reports nothing, and its months stay company-level`,
+      );
+      continue;
+    }
+    siteSpecs.push({ ...spec, subsidiary, factor });
+  }
+
+  // Keyed on the database's own uniqueness tuple with the location column
+  // collapsed — which is exactly what this guard means ("the same key, ignoring
+  // location"), so it cannot drift away from the constraint it protects
+  // (`activity_records_reporting_entity_period_category_key`).
+  //
+  // Keying it on subsidiary+category+month alone was a trap in two directions.
+  // A quarterly site spec would produce `…|Q1`, match nothing in `MONTHS`, and
+  // let both rows come back for all three months — silently reopening the very
+  // defect this exists to close. A site spec for another YEAR would delete the
+  // wrong year's company months.
+  const entityPeriodKey = (
+    subsidiaryId: string,
+    year: number,
+    period: string,
+    periodValue: string,
+    category: string,
+  ) => `${subsidiaryId}|${year}|${period}|${periodValue}|${category}`;
+  const siteReportedKeys = new Set(
+    siteSpecs.flatMap((spec) =>
+      LOCATION_MONTHS.map((month) =>
+        entityPeriodKey(spec.subsidiary.id, LOCATION_YEAR, LOCATION_PERIOD, month, spec.category),
+      ),
+    ),
+  );
+  let yieldedToSiteLevel = 0;
+  let siteRecordCount = 0;
+
   for (const spec of ACTIVITY_SPECS) {
     const subsidiary = SUBSIDIARIES[spec.subsidiaryIndex];
     const factor = await resolveFactor(
@@ -495,6 +590,15 @@ async function main() {
     }
 
     for (let month = 0; month < MONTHS.length; month++) {
+      // This month belongs to the sites (see the note above the loop).
+      if (
+        siteReportedKeys.has(
+          entityPeriodKey(subsidiary.id, ACTIVITY_YEAR, 'monthly', MONTHS[month], spec.category),
+        )
+      ) {
+        yieldedToSiteLevel++;
+        continue;
+      }
       const activityValue = monthlyActivity(spec, month);
       const kgCo2e = activityValue * factor.factorValue;
       const tCo2e = kgCo2e / 1000;
@@ -545,32 +649,28 @@ async function main() {
     }
   }
 
-  // A few LOCATION-level records (attributed to a specific location, not just the
-  // subsidiary) to exercise the reporting-entity dimension (data_entry_page.md §5.2). Same
-  // subsidiary+category can coexist at subsidiary-level and per-location.
-  const LOCATION_ACTIVITY = [
-    { locationId: LOCATIONS[0].id, subsidiaryId: SUBSIDIARIES[0].id, geographyCode: SUBSIDIARIES[0].geographyCode, category: 'Electricity', unit: 'kWh', base: 40000 },
-    { locationId: LOCATIONS[5].id, subsidiaryId: SUBSIDIARIES[3].id, geographyCode: SUBSIDIARIES[3].geographyCode, category: 'Fuel', unit: 'litres', base: 6000 },
-  ];
-  const LOCATION_MONTHS = ['January', 'February', 'March'];
-  for (const spec of LOCATION_ACTIVITY) {
-    const factor = await resolveFactor(spec.category, spec.geographyCode, ACTIVITY_YEAR);
-    if (!factor) continue;
+  // The site-level half of the split declared above. A subsidiary+category can
+  // still hold both attribution levels across the year — that is the dimension
+  // this exercises — but never for the same month. Iterates `siteSpecs`, whose
+  // factors are already resolved, so the months skipped above are exactly the
+  // months written here.
+  for (const spec of siteSpecs) {
+    const { factor, subsidiary } = spec;
     for (const periodValue of LOCATION_MONTHS) {
       const activityValue = spec.base;
       const kgCo2e = activityValue * factor.factorValue;
       const calculation = {
-        category: spec.category, geographyCode: spec.geographyCode, reportingYear: ACTIVITY_YEAR,
+        category: spec.category, geographyCode: subsidiary.geographyCode, reportingYear: LOCATION_YEAR,
         scope: factor.scope, inputValue: activityValue, inputUnit: spec.unit,
         normalizedValue: activityValue, normalizedUnit: factor.normalizedUnit, conversionApplied: false,
         kgCo2e, tCo2e: kgCo2e / 1000, factorId: factor.id, factorValue: factor.factorValue,
         factorUnit: factor.factorUnit, methodology: factor.methodology, source: factor.source, version: factor.version,
       };
       const { id: recordId } = await findOrCreateRecord({
-        subsidiaryId: spec.subsidiaryId,
-        locationId: spec.locationId,
-        reportingYear: ACTIVITY_YEAR,
-        reportingPeriod: 'monthly',
+        subsidiaryId: subsidiary.id,
+        locationId: spec.location.id,
+        reportingYear: LOCATION_YEAR,
+        reportingPeriod: LOCATION_PERIOD,
         periodValue,
         category: spec.category,
         scope: factor.scope,
@@ -582,12 +682,21 @@ async function main() {
         varianceReason: null,
       });
       activityCount++;
+      siteRecordCount++;
       if (await ensureSeedEvidence(recordId, adminId)) evidenceCount++;
     }
   }
 
   console.log(
-    `  seeded ${activityCount} monthly activity records (approved, incl. ${LOCATION_ACTIVITY.length * LOCATION_MONTHS.length} location-level) + ${evidenceCount} placeholder evidence files.`,
+    `  seeded ${activityCount} monthly activity records (approved, incl. ${siteRecordCount} location-level) + ${evidenceCount} placeholder evidence files.`,
+  );
+  // Both numbers are COUNTED, not computed from the spec lengths: a hardcoded
+  // `specs x months` printed a reassuring total over a hole whenever a factor
+  // failed to resolve. And the yielded count is printed rather than left to be
+  // inferred, because it no longer matches specs x months — a reader who does
+  // not know about the split would take the gap for a seeding failure.
+  console.log(
+    `  ${yieldedToSiteLevel} company-level months were left to the sites that report them (no month is counted twice).`,
   );
 
   // --- Targets & intensity denominators (WP5, DEMO) ------------------------

@@ -1350,6 +1350,24 @@ export interface VoidInput {
 }
 
 /**
+ * How long a void reason has to be, in ONE place.
+ *
+ * The browser and the DTO used to hold these as independent literals, and a
+ * mutation test proved what that costs: raising the client's maximum to 20,000
+ * broke nothing in the suite, because the web spec pinned the constant against
+ * itself. A user would then have typed 3,000 characters of restatement
+ * justification into a box that accepted them and watched a 400 come back.
+ *
+ * The minimum fails the other way: a client stricter than the server blocks a
+ * legitimate withdrawal for a rule the server does not have.
+ *
+ * Same reasoning as `COUNTED_STATUSES` — a rule written down twice is a rule
+ * that will disagree with itself, and this one gates an irreversible write.
+ */
+export const VOID_REASON_MIN_LENGTH = 10;
+export const VOID_REASON_MAX_LENGTH = 2000;
+
+/**
  * The statuses a reviewer's queue is made of: a record that has left the
  * submitter's hands but has not yet been decided.
  *
