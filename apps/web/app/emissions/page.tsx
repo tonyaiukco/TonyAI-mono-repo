@@ -301,20 +301,38 @@ export default function EmissionsAnalysisPage() {
       // reporting an inventory that still contains the figure just withdrawn.
       await loadSummary();
     } catch (e) {
-      toast.error(errMessage(e));
-      // 400 = the status or the period lock moved since the drawer opened;
-      // 409 = someone else voided it first. Either way this page is stale, so
-      // re-read rather than leave rows the server disagrees with.
-      if (e instanceof ApiError && (e.status === 400 || e.status === 409)) {
-        try {
-          const fresh = await api.listActivityRecords();
-          setRecords(fresh);
-          setSelectedRecord(fresh.find((r) => r.id === record.id) ?? null);
-        } catch {
-          // The toast above already told the user the withdrawal failed; a
-          // second one about the refresh would only bury it.
+      // Re-read BEFORE saying anything, and on ANY failure rather than only on
+      // the statuses that mean "your page is stale" (400 = someone else voided
+      // it first, so it is no longer approved; 409 = the period was locked
+      // between opening the drawer and clicking). A dropped connection or a
+      // timeout throws a TypeError rather than an ApiError, and that is exactly
+      // the case where the server may already have COMMITTED the withdrawal —
+      // so the server, not the exception, decides what the user is told.
+      // Reporting failure first left someone reading "unavailable" beside a row
+      // that had in fact just been withdrawn.
+      let settled = false;
+      try {
+        const fresh = await api.listActivityRecords();
+        setRecords(fresh);
+        const current = fresh.find((r) => r.id === record.id) ?? null;
+        setSelectedRecord(current);
+        if (current?.status === 'voided') {
+          toast.success(voidSuccessMessage(current));
+          setVoidReason('');
+          settled = true;
+          await loadSummary();
+        } else if (!current) {
+          // The record is gone from under the drawer. Clear the reason with it,
+          // or text typed for this record pre-fills the box for whichever one
+          // is opened next — the leak `closeRecordDrawer` exists to prevent, on
+          // the one action that cannot be undone.
+          setVoidReason('');
         }
+      } catch {
+        // The re-read failed too. Fall through to the error below: one message
+        // about the withdrawal beats two about the network.
       }
+      if (!settled) toast.error(errMessage(e));
     } finally {
       // Closed either way. A failure here is not something a retry fixes — the
       // period is locked, or the record has already gone — and a dialog left
@@ -327,7 +345,12 @@ export default function EmissionsAnalysisPage() {
   // What the confirmation will say, if it is opened. Computed here rather than
   // inside the dialog so the warning is a value the drawer holds, not markup
   // assembled at the moment of the click.
-  const voidWarning = selectedRecord ? voidConsequence(selectedRecord) : null;
+  const voidWarning = selectedRecord
+    ? voidConsequence(
+        selectedRecord,
+        nameById.get(selectedRecord.subsidiaryId) ?? selectedRecord.subsidiaryId,
+      )
+    : null;
   const voidBlockedBy = voidReasonError(voidReason);
 
   const totals = summary?.totals ?? { scope1: 0, scope2: 0, scope3: 0, total: 0 };
@@ -1290,6 +1313,12 @@ export default function EmissionsAnalysisPage() {
                       placeholder="Why is this figure being withdrawn?"
                       rows={3}
                       maxLength={VOID_REASON_MAX_LENGTH}
+                      // Tied to the message below, so a user who tabs back to
+                      // the field hears WHY the button is dead instead of just
+                      // the label. Without the association the live region
+                      // announces once, on change, and is then unreachable.
+                      aria-describedby="void-reason-error"
+                      aria-invalid={voidReason.length > 0 && voidBlockedBy !== null}
                       className="mt-1"
                     />
                     {/* Rendered unconditionally so it is a live region from
@@ -1298,6 +1327,7 @@ export default function EmissionsAnalysisPage() {
                         same instant as the node, which screen readers do not
                         announce. */}
                     <p
+                      id="void-reason-error"
                       role="status"
                       className="mt-1 min-h-4 text-xs text-amber-700"
                     >
@@ -1336,15 +1366,27 @@ export default function EmissionsAnalysisPage() {
                 <AlertDialogTitle>
                   Withdraw this figure from the inventory?
                 </AlertDialogTitle>
-                <AlertDialogDescription>
-                  {voidWarning.headline}
+                {/* Everything the reader needs goes INSIDE the description,
+                    because Radix wires `aria-describedby` to this node alone.
+                    With the consequences as a sibling, a screen reader
+                    announced the title and the tonnage and stopped — "It cannot
+                    be undone." was never spoken, on the one action in the
+                    product where that is the sentence that matters. `asChild`
+                    because a <ul> inside the default <p> is invalid markup. */}
+                <AlertDialogDescription asChild>
+                  <div className="space-y-3">
+                    <p className="font-medium text-foreground">
+                      {voidWarning.subject}
+                    </p>
+                    <p>{voidWarning.headline}</p>
+                    <ul className="list-disc space-y-1 pl-5">
+                      {voidWarning.effects.map((effect) => (
+                        <li key={effect}>{effect}</li>
+                      ))}
+                    </ul>
+                  </div>
                 </AlertDialogDescription>
               </AlertDialogHeader>
-              <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                {voidWarning.effects.map((effect) => (
-                  <li key={effect}>{effect}</li>
-                ))}
-              </ul>
               <AlertDialogFooter>
                 <AlertDialogCancel disabled={voidBusy}>Cancel</AlertDialogCancel>
                 <AlertDialogAction

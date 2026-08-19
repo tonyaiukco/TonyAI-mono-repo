@@ -92,10 +92,19 @@ test('the drawer names every open month, and says why the count is short', async
     }),
   ).toBeEnabled();
 
-  // The sentence a real overlap prints. It has to be absent now: the six pairs
-  // it was written for are gone. This is the assertion that would fail if the
-  // seed ever went back to writing a company row and a site row for the same
-  // month — which is the whole defect, and it left no other visible trace.
+  // The legend, which is gated on the category having ANY company-level month
+  // and so still renders for the nine that remain. Kept because dropping it
+  // when the numbers moved would have quietly retired the only assertion that
+  // the `◆` marker explains itself, and nothing else in the repo covers it.
+  await expect(
+    drawer.getByText(/would count that month twice/),
+  ).toBeVisible();
+
+  // The sentence a real overlap prints — a different string from the legend
+  // above, in the present tense, and it has to be ABSENT now: the six pairs it
+  // was written for are gone. This is the assertion that would fail if the seed
+  // ever went back to writing a company row and a site row for the same month,
+  // which is the whole defect and left no other visible trace.
   await expect(
     drawer.getByText(/already counted twice in the emissions total/),
   ).toHaveCount(0);

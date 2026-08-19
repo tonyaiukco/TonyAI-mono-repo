@@ -273,6 +273,10 @@ pnpm db:seed        # 1 org, 5 subsidiaries, 8 locations, 3 users, demo factors 
                     # one demo evidence file each, 3 targets + 10 intensity denominators
                     # A month reported per site is NOT also reported company-wide: the two
                     # attribution levels coexist across the year, never for the same month.
+                    # Jan-Mar for TonyAI Energy (Electricity) and TonyAI Logistics (Fuel) are
+                    # therefore reported per site ONLY, by one site of two — so those months
+                    # are deliberately incomplete at company level. The company figure is
+                    # withdrawn, not redistributed; the coverage grid shows the open slots.
 
 # 5. Run everything
 pnpm dev            # web -> http://localhost:3000   api -> http://localhost:3001/api/v1

@@ -93,6 +93,13 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   await expect(drawer.getByText('Reporting Entity')).toBeVisible();
   await expect(drawer.getByText('Whole company')).toBeVisible();
 
+  // The live region has to EXIST before the first keystroke. A node inserted at
+  // the same instant as its message is not announced, and a prior session
+  // shipped exactly that (a `hidden`-toggled region). Asserting only that the
+  // message becomes visible passes just as well for a conditionally-mounted
+  // paragraph, so the regression would come back silently.
+  await expect(drawer.locator('[role="status"]')).toHaveCount(1);
+
   // The reason gate, before the happy path: the server enforces ten
   // characters, and a client that disagreed would let the user watch a request
   // fail for a rule the form said they had met.
@@ -113,6 +120,11 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   await expect(confirm).toContainText(/This removes [\d.,]+ tCO₂e from the inventory/);
   await expect(confirm).toContainText(/cannot be undone/);
   await expect(confirm).toContainText(`Q1 ${E2E_YEAR}`);
+  // And it names WHICH record. "this entity" with no antecedent is what let the
+  // first live use of the void endpoint withdraw the wrong half of a pair.
+  await expect(confirm).toContainText('TonyAI Mfg');
+  await expect(confirm).toContainText('Whole company');
+  await expect(confirm).toContainText('Fuel');
   await confirm.getByRole('button', { name: 'Withdraw', exact: true }).click();
 
   // The toast says how far the inventory moved.
@@ -136,6 +148,25 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   expect(record.status).toBe('voided');
   expect(record.voidReason).toBe(REASON);
   expect(record.voidedAt).toBeTruthy();
+
+  // The audit row is the ONLY surviving account of the figure that left the
+  // inventory — the row keeps its snapshot, but the trail is what an auditor
+  // reads. Nothing anywhere asserted it: the API spec checks the update
+  // payload, and `audit-trail.spec.ts` has no void in it at all.
+  const trail = await request.get(
+    `${API_BASE}/audit?entity=activity_record&action=void&entityId=${recordId}`,
+    { headers: bearer(token) },
+  );
+  expect(trail.ok()).toBe(true);
+  const { items } = await trail.json();
+  expect(items).toHaveLength(1);
+  expect(items[0].action).toBe('void');
+  expect(items[0].diff.voidReason).toBe(REASON);
+  expect(items[0].diff.transition).toEqual({ from: 'approved', to: 'voided' });
+  // The withdrawn figure itself, carried in the before-snapshot. Without it the
+  // trail records that something was withdrawn but not what.
+  expect(items[0].diff.before.status).toBe('approved');
+  expect(items[0].diff.before.calculation.tCo2e).toBeGreaterThan(0);
 });
 
 test('the withdrawn figure stops counting, and its slot reopens', async ({
@@ -185,8 +216,11 @@ test('the withdrawn figure stops counting, and its slot reopens', async ({
   expect(replacement.status()).toBe(201);
 });
 
-test('a consultant is not offered the control', async ({ page, request }) => {
-  await arrangeApproved(request, 'Q3');
+test('a consultant is not offered the control, and is refused if they ask anyway', async ({
+  page,
+  request,
+}) => {
+  const recordId = await arrangeApproved(request, 'Q3');
   await login(page, ADMIN_EMAIL);
 
   // Prove the control exists for the seat that has it, so the absence below is
@@ -212,4 +246,24 @@ test('a consultant is not offered the control', async ({ page, request }) => {
   // The record is still fully readable — this is a missing control, not a
   // hidden record.
   await expect(asConsultant.getByText('Methodology & Factor')).toBeVisible();
+
+  // And the guard is real, not merely unrendered. Everything above is about
+  // what a screen shows; this is the privilege-escalation probe — a genuine
+  // consultant token against the live route, through the wired guard, the
+  // controller and the DTO. Until this existed the 403 was proven only against
+  // a mocked `user` object in a unit test, which cannot tell you the pipeline
+  // is assembled the way the mock assumes.
+  const consultantToken = await getAccessToken(request, CONSULTANT_EMAIL);
+  const refused = await request.post(`${API_BASE}/activity-records/${recordId}/void`, {
+    headers: bearer(consultantToken),
+    data: { voidReason: 'A consultant should never be able to do this.' },
+  });
+  expect(refused.status()).toBe(403);
+
+  // The refusal changed nothing: read it back as the admin.
+  const adminToken = await getAccessToken(request, ADMIN_EMAIL);
+  const after = await request.get(`${API_BASE}/activity-records/${recordId}`, {
+    headers: bearer(adminToken),
+  });
+  expect((await after.json()).status).toBe('approved');
 });

@@ -3,6 +3,7 @@ import {
   VOID_REASON_MAX_LENGTH,
   VOID_REASON_MIN_LENGTH,
   canOfferVoid,
+  entityLabel,
   voidConsequence,
   voidReasonError,
   voidSuccessMessage,
@@ -120,6 +121,15 @@ describe('voidReasonError', () => {
   });
 
   it('holds the minimum the server enforces, exactly', () => {
+    // The VALUES, not just the boundary. Pinning `'a'.repeat(MIN)` against MIN
+    // is pinning a constant to itself: a mutant that raised the maximum to
+    // 20,000 passed the whole suite, and would have let a user type 3,000
+    // characters into a box the DTO refuses. Both constants now come from
+    // shared-types, and these two lines are what makes changing them
+    // deliberate on both sides of the wire at once.
+    expect(VOID_REASON_MIN_LENGTH).toBe(10);
+    expect(VOID_REASON_MAX_LENGTH).toBe(2000);
+
     const nine = 'a'.repeat(VOID_REASON_MIN_LENGTH - 1);
     const ten = 'a'.repeat(VOID_REASON_MIN_LENGTH);
     expect(voidReasonError(nine)).not.toBeNull();
@@ -132,17 +142,62 @@ describe('voidReasonError', () => {
     // The message is the only feedback on a disabled button; without the count
     // "at least 10 characters" reads as a rule, not as a distance.
     expect(voidReasonError('abcd')).toContain('4 so far');
+    // And it counts what the SERVER will count. Reporting the untrimmed length
+    // put "(13 so far)" beside a button disabled for being under ten — the
+    // message contradicting the control it explains.
+    expect(voidReasonError('   abcdefg   ')).toContain('7 so far');
   });
 
-  it('holds the maximum exactly', () => {
+  it('holds the maximum exactly, and says something different about it', () => {
     expect(voidReasonError('a'.repeat(VOID_REASON_MAX_LENGTH))).toBeNull();
-    expect(voidReasonError('a'.repeat(VOID_REASON_MAX_LENGTH + 1))).not.toBeNull();
+    const tooLong = voidReasonError('a'.repeat(VOID_REASON_MAX_LENGTH + 1));
+    expect(tooLong).not.toBeNull();
+    // Three rejection branches, three messages that are ABOUT their branch.
+    // Asserting only `not.toBeNull()` let the over-maximum case return the
+    // under-minimum text, so a 2,500-character reason read "at least 10
+    // characters (2500 so far)" — and merely asserting the three differ did not
+    // catch it either, because the embedded count made them differ anyway.
+    expect(tooLong).toContain(String(VOID_REASON_MAX_LENGTH).slice(0, 1));
+    expect(tooLong).toMatch(/cannot run past/i);
+    expect(tooLong).not.toMatch(/at least/i);
+    expect(voidReasonError('short')).toMatch(/at least/i);
+    expect(voidReasonError('')).not.toMatch(/at least|cannot run past/i);
+  });
+});
+
+describe('entityLabel', () => {
+  it('names the site, or says the row is the whole company', () => {
+    expect(entityLabel({ locationName: 'Istanbul HQ' })).toBe('Istanbul HQ');
+    expect(entityLabel({ locationName: null })).toBe('Whole company');
+    // Whitespace is not a name. A blank label here would read as a site whose
+    // name failed to load, on the field the reader uses to tell a pair apart.
+    expect(entityLabel({ locationName: '   ' })).toBe('Whole company');
   });
 });
 
 describe('voidConsequence', () => {
+  it('names WHICH record is about to be withdrawn', () => {
+    // The blocker this exists for: the first live use of the void endpoint
+    // withdrew the wrong half of a duplicate pair. The two rows differ only in
+    // the reporting entity, and a dialog reading "this entity" gives the reader
+    // nothing to check the click against.
+    const site = voidConsequence(
+      record({ locationName: 'Istanbul HQ' }),
+      'TonyAI Energy',
+    );
+    expect(site.subject).toContain('Istanbul HQ');
+    expect(site.subject).toContain('TonyAI Energy');
+    expect(site.subject).toContain('Electricity');
+    expect(site.subject).toContain('January 2026');
+
+    // And its twin must not read identically — that is the whole point.
+    const company = voidConsequence(record(), 'TonyAI Energy');
+    expect(company.subject).toContain('Whole company');
+    expect(company.subject).not.toBe(site.subject);
+  });
+
   it('names the tonnage that is about to leave the inventory', () => {
-    const { headline } = voidConsequence(record());
+    const { headline } = voidConsequence(record(), 'TonyAI Energy');
     // The number is the point of the confirmation. A generic "are you sure?"
     // gives the user nothing to check the click against.
     expect(headline).toContain('56.144');
@@ -152,6 +207,7 @@ describe('voidConsequence', () => {
   it('does not claim a figure for an entry that never had one', () => {
     const { headline } = voidConsequence(
       record({ category: 'Water', calculation: uncalculated }),
+      'TonyAI Energy',
     );
     // "removes 0 tCO₂e" would read as "nothing happens", which is false — the
     // entry still leaves the completeness counts.
@@ -159,16 +215,39 @@ describe('voidConsequence', () => {
     expect(headline).toContain('no tCO₂e figure');
   });
 
-  it('tells the user the period reopens, naming it', () => {
-    // This is the half of the feature that is invisible on screen: the partial
-    // unique index excludes voided rows, so the slot genuinely frees up. A user
-    // who does not know that will assume the month is now unusable.
-    const { effects } = voidConsequence(record({ periodValue: 'March' }));
-    expect(effects.join(' ')).toContain('March 2026');
+  // Each consequence asserted on its own. Checking only that the period string
+  // appeared somewhere let a mutant invert the sentence — "March 2026 stays
+  // closed, no corrected figure can be entered" satisfied it — and deleting
+  // either of the first two lines outright broke nothing in the whole repo.
+  it('says the figure stops counting', () => {
+    const { effects } = voidConsequence(record(), 'TonyAI Energy');
+    expect(effects.some((e) => /stops counting/i.test(e))).toBe(true);
+  });
+
+  it('says the period reopens for that entity, and that a figure can replace it', () => {
+    // The half of the feature that is invisible on screen: the partial unique
+    // index excludes voided rows, so the slot genuinely frees up. A user who
+    // does not know that will assume the month is now unusable.
+    const { effects } = voidConsequence(
+      record({ periodValue: 'March', locationName: 'Istanbul HQ' }),
+      'TonyAI Energy',
+    );
+    const reopening = effects.find((e) => e.includes('March 2026'));
+    expect(reopening).toBeDefined();
+    expect(reopening).toMatch(/reopens/i);
+    expect(reopening).toContain('Istanbul HQ');
+    expect(reopening).toMatch(/can be entered/i);
+  });
+
+  it('says the entry survives, with the reason, in the audit log', () => {
+    const { effects } = voidConsequence(record(), 'TonyAI Energy');
+    const kept = effects.find((e) => /stays on record/i.test(e));
+    expect(kept).toBeDefined();
+    expect(kept).toMatch(/audit log/i);
   });
 
   it('states that it cannot be undone', () => {
-    const { effects } = voidConsequence(record());
+    const { effects } = voidConsequence(record(), 'TonyAI Energy');
     expect(effects.some((e) => /cannot be undone/i.test(e))).toBe(true);
   });
 });

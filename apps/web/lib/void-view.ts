@@ -1,4 +1,8 @@
-import { isCalculated } from '@/lib/types';
+import {
+  isCalculated,
+  VOID_REASON_MAX_LENGTH,
+  VOID_REASON_MIN_LENGTH,
+} from '@/lib/types';
 import type { ActivityRecordDTO } from '@/lib/types';
 import { formatNumber } from '@/lib/utils';
 
@@ -17,15 +21,13 @@ import { formatNumber } from '@/lib/utils';
  */
 
 /**
- * Mirrors `@MinLength(10)` / `@MaxLength(2000)` on `VoidActivityRecordDto`.
- *
- * A minimum length is new territory on this client — reject and the variance
- * comment are both "non-empty" — so the number lives here rather than as a
- * literal inside a disabled-button expression, and the DTO's spec pins the same
- * boundary on the server side.
+ * The same two numbers `VoidActivityRecordDto` validates with — not a copy of
+ * them. A minimum length is new territory on this client (reject and the
+ * variance comment are both "non-empty"), and a mutation test showed the copy
+ * was worse than useless: raising the client's maximum broke no test, because
+ * the spec pinned the constant against itself.
  */
-export const VOID_REASON_MIN_LENGTH = 10;
-export const VOID_REASON_MAX_LENGTH = 2000;
+export { VOID_REASON_MIN_LENGTH, VOID_REASON_MAX_LENGTH } from '@/lib/types';
 
 /**
  * Why the typed reason will not be accepted, or null when it will.
@@ -57,12 +59,17 @@ export function voidReasonError(reason: string): string | null {
  * submitted record is reviewed, a locked period is unlocked first, and a voided
  * record has already left.
  *
- * What this CANNOT see is the period lock, because the record DTO does not
- * carry one and this page does not fetch locks. So a super_admin looking at an
- * approved record inside a locked period is offered the control and is refused
- * by the API, whose message names the remedy ("A locked period must be unlocked
- * first"). Offering-then-refusing is the honest failure here; the alternative
- * is a hidden control with no explanation.
+ * What this cannot see is a period lock — the DTO carries none and this page
+ * fetches none. That turns out not to matter for the steady state: locking a
+ * period flips its approved records to `locked` in the same transaction
+ * (`period-locks.service.ts`), on the identical four-tuple the void path's own
+ * lock check uses, so an approved record never sits inside a locked period and
+ * the `locked` clause above already hides the control. What remains is a
+ * staleness race — the lock commits between page load and click — which the
+ * API refuses with a message naming the remedy, after which the re-read turns
+ * the row `locked` and the control disappears. Every other way to be offered
+ * something the server will refuse (voided in another tab, role changed
+ * mid-session) is that same race, and all of them fail closed.
  */
 export function canOfferVoid(
   record: Pick<ActivityRecordDTO, 'status'>,
@@ -72,10 +79,23 @@ export function canOfferVoid(
 }
 
 export interface VoidConsequence {
+  /** WHICH record is about to be withdrawn, named in full. */
+  subject: string;
   /** What leaves the inventory, named in tonnes where there are tonnes. */
   headline: string;
   /** Everything else the withdrawal does, in the order the reader needs it. */
   effects: string[];
+}
+
+/**
+ * The reporting entity in one phrase — the site's name, or the whole company.
+ *
+ * `locationName` is null both for a genuinely company-level row and for a row
+ * whose location has since been removed; the contract documents that, and the
+ * second case is one WP16's delete guards made unreachable.
+ */
+export function entityLabel(record: Pick<ActivityRecordDTO, 'locationName'>): string {
+  return record.locationName?.trim() || 'Whole company';
 }
 
 /**
@@ -88,8 +108,12 @@ export interface VoidConsequence {
  * so the withdrawal is permanent in both directions — the record cannot be
  * restored and the act cannot be erased.
  */
-export function voidConsequence(record: ActivityRecordDTO): VoidConsequence {
+export function voidConsequence(
+  record: ActivityRecordDTO,
+  subsidiaryName: string,
+): VoidConsequence {
   const calculation = record.calculation;
+  const entity = entityLabel(record);
   const headline = isCalculated(calculation)
     ? `This removes ${formatNumber(calculation.tCo2e, 3)} tCO₂e from the inventory.`
     : // No factor, so no tonnes ever entered a total — saying "removes 0 tCO₂e"
@@ -98,10 +122,16 @@ export function voidConsequence(record: ActivityRecordDTO): VoidConsequence {
       'This entry produced no tCO₂e figure, so no emissions total changes.';
 
   return {
+    // Named in full, because the whole reason this control exists is a pair of
+    // rows that differ ONLY in the reporting entity — and the first live use of
+    // the void endpoint withdrew the wrong half of exactly such a pair. A
+    // dialog that says "this entity" gives the reader nothing to check the
+    // click against; the four facts below are the record's identity.
+    subject: `${record.category} · ${subsidiaryName} · ${entity} · ${record.periodValue} ${record.reportingYear}`,
     headline,
     effects: [
       'It stops counting towards totals, reports and invoice coverage.',
-      `It frees ${record.periodValue} ${record.reportingYear} for this entity and category, so a corrected figure can be entered.`,
+      `${record.periodValue} ${record.reportingYear} then reopens for ${entity}, so a corrected ${record.category} figure can be entered in its place.`,
       'The entry stays on record with your reason, and the withdrawal is written to the audit log.',
       'It cannot be undone.',
     ],

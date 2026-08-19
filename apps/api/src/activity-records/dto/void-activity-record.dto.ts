@@ -1,5 +1,9 @@
 import { Transform } from 'class-transformer';
 import { IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  VOID_REASON_MAX_LENGTH,
+  VOID_REASON_MIN_LENGTH,
+} from '@tonyai/shared-types';
 
 /**
  * The body of POST /api/v1/activity-records/:id/void.
@@ -18,14 +22,18 @@ import { IsString, MaxLength, MinLength } from 'class-validator';
  * corrected through the product. This runs on the server because a compliance
  * control cannot live in the browser's disabled-button logic — curl bypasses
  * that entirely.
+ *
+ * The bounds come from `@tonyai/shared-types` so this and the browser cannot
+ * hold different numbers — see the note on those constants for the mutation
+ * that proved two independent literals were not enough.
  */
 export class VoidActivityRecordDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
-  @MinLength(10, {
+  @MinLength(VOID_REASON_MIN_LENGTH, {
     message:
-      'A void reason is required and must explain why the figure was withdrawn (at least 10 characters).',
+      `A void reason is required and must explain why the figure was withdrawn (at least ${VOID_REASON_MIN_LENGTH} characters).`,
   })
-  @MaxLength(2000)
+  @MaxLength(VOID_REASON_MAX_LENGTH)
   voidReason!: string;
 }
