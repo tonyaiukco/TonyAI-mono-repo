@@ -1,12 +1,14 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import {
+  Prisma,
   PrismaClient,
   UserRole,
   SubsidiaryStatus,
   TrackingGranularity,
   ActivityRecordStatus,
 } from '../generated/client';
+import { MONTH_NAMES } from '@tonyai/shared-types';
 
 const prisma = new PrismaClient();
 
@@ -155,20 +157,11 @@ const EMISSION_FACTORS: SeedFactor[] = [
 // boundary. Records are seeded MONTHLY across DEMO_YEAR so the monthly, quarterly
 // and yearly trend views all populate. Records are `approved` (committed), so
 // they feed the inventory the same way real reviewed data would.
-const MONTHS = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-];
+// The canonical vocabulary, from the contract package. This was the LAST
+// hand-written copy of the twelve months in the repo, and the only one in a
+// file that writes `period_value` directly — bypassing the API's own
+// canonicalisation, which is exactly the writer a drifted copy would hurt.
+const MONTHS = MONTH_NAMES;
 
 const ACTIVITY_YEAR = DEMO_YEAR;
 
@@ -305,7 +298,16 @@ async function findOrCreateRecord(
   });
   if (existing) return { id: existing.id, created: false };
   const record = await prisma.activityRecord.create({
-    data: { ...data, status: ActivityRecordStatus.approved },
+    data: {
+      ...data,
+      // The snapshot is modelled here as a plain object; Prisma's Json input
+      // type is a narrower union that an index signature does not satisfy.
+      // Asserted rather than re-typed: the shape is the calc engine's, not the
+      // seed's, and widening `SeedRecordInput` to Prisma's type would drag the
+      // client's generated types into this file's own contract.
+      calculation: data.calculation as Prisma.InputJsonValue,
+      status: ActivityRecordStatus.approved,
+    },
   });
   return { id: record.id, created: true };
 }

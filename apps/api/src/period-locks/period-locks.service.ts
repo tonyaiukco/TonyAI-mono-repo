@@ -11,12 +11,12 @@ import {
   type PeriodLock,
 } from '@tonyai/db';
 import { PENDING_REVIEW_STATUSES as SHARED_PENDING_REVIEW } from '@tonyai/shared-types';
+import { canonicalPeriodValue } from '@tonyai/shared-types';
 import type { PeriodLockDTO, ReportingPeriod } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { CreatePeriodLockDto } from './dto/create-period-lock.dto';
-import { isValidPeriodValue } from '../activity-records/activity-records.service';
 
 // Closing a period is only allowed once every record in it has been reviewed:
 // locking with `submitted`/`under_review` rows present is rejected (409), so
@@ -97,7 +97,14 @@ export class PeriodLocksService {
     if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
       throw new NotFoundException('Subsidiary not found');
     }
-    if (!isValidPeriodValue(dto.reportingPeriod, dto.periodValue)) {
+    // Canonicalised before anything looks a record up. Every query below
+    // compares `period_value` with raw Postgres equality, so a lock stored as
+    // `"january"` used to leave every `"January"` record open — it neither
+    // counted them as pending nor flipped them to `locked`. A period a
+    // super_admin believes is closed that still accepts writes is the sharpest
+    // consequence of storing the caller's spelling.
+    const periodValue = canonicalPeriodValue(dto.reportingPeriod, dto.periodValue);
+    if (periodValue === null) {
       throw new BadRequestException(
         `"${dto.periodValue}" is not a valid period for a ${dto.reportingPeriod} lock.`,
       );
@@ -110,7 +117,7 @@ export class PeriodLocksService {
         subsidiaryId: dto.subsidiaryId,
         reportingYear: dto.reportingYear,
         reportingPeriod: dto.reportingPeriod,
-        periodValue: dto.periodValue,
+        periodValue,
         status: { in: PENDING_REVIEW_STATUSES },
       },
     });
@@ -128,7 +135,7 @@ export class PeriodLocksService {
             subsidiaryId: dto.subsidiaryId,
             reportingYear: dto.reportingYear,
             reportingPeriod: dto.reportingPeriod,
-            periodValue: dto.periodValue,
+            periodValue,
             lockedBy: user.id,
           },
         });
@@ -137,7 +144,7 @@ export class PeriodLocksService {
             subsidiaryId: dto.subsidiaryId,
             reportingYear: dto.reportingYear,
             reportingPeriod: dto.reportingPeriod,
-            periodValue: dto.periodValue,
+            periodValue,
             status: ActivityRecordStatus.approved,
           },
           data: { status: ActivityRecordStatus.locked },

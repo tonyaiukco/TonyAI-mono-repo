@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   ACTIVITY_RECORD_STATUSES,
   ACTIVITY_UNITS,
+  canonicalPeriodValue,
+  MONTH_NAMES,
+  PERIOD_VALUES,
+  REPORTING_PERIODS,
   COUNTED_STATUSES,
   PENDING_REVIEW_STATUSES,
   appliesUnitConversion,
@@ -301,5 +305,106 @@ describe('COUNTED_STATUSES — what the inventory counts', () => {
     expect(accepted.length + PENDING_REVIEW_STATUSES.length).toBe(
       COUNTED_STATUSES.length,
     );
+  });
+});
+
+describe('the periodValue vocabulary', () => {
+  it('covers every granularity, and nothing else', () => {
+    expect(Object.keys(PERIOD_VALUES).sort()).toEqual([...REPORTING_PERIODS].sort());
+    expect(PERIOD_VALUES.monthly).toHaveLength(12);
+    expect(PERIOD_VALUES.quarterly).toEqual(['Q1', 'Q2', 'Q3', 'Q4']);
+    // `annual` is a fixed token, NOT the year. The year has its own column, and
+    // a periodValue that sometimes held it would make the uniqueness key mean
+    // two different things.
+    expect(PERIOD_VALUES.annual).toEqual(['Annual']);
+    expect(MONTH_NAMES[0]).toBe('January');
+    expect(MONTH_NAMES[11]).toBe('December');
+  });
+
+  it('is already canonical — every listed value round-trips to itself', () => {
+    // If this ever failed, the list and the canonicaliser would disagree about
+    // what "canonical" means, and every write would normalise to a spelling the
+    // dropdowns do not offer.
+    for (const period of REPORTING_PERIODS) {
+      for (const value of PERIOD_VALUES[period]) {
+        expect(canonicalPeriodValue(period, value)).toBe(value);
+      }
+    }
+  });
+
+  it('accepts any casing and any surrounding space, and answers with one spelling', () => {
+    // This asymmetry IS the fix. Validation was already case-insensitive, which
+    // is exactly how `"january"` got in; what was missing was storing the
+    // answer rather than the question.
+    expect(canonicalPeriodValue('monthly', 'january')).toBe('January');
+    expect(canonicalPeriodValue('monthly', 'JANUARY')).toBe('January');
+    expect(canonicalPeriodValue('monthly', '  JaNuArY  ')).toBe('January');
+    expect(canonicalPeriodValue('quarterly', 'q4')).toBe('Q4');
+    expect(canonicalPeriodValue('annual', ' annual ')).toBe('Annual');
+  });
+
+  it('refuses a value that names no period, rather than guessing', () => {
+    // Canonicalising must never become "accept anything and pick something".
+    expect(canonicalPeriodValue('monthly', 'Mar')).toBeNull();
+    expect(canonicalPeriodValue('monthly', '2024-03')).toBeNull();
+    expect(canonicalPeriodValue('monthly', '')).toBeNull();
+    // Right token, wrong granularity — the pair is what identifies a period.
+    expect(canonicalPeriodValue('quarterly', 'January')).toBeNull();
+    expect(canonicalPeriodValue('monthly', 'Q1')).toBeNull();
+    expect(canonicalPeriodValue('annual', 'January')).toBeNull();
+    // An unknown granularity must not throw on the index lookup.
+    expect(canonicalPeriodValue('weekly', 'January')).toBeNull();
+  });
+
+  it('pins the calendar in order, because the order is what attributes quarters', () => {
+    // Not decoration. This list drives month -> quarter attribution
+    // (`quarterOf`), the monthly trend sort key and label, and the anomaly
+    // baseline's period ordering. Swapping June and July puts June in Q3 and
+    // July in Q2 — and before this assertion existed that mutant passed all
+    // 643 tests, because the only quarter-attribution fixture uses Jan/Feb/Apr.
+    // Length-and-endpoints was never enough.
+    expect([...MONTH_NAMES]).toEqual([
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ]);
+  });
+
+  it('cannot be reshaped by a consumer at runtime', () => {
+    // `readonly` is compile-time only, and this list now decides record
+    // identity — a consumer that pushed onto it would silently re-mean every
+    // stored period.
+    expect(Object.isFrozen(PERIOD_VALUES)).toBe(true);
+    expect(Object.isFrozen(PERIOD_VALUES.monthly)).toBe(true);
+    expect(() => {
+      (PERIOD_VALUES.monthly as unknown as string[]).push('Smarch');
+    }).toThrow();
+    expect(MONTH_NAMES).toHaveLength(12);
+  });
+
+  it('answers null, never throws, for a granularity off Object.prototype', () => {
+    // `PERIOD_VALUES` inherits `Object.prototype`, so a truthiness guard let
+    // these through to `.find` and died with a TypeError — where the predicate
+    // this replaced simply returned false. `reporting_period` is a plain text
+    // column, so this is reachable from data, not just from a hostile caller.
+    for (const key of [
+      'constructor',
+      'toString',
+      'valueOf',
+      'hasOwnProperty',
+      'isPrototypeOf',
+      '__proto__',
+    ]) {
+      expect(canonicalPeriodValue(key, 'January')).toBeNull();
+    }
   });
 });

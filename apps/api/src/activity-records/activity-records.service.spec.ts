@@ -1827,6 +1827,110 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
   });
 });
 
+describe('ActivityRecordsService — periodValue is canonicalised on write', () => {
+  /**
+   * Validation was always case-insensitive; storage was verbatim. Everything
+   * that then read the column compared RAW strings — the uniqueness index, both
+   * period-lock lookups, the seed's de-duplication key — so `"january"` and
+   * `"January"` were two rows for one month, and both counted towards the
+   * emissions inventory. The fix is not stricter validation; it is storing one
+   * spelling.
+   */
+  const monthly = (periodValue: string) => ({
+    ...CREATE_DTO,
+    reportingPeriod: 'monthly' as const,
+    periodValue,
+  });
+
+  const createdWith = async (dto: Parameters<typeof monthly>[0] | object) => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.activityRecord.create.mockImplementation(({ data }: never) =>
+      makeRecord({ id: 'rec-1', ...(data as object) }),
+    );
+    await service.create(dataEntry(), dto as never);
+    return prisma;
+  };
+
+  it('stores the canonical spelling, whatever casing the caller sent', async () => {
+    for (const sent of ['january', 'JANUARY', 'JaNuArY']) {
+      const prisma = await createdWith(monthly(sent));
+      expect(prisma.activityRecord.create.mock.calls[0][0].data.periodValue).toBe(
+        'January',
+      );
+    }
+  });
+
+  it('trims, because a stored space is a different index key', async () => {
+    // `" January "` passed validation — which trims only to COMPARE — and was
+    // then written with its spaces, occupying a slot of its own.
+    const prisma = await createdWith(monthly('  January  '));
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.periodValue).toBe(
+      'January',
+    );
+  });
+
+  it('canonicalises quarters and the annual token too', async () => {
+    const q = await createdWith({ ...CREATE_DTO, reportingPeriod: 'quarterly', periodValue: 'q3' });
+    expect(q.activityRecord.create.mock.calls[0][0].data.periodValue).toBe('Q3');
+    const a = await createdWith({ ...CREATE_DTO, periodValue: 'annual' });
+    expect(a.activityRecord.create.mock.calls[0][0].data.periodValue).toBe('Annual');
+  });
+
+  it('looks the period lock up by the canonical spelling', async () => {
+    // The sharpest consequence, and not a data-quality one: a lock stored as
+    // `"January"` did not block a record sent as `"january"`, because the gate
+    // is raw Postgres equality. A period a super_admin believes is closed went
+    // on accepting writes.
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1', subsidiaryId: 'sub-1' });
+
+    await expect(service.create(dataEntry(), monthly('january'))).rejects.toThrow(
+      /period .* is locked/i,
+    );
+    expect(prisma.periodLock.findFirst.mock.calls[0][0].where).toMatchObject({
+      periodValue: 'January',
+    });
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+  });
+
+  it('canonicalises on update, and only when the caller sent one', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-1', reportingPeriod: 'monthly', periodValue: 'March' }),
+    );
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([]);
+    prisma.activityRecord.update.mockImplementation(({ data }: never) =>
+      makeRecord({ id: 'rec-1', ...(data as object) }),
+    );
+
+    await service.update(dataEntry(), 'rec-1', { periodValue: 'april' } as never);
+    expect(prisma.activityRecord.update.mock.calls[0][0].data.periodValue).toBe('April');
+
+    // An edit that does not mention the period must not rewrite it — that would
+    // put a change into the append-only audit diff that the user never made.
+    prisma.activityRecord.update.mockClear();
+    await service.update(dataEntry(), 'rec-1', { activityValue: 12 } as never);
+    expect(prisma.activityRecord.update.mock.calls[0][0].data.periodValue).toBeUndefined();
+  });
+
+  it('still refuses a value that names no period at all', async () => {
+    const { service } = build(2);
+    // Canonicalising must not become "accept anything and guess". An
+    // abbreviation names no period, so it is a 400 exactly as before.
+    await expect(service.create(dataEntry(), monthly('Mar'))).rejects.toThrow(
+      /not a valid period/i,
+    );
+    await expect(service.create(dataEntry(), monthly('2024-03'))).rejects.toThrow(
+      /not a valid period/i,
+    );
+  });
+});
+
 describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
   const LOCK_ROW = { id: 'lock-1', subsidiaryId: 'sub-1' };
 

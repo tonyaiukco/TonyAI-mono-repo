@@ -9,14 +9,13 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { CATEGORIES } from '@tonyai/shared-types';
+import { CATEGORIES, REPORTING_PERIODS } from '@tonyai/shared-types';
 import type {
   Category,
   ReportingPeriod,
 } from '@tonyai/shared-types';
 import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
 
-const REPORTING_PERIODS: ReportingPeriod[] = ['monthly', 'quarterly', 'annual'];
 
 /**
  * Body of POST /api/v1/activity-records.
@@ -44,7 +43,7 @@ export class CreateActivityRecordDto {
   reportingYear!: number;
 
   @IsString()
-  @IsIn(REPORTING_PERIODS)
+  @IsIn(REPORTING_PERIODS as readonly string[])
   reportingPeriod!: ReportingPeriod;
 
   @IsString()

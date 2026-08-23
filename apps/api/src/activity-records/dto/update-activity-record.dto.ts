@@ -9,11 +9,10 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { CATEGORIES } from '@tonyai/shared-types';
+import { CATEGORIES, REPORTING_PERIODS } from '@tonyai/shared-types';
 import type { Category, ReportingPeriod } from '@tonyai/shared-types';
 import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
 
-const REPORTING_PERIODS: ReportingPeriod[] = ['monthly', 'quarterly', 'annual'];
 
 /**
  * Body of PATCH /api/v1/activity-records/:id. All fields optional.
@@ -38,7 +37,7 @@ export class UpdateActivityRecordDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(REPORTING_PERIODS)
+  @IsIn(REPORTING_PERIODS as readonly string[])
   reportingPeriod?: ReportingPeriod;
 
   @IsOptional()

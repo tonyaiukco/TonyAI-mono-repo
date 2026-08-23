@@ -11,8 +11,10 @@ import {
   type ActivityRecord,
 } from '@tonyai/db';
 import {
+  canonicalPeriodValue,
   CATEGORY_SCOPE_MAP,
   COUNTED_STATUSES,
+  PERIOD_VALUES,
   isCalculated,
   isEvidenceRequired,
   type ActivityCalculationSnapshot,
@@ -93,37 +95,50 @@ const BASELINE_MAX_PERIODS = 3;
 // inform the baseline, so the two can never legitimately differ.
 const BASELINE_STATUSES: ActivityRecordStatus[] = [...COUNTED_STATUSES];
 
-const MONTHS = [
-  'january', 'february', 'march', 'april', 'may', 'june',
-  'july', 'august', 'september', 'october', 'november', 'december',
-];
-
 /** Position of a period within its year, so records can be ordered despite
- * `periodValue` being a free string. Only compared within the same granularity
- * (monthly 0–11, quarterly 1–4, annual single). */
+ * `periodValue` being a plain string column. Only compared within the same
+ * granularity (monthly 0–11, quarterly 1–4, annual single).
+ *
+ * Reads the shared vocabulary rather than a local lower-case copy of it — that
+ * copy was one of six, and it is the reason nothing in this file could say what
+ * the canonical spelling of a month WAS. */
 function periodOrdinal(reportingPeriod: string, periodValue: string): number {
-  const v = periodValue.trim().toLowerCase();
-  if (reportingPeriod === 'monthly') {
-    const i = MONTHS.indexOf(v);
-    return i < 0 ? 0 : i;
-  }
-  if (reportingPeriod === 'quarterly') {
-    const m = /^q([1-4])$/.exec(v);
-    return m ? Number(m[1]) : 0;
-  }
-  return 0; // annual: one period per year
+  const canonical = canonicalPeriodValue(reportingPeriod, periodValue);
+  if (canonical === null) return 0;
+  const allowed: readonly string[] =
+    PERIOD_VALUES[reportingPeriod as ReportingPeriod];
+  // `canonical` came out of this very list, so the index is always found — no
+  // `Math.max` floor, which would only have hidden a broken canonicaliser.
+  //
+  // Quarters stay 1-based and months 0-based, exactly as before. An ordinal is
+  // only ever compared against another of the SAME granularity, so the bases do
+  // not need to agree; what the +1 buys is keeping `Q1` distinct from
+  // "unrecognised value" (0), which the regex it replaced also did.
+  const i = allowed.indexOf(canonical);
+  return reportingPeriod === 'quarterly' ? i + 1 : i;
 }
 
-/** True when `periodValue` is a canonical token for its granularity. Guards the
- * baseline ordering (periodOrdinal) against silent miscalculation from a
- * non-web client sending e.g. "Mar" or "2024-03". Exported for period locks,
- * which share the same period vocabulary. */
-export function isValidPeriodValue(reportingPeriod: string, periodValue: string): boolean {
-  const v = periodValue.trim().toLowerCase();
-  if (reportingPeriod === 'monthly') return MONTHS.includes(v);
-  if (reportingPeriod === 'quarterly') return /^q[1-4]$/.test(v);
-  if (reportingPeriod === 'annual') return v === 'annual';
-  return false;
+/**
+ * The canonical spelling to STORE, or a 400 naming what was sent.
+ *
+ * Validating alone was never enough. The old `isValidPeriodValue` (since
+ * folded into `canonicalPeriodValue`) has always been case-insensitive to
+ * COMPARE, so `"january"` passed — and was then written verbatim,
+ * where the uniqueness index and the period-lock lookups both compare raw
+ * strings. One month could therefore exist as two rows that both counted, and a
+ * lock on one spelling closed nothing for the other.
+ */
+function requireCanonicalPeriodValue(
+  reportingPeriod: string,
+  periodValue: string,
+): string {
+  const canonical = canonicalPeriodValue(reportingPeriod, periodValue);
+  if (canonical === null) {
+    throw new BadRequestException(
+      `"${periodValue}" is not a valid period for a ${reportingPeriod} record.`,
+    );
+  }
+  return canonical;
 }
 
 @Injectable()
@@ -425,17 +440,21 @@ export class ActivityRecordsService {
         'Your role may not create activity records',
       );
     }
-    if (!isValidPeriodValue(dto.reportingPeriod, dto.periodValue)) {
-      throw new BadRequestException(
-        `"${dto.periodValue}" is not a valid period for a ${dto.reportingPeriod} record.`,
-      );
-    }
+    // Canonicalised, not merely validated. Everything downstream compares RAW
+    // strings — the uniqueness index, both period-lock lookups, the seed's own
+    // de-duplication key — so the spelling that gets stored IS the identity of
+    // the month. Use it from here on; `dto.periodValue` is the user's spelling
+    // and belongs only in the error message above.
+    const periodValue = requireCanonicalPeriodValue(
+      dto.reportingPeriod,
+      dto.periodValue,
+    );
     // Period-lock gate (FR §4.2): no new records in a closed period.
     await this.assertPeriodNotLocked(
       dto.subsidiaryId,
       dto.reportingYear,
       dto.reportingPeriod,
-      dto.periodValue,
+      periodValue,
     );
 
     const { calculation, scope } = await this.computeSnapshot(
@@ -454,7 +473,7 @@ export class ActivityRecordsService {
       category: dto.category,
       reportingPeriod: dto.reportingPeriod,
       reportingYear: dto.reportingYear,
-      periodValue: dto.periodValue,
+      periodValue,
     });
 
     let created: ActivityRecord & { location: { name: string } | null };
@@ -469,7 +488,7 @@ export class ActivityRecordsService {
           locationId: dto.locationId ?? null,
           reportingYear: dto.reportingYear,
           reportingPeriod: dto.reportingPeriod,
-          periodValue: dto.periodValue,
+          periodValue,
           category: dto.category,
           scope,
           status: ActivityRecordStatus.draft,
@@ -520,12 +539,10 @@ export class ActivityRecordsService {
       dto.locationId !== undefined ? dto.locationId : existing.locationId;
 
     const reportingPeriod = dto.reportingPeriod ?? existing.reportingPeriod;
-    const periodValue = dto.periodValue ?? existing.periodValue;
-    if (!isValidPeriodValue(reportingPeriod, periodValue)) {
-      throw new BadRequestException(
-        `"${periodValue}" is not a valid period for a ${reportingPeriod} record.`,
-      );
-    }
+    const periodValue = requireCanonicalPeriodValue(
+      reportingPeriod,
+      dto.periodValue ?? existing.periodValue,
+    );
     // Period-lock gate (FR §4.2): the record's current period must be open, and
     // it cannot be re-targeted INTO a locked period either.
     await this.assertPeriodNotLocked(
@@ -593,7 +610,10 @@ export class ActivityRecordsService {
         : { disconnect: true };
     }
     if (dto.reportingPeriod !== undefined) data.reportingPeriod = dto.reportingPeriod;
-    if (dto.periodValue !== undefined) data.periodValue = dto.periodValue;
+    // The canonical spelling, not the caller's. Gated on the caller having
+    // SENT one, so an unrelated edit never rewrites a field nobody touched —
+    // that would put a change into the audit diff that the user did not make.
+    if (dto.periodValue !== undefined) data.periodValue = periodValue;
     if (dto.input !== undefined) {
       data.input = (dto.input ?? Prisma.JsonNull) as Prisma.InputJsonValue;
     }

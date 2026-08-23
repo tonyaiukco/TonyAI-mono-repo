@@ -5,6 +5,7 @@ import {
   CATEGORY_SCOPE_MAP,
   ACCEPTED_STATUSES,
   COUNTED_STATUSES as SHARED_COUNTED_STATUSES,
+  MONTH_NAMES,
   isCalculated,
   INVOICE_TRACKED_CATEGORIES,
   isEvidenceRequired,
@@ -49,35 +50,15 @@ const PENDING_STATUSES = new Set<ActivityRecordStatus>([
 ]);
 const COUNTED_SET = new Set<ActivityRecordStatus>(COUNTED_STATUSES);
 
-const MONTH_INDEX: Record<string, number> = {
-  january: 0,
-  february: 1,
-  march: 2,
-  april: 3,
-  may: 4,
-  june: 5,
-  july: 6,
-  august: 7,
-  september: 8,
-  october: 9,
-  november: 10,
-  december: 11,
-};
+// Both derived from the one canonical list. They were two more hand-written
+// copies of it — one lower-cased for lookups, one Title Case for labels — and
+// keeping them in step by hand is the same bet that let `"january"` and
+// `"January"` become two different months.
+const MONTH_INDEX: Record<string, number> = Object.fromEntries(
+  MONTH_NAMES.map((m, i) => [m.toLowerCase(), i]),
+);
 
-const MONTH_LABEL = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-];
+
 
 /**
  * The WP17 invoice rule, as a pure function over records already loaded.
@@ -187,7 +168,7 @@ export function computeInvoiceCoverage(
     } else {
       const month = r.periodValue.trim().toLowerCase();
       // Only a real month closes a slot. Without this the denominator would rest
-      // on a rule enforced in ANOTHER module (`isValidPeriodValue`), and 24
+      // on a rule enforced in ANOTHER module (`canonicalPeriodValue`), and 24
       // records at one location could report 24-of-24 while the second location
       // held nothing.
       if (MONTH_INDEX[month] !== undefined) {
@@ -206,7 +187,7 @@ export function computeInvoiceCoverage(
   }
 
   return {
-    required: locationIds.length * MONTH_LABEL.length,
+    required: locationIds.length * MONTH_NAMES.length,
     covered,
     unattributedRecords,
     nonMonthlyRecords,
@@ -469,7 +450,7 @@ export class EmissionsService {
         if (idx !== undefined) {
           bump(
             monthly,
-            `${MONTH_LABEL[idx]} ${r.reportingYear}`,
+            `${MONTH_NAMES[idx]} ${r.reportingYear}`,
             r.reportingYear * 100 + idx,
             scope,
             tCo2e,
@@ -942,7 +923,7 @@ export class EmissionsService {
             // The complement, month by month. Keyed identically to the set the
             // rule builds, so "covered here" and "covered in the cell" cannot
             // drift apart.
-            months: MONTH_LABEL.map((month) => {
+            months: MONTH_NAMES.map((month) => {
               const slot = `${loc.id}\u0000${month.toLowerCase()}`;
               return {
                 month,

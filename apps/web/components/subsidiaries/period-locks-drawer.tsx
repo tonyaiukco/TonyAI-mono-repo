@@ -20,7 +20,7 @@ import {
 import { Lock, LockOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
-import { DEFAULT_REPORTING_YEAR, REPORTING_YEARS } from '@/lib/types';
+import { DEFAULT_REPORTING_YEAR, PERIOD_VALUES, REPORTING_YEARS } from '@/lib/types';
 import type { PeriodLockDTO, ReportingPeriod, SubsidiaryDTO } from '@/lib/types';
 
 const PERIODS: { value: ReportingPeriod; label: string }[] = [
@@ -28,14 +28,8 @@ const PERIODS: { value: ReportingPeriod; label: string }[] = [
   { value: 'monthly', label: 'Monthly' },
   { value: 'annual', label: 'Annual' },
 ];
-const PERIOD_VALUES: Record<ReportingPeriod, string[]> = {
-  quarterly: ['Q1', 'Q2', 'Q3', 'Q4'],
-  monthly: [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ],
-  annual: ['Annual'],
-};
+// Same canonical vocabulary the entry form and the server use — a lock keyed
+// on a spelling no record carries would close nothing.
 
 interface PeriodLocksDrawerProps {
   subsidiary: SubsidiaryDTO | null;

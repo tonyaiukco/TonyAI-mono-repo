@@ -332,14 +332,20 @@ export interface EntryCoverageInput {
    * twice" about the very record leaving the whole-company slot — a duplicate
    * the save is about to REMOVE rather than create.
    *
-   * Honest scope: on canonical data that state is unreachable, because the
-   * moving record must be a draft and `companyLevelMonths` counts only
-   * committed rows, and the uniqueness index permits just one row per entity +
-   * period + category. It is reachable through the gap the index leaves — it
-   * dedups on the RAW `period_value` while this panel matches the normalised
-   * one, so a committed "january" and an editable "January" can coexist. So
-   * this guards an invariant the screen depends on rather than repairing a
-   * falsehood users are hitting today.
+   * Honest scope, and it narrowed: the moving record must be a draft while
+   * `companyLevelMonths` counts only committed rows, and the uniqueness index
+   * permits one row per entity + period + category. The one way in used to be
+   * that the index dedups on the RAW `period_value` while this panel matches
+   * the normalised one, so a committed "january" and an editable "January"
+   * could coexist. **That gap is closed** — `periodValue` is canonicalised on
+   * write and the existing rows were backfilled (2026-08-21), so the two
+   * spellings are now one period everywhere.
+   *
+   * The guard stays anyway, and this is the reason to keep rather than the
+   * reason it was written: it is what makes the screen's claim true BY
+   * CONSTRUCTION instead of by relying on an invariant enforced two layers
+   * away, in code this file cannot see. Deleting it would make a correct
+   * warning depend on the API never regressing.
    */
   movingFrom?: string | null;
 }
