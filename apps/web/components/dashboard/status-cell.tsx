@@ -2,7 +2,11 @@
 
 import type { DataStatus, TrackingMatrixCell } from '@/lib/types';
 import { cn } from '@/lib/utils';
-import { reviewNote, shortfallReasons } from '@/lib/completeness-view';
+import {
+  reviewBadge,
+  reviewSentence,
+  shortfallReasons,
+} from '@/lib/completeness-view';
 import {
   Tooltip,
   TooltipContent,
@@ -99,7 +103,16 @@ function formatEmission(value: number): string {
  */
 function cellReasons(cell: TrackingMatrixCell, reportingYear: number | null): string[] {
   const c = cell.coverage;
-  if (!c) return [];
+  // One chooser for the unit, shared with the drill-down and the entry panel.
+  // A cell with no `coverage` has no shortfall counters at all, so this is the
+  // only thing that can account for its amber — returning nothing here was the
+  // unexplained amber `reviewNote` exists to stop, reintroduced on the eight
+  // yes/no categories and on every invoice category measured whole-company.
+  const review = reviewSentence({
+    awaitingReviewSlots: c?.awaitingReviewSlots,
+    awaitingReviewRecords: cell.awaitingReviewRecords,
+  });
+  if (!c) return review ? [review] : [];
   // One phrasing of the rule, shared with the drill-down and the Data Entry
   // panel. This function used to keep its own near-identical copy, differing in
   // wording ("entries have" vs "entries are with") and in the order the reasons
@@ -109,8 +122,7 @@ function cellReasons(cell: TrackingMatrixCell, reportingYear: number | null): st
   // Without this the DE-2 scenario renders a "Partial" badge above "Invoices
   // 24 of 24" and no explanation anywhere on the cell: all four shortfall
   // counters are zero when every slot is closed by an unreviewed invoice.
-  const note = reviewNote(c.awaitingReviewSlots);
-  if (note) reasons.push(note);
+  if (review) reasons.push(review);
   return reasons;
 }
 
@@ -127,6 +139,13 @@ export function StatusCell({
   const emission = cell.tCo2e === null ? null : Math.round(cell.tCo2e);
   const coverage = cell.coverage;
   const reasons = cellReasons(cell, reportingYear);
+  // The same unit the tooltip chose. Announcing a record count beside a face
+  // showing "3/24" told a screen-reader user a different number from the one on
+  // screen, in a different unit, with nothing saying so.
+  const badge = reviewBadge({
+    awaitingReviewSlots: coverage?.awaitingReviewSlots,
+    awaitingReviewRecords: cell.awaitingReviewRecords,
+  });
 
   // On an invoice-tracked cell the fraction IS the status, so it takes the
   // cell face and the tonnage moves into the tooltip. A cell showing "818"
@@ -154,7 +173,7 @@ export function StatusCell({
                       : hasEmission
                         ? `, ${formatEmission(emission!)} tCO2e`
                         : ''
-                  }`
+                  }${badge ? `, ${badge}` : ''}`
                 : undefined
             }
             className={cn(

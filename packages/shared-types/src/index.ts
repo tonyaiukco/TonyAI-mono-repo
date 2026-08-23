@@ -1408,6 +1408,22 @@ export const PENDING_REVIEW_STATUSES = [
 ] as const satisfies readonly ActivityRecordStatus[];
 
 /**
+ * The counted statuses a PERSON has accepted — the other half of the partition
+ * `PENDING_REVIEW_STATUSES` starts (asserted in this package's own spec).
+ *
+ * Exported because WP19 made it the definition of a green tracking-matrix cell,
+ * and until then it lived as a private `REVIEWED_STATUSES` inside the emissions
+ * service — a third hand-maintained copy of a list `COUNTED_STATUSES` was moved
+ * here to stop having. `locked` belongs beside `approved`: a lock freezes data a
+ * reviewer already accepted, so reading this as `approved` alone would turn
+ * every locked period amber.
+ */
+export const ACCEPTED_STATUSES = [
+  'approved',
+  'locked',
+] as const satisfies readonly ActivityRecordStatus[];
+
+/**
  * Optional filters for GET /activity-records (all AND-combined).
  *
  * `status` is a set because the reviewer queue is defined by one, not by a
@@ -1686,7 +1702,12 @@ export interface EmissionsSummary {
  * closed no slot. `awaitingReviewSlots` counts SLOTS and is a SUBSET of
  * `covered`. A consumer that lumps all five into one "explain the shortfall"
  * list computes nonsense; the first four explain why `covered < required`, the
- * fifth explains why a full `covered` still is not finished.
+ * fifth names WHICH months are waiting on a reviewer.
+ *
+ * None of the five decides the verdict on its own. Since WP19 the review gate
+ * is `awaitingReviewRecords` — a RECORD count that lives beside this object,
+ * not in it — because a fully covered, fully accepted slot set can still sit
+ * behind a record nobody has reviewed.
  */
 export interface CellCoverage {
   /**
@@ -1743,8 +1764,12 @@ export interface CellCoverage {
    * Of the `covered` slots, how many are closed ONLY by a record nobody has
    * reviewed yet — `submitted` or `under_review` rather than `approved`/`locked`.
    *
-   * The counter round-1 **DE-2** actually asks for, and a SUBSET of `covered`,
-   * never a rival to it. `COUNTED_STATUSES` treats a submitted record as
+   * WHICH months are waiting on a reviewer — a SUBSET of `covered`, never a
+   * rival to it. It was round-1 **DE-2**'s answer for invoice-measured cells
+   * until WP19 replaced the gate with the record-level
+   * `TrackingMatrixCell.awaitingReviewRecords`, which catches the cases a slot
+   * count cannot see; this survives as the projection that can NAME the months,
+   * which a bare count never could. `COUNTED_STATUSES` treats a submitted record as
    * committed on purpose — the inventory must not lose data sitting in a review
    * queue — but the side effect was that a cell turned green the moment its last
    * invoice was *sent* for review, which is DE-2's complaint verbatim: "On submit
@@ -1789,6 +1814,41 @@ export interface TrackingMatrixCell {
    * somebody had deliberately removed from the inventory.
    */
   voidedRecordCount: number;
+  /**
+   * Committed records in this cell that no human has accepted yet —
+   * `submitted` or `under_review`, i.e. the complement of the reviewed
+   * statuses within COUNTED_STATUSES.
+   *
+   * COUNTS RECORDS, not slots. `coverage.awaitingReviewSlots` counts SLOTS and
+   * the two disagree routinely — two unreviewed entries for one site-month are
+   * two records and one slot. Never compare them, and never add either to
+   * `recordCount`, which includes drafts that neither counter explains.
+   *
+   * LOAD-BEARING on EVERY cell, invoice-measured or not: a cell holding any
+   * unreviewed committed record is `incomplete`. That is round-1 DE-2 ("on
+   * submit for review, the status turns green immediately") applied to every
+   * category, which is what WP19 decided.
+   *
+   * THIS field is what the verdict reads — not `coverage.awaitingReviewSlots`,
+   * which is reporting only and names WHICH months are waiting. The record form
+   * subsumes the slot form (`awaitingReview` is `covered` minus the accepted
+   * slots, so an awaiting slot implies an awaiting record and never the
+   * reverse) and it catches a case the slot form cannot see at all: an
+   * unreviewed record that closed no slot — filed for the whole company, or
+   * against a period the monthly rule does not recognise — while its tonnage is
+   * already inside the cell's figure.
+   *
+   * Named to pair with `awaitingReviewSlots` rather than with this object's
+   * `*Count` siblings, deliberately: the pair is what makes the unit visible at
+   * every call site, and the two sit side by side on `CategoryCompleteness`.
+   *
+   * On a YEAR-LESS matrix query this folds every year's unreviewed records into
+   * one cell, exactly as the rest of that view folds every year's data — so a
+   * stray old `submitted` record holds its cell amber in the all-years view.
+   *
+   * `0`, never absent — including on a `missing` cell.
+   */
+  awaitingReviewRecords: number;
   /** Invoice coverage — see CellCoverage. Absent unless the rule applies. */
   coverage?: CellCoverage;
   /**
@@ -1875,13 +1935,27 @@ export interface CategoryCompleteness extends CellCoverage {
    * carries, produced by the same derivation on the server.
    *
    * On the wire because it cannot be recomputed from the numbers beside it. Two
-   * of the three caps behind `incomplete` — a draft in the cell, an anomaly
+   * of the four caps behind `incomplete` — a draft in the cell, an anomaly
    * flag — correspond to no field in this object, so a client deriving its own
    * verdict from `covered >= required` badges a cell green that the dashboard is
    * showing amber. That is round-1 DE-2's own failure (a green that overstates),
-   * one level up.
+   * one level up. (Four, not three, since WP19 added the review gate — which is
+   * why `awaitingReviewRecords` below had to come with it.)
    */
   status: DataStatus;
+  /**
+   * The review gate's own number, in RECORDS — see
+   * `TrackingMatrixCell.awaitingReviewRecords`, which this mirrors exactly.
+   *
+   * Here because without it this DTO carries a verdict it cannot explain. Take
+   * 24 approved invoices closing all 24 slots plus one `submitted` whole-company
+   * record: `covered` is 24 of 24, `awaitingReviewSlots` is 0, and all four
+   * shortfall counters produce sentences that would read identically if that
+   * record were approved and the cell green. The drill-down and the Data Entry
+   * panel could not tell their own two states apart — the unexplained amber
+   * WP17's review caught, reappearing in the surfaces built to prevent it.
+   */
+  awaitingReviewRecords: number;
   /**
    * Months (lower-cased) that already hold a WHOLE-COMPANY entry for this
    * category and year.

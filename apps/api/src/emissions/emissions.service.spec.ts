@@ -5,6 +5,7 @@ import {
   type ActivityRecord,
   type Subsidiary,
 } from '@tonyai/db';
+import { ACCEPTED_STATUSES, COUNTED_STATUSES } from '@tonyai/shared-types';
 import {
   computeInvoiceCoverage,
   deriveCellStatus,
@@ -232,11 +233,58 @@ describe('EmissionsService.completeness (drill-down)', () => {
     expect(month('March')).toMatchObject({ covered: false, awaitingReview: false });
     expect(electricity.awaitingReviewSlots).toBe(1);
     expect(ankara.months.every((m) => m.covered || !m.awaitingReview)).toBe(true);
+    // The VERDICT, not only the flags. This fixture is the only one in the file
+    // that held an unreviewed record, and it asserted everything about that
+    // record except the thing the record changes — so zeroing the count the
+    // panel gates on left the whole suite green.
+    expect(electricity.awaitingReviewRecords).toBe(1);
+    expect(electricity.status).toBe('incomplete');
+  });
+
+  it('reports the record count that holds a fully covered category amber (WP19)', async () => {
+    // The case the slot counters cannot express. Both sites hold all twelve
+    // months, approved — `covered` is 24 of 24 and `awaitingReviewSlots` is 0 —
+    // and one whole-company record for the same category is still with a
+    // reviewer while its tonnage already counts. Without `awaitingReviewRecords`
+    // on this response the panel shows an amber verdict and every sentence it
+    // can build would read identically if that record were approved.
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    prisma.activityRecord.findMany.mockResolvedValue([
+      ...LOCATIONS.flatMap((l) => months.map((m) => invoice(l.id, m))),
+      invoice(null as unknown as string, 'January', {
+        status: ActivityRecordStatus.submitted,
+      } as Partial<ActivityRecord>),
+    ]);
+
+    const d = await service.completeness(user, { subsidiaryId: 'sub-1', year: 2024 });
+    const electricity = d.categories.find((c) => c.category === 'Electricity')!;
+
+    expect(electricity).toMatchObject({
+      required: 24,
+      covered: 24,
+      awaitingReviewSlots: 0,
+      unattributedRecords: 1,
+      awaitingReviewRecords: 1,
+    });
+    expect(electricity.status).toBe('incomplete');
   });
 
   it('agrees with the matrix cell it drills into', async () => {
     const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
-    const records = [invoice('loc-1', 'January'), invoice('loc-2', 'February')];
+    // One of the three is UNREVIEWED on purpose. With every fixture `approved`
+    // the two endpoints agreed in the only case where they cannot disagree,
+    // which is not a guarantee — it is a tautology with an assertion around it.
+    const records = [
+      invoice('loc-1', 'January'),
+      invoice('loc-2', 'February'),
+      invoice('loc-2', 'March', {
+        status: ActivityRecordStatus.submitted,
+      } as Partial<ActivityRecord>),
+    ];
     prisma.activityRecord.findMany.mockResolvedValue(records);
     prisma.subsidiary.findMany.mockResolvedValue([
       makeSubsidiary({
@@ -265,6 +313,11 @@ describe('EmissionsService.completeness (drill-down)', () => {
       cell.coverage!.awaitingReviewSlots,
     );
     expect(drillElectricity.status).toBe(cell.status);
+    expect(drillElectricity.awaitingReviewRecords).toBe(cell.awaitingReviewRecords);
+    // …and that shared verdict is the amber one, so the agreement above is
+    // about a state the two endpoints reach separately.
+    expect(cell.status).toBe('incomplete');
+    expect(cell.awaitingReviewRecords).toBe(1);
     // And the per-slot flags must sum to the aggregate, or the month strip
     // contradicts the fraction printed directly above it.
     expect(
@@ -1029,6 +1082,256 @@ describe('EmissionsService.trackingMatrix', () => {
         // set would have left this slot in both buckets at once.
         expect(cell.coverage).toMatchObject({ covered: 1, awaitingReviewSlots: 0 });
       });
+
+      it('holds a fully covered cell amber for an unreviewed record that closed no slot', async () => {
+        // WP19. Twelve approved invoices close every slot, and a thirteenth
+        // record — company-level, so it closes nothing — is still waiting for a
+        // reviewer while its tonnage is already inside the cell's figure. The
+        // slot-level test alone could not see this: `awaitingReview` is
+        // `covered` minus the accepted slots, and every covered slot here WAS
+        // accepted. Same for an unreviewed duplicate filed against a month an
+        // approved invoice already covers.
+        const cell = await matrixFor([
+          ...ALL_MONTHS.map((mth) => invoice('loc-1', mth)),
+          invoice(null as unknown as string, 'January', {
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        expect(cell.coverage).toMatchObject({
+          required: 12,
+          covered: 12,
+          awaitingReviewSlots: 0,
+          unattributedRecords: 1,
+        });
+        expect(cell.awaitingReviewRecords).toBe(1);
+        expect(cell.status).toBe('incomplete');
+      });
+    });
+
+    /**
+     * WP19 — the same gate on the branch WP17 deliberately left alone.
+     *
+     * The eight yes/no categories reach `deriveCellStatus` with `coverage:
+     * null`, and so does EVERY invoice category on a subsidiary-measured row or
+     * a year-less query — four of the five seeded subsidiaries are exactly
+     * that. Until the 2026-08-21 decision this branch returned `complete` as
+     * soon as a record existed and was neither draft nor rejected, so Fuel,
+     * Waste, Business Travel and the rest went green the moment they were SENT
+     * for review: round-1 DE-2's complaint, in the branch its fix skipped.
+     *
+     * Unobservable on seeded data — the seed hard-codes `approved` on every
+     * record — so these specs are the only thing holding the behaviour.
+     */
+    describe('submitting is not finishing on the yes/no branch either (WP19)', () => {
+      const plainSub = () =>
+        makeSubsidiary({
+          id: 'sub-1',
+          trackingGranularity: 'subsidiary',
+          locations: [],
+        } as Partial<Subsidiary>);
+
+      /** A committed record in a category outside the invoice rule. */
+      const wasteRecord = (over: Partial<ActivityRecord> = {}) =>
+        makeRecord({
+          subsidiaryId: 'sub-1',
+          category: 'Waste',
+          scope: 3,
+          status: ActivityRecordStatus.approved,
+          reportingPeriod: 'monthly',
+          periodValue: 'January',
+          _count: { evidence: 0 },
+          ...over,
+        } as Partial<ActivityRecord>);
+
+      const cellFor = async (records: ActivityRecord[], category = 'Waste') => {
+        const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+        prisma.subsidiary.findMany.mockResolvedValue([plainSub()]);
+        prisma.activityRecord.findMany.mockResolvedValue(records);
+        const m = await service.trackingMatrix(user, { year: 2024 });
+        return m.rows[0].cells.find((c) => c.category === category)!;
+      };
+
+      it('holds the cell amber while its only record awaits review', async () => {
+        const cell = await cellFor([
+          wasteRecord({
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        expect(cell.status).toBe('incomplete');
+        expect(cell.awaitingReviewRecords).toBe(1);
+        // No denominator on this branch, so the count is the entire explanation
+        // a screen has to work with — which is why it is on the wire at all.
+        expect(cell.coverage).toBeUndefined();
+      });
+
+      it('does not leak the count into a neighbouring category or row', async () => {
+        // The accumulator is declared per CELL. Hoisting it one level — to the
+        // row, or to the whole matrix — makes one unreviewed record turn every
+        // later category amber, and every test that inspects only the cell it
+        // wrote to stays green through it. Same shape as the leak WP18 found.
+        const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] });
+        prisma.subsidiary.findMany.mockResolvedValue([
+          plainSub(),
+          makeSubsidiary({
+            id: 'sub-2',
+            trackingGranularity: 'subsidiary',
+            locations: [],
+          } as Partial<Subsidiary>),
+        ]);
+        prisma.activityRecord.findMany.mockResolvedValue([
+          wasteRecord({
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+          // A neighbour in the same row, fully accepted.
+          wasteRecord({
+            category: 'Business Travel',
+            status: ActivityRecordStatus.approved,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        const m = await service.trackingMatrix(user, { year: 2024 });
+        const cellIn = (subId: string, category: string) =>
+          m.rows
+            .find((r) => r.subsidiaryId === subId)!
+            .cells.find((c) => c.category === category)!;
+
+        expect(cellIn('sub-1', 'Waste').awaitingReviewRecords).toBe(1);
+        // Next category in the same row: accepted data, and it must stay green.
+        expect(cellIn('sub-1', 'Business Travel').awaitingReviewRecords).toBe(0);
+        expect(cellIn('sub-1', 'Business Travel').status).toBe('complete');
+        // A category with nothing in it at all, after the amber one.
+        expect(cellIn('sub-1', 'Commuting').awaitingReviewRecords).toBe(0);
+        expect(cellIn('sub-1', 'Commuting').status).toBe('missing');
+        // And the next subsidiary starts from zero.
+        expect(cellIn('sub-2', 'Waste').awaitingReviewRecords).toBe(0);
+        expect(cellIn('sub-2', 'Waste').status).toBe('missing');
+        expect(m.totals.incomplete).toBe(1);
+      });
+
+      it('turns green once a human has accepted it', async () => {
+        const cell = await cellFor([wasteRecord()]);
+
+        expect(cell.status).toBe('complete');
+        expect(cell.awaitingReviewRecords).toBe(0);
+      });
+
+      it('reads under_review as awaiting and locked as accepted', async () => {
+        const under = await cellFor([
+          wasteRecord({
+            status: ActivityRecordStatus.under_review,
+          } as Partial<ActivityRecord>),
+        ]);
+        expect(under.status).toBe('incomplete');
+        expect(under.awaitingReviewRecords).toBe(1);
+
+        // A locked period is approved data that a lock froze — accepted. Reading
+        // the reviewed set as `approved` alone would turn every locked period
+        // amber the moment this gate shipped.
+        const locked = await cellFor([
+          wasteRecord({
+            status: ActivityRecordStatus.locked,
+          } as Partial<ActivityRecord>),
+        ]);
+        expect(locked.status).toBe('complete');
+        expect(locked.awaitingReviewRecords).toBe(0);
+      });
+
+      it('counts only the unreviewed records, and one is enough to hold the cell', async () => {
+        const cell = await cellFor([
+          wasteRecord({ periodValue: 'January' } as Partial<ActivityRecord>),
+          wasteRecord({ periodValue: 'February' } as Partial<ActivityRecord>),
+          wasteRecord({
+            periodValue: 'March',
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        expect(cell.recordCount).toBe(3);
+        expect(cell.awaitingReviewRecords).toBe(1);
+        expect(cell.status).toBe('incomplete');
+      });
+
+      it('leaves draft and rejected records out of the count', async () => {
+        // They hold the cell amber through `hasPending`, not through this
+        // counter. A draft is not data anyone has been ASKED to review, and
+        // counting it here would make the sentence on the cell untrue.
+        const cell = await cellFor([
+          wasteRecord({
+            status: ActivityRecordStatus.draft,
+          } as Partial<ActivityRecord>),
+          wasteRecord({
+            periodValue: 'February',
+            status: ActivityRecordStatus.rejected,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        expect(cell.status).toBe('incomplete');
+        expect(cell.awaitingReviewRecords).toBe(0);
+      });
+
+      it('keeps the draft cap and the review gate as separate facts', async () => {
+        // Both true at once, and they are not the same claim: a draft is work
+        // the author has not finished, an unreviewed record is work waiting on
+        // someone else. A counter that folded them together would make the
+        // cell's sentence — "2 entries are keyed in but nobody has reviewed
+        // them yet" — untrue about the draft.
+        const cell = await cellFor([
+          wasteRecord({
+            status: ActivityRecordStatus.draft,
+          } as Partial<ActivityRecord>),
+          wasteRecord({
+            periodValue: 'February',
+            status: ActivityRecordStatus.submitted,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        expect(cell.status).toBe('incomplete');
+        expect(cell.recordCount).toBe(2);
+        expect(cell.awaitingReviewRecords).toBe(1);
+      });
+
+      it('reports 0 on a cell holding no records at all', async () => {
+        const cell = await cellFor([]);
+
+        expect(cell.status).toBe('missing');
+        expect(cell.awaitingReviewRecords).toBe(0);
+      });
+
+      it('ignores a voided record, which counts towards nothing', async () => {
+        const cell = await cellFor([
+          wasteRecord({
+            status: ActivityRecordStatus.voided,
+          } as Partial<ActivityRecord>),
+        ]);
+
+        expect(cell.status).toBe('missing');
+        expect(cell.awaitingReviewRecords).toBe(0);
+        expect(cell.voidedRecordCount).toBe(1);
+      });
+
+      it('gates an invoice category on a subsidiary-measured row as well', async () => {
+        // The strict rule needs `byLocation && isInvoiceTracked && year`, so
+        // Electricity on a subsidiary-measured entity has always been HERE.
+        // Framing the decision as "the three utility categories are stricter"
+        // would have been wrong about most of the matrix.
+        const cell = await cellFor(
+          [
+            wasteRecord({
+              category: 'Electricity',
+              scope: 2,
+              status: ActivityRecordStatus.submitted,
+              _count: { evidence: 1 },
+            } as Partial<ActivityRecord>),
+          ],
+          'Electricity',
+        );
+
+        expect(cell.coverage).toBeUndefined();
+        expect(cell.status).toBe('incomplete');
+        expect(cell.awaitingReviewRecords).toBe(1);
+      });
     });
 
     it('counts a second invoice for the same location and month once', async () => {
@@ -1085,7 +1388,7 @@ describe('EmissionsService.trackingMatrix', () => {
       expect(cell.recordCount).toBe(2);
     });
 
-    it('leaves a subsidiary-granularity row on the old rule entirely', async () => {
+    it('keeps a subsidiary-granularity row off the invoice denominator, locations or not', async () => {
       const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([
         makeSubsidiary({
@@ -1281,6 +1584,7 @@ describe('the shared completeness primitives', () => {
       hasPending: false,
       anomaly: false,
       evidenceMissing: false,
+      awaitingReviewRecords: 0,
       coverage: null,
       ...over,
     });
@@ -1317,12 +1621,31 @@ describe('the shared completeness primitives', () => {
       expect(verdict({ coverage: full, evidenceMissing: true })).toBe('incomplete');
     });
 
-    it('leaves the yes/no categories exactly as they were', () => {
-      // Eight of the eleven categories take this branch, and the DE-2 review
-      // gate deliberately does NOT apply to it — changing that would re-mean
-      // every category on every subsidiary.
+    it('holds a yes/no cell amber while committed data awaits review', () => {
+      // WP19. Until the 2026-08-21 decision this branch returned `complete` the
+      // moment a record was SENT for review — round-1 DE-2's own complaint,
+      // applying to the eight yes/no categories AND to every invoice category
+      // on a subsidiary-measured row or a year-less query. FR §2.2 now requires
+      // `approved`/`locked` for green everywhere.
       expect(verdict({ coverage: null })).toBe('complete');
+      expect(verdict({ coverage: null, awaitingReviewRecords: 1 })).toBe('incomplete');
+      expect(verdict({ coverage: null, awaitingReviewRecords: 12 })).toBe('incomplete');
+      // The three shared caps still stand on their own.
       expect(verdict({ coverage: null, hasPending: true })).toBe('incomplete');
+      expect(verdict({ coverage: null, anomaly: true })).toBe('incomplete');
+      expect(verdict({ coverage: null, evidenceMissing: true })).toBe('incomplete');
+    });
+
+    it('gates the invoice branch on records too, not on slots alone', () => {
+      // The slot test this replaced could not see either of these on a fully
+      // covered cell: an unreviewed record that closed NO slot (company-level,
+      // unattributed, not monthly), and an unreviewed duplicate filed against a
+      // month an approved invoice already covers — `awaitingReview` is `covered`
+      // minus the accepted slots, so it is empty in both. Both records count
+      // towards the tonnage the cell prints, and nobody has accepted either.
+      const full = coverage({ required: 1, covered: new Set(['loc-1\u0000january']) });
+      expect(verdict({ coverage: full })).toBe('complete');
+      expect(verdict({ coverage: full, awaitingReviewRecords: 1 })).toBe('incomplete');
     });
   });
 
@@ -1334,6 +1657,37 @@ describe('the shared completeness primitives', () => {
       evidenceCount: 1,
       status: ActivityRecordStatus.approved,
       ...over,
+    });
+
+    it('never reports a waiting slot without an unreviewed record behind it', () => {
+      // The invariant WP19's gate leans on. The record-level counter REPLACED
+      // the slot-level term in `deriveCellStatus` because it strictly implies
+      // it; if that ever stopped being true the gate would silently weaken on
+      // the invoice branch, with nothing failing. So it is asserted here rather
+      // than argued in a comment — the function cannot check its own callers.
+      for (const status of COUNTED_STATUSES) {
+        const accepted = (ACCEPTED_STATUSES as readonly string[]).includes(status);
+        const c = computeInvoiceCoverage(
+          [record({ status: status as ActivityRecordStatus })],
+          ['loc-1'],
+        );
+        expect(c.covered.size).toBe(1);
+        expect(c.awaitingReview.size > 0).toBe(!accepted);
+      }
+
+      // And the implication runs ONE WAY. An accepted invoice closes the slot
+      // whatever else was filed against it, so the slot set falls silent while
+      // an unreviewed record is still sitting in the cell counting towards its
+      // tonnage — the case the record counter exists to catch.
+      const mixed = computeInvoiceCoverage(
+        [
+          record({ status: ActivityRecordStatus.approved }),
+          record({ status: ActivityRecordStatus.submitted }),
+        ],
+        ['loc-1'],
+      );
+      expect(mixed.covered.size).toBe(1);
+      expect(mixed.awaitingReview.size).toBe(0);
     });
 
     it('ignores a record no caller should have passed', () => {
