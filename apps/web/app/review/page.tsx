@@ -50,6 +50,7 @@ import {
   type EvidenceDTO,
   type SubsidiaryDTO,
 } from "@/lib/types";
+import { entityLabel } from "@/lib/void-view";
 import {
   formatTCo2e,
   notCalculatedReason,
@@ -484,10 +485,8 @@ export default function ReviewPage() {
                 <span className="col-span-2">
                   {subsidiaryName(selected.subsidiaryId)}
                 </span>
-                <span className="text-muted-foreground">Location</span>
-                <span className="col-span-2">
-                  {selected.locationName ?? 'Whole subsidiary'}
-                </span>
+                <span className="text-muted-foreground">Reporting entity</span>
+                <span className="col-span-2">{entityLabel(selected)}</span>
                 <span className="text-muted-foreground">Activity</span>
                 <span className="col-span-2 font-mono">
                   {selected.activityValue.toLocaleString("en-GB")}{" "}

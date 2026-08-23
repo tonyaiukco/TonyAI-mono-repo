@@ -191,6 +191,41 @@ All export outputs must respect the filters currently applied in the UI, includi
 - categoryKey
 - status
 
+### 5.4 Restatement Disclosure and Reporting Entity *(added WP20, 2026-08-23)*
+Every generated artifact (PDF, Excel, CSV) must:
+- **Disclose withdrawn figures.** A record withdrawn from the inventory
+  (`voided` — the withdrawal path; note §6 below still documents only the six
+  pre-WP18 workflow states and does not yet describe `voided`) counts towards no
+  figure in a report, and the report must say so rather than omit it silently: the count, and per record the reporting entity,
+  category, period, the tCO2e that left, when it was withdrawn and the reason
+  recorded at the time. A restatement a reader cannot see is not a restatement
+  (ISO 14064-1 §9.3.1 traceability).
+- **Name the reporting entity of every ledger row** — the operational location
+  the figure is attributed to, or the whole company. Uniqueness includes
+  `location_id`, so without it two figures for one month are indistinguishable in
+  the ledger an auditor keeps.
+
+Withdrawn records are NEVER counted in a total. In the flat CSV, where they share
+one table with the committed ledger, `status` is the authoritative discriminator
+(`voided`), and **every column a reader could aggregate** — not only tCO2e —
+carries a text marker on those rows, so summing any column of the export
+reproduces the report's own figures. Activity quantity is itself a reported
+datapoint (GRI 302-1, CSRD E1-5), so protecting the tCO2e column alone is not
+enough. What was withdrawn is reported in the `voided_*` columns, where summing
+answers a different question on purpose.
+
+The disclosure obligation belongs to the **artifact**: a file leaves the system
+and is read by someone who cannot click through to the record history. On-screen
+aggregates state the exclusion structurally instead (`statusesIncluded`) — but a
+screen that starts printing record COUNTS beside its totals inherits this rule.
+
+**Export column contract.** Consumers must key on column NAMES: a new column may
+be appended at any time. Column order changed once, at WP20 (`reporting_entity`
+inserted as the second column of the CSV and of the Excel `Raw Activity Data`
+sheet, and `Withdrawn Records` inserted as the third worksheet), which moves
+every later column by one for anything reading by position. From WP20 onwards new
+columns are **appended, never inserted**.
+
 ---
 
 ## 6. User Workflow States

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { withdrawalNotice } from '@/lib/report-view';
 import { Sidebar } from '@/components/dashboard/sidebar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -247,6 +248,15 @@ export default function ReportsPage() {
                 </CardContent>
               </Card>
 
+              {/* Restatement disclosure — the same fact the exports carry, so a
+                  user knows what the file will say before generating it. */}
+              {withdrawalNotice(meta) && (
+                <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{withdrawalNotice(meta)}</span>
+                </div>
+              )}
+
               {/* Data warning (report_page.md §9) */}
               {meta && meta.incompleteRatio > 0.15 && (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -406,8 +416,8 @@ export default function ReportsPage() {
                   </Button>
                   </>)}
                   <p className="text-xs text-muted-foreground">
-                    Excel contains Summary, Raw Activity Data and Factors Used sheets. Every
-                    generation is recorded in the audit log.
+                    Excel contains Summary, Raw Activity Data, Withdrawn Records and Factors
+                    Used sheets. Every generation is recorded in the audit log.
                   </p>
                 </CardContent>
               </Card>
@@ -426,6 +436,9 @@ export default function ReportsPage() {
                       <Row label="Committed" value={String(meta.committedCount)} />
                       <Row label="Awaiting review" value={String(meta.pendingCount)} />
                       <Row label="Draft / rejected" value={String(meta.incompleteCount)} />
+                      {meta.voidedCount > 0 && (
+                        <Row label="Withdrawn" value={String(meta.voidedCount)} />
+                      )}
                     </>
                   ) : (
                     <Skeleton className="h-20 w-full" />

@@ -52,6 +52,7 @@ import {
   REPORTING_YEARS,
   unitSymbol,
   unitsForCategory,
+  WHOLE_COMPANY_ENTITY_LABEL,
 } from "@/lib/types";
 import {
   NOT_CALCULATED_LABEL,
@@ -143,11 +144,15 @@ const numberFmt = new Intl.NumberFormat("en-GB", {
  * still claimed it was "a bare 500", so the one case it existed to explain was
  * the one case it no longer caught. 5xx keeps a generic hint because an
  * unexpected server error tells the user nothing on its own. */
-/** A record's reporting entity, in prose. Degrades on `locationId` because
- *  `locationName` is optional on the contract — a bare `??` would call a site
- *  row "the whole company" if the include were ever dropped. */
-function entityLabel(rec: ActivityRecordDTO): string {
-  return rec.locationId ? (rec.locationName ?? "a site") : "the whole company";
+/** A record's reporting entity, in PROSE — it appears mid-sentence ("Moved to
+ *  the whole company, draft saved"), which is why it is not `entityLabel`: that
+ *  one is a standalone label and is now exported from `@tonyai/shared-types`,
+ *  so two functions of one name would sit in one bundle. Same `locationId`
+ *  degradation, which is where the shared helper's rule came from. */
+function entityPhrase(rec: ActivityRecordDTO): string {
+  return rec.locationId
+    ? (rec.locationName ?? "a site")
+    : `the ${WHOLE_COMPANY_ENTITY_LABEL.toLowerCase()}`;
 }
 
 function saveErrorMessage(e: unknown, moving = false): string {
@@ -762,7 +767,7 @@ function DataEntryPageInner() {
         : "";
       toast.success(
         wasMoving
-          ? `Moved to ${entityLabel(rec)}, draft saved${anomalyNote}`
+          ? `Moved to ${entityPhrase(rec)}, draft saved${anomalyNote}`
           : `Draft saved${anomalyNote}`,
       );
       await refreshRecords(subsidiaryId);
@@ -798,7 +803,7 @@ function DataEntryPageInner() {
       // an action with the same consequence.
       toast.success(
         wasMoving
-          ? `Moved to ${entityLabel(rec)}, submitted for review`
+          ? `Moved to ${entityPhrase(rec)}, submitted for review`
           : "Submitted for review",
       );
       resetForm();

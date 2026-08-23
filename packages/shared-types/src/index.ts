@@ -648,6 +648,16 @@ export interface ReportMetaDTO {
   incompleteCount: number; // draft + rejected
   pendingCount: number; // submitted + under_review
   incompleteRatio: number; // 0-1
+  /**
+   * Records withdrawn from this reporting year (`voided`).
+   *
+   * Deliberately NOT part of `totalCount` — `committed + incomplete` is meant
+   * to exhaust it, and a withdrawn figure belongs to neither. It is reported
+   * separately because the alternative, which shipped, was an export that
+   * silently omitted withdrawn records without saying it had: a restatement
+   * the reader cannot see is not a restatement.
+   */
+  voidedCount: number;
 }
 
 // Target Types
@@ -1449,6 +1459,54 @@ export interface VoidInput {
  */
 export const VOID_REASON_MIN_LENGTH = 10;
 export const VOID_REASON_MAX_LENGTH = 2000;
+
+/**
+ * What a record with no location is called, everywhere it is named.
+ *
+ * TonyAI's tiers are organisation (the holding) -> subsidiary (a company) ->
+ * location (a site), so a record attributed to the subsidiary itself is the
+ * whole COMPANY, and "Whole organisation" means something else again (the
+ * report scope filter). One constant because the app and the generated report
+ * now both print this phrase, and the record drawer's confirmation dialog is
+ * the one place a user reads it before an irreversible write.
+ */
+export const WHOLE_COMPANY_ENTITY_LABEL = 'Whole company';
+
+/**
+ * What a row attributed to a site whose NAME did not come back is called.
+ *
+ * Reachable only when a caller passes a record loaded without the location
+ * join. Saying "whole company" there would misstate the reporting entity in an
+ * audit-ready export; saying nothing would hide that a site is involved at all.
+ */
+export const UNNAMED_SITE_ENTITY_LABEL = 'Site (name unavailable)';
+
+/**
+ * The reporting entity in one phrase — the site's name, or the whole company.
+ *
+ * Keyed on the PAIR, never on the name alone. `locationName` is optional on the
+ * contract because it is carried by an `include` only some queries ask for
+ * (`ActivityRecordsService.toDTO` returns `Omit<…, 'locationName'>` precisely so
+ * a read path cannot forget it), so a name-only test would call a SITE row "the
+ * whole company" the first time a caller passed a record loaded without the
+ * join — a misstatement of the reporting entity in an artifact an auditor
+ * keeps, not a wording slip. `locationId` is the fact; the name is a decoration
+ * on it. Data Entry has degraded on `locationId` for exactly this reason since
+ * WP16, and this is that rule promoted to the one shared helper.
+ *
+ * A null name with no id is the genuine company level — or a location that has
+ * since been removed, a case WP16's delete guards made unreachable.
+ * Whitespace is trimmed first: a location named "   " would otherwise print as
+ * a blank cell, which reads as a missing value rather than as a level.
+ */
+export function entityLabel(record: {
+  locationId?: string | null;
+  locationName?: string | null;
+}): string {
+  const named = record.locationName?.trim();
+  if (named) return named;
+  return record.locationId ? UNNAMED_SITE_ENTITY_LABEL : WHOLE_COMPANY_ENTITY_LABEL;
+}
 
 /**
  * The statuses a reviewer's queue is made of: a record that has left the

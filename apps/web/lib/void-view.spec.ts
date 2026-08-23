@@ -167,11 +167,20 @@ describe('voidReasonError', () => {
 
 describe('entityLabel', () => {
   it('names the site, or says the row is the whole company', () => {
-    expect(entityLabel({ locationName: 'Istanbul HQ' })).toBe('Istanbul HQ');
-    expect(entityLabel({ locationName: null })).toBe('Whole company');
+    expect(entityLabel({ locationId: 'loc-1', locationName: 'Istanbul HQ' })).toBe('Istanbul HQ');
+    expect(entityLabel({ locationId: null, locationName: null })).toBe('Whole company');
     // Whitespace is not a name. A blank label here would read as a site whose
     // name failed to load, on the field the reader uses to tell a pair apart.
-    expect(entityLabel({ locationName: '   ' })).toBe('Whole company');
+    expect(entityLabel({ locationId: null, locationName: '   ' })).toBe('Whole company');
+  });
+
+  it('does not call a SITE row the whole company when the name is missing', () => {
+    // `locationName` rides on an `include`; `locationId` is the fact. This is
+    // the dialog that precedes an irreversible write, so getting the entity
+    // wrong here is worse than getting it vague.
+    expect(entityLabel({ locationId: 'loc-1', locationName: null })).toBe(
+      'Site (name unavailable)',
+    );
   });
 });
 
@@ -244,6 +253,20 @@ describe('voidConsequence', () => {
     const kept = effects.find((e) => /stays on record/i.test(e));
     expect(kept).toBeDefined();
     expect(kept).toMatch(/audit log/i);
+  });
+
+  it('warns that the reason leaves the product inside every export', () => {
+    // The reason is free text, uncorrectable, and since WP20 it is printed
+    // verbatim into PDFs, spreadsheets and CSVs that go to third parties. A
+    // dialog that only promises "stays on record" invites someone to write
+    // something they would not put in front of an auditor.
+    const { effects } = voidConsequence(record(), 'TonyAI Energy');
+    const published = effects.find((e) => /printed verbatim/i.test(e));
+    expect(published).toBeDefined();
+    expect(published).toMatch(/PDF/);
+    expect(published).toMatch(/Excel/);
+    expect(published).toMatch(/CSV/);
+    expect(published).toMatch(/cannot be edited/i);
   });
 
   it('states that it cannot be undone', () => {
