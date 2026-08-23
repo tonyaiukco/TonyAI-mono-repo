@@ -265,6 +265,89 @@ export const DEFAULT_REPORTING_YEAR: ReportingYear = REPORTING_YEARS[0];
 export const REPORTING_PERIODS = ['monthly', 'quarterly', 'annual'] as const;
 export type ReportingPeriod = (typeof REPORTING_PERIODS)[number];
 
+/**
+ * The canonical `periodValue` vocabulary, per granularity — the spelling a
+ * record is STORED with, not merely one the API accepts.
+ *
+ * It lives here because six hand-written copies of it existed, in two different
+ * casings: the validator and the anomaly ordering kept lower-case lists, the
+ * emissions module kept one of each, and the two dropdowns and the seed kept
+ * Title Case. Nothing reconciled them, and "canonicalise on write" is not a
+ * thing that can be said at all until one of them is the answer.
+ *
+ * `annual` is the literal token `Annual`, deliberately NOT the year: the year
+ * already has its own column, and a `periodValue` that sometimes held it would
+ * make the uniqueness key mean two different things.
+ */
+export const PERIOD_VALUES = {
+  monthly: [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ],
+  quarterly: ['Q1', 'Q2', 'Q3', 'Q4'],
+  annual: ['Annual'],
+} as const satisfies Record<ReportingPeriod, readonly string[]>;
+
+// `as const` is compile-time only, and this list now decides record identity.
+// Annotating it `Record<ReportingPeriod, readonly string[]>` had thrown the
+// literals away AND left whole-property assignment legal — `PERIOD_VALUES.monthly
+// = ['Nope']` typechecked.
+Object.freeze(PERIOD_VALUES);
+for (const values of Object.values(PERIOD_VALUES)) Object.freeze(values);
+
+/**
+ * The twelve month names in calendar order — the index IS the month number.
+ *
+ * Order is LOAD-BEARING, not presentational: it drives month→quarter
+ * attribution, the monthly trend sort key, and the anomaly baseline's period
+ * ordering. Asserted element by element in this package's spec, because a
+ * swapped pair changes emissions attribution and nothing else would notice.
+ */
+export const MONTH_NAMES = PERIOD_VALUES.monthly;
+
+/**
+ * The canonical spelling of a `periodValue`, or `null` when it names no period
+ * of that granularity.
+ *
+ * Tolerant on the way in (case-insensitive, trims) and exact on the way out, so
+ * a caller sending `" JANUARY "` stores `January`. That asymmetry is the whole
+ * point: the uniqueness index compares raw strings, so every spelling the API
+ * accepted used to occupy a SEPARATE slot — `"january"` and `"January"` were
+ * two rows for one month, and both counted towards the emissions inventory.
+ * Period locks compare raw strings too, so a lock on one spelling did not close
+ * the other.
+ *
+ * Canonicalise at every write. Validation alone is not enough; it was already
+ * case-insensitive, and that is exactly how the two spellings both got in.
+ */
+export function canonicalPeriodValue(
+  reportingPeriod: string,
+  periodValue: string,
+): string | null {
+  const wanted = periodValue.trim().toLowerCase();
+  // `Array.isArray`, not a truthiness check: `PERIOD_VALUES` inherits
+  // `Object.prototype`, so `reportingPeriod` of `constructor`, `toString`,
+  // `valueOf`, `hasOwnProperty` or `__proto__` returns something truthy that is
+  // not an array, and `.find` then throws. `reporting_period` is a plain text
+  // column and this function is exported, so "the DTO validates it" is not a
+  // property this function may assume about its own inputs.
+  const allowed: readonly string[] | undefined =
+    PERIOD_VALUES[reportingPeriod as ReportingPeriod];
+  if (!Array.isArray(allowed)) return null;
+  return allowed.find((v) => v.toLowerCase() === wanted) ?? null;
+}
+
+
 export interface DataEntryField {
   id: string;
   name: string;

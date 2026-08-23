@@ -174,7 +174,11 @@ model ActivityRecord {
   location       Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
   reportingYear  Int                  @map("reporting_year")
   reportingPeriod String              @map("reporting_period") // 'monthly' | 'quarterly' | 'annual'
-  periodValue    String               @map("period_value") // e.g. "Q1", "January", "Annual"
+  // Canonicalised on write to the vocabulary in @tonyai/shared-types
+  // (PERIOD_VALUES): "January".."December" | "Q1".."Q4" | "Annual". Not an
+  // example set -- the uniqueness index below compares this column RAW, so a
+  // second spelling of one month is a second period.
+  periodValue    String               @map("period_value")
   category       String // canonical category key, e.g. "Electricity"
   scope          Int // derived from CATEGORY_SCOPE_MAP
   status         ActivityRecordStatus @default(draft)
@@ -244,7 +248,10 @@ model PeriodLock {
   subsidiary      Subsidiary @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
   reportingYear   Int        @map("reporting_year")
   reportingPeriod String     @map("reporting_period") // 'monthly' | 'quarterly' | 'annual'
-  periodValue     String     @map("period_value") // e.g. "Q1", "January", "Annual"
+  // Same canonical vocabulary as activity_records.period_value, and for the
+  // same reason: the lock is matched by exact string equality, so a lock
+  // spelled differently from the records it covers closes nothing.
+  periodValue     String     @map("period_value")
   lockedBy        String     @map("locked_by") @db.Uuid
   createdAt       DateTime   @default(now()) @map("created_at")
 

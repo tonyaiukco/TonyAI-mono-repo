@@ -1,7 +1,7 @@
 import { IsIn, IsInt, IsString, Max, Min, MinLength } from 'class-validator';
+import { REPORTING_PERIODS } from '@tonyai/shared-types';
 import type { ReportingPeriod } from '@tonyai/shared-types';
 
-const REPORTING_PERIODS: ReportingPeriod[] = ['monthly', 'quarterly', 'annual'];
 
 /**
  * Body of POST /api/v1/period-locks — closes one subsidiary's reporting period
@@ -19,7 +19,7 @@ export class CreatePeriodLockDto {
   reportingYear!: number;
 
   @IsString()
-  @IsIn(REPORTING_PERIODS)
+  @IsIn(REPORTING_PERIODS as readonly string[])
   reportingPeriod!: ReportingPeriod;
 
   @IsString()

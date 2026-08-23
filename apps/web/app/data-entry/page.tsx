@@ -46,7 +46,9 @@ import {
   GEOGRAPHY_LABELS,
   DEFAULT_REPORTING_YEAR,
   isCalculated,
+  canonicalPeriodValue,
   isInvoiceTracked,
+  PERIOD_VALUES,
   REPORTING_YEARS,
   unitSymbol,
   unitsForCategory,
@@ -80,24 +82,9 @@ const PERIODS: { value: ReportingPeriod; label: string }[] = [
   { value: "annual", label: "Annual" },
 ];
 
-const PERIOD_VALUES: Record<ReportingPeriod, string[]> = {
-  quarterly: ["Q1", "Q2", "Q3", "Q4"],
-  monthly: [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ],
-  annual: ["Annual"],
-};
+// The canonical vocabulary, from the contract rather than a local copy: this
+// dropdown decides what a user can send, and the server now stores exactly
+// these spellings. A copy that drifted would offer a value the API rejects.
 
 // --- Status badge styling (matches subsidiaries page emerald/amber palette) --
 
@@ -416,10 +403,14 @@ function DataEntryPageInner() {
           wantedPeriod && (PERIODS as { value: ReportingPeriod }[]).some((p) => p.value === wantedPeriod)
             ? (wantedPeriod as ReportingPeriod)
             : undefined;
+        // Canonicalised rather than matched exactly. A link carrying
+        // `?periodValue=january` used to fail the membership test and drop the
+        // period silently, landing the user on the wrong month with nothing
+        // said; the server accepts and stores that spelling as `January`, so
+        // the form should arrive there too.
         const validPeriodValue =
-          validPeriod && wantedPeriodValue &&
-          PERIOD_VALUES[validPeriod].includes(wantedPeriodValue)
-            ? wantedPeriodValue
+          validPeriod && wantedPeriodValue
+            ? (canonicalPeriodValue(validPeriod, wantedPeriodValue) ?? undefined)
             : undefined;
 
         if (validPeriod) setReportingPeriod(validPeriod);

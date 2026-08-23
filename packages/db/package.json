@@ -13,11 +13,12 @@
     "seed": "tsx prisma/seed.ts",
     "studio": "prisma studio",
     "lint": "echo \"(db) no lint\" && exit 0",
-    "typecheck": "echo \"(db) typecheck handled by consumers\" && exit 0",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "evidence:reclaim": "node scripts/reclaim-evidence.mjs"
   },
   "dependencies": {
-    "@prisma/client": "^6.1.0"
+    "@prisma/client": "^6.1.0",
+    "@tonyai/shared-types": "workspace:*"
   },
   "devDependencies": {
     "@supabase/supabase-js": "^2.45.4",

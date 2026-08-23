@@ -127,6 +127,27 @@ describe('PeriodLocksService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('canonicalises the periodValue before it looks anything up', async () => {
+    // Raw Postgres equality all the way down: a lock stored as `"q1"` counted
+    // no `"Q1"` record as pending, flipped none to `locked`, and left the
+    // period open to writes while the UI showed it closed. The lock row itself
+    // is the smallest part of that; the two queries around it are the hole.
+    prisma.tx.periodLock.create.mockResolvedValue(LOCK_ROW);
+    prisma.tx.activityRecord.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.lock(superAdmin(), { ...CREATE_DTO, periodValue: '  q1  ' });
+
+    expect(prisma.activityRecord.count.mock.calls[0][0].where).toMatchObject({
+      periodValue: 'Q1',
+    });
+    expect(prisma.tx.periodLock.create.mock.calls[0][0].data).toMatchObject({
+      periodValue: 'Q1',
+    });
+    expect(prisma.tx.activityRecord.updateMany.mock.calls[0][0].where).toMatchObject({
+      periodValue: 'Q1',
+    });
+  });
+
   it('lock creates the row, flips committed records to locked, and audits', async () => {
     prisma.tx.periodLock.create.mockResolvedValue(LOCK_ROW);
     prisma.tx.activityRecord.updateMany.mockResolvedValue({ count: 3 });
