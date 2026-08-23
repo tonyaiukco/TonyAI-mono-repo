@@ -27,6 +27,7 @@ function cell(over: Partial<TrackingMatrixCell> = {}): TrackingMatrixCell {
     recordCount: 1,
     uncalculatedRecordCount: 0,
     voidedRecordCount: 0,
+    awaitingReviewRecords: 0,
     lastUpdate: '2026-01-01T00:00:00.000Z',
     anomaly: false,
     ...over,
@@ -108,6 +109,30 @@ describe('buildKpiData', () => {
     expect(kpi.completedCategories).toBe(6);
     expect(kpi.calculationCompletionRate).toBe(60);
     expect(kpi.totalLocations).toBe(8);
+  });
+
+  it('counts a cell awaiting review as incomplete, not complete', () => {
+    // WP19 moved a submitted-only cell from `complete` to `incomplete` on the
+    // server, and this card is where a user meets the consequence: the
+    // percentage now answers "how much has been ACCEPTED", not "how much has
+    // been keyed in". Read from the server's totals and never recomputed here —
+    // the cells this function receives are one row's worth, while the totals
+    // span the whole tenant.
+    const kpi = buildKpiData(
+      summary,
+      matrix(
+        [
+          row({
+            cells: [cell({ status: 'incomplete', awaitingReviewRecords: 3 })],
+            completeCount: 0,
+          }),
+        ],
+        { complete: 0, incomplete: 1, missing: 10 },
+      ),
+      1,
+    );
+    expect(kpi.completedCategories).toBe(0);
+    expect(kpi.calculationCompletionRate).toBe(0);
   });
 
   it('reports 0%, not NaN, for a tenant with no cells at all', () => {

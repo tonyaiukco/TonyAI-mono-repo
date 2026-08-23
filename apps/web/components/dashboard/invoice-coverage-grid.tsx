@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import {
   duplicateNote,
   duplicatedMonths,
-  reviewNote,
+  reviewSentence,
   shortfallReasons,
   slotState,
   SHORT_MONTH,
@@ -129,7 +129,10 @@ export function InvoiceCoverageGrid({
   // Why a category can read 24 of 24 and still not be finished. Without it the
   // grid explains every kind of shortfall except the one the review gate
   // introduced, and that cell's amber has no account anywhere on screen.
-  const note = category ? reviewNote(category.awaitingReviewSlots) : null;
+  // Slots when months are waiting, records otherwise. The second arm is the one
+  // a slot count cannot reach: every month closed and accepted, with a
+  // whole-company record behind them still unreviewed.
+  const note = category ? reviewSentence(category) : null;
   if (note) reasons.push(note);
   // A month held BOTH at a site and company-wide renders as a plain ✓ — the
   // slot is closed — so `hasCompanyLevel` goes false and the "would count this

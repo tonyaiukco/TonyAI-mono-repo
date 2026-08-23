@@ -134,17 +134,25 @@ function DataStatusCard({ complete, partial, missing, subsidiaries, locations, c
           location-level tracking replaces one yes/no verdict with a count of
           monthly invoices, so this figure can fall without any data changing —
           and a number that drops on its own reads as a fault unless the screen
-          says otherwise. */}
-      {byLocationCount > 0 && (
-        <p className="-mt-2 mb-4 text-xs text-[#6E6E73]">
-          {byLocationCount === 1
-            ? '1 company is'
-            : `${byLocationCount} companies are`}{' '}
-          measured per location: their electricity, gas and water need one
-          invoice per site per month, so those categories count as complete only
-          when every month is in.
+          says otherwise. WP19 gave it a second way to move for the same
+          reason: the figure now answers "how much has been ACCEPTED", so
+          sending a year's data for review no longer completes anything. */}
+      <div className="-mt-2 mb-4 space-y-1">
+        <p className="text-xs text-[#6E6E73]">
+          Complete counts categories whose data a reviewer has approved.
+          Anything still waiting for review is counted as partial.
         </p>
-      )}
+        {byLocationCount > 0 && (
+          <p className="text-xs text-[#6E6E73]">
+            {byLocationCount === 1
+              ? '1 company is'
+              : `${byLocationCount} companies are`}{' '}
+            measured per location: their electricity, gas and water need one
+            invoice per site per month, so those categories count as complete
+            only when every month is in.
+          </p>
+        )}
+      </div>
 
       {/* Progress bar */}
       <div className="h-4 rounded-full bg-[#F5F5F7] overflow-hidden mb-5">

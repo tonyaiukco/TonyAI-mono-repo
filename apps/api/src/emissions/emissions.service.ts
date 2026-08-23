@@ -3,6 +3,7 @@ import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import {
   CATEGORIES,
   CATEGORY_SCOPE_MAP,
+  ACCEPTED_STATUSES,
   COUNTED_STATUSES as SHARED_COUNTED_STATUSES,
   isCalculated,
   INVOICE_TRACKED_CATEGORIES,
@@ -114,18 +115,20 @@ export interface InvoiceCoverage {
 }
 
 /**
- * The statuses that mean a human has actually accepted the invoice.
+ * The statuses that mean a human has actually accepted the data.
  *
  * Deliberately narrower than `COUNTED_STATUSES`: that set decides what the
  * emissions inventory counts (submitted data must not vanish from the totals
  * while it queues for review), this one decides what the *collection status* is
  * allowed to call finished. Round-1 DE-2 is precisely the gap between the two —
  * submitting is not finishing.
+ *
+ * Derived from the shared list rather than restated here. It was a local literal
+ * until WP19 made it the definition of a green cell across the whole matrix, at
+ * which point a second hand-maintained copy of a status list was exactly the
+ * shape of problem `COUNTED_STATUSES` was moved to shared-types to end.
  */
-const REVIEWED_STATUSES = new Set<ActivityRecordStatus>([
-  ActivityRecordStatus.approved,
-  ActivityRecordStatus.locked,
-]);
+const REVIEWED_STATUSES = new Set<ActivityRecordStatus>([...ACCEPTED_STATUSES]);
 
 /** The projection of an activity record that the invoice rule actually reads. */
 export interface CoverageRecord {
@@ -234,6 +237,8 @@ export function deriveCellStatus(input: {
   anomaly: boolean;
   /** An evidence-required category holding a committed record with no file. */
   evidenceMissing: boolean;
+  /** Committed records nobody has reviewed yet (`submitted`/`under_review`). */
+  awaitingReviewRecords: number;
   /** The invoice rule's result, or `null` for the yes/no categories. */
   coverage: InvoiceCoverage | null;
 }): DataStatus {
@@ -250,9 +255,36 @@ export function deriveCellStatus(input: {
   const somethingLeftToLookAt =
     input.hasPending || input.anomaly || input.evidenceMissing;
 
-  if (!input.coverage) {
-    return somethingLeftToLookAt ? 'incomplete' : 'complete';
+  // The review gate — WP19 (decision 2026-08-21), one rule for every cell.
+  //
+  // Round-1 DE-2: "On submit for review, the data-collection status turns green
+  // immediately." It did, because `COUNTED_STATUSES` counts a `submitted`
+  // record as committed — rightly, the inventory must not lose data queued for
+  // review — while `PENDING_STATUSES` catches only `draft`/`rejected`. WP17
+  // closed that on the invoice branch alone and in SLOTS; this closes it
+  // everywhere and in RECORDS.
+  //
+  // The record form SUBSUMES the slot form, which is why the old
+  // `coverage.awaitingReview.size` test is gone rather than kept alongside:
+  // `awaitingReview` is `covered` minus the accepted slots, so a slot can only
+  // be awaiting review if some committed record in the cell is — never the
+  // reverse. The case the slot test could not state at all is an unreviewed
+  // record that closed NO slot: filed for the whole company, or against a
+  // period the monthly rule does not recognise. Its tonnage is already inside
+  // the figure printed on the cell and nobody has accepted it. (A second
+  // unreviewed record against a month an approved invoice already covers is the
+  // same shape, but the uniqueness index makes it hard to reach — see the
+  // `periodValue` casing note in the status log.) `awaitingReview` survives as
+  // reporting: it names WHICH months are waiting, in the drill-down and on the
+  // wire, which a bare count cannot.
+  if (somethingLeftToLookAt || input.awaitingReviewRecords > 0) {
+    return 'incomplete';
   }
+
+  // Everything below is the invoice rule's own question — is the year's set of
+  // required invoices actually in? — and a yes/no cell has no denominator to
+  // ask it against. Not having one is what puts a cell on this branch.
+  if (!input.coverage) return 'complete';
 
   // `required > 0` is load-bearing, not defensive. A location-measured
   // subsidiary whose sites all postdate the reported year has a denominator of
@@ -261,24 +293,7 @@ export function deriveCellStatus(input: {
   const allSlotsClosed =
     input.coverage.required > 0 &&
     input.coverage.covered.size >= input.coverage.required;
-  if (!allSlotsClosed) return 'incomplete';
-
-  // The fourth cap is round-1 DE-2 itself: "On submit for review, the
-  // data-collection status turns green immediately." It did, and the
-  // denominator work of PRs 2–3 did not touch it — `COUNTED_STATUSES` counts a
-  // `submitted` record as committed (rightly: the inventory must not lose data
-  // queued for review), while `PENDING_STATUSES` only catches `draft`/
-  // `rejected`. So twelve invoices sent for review and seen by nobody closed
-  // twelve slots and turned the cell green.
-  //
-  // Confined to the invoice-tracked branch on purpose. The yes/no branch above
-  // has the same property, and changing it would re-mean all eight remaining
-  // categories on every subsidiary — a separate decision, recorded as an open
-  // question rather than smuggled in here.
-  if (somethingLeftToLookAt || input.coverage.awaitingReview.size > 0) {
-    return 'incomplete';
-  }
-  return 'complete';
+  return allSlotsClosed ? 'complete' : 'incomplete';
 }
 
 /** Mutable accumulator behind an EmissionsTrendPoint, carrying a sort key. */
@@ -632,6 +647,9 @@ export class EmissionsService {
         let tCo2e: number | null = null;
         let uncalculatedRecordCount = 0;
         let voidedRecordCount = 0;
+        // At cell scope rather than inside the `live.length` branch below, so a
+        // cell holding no records reports 0 instead of nothing.
+        let awaitingReviewRecords = 0;
         let lastUpdate: string | null = null;
         let anomaly = false;
 
@@ -682,6 +700,11 @@ export class EmissionsService {
               if (evidenceRequired && r._count.evidence === 0) {
                 evidenceMissing = true;
               }
+              // The complement of REVIEWED_STATUSES within the counted set,
+              // i.e. `submitted`/`under_review`. Derived, never restated: one
+              // definition of "a human accepted this", and the same complement
+              // `computeInvoiceCoverage` builds its own awaiting set from.
+              if (!REVIEWED_STATUSES.has(r.status)) awaitingReviewRecords += 1;
               committed.push({
                 locationId: r.locationId,
                 reportingPeriod: r.reportingPeriod,
@@ -701,6 +724,7 @@ export class EmissionsService {
             hasPending,
             anomaly,
             evidenceMissing,
+            awaitingReviewRecords,
             coverage,
           });
         }
@@ -718,6 +742,7 @@ export class EmissionsService {
           recordCount: recs.length,
           uncalculatedRecordCount,
           voidedRecordCount,
+          awaitingReviewRecords,
           ...(coverage
             ? {
                 coverage: {
@@ -802,9 +827,9 @@ export class EmissionsService {
           category: { in: INVOICE_TRACKED_CATEGORIES },
           // Deliberately UNFILTERED by status, where this once asked SQL for
           // `COUNTED_STATUSES` only. The response now carries FR §2.2's verdict,
-          // and two of the three caps behind it — a draft sitting in the cell,
+          // and two of the four caps behind it — a draft sitting in the cell,
           // an anomaly flag — are invisible to a query that has already dropped
-          // those rows. The committed subset is taken in JS below, exactly as
+          // those rows. (Four since WP19 added the review gate.) The committed subset is taken in JS below, exactly as
           // `trackingMatrix` does it, so both reach the verdict from the same
           // records rather than from two different queries.
         },
@@ -839,6 +864,13 @@ export class EmissionsService {
         let hasPending = false;
         let anomaly = false;
         let evidenceMissing = false;
+        // This IS the gate on this branch too, not defensive symmetry: since
+        // WP19 `deriveCellStatus` reads the record count before it looks at
+        // coverage at all. A category with every slot closed AND accepted, plus
+        // one `submitted` whole-company record, is `incomplete` here — and this
+        // number is the only thing on the response that can explain why, which
+        // is why it is returned rather than only passed.
+        let awaitingReviewRecords = 0;
         const committed: CoverageRecord[] = [];
         // The SAME `live` filter the matrix applies. Without it this panel
         // reads a voided record's stale anomaly flag and counts the row as
@@ -851,6 +883,7 @@ export class EmissionsService {
           if (PENDING_STATUSES.has(r.status)) hasPending = true;
           if (r.anomalyFlag) anomaly = true;
           if (!COUNTED_SET.has(r.status)) continue;
+          if (!REVIEWED_STATUSES.has(r.status)) awaitingReviewRecords += 1;
           if (evidenceRequired && r._count.evidence === 0) evidenceMissing = true;
           committed.push({
             locationId: r.locationId,
@@ -875,6 +908,7 @@ export class EmissionsService {
             hasPending,
             anomaly,
             evidenceMissing,
+            awaitingReviewRecords,
             coverage,
           }),
           required: coverage.required,
@@ -884,6 +918,7 @@ export class EmissionsService {
           missingEvidenceRecords: coverage.missingEvidenceRecords,
           outOfScopeRecords: coverage.outOfScopeRecords,
           awaitingReviewSlots: coverage.awaitingReview.size,
+          awaitingReviewRecords,
           // Which months already hold a WHOLE-COMPANY entry. Without this the
           // grid invites the user to key a site invoice for a month that is
           // already recorded at company level, and both rows then feed the

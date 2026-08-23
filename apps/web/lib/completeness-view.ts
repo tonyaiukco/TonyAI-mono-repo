@@ -9,8 +9,9 @@
 //
 // What this module must NEVER do is decide whether a category is complete. That
 // verdict is FR §2.2's and it arrives on the wire as `status`, because two of
-// the three caps behind it — a draft in the cell, an anomaly flag — correspond
-// to no field in this response. A client that recomputed it from
+// the four caps behind it — a draft in the cell, an anomaly flag — correspond
+// to no field in this response. (Four since WP19 added the review gate, whose
+// own number DOES arrive, as `awaitingReviewRecords`.) A client that recomputed it from
 // `covered >= required` would badge green over a cell the dashboard shows
 // amber, which is round-1 DE-2's own failure one level up.
 import { INVOICE_TRACKED_CATEGORIES } from "@tonyai/shared-types";
@@ -144,6 +145,73 @@ export function reviewNote(awaitingReviewSlots: number): string | null {
   return awaitingReviewSlots === 1
     ? "1 invoice is keyed in but still waiting for review, so this category is not finished yet."
     : `${awaitingReviewSlots} invoices are keyed in but still waiting for review, so this category is not finished yet.`;
+}
+
+/**
+ * Why a cell with no invoice denominator is not finished (WP19).
+ *
+ * The counterpart to `reviewNote` for the branch that counts RECORDS instead of
+ * slots — the eight yes/no categories, and every invoice category on a
+ * subsidiary-measured row. That branch has no shortfall counters at all, so
+ * without this line its amber has nothing on screen accounting for it.
+ *
+ * Also used on an invoice cell whose slots are all accepted while a record that
+ * closed none of them still waits: the slot sentence is silent about exactly
+ * that case, and it is the reason such a cell is amber.
+ *
+ * Counts committed records only. It is deliberately not comparable with the
+ * cell's entry count, which includes drafts nobody has been asked to review.
+ */
+export function unreviewedRecordsNote(awaitingReviewRecords: number): string | null {
+  if (awaitingReviewRecords <= 0) return null;
+  return awaitingReviewRecords === 1
+    ? "1 entry is keyed in but nobody has reviewed it yet, so this category is not finished."
+    : `${awaitingReviewRecords} entries are keyed in but nobody has reviewed them yet, so this category is not finished.`;
+}
+
+/**
+ * The review sentence for one cell, in whichever unit that cell can speak —
+ * one decision, three surfaces.
+ *
+ * SLOTS when the cell has a denominator and months are waiting, because naming
+ * months is more use than counting the rows behind them. RECORDS otherwise:
+ * that is the only unit a cell without a denominator has, and the only one that
+ * can see a record which closed no slot at all.
+ *
+ * Never both. They count different things, and a cell printing "3 invoices are
+ * keyed in…" beside "4 awaiting review" invites a reader to find a discrepancy
+ * that is not there — which is exactly what the dashboard cell did between the
+ * tooltip and its own accessible name before this existed.
+ */
+export function reviewSentence(input: {
+  awaitingReviewSlots?: number;
+  awaitingReviewRecords: number;
+}): string | null {
+  const slots = input.awaitingReviewSlots ?? 0;
+  return slots > 0
+    ? reviewNote(slots)
+    : unreviewedRecordsNote(input.awaitingReviewRecords);
+}
+
+/**
+ * The same choice, compressed to a badge — for an accessible name or a corner
+ * of a row, where the full sentence does not fit.
+ *
+ * Carries its unit. "1 awaiting review" beside a fraction counted in invoices
+ * reads as one of those invoices, which is the confusion this whole pair of
+ * counters exists to avoid.
+ */
+export function reviewBadge(input: {
+  awaitingReviewSlots?: number;
+  awaitingReviewRecords: number;
+}): string | null {
+  const slots = input.awaitingReviewSlots ?? 0;
+  if (slots > 0) {
+    return `${slots} invoice${slots === 1 ? "" : "s"} awaiting review`;
+  }
+  const records = input.awaitingReviewRecords;
+  if (records <= 0) return null;
+  return `${records} ${records === 1 ? "entry" : "entries"} awaiting review`;
 }
 
 /**
@@ -308,7 +376,11 @@ export function deriveEntryCoverage({
   const accepted = Math.max(0, tracked.covered - tracked.awaitingReviewSlots);
 
   const reasons = shortfallReasons(tracked, data.reportingYear);
-  const note = reviewNote(tracked.awaitingReviewSlots);
+  // Slots when months are waiting, records otherwise — the second arm is what
+  // accounts for a category whose slots are all closed AND accepted while a
+  // whole-company record behind them still waits. Without it this panel shows
+  // an amber verdict it cannot explain.
+  const note = reviewSentence(tracked);
   if (note) reasons.push(note);
   // A statement about data that already exists, so it sits with the reasons and
   // is NOT gated on `hasEntry`. Reachable on the seeded database today.

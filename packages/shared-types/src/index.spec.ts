@@ -287,4 +287,19 @@ describe('COUNTED_STATUSES — what the inventory counts', () => {
       expect(ACTIVITY_RECORD_STATUSES).toContain(status);
     }
   });
+
+  it('splits into awaiting-review and accepted, with no third kind', () => {
+    // WP19's review gate is exactly the complement of "accepted" within this
+    // list, and the completeness verdict reads it on both of its branches. A
+    // new counted status that is neither pending nor accepted would land
+    // silently on the accepted side and turn a cell green without anyone
+    // deciding it should — so the partition is asserted here, where the list
+    // lives, instead of being inferred at the call sites that consume it.
+    const pending = new Set<string>(PENDING_REVIEW_STATUSES);
+    const accepted = COUNTED_STATUSES.filter((s) => !pending.has(s));
+    expect(accepted).toEqual(['approved', 'locked']);
+    expect(accepted.length + PENDING_REVIEW_STATUSES.length).toBe(
+      COUNTED_STATUSES.length,
+    );
+  });
 });

@@ -35,18 +35,47 @@ The Tracking Matrix must provide a subsidiary level view of category completenes
 #### Red: Missing
 Show red when:
 - no data record exists for the selected category, reporting period, and organisation or subsidiary
+- or every record in the cell has been **withdrawn** (`voided`). A withdrawn figure counts towards nothing, so the cell reports what is actually there. The withdrawn rows are still reported as a count, so the cell can say what happened rather than look like it lost track
 
 #### Yellow: Incomplete
 Show yellow when:
-- a data record exists but is still in `draft` status
+- a data record exists but is still in `draft` or `rejected` status
 - or required evidence is missing
-- or the record is flagged for review
+- or a record carries an **anomaly flag** — this is what "flagged for review" means here: the automated variance check in [`validation_anomaly_rules.md`](validation_anomaly_rules.md), not the human review queue. The two were not distinguished in an earlier draft of this section, which read as a contradiction against the green rule below
+- or any committed record in the cell is still **awaiting review** (`submitted` or `under_review`)
 
 #### Green: Complete
 Show green when:
 - a valid data record exists
 - required evidence is attached where applicable
-- and status is `submitted`, `approved`, or `locked`
+- and **every** committed record in the cell has been accepted by a person — status `approved` or `locked`
+
+> **Amended 2026-08-21 (WP19).** Green previously included `submitted`, so a category
+> went green the moment it was *sent* for review and nobody had looked at it. Round-1
+> UAT raised that as **DE-2**; WP17 closed it for invoice-measured cells only, and this
+> amendment extends it to every cell, so "green" means one thing across the matrix.
+>
+> Two consequences worth stating rather than discovering. The dashboard completion
+> percentage now answers *"how much has been accepted"*, not *"how much has been keyed
+> in"*, and will read lower for any organisation with reviews outstanding. And
+> `submitted` records still count towards the emissions **inventory** — data queued for
+> review must not vanish from the totals. Completeness and inventory are separate
+> claims, computed separately, and this rule changes only the first.
+
+#### The invoice rule — an additional condition, not a different one
+A cell measured **by invoice** must also have every required monthly invoice in place
+before it can be green. That measurement applies when all three of these hold:
+
+- the subsidiary's `trackingGranularity` is `location`, **and**
+- the category is Electricity, Natural Gas or Water, **and**
+- the matrix is scoped to a single reporting year
+
+Required invoices = `locations × 12` per category (see §DASH-3 in the round-1 feedback
+for the worked example). A cell failing any one of the three is judged by the rules
+above alone — which is most of the matrix rather than a rare edge, because a subsidiary
+measured as a whole has no per-site denominator to count against. Any statement of this
+rule as "the three utility categories are stricter" is wrong: the category is only one
+of its three conditions.
 
 ### 2.3 Drill Down
 Clicking a matrix cell must open a targeted drawer or route that passes:

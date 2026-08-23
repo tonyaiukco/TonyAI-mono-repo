@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/sheet';
 import type { Category, DataStatus, TrackingMatrixRow } from '@/lib/types';
 import { InvoiceCoverageGrid } from './invoice-coverage-grid';
+import { reviewBadge } from '@/lib/completeness-view';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -182,6 +183,11 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                 {row.cells.map((cat) => {
                   const config = statusConfig[cat.status];
                   const Icon = config.icon;
+                  // Same unit the cell tooltip and the drill-down chose.
+                  const awaiting = reviewBadge({
+                    awaitingReviewSlots: cat.coverage?.awaitingReviewSlots,
+                    awaitingReviewRecords: cat.awaitingReviewRecords,
+                  });
                   
                   return (
                     <div
@@ -230,6 +236,15 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                           >
                             {config.label}
                           </Badge>
+                        )}
+                        {/* The verdict beside it may read Partial for a
+                            category whose data is entirely keyed in — WP19 —
+                            and this is the only place in the drawer that can
+                            say which of the two it is. */}
+                        {awaiting && (
+                          <p className="mt-1 text-[10px] font-medium text-[#92400E]">
+                            {awaiting}
+                          </p>
                         )}
                       </div>
                     </div>

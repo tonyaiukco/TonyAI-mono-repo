@@ -3,9 +3,12 @@ import {
   deriveEntryCoverage,
   duplicateNote,
   duplicatedMonths,
+  reviewBadge,
   reviewNote,
+  reviewSentence,
   shortfallReasons,
   slotState,
+  unreviewedRecordsNote,
 } from './completeness-view';
 import type {
   CategoryCompleteness,
@@ -53,6 +56,7 @@ function category(over: Partial<CategoryCompleteness> = {}): CategoryCompletenes
     missingEvidenceRecords: 0,
     outOfScopeRecords: 0,
     awaitingReviewSlots: 0,
+    awaitingReviewRecords: 0,
     companyLevelMonths: [],
     locations: [{ locationId: 'loc-1', locationName: 'Ankara Power Plant', months: months() }],
     ...over,
@@ -185,13 +189,129 @@ describe('reviewNote', () => {
   it('explains a yellow status that the shortfall lines cannot account for', () => {
     // The cell can read 24 of 24 and still be yellow. Without this line there is
     // nothing on screen saying why.
-    expect(reviewNote(6)).toContain('6 invoices are keyed in but still waiting');
-    expect(reviewNote(1)).toContain('1 invoice is keyed in');
+    //
+    // Pinned WHOLE, not by its opening clause. Substring assertions let the
+    // operative half be rewritten to say the opposite — "so this category is
+    // finished and needs nothing further" passed every check here — and the
+    // operative half is the only part that tells a user to act.
+    expect(reviewNote(6)).toBe(
+      '6 invoices are keyed in but still waiting for review, so this category is not finished yet.',
+    );
+    expect(reviewNote(1)).toBe(
+      '1 invoice is keyed in but still waiting for review, so this category is not finished yet.',
+    );
   });
 
   it('is absent when nothing is queued', () => {
     expect(reviewNote(0)).toBeNull();
     expect(reviewNote(-1)).toBeNull();
+  });
+});
+
+describe('unreviewedRecordsNote', () => {
+  it('explains an amber cell that has no invoice counters to explain it', () => {
+    // WP19's branch counts RECORDS, has no denominator and no shortfall lines,
+    // so this sentence is the entire explanation such a cell can offer — which
+    // is why it is pinned whole rather than by substring. Asserting only the
+    // opening clause let the ending be reversed to "so this category is
+    // finished and needs nothing further" with the suite still green.
+    expect(unreviewedRecordsNote(3)).toBe(
+      '3 entries are keyed in but nobody has reviewed them yet, so this category is not finished.',
+    );
+    expect(unreviewedRecordsNote(1)).toBe(
+      '1 entry is keyed in but nobody has reviewed it yet, so this category is not finished.',
+    );
+  });
+
+  it('is absent when nothing is waiting', () => {
+    expect(unreviewedRecordsNote(0)).toBeNull();
+    expect(unreviewedRecordsNote(-1)).toBeNull();
+  });
+
+  it('makes both halves of its claim, and neither of the wrong ones', () => {
+    // Two things have to be true at once and each guards a different mistake.
+    // "The data is in" stops a user who keyed a full year being sent to look
+    // for work that does not exist; "not finished" is what tells them there is
+    // still something to do. Assert both — the second half was unguarded, and a
+    // sentence claiming the category WAS finished passed the whole suite.
+    const note = unreviewedRecordsNote(4)!;
+    expect(note).not.toMatch(/missing|no data|not entered/i);
+    expect(note).toContain('keyed in');
+    expect(note).toContain('is not finished');
+    expect(note).not.toMatch(/needs nothing|is finished and|nothing further/i);
+  });
+
+  it('counts a different thing from reviewNote and says so in its own words', () => {
+    // Records here, invoices there. A reader who saw the same noun twice would
+    // reasonably subtract one from the other; the units do not allow it.
+    expect(unreviewedRecordsNote(2)).not.toContain('invoice');
+    expect(reviewNote(2)).toContain('invoices');
+  });
+});
+
+describe('reviewSentence — one unit per cell, never two', () => {
+  it('speaks in invoices when months are waiting', () => {
+    expect(reviewSentence({ awaitingReviewSlots: 3, awaitingReviewRecords: 4 })).toContain(
+      '3 invoices are keyed in',
+    );
+  });
+
+  it('falls back to entries when no month is waiting but a record is', () => {
+    // The case the slot count cannot see: every month closed AND accepted,
+    // with a whole-company record behind them still unreviewed. Without this
+    // arm the cell is amber and nothing on screen accounts for it.
+    expect(reviewSentence({ awaitingReviewSlots: 0, awaitingReviewRecords: 1 })).toContain(
+      '1 entry is keyed in',
+    );
+  });
+
+  it('speaks in entries for a cell that has no denominator at all', () => {
+    expect(reviewSentence({ awaitingReviewRecords: 2 })).toContain('2 entries are keyed in');
+  });
+
+  it('says nothing when nothing is waiting', () => {
+    expect(reviewSentence({ awaitingReviewSlots: 0, awaitingReviewRecords: 0 })).toBeNull();
+    expect(reviewSentence({ awaitingReviewRecords: 0 })).toBeNull();
+  });
+
+  it('never emits both units at once', () => {
+    // Records and slots count different things. A cell printing "3 invoices are
+    // keyed in…" beside a record count invites a reader to subtract one from
+    // the other and find a discrepancy that is not there.
+    const s = reviewSentence({ awaitingReviewSlots: 3, awaitingReviewRecords: 4 })!;
+    expect(s).not.toContain('4');
+    expect(s).not.toContain('entries');
+  });
+});
+
+describe('reviewBadge — the same choice, compressed', () => {
+  it('carries its unit, in both arms', () => {
+    // "1 awaiting review" beside a face reading "3/24" reads as one of those
+    // invoices. The unit is the whole point of the word.
+    expect(reviewBadge({ awaitingReviewSlots: 1, awaitingReviewRecords: 9 })).toBe(
+      '1 invoice awaiting review',
+    );
+    expect(reviewBadge({ awaitingReviewSlots: 2, awaitingReviewRecords: 9 })).toBe(
+      '2 invoices awaiting review',
+    );
+    expect(reviewBadge({ awaitingReviewRecords: 1 })).toBe('1 entry awaiting review');
+    expect(reviewBadge({ awaitingReviewRecords: 3 })).toBe('3 entries awaiting review');
+  });
+
+  it('agrees with reviewSentence about which unit this cell speaks', () => {
+    // They are rendered together — the badge in the accessible name, the
+    // sentence in the tooltip. Disagreeing told a screen-reader user a
+    // different number from the one on screen, in a different unit.
+    const input = { awaitingReviewSlots: 3, awaitingReviewRecords: 4 };
+    expect(reviewBadge(input)).toContain('invoice');
+    expect(reviewSentence(input)).toContain('invoice');
+    const records = { awaitingReviewSlots: 0, awaitingReviewRecords: 4 };
+    expect(reviewBadge(records)).toContain('entries');
+    expect(reviewSentence(records)).toContain('entries');
+  });
+
+  it('says nothing when nothing is waiting', () => {
+    expect(reviewBadge({ awaitingReviewSlots: 0, awaitingReviewRecords: 0 })).toBeNull();
   });
 });
 
