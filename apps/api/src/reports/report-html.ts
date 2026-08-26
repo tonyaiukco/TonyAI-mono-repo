@@ -1,3 +1,4 @@
+import { entityLabel } from '@tonyai/shared-types';
 import type { ReportData } from './reports.service';
 
 /**
@@ -41,7 +42,7 @@ export function buildReportHtml(data: ReportData): string {
   const ledgerRows = isDetail
     ? data.records
         .map(
-          (r) => `<tr><td>${esc(r.subsidiaryName)}</td><td>${esc(r.category)}</td>
+          (r) => `<tr><td>${esc(r.subsidiaryName)}</td><td>${esc(entityLabel(r))}</td><td>${esc(r.category)}</td>
           <td>${esc(r.periodValue)}</td><td class="num">${fmt.format(r.activityValue)} ${esc(r.activityUnit)}</td>
           <td class="num">${
             r.conversionFactor && r.normalizedValue !== undefined
@@ -67,6 +68,21 @@ export function buildReportHtml(data: ReportData): string {
           ? `<tr><td colspan="6" class="note">Unit conversion applied before this factor: ${esc(f.conversionBasis)}</td></tr>`
           : ''
       }`,
+    )
+    .join('');
+
+  // Every cell here is user-authored — a site name and a free-text reason of up
+  // to 2,000 characters — so all of it goes through `esc`.
+  const withdrawnRows = data.withdrawn
+    .map(
+      (r) => `<tr><td>${esc(r.subsidiaryName)}</td><td>${esc(entityLabel(r))}</td>
+      <td>${esc(r.category)}</td><td>${esc(r.periodValue)}</td>
+      <td class="num">${
+        r.tCo2e === null
+          ? '<span class="note">Not calculated</span>'
+          : fmt.format(r.tCo2e)
+      }</td><td>${esc(r.voidedAt ?? '—')}</td>
+      <td>${esc(r.voidReason ?? '—')}</td></tr>`,
     )
     .join('');
 
@@ -122,6 +138,25 @@ export function buildReportHtml(data: ReportData): string {
       ? `<p class="note"><strong>${data.summary.uncalculatedRecordCount}</strong> of these ${data.summary.recordCount} records carry no emissions figure, because no emission factor is available for their category. They are listed in the detail ledger as &ldquo;Not calculated&rdquo; and contribute nothing to the totals above.</p>`
       : ''
   }
+  ${
+    data.withdrawn.length > 0
+      ? `<div class="warn"><strong>Restatement:</strong> ${data.withdrawnTotals.count} ${
+          data.withdrawnTotals.count === 1
+            ? 'record was withdrawn from this reporting year after approval, removing'
+            : 'records were withdrawn from this reporting year after approval, removing'
+        } <strong>${fmt.format(data.withdrawnTotals.tCo2e)} tCO₂e</strong> from the inventory.${
+          data.withdrawnTotals.uncalculatedCount > 0
+            ? ` ${data.withdrawnTotals.uncalculatedCount} of them carry no emissions figure, so withdrawing ${
+                data.withdrawnTotals.uncalculatedCount === 1 ? 'it' : 'them'
+              } removed no tonnage.`
+            : ''
+        } ${
+          data.withdrawnTotals.count === 1 ? 'It counts' : 'They count'
+        } towards no figure in this report, and ${
+          data.withdrawnTotals.count === 1 ? 'it is' : 'they are'
+        } listed under &ldquo;Withdrawn from this inventory&rdquo; below with the reason recorded at the time.</div>`
+      : ''
+  }
   <p class="note">Scope 3 is out of scope for Phase 1. Figures are computed from committed activity records using prototype demo emission factors — not authoritative DEFRA/AIB values.</p>
 
   <h2>Emissions by category</h2>
@@ -135,8 +170,22 @@ export function buildReportHtml(data: ReportData): string {
   ${
     isDetail
       ? `<h2>Activity records ledger</h2>
-  <table><thead><tr><th>Subsidiary</th><th>Category</th><th>Period</th><th class="num">Activity</th><th class="num">Normalised</th><th class="num">tCO₂e</th><th>Status</th><th class="num">Evidence</th></tr></thead>
+  <table><thead><tr><th>Subsidiary</th><th>Reporting entity</th><th>Category</th><th>Period</th><th class="num">Activity</th><th class="num">Normalised</th><th class="num">tCO₂e</th><th>Status</th><th class="num">Evidence</th></tr></thead>
   <tbody>${ledgerRows}</tbody></table>`
+      : ''
+  }
+
+  ${
+    // Deliberately NOT gated on `isDetail`, unlike the ledger above it: a
+    // restatement is a disclosure, not a detail appendix, and the template a
+    // board actually reads is the Executive Summary. Hiding it there would
+    // recreate the omission this section exists to end.
+    data.withdrawn.length > 0
+      ? `<h2>Withdrawn from this inventory</h2>
+  <p class="note">These figures were approved and then withdrawn. They stop counting towards totals, reports and invoice coverage from the moment of withdrawal, so nothing above includes them; each entry stays on record with the reason given, and the withdrawal itself is in the audit log. A withdrawal is not a deletion — the period it covered reopens so a corrected figure can be entered in its place.</p>
+  <table><thead><tr><th>Subsidiary</th><th>Reporting entity</th><th>Category</th><th>Period</th><th class="num">tCO₂e removed</th><th>Withdrawn (UTC)</th><th>Reason</th></tr></thead>
+  <tbody>${withdrawnRows}<tr><td colspan="4"><strong>Total withdrawn</strong></td>
+  <td class="num"><strong>${fmt.format(data.withdrawnTotals.tCo2e)}</strong></td><td colspan="2"></td></tr></tbody></table>`
       : ''
   }
 

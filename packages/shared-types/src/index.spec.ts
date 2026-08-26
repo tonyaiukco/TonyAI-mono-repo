@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   ACTIVITY_RECORD_STATUSES,
+  entityLabel,
+  UNNAMED_SITE_ENTITY_LABEL,
+  WHOLE_COMPANY_ENTITY_LABEL,
   ACTIVITY_UNITS,
   canonicalPeriodValue,
   MONTH_NAMES,
@@ -406,5 +409,44 @@ describe('the periodValue vocabulary', () => {
     ]) {
       expect(canonicalPeriodValue(key, 'January')).toBeNull();
     }
+  });
+});
+
+describe('entityLabel — one phrase for the reporting entity', () => {
+  it('is the phrase the app and every export print, spelled out here', () => {
+    // Pinned against the LITERAL, not against itself: asserting
+    // `entityLabel(x) === WHOLE_COMPANY_ENTITY_LABEL` passes just as happily
+    // with the constant redefined to 'Whole organisation' — which means
+    // something else entirely (the holding, in the report scope filter).
+    expect(WHOLE_COMPANY_ENTITY_LABEL).toBe('Whole company');
+    expect(UNNAMED_SITE_ENTITY_LABEL).toBe('Site (name unavailable)');
+  });
+
+  it('prints the site name when the record is attributed to one', () => {
+    expect(entityLabel({ locationId: 'loc-1', locationName: 'Istanbul HQ' })).toBe('Istanbul HQ');
+  });
+
+  it('falls back to the whole company for a subsidiary-level record', () => {
+    expect(entityLabel({ locationId: null, locationName: null })).toBe('Whole company');
+    expect(entityLabel({})).toBe('Whole company');
+  });
+
+  it('says a site is involved even when its NAME did not come back', () => {
+    // The case a name-only helper gets wrong: `locationName` is optional on the
+    // contract because it rides on an `include` some queries do not ask for, so
+    // keying on the name alone calls a SITE row "the whole company" the first
+    // time a caller passes a record loaded without the join. That is a
+    // misstatement of the reporting entity in an artifact an auditor keeps.
+    expect(entityLabel({ locationId: 'loc-1' })).toBe('Site (name unavailable)');
+    expect(entityLabel({ locationId: 'loc-1', locationName: '   ' })).toBe(
+      'Site (name unavailable)',
+    );
+  });
+
+  it('treats a blank name as no name — a ledger cell must never be empty', () => {
+    // '   ' is truthy. Without the trim this prints an empty cell in an
+    // audit-ready export, which reads as a missing value, not as a level.
+    expect(entityLabel({ locationName: '   ' })).toBe('Whole company');
+    expect(entityLabel({ locationId: 'l', locationName: '  Izmir Plant  ' })).toBe('Izmir Plant');
   });
 });

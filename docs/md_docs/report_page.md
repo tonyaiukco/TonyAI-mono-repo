@@ -142,7 +142,36 @@ Generate styled PDF output from the active report preview.
 Generate multi sheet `.xlsx` output with suggested sheets:
 - Summary
 - Raw Activity Data
+- Withdrawn Records *(added WP20 — always present, even when empty: a sheet list
+  that depends on the data cannot be consumed by anything automated)*
 - Factors Used
+
+### Restatement disclosure *(added WP20, FR §5.4)*
+Every format states what was withdrawn from the reporting year, because a
+withdrawn figure counts towards nothing above it and an export that omitted it
+silently would misstate the inventory by omission:
+- **PDF** — a `Restatement:` banner under the metric tiles, and a
+  `Withdrawn from this inventory` section listing each record with the reason.
+- **Excel** — a `Withdrawn records (excluded from every figure below)` row on
+  Summary, plus the sheet above.
+- **CSV** — the withdrawn rows share the single table (one header row keeps the
+  file parseable): `status` reads `voided` and is the authoritative
+  discriminator, and every aggregatable cell on those rows (`tco2e`,
+  `activity_value`, `evidence_files`, `anomaly_flag`) carries the `Withdrawn`
+  marker so a SUM over any column still reproduces the report's own figures.
+  The disclosure itself is in `voided_activity_value`, `voided_tco2e`,
+  `voided_at_utc` and `void_reason`.
+
+Every ledger row also names its **reporting entity** — the location, or
+`Whole company` — in all three formats.
+
+**Column order changed once, at WP20.** `reporting_entity` was inserted as the
+second column of the CSV and of the Excel `Raw Activity Data` sheet, and
+`Withdrawn Records` as the third worksheet — so anything reading those exports by
+POSITION rather than by column name (a spreadsheet formula pinned to column G, a
+worksheet index) reads a shifted column and can total the wrong thing silently.
+Repoint such consumers once. From WP20 onwards new columns are **appended, never
+inserted**.
 
 ### Share Report
 Optional feature. Opens modal to share report link or report file with selected stakeholders or auditors.

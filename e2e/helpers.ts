@@ -146,6 +146,10 @@ export const EVIDENCE_FIXTURE = resolve(__dirname, 'fixtures/sample-invoice.pdf'
 
 interface CommittedRecordInput {
   subsidiaryId: string;
+  /** Attribute the record to an operational location instead of the subsidiary
+   *  as a whole. Also widens the uniqueness tuple, so a located record cannot
+   *  collide with a company-level one for the same category and period. */
+  locationId?: string | null;
   category: string;
   periodValue: string;
   activityValue: number;
@@ -170,7 +174,7 @@ export async function createCommittedRecord(
     headers,
     data: {
       subsidiaryId: input.subsidiaryId,
-      locationId: null,
+      locationId: input.locationId ?? null,
       reportingYear: input.reportingYear ?? E2E_YEAR,
       reportingPeriod: input.reportingPeriod ?? E2E_PERIOD,
       periodValue: input.periodValue,

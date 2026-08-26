@@ -15,6 +15,31 @@ import { AuditService } from '../audit/audit.service';
  * specs assert WHAT was audited; the row shape it stamps (actor role +
  * organisation) is covered by audit.service.spec.ts.
  */
+/**
+ * A stubbed browser — not a launched one.
+ *
+ * The rule this module has always followed is "never launch Chromium in a unit
+ * test", and it stands. But it left `generatePdf` with NO unit coverage at all,
+ * so the PDF path could log a zero into the append-only generation log — the
+ * one place a report's restatement count survives — with the suite green and
+ * the E2E, which only checks that bytes arrive, none the wiser. Stubbing the
+ * launch pins what the PDF path DOES without paying for what it renders with.
+ */
+const pdfPage = {
+  setContent: vi.fn(),
+  pdf: vi.fn(async () => Buffer.from('%PDF-1.4 stub')),
+  close: vi.fn(),
+};
+vi.mock('puppeteer', () => ({
+  default: {
+    launch: vi.fn(async () => ({
+      connected: true,
+      newPage: vi.fn(async () => pdfPage),
+      close: vi.fn(),
+    })),
+  },
+}));
+
 const audit = { record: vi.fn() };
 const auditMock = () => audit as unknown as AuditService;
 
@@ -63,6 +88,11 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
     createdBy: 'admin-1',
     anomalyFlag: false,
     varianceReason: null,
+    // Always present on a row Prisma returns — null for a company-level record
+    // that was never withdrawn, which is the overwhelmingly common case.
+    location: null,
+    voidReason: null,
+    voidedAt: null,
     evidence: [{ fileName: 'invoice-jan.pdf' }],
     createdAt: now,
     updatedAt: now,
@@ -89,6 +119,42 @@ function createPrismaMock() {
   };
 }
 type PrismaMock = ReturnType<typeof createPrismaMock>;
+
+/**
+ * Answer `findMany` the way the database does: by status.
+ *
+ * `assemble` runs two reads — the committed ledger and the withdrawn set — and
+ * a mock that returns one array to both makes every approved record show up as
+ * withdrawn as well. That is not a harmless fixture detail: the PDF's
+ * "withdrawn" section would then be exercised by tests that never voided
+ * anything, and a writer that leaked voided rows into the ledger would look
+ * correct here.
+ */
+function stubRecords(prisma: PrismaMock, records: Record<string, unknown>[]): void {
+  prisma.activityRecord.findMany.mockImplementation((args: unknown) => {
+    const q = args as {
+      where?: { status?: { in?: string[] } };
+      include?: { evidence?: unknown; location?: unknown };
+    };
+    const wanted = q?.where?.status?.in ?? [];
+    const include = q?.include ?? {};
+    return Promise.resolve(
+      records
+        .filter((r) => wanted.includes(r.status as string))
+        .map((r) => ({
+          ...r,
+          // Prisma hands back a relation only when the query ASKED for it.
+          // Returning it regardless made both includes untestable: deleting
+          // `location: { select: { name: true } }` from the query — which turns
+          // every row in every export into "Whole company" — killed nothing in
+          // 657 tests, and the same held for `evidence`, under a spec named
+          // "truthful evidence counts".
+          evidence: include.evidence ? r.evidence : undefined,
+          location: include.location ? r.location : undefined,
+        })),
+    );
+  });
+}
 
 const admin: RequestUser = {
   id: 'admin-1',
@@ -188,14 +254,23 @@ describe('ReportsService', () => {
 
   it('meta is tenant-scoped and empty for an out-of-scope subsidiary', async () => {
     const m = await service.meta(admin, 2024, 'sub-999');
-    expect(m.totalCount).toBe(0);
+    // Every count, not just the total: the empty shape is hand-written, so a
+    // field left behind there reports a number for a tenant we cannot see.
+    expect(m).toMatchObject({
+      totalCount: 0,
+      committedCount: 0,
+      incompleteCount: 0,
+      pendingCount: 0,
+      incompleteRatio: 0,
+      voidedCount: 0,
+    });
     expect(prisma.activityRecord.groupBy).not.toHaveBeenCalled();
   });
 
   // --- assembly -------------------------------------------------------------
 
   it('assemble scopes the ledger to the accessible subsidiaries and committed statuses', async () => {
-    prisma.activityRecord.findMany.mockResolvedValue([makeRecord()]);
+    stubRecords(prisma, [makeRecord()]);
     await service.assemble(admin, q);
     expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -211,11 +286,15 @@ describe('ReportsService', () => {
   it('assemble returns an empty ledger for an out-of-scope subsidiary (no query)', async () => {
     const data = await service.assemble(admin, { ...q, subsidiaryId: 'sub-999' } as ReportQueryDto);
     expect(data.records).toEqual([]);
+    // Both reads, not just the ledger: the withdrawn set is tenant-scoped by the
+    // same intersection and must not fall outside the empty-scope early return.
+    expect(data.withdrawn).toEqual([]);
+    expect(data.withdrawnTotals).toEqual({ count: 0, tCo2e: 0, uncalculatedCount: 0 });
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
   });
 
   it('assemble deduplicates factor snapshots by factorId and reports truthful evidence counts', async () => {
-    prisma.activityRecord.findMany.mockResolvedValue([
+    stubRecords(prisma, [
       makeRecord(),
       makeRecord({ id: 'rec-2', periodValue: 'February', evidence: [] }),
       makeRecord({
@@ -231,7 +310,7 @@ describe('ReportsService', () => {
   });
 
   it('assemble includes the evidence appendix only when requested, listing file names', async () => {
-    prisma.activityRecord.findMany.mockResolvedValue([makeRecord()]);
+    stubRecords(prisma, [makeRecord()]);
     const withOut = await service.assemble(admin, q);
     expect(withOut.evidenceSummary).toEqual([]);
     const withIn = await service.assemble(admin, { ...q, includeEvidenceSummary: true } as ReportQueryDto);
@@ -243,14 +322,14 @@ describe('ReportsService', () => {
   // --- CSV + audit ----------------------------------------------------------
 
   it('generateCsv emits a header + one quoted row per committed record and audits the generation', async () => {
-    prisma.activityRecord.findMany.mockResolvedValue([
+    stubRecords(prisma, [
       makeRecord({ activityValue: 12.5 }),
       makeRecord({ id: 'rec-2', periodValue: 'Feb, "cold"' }), // needs quoting
     ]);
     const csv = await service.generateCsv(admin, q);
     const lines = csv.trim().split('\n');
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toContain('subsidiary,category');
+    expect(lines[0]).toContain('subsidiary,reporting_entity,category');
     expect(lines[2]).toContain('"Feb, ""cold"""');
     expect(audit.record).toHaveBeenCalledWith(
         expect.objectContaining({ id: expect.any(String) }),
@@ -265,7 +344,7 @@ describe('ReportsService', () => {
   // --- HTML builder (pure) --------------------------------------------------
 
   it('buildReportHtml renders totals, status and the data warning honestly', async () => {
-    prisma.activityRecord.findMany.mockResolvedValue([makeRecord()]);
+    stubRecords(prisma, [makeRecord()]);
     prisma.activityRecord.groupBy.mockResolvedValue([
       { status: 'approved', _count: { _all: 6 } },
       { status: 'draft', _count: { _all: 4 } }, // 40% incomplete → warning
@@ -284,7 +363,7 @@ describe('ReportsService', () => {
     prisma.subsidiary.findMany.mockResolvedValue([
       { id: 'sub-1', legalName: '<script>alert(1)</script>', tradingName: null },
     ]);
-    prisma.activityRecord.findMany.mockResolvedValue([makeRecord()]);
+    stubRecords(prisma, [makeRecord()]);
     const data = await service.assemble(admin, q);
     const html = buildReportHtml(data);
     expect(html).not.toContain('<script>alert(1)</script>');
@@ -307,7 +386,7 @@ describe('ReportsService', () => {
   });
 
   it('generateExcel builds the three audit sheets', async () => {
-    prisma.activityRecord.findMany.mockResolvedValue([makeRecord()]);
+    stubRecords(prisma, [makeRecord()]);
     const buffer = await service.generateExcel(admin, q);
     expect(buffer.length).toBeGreaterThan(1000);
     expect(buffer.subarray(0, 2).toString()).toBe('PK'); // valid zip/xlsx magic
@@ -317,6 +396,9 @@ describe('ReportsService', () => {
     expect(wb.worksheets.map((w) => w.name)).toEqual([
       'Summary',
       'Raw Activity Data',
+      // Present even with nothing withdrawn: a sheet list that depends on the
+      // data cannot be consumed by anything automated.
+      'Withdrawn Records',
       'Factors Used',
     ]);
   });
@@ -356,7 +438,7 @@ describe('ReportsService', () => {
       });
 
     it('the ledger carries null, not 0 — a report must not assert an unmeasured zero', async () => {
-      prisma.activityRecord.findMany.mockResolvedValue([waterRecord()]);
+      stubRecords(prisma, [waterRecord()]);
 
       const meta = await service.assemble(admin, q);
       const row = meta.records.find((r) => r.category === 'Water');
@@ -372,7 +454,7 @@ describe('ReportsService', () => {
       // Two records on purpose. Asserting only that the water row says the
       // label passes just as happily against a writer that prints the label for
       // EVERY row — i.e. against a destroyed tCO₂e column.
-      prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), waterRecord()]);
+      stubRecords(prisma, [makeRecord(), waterRecord()]);
 
       const csv = await service.generateCsv(admin, q);
       const lines = csv.trim().split('\n');
@@ -382,13 +464,19 @@ describe('ReportsService', () => {
       expect(water).toContain('Not calculated');
       expect(electricity).not.toContain('Not calculated');
       expect(electricity.split(',')).toContain('0.44');
-      // An empty cell in a numeric column sums as zero downstream, which is the
-      // same misstatement wearing a different hat.
-      expect(water).not.toMatch(/,,/);
+      // Positional, not a blanket "no empty cells": the withdrawal columns are
+      // legitimately empty on a counted row, so the old `/,,/` guard would now
+      // fail for a reason that has nothing to do with a dropped figure. What
+      // must hold is that the tCO₂e COLUMN itself is never blank — an empty
+      // cell there sums as zero downstream, the same misstatement in a hat.
+      const header = lines[0].split(',');
+      const tco2e = header.indexOf('tco2e');
+      expect(water.split(',')[tco2e]).toBe('Not calculated');
+      expect(electricity.split(',')[tco2e]).toBe('0.44');
     });
 
     it('the Excel ledger writes the label for water and a numeric cell for the calculated row', async () => {
-      prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), waterRecord()]);
+      stubRecords(prisma, [makeRecord(), waterRecord()]);
 
       const buffer = await service.generateExcel(admin, q);
       const wb = new ExcelJS.Workbook();
@@ -398,7 +486,8 @@ describe('ReportsService', () => {
       const cellsByCategory = new Map<string, ExcelJS.CellValue>();
       sheet.eachRow((row, i) => {
         if (i === 1) return; // header
-        cellsByCategory.set(String(row.getCell(2).value), row.getCell(7).value);
+        // Columns 3 and 8 since WP20 inserted `Reporting entity` at 2.
+        cellsByCategory.set(String(row.getCell(3).value), row.getCell(8).value);
       });
 
       expect(cellsByCategory.get('Water')).toBe('Not calculated');
@@ -409,7 +498,7 @@ describe('ReportsService', () => {
     });
 
     it('the PDF prints the label for water, a number for the calculated row, and reconciles its own tile', async () => {
-      prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), waterRecord()]);
+      stubRecords(prisma, [makeRecord(), waterRecord()]);
       const data = await service.assemble(admin, {
         ...q,
         template: 'ghg_protocol_detail',
@@ -438,7 +527,7 @@ describe('ReportsService', () => {
     });
 
     it('a factor-less record contributes no row to the Factors Used appendix', async () => {
-      prisma.activityRecord.findMany.mockResolvedValue([waterRecord()]);
+      stubRecords(prisma, [waterRecord()]);
 
       const meta = await service.assemble(admin, q);
 
@@ -449,10 +538,395 @@ describe('ReportsService', () => {
   });
 
   it('generateCsv neutralizes spreadsheet formula injection', async () => {
-    prisma.activityRecord.findMany.mockResolvedValue([
+    stubRecords(prisma, [
       makeRecord({ periodValue: '=HYPERLINK("evil")' }),
     ]);
     const csv = await service.generateCsv(admin, q);
     expect(csv).toContain(`"'=HYPERLINK`);
+  });
+  // --- WP20: the restatement disclosure -------------------------------------
+
+  describe('withdrawn records are disclosed, not silently omitted', () => {
+    const voidedRecord = (overrides: Record<string, unknown> = {}) =>
+      makeRecord({
+        id: 'rec-void',
+        status: 'voided',
+        periodValue: 'February',
+        activityValue: 900,
+        voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
+        voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+        ...overrides,
+      });
+
+    /** A withdrawn record in a category with no emission factor (WP17 — Water):
+     *  nothing was removed from the totals by withdrawing it, and no writer may
+     *  print a 0 that claims otherwise. */
+    const voidedWaterRecord = () =>
+      voidedRecord({
+        id: 'rec-void-water',
+        category: 'Water',
+        activityValue: 250,
+        activityUnit: 'cubic_metres',
+        periodValue: 'April',
+        calculation: { category: 'Water', reason: 'no_factor_for_category' },
+        voidReason: 'Meter read against the wrong building.',
+      });
+
+    const columns = (csv: string) => {
+      const lines = csv.trim().split('\n');
+      const header = lines[0].split(',');
+      const at = (line: string, name: string) => line.split(',')[header.indexOf(name)];
+      // A strict numeric test: `Number('')` is 0 AND finite, so filtering on
+      // `Number.isFinite` treats a BLANK cell as a legitimate zero — which is
+      // exactly the dropped-figure bug these sums exist to catch.
+      const numeric = (v: string) => (/^-?\d+(\.\d+)?$/.test(v) ? Number(v) : null);
+      const sum = (name: string, rows = lines.slice(1)) =>
+        rows
+          .map((l) => numeric(at(l, name)))
+          .filter((n): n is number => n !== null)
+          .reduce((a, b) => a + b, 0);
+      return { lines, header, at, numeric, sum };
+    };
+
+    it('meta reports the withdrawn count without letting it back into the ratio', async () => {
+      prisma.activityRecord.groupBy.mockResolvedValue([
+        { status: 'approved', _count: { _all: 6 } },
+        { status: 'submitted', _count: { _all: 2 } },
+        { status: 'under_review', _count: { _all: 1 } },
+        { status: 'draft', _count: { _all: 2 } },
+        { status: 'voided', _count: { _all: 4 } },
+      ] as unknown as { status: ActivityRecordStatus; _count: { _all: number } }[]);
+
+      const m = await service.meta(admin, 2024);
+
+      // Pending rows are in the fixture on purpose: without them, a count that
+      // swept `submitted` in with `voided` would report queued records as
+      // withdrawn, drop them from `totalCount` AND inflate the data-quality
+      // ratio — three compliance figures wrong at once — with the suite green.
+      expect(m.voidedCount).toBe(4);
+      expect(m.pendingCount).toBe(3);
+      expect(m.totalCount).toBe(11);
+      expect(m.committedCount).toBe(9);
+      expect(m.incompleteCount).toBe(2);
+      expect(m.committedCount + m.incompleteCount).toBe(m.totalCount);
+      expect(m.incompleteRatio).toBeCloseTo(2 / 11);
+    });
+
+    it('reports zero withdrawals for a year with no records at all', async () => {
+      prisma.activityRecord.groupBy.mockResolvedValue([]);
+      expect((await service.meta(admin, 2023)).voidedCount).toBe(0);
+    });
+
+    it('reads the withdrawn set separately and keeps voided rows out of the ledger', async () => {
+      stubRecords(prisma, [makeRecord(), voidedRecord()]);
+
+      const data = await service.assemble(admin, q);
+
+      expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            subsidiaryId: { in: ['sub-1', 'sub-2'] },
+            reportingYear: 2024,
+            status: { in: ['voided'] },
+          }),
+          // The include is half the feature: without the location join every
+          // row in every export reads "Whole company", and without evidence the
+          // ledger's file counts are all zero. `objectContaining` on `where`
+          // alone constrains neither.
+          include: {
+            evidence: { select: { fileName: true } },
+            location: { select: { name: true } },
+          },
+        }),
+      );
+      // The ledger is the committed set and nothing else — a voided row leaking
+      // into it would put a withdrawn figure back into every total that sums it.
+      expect(data.records.map((r) => r.status)).toEqual(['approved']);
+      expect(data.withdrawn).toHaveLength(1);
+      expect(data.withdrawn[0]).toMatchObject({
+        category: 'Electricity',
+        periodValue: 'February',
+        status: 'voided',
+        voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
+        voidedAt: '2026-02-03 09:30',
+      });
+      expect(data.withdrawnTotals).toEqual({ count: 1, tCo2e: 0.44, uncalculatedCount: 1 - 1 });
+    });
+
+    it('sums what left in tonnes, and says how many rows had nothing to remove', async () => {
+      stubRecords(prisma, [makeRecord(), voidedRecord(), voidedWaterRecord()]);
+
+      const { withdrawnTotals } = await service.assemble(admin, q);
+
+      // Materiality is measured in tonnes, not rows — and a factor-less row
+      // must not be folded in silently, or "0.44 tCO₂e withdrawn" beside two
+      // rows implies both carried tonnage.
+      expect(withdrawnTotals).toEqual({ count: 2, tCo2e: 0.44, uncalculatedCount: 1 });
+    });
+
+    it('names the reporting entity on every row — committed and withdrawn alike', async () => {
+      stubRecords(prisma, [
+        makeRecord({ locationId: 'loc-1', location: { name: 'Istanbul HQ' } }),
+        makeRecord({ id: 'rec-2', periodValue: 'March' }),
+        voidedRecord({ locationId: 'loc-2', location: { name: 'Izmir Freight Hub' } }),
+      ]);
+
+      const csv = await service.generateCsv(admin, q);
+      const { lines, at } = columns(csv);
+      const site = lines.find((l) => l.includes('January'))!;
+      const company = lines.find((l) => l.includes('March'))!;
+      const withdrawn = lines.find((l) => l.includes('February'))!;
+
+      expect(at(site, 'reporting_entity')).toBe('Istanbul HQ');
+      expect(at(company, 'reporting_entity')).toBe('Whole company');
+      // The withdrawn row too, and asserted beside `subsidiary`: the two halves
+      // of a double-counted month differ ONLY in the reporting entity, and
+      // naming the wrong one in the disclosure defeats the feature. A swap of
+      // the two cells passes any assertion that checks one of them alone.
+      expect(at(withdrawn, 'reporting_entity')).toBe('Izmir Freight Hub');
+      expect(at(withdrawn, 'subsidiary')).toBe('Energy');
+    });
+
+    it('discloses a withdrawal in the same table without adding it to any total', async () => {
+      stubRecords(prisma, [
+        makeRecord(),
+        makeRecord({ id: 'rec-2', periodValue: 'March', activityValue: 2000 }),
+        voidedRecord(),
+      ]);
+
+      const csv = await service.generateCsv(admin, q);
+      const { lines, at, sum } = columns(csv);
+      const withdrawn = lines.find((l) => l.includes('February'))!;
+      const counted = lines.find((l) => l.includes('January'))!;
+
+      expect(at(withdrawn, 'status')).toBe('voided');
+      expect(at(withdrawn, 'void_reason')).toContain('Duplicate of the Istanbul HQ');
+      expect(at(withdrawn, 'voided_at_utc')).toBe('2026-02-03 09:30');
+      // What left is stated — in its OWN columns.
+      expect(at(withdrawn, 'voided_tco2e')).toBe('0.44');
+      expect(at(withdrawn, 'voided_activity_value')).toBe('900');
+      // ...and EVERY column a reader could aggregate carries the marker on a
+      // withdrawn row. Protecting tCO₂e alone still overstated total energy
+      // consumption — itself a reported figure (GRI 302-1, CSRD E1-5) — and
+      // made the CSV disagree with the Excel from the same request.
+      for (const column of ['tco2e', 'activity_value', 'evidence_files', 'anomaly_flag']) {
+        expect(at(withdrawn, column)).toBe('Withdrawn');
+      }
+      expect(sum('tco2e')).toBe(0.88);
+      expect(sum('activity_value')).toBe(3000);
+      expect(sum('evidence_files')).toBe(2);
+      // The voided block is empty on a counted row: it was never withdrawn.
+      for (const column of ['void_reason', 'voided_tco2e', 'voided_activity_value', 'voided_at_utc']) {
+        expect(at(counted, column)).toBe('');
+      }
+    });
+
+    it('says "Not calculated" for a withdrawn row that never had a figure', async () => {
+      stubRecords(prisma, [makeRecord(), voidedWaterRecord()]);
+
+      const csv = await service.generateCsv(admin, q);
+      const { lines, at } = columns(csv);
+      const water = lines.find((l) => l.includes('Water'))!;
+
+      // `?? 0` here writes a literal zero into the removed-tonnage column, and
+      // `?? ''` leaves a blank that SUMs as one — the unmeasured zero, in the
+      // disclosure this time.
+      expect(at(water, 'voided_tco2e')).toBe('Not calculated');
+
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+      const sheet = wb.getWorksheet('Withdrawn Records')!;
+      expect(sheet.getRow(2).getCell(8).value).toBe('Not calculated');
+
+      const html = buildReportHtml(await service.assemble(admin, q));
+      expect(html).toContain('Total withdrawn');
+      expect(html).toContain('carry no emissions figure');
+      expect(html).not.toMatch(/<td class="num">0<\/td>\s*<td>2026-02/);
+    });
+
+    it('quotes a separator, a carriage return and a formula inside the reason', async () => {
+      stubRecords(prisma, [
+        voidedRecord({ voidReason: '=HYPERLINK("evil"), and a comma' }),
+        voidedRecord({ id: 'rec-void-2', periodValue: 'May', voidReason: 'split\rrow' }),
+      ]);
+
+      const csv = await service.generateCsv(admin, q);
+
+      // The reason is free text a user typed, so it needs the same treatment
+      // every other user-influenced column already gets.
+      expect(csv).toContain(`"'=HYPERLINK(""evil""), and a comma"`);
+      // A BARE carriage return ends a record in most parsers: unquoted, the
+      // tail of a reason becomes a fabricated ledger row that no database row
+      // and no audit entry stands behind.
+      expect(csv).toContain('"split\rrow"');
+      expect(csv.trim().split('\n')).toHaveLength(3); // header + 2 rows, not 3
+    });
+
+    it('carries the withdrawn records on their own Excel sheet, with the total', async () => {
+      stubRecords(prisma, [
+        makeRecord({ locationId: 'loc-1', location: { name: 'Istanbul HQ' } }),
+        voidedRecord({ locationId: 'loc-2', location: { name: 'Izmir Freight Hub' } }),
+        voidedRecord({ id: 'rec-void-2', periodValue: 'May' }),
+      ]);
+
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+      const sheet = wb.getWorksheet('Withdrawn Records')!;
+      const ledger = wb.getWorksheet('Raw Activity Data')!;
+      const summary = wb.getWorksheet('Summary')!;
+
+      // Two withdrawals, not one: a writer that listed only the first would
+      // satisfy any single-row fixture, and a restatement that discloses one of
+      // two is worse than none — it reads as complete.
+      expect(sheet.rowCount).toBe(4); // header + 2 withdrawals + total
+      expect(String(sheet.getRow(1).getCell(8).value)).toBe('tCO₂e removed');
+      expect(String(sheet.getRow(1).getCell(9).value)).toBe('Withdrawn (UTC)');
+      expect(sheet.getRow(2).getCell(2).value).toBe('Izmir Freight Hub');
+      expect(sheet.getRow(2).getCell(8).value).toBe(0.44);
+      expect(String(sheet.getRow(2).getCell(9).value)).toBe('2026-02-03 09:30');
+      expect(String(sheet.getRow(2).getCell(10).value)).toContain('Duplicate of the Istanbul HQ');
+      expect(sheet.getRow(3).getCell(5).value).toBe('May');
+      expect(String(sheet.getRow(4).getCell(1).value)).toBe('Total withdrawn');
+      expect(sheet.getRow(4).getCell(8).value).toBeCloseTo(0.88);
+
+      // The ledger's own entity column, and the Summary line's VALUE — a label
+      // assertion alone lets Summary say "0 withdrawn" beside a sheet listing
+      // two, which is this feature's failure mode one sheet over.
+      expect(String(ledger.getRow(1).getCell(2).value)).toBe('Reporting entity');
+      expect(ledger.getRow(2).getCell(2).value).toBe('Istanbul HQ');
+      const summaryRow = (summary.getSheetValues() as unknown[][]).find(
+        (row) => Array.isArray(row) && String(row[1] ?? '').startsWith('Withdrawn records'),
+      )!;
+      expect(summaryRow[2]).toBe(2);
+      expect(String(summaryRow[3])).toContain('0.88');
+    });
+
+    it('states the restatement in the PDF — count, tonnage, and every row', async () => {
+      stubRecords(prisma, [
+        makeRecord(),
+        makeRecord({ id: 'rec-2', periodValue: 'March' }),
+        makeRecord({ id: 'rec-3', periodValue: 'June' }),
+        voidedRecord(),
+        voidedRecord({ id: 'rec-void-2', periodValue: 'May', voidReason: 'Second withdrawal.' }),
+      ]);
+
+      const html = buildReportHtml(await service.assemble(admin, q));
+
+      // THREE committed against TWO withdrawn, deliberately unequal: on a
+      // balanced fixture a banner built from `records.length` prints the right
+      // number for the wrong reason, and the assertion below cannot tell.
+      expect(html).toContain('2 records were withdrawn from this reporting year');
+      expect(html).toContain('0.9 tCO₂e</strong> from the inventory');
+      // The HEADING, not the phrase: the banner above quotes the section title,
+      // so a bare `toContain('Withdrawn from this inventory')` is satisfied by
+      // the banner alone and passes with the section renamed or gone.
+      expect(html).toContain('<h2>Withdrawn from this inventory</h2>');
+      expect(html).toContain('tCO₂e removed');
+      expect(html).toContain('Withdrawn (UTC)');
+      // The column's VALUE, not only its header: a restatement whose date is a
+      // dash tells the reader nothing about when the inventory changed.
+      expect(html).toContain('<td>2026-02-03 09:30</td>');
+      expect(html).toContain('Reporting entity');
+      // Both rows listed, not just the first.
+      expect(html).toContain('Duplicate of the Istanbul HQ');
+      expect(html).toContain('Second withdrawal.');
+      expect(html).toContain('Total withdrawn');
+    });
+
+    it('discloses the restatement in the executive summary too, not only the detail template', async () => {
+      stubRecords(prisma, [makeRecord(), voidedRecord()]);
+
+      const html = buildReportHtml(
+        await service.assemble(admin, { ...q, template: 'executive_summary' } as typeof q),
+      );
+
+      // The template the UI downloads by default, and the one a board reads.
+      // Gating the disclosure on `isDetail` — as the ledger IS gated — would
+      // hide it exactly where it matters most, and every other HTML spec in
+      // this file uses the detail template, so nothing else would notice.
+      expect(html).not.toContain('Activity records ledger');
+      expect(html).toContain('Restatement:');
+      expect(html).toContain('<h2>Withdrawn from this inventory</h2>');
+    });
+
+    it('escapes what the user wrote, in the ledger and in the disclosure', async () => {
+      stubRecords(prisma, [
+        makeRecord({ locationId: 'loc-1', location: { name: '<b>Istanbul</b>' } }),
+        voidedRecord({
+          locationId: 'loc-2',
+          location: { name: '<i>Izmir</i>' },
+          voidReason: '<script>alert(1)</script> misread invoice',
+        }),
+      ]);
+
+      const html = buildReportHtml(await service.assemble(admin, q));
+
+      // Location names are user-authored (`POST /locations`) and now print in
+      // BOTH tables; the reason is 2,000 characters of free text.
+      expect(html).not.toContain('<b>Istanbul</b>');
+      expect(html).not.toContain('<i>Izmir</i>');
+      expect(html).not.toContain('<script>alert(1)</script>');
+      expect(html).toContain('&lt;b&gt;Istanbul');
+      expect(html).toContain('&lt;i&gt;Izmir');
+      expect(html).toContain('&lt;script&gt;');
+    });
+
+    it('renders the disclosure into the document the PDF is printed from', async () => {
+      stubRecords(prisma, [makeRecord(), voidedRecord()]);
+
+      const pdf = await service.generatePdf(admin, q);
+
+      // The bytes come from a stub, so what is asserted is the HTML the real
+      // Chromium would have been handed — the E2E proves a real PDF arrives,
+      // and nothing before this proved what was inside it.
+      expect(pdf.subarray(0, 4).toString()).toBe('%PDF');
+      const html = pdfPage.setContent.mock.calls.at(-1)?.[0] as string;
+      expect(html).toContain('Restatement:');
+      expect(html).toContain('<h2>Withdrawn from this inventory</h2>');
+    });
+
+    it('says nothing about withdrawals when nothing was withdrawn', async () => {
+      stubRecords(prisma, [makeRecord()]);
+
+      const html = buildReportHtml(await service.assemble(admin, q));
+
+      // An empty disclosure is a claim of its own; a clean year should read as
+      // a clean year rather than as a report with an empty restatement table.
+      expect(html).not.toContain('Restatement:');
+      expect(html).not.toContain('Withdrawn from this inventory');
+    });
+
+    it('records what each artifact disclosed in the generation log', async () => {
+      stubRecords(prisma, [makeRecord(), voidedRecord()]);
+      const scoped = { ...q, subsidiaryId: 'sub-1' } as typeof q;
+
+      await service.generateCsv(admin, scoped);
+      await service.generateExcel(admin, scoped);
+      await service.generatePdf(admin, scoped);
+
+      // The record set moves afterwards, so this is not recoverable later: it
+      // is the only place a generated report's restatement count survives.
+      // Asserted for ALL THREE formats — pinning one leaves the others free to
+      // log a zero — and with the scope, which makes the count meaningful.
+      for (const exportType of ['csv', 'excel', 'pdf']) {
+        expect(audit.record).toHaveBeenCalledWith(
+          expect.objectContaining({ id: expect.any(String) }),
+          expect.objectContaining({
+            entity: 'report',
+            action: 'generate',
+            diff: expect.objectContaining({
+              exportType,
+              voidedCount: 1,
+              // The SUMMARY's count, not `records.length` — one expression for
+              // all three formats, so two exports of one selection cannot write
+              // different counts into an append-only compliance log.
+              recordCount: SUMMARY.recordCount,
+              subsidiaryId: 'sub-1',
+              year: 2024,
+            }),
+          }),
+        );
+      }
+    });
   });
 });

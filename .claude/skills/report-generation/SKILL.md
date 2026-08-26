@@ -25,8 +25,30 @@ Produce audit-ready file artifacts from live data. The **canonical exemplar** is
 - **Escape every user-influenced string** in the HTML builder (names can contain
   markup). Test it (`&lt;script&gt;`).
 - **Audit every generation** (`entity: 'report'`, `action: 'generate'`, diff =
-  template/filters/exportType/recordCount) — this IS the generation log
-  (report_page.md §10); no extra table needed.
+  template/filters/exportType/recordCount/withdrawnCount) — this IS the
+  generation log (report_page.md §10); no extra table needed. Record what the
+  artifact DISCLOSED, not only what it counted: the record set moves afterwards,
+  so a disclosure count is not recoverable from the data later.
+- **State what is absent, per format** (FR §5.4). Anything excluded from the
+  totals — a withdrawn (`voided`) figure, a factor-less record — has to be
+  visible in the artifact, with the reason where one exists; an export that
+  quietly drops rows misstates by omission, and `voidedCount` shipped computed
+  and then discarded for two work packages. In a FLAT export where the excluded
+  rows share one table, **every column a reader could aggregate** carries a text
+  marker (`Withdrawn`, `Not calculated`) and the real figures go in their own
+  columns — never a number a SUM would pull back into a total, never a blank (a
+  blank sums as zero). Enumerate those columns rather than protecting the
+  obvious one: this shipped guarding tCO2e while leaving the activity quantity
+  numeric, which overstated total energy by 394 MWh and made the CSV disagree
+  with the Excel from the same request.
+- **Name the reporting entity on every row** (`entityLabel` from
+  `@tonyai/shared-types` — one phrase, three formats, and the same one the app
+  shows). A ledger keyed on subsidiary alone cannot tell two figures for one
+  month apart.
+- **One label constant per absent/derived value, shared by all three writers.**
+  Six column literals for one column set is the standing trap in this module:
+  the PDF `<th>`s, its `<td>`s, the Excel header, its rows, the CSV header and
+  its rows. Adding a column is six edits — check every one.
 - **Honesty rules carry over:** committed statuses only; evidence appears as
   *file names + counts*, never signed URLs (they expire); completeness/status
   (`approved | draft | contains_incomplete_data`) computed from real record
@@ -46,7 +68,11 @@ Produce audit-ready file artifacts from live data. The **canonical exemplar** is
 4. Frontend: rewire the page to live endpoints (`wire-page` skill); downloads via
    `api.downloadReport`; loading/empty/error states; provenance banner.
 5. Tests: unit-test **assembly + builders with fixtures** (meta status math,
-   tenant scoping, factor dedupe, CSV quoting, HTML escaping) — never Puppeteer
+   tenant scoping, factor dedupe, CSV quoting, HTML escaping — including free
+   text a user wrote, e.g. a withdrawal reason). Mock `findMany` **by status**
+   when assembly runs more than one read: a single `mockResolvedValue` answers
+   every query with the same rows, so the excluded set arrives full of records
+   nobody excluded and a writer that leaked them looks correct — never Puppeteer
    in unit tests. E2E: `page.waitForEvent('download')` → assert filename
    extension + non-empty file size.
 6. Deps note: `puppeteer` needs `allowBuilds` in `pnpm-workspace.yaml` (pnpm 11)
@@ -58,3 +84,7 @@ Produce audit-ready file artifacts from live data. The **canonical exemplar** is
 - Re-aggregating emissions in the report service.
 - Embedding signed storage URLs in a static artifact.
 - Asserting toast text alone in the E2E instead of the actual download event.
+- Asserting a section by a phrase the surrounding prose also contains (a banner
+  that quotes its own section title satisfies `toContain('<title text>')` with
+  the section deleted — assert the heading markup).
+- Computing a count that explains an omission and then not returning it.

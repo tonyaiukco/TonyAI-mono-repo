@@ -3,10 +3,15 @@ import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import type {
   EmissionsSummary,
   ReportExportType,
+  ReportMetaDTO,
   ReportStatus,
   ReportTemplate,
 } from '@tonyai/shared-types';
-import { PENDING_REVIEW_STATUSES, REPORT_TEMPLATES } from '@tonyai/shared-types';
+import {
+  entityLabel,
+  PENDING_REVIEW_STATUSES,
+  REPORT_TEMPLATES,
+} from '@tonyai/shared-types';
 import puppeteer, { type Browser } from 'puppeteer';
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -28,8 +33,30 @@ const COMMITTED_STATUSES = COUNTED_STATUSES;
  */
 const NOT_CALCULATED = 'Not calculated';
 
+/**
+ * What the flat exports write in the tCO₂e column of a WITHDRAWN row.
+ *
+ * Text, never a number, and never blank: the withdrawn rows share one table
+ * with the counted ledger in the CSV, so anything numeric there would be
+ * summed straight back into a total the record was deliberately taken out of.
+ * The figure that left is carried in its own `withdrawn_tco2e` column instead,
+ * where a SUM over it answers a different question on purpose.
+ */
+const WITHDRAWN = 'Withdrawn';
+
 export interface ReportLedgerRow {
   subsidiaryName: string;
+  /** The location id, carried beside the name because `entityLabel` keys on the
+   *  PAIR: the id is the fact, the name is a decoration the query may or may not
+   *  have loaded. Free — it is on the record row already. */
+  locationId: string | null;
+  /** The site this figure is attributed to, or `null` for a whole-company row.
+   *  Kept null-able rather than pre-labelled so the three writers all put the
+   *  same phrase on it (`entityLabel`) instead of three near-synonyms. Without
+   *  it a re-attribution from the company to a site changes nothing visible in
+   *  any export, and the two halves of a double-counted month are
+   *  indistinguishable in the ledger an auditor keeps. */
+  locationName: string | null;
   category: string;
   periodValue: string;
   reportingPeriod: string;
@@ -49,9 +76,30 @@ export interface ReportLedgerRow {
    *  told apart from a genuine zero afterwards, and the report is the artifact
    *  an auditor keeps. Every writer renders it as "Not calculated". */
   tCo2e: number | null;
-  status: string;
+  /** Narrowed so "the ledger holds no withdrawn figure" is a compile error
+   *  rather than only a test: `ReportWithdrawnRow` extends this type, so a
+   *  withdrawn row is otherwise assignable straight into `records` and into the
+   *  ledger writers. Same allow-list instinct as `COUNTED_STATUSES`. */
+  status: Exclude<ActivityRecordStatus, 'voided'>;
   evidenceCount: number;
   anomalyFlag: boolean;
+}
+
+/**
+ * One figure withdrawn from this reporting year — a ledger row plus why it left.
+ *
+ * It extends `ReportLedgerRow` rather than restating it because a withdrawal
+ * disclosure is only meaningful beside the same identifying columns the ledger
+ * uses: the reader has to be able to tell which of two entries for one month
+ * was removed, and before WP18's Reporting Entity row the two were
+ * distinguishable only by activity value.
+ */
+export interface ReportWithdrawnRow extends Omit<ReportLedgerRow, 'status'> {
+  status: 'voided';
+  /** Why the figure was withdrawn — required at the API (min 10 chars) and
+   *  uncorrectable afterwards, so it is quoted verbatim, never summarised. */
+  voidReason: string | null;
+  voidedAt: string | null;
 }
 
 /** One deduplicated factor snapshot (audit traceability core, FR §3.5/§5). */
@@ -77,6 +125,25 @@ export interface ReportEvidenceRow {
   fileNames: string[];
 }
 
+/**
+ * How much left the inventory, alongside how many rows did.
+ *
+ * An assurer's first question about a restatement is its magnitude, and
+ * materiality is measured in tonnes, not in rows. Computed once in `assemble`
+ * so the banner, the Excel line and the table footer cannot state three
+ * different numbers — the `recordCount` lesson, applied before it happens.
+ */
+export interface ReportWithdrawnTotals {
+  count: number;
+  /** Sum over the withdrawn rows that HAD a figure. */
+  tCo2e: number;
+  /** Withdrawn rows whose category has no emission factor, so nothing was
+   *  removed from the totals by withdrawing them (WP17 — Water). Disclosed
+   *  rather than folded in, because "269.9 tCO2e withdrawn" beside 6 rows must
+   *  not imply all six carried tonnage. */
+  uncalculatedCount: number;
+}
+
 /** Everything a report renders — assembled once, shared by PDF/Excel/CSV. */
 export interface ReportData {
   template: ReportTemplate;
@@ -92,19 +159,29 @@ export interface ReportData {
   includeEvidenceSummary: boolean;
   summary: EmissionsSummary;
   records: ReportLedgerRow[];
+  /** Records withdrawn from this year — disclosed by every format, counted by
+   *  none of them. Empty is the normal case and every writer says nothing then.
+   *
+   *  This is the artifact's disclosure set BY CONSTRUCTION: every writer counts
+   *  `withdrawn.length`, never `meta.voidedCount`. The two are computed by
+   *  different queries with identical predicates and agree today; if this list
+   *  ever gains a cap or a filter, a banner reading the meta would under-report
+   *  the very table printed beneath it. `meta.voidedCount` is the SCREEN's
+   *  number (it has no list to count). */
+  withdrawn: ReportWithdrawnRow[];
+  withdrawnTotals: ReportWithdrawnTotals;
   factors: ReportFactorRow[];
   evidenceSummary: ReportEvidenceRow[];
 }
 
-export interface ReportMeta {
-  status: ReportStatus;
-  organisationName: string;
-  totalCount: number;
-  committedCount: number;
-  incompleteCount: number; // draft + rejected
-  pendingCount: number; // submitted + under_review
-  incompleteRatio: number;
-}
+/**
+ * What `GET /reports/meta` returns. This is the wire contract itself, not a
+ * structural twin of it: the two were hand-written copies of one shape with
+ * nothing tying them together, so a field added to either could sit unread on
+ * the other — the exact drift `COUNTED_STATUSES` and the period vocabulary were
+ * both consolidated to end.
+ */
+export type ReportMeta = ReportMetaDTO;
 
 @Injectable()
 export class ReportsService implements OnModuleDestroy {
@@ -182,6 +259,7 @@ export class ReportsService implements OnModuleDestroy {
       incompleteCount: 0,
       pendingCount: 0,
       incompleteRatio: 0,
+      voidedCount: 0,
     };
     if (ids.length === 0) return empty;
 
@@ -234,6 +312,9 @@ export class ReportsService implements OnModuleDestroy {
       incompleteCount,
       pendingCount,
       incompleteRatio,
+      // Reported, never deducted from anything above: the ratio keeps its
+      // meaning and the reader still learns that figures left this year.
+      voidedCount,
     };
   }
 
@@ -252,21 +333,46 @@ export class ReportsService implements OnModuleDestroy {
 
     const nameById = new Map(subs.map((s) => [s.id, s.tradingName || s.legalName]));
 
-    // Committed ledger (+ evidence file names when the appendix is requested).
-    const records =
+    // Evidence file names are always loaded: the ledger's evidence count must be
+    // truthful whether or not the appendix is requested. The location join is
+    // the one every other read path already uses (`ActivityRecordsService.toDTO`)
+    // rather than a second way of resolving the same name.
+    const include = {
+      evidence: { select: { fileName: true } },
+      location: { select: { name: true } },
+    } satisfies Prisma.ActivityRecordInclude;
+    const orderBy: Prisma.ActivityRecordOrderByWithRelationInput[] = [
+      { subsidiaryId: 'asc' },
+      { category: 'asc' },
+      { createdAt: 'asc' },
+    ];
+    const load = (statuses: ActivityRecordStatus[]) =>
+      this.prisma.activityRecord.findMany({
+        where: {
+          subsidiaryId: { in: ids },
+          reportingYear: q.year,
+          status: { in: statuses },
+        },
+        include,
+        orderBy,
+      });
+    type LoadedRecord = Awaited<ReturnType<typeof load>>[number];
+    // Two arrays, not one handed to both slots: aliasing them is harmless while
+    // both are only mapped, and a trap the moment either is sorted in place.
+    const noRecords: LoadedRecord[] = [];
+    const noWithdrawals: LoadedRecord[] = [];
+
+    // Two queries rather than one wide read partitioned in memory: "the ledger
+    // holds committed records only" stays a property of the query, where it can
+    // be asserted, instead of a property of a filter a later edit could get
+    // wrong — and `voided` is by construction the set no figure here counts.
+    const [records, voided] =
       ids.length === 0
-        ? []
-        : await this.prisma.activityRecord.findMany({
-            where: {
-              subsidiaryId: { in: ids },
-              reportingYear: q.year,
-              status: { in: COMMITTED_STATUSES },
-            },
-            // Evidence file names are always loaded: the ledger's evidence count
-            // must be truthful whether or not the appendix is requested.
-            include: { evidence: { select: { fileName: true } } },
-            orderBy: [{ subsidiaryId: 'asc' }, { category: 'asc' }, { createdAt: 'asc' }],
-          });
+        ? [noRecords, noWithdrawals]
+        : await Promise.all([
+            load(COMMITTED_STATUSES),
+            load([ActivityRecordStatus.voided]),
+          ]);
 
     type Snapshot = {
       tCo2e?: number;
@@ -283,11 +389,19 @@ export class ReportsService implements OnModuleDestroy {
       geographyCode?: string;
     };
 
-    const ledger: ReportLedgerRow[] = records.map((r) => {
+    // One mapper for both tables: a withdrawn figure is disclosed beside the
+    // same identifying columns the ledger uses, so the reader can tell which of
+    // two entries for one month was the one that left.
+    const toRowBase = (r: LoadedRecord): Omit<ReportLedgerRow, 'status'> => {
       const calc = (r.calculation ?? {}) as Snapshot;
-      const withEvidence = r as typeof r & { evidence?: { fileName: string }[] };
+      const withRelations = r as typeof r & {
+        evidence?: { fileName: string }[];
+        location?: { name: string } | null;
+      };
       return {
         subsidiaryName: nameById.get(r.subsidiaryId) ?? r.subsidiaryId,
+        locationId: r.locationId,
+        locationName: withRelations.location?.name ?? null,
         category: r.category,
         periodValue: r.periodValue,
         reportingPeriod: r.reportingPeriod,
@@ -300,11 +414,37 @@ export class ReportsService implements OnModuleDestroy {
         // type now prevents: a record with no factor has no figure, and a
         // report that prints 0 for it asserts a measurement nobody made.
         tCo2e: Number.isFinite(calc.tCo2e) ? (calc.tCo2e as number) : null,
-        status: r.status,
-        evidenceCount: withEvidence.evidence?.length ?? 0,
+        evidenceCount: withRelations.evidence?.length ?? 0,
         anomalyFlag: r.anomalyFlag,
       };
-    });
+    };
+
+    const ledger: ReportLedgerRow[] = records.map((r) => ({
+      ...toRowBase(r),
+      // Narrowed at the ONE place the committed query's result is mapped: the
+      // query filters on `COMMITTED_STATUSES`, which excludes `voided`.
+      status: r.status as Exclude<ActivityRecordStatus, 'voided'>,
+    }));
+
+    // The restatement disclosure. The reason is carried verbatim: it is written
+    // once, at least 10 characters, and uncorrectable afterwards, so a report
+    // that paraphrased it would be asserting something nobody wrote.
+    const withdrawn: ReportWithdrawnRow[] = voided.map((r) => ({
+      ...toRowBase(r),
+      status: 'voided',
+      voidReason: r.voidReason,
+      // UTC, and every writer labels the column as such: an unlabelled wall
+      // clock in an artifact a reader keeps in another timezone is ambiguous
+      // about the one thing a restatement date is for.
+      voidedAt: r.voidedAt
+        ? r.voidedAt.toISOString().slice(0, 16).replace('T', ' ')
+        : null,
+    }));
+    const withdrawnTotals: ReportWithdrawnTotals = {
+      count: withdrawn.length,
+      tCo2e: withdrawn.reduce((sum, r) => sum + (r.tCo2e ?? 0), 0),
+      uncalculatedCount: withdrawn.filter((r) => r.tCo2e === null).length,
+    };
 
     // Deduplicate the immutable factor snapshots by factorId (audit appendix).
     const factorById = new Map<string, ReportFactorRow>();
@@ -356,6 +496,8 @@ export class ReportsService implements OnModuleDestroy {
       includeEvidenceSummary: q.includeEvidenceSummary ?? false,
       summary,
       records: ledger,
+      withdrawn,
+      withdrawnTotals,
       factors: [...factorById.values()],
       evidenceSummary,
     };
@@ -375,7 +517,7 @@ export class ReportsService implements OnModuleDestroy {
         printBackground: true,
         margin: { top: '12mm', bottom: '12mm', left: '10mm', right: '10mm' },
       });
-      await this.audit(user, q, 'pdf', data.summary.recordCount);
+      await this.audit(user, q, 'pdf', data.summary.recordCount, data.withdrawnTotals.count);
       return Buffer.from(pdf);
     } finally {
       await page.close();
@@ -396,6 +538,14 @@ export class ReportsService implements OnModuleDestroy {
       ['Reporting year', data.year],
       ['Scope filter', data.subsidiaryName ?? 'All accessible subsidiaries'],
       ['Status', data.status],
+      // Stated here and not only on the Withdrawn Records sheet: a reader who
+      // opens Summary and nothing else must still learn that figures left, and
+      // in tonnes — materiality is not measured in rows.
+      [
+        'Withdrawn records (excluded from every figure below)',
+        data.withdrawnTotals.count,
+        `${data.withdrawnTotals.tCo2e} tCO₂e removed`,
+      ],
       ['Generated', data.generatedAt, data.generatedBy],
       [],
       ['Scope 1 (tCO₂e)', data.summary.totals.scope1],
@@ -416,12 +566,12 @@ export class ReportsService implements OnModuleDestroy {
     // Sheet 2 — Raw Activity Data (the committed ledger)
     const s2 = wb.addWorksheet('Raw Activity Data');
     s2.addRow([
-      'Subsidiary', 'Category', 'Reporting period', 'Period', 'Activity value',
-      'Unit', 'tCO₂e', 'Status', 'Evidence files', 'Anomaly flag',
+      'Subsidiary', 'Reporting entity', 'Category', 'Reporting period', 'Period',
+      'Activity value', 'Unit', 'tCO₂e', 'Status', 'Evidence files', 'Anomaly flag',
     ]);
     for (const r of data.records) {
       s2.addRow([
-        r.subsidiaryName, r.category, r.reportingPeriod, r.periodValue,
+        r.subsidiaryName, entityLabel(r), r.category, r.reportingPeriod, r.periodValue,
         // A text cell, not an empty numeric one: a blank in a tCO₂e column
         // sums as zero the moment someone drags a SUM over it, which is the
         // same misstatement as writing 0 — only harder to notice.
@@ -430,47 +580,114 @@ export class ReportsService implements OnModuleDestroy {
       ]);
     }
 
-    // Sheet 3 — Factors Used (immutable snapshots, audit traceability)
-    const s3 = wb.addWorksheet('Factors Used');
-    s3.addRow(['Category', 'Geography', 'Factor value', 'Factor unit', 'Methodology', 'Source', 'Version']);
+    // Sheet 3 — Withdrawn Records (the restatement disclosure), directly after
+    // the ledger it was taken out of.
+    // Always present, even when empty: a workbook whose sheet list depends on
+    // the data cannot be read by anything automated, and an empty sheet with a
+    // header states "nothing was withdrawn" where a missing one states nothing.
+    const s3 = wb.addWorksheet('Withdrawn Records');
+    s3.addRow([
+      'Subsidiary', 'Reporting entity', 'Category', 'Reporting period', 'Period',
+      'Activity value', 'Unit', 'tCO₂e removed', 'Withdrawn (UTC)', 'Reason',
+    ]);
+    for (const r of data.withdrawn) {
+      s3.addRow([
+        r.subsidiaryName, entityLabel(r), r.category, r.reportingPeriod,
+        r.periodValue, r.activityValue, r.activityUnit, r.tCo2e ?? NOT_CALCULATED,
+        r.voidedAt ?? '', r.voidReason ?? '',
+      ]);
+    }
+    if (data.withdrawn.length > 0) {
+      s3.addRow([
+        'Total withdrawn', '', '', '', '', '', '',
+        data.withdrawnTotals.tCo2e, '',
+        data.withdrawnTotals.uncalculatedCount > 0
+          ? `${data.withdrawnTotals.uncalculatedCount} of these carry no emissions figure`
+          : '',
+      ]);
+    }
+
+    // Sheet 4 — Factors Used (immutable snapshots, audit traceability)
+    const s4 = wb.addWorksheet('Factors Used');
+    s4.addRow(['Category', 'Geography', 'Factor value', 'Factor unit', 'Methodology', 'Source', 'Version']);
     for (const f of data.factors) {
-      s3.addRow([f.category, f.geographyCode, f.factorValue, f.factorUnit, f.methodology, f.source, f.version]);
+      s4.addRow([f.category, f.geographyCode, f.factorValue, f.factorUnit, f.methodology, f.source, f.version]);
     }
 
     const buffer = await wb.xlsx.writeBuffer();
-    await this.audit(user, q, 'excel', data.summary.recordCount);
+    await this.audit(user, q, 'excel', data.summary.recordCount, data.withdrawnTotals.count);
     return Buffer.from(buffer);
   }
 
   async generateCsv(user: RequestUser, q: ReportQueryDto): Promise<string> {
     this.assertCanGenerate(user);
     const data = await this.assemble(user, q);
+    // `reporting_entity` is INSERTED at position 2, so column ORDER changed:
+    // anything reading this export by position rather than by column name (a
+    // formula pinned to column G) now reads its neighbour. Documented as a
+    // one-time break in report_page.md and FR §5.4; from here on new columns
+    // are appended, never inserted.
+    //
+    // The `voided_*` block is the suffix. Machine-readable identifiers use the
+    // status word (`voided`, matching the `status` column that discriminates
+    // the two row kinds); "withdrawn" is for the humans reading the PDF.
     const header = [
-      'subsidiary', 'category', 'reporting_period', 'period_value',
-      'activity_value', 'activity_unit', 'tco2e', 'status', 'evidence_files',
-      'anomaly_flag',
+      'subsidiary', 'reporting_entity', 'category', 'reporting_period',
+      'period_value', 'activity_value', 'activity_unit', 'tco2e', 'status',
+      'evidence_files', 'anomaly_flag', 'voided_activity_value', 'voided_tco2e',
+      'voided_at_utc', 'void_reason',
     ];
     const cell = (v: string | number | boolean): string => {
       let s = String(v);
       // Neutralize spreadsheet formula injection on user-influenced text.
       if (/^[=+\-@]/.test(s)) s = `'${s}`;
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      // A BARE `\r` has to be quoted too, not just `\n`: most parsers end a
+      // record on it, so a withdrawal reason containing one would split into a
+      // second row — a fabricated ledger line, in the artifact a reader trusts,
+      // behind no database row and no audit entry. A browser sends `\r\n`, so
+      // reaching this needs a deliberate API call; it is still a forgery.
+      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const lines = [
       header.join(','),
       ...data.records.map((r) =>
         [
-          r.subsidiaryName, r.category, r.reportingPeriod, r.periodValue,
+          r.subsidiaryName, entityLabel(r), r.category, r.reportingPeriod,
+          r.periodValue,
           // Same reasoning as the Excel sheet: an empty cell in a numeric
           // column is read as zero by whatever consumes the CSV next.
           r.activityValue, r.activityUnit, r.tCo2e ?? NOT_CALCULATED, r.status, r.evidenceCount,
           r.anomalyFlag,
+          // The `voided_*` columns are empty for a counted row, and empty is
+          // the right word here: this row was never withdrawn.
+          '', '', '', '',
+        ]
+          .map(cell)
+          .join(','),
+      ),
+      // Withdrawn records share the table rather than getting a second file:
+      // one header row keeps the export parseable. EVERY column a reader could
+      // aggregate therefore carries the marker on these rows — not just tCO₂e.
+      // The first cut protected the tCO₂e column alone and left the real
+      // `activity_value` in place, which overstated total electricity by
+      // 394 MWh and total fuel by 36,000 litres on the seeded year: energy
+      // consumption is a reported figure in its own right (GRI 302-1, CSRD
+      // E1-5), and the Excel from the same request gave a different answer.
+      // What was withdrawn is reported in the `voided_*` block, where summing
+      // answers a different question on purpose.
+      ...data.withdrawn.map((r) =>
+        [
+          r.subsidiaryName, entityLabel(r), r.category, r.reportingPeriod,
+          r.periodValue, WITHDRAWN, r.activityUnit, WITHDRAWN, r.status,
+          WITHDRAWN, WITHDRAWN,
+          r.activityValue, r.tCo2e ?? NOT_CALCULATED, r.voidedAt ?? '',
+          r.voidReason ?? '',
         ]
           .map(cell)
           .join(','),
       ),
     ];
-    await this.audit(user, q, 'csv', data.summary.recordCount);
+    await this.audit(user, q, 'csv', data.summary.recordCount, data.withdrawnTotals.count);
     return lines.join('\n') + '\n';
   }
 
@@ -486,6 +703,7 @@ export class ReportsService implements OnModuleDestroy {
     q: ReportQueryDto,
     exportType: ReportExportType,
     recordCount: number,
+    voidedCount: number,
   ): Promise<void> {
     await this.auditLog.record(user, {
       action: 'generate',
@@ -498,6 +716,17 @@ export class ReportsService implements OnModuleDestroy {
         subsidiaryId: q.subsidiaryId ?? null,
         exportType,
         recordCount,
+        // What the artifact disclosed, recorded with it. The record set moves
+        // afterwards — a figure withdrawn next month is not in last month's
+        // export — so this is not recoverable from the data later, and the log
+        // is the only place a generated report's restatement count survives.
+        //
+        // Named for the STATUS, not for the reader-facing word: `audit_log` is
+        // append-only, so a key written today cannot be renamed, and every
+        // machine-readable identifier in this product already spells this
+        // concept `void*` (`voidReason`, `transition.to: 'voided'`,
+        // `ReportMetaDTO.voidedCount`). "Withdrawn" is the word humans read.
+        voidedCount,
       },
     });
 

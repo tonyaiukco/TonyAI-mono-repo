@@ -1,4 +1,5 @@
 import {
+  entityLabel as entityLabelFor,
   isCalculated,
   VOID_REASON_MAX_LENGTH,
   VOID_REASON_MIN_LENGTH,
@@ -90,12 +91,15 @@ export interface VoidConsequence {
 /**
  * The reporting entity in one phrase — the site's name, or the whole company.
  *
- * `locationName` is null both for a genuinely company-level row and for a row
- * whose location has since been removed; the contract documents that, and the
- * second case is one WP16's delete guards made unreachable.
+ * The phrase itself now comes from `@tonyai/shared-types`, because the
+ * generated report prints it too (WP20): this dialog and a PDF a reader keeps
+ * must call the same row the same thing. This wrapper stays because callers
+ * hold a record, not a field.
  */
-export function entityLabel(record: Pick<ActivityRecordDTO, 'locationName'>): string {
-  return record.locationName?.trim() || 'Whole company';
+export function entityLabel(
+  record: Pick<ActivityRecordDTO, 'locationId' | 'locationName'>,
+): string {
+  return entityLabelFor(record);
 }
 
 /**
@@ -133,6 +137,12 @@ export function voidConsequence(
       'It stops counting towards totals, reports and invoice coverage.',
       `${record.periodValue} ${record.reportingYear} then reopens for ${entity}, so a corrected ${record.category} figure can be entered in its place.`,
       'The entry stays on record with your reason, and the withdrawal is written to the audit log.',
+      // Added with WP20, which is what made it true: until reports disclosed
+      // withdrawals, this text stayed inside the product. It is now quoted
+      // verbatim into every generated PDF, Excel and CSV — documents that go to
+      // auditors and investors — and it cannot be edited afterwards. Someone
+      // about to type a colleague's name into it deserves to know that first.
+      'Your reason is printed verbatim in every generated report — PDF, Excel and CSV — and cannot be edited afterwards.',
       'It cannot be undone.',
     ],
   };

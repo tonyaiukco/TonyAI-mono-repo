@@ -67,6 +67,7 @@ import { NOT_CALCULATED_LABEL, NO_FACTOR_LABEL } from '@/lib/calculation-display
 import {
   VOID_REASON_MAX_LENGTH,
   canOfferVoid,
+  entityLabel,
   voidConsequence,
   voidReasonError,
   voidSuccessMessage,
@@ -1191,9 +1192,7 @@ export default function EmissionsAnalysisPage() {
                       rather than joined here. */}
                   <div>
                     <p className="text-xs text-muted-foreground">Reporting Entity</p>
-                    <p className="font-medium">
-                      {selectedRecord.locationName?.trim() || 'Whole company'}
-                    </p>
+                    <p className="font-medium">{entityLabel(selectedRecord)}</p>
                   </div>
                 </div>
 
