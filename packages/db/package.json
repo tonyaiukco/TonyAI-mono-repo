@@ -15,7 +15,9 @@
     "lint": "echo \"(db) no lint\" && exit 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "evidence:reclaim": "node scripts/reclaim-evidence.mjs",
-    "anomaly:probe": "node scripts/anomaly-probe.mjs"
+    "test": "vitest run --passWithNoTests",
+    "anomaly:probe": "node scripts/anomaly-probe.mjs",
+    "anomaly:recompute": "tsx scripts/anomaly-recompute.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
@@ -27,6 +29,7 @@
     "dotenv": "^16.4.7",
     "prisma": "^6.1.0",
     "tsx": "^4.19.2",
-    "typescript": "5.7.3"
+    "typescript": "5.7.3",
+    "vitest": "^2.1.8"
   }
 }

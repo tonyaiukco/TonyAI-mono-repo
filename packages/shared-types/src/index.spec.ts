@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   ANOMALY_BASELINE_PERIODS,
+  anomalyNotEvaluated,
+  computeAnomalyVerdict,
   ANOMALY_THRESHOLD,
   isAnomalyEvaluated,
   ACTIVITY_RECORD_STATUSES,
@@ -508,5 +510,77 @@ describe('the anomaly rule (VAR §4)', () => {
         isAnomalyEvaluated({ anomalyBaselinePriorCount: 4, anomalyBaselineTCo2e: 41.2 }),
       ).toBe(false);
     });
+  });
+});
+
+describe('computeAnomalyVerdict', () => {
+  // The fold moved here in WP21 PR 3 so `pnpm anomaly:recompute` and the API
+  // could not produce different verdicts for one record. These cases are the
+  // rule itself; the service's own spec covers SELECTING the pool.
+  it('flags a value more than the threshold away from a full window', () => {
+    expect(computeAnomalyVerdict(19.8, [10, 10, 10])).toEqual({
+      anomalous: true,
+      priorCount: 3,
+      baseline: 10,
+    });
+  });
+
+  it('does not flag a deviation of exactly the threshold (§4.2 says MORE than)', () => {
+    // Binary-exact on purpose: 15, 10 and the 5 between them are representable,
+    // so this is the boundary and not a value near it.
+    expect(computeAnomalyVerdict(15, [10, 10, 10]).anomalous).toBe(false);
+  });
+
+  it.each([[[10, 10]], [[10]], [[]]])(
+    'does not run on a window of %j — the count is reported, the baseline is not',
+    (priors) => {
+      const v = computeAnomalyVerdict(19.8, priors as number[]);
+      expect(v.anomalous).toBe(false);
+      expect(v.priorCount).toBe((priors as number[]).length);
+      expect(v.baseline).toBeNull();
+    },
+  );
+
+  it('lets a figureless prior consume a slot rather than reaching past it', () => {
+    // Four comparable periods exist, one of them without a figure. The window
+    // is still three, so two figures remain and the rule does not run — it does
+    // NOT reach back to the fourth to refill the window.
+    const v = computeAnomalyVerdict(19.8, [null, 10, 10, 10]);
+    expect(v.priorCount).toBe(2);
+    expect(v.anomalous).toBe(false);
+  });
+
+  it('reports a full window that averages zero instead of hiding it', () => {
+    expect(computeAnomalyVerdict(500, [0, 0, 0])).toEqual({
+      anomalous: false,
+      priorCount: 3,
+      baseline: 0,
+    });
+  });
+
+  it('ignores priors beyond the window', () => {
+    // A fourth, much larger prior must not move the average.
+    expect(computeAnomalyVerdict(19.8, [10, 10, 10, 1000]).baseline).toBe(10);
+  });
+
+  it('flags a value far BELOW its baseline, not only above', () => {
+    // VAR §4.2 is an absolute deviation; a collapse in consumption is as much
+    // an anomaly as a spike, and a one-sided comparison would miss a meter
+    // that stopped reporting.
+    expect(computeAnomalyVerdict(1, [10, 10, 10]).anomalous).toBe(true);
+  });
+});
+
+describe('anomalyNotEvaluated', () => {
+  it('defaults to a null count — the pool was never queried', () => {
+    expect(anomalyNotEvaluated()).toEqual({
+      anomalous: false,
+      priorCount: null,
+      baseline: null,
+    });
+  });
+
+  it('carries how close it came when a pool WAS queried', () => {
+    expect(anomalyNotEvaluated(2).priorCount).toBe(2);
   });
 });
