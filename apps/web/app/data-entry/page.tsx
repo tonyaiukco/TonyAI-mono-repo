@@ -34,6 +34,22 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
+import {
+  anomalyStatement,
+  type AnomalyVerdictFields,
+} from "@/lib/anomaly-view";
+
+/** The three fields that make up a VAR §4 verdict, off a record DTO. Picked
+ *  rather than spread so a future DTO field cannot quietly join the state. */
+const verdictOf = (rec: {
+  anomalyFlag: boolean;
+  anomalyBaselinePriorCount: number | null;
+  anomalyBaselineTCo2e: number | null;
+}): AnomalyVerdictFields => ({
+  anomalyFlag: rec.anomalyFlag,
+  anomalyBaselinePriorCount: rec.anomalyBaselinePriorCount,
+  anomalyBaselineTCo2e: rec.anomalyBaselineTCo2e,
+});
 import { cn } from "@/lib/utils";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
@@ -228,7 +244,16 @@ function DataEntryPageInner() {
 
   // Anomaly (VAR §4): server flags a value that deviates >±50% from the
   // baseline; a variance comment is then mandatory before submit.
-  const [anomalyFlag, setAnomalyFlag] = useState(false);
+  // The whole verdict, not just its flag: a screen holding only the boolean
+  // cannot tell "checked and clean" from "never checked", which is the entire
+  // point of WP21. `anomalyFlag` stays derived so the submit gate and the save
+  // toast below read exactly as they did.
+  const [verdict, setVerdict] = useState<AnomalyVerdictFields>({
+    anomalyFlag: false,
+    anomalyBaselinePriorCount: null,
+    anomalyBaselineTCo2e: null,
+  });
+  const anomalyFlag = verdict.anomalyFlag;
   const [varianceReason, setVarianceReason] = useState("");
 
   // Records + saving
@@ -627,7 +652,7 @@ function DataEntryPageInner() {
     setActivityValue(String(rec.activityValue));
     setActivityUnit(rec.activityUnit);
     setContext((rec.input as ContextValues | null) ?? {});
-    setAnomalyFlag(rec.anomalyFlag);
+    setVerdict(verdictOf(rec));
     setVarianceReason(rec.varianceReason ?? "");
     setPreviewError(null);
     setEditingTuple(tupleOf(rec));
@@ -686,7 +711,11 @@ function DataEntryPageInner() {
     setEditingId(null);
     setEditingTuple(null);
     setLocationId("");
-    setAnomalyFlag(false);
+    setVerdict({
+      anomalyFlag: false,
+      anomalyBaselinePriorCount: null,
+      anomalyBaselineTCo2e: null,
+    });
     setVarianceReason("");
   }
 
@@ -755,7 +784,7 @@ function DataEntryPageInner() {
       if (!rec) return;
       setEditingId(rec.id);
       setEditingTuple(tupleOf(rec));
-      setAnomalyFlag(rec.anomalyFlag);
+      setVerdict(verdictOf(rec));
       // Composed, not branched. A move is the operation most likely to RAISE
       // the anomaly flag — the baseline is keyed on the reporting entity, so
       // the value is re-scored against a different pool of periods — and an
@@ -788,7 +817,7 @@ function DataEntryPageInner() {
       // or anomaly gate), the vault + variance field stay visible to fix + retry.
       setEditingId(rec.id);
       setEditingTuple(tupleOf(rec));
-      setAnomalyFlag(rec.anomalyFlag);
+      setVerdict(verdictOf(rec));
       // Mirror the server anomaly gate (VAR §2.2 / §4.3): a flagged value needs
       // a variance comment before it can be submitted.
       if (rec.anomalyFlag && !varianceReason.trim()) {
@@ -1231,8 +1260,7 @@ function DataEntryPageInner() {
                     <div className="flex items-start gap-2 text-sm text-amber-800">
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>
-                        This value deviates significantly from the historical
-                        average for this reporting entity. Please verify it and
+                        {anomalyStatement(verdict).detail} Please verify it and
                         explain the variance before submitting.
                       </span>
                     </div>
@@ -1249,6 +1277,27 @@ function DataEntryPageInner() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* The other half of VAR §4, and the half that was invisible: a
+                  saved record the rule could NOT run on. Rendering nothing here
+                  told the author "fine" about a value nobody checked. Neutral,
+                  not amber — a short window is the normal state of a new
+                  series' first months and is not something to act on. */}
+              {editingId !== null &&
+                !anomalyFlag &&
+                anomalyStatement(verdict).tone === "not_evaluated" && (
+                  <Card className="border-slate-200 bg-slate-50/60">
+                    <CardContent className="flex items-start gap-2 pt-5 text-sm text-slate-600">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="font-medium">
+                          {anomalyStatement(verdict).headline}.
+                        </span>{" "}
+                        {anomalyStatement(verdict).detail}
+                      </span>
+                    </CardContent>
+                  </Card>
+                )}
 
               {/* Actions */}
               <div className="flex items-center justify-end gap-2">

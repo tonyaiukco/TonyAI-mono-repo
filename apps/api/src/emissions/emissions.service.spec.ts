@@ -51,6 +51,11 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     calculation: { tCo2e: 10, factorId: 'f-1' } as unknown,
     createdBy: 'user-entry',
     anomalyFlag: false,
+    // Defaulted to an EVALUATED verdict, the common case for a committed record
+    // with a figure. Left undefined these read as "the rule never ran", which
+    // silently turns every fixture in the file into a not-evaluated record.
+    anomalyBaselinePriorCount: 3,
+    anomalyBaselineTCo2e: 10,
     varianceReason: null,
     // Prisma `_count` from the matrix query's evidence include. Default 1
     // ("has evidence") so committed records satisfy the FR §2.2 evidence rule.
@@ -572,7 +577,8 @@ describe('EmissionsService.summary', () => {
       }),
     ]);
 
-    const m = await service.trackingMatrix(user, { year: 2024 });
+
+      const m = await service.trackingMatrix(user, { year: 2024 });
     const cell = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
 
     expect(cell.recordCount).toBe(2);
@@ -743,6 +749,65 @@ describe('EmissionsService.trackingMatrix', () => {
     seq = 0;
     prisma = createPrismaMock();
     service = new EmissionsService(prisma as unknown as PrismaService);
+  });
+
+  it('counts committed records the anomaly rule never ran on, without capping the cell', async () => {
+    const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+    prisma.subsidiary.findMany.mockResolvedValue([
+      makeSubsidiary({ id: 'sub-1', trackingGranularity: 'subsidiary' } as Partial<Subsidiary>),
+    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      // Evaluated and clean.
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity' }),
+      // A short window — the rule did not run. Before WP21 this was
+      // indistinguishable from the row above on every surface.
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'February',
+        anomalyBaselinePriorCount: 2,
+        anomalyBaselineTCo2e: null,
+      }),
+      // A FULL window averaging zero: three priors, an average, and still no
+      // ratio. The case a hand-written `priorCount === 3` check would miss.
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'March',
+        anomalyBaselinePriorCount: 3,
+        anomalyBaselineTCo2e: 0,
+      }),
+      // No figure at all: already reported as `uncalculatedRecordCount`, so it
+      // must NOT also land here or the two stop reconciling.
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'April',
+        calculation: { reasonCode: 'no_emission_factor' },
+        anomalyBaselinePriorCount: null,
+        anomalyBaselineTCo2e: null,
+      }),
+      // A draft is not committed, so it is nobody's verdict to report.
+      makeRecord({
+        subsidiaryId: 'sub-1',
+        category: 'Electricity',
+        periodValue: 'May',
+        status: ActivityRecordStatus.draft,
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+      }),
+    ]);
+
+    const m = await service.trackingMatrix(user, { year: 2024 });
+    const cell = m.rows[0].cells.find((c) => c.category === 'Electricity')!;
+
+    expect(cell.notEvaluatedRecordCount).toBe(2);
+    expect(cell.uncalculatedRecordCount).toBe(1);
+    // Deliberately NOT a cap (decision 2026-08-27): a short window is the
+    // normal state of a new series' first months, and amber-forever is not a
+    // warning. The count is the disclosure; the colour is not.
+    expect(cell.anomaly).toBe(false);
+    expect(cell.status).not.toBe('missing');
   });
 
   it('returns an empty matrix for an empty accessible set without hitting the DB', async () => {

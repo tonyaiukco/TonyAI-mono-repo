@@ -1380,6 +1380,43 @@ export interface ActivityRecordDTO {
   calculation: ActivityCalculationSnapshot;
   createdBy: string;
   anomalyFlag: boolean;
+  /**
+   * What the verdict above was taken against: how many comparable periods
+   * carried a figure, and their rolling average in tCO₂e.
+   *
+   * `anomalyFlag: false` is not one claim but three — "clean against three
+   * priors", "clean against fewer", and "never evaluated" — and until these
+   * fields existed nothing on the wire could tell them apart. **THREE STATES:**
+   *
+   * - `null` — the pool was never queried, because the record carries no figure
+   *   of its own. It may still sit on a full year of neighbours: "has no figure"
+   *   and "has no priors" are different facts about different rows, and a `0`
+   *   for both forced every reader outside TypeScript to re-implement
+   *   `isCalculated()` to separate them.
+   * - `0`–`2` — a short window. The rule did NOT run; the record is *not
+   *   evaluated*, which is not the same claim as *not anomalous*.
+   * - `ANOMALY_BASELINE_PERIODS` — evaluated, and `anomalyBaselineTCo2e` is the
+   *   average it was judged against.
+   *
+   * `anomalyBaselineTCo2e` is non-null exactly when the count is
+   * `ANOMALY_BASELINE_PERIODS`. **A value of `0` there is a fourth state**: a
+   * full window whose average is zero yields no ratio, so the verdict is vacuous
+   * rather than clean — 500 tCO₂e against three zero priors is reported
+   * identically to a value in line with its history. Present it as *not
+   * evaluated*, never as a baseline that was met.
+   *
+   * Not to be confused with `TargetDTO.baselineTCo2e`, which is a reduction
+   * target's baseline-YEAR emissions and an unrelated quantity. Hence the
+   * `anomalyBaseline` prefix on both fields.
+   *
+   * Written at the same three moments as `anomalyFlag` (create, update,
+   * submit) and never revisited afterwards, so all three describe the pool as it
+   * stood when the verdict was taken — not as it stands now. Reconciling the two
+   * is `pnpm anomaly:recompute`, planned as WP21 PR 3 and not yet built;
+   * `pnpm anomaly:probe` reports the divergence today without repairing it.
+   */
+  anomalyBaselinePriorCount: number | null;
+  anomalyBaselineTCo2e: number | null;
   /** The AUTHOR's justification for an anomalous value (VAR §4). */
   varianceReason: string | null;
   /** Who decided the review outcome, when, and why. `reviewNote` carries the
@@ -1547,6 +1584,58 @@ export const PENDING_REVIEW_STATUSES = [
   'submitted',
   'under_review',
 ] as const satisfies readonly ActivityRecordStatus[];
+
+/** VAR §4.2 — the deviation from the rolling average that raises the warning. */
+export const ANOMALY_THRESHOLD = 0.5;
+
+/**
+ * VAR §4.1 — the rolling average is over the previous 3 comparable periods.
+ * This is BOTH the window and the requirement: fewer than three priors with a
+ * figure means the rule does not run.
+ *
+ * The implementation used to take "up to 3, minimum 1", which the spec does not
+ * sanction and no surface disclosed: the gate degraded from a three-period
+ * average to a single-period comparison with nothing recording that it had.
+ * Measured before the change (`pnpm anomaly:probe`), 30 of 96 committed records
+ * sat below three and NONE of them was flagged — so applying the spec literally
+ * moved no figure, only what the absence of a flag is allowed to mean.
+ *
+ * Both numbers live here rather than in `activity-records.service.ts` because
+ * the API is no longer the only thing that has to state the rule: a screen that
+ * cannot say "2 of 3" is misleading about what a missing flag means, and a
+ * second copy in `apps/web` is how the two halves come to disagree.
+ */
+export const ANOMALY_BASELINE_PERIODS = 3;
+
+/**
+ * Did the anomaly rule actually RUN on this record?
+ *
+ * One predicate everywhere, for the same reason `isCalculated()` is one: the
+ * question has four wrong answers and they all look like `anomalyFlag: false`.
+ * A record is evaluated only when the window was full AND the average it was
+ * judged against is a usable divisor:
+ *
+ * - `anomalyBaselinePriorCount === null` — no figure of its own, no pool queried.
+ * - `< ANOMALY_BASELINE_PERIODS` — a short window; VAR §4.1 needs three.
+ * - `anomalyBaselineTCo2e === null` — the average was never taken.
+ * - `anomalyBaselineTCo2e === 0` — a full window that averages to zero yields no
+ *   ratio, so the verdict is vacuous: 500 tCO₂e against three zero priors reads
+ *   exactly like a value in line with its history. The subtlest of the four,
+ *   and the one a hand-written check at a call site would miss.
+ *
+ * When this is false, "not anomalous" is not a claim anyone made — and any
+ * surface that renders a blank, a tick or a green cell is overstating.
+ */
+export function isAnomalyEvaluated(record: {
+  anomalyBaselinePriorCount: number | null;
+  anomalyBaselineTCo2e: number | null;
+}): boolean {
+  return (
+    record.anomalyBaselinePriorCount === ANOMALY_BASELINE_PERIODS &&
+    record.anomalyBaselineTCo2e !== null &&
+    record.anomalyBaselineTCo2e !== 0
+  );
+}
 
 /**
  * The counted statuses a PERSON has accepted — the other half of the partition
@@ -2006,6 +2095,22 @@ export interface TrackingMatrixCell {
   /** true when any LIVE record in the cell carries an anomaly flag. A voided
    *  record's flag is ignored — it describes data that no longer counts. */
   anomaly: boolean;
+  /**
+   * Committed records in this cell that HAVE a figure but that the anomaly rule
+   * never ran on — a window shorter than `ANOMALY_BASELINE_PERIODS`, or one
+   * averaging to zero (see `isAnomalyEvaluated`).
+   *
+   * `anomaly: false` alone overstates: it reads as "checked, nothing unusual"
+   * for a cell nobody checked. This counter is deliberately NOT a cap on the
+   * cell's status (decision 2026-08-27) — a short window is the normal state of
+   * any series' first months, and capping would paint every new site's first
+   * quarter amber forever. It is reported so the surface can SAY so instead.
+   *
+   * Records with no figure at all are counted by `uncalculatedRecordCount`, not
+   * here: they are a different absence and double-counting them would make the
+   * two counters unreconcilable against the cell's own record count.
+   */
+  notEvaluatedRecordCount: number;
 }
 
 /** One subsidiary row of the tracking matrix (cells ordered as CATEGORIES). */
@@ -2097,6 +2202,13 @@ export interface CategoryCompleteness extends CellCoverage {
    * WP17's review caught, reappearing in the surfaces built to prevent it.
    */
   awaitingReviewRecords: number;
+  /**
+   * Committed records in this category that HAVE a figure but that the anomaly
+   * rule never ran on. Mirrors `TrackingMatrixCell.notEvaluatedRecordCount`
+   * exactly, for the same reason `awaitingReviewRecords` mirrors its twin: the
+   * panel and the dashboard cell must not be able to disagree about one cell.
+   */
+  notEvaluatedRecordCount: number;
   /**
    * Months (lower-cased) that already hold a WHOLE-COMPANY entry for this
    * category and year.

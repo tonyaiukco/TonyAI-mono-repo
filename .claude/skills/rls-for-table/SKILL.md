@@ -65,3 +65,18 @@ SELECT tablename, policyname, cmd FROM pg_policies WHERE schemaname = 'public' A
 ```
 Then prove containment via PostgREST as the seeded `data_entry` user (anon key + Bearer token): a cross-tenant
 row must return `[]`, while the owner/Prisma path still sees all rows (e.g. re-run `pnpm db:seed`).
+
+## Columns are not tables
+
+A new **table** comes up invisible to client roles until its migration grants
+them: default privileges are granted to `service_role` only. A new **column**
+needs nothing — grants in this database are table-level (`pg_attribute.attacl`
+is null on every column in `public`, and there is no such thing as a default
+privilege for a future column), and RLS is row-level, so an existing policy
+governs a new column identically the instant `ALTER TABLE` commits.
+
+The consequence worth remembering: **you cannot add a private column.** Anything
+added to a tenant table is readable by every role that can already read the row.
+Verified against the live database when WP21 added `anomaly_baseline_*` to
+`activity_records` — a `data_entry` JWT read both new columns with no grant in
+the migration, and `anon` read none.

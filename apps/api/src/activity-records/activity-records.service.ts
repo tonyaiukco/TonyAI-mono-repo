@@ -13,6 +13,8 @@ import {
 import {
   canonicalPeriodValue,
   CATEGORY_SCOPE_MAP,
+  ANOMALY_BASELINE_PERIODS,
+  ANOMALY_THRESHOLD,
   COUNTED_STATUSES,
   PERIOD_VALUES,
   isCalculated,
@@ -44,6 +46,33 @@ interface AnomalyParams {
   currentTCo2e: number;
   excludeId?: string;
 }
+
+/**
+ * The VAR §4 outcome AND what it was decided against.
+ *
+ * A bare boolean was the defect: "clean against three priors", "clean against
+ * fewer" and "never evaluated" all reached the database as `false`, and no
+ * reader downstream could separate them. All three fields are persisted beside
+ * each other so nobody has to re-derive the pool to learn whether the rule ran.
+ */
+interface AnomalyVerdict {
+  /** VAR §4.3 — the warning. False whenever the rule did not run. */
+  anomalous: boolean;
+  /** Comparable periods that carried a figure, 0..ANOMALY_BASELINE_PERIODS —
+   *  or NULL when the pool was never queried at all, which is a different fact
+   *  and one a `0` would have hidden. */
+  priorCount: number | null;
+  /** The rolling average — non-null exactly when the rule ran on a full window. */
+  baseline: number | null;
+}
+
+/** The verdict for a record the rule cannot judge. `priorCount` carries how
+ *  close it came, or null when no pool was ever looked at. */
+const notEvaluated = (priorCount: number | null = null): AnomalyVerdict => ({
+  anomalous: false,
+  priorCount,
+  baseline: null,
+});
 
 // Roles allowed to create/update/delete/submit their own records.
 // A consultant is NOT among them (decision 2026-07-30): the permissions matrix
@@ -84,11 +113,19 @@ const SUBMITTABLE_STATUSES = new Set<ActivityRecordStatus>([
 
 // --- Anomaly detection (VAR §4) --------------------------------------------
 // A value is anomalous when it deviates > ±50% from the rolling average of the
-// previous (up to) 3 comparable periods for the same reporting entity, measured
-// on calculated tCO₂e. Only committed rows feed the baseline (unreviewed drafts
+// previous 3 comparable periods for the same reporting entity, measured on
+// calculated tCO₂e. Only committed rows feed the baseline (unreviewed drafts
 // would add noise). Warning-based, never auto-rejection (VAR §8).
-const ANOMALY_THRESHOLD = 0.5;
-const BASELINE_MAX_PERIODS = 3;
+//
+// THREE priors are REQUIRED, not "up to three" (decision 2026-08-27). Under the
+// old reading the gate quietly degraded to a single-period comparison — a
+// two-period average, or one month against one month — with nothing recording
+// that it had, because `anomalyFlag: false` cannot distinguish "checked" from
+// "not checkable". Fewer than three now means NOT EVALUATED, and the record
+// says which via `baselinePriorCount`.
+//
+// Both numbers live in @tonyai/shared-types: a screen has to state the same
+// rule now that "2 of 3" is something it must be able to say.
 // The SAME list the inventory counts — a sixth hand-written copy of it lived
 // here, character-identical, in the file this rule is most likely to be edited
 // from. A record that counts towards the totals is exactly a record that should
@@ -185,6 +222,8 @@ export class ActivityRecordsService {
       calculation: r.calculation as unknown as ActivityCalculationSnapshot,
       createdBy: r.createdBy,
       anomalyFlag: r.anomalyFlag,
+      anomalyBaselinePriorCount: r.anomalyBaselinePriorCount,
+      anomalyBaselineTCo2e: r.anomalyBaselineTCo2e,
       varianceReason: r.varianceReason,
       reviewedBy: r.reviewedBy,
       reviewedAt: r.reviewedAt ? r.reviewedAt.toISOString() : null,
@@ -344,18 +383,36 @@ export class ActivityRecordsService {
   private async detectAnomalyFor(
     calculation: ActivityCalculationSnapshot,
     params: Omit<AnomalyParams, 'currentTCo2e'>,
-  ): Promise<boolean> {
-    if (!isCalculated(calculation)) return false;
+  ): Promise<AnomalyVerdict> {
+    // Reports 0 priors because none were ever queried, not because none exist.
+    // "Has no figure of its own" and "has no comparable periods" are different
+    // facts; a reader separates them with isCalculated() on the snapshot, which
+    // travels on the same DTO.
+    if (!isCalculated(calculation)) return notEvaluated();
     return this.detectAnomaly({ ...params, currentTCo2e: calculation.tCo2e });
   }
 
   /**
-   * Anomaly check (VAR §4): true when `currentTCo2e` deviates > ±50% from the
-   * rolling average of the previous (up to 3) committed periods for the same
+   * Anomaly check (VAR §4): anomalous when `currentTCo2e` deviates > ±50% from
+   * the rolling average of the previous 3 committed periods for the same
    * reporting entity (subsidiary + location + category) at the same granularity.
-   * No prior periods (or a zero baseline) → not anomalous. Warning-only.
+   * Fewer than three priors → the rule does not run. Warning-only.
+   *
+   * The key includes `locationId` and the granularity, which VAR §4.1 does not
+   * name — a deliberate deviation, now written into the spec: comparing a site
+   * meter against a whole-company roll-up flags a change of SCOPE as a change of
+   * consumption, and it is what stops a re-attribution raising a false anomaly.
    */
-  private async detectAnomaly(params: AnomalyParams): Promise<boolean> {
+  private async detectAnomaly(params: AnomalyParams): Promise<AnomalyVerdict> {
+    // Prisma DROPS a `where` entry whose value is `undefined`, so an unset
+    // subsidiary here would widen the pool to every tenant in the database and
+    // persist a cross-tenant average onto the record. Unreachable today — all
+    // three callers pass a value whose accessibility was established upstream —
+    // but upstream is an ORDERING convention (`computeSnapshot` validates and
+    // does not return what it validated), and a convention is not a mechanism.
+    if (!params.subsidiaryId) {
+      throw new Error('anomaly baseline requires a subsidiary scope');
+    }
     const rows = await this.prisma.activityRecord.findMany({
       where: {
         subsidiaryId: params.subsidiaryId,
@@ -377,18 +434,36 @@ export class ActivityRecordsService {
       }))
       .filter((x) => x.key < currentKey) // strictly earlier periods only
       .sort((a, b) => b.key - a.key)
-      .slice(0, BASELINE_MAX_PERIODS)
+      .slice(0, ANOMALY_BASELINE_PERIODS)
       .map((x) => (isCalculated(x.calc) ? x.calc.tCo2e : null))
       // Drop (rather than zero-fill) priors without a usable tCO₂e so they don't
       // deflate the average and manufacture false anomalies. A record with no
       // factor is one such prior. One predicate everywhere — see isCalculated().
       .filter((v): v is number => v !== null);
 
-    if (priorValues.length === 0) return false; // no baseline to deviate from
+    // VAR §4.1 requires the previous THREE periods. A prior with no figure has
+    // already consumed one of the three slots above, so dropping it leaves the
+    // window short — and short means the rule does not run rather than running
+    // on whatever is left. `priorCount` is reported either way: it is the
+    // difference between "checked and clean" and "never checked", which is what
+    // the bare boolean could not say.
+    if (priorValues.length < ANOMALY_BASELINE_PERIODS) {
+      return notEvaluated(priorValues.length);
+    }
     const baseline =
       priorValues.reduce((sum, v) => sum + v, 0) / priorValues.length;
-    if (baseline === 0) return false;
-    return Math.abs(params.currentTCo2e - baseline) / baseline > ANOMALY_THRESHOLD;
+    // A full window averaging to zero yields no ratio. The baseline is still
+    // REPORTED rather than nulled: three priors that are all zero is a fact
+    // about the series, not an absence of one.
+    if (baseline === 0) {
+      return { anomalous: false, priorCount: priorValues.length, baseline };
+    }
+    return {
+      anomalous:
+        Math.abs(params.currentTCo2e - baseline) / baseline > ANOMALY_THRESHOLD,
+      priorCount: priorValues.length,
+      baseline,
+    };
   }
 
   async list(
@@ -467,7 +542,7 @@ export class ActivityRecordsService {
       dto.locationId,
     );
 
-    const anomalyFlag = await this.detectAnomalyFor(calculation, {
+    const verdict = await this.detectAnomalyFor(calculation, {
       subsidiaryId: dto.subsidiaryId,
       locationId: dto.locationId ?? null,
       category: dto.category,
@@ -492,7 +567,9 @@ export class ActivityRecordsService {
           category: dto.category,
           scope,
           status: ActivityRecordStatus.draft,
-          anomalyFlag,
+          anomalyFlag: verdict.anomalous,
+          anomalyBaselinePriorCount: verdict.priorCount,
+          anomalyBaselineTCo2e: verdict.baseline,
           activityValue: dto.activityValue,
           activityUnit: dto.activityUnit,
           input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
@@ -585,7 +662,7 @@ export class ActivityRecordsService {
       dto.activityUnit !== undefined || category !== existing.category,
     );
 
-    const anomalyFlag = await this.detectAnomalyFor(calculation, {
+    const verdict = await this.detectAnomalyFor(calculation, {
       subsidiaryId: existing.subsidiaryId,
       locationId,
       category,
@@ -601,7 +678,9 @@ export class ActivityRecordsService {
       scope,
       activityValue,
       activityUnit,
-      anomalyFlag,
+      anomalyFlag: verdict.anomalous,
+      anomalyBaselinePriorCount: verdict.priorCount,
+      anomalyBaselineTCo2e: verdict.baseline,
       calculation: calculation as unknown as Prisma.InputJsonValue,
     };
     if (dto.locationId !== undefined) {
@@ -735,7 +814,7 @@ export class ActivityRecordsService {
     // computed. Harmless while a category is uniformly factor-less, and a live
     // bug the day a factor lands mid-year and the priors become calculable.
     const calc = record.calculation as unknown as ActivityCalculationSnapshot;
-    const anomalous = await this.detectAnomalyFor(calc, {
+    const verdict = await this.detectAnomalyFor(calc, {
       subsidiaryId: record.subsidiaryId,
       locationId: record.locationId,
       category: record.category,
@@ -744,7 +823,7 @@ export class ActivityRecordsService {
       periodValue: record.periodValue,
       excludeId: record.id,
     });
-    if (anomalous && !record.varianceReason?.trim()) {
+    if (verdict.anomalous && !record.varianceReason?.trim()) {
       throw new BadRequestException(
         'This value deviates significantly from the historical average — add a variance comment before submitting.',
       );
@@ -756,9 +835,10 @@ export class ActivityRecordsService {
     // record would see something indistinguishable from a first submission. The
     // stale-note problem it was meant to solve is a RENDERING one, fixed where
     // it belongs: `/emissions` shows the note only on a `rejected` record.
-    return this.transition(user, record, ActivityRecordStatus.submitted, {
-      anomalyFlag: anomalous,
-    });
+    // The verdict travels whole: the flag and the window it was taken against
+    // are one fact, and `transition` takes them as one argument so that
+    // persisting a flag beside a window nobody can name is not expressible.
+    return this.transition(user, record, ActivityRecordStatus.submitted, { verdict });
   }
 
   /**
@@ -948,7 +1028,10 @@ export class ActivityRecordsService {
     status: ActivityRecordStatus,
     extra: {
       varianceReason?: string;
-      anomalyFlag?: boolean;
+      /** The whole verdict or none of it. Three independent optionals let a
+       *  caller persist a flag beside a window nobody can name — which the
+       *  submit path's own comment forbids, and which a type can enforce. */
+      verdict?: AnomalyVerdict;
       reviewNote?: string | null;
       voidReason?: string;
     } = {},
@@ -983,8 +1066,12 @@ export class ActivityRecordsService {
         ...(extra.varianceReason !== undefined
           ? { varianceReason: extra.varianceReason }
           : {}),
-        ...(extra.anomalyFlag !== undefined
-          ? { anomalyFlag: extra.anomalyFlag }
+        ...(extra.verdict !== undefined
+          ? {
+              anomalyFlag: extra.verdict.anomalous,
+              anomalyBaselinePriorCount: extra.verdict.priorCount,
+              anomalyBaselineTCo2e: extra.verdict.baseline,
+            }
           : {}),
         ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
         ...(isReviewOutcome ? { reviewedBy: user.id, reviewedAt: new Date() } : {}),

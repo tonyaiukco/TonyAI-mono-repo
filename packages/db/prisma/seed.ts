@@ -8,7 +8,25 @@ import {
   TrackingGranularity,
   ActivityRecordStatus,
 } from '../generated/client';
-import { MONTH_NAMES } from '@tonyai/shared-types';
+import {
+  ANOMALY_BASELINE_PERIODS,
+  ANOMALY_THRESHOLD,
+  COUNTED_STATUSES,
+  MONTH_NAMES,
+} from '@tonyai/shared-types';
+
+/** The status every activity record the seed writes is created with. Read by
+ *  `findOrCreateRecord` AND by the rolling-baseline guard below, so the two
+ *  cannot disagree about whether a seeded row seeds a baseline. */
+const SEED_RECORD_STATUS = ActivityRecordStatus.approved;
+
+/** The average of a window, or null unless it is full — one definition for
+ *  both loops, so the site series cannot drift from the company series. */
+function rollingBaseline(priors: number[]): number | null {
+  return priors.length === ANOMALY_BASELINE_PERIODS
+    ? priors.reduce((sum, v) => sum + v, 0) / priors.length
+    : null;
+}
 
 const prisma = new PrismaClient();
 
@@ -275,6 +293,8 @@ interface SeedRecordInput {
   calculation: Record<string, unknown>;
   createdBy: string;
   anomalyFlag: boolean;
+  anomalyBaselinePriorCount: number | null;
+  anomalyBaselineTCo2e: number | null;
   varianceReason: string | null;
 }
 
@@ -306,7 +326,7 @@ async function findOrCreateRecord(
       // seed's, and widening `SeedRecordInput` to Prisma's type would drag the
       // client's generated types into this file's own contract.
       calculation: data.calculation as Prisma.InputJsonValue,
-      status: ActivityRecordStatus.approved,
+      status: SEED_RECORD_STATUS,
     },
   });
   return { id: record.id, created: true };
@@ -591,6 +611,14 @@ async function main() {
       );
     }
 
+    // What the anomaly verdict on each record was decided against. The seed
+    // STAGES its verdicts rather than running the rule (see `isAnomaly`), so it
+    // states the provenance the same way — from the series it is building, not
+    // by re-deriving VAR §4. A month yielded to the sites below is never pushed,
+    // so the window holds the three most recent months this series actually
+    // wrote, which is exactly the pool the rule would find.
+    const writtenTCo2e: number[] = [];
+
     for (let month = 0; month < MONTHS.length; month++) {
       // This month belongs to the sites (see the note above the loop).
       if (
@@ -605,6 +633,33 @@ async function main() {
       const kgCo2e = activityValue * factor.factorValue;
       const tCo2e = kgCo2e / 1000;
       const isAnomaly = spec.anomaly?.month === month;
+      const priors = writtenTCo2e.slice(-ANOMALY_BASELINE_PERIODS);
+      const baselineTCo2e = rollingBaseline(priors);
+      // A staged anomaly on a record the rule could never have evaluated would
+      // ship a row no code path can produce: flagged, with the baseline that
+      // decided it declared absent. Caught here rather than in a screenshot.
+      if (isAnomaly && baselineTCo2e === null) {
+        throw new Error(
+          `Seed stages an anomaly for ${subsidiary.tradingName}/${spec.category} at ` +
+            `${MONTHS[month]}, which has only ${priors.length} prior period(s) — ` +
+            `VAR §4.1 needs ${ANOMALY_BASELINE_PERIODS}.`,
+        );
+      }
+      // ...and that the staged flag AGREES with the window it claims. Checking
+      // only that a baseline exists let the seed ship a flagged record whose
+      // own stored average implies a 5% deviation — a contradiction the screens
+      // now render, since they print the average beside the warning.
+      if (
+        isAnomaly &&
+        baselineTCo2e !== null &&
+        Math.abs(tCo2e - baselineTCo2e) / baselineTCo2e <= ANOMALY_THRESHOLD
+      ) {
+        throw new Error(
+          `Seed stages an anomaly for ${subsidiary.tradingName}/${spec.category} at ` +
+            `${MONTHS[month]} whose value (${tCo2e.toFixed(3)} tCO2e) is within ` +
+            `${ANOMALY_THRESHOLD * 100}% of its own baseline (${baselineTCo2e.toFixed(3)}).`,
+        );
+      }
 
       // Immutable calc snapshot — same shape the calc engine produces at write
       // time (no unit conversion here: activity is already in the base unit).
@@ -641,11 +696,24 @@ async function main() {
         calculation,
         createdBy: adminId,
         anomalyFlag: isAnomaly,
+        anomalyBaselinePriorCount: priors.length,
+        anomalyBaselineTCo2e: baselineTCo2e,
         varianceReason: isAnomaly
           ? 'Prototype anomaly: unusually high activity vs seasonal baseline.'
           : null,
       });
       activityCount++;
+      // Only a COUNTED record seeds a baseline. The status is set 300 lines
+      // away, so this checks the seed's own constant against the shared
+      // vocabulary rather than against a repeated literal: flip
+      // SEED_RECORD_STATUS to `draft` and this fires, instead of every later
+      // record silently claiming a window of rows that seed nothing.
+      if (!(COUNTED_STATUSES as readonly string[]).includes(SEED_RECORD_STATUS)) {
+        throw new Error(
+          `the rolling baseline assumes seeded records are counted, but they are written as "${SEED_RECORD_STATUS}"`,
+        );
+      }
+      writtenTCo2e.push(tCo2e);
       // Evidence-required categories need a linked file to count as complete.
       if (await ensureSeedEvidence(recordId, adminId)) evidenceCount++;
     }
@@ -658,6 +726,7 @@ async function main() {
   // months written here.
   for (const spec of siteSpecs) {
     const { factor, subsidiary } = spec;
+    const siteWrittenTCo2e: number[] = [];
     for (const periodValue of LOCATION_MONTHS) {
       const activityValue = spec.base;
       const kgCo2e = activityValue * factor.factorValue;
@@ -681,9 +750,21 @@ async function main() {
         calculation,
         createdBy: adminId,
         anomalyFlag: false,
+        // Three months per site (LOCATION_MONTHS) means this series never
+        // reaches a full window today: 0, then 1, then 2 priors. That is not a
+        // gap in the seed — it is what a site's first quarter genuinely looks
+        // like, and the surfaces now say "not evaluated" rather than "clean".
+        // The average is DERIVED rather than hardcoded null: a fourth month
+        // would otherwise ship a record claiming three priors and no baseline,
+        // which is the row the migration's third guard refuses.
+        anomalyBaselinePriorCount: siteWrittenTCo2e.slice(-ANOMALY_BASELINE_PERIODS).length,
+        anomalyBaselineTCo2e: rollingBaseline(
+          siteWrittenTCo2e.slice(-ANOMALY_BASELINE_PERIODS),
+        ),
         varianceReason: null,
       });
       activityCount++;
+      siteWrittenTCo2e.push(calculation.tCo2e);
       siteRecordCount++;
       if (await ensureSeedEvidence(recordId, adminId)) evidenceCount++;
     }

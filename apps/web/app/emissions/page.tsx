@@ -59,6 +59,7 @@ import {
 } from 'recharts';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
+import { anomalyStatement } from '@/lib/anomaly-view';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { CATEGORIES, isCalculated, unitSymbol } from '@/lib/types';
@@ -1157,6 +1158,13 @@ export default function EmissionsAnalysisPage() {
                     </Badge>
                   )}
                 </div>
+
+                {/* The verdict in words, including the case where there is no
+                    verdict: a drawer that shows a badge or nothing lets "never
+                    checked" render exactly like "checked and clean". */}
+                <p className="text-xs text-muted-foreground">
+                  {anomalyStatement(selectedRecord).detail}
+                </p>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>

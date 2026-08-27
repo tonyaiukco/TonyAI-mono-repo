@@ -188,6 +188,32 @@ model ActivityRecord {
   calculation    Json // immutable calc-engine snapshot (tCo2e + factor traceability)
   createdBy      String               @map("created_by") @db.Uuid
   anomalyFlag    Boolean              @default(false) @map("anomaly_flag")
+  // What the flag above was decided against: how many comparable periods
+  // carried a figure, and their rolling average. VAR §4.1 requires three, so a
+  // count below it means the rule did NOT run and the average is null --
+  // `anomalyFlag: false` said all three of "clean against three", "clean
+  // against fewer" and "never evaluated" until these columns existed.
+  //
+  // THREE states, readable in plain SQL with no join and no JSON parsing:
+  //   NULL  -- the pool was never queried (this record carries no figure of its
+  //            own, so there is nothing to deviate). It may still sit on a full
+  //            year of neighbours; "no figure" and "no priors" are different
+  //            facts, and a column that said 0 for both forced every non-
+  //            TypeScript reader to re-implement isCalculated() to tell them
+  //            apart -- three copies of that predicate already exist.
+  //   0..2  -- a short window: the rule did not run.
+  //   3     -- evaluated, and `anomalyBaselineTCo2e` is the average it used.
+  //
+  // Named `anomalyBaseline*` and not `baseline*`: `Target.baselineTCo2e` in
+  // this same schema is a reduction target's baseline-year emissions, an
+  // unrelated quantity, and one package holding two different "baselines" is a
+  // trap for whoever reaches for "the baseline" next.
+  //
+  // Mutable, unlike `calculation`: a verdict is a judgement about a moving pool
+  // of neighbours, not a frozen measurement, which is what makes re-scoring
+  // legal at all. Written at create/update/submit beside the flag itself.
+  anomalyBaselinePriorCount Int?      @map("anomaly_baseline_prior_count")
+  anomalyBaselineTCo2e      Float?    @map("anomaly_baseline_tco2e")
   // The AUTHOR's justification for an anomalous value (VAR §4). A reviewer must
   // never overwrite it — their own words go in reviewNote.
   varianceReason String?              @map("variance_reason")

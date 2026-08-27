@@ -23,6 +23,7 @@ function cell(over: Partial<TrackingMatrixCell> = {}): TrackingMatrixCell {
     category: 'Electricity',
     scope: 2,
     status: 'complete',
+    notEvaluatedRecordCount: 0,
     tCo2e: 12.4,
     recordCount: 1,
     uncalculatedRecordCount: 0,

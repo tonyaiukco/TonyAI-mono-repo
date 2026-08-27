@@ -158,7 +158,16 @@ Changes to locked records must create a revision entry with:
 - original value visibility
 
 ### 4.4 Anomaly Detection
-Records with more than 50 percent variance from the previous comparable period average must be flagged.
+Records with more than 50 percent variance from the rolling average of the
+previous **3** comparable periods for the same reporting entity must be flagged.
+Fewer than three priors carrying a figure means the record is **not evaluated**
+rather than clean, and the surface must say so.
+
+The normative rule — the full baseline key, the counted statuses that seed it,
+and why the key deviates from the original specification — is
+`validation_anomaly_rules.md` §4.1. This paragraph stated it a third and looser
+way until 2026-08-27 ("the previous comparable period average", with no count
+and no key), which is how three documents came to describe one rule differently.
 
 When anomaly is detected:
 - show warning

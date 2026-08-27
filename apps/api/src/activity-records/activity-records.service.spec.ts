@@ -112,6 +112,12 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     calculation: { tCo2e: 19.8, factorId: 'factor-1' } as unknown,
     createdBy: 'user-entry',
     anomalyFlag: false,
+    // Defaulted for the same reason `factorId` is (see above): a fixture that
+    // omits a NOT-NULL-ish column hands `toDTO` an `undefined` where the
+    // contract says a number, and the next assertion written against a read
+    // path gets written to expect it.
+    anomalyBaselinePriorCount: null,
+    anomalyBaselineTCo2e: null,
     varianceReason: null,
     // Prisma `_count` shape returned when the service includes evidence counts.
     _count: { evidence: 0 },
@@ -1481,10 +1487,16 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     reportingPeriod: 'monthly' as const,
     periodValue: 'March',
   };
-  const priorMonth = (periodValue: string, tCo2e: number) =>
+  // A third prior usually has to come from the PREVIOUS year — the subject is
+  // March, and only two months precede it inside 2024. That is not a workaround:
+  // the baseline query has no `reportingYear` filter (the year enters through
+  // the ordinal key alone, so December seeds January), and until VAR §4.1
+  // required three priors nothing exercised it.
+  const priorMonth = (periodValue: string, tCo2e: number, reportingYear?: number) =>
     makeRecord({
       reportingPeriod: 'monthly',
       periodValue,
+      ...(reportingYear !== undefined ? { reportingYear } : {}),
       status: ActivityRecordStatus.approved,
       // `factorId` for the same reason as makeRecord's default: a stored,
       // calculated prior always carries the factor it used, and isCalculated()
@@ -1497,6 +1509,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
     // Baseline avg = 10; current = 19.8 → +98% → anomaly.
     prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('December', 10, 2023),
       priorMonth('January', 10),
       priorMonth('February', 10),
     ]);
@@ -1513,8 +1526,11 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
   it('does not flag a value within 50% of the baseline', async () => {
     const { prisma, service } = build(2);
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
-    // Baseline avg = 15; current = 19.8 → +32% → within threshold.
+    // Baseline avg = 15; current = 19.8 → +32% → within threshold. Three priors,
+    // deliberately: with two this would pass because the rule never RAN, which
+    // is a different claim from the one the test makes.
     prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('December', 15, 2023),
       priorMonth('January', 15),
       priorMonth('February', 15),
     ]);
@@ -1543,16 +1559,20 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
     // A FUTURE month (April) must not seed the March baseline; only Jan/Feb count.
     prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('December', 10, 2023),
       priorMonth('January', 10),
       priorMonth('February', 10),
-      priorMonth('April', 19), // later than March → ignored
+      priorMonth('April', 40), // later than March → ignored
     ]);
     prisma.activityRecord.create.mockImplementation(({ data }: any) =>
       makeRecord({ ...data, id: 'rec-new' }),
     );
 
     await service.create(dataEntry(), MONTHLY_DTO);
-    // If April (19) had counted, baseline ≈ 13 and 19.8 would be within 50%.
+    // The intruder's VALUE is load-bearing. At 19 this test could not fail: an
+    // admitted April gives a baseline of 13, and 19.8 is +52% of that — still
+    // flagged, still green. At 40 an admitted April gives 20, and 19.8 is -1%,
+    // so the assertion below genuinely depends on April being excluded.
     expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(true);
   });
 
@@ -1601,13 +1621,148 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(true);
   });
 
+  // --- The strict window, and the provenance that makes it legible ---------
+  //
+  // VAR §4.1 asks for the previous THREE periods. The rule used to run on as
+  // few as one, so a green cell could mean "compared against one month" and
+  // nothing said so. Fewer than three is now NOT EVALUATED, and the count
+  // travels with the verdict — without it the strict rule would be strictly
+  // less informative than the loose one it replaced.
+
+  it('does not flag a deviation of exactly the threshold (VAR §4.2 says MORE than)', async () => {
+    const { prisma, calc, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    // 15 against a baseline of 10 is +50% EXACTLY, and all three of 15, 10 and
+    // the 5 between them are exact in binary. The suite's usual 19.8 cannot
+    // express this case at all: 19.8 - 13.2 is 6.600000000000001, so the ratio
+    // lands a hair ABOVE the threshold and the boundary is never reached.
+    calc.compute.mockResolvedValue({ ...calc.snapshot, tCo2e: 15, kgCo2e: 15000 });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('December', 10, 2023),
+      priorMonth('January', 10),
+      priorMonth('February', 10),
+    ]);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    await service.create(dataEntry(), MONTHLY_DTO);
+
+    // `>` vs `>=` on the threshold survived the whole suite until this test:
+    // every other fixture sits far from the boundary, so the one comparison
+    // VAR §4.2 words precisely ("more than 50 percent") was unpinned.
+    const { data } = prisma.activityRecord.create.mock.calls[0][0];
+    expect(data.anomalyFlag).toBe(false);
+    expect(data.anomalyBaselinePriorCount).toBe(3);
+    expect(data.anomalyBaselineTCo2e).toBe(10);
+  });
+
+  it('does not evaluate a value scored on fewer than three priors, and records how many it had', async () => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    // 19.8 against an average of 10 is +98% — the old rule flagged exactly this.
+    prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('January', 10),
+      priorMonth('February', 10),
+    ]);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    const dto = await service.create(dataEntry(), MONTHLY_DTO);
+
+    const { data } = prisma.activityRecord.create.mock.calls[0][0];
+    expect(data.anomalyFlag).toBe(false);
+    expect(data.anomalyBaselinePriorCount).toBe(2);
+    // Null, not the two-period average: a number here would be an average no
+    // rule used, and a screen would show it as the thing the value was judged
+    // against.
+    expect(data.anomalyBaselineTCo2e).toBeNull();
+    expect(dto.anomalyBaselinePriorCount).toBe(2);
+    expect(dto.anomalyBaselineTCo2e).toBeNull();
+  });
+
+  it('persists the baseline it judged against when the window is full', async () => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('December', 9, 2023),
+      priorMonth('January', 10),
+      priorMonth('February', 11),
+    ]);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    const dto = await service.create(dataEntry(), MONTHLY_DTO);
+
+    expect(dto.anomalyBaselinePriorCount).toBe(3);
+    expect(dto.anomalyBaselineTCo2e).toBe(10);
+    expect(dto.anomalyFlag).toBe(true); // 19.8 vs 10 → +98%
+  });
+
+  it('a prior without a figure consumes a slot, leaving the window short', async () => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('November', 10, 2023), // older — must NOT be pulled in to fill the gap
+      priorMonth('December', 10, 2023),
+      priorMonth('January', 10),
+      // An invoice-tracked category with no factor: stored, committed, and
+      // carrying no tCO₂e. It is the NEWEST prior, so it takes a slot.
+      makeRecord({
+        reportingPeriod: 'monthly',
+        periodValue: 'February',
+        status: ActivityRecordStatus.approved,
+        calculation: { reasonCode: 'no_emission_factor' },
+      }),
+    ]);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    await service.create(dataEntry(), MONTHLY_DTO);
+
+    // Two figures out of three slots → the rule does not run, even though a
+    // fourth comparable period exists just outside the window.
+    const { data } = prisma.activityRecord.create.mock.calls[0][0];
+    expect(data.anomalyBaselinePriorCount).toBe(2);
+    expect(data.anomalyFlag).toBe(false);
+  });
+
+  it('reports a full window that averages to zero rather than hiding it', async () => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('December', 0, 2023),
+      priorMonth('January', 0),
+      priorMonth('February', 0),
+    ]);
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    await service.create(dataEntry(), MONTHLY_DTO);
+
+    // No ratio is computable against zero, so no warning — but three priors of
+    // zero is a fact about the series, and the record says so instead of
+    // reading like a record that had no priors at all.
+    const { data } = prisma.activityRecord.create.mock.calls[0][0];
+    expect(data.anomalyFlag).toBe(false);
+    expect(data.anomalyBaselinePriorCount).toBe(3);
+    expect(data.anomalyBaselineTCo2e).toBe(0);
+  });
+
   it('orders quarterly periods correctly (Q1<Q2<Q3, Q4 excluded)', async () => {
     const { prisma, service } = build(2);
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
     prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q4', reportingYear: 2023, status: ActivityRecordStatus.approved, calculation: { tCo2e: 10, factorId: 'f-1' } }),
       makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q1', status: ActivityRecordStatus.approved, calculation: { tCo2e: 10, factorId: 'f-1' } }),
       makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q2', status: ActivityRecordStatus.approved, calculation: { tCo2e: 10, factorId: 'f-1' } }),
-      makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q4', status: ActivityRecordStatus.approved, calculation: { tCo2e: 19, factorId: 'f-1' } }), // later → excluded
+      // Same reasoning as the monthly case: at 19 an admitted Q4 still leaves
+      // the value flagged, so the exclusion went unproven. At 40 it does not.
+      makeRecord({ reportingPeriod: 'quarterly', periodValue: 'Q4', status: ActivityRecordStatus.approved, calculation: { tCo2e: 40, factorId: 'f-1' } }), // later → excluded
     ]);
     prisma.activityRecord.create.mockImplementation(({ data }: any) =>
       makeRecord({ ...data, id: 'rec-new' }),
@@ -1624,6 +1779,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     );
     prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
     prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('December', 10, 2023),
       priorMonth('January', 10),
       priorMonth('February', 10),
     ]);
@@ -1665,6 +1821,13 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     expect(prisma.activityRecord.create.mock.calls[0][0].data.anomalyFlag).toBe(false);
     // The baseline query never runs: detection is skipped, not survived.
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+    // NULL, not 0: the pool was never LOOKED AT, and the record may well sit on
+    // a full year of neighbours. A `0` here would be a claim about its history
+    // — and one every reader outside TypeScript would have had to re-derive
+    // `isCalculated()` to disbelieve.
+    const { data } = prisma.activityRecord.create.mock.calls[0][0];
+    expect(data.anomalyBaselinePriorCount).toBeNull();
+    expect(data.anomalyBaselineTCo2e).toBeNull();
   });
 
   it('update skips the anomaly check when the recomputed snapshot has no figure', async () => {
@@ -1756,7 +1919,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
   it('blocks submit when the value is anomalous vs. the current baseline and no comment', async () => {
     const { prisma, service } = build(2);
     prisma.activityRecord.findUnique.mockResolvedValue(draftForSubmit());
-    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('January', 10), priorMonth('February', 10)]);
+    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('December', 10, 2023), priorMonth('January', 10), priorMonth('February', 10)]);
 
     await expect(service.submit(dataEntry(), 'rec-s')).rejects.toThrow(/variance comment|deviates/i);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -1765,12 +1928,75 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
   it('allows submit of an anomalous record once a variance comment is present (persists the fresh flag)', async () => {
     const { prisma, service } = build(2);
     prisma.activityRecord.findUnique.mockResolvedValue(draftForSubmit({ varianceReason: 'Plant expansion' }));
-    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('January', 10), priorMonth('February', 10)]);
+    prisma.activityRecord.findMany.mockResolvedValue([priorMonth('December', 10, 2023), priorMonth('January', 10), priorMonth('February', 10)]);
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-s', ...data }));
 
     const dto = await service.submit(dataEntry(), 'rec-s');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
     expect(prisma.activityRecord.update.mock.calls[0][0].data.anomalyFlag).toBe(true);
+  });
+
+  // The provenance is written at THREE moments, and until these two tests
+  // existed only the first was asserted: dropping the write at update or at
+  // submit, or hardcoding it, left the whole suite green. Each test arranges a
+  // window that differs from what the record already stores, so a stale value
+  // is as visible as a missing one.
+
+  it('update persists the window it re-scored against, not the one create wrote', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-u',
+        subsidiaryId: 'sub-1',
+        reportingPeriod: 'monthly',
+        periodValue: 'March',
+        createdBy: 'user-entry',
+        // What create wrote when this record was first saved and its series
+        // was empty. The pool has moved since.
+        anomalyBaselinePriorCount: 0,
+        anomalyBaselineTCo2e: null,
+      }),
+    );
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+    prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('December', 9, 2023),
+      priorMonth('January', 10),
+      priorMonth('February', 11),
+    ]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-u', ...data }),
+    );
+
+    const dto = await service.update(dataEntry(), 'rec-u', { activityValue: 5000 });
+
+    const { data } = prisma.activityRecord.update.mock.calls[0][0];
+    expect(data.anomalyBaselinePriorCount).toBe(3);
+    expect(data.anomalyBaselineTCo2e).toBe(10);
+    expect(dto.anomalyBaselinePriorCount).toBe(3);
+  });
+
+  it('submit persists the window as of submit time', async () => {
+    const { prisma, service } = build(2);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      draftForSubmit({ anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: 99 }),
+    );
+    // Two priors now — fewer than the record claims to have been scored on, and
+    // fewer than the rule needs. Both halves of the stale claim must be
+    // replaced, not just the flag.
+    prisma.activityRecord.findMany.mockResolvedValue([
+      priorMonth('January', 10),
+      priorMonth('February', 10),
+    ]);
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-s', ...data }),
+    );
+
+    await service.submit(dataEntry(), 'rec-s');
+
+    const { data } = prisma.activityRecord.update.mock.calls[0][0];
+    expect(data.anomalyBaselinePriorCount).toBe(2);
+    expect(data.anomalyBaselineTCo2e).toBeNull();
+    expect(data.anomalyFlag).toBe(false);
   });
 
   it('a record with no calculated figure is never anomalous, so submit is not blocked', async () => {

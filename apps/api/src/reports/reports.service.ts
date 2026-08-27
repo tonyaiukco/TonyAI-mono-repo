@@ -8,7 +8,9 @@ import type {
   ReportTemplate,
 } from '@tonyai/shared-types';
 import {
+  ANOMALY_BASELINE_PERIODS,
   entityLabel,
+  isAnomalyEvaluated,
   PENDING_REVIEW_STATUSES,
   REPORT_TEMPLATES,
 } from '@tonyai/shared-types';
@@ -32,6 +34,38 @@ const COMMITTED_STATUSES = COUNTED_STATUSES;
  * the CSV cannot say three different things about the same row.
  */
 const NOT_CALCULATED = 'Not calculated';
+
+/**
+ * What the anomaly column says for a record the VAR §4 rule never ran on.
+ *
+ * A blank in that column has always meant "checked, nothing unusual". Since
+ * 2026-08-27 the rule needs three priors, so a blank would also cover "never
+ * checked" — and on the dev database that is 30 of 96 committed records, in the
+ * artifact an auditor keeps. Same instinct as NOT_CALCULATED above: say the
+ * absence rather than print something indistinguishable from a measurement.
+ *
+ * ONE renderer for every format (`anomalyCell`), because the Excel sheet and
+ * the CSV each hold their own column literals and this is exactly the kind of
+ * difference that survives review — WP20 shipped a CSV and an Excel from one
+ * request that disagreed about withdrawn rows for precisely this reason.
+ */
+const NOT_EVALUATED = 'Not evaluated';
+
+function anomalyCell(r: {
+  anomalyFlag: boolean;
+  anomalyEvaluated: boolean;
+  anomalyBaselinePriorCount: number | null;
+}): string {
+  if (r.anomalyFlag) return 'yes';
+  if (r.anomalyEvaluated) return '';
+  const priors = r.anomalyBaselinePriorCount;
+  // Each absence names itself: the reader of a filed report cannot ask which
+  // one it was, and the three have different remedies — a factor, more months,
+  // or nothing at all.
+  if (priors === null) return `${NOT_EVALUATED} (no figure)`;
+  if (priors >= ANOMALY_BASELINE_PERIODS) return `${NOT_EVALUATED} (baseline is zero)`;
+  return `${NOT_EVALUATED} (${priors} of ${ANOMALY_BASELINE_PERIODS} priors)`;
+}
 
 /**
  * What the flat exports write in the tCO₂e column of a WITHDRAWN row.
@@ -83,6 +117,16 @@ export interface ReportLedgerRow {
   status: Exclude<ActivityRecordStatus, 'voided'>;
   evidenceCount: number;
   anomalyFlag: boolean;
+  /** Whether the VAR §4 rule actually RAN on this record — `anomalyFlag: false`
+   *  covers both "checked, clean" and "never checked", and only one of those is
+   *  a statement a filed report may make. Derived once here through the shared
+   *  `isAnomalyEvaluated` predicate so no writer re-derives it. */
+  anomalyEvaluated: boolean;
+  /** The window it was judged against: null (no figure of its own), 0–2 (short)
+   *  or 3 (evaluated). Printed inside the anomaly column rather than as a new
+   *  column — the ledger already carries ten hand-maintained column literals
+   *  across three writers, and this adds no eleventh. */
+  anomalyBaselinePriorCount: number | null;
 }
 
 /**
@@ -416,6 +460,8 @@ export class ReportsService implements OnModuleDestroy {
         tCo2e: Number.isFinite(calc.tCo2e) ? (calc.tCo2e as number) : null,
         evidenceCount: withRelations.evidence?.length ?? 0,
         anomalyFlag: r.anomalyFlag,
+        anomalyEvaluated: isAnomalyEvaluated(r),
+        anomalyBaselinePriorCount: r.anomalyBaselinePriorCount,
       };
     };
 
@@ -576,7 +622,7 @@ export class ReportsService implements OnModuleDestroy {
         // sums as zero the moment someone drags a SUM over it, which is the
         // same misstatement as writing 0 — only harder to notice.
         r.activityValue, r.activityUnit, r.tCo2e ?? NOT_CALCULATED, r.status, r.evidenceCount,
-        r.anomalyFlag ? 'yes' : '',
+        anomalyCell(r),
       ]);
     }
 
@@ -657,7 +703,7 @@ export class ReportsService implements OnModuleDestroy {
           // Same reasoning as the Excel sheet: an empty cell in a numeric
           // column is read as zero by whatever consumes the CSV next.
           r.activityValue, r.activityUnit, r.tCo2e ?? NOT_CALCULATED, r.status, r.evidenceCount,
-          r.anomalyFlag,
+          anomalyCell(r),
           // The `voided_*` columns are empty for a counted row, and empty is
           // the right word here: this row was never withdrawn.
           '', '', '', '',

@@ -87,6 +87,11 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
     },
     createdBy: 'admin-1',
     anomalyFlag: false,
+    // Defaulted to an EVALUATED verdict, the common case for a committed record
+    // with a figure. Left undefined these read as "the rule never ran", which
+    // silently turns every fixture in the file into a not-evaluated record.
+    anomalyBaselinePriorCount: 3,
+    anomalyBaselineTCo2e: 10,
     varianceReason: null,
     // Always present on a row Prisma returns — null for a company-level record
     // that was never withdrawn, which is the overwhelmingly common case.
@@ -339,6 +344,50 @@ describe('ReportsService', () => {
           diff: expect.objectContaining({ exportType: 'csv' }),
         }),
       );
+  });
+
+  it('the anomaly column says "not evaluated" instead of leaving a blank the rule never earned', async () => {
+    // A blank in that column has always meant "checked, nothing unusual".
+    // Since the rule needs three priors, a blank would also cover "never
+    // checked" — 30 of 96 committed records on the dev database — inside the
+    // artifact an auditor keeps. Same instinct as `Not calculated`.
+    stubRecords(prisma, [
+      makeRecord({ id: 'rec-clean' }),
+      makeRecord({ id: 'rec-flagged', periodValue: 'February', anomalyFlag: true }),
+      makeRecord({
+        id: 'rec-thin',
+        periodValue: 'March',
+        anomalyBaselinePriorCount: 2,
+        anomalyBaselineTCo2e: null,
+      }),
+      makeRecord({
+        id: 'rec-no-figure',
+        periodValue: 'April',
+        anomalyBaselinePriorCount: null,
+        anomalyBaselineTCo2e: null,
+      }),
+      makeRecord({
+        id: 'rec-zero-window',
+        periodValue: 'May',
+        anomalyBaselinePriorCount: 3,
+        anomalyBaselineTCo2e: 0,
+      }),
+    ]);
+
+    const rows = (await service.generateCsv(admin, q)).trim().split('\n');
+    const cellFor = (period: string) =>
+      rows.find((r) => r.includes(period))!.split(',');
+
+    // Checked and clean: still a blank, as it always was.
+    expect(cellFor('January')).toContain('');
+    expect(rows.find((r) => r.includes('February'))).toContain('yes');
+    // ...and the three absences each say which one they are, because "no
+    // figure to compare" and "not enough history" have different remedies.
+    expect(rows.find((r) => r.includes('March'))).toContain('Not evaluated (2 of 3 priors)');
+    expect(rows.find((r) => r.includes('April'))).toContain('Not evaluated (no figure)');
+    // A full window that averages zero yields no ratio — reported as its own
+    // absence rather than as "3 of 3", which would read as evaluated.
+    expect(rows.find((r) => r.includes('May'))).toContain('Not evaluated (baseline is zero)');
   });
 
   // --- HTML builder (pure) --------------------------------------------------
