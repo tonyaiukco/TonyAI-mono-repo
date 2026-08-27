@@ -1,5 +1,12 @@
 # TonyAI — Phase 1 UAT Plan & Test Catalog
 
+> 📍 **Round 2 is running — start at [`uat_round2.md`](uat_round2.md).**
+> That catalog covers what changed since round 1 (the review gate, per-location
+> completeness, record withdrawal, report disclosure, anomaly provenance, the audit
+> screen) and asks you to confirm the round-1 close-out item by item. **This** file
+> stays as the baseline catalog for everything those packages did not touch; its
+> figures have been refreshed to the current seed.
+
 > ⚠️ **Re-seed before this round.** The demo dataset moved from 2024 to **2026**
 > (round-1 **DE-9**), so a database seeded earlier still holds 2024 data and the
 > scenarios below will not match it. Run **`pnpm db:reset`** — plain `pnpm db:seed`
@@ -39,7 +46,7 @@ TonyAI is a multi-tenant carbon-accounting platform for holding companies. Phase
 | `entry@tonyai.local` | `data_entry` | only **2** subsidiaries (TonyAI Energy, TonyAI Logistics); cannot manage org structure, cannot generate reports |
 | `review@tonyai.local` | `consultant` | organisation-wide read; may review and reject records but **may not approve**, and may not enter, edit or submit data |
 
-**Seed data:** 1 organisation · 5 subsidiaries · 8 operational locations · 102 approved monthly 2026 activity records (each with a demo evidence file) · 3 reduction targets · 10 intensity denominators.
+**Seed data:** 1 organisation · 5 subsidiaries · 8 operational locations · **96** approved monthly 2026 activity records (each with a demo evidence file) · 3 reduction targets · **12** intensity denominators.
 
 **Recommended free period for entry tests:** any **2026 · Quarterly** period (the seed only fills monthly periods).
 
@@ -99,7 +106,7 @@ Conventions: run as `admin@tonyai.local` unless the TC says otherwise. Mark each
 | ENTRY-07 | Switch category to **Mobile Combustion** or **Refrigerants**, enter a value | Preview says "No emission factor for this selection" — expected: Phase 1 seeds factors only for Electricity / Natural Gas / Fuel | |
 | ENTRY-08 | As entry: create + submit a record on TonyAI Energy | Same flow works for the data_entry role on its own subsidiaries | |
 
-> **Review/approve note:** as of WP7 PR 3 the reviewer actions have a UI at **`/review`** — a queue of records awaiting a decision, with Start review / Reject / Approve. Approve renders for `super_admin` only; a `consultant` may take a record into review and reject it, and the API refuses an approve from that role regardless of what the UI offers. A rejection's reason is written to the record's review note and shown to the submitter on `/emissions`. The seed also contains 102 already-approved records feeding analytics and reports.
+> **Review/approve note:** as of WP7 PR 3 the reviewer actions have a UI at **`/review`** — a queue of records awaiting a decision, with Start review / Reject / Approve. Approve renders for `super_admin` only; a `consultant` may take a record into review and reject it, and the API refuses an approve from that role regardless of what the UI offers. A rejection's reason is written to the record's review note and shown to the submitter on `/emissions`. The seed also contains 96 already-approved records feeding analytics and reports.
 
 ### 3.4b Review queue (`/review`) — WP7 PR 3
 
@@ -202,7 +209,7 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
-| EMIS-01 | Open all four tabs (Summary / Breakdown / History / Trends) | Live data everywhere; 2026 total ≈ **3,177 tCO₂e** on the pristine seed | |
+| EMIS-01 | Open all four tabs (Summary / Breakdown / History / Trends) | Live data everywhere; 2026 total is **2,906.61 tCO₂e** on the pristine seed (it read ≈3,177 before the six double-counted months were removed — see the round-2 catalog §2.2) | |
 | EMIS-02 | Apply a Scope filter and a Category filter | All tabs update consistently | |
 | EMIS-03 | History tab: open a record's detail sheet | Full calculation snapshot: factor value, source, version, methodology | |
 | EMIS-04 | **Targets** tab | 3 demo targets: one **On track**, one **At risk**, one honest **"Progress n/a"** (baseline year has no later data) | |
@@ -216,7 +223,7 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
 | REP-01 | Open `/reports` as admin | **Live** preview: status badge, scope tiles, charts, category table; *Data completeness* panel shows real counts | |
-| REP-02 | Status badge on the pristine seed (2026, whole org) | **Approved** (all 102 records reviewed) | |
+| REP-02 | Status badge on the pristine seed (2026, whole org) | **Approved** (all 96 records reviewed) | |
 | REP-03 | Switch Reporting year to **2023** | Badge is **not** "Approved" (no data — an empty year is never approved); tables show "No committed data" | |
 | REP-04 | **Download PDF** (2026, Methodology notes ticked) | Branded multi-page A4 `tonyai-executive_summary-2026.pdf` with totals, tables and the **emission-factor appendix** (value/source/version) | |
 | REP-05 | Template → **GHG Protocol Detail** → Download PDF | PDF additionally contains the full activity-records ledger | |
@@ -239,11 +246,11 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 - Dashboard year-over-year badges show "—" until a second year of data exists.
 
 **Known minor gaps (already in the backlog — skip reporting):**
-- The audit trail is written for every mutation but has **no viewing UI** yet (verifiable via Supabase Studio).
+- ~~The audit trail has no viewing UI~~ — **closed**: `/audit` is a super_admin screen now (see the round-2 catalog §4.1).
 - Dashboard has no year/period selector or organisation switcher (single-org, single-year seed makes this invisible).
-- Subsidiaries have no **Edit** dialog yet (create/delete only; editing exists in the API).
-- The matrix drill-down sheet has no "Go to Data Entry" shortcut.
-- Consultant / executive_viewer roles exist but have no seed users; their flows are not part of this UAT.
+- ~~Subsidiaries have no **Edit** dialog~~ — **closed**: a subsidiary is edited on its own page at `/subsidiaries/<id>` (round-1 SUB-1/SUB-2).
+- ~~The matrix drill-down sheet has no "Go to Data Entry" shortcut~~ — **closed**: clicking a matrix cell lands on Data Entry with the subsidiary, category and year selected (round-1 DASH-2).
+- `consultant` now **has** a seed user (`review@tonyai.local`) and is in scope. `executive_viewer` still has none and remains out of scope.
 - Unknown URLs and unexpected render failures now show **branded TonyAI pages** ("Page not found" / "Something went wrong" with a reference code) instead of the framework's default screens — that is the new error handling, not a defect. While signed out, any URL still redirects to `/login` first, so the 404 page only appears once you are signed in. Do report the error that *caused* such a page, quoting the reference code.
 
 ## 5. Reporting an issue
@@ -258,6 +265,9 @@ For each issue please capture:
 The demo dataset can always be restored with `pnpm db:reset`.
 
 ## 5b. Results
+
+**Round 2 is open (2026-08-27):** the catalog is
+[`uat_round2.md`](uat_round2.md); its §3 is the round-1 close-out check.
 
 **Round 1 feedback received (2026-07-27, product-owner walkthrough):**
 [`uat_phase1_feedback_round1.md`](uat_phase1_feedback_round1.md) — 16 items across
@@ -291,7 +301,7 @@ items is in [`../roadmap_docs/project-status.md`](../roadmap_docs/project-status
 
 ## 7. Automation baseline (already verified before this UAT)
 
-- **245 API unit tests** — calculation engine (unit conversions to the digit), tenant isolation, RBAC, all lifecycle gates incl. the review transition, targets/intensity math, report assembly/status honesty, JWT verification under both signing schemes.
-- **14 end-to-end tests** (Playwright) — login, CRUD, full data-entry lifecycle incl. evidence upload and approval, all three gates, RBAC/tenant negatives, analytics/dashboard smoke, targets round-trip, report downloads (exact filenames + magic-byte checks) and the data_entry no-export rule.
-- **18 live RLS containment probes** — the database layer independently hides cross-tenant rows even when the API is bypassed.
+- **757 unit tests** (548 API · 105 web · 63 shared-types · 41 database tooling) — calculation engine (unit conversions to the digit), tenant isolation, RBAC, all lifecycle gates incl. the review transition, the completeness rule, the withdrawal path, targets/intensity math, report assembly/status honesty, the anomaly baseline, JWT verification under both signing schemes.
+- **84 end-to-end tests** (Playwright) — login, CRUD, full data-entry lifecycle incl. evidence upload and approval, all three gates, RBAC/tenant negatives, analytics/dashboard smoke, the completeness dashboard, the review gate, record withdrawal, the audit trail, targets round-trip, report downloads (exact filenames + magic-byte checks) and the data_entry no-export rule.
+- **31 live RLS containment probes** — the database layer independently hides cross-tenant rows even when the API is bypassed, and a consultant can neither write nor withdraw a figure through it.
 - Every mutation writes an append-only **audit log** row.
