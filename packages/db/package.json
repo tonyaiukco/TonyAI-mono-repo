@@ -14,7 +14,8 @@
     "studio": "prisma studio",
     "lint": "echo \"(db) no lint\" && exit 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "evidence:reclaim": "node scripts/reclaim-evidence.mjs"
+    "evidence:reclaim": "node scripts/reclaim-evidence.mjs",
+    "anomaly:probe": "node scripts/anomaly-probe.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
