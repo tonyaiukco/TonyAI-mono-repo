@@ -51,7 +51,7 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 
 ## Project status
 
-**Phase 1 (Scope 1 & 2 core MVP) is complete** and running end‑to‑end on a local machine; UAT round 1 is closed and **Phase 3** is active — WP7 (audit viewer, reviewer UI, subsidiary edit), WP15 (UAT quick wins) and WP16 (locations in the subsidiary flow) have all shipped. Phase 2 (staging on Azure) is waiting on the cloud credit; its cloud‑independent prep is done. The checkbox‑level plan lives in [`docs/roadmap_docs/project-status.md`](docs/roadmap_docs/project-status.md).
+**Phase 1 (Scope 1 & 2 core MVP) is complete** and running end‑to‑end on a local machine; UAT round 1 is closed, **UAT round 2 is open** ([`docs/uat/uat_round2.md`](docs/uat/uat_round2.md)) and **Phase 3** is active — WP7 (audit viewer, reviewer UI, subsidiary edit), WP15 (UAT quick wins), WP16 (locations in the subsidiary flow), WP17 (completeness engine), WP18 (withdrawal + re-attribution), WP19 (the review gate on every cell), WP20 (report disclosure) and WP21 (anomaly baseline provenance + recompute) have all shipped. Phase 2 (staging on Azure) is waiting on the cloud credit; its cloud‑independent prep is done. The checkbox‑level plan lives in [`docs/roadmap_docs/project-status.md`](docs/roadmap_docs/project-status.md).
 
 | Area | Status |
 | --- | --- |
@@ -270,7 +270,7 @@ supabase start
 pnpm db:migrate     # applies Prisma migrations (incl. RLS policies)
 pnpm db:seed        # 1 org, 5 subsidiaries, 8 locations, 3 users, demo factors for DEMO_YEAR (2026)
                     # + 96 approved Scope 1&2 records (90 subsidiary-level monthly, 6 location-level),
-                    # one demo evidence file each, 3 targets + 10 intensity denominators
+                    # one demo evidence file each, 3 targets + 12 intensity denominators
                     # A month reported per site is NOT also reported company-wide: the two
                     # attribution levels coexist across the year, never for the same month.
                     # Jan-Mar for TonyAI Energy (Electricity) and TonyAI Logistics (Fuel) are
@@ -503,7 +503,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 - **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
 - **Phase 1 — Core MVP (Scope 1 & 2)** ✅: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅, Targets & intensity ✅, Reports ✅ — **Phase 1 complete**.
 - **Phase 2 — Staging cloud & CI/CD** *(target: **Azure** — provider switched from GCP 2026-07-29, credit expected; cloud-independent prep is done)*: Supabase cloud (Frankfurt), **Azure Container Apps** deploy via GitHub Actions **OIDC** + **ACR**, Key Vault secrets, Log Analytics for the JSON logs + Sentry for errors, KVKK/GDPR EU residency (Germany West Central), staging smoke E2E in CI.
-- **Phase 3 — Advanced** *(active)*: **WP7 UAT backlog & reviewer UI ✅ → WP15 UAT quick wins ✅ → WP16 locations in the subsidiary flow ✅ → WP17 completeness engine ✅** → bulk upload → email notifications + report sharing (Resend) → Scope 3 + supplier management → i18n/dark mode. A Python/FastAPI analytics microservice was **demoted to conditional** (2026-07-29): analytics lands in the existing API unless a concrete Python-library need is demonstrated.
+- **Phase 3 — Advanced** *(active)*: **WP7 UAT backlog & reviewer UI ✅ → WP15 UAT quick wins ✅ → WP16 locations in the subsidiary flow ✅ → WP17 completeness engine ✅ → WP18 withdrawal & re-attribution ✅ → WP19 review gate on every cell ✅ → WP20 report disclosure ✅ → WP21 anomaly baseline provenance ✅ → UAT round 2 (open)** → bulk upload → email notifications + report sharing (Resend) → Scope 3 + supplier management → i18n/dark mode. A Python/FastAPI analytics microservice was **demoted to conditional** (2026-07-29): analytics lands in the existing API unless a concrete Python-library need is demonstrated.
 - **Phase 4 — Production launch:** authoritative emission-factor data, security/pen-test + load test, backup/DR, user lifecycle, legal (KVKK/GDPR), go-live.
 
 The detailed, checkbox-level plan lives in [`docs/roadmap_docs/project-status.md`](docs/roadmap_docs/project-status.md).
