@@ -90,8 +90,12 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   // Which entity the figure belongs to. The ledger has no column for it, so a
   // whole-company row and its site twin are distinguishable here and nowhere
   // else — and choosing between exactly that pair is what this control is for.
-  await expect(drawer.getByText('Reporting Entity')).toBeVisible();
-  await expect(drawer.getByText('Whole company')).toBeVisible();
+  // `exact` matters here: the drawer now also states what the anomaly rule was
+  // able to compare this figure against, and that sentence names the reporting
+  // entity in prose. A substring match resolved to two elements and failed in
+  // strict mode — the same duplicate-label hazard `pickByFieldLabel` carries.
+  await expect(drawer.getByText('Reporting Entity', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('Whole company', { exact: true })).toBeVisible();
 
   // The live region has to EXIST before the first keystroke. A node inserted at
   // the same instant as its message is not announced, and a prior session

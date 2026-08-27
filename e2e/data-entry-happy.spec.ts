@@ -38,6 +38,17 @@ test('data entry: draft → live preview → evidence → submit → approve →
   await page.getByRole('button', { name: 'Save draft' }).click();
   await expect(page.getByText('Draft saved')).toBeVisible();
 
+  // "No baseline" is stated, not left blank. This spec's own header names the
+  // condition — an unseeded quarterly tuple — and until WP21 the screen showed
+  // NOTHING for it, which reads as "checked, fine" about a value the rule never
+  // ran on. Neutral, not the amber anomaly banner: a short window is the normal
+  // state of a new series, and the two must not look alike.
+  await expect(page.getByText('Not checked for anomalies')).toBeVisible();
+  await expect(
+    page.getByText(/no earlier committed period exists for this reporting entity/i),
+  ).toBeVisible();
+  await expect(page.getByLabel('Reason for variance *')).toHaveCount(0);
+
   // Attach the required evidence (hidden file input under the vault).
   await page.locator('input[type="file"]').setInputFiles(EVIDENCE_FIXTURE);
   await expect(page.getByText('Evidence uploaded')).toBeVisible();

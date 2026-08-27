@@ -41,7 +41,10 @@ test('gate: anomalous value shows the banner and blocks submit without a varianc
   page,
   request,
 }) => {
-  // Arrange a baseline via the API: two committed quarterly priors at a normal value.
+  // Arrange a baseline via the API: THREE committed quarterly priors at a normal
+  // value. Two was enough until 2026-08-27, when VAR §4.1's "previous 3" started
+  // being enforced as three — with two the rule does not run at all, so this
+  // spec would have gone green on a banner that never appeared.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   await createCommittedRecord(request, token, {
     subsidiaryId: SUB.mfg,
@@ -55,12 +58,20 @@ test('gate: anomalous value shows the banner and blocks submit without a varianc
     periodValue: 'Q2',
     activityValue: 10_000,
   });
+  await createCommittedRecord(request, token, {
+    subsidiaryId: SUB.mfg,
+    category: 'Electricity',
+    periodValue: 'Q3',
+    activityValue: 10_000,
+  });
 
   await login(page, ADMIN_EMAIL);
   await page.goto('/data-entry');
 
-  // Mfg (EU) · Electricity · Q3 with a value ~50× the baseline → anomalous.
-  await selectScope(page, 'TonyAI Mfg (EU)', 'Q3');
+  // Mfg (EU) · Electricity · Q4 with a value ~50× the baseline → anomalous.
+  // The subject moved from Q3 to Q4 so all three priors fit inside one year;
+  // the alternative was seeding Q4 of the previous year through the UI.
+  await selectScope(page, 'TonyAI Mfg (EU)', 'Q4');
   await page.getByPlaceholder('e.g. 45000').fill('500000');
   await page.getByRole('button', { name: 'Save draft' }).click();
 

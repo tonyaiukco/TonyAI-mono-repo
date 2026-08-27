@@ -6,6 +6,7 @@ import {
   ACCEPTED_STATUSES,
   COUNTED_STATUSES as SHARED_COUNTED_STATUSES,
   MONTH_NAMES,
+  isAnomalyEvaluated,
   isCalculated,
   INVOICE_TRACKED_CATEGORIES,
   isEvidenceRequired,
@@ -233,6 +234,16 @@ export function deriveCellStatus(input: {
   // The three caps both branches share. Full invoice coverage does not answer
   // "there is an unfinished record here" or "one of these has no document", and
   // FR §2.2's yellow means exactly that there is something left to look at.
+  //
+  // `notEvaluatedRecordCount` is deliberately NOT a fourth cap (decision
+  // 2026-08-27). Since 2026-08-27 the anomaly rule needs three priors, so a
+  // record on a short window is not "clean" — but a short window is the normal
+  // state of any series' first months, and capping on it would paint every new
+  // site's first quarter amber until its fourth month, permanently for a
+  // subsidiary reporting quarterly in its first year. The cell reports the
+  // count instead and the surfaces say it, which is the disclosure without the
+  // false alarm. If UAT round 2 says testers read the green as "checked", this
+  // is the line that changes.
   const somethingLeftToLookAt =
     input.hasPending || input.anomaly || input.evidenceMissing;
 
@@ -633,6 +644,7 @@ export class EmissionsService {
         let awaitingReviewRecords = 0;
         let lastUpdate: string | null = null;
         let anomaly = false;
+        let notEvaluatedRecordCount = 0;
 
         // The invoice rule (WP17 / round-1 DASH-3) applies to three categories,
         // on a location-measured subsidiary, FOR ONE REPORTING YEAR.
@@ -676,8 +688,14 @@ export class EmissionsService {
             if (r.anomalyFlag) anomaly = true;
             if (COUNTED_SET.has(r.status)) {
               const calc = r.calculation as unknown as ActivityCalculationSnapshot | null;
-              if (isCalculated(calc)) tCo2e = (tCo2e ?? 0) + calc.tCo2e;
-              else uncalculatedRecordCount += 1;
+              if (isCalculated(calc)) {
+                tCo2e = (tCo2e ?? 0) + calc.tCo2e;
+                // A record that HAS a figure but that the rule never ran on.
+                // Only counted here — a figureless record is already reported
+                // as `uncalculatedRecordCount`, and counting it twice would
+                // stop the two reconciling against the cell's record count.
+                if (!isAnomalyEvaluated(r)) notEvaluatedRecordCount += 1;
+              } else uncalculatedRecordCount += 1;
               if (evidenceRequired && r._count.evidence === 0) {
                 evidenceMissing = true;
               }
@@ -739,6 +757,7 @@ export class EmissionsService {
             : {}),
           lastUpdate,
           anomaly,
+          notEvaluatedRecordCount,
         };
       });
 
@@ -860,11 +879,20 @@ export class EmissionsService {
         // surfaces disagreeing about one cell, which is exactly what this
         // method's own comment promises cannot happen.
         const live = recs.filter((r) => r.status !== ActivityRecordStatus.voided);
+        let notEvaluatedRecordCount = 0;
         for (const r of live) {
           if (PENDING_STATUSES.has(r.status)) hasPending = true;
           if (r.anomalyFlag) anomaly = true;
           if (!COUNTED_SET.has(r.status)) continue;
           if (!REVIEWED_STATUSES.has(r.status)) awaitingReviewRecords += 1;
+          // Same rule as the matrix cell, same predicate, so the panel and the
+          // dashboard cannot disagree about one cell.
+          if (
+            isCalculated(r.calculation as unknown as ActivityCalculationSnapshot | null) &&
+            !isAnomalyEvaluated(r)
+          ) {
+            notEvaluatedRecordCount += 1;
+          }
           if (evidenceRequired && r._count.evidence === 0) evidenceMissing = true;
           committed.push({
             locationId: r.locationId,
@@ -900,6 +928,7 @@ export class EmissionsService {
           outOfScopeRecords: coverage.outOfScopeRecords,
           awaitingReviewSlots: coverage.awaitingReview.size,
           awaitingReviewRecords,
+          notEvaluatedRecordCount,
           // Which months already hold a WHOLE-COMPANY entry. Without this the
           // grid invites the user to key a site invoice for a month that is
           // already recorded at company level, and both rows then feed the

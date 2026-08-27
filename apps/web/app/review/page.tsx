@@ -40,6 +40,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
+import { anomalyStatement } from "@/lib/anomaly-view";
 import { useAuthStore } from "@/lib/store";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
@@ -543,7 +544,13 @@ export default function ReviewPage() {
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-1">
                   <p className="flex items-center gap-2 font-medium text-amber-800">
                     <AlertTriangle className="h-4 w-4" />
-                    Flagged as anomalous
+                    {anomalyStatement(selected).headline}
+                  </p>
+                  {/* What the verdict was taken against, so a reviewer deciding
+                      on the figure is not asked to trust an average nobody
+                      shows them. */}
+                  <p className="text-xs text-amber-900/80">
+                    {anomalyStatement(selected).detail}
                   </p>
                   <p className="text-xs text-amber-900/80">
                     {selected.varianceReason
@@ -552,6 +559,21 @@ export default function ReviewPage() {
                   </p>
                 </div>
               )}
+
+              {/* The absence of a flag is not a verdict when the rule never
+                  ran. A reviewer approving on the strength of "nothing was
+                  flagged" is the exact failure this states out loud. */}
+              {!selected.anomalyFlag &&
+                anomalyStatement(selected).tone === "not_evaluated" && (
+                  <div className="rounded-lg border bg-muted/40 p-3 space-y-1">
+                    <p className="font-medium">
+                      {anomalyStatement(selected).headline}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {anomalyStatement(selected).detail}
+                    </p>
+                  </div>
+                )}
 
               {selected.reviewNote && (
                 <div className="rounded-lg border bg-muted/40 p-3 space-y-1">

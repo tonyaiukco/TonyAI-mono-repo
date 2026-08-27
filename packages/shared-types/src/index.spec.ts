@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ANOMALY_BASELINE_PERIODS,
+  ANOMALY_THRESHOLD,
+  isAnomalyEvaluated,
   ACTIVITY_RECORD_STATUSES,
   entityLabel,
   UNNAMED_SITE_ENTITY_LABEL,
@@ -448,5 +451,62 @@ describe('entityLabel — one phrase for the reporting entity', () => {
     // audit-ready export, which reads as a missing value, not as a level.
     expect(entityLabel({ locationName: '   ' })).toBe('Whole company');
     expect(entityLabel({ locationId: 'l', locationName: '  Izmir Plant  ' })).toBe('Izmir Plant');
+  });
+});
+
+describe('the anomaly rule (VAR §4)', () => {
+  // These two numbers were module-private inside `activity-records.service.ts`
+  // until WP21 moved them here so a screen could state the same rule. Promoting
+  // a constant into the contract package means any package can now import it,
+  // so a one-character edit reaches everything — and nothing in this package
+  // said what the numbers were. The suite constrained the threshold only to the
+  // open interval (0.32, 0.98), incidentally, through API fixtures.
+  it('is 50% deviation from a 3-period rolling average', () => {
+    expect(ANOMALY_THRESHOLD).toBe(0.5);
+    expect(ANOMALY_BASELINE_PERIODS).toBe(3);
+  });
+
+  describe('isAnomalyEvaluated', () => {
+    const evaluated = { anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: 41.2 };
+
+    it('is true only on a full window with a usable divisor', () => {
+      expect(isAnomalyEvaluated(evaluated)).toBe(true);
+    });
+
+    it('is false when the pool was never queried', () => {
+      expect(
+        isAnomalyEvaluated({ anomalyBaselinePriorCount: null, anomalyBaselineTCo2e: null }),
+      ).toBe(false);
+    });
+
+    it.each([0, 1, 2])('is false on a window of %i priors', (priors) => {
+      expect(
+        isAnomalyEvaluated({ anomalyBaselinePriorCount: priors, anomalyBaselineTCo2e: null }),
+      ).toBe(false);
+    });
+
+    it('is false when a full window averages to zero', () => {
+      // The subtlest of the four: three priors, an average, and still no ratio.
+      // A hand-written `priorCount === 3` check at a call site would call this
+      // evaluated and render 500 tCO₂e against three zero priors as clean.
+      expect(
+        isAnomalyEvaluated({ anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: 0 }),
+      ).toBe(false);
+    });
+
+    it('is false when a full window somehow carries no average', () => {
+      expect(
+        isAnomalyEvaluated({ anomalyBaselinePriorCount: 3, anomalyBaselineTCo2e: null }),
+      ).toBe(false);
+    });
+
+    it('does not treat a count above the window as evaluated', () => {
+      // Equality, not `>=`: a count above the window means the rule that
+      // produced it disagrees with the one reading it, and "evaluated" would be
+      // the wrong thing to conclude from a contradiction.
+      expect(
+        isAnomalyEvaluated({ anomalyBaselinePriorCount: 4, anomalyBaselineTCo2e: 41.2 }),
+      ).toBe(false);
+    });
   });
 });

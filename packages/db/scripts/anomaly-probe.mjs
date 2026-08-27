@@ -11,9 +11,10 @@
  * It answers three questions the API cannot:
  *
  *  1. HOW STRONG IS THE BASELINE that each committed record was scored against?
- *     `detectAnomaly` returns a bare boolean, so `anomalyFlag: false` means
- *     "clean against three priors", "clean against one" and "never evaluated"
- *     indistinguishably, on every surface. Only SQL can count the priors.
+ *     The record carries `baselinePriorCount` since WP21 PR 2a, but this probe
+ *     recomputes it rather than reading it — a column that describes the pool
+ *     as it stood at write time cannot verify itself against the pool as it
+ *     stands now, which is exactly what question 2 asks.
  *
  *  2. HAS THE STORED VERDICT DRIFTED? The flag is written at create/update/
  *     submit and never revisited, while the pool underneath it keeps moving:
@@ -58,10 +59,12 @@ const ANOMALY_THRESHOLD = 0.5;
 const BASELINE_MAX_PERIODS = 3;
 /**
  * How many of those periods must actually carry a figure for the rule to run.
- * The implementation evaluates on as few as ONE, which VAR §4.1 does not
- * sanction and no surface discloses — see section 3 of the report.
+ * Equal to the window since 2026-08-27: the implementation used to evaluate on
+ * as few as ONE, which VAR §4.1 does not sanction and no surface disclosed.
+ * Kept as its own constant because section 3 still reports the shortfall —
+ * "2 of 3" is the finding, and a single constant could not express it.
  */
-const BASELINE_MIN_PERIODS = 1;
+const BASELINE_MIN_PERIODS = 3;
 /** COUNTED_STATUSES — the only statuses that seed a baseline. `voided` never does. */
 const BASELINE_STATUSES = ['submitted', 'under_review', 'approved', 'locked'];
 
@@ -145,7 +148,7 @@ async function main() {
   console.log(`Target:  ${target}${isLocal ? ' (local)' : '  ** REMOTE **'}`);
   console.log(
     `Rule:    key = subsidiary + location + category + granularity · ` +
-      `up to ${BASELINE_MAX_PERIODS} priors, minimum ${BASELINE_MIN_PERIODS} · ` +
+      `${BASELINE_MIN_PERIODS} priors required of a ${BASELINE_MAX_PERIODS}-period window · ` +
       `threshold ${ANOMALY_THRESHOLD * 100}%\n`,
   );
 
