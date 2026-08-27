@@ -32,6 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
+import { actorLabel } from "@/lib/audit-view";
 import { useAuthStore } from "@/lib/store";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
@@ -43,6 +44,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
+
 const ANY = "__any__";
 
 /** Colour by consequence, not by entity: a reader scanning the trail is looking
@@ -61,6 +63,12 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   // reviewed figure from the reported inventory — the most destructive thing
   // that can happen to a number in this product, even though the row survives.
   void: "bg-red-500/15 text-red-700 border-red-500/30",
+  // Slate, with `update`: the FIGURE did not change, only the system's
+  // judgement about it, and colouring a re-score like an approval or a
+  // withdrawal would overstate what happened. These rows carry no actor —
+  // `pnpm anomaly:recompute` performed them, not a person — which the trail
+  // already renders, since a deleted profile produces the same shape.
+  rescore: "bg-slate-500/15 text-slate-700 border-slate-500/30",
   generate: "bg-violet-500/15 text-violet-700 border-violet-500/30",
 };
 
@@ -322,11 +330,16 @@ export default function AuditPage() {
                               {formatDateTime(row.createdAt)}
                             </TableCell>
                             <TableCell className="text-sm">
-                              {row.userFullName ?? row.userEmail ?? (
-                                <span className="text-muted-foreground italic">
-                                  deleted user
-                                </span>
-                              )}
+                              {(() => {
+                                const actor = actorLabel(row);
+                                return actor.muted ? (
+                                  <span className="text-muted-foreground italic">
+                                    {actor.text}
+                                  </span>
+                                ) : (
+                                  actor.text
+                                );
+                              })()}
                             </TableCell>
                             <TableCell className="text-sm">
                               {row.role ? (
@@ -407,7 +420,7 @@ export default function AuditPage() {
                 <span className="col-span-2">{formatDateTime(selected.createdAt)}</span>
                 <span className="text-muted-foreground">Actor</span>
                 <span className="col-span-2">
-                  {selected.userFullName ?? selected.userEmail ?? "deleted user"}
+                  {actorLabel(selected).text}
                 </span>
                 <span className="text-muted-foreground">Role at the time</span>
                 <span className="col-span-2 font-mono text-xs">

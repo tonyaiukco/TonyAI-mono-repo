@@ -1411,9 +1411,9 @@ export interface ActivityRecordDTO {
    *
    * Written at the same three moments as `anomalyFlag` (create, update,
    * submit) and never revisited afterwards, so all three describe the pool as it
-   * stood when the verdict was taken — not as it stands now. Reconciling the two
-   * is `pnpm anomaly:recompute`, planned as WP21 PR 3 and not yet built;
-   * `pnpm anomaly:probe` reports the divergence today without repairing it.
+   * stood when the verdict was taken — not as it stands now. `pnpm anomaly:probe`
+   * reports where the two have diverged; `pnpm anomaly:recompute` repairs it,
+   * except on `approved`/`locked` records, which it reports and leaves alone.
    */
   anomalyBaselinePriorCount: number | null;
   anomalyBaselineTCo2e: number | null;
@@ -1606,6 +1606,76 @@ export const ANOMALY_THRESHOLD = 0.5;
  * second copy in `apps/web` is how the two halves come to disagree.
  */
 export const ANOMALY_BASELINE_PERIODS = 3;
+
+/**
+ * The VAR §4 outcome AND what it was decided against.
+ *
+ * Lives here rather than in `activity-records.service.ts` because the API is no
+ * longer the only thing that produces one: `pnpm anomaly:recompute` re-derives
+ * verdicts outside the request path, and a second implementation of the fold
+ * would differ from the service's in the last ULP at best and in the rule at
+ * worst.
+ */
+export interface AnomalyVerdict {
+  /** VAR §4.3 — the warning. False whenever the rule did not run. */
+  anomalous: boolean;
+  /** Comparable periods that carried a figure, 0..`ANOMALY_BASELINE_PERIODS` —
+   *  or null when the pool was never queried at all. */
+  priorCount: number | null;
+  /** The rolling average — non-null exactly when the rule ran on a full window. */
+  baseline: number | null;
+}
+
+/** The verdict for a record the rule cannot judge. `priorCount` carries how
+ *  close it came, or null when no pool was ever looked at. */
+export function anomalyNotEvaluated(priorCount: number | null = null): AnomalyVerdict {
+  return { anomalous: false, priorCount, baseline: null };
+}
+
+/**
+ * VAR §4's arithmetic, in ONE place.
+ *
+ * `orderedPriorTCo2e` is the comparable periods NEWEST FIRST, already scoped to
+ * the reporting entity and to committed statuses by the caller — a `null`
+ * element is a prior that carries no figure. Selecting that list is the
+ * caller's job (it needs a database); judging it is this function's.
+ *
+ * The split matters: the caller can be a Prisma query or a script holding rows
+ * in memory, and neither may re-derive the window, the drop rule, the strict
+ * three, the zero-baseline case or the threshold comparison. Reimplementing the
+ * fold is how two writers of the same column come to disagree by a ULP — which
+ * was measured, at 3.6e-16, between this arithmetic and Postgres's `avg()`.
+ */
+export function computeAnomalyVerdict(
+  currentTCo2e: number,
+  orderedPriorTCo2e: readonly (number | null)[],
+): AnomalyVerdict {
+  const priorValues = orderedPriorTCo2e
+    .slice(0, ANOMALY_BASELINE_PERIODS)
+    // Dropped, not zero-filled: a zero would deflate the average and
+    // manufacture a false anomaly. The slot it occupied is still spent, which
+    // is what leaves the window short below.
+    .filter((v): v is number => v !== null);
+
+  // VAR §4.1 requires the previous THREE periods, so a short window means the
+  // rule does not run rather than running on whatever is left. The count is
+  // reported either way: it is the difference between "checked and clean" and
+  // "never checked".
+  if (priorValues.length < ANOMALY_BASELINE_PERIODS) {
+    return anomalyNotEvaluated(priorValues.length);
+  }
+  const baseline = priorValues.reduce((sum, v) => sum + v, 0) / priorValues.length;
+  // A full window averaging to zero yields no ratio. Still REPORTED rather than
+  // nulled: three priors that are all zero is a fact about the series.
+  if (baseline === 0) {
+    return { anomalous: false, priorCount: priorValues.length, baseline };
+  }
+  return {
+    anomalous: Math.abs(currentTCo2e - baseline) / baseline > ANOMALY_THRESHOLD,
+    priorCount: priorValues.length,
+    baseline,
+  };
+}
 
 /**
  * Did the anomaly rule actually RUN on this record?
@@ -2282,6 +2352,15 @@ export const AUDIT_ACTIONS = [
    *  Its own verb rather than a generic `update`, so "what was restated and
    *  why" is filterable in the audit trail instead of buried in a diff. */
   'void',
+  /** An anomaly verdict re-derived against the pool as it stands now, by
+   *  `pnpm anomaly:recompute` rather than by a user action.
+   *
+   *  Its own verb, not `update`: the row's DATA did not change, only the
+   *  system's judgement about it, and "who changed this figure" must stay
+   *  answerable separately from "when did we re-score it". These rows carry a
+   *  null `userId` — no person performed them — which the viewer already
+   *  renders, since a deleted profile produces the same shape. */
+  'rescore',
   'generate',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

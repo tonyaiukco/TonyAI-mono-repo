@@ -13,8 +13,9 @@ import {
 import {
   canonicalPeriodValue,
   CATEGORY_SCOPE_MAP,
-  ANOMALY_BASELINE_PERIODS,
-  ANOMALY_THRESHOLD,
+  anomalyNotEvaluated,
+  type AnomalyVerdict,
+  computeAnomalyVerdict,
   COUNTED_STATUSES,
   PERIOD_VALUES,
   isCalculated,
@@ -46,33 +47,6 @@ interface AnomalyParams {
   currentTCo2e: number;
   excludeId?: string;
 }
-
-/**
- * The VAR §4 outcome AND what it was decided against.
- *
- * A bare boolean was the defect: "clean against three priors", "clean against
- * fewer" and "never evaluated" all reached the database as `false`, and no
- * reader downstream could separate them. All three fields are persisted beside
- * each other so nobody has to re-derive the pool to learn whether the rule ran.
- */
-interface AnomalyVerdict {
-  /** VAR §4.3 — the warning. False whenever the rule did not run. */
-  anomalous: boolean;
-  /** Comparable periods that carried a figure, 0..ANOMALY_BASELINE_PERIODS —
-   *  or NULL when the pool was never queried at all, which is a different fact
-   *  and one a `0` would have hidden. */
-  priorCount: number | null;
-  /** The rolling average — non-null exactly when the rule ran on a full window. */
-  baseline: number | null;
-}
-
-/** The verdict for a record the rule cannot judge. `priorCount` carries how
- *  close it came, or null when no pool was ever looked at. */
-const notEvaluated = (priorCount: number | null = null): AnomalyVerdict => ({
-  anomalous: false,
-  priorCount,
-  baseline: null,
-});
 
 // Roles allowed to create/update/delete/submit their own records.
 // A consultant is NOT among them (decision 2026-07-30): the permissions matrix
@@ -388,7 +362,7 @@ export class ActivityRecordsService {
     // "Has no figure of its own" and "has no comparable periods" are different
     // facts; a reader separates them with isCalculated() on the snapshot, which
     // travels on the same DTO.
-    if (!isCalculated(calculation)) return notEvaluated();
+    if (!isCalculated(calculation)) return anomalyNotEvaluated();
     return this.detectAnomaly({ ...params, currentTCo2e: calculation.tCo2e });
   }
 
@@ -427,43 +401,25 @@ export class ActivityRecordsService {
     const currentKey =
       params.reportingYear * 100 +
       periodOrdinal(params.reportingPeriod, params.periodValue);
-    const priorValues = rows
+    // SELECTING the pool needs a database and therefore lives here; JUDGING it
+    // is `computeAnomalyVerdict` in the contract package, so the API and
+    // `pnpm anomaly:recompute` cannot disagree about the same record — not even
+    // in the last ULP, which is exactly how far Postgres's `avg()` differs from
+    // this fold.
+    const orderedPriors = rows
       .map((r) => ({
         key: r.reportingYear * 100 + periodOrdinal(r.reportingPeriod, r.periodValue),
         calc: r.calculation as unknown as ActivityCalculationSnapshot | null,
       }))
       .filter((x) => x.key < currentKey) // strictly earlier periods only
       .sort((a, b) => b.key - a.key)
-      .slice(0, ANOMALY_BASELINE_PERIODS)
-      .map((x) => (isCalculated(x.calc) ? x.calc.tCo2e : null))
-      // Drop (rather than zero-fill) priors without a usable tCO₂e so they don't
-      // deflate the average and manufacture false anomalies. A record with no
-      // factor is one such prior. One predicate everywhere — see isCalculated().
-      .filter((v): v is number => v !== null);
+      // A prior with no figure stays in the list as `null` rather than being
+      // filtered out here: it must still CONSUME one of the three slots, and
+      // dropping it before the window is applied would let the rule reach
+      // further back to refill it.
+      .map((x) => (isCalculated(x.calc) ? x.calc.tCo2e : null));
 
-    // VAR §4.1 requires the previous THREE periods. A prior with no figure has
-    // already consumed one of the three slots above, so dropping it leaves the
-    // window short — and short means the rule does not run rather than running
-    // on whatever is left. `priorCount` is reported either way: it is the
-    // difference between "checked and clean" and "never checked", which is what
-    // the bare boolean could not say.
-    if (priorValues.length < ANOMALY_BASELINE_PERIODS) {
-      return notEvaluated(priorValues.length);
-    }
-    const baseline =
-      priorValues.reduce((sum, v) => sum + v, 0) / priorValues.length;
-    // A full window averaging to zero yields no ratio. The baseline is still
-    // REPORTED rather than nulled: three priors that are all zero is a fact
-    // about the series, not an absence of one.
-    if (baseline === 0) {
-      return { anomalous: false, priorCount: priorValues.length, baseline };
-    }
-    return {
-      anomalous:
-        Math.abs(params.currentTCo2e - baseline) / baseline > ANOMALY_THRESHOLD,
-      priorCount: priorValues.length,
-      baseline,
-    };
+    return computeAnomalyVerdict(params.currentTCo2e, orderedPriors);
   }
 
   async list(

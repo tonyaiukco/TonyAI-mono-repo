@@ -22,6 +22,7 @@
     "db:reset": "pnpm --filter @tonyai/db run reset",
     "evidence:reclaim": "pnpm --filter @tonyai/db run evidence:reclaim",
     "anomaly:probe": "pnpm --filter @tonyai/db run anomaly:probe",
+    "anomaly:recompute": "pnpm --filter @tonyai/db run anomaly:recompute",
     "docker:up": "bash scripts/compose-dev.sh up --build -d",
     "docker:down": "bash scripts/compose-dev.sh down"
   },
