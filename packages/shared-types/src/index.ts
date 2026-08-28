@@ -1380,22 +1380,28 @@ export interface ActivityRecordDTO {
   calculation: ActivityCalculationSnapshot;
   createdBy: string;
   /**
-   * Who entered the record, resolved at read time — full name, falling back to
-   * the account email. THREE states, and they mean different things:
+   * Who entered the record, resolved at read time. `null` means the profile is
+   * gone: identity is joined at read time precisely so an erasure removes the
+   * name, and `createdBy` survives as an opaque id.
    *
-   * - **absent** (`undefined`) — this response did not resolve identities. Only
-   *   reads do; a create/update/transition response answers "what is the record
-   *   now", not "who are these people", and paying a second query on the write
-   *   path to say something the caller already knows would be waste.
-   * - **`null`** — resolved, and there is no name: the profile was deleted.
-   *   Identity is joined at read time precisely so erasure works, and
-   *   `createdBy` survives as an opaque id.
-   * - **a string** — the person.
+   * REQUIRED, and deliberately so. The first cut made this optional and
+   * resolved it only on reads, on the reasoning that a write response answers
+   * "what is the record now" rather than "who are these people". Three review
+   * seats independently found the same defect: both screens splice a write
+   * response into state built from a read, so the name vanished from the row at
+   * the exact moment a reviewer took the record into review — and on the void
+   * confirmation, which is the one irreversible act in the product.
    *
-   * Rendering absent and null the same way tells a reader something untrue, so
-   * the web side keeps them apart the way `actorLabel` does for the audit trail.
+   * Required also restores a compiler check that optional silently removed:
+   * `Omit<ActivityRecordDTO, …>` rejects a REQUIRED field it names being spread
+   * into the audit snapshot, and ignores an optional one. `audit_log` is
+   * append-only with no correction path, so that guard has to be real.
+   *
+   * The cost that motivated `optional` turned out to be near zero: the auth
+   * guard already loads the caller's whole profile on every request, so a
+   * create resolves without a query at all.
    */
-  createdByName?: string | null;
+  createdByName: string | null;
   anomalyFlag: boolean;
   /**
    * What the verdict above was taken against: how many comparable periods
@@ -1440,13 +1446,14 @@ export interface ActivityRecordDTO {
    * REVIEWER's words — a rejection reason never overwrites `varianceReason`. */
   reviewedBy: string | null;
   /**
-   * Who decided the outcome, resolved at read time. Same three states as
-   * `createdByName`, plus one this field has and that one cannot: `reviewedBy`
-   * is itself null on a record nobody has reviewed, so a null name there means
-   * "no reviewer yet" rather than "the reviewer's profile is gone". `reviewedBy`
-   * is what tells those apart, which is why it stays on the DTO beside the name.
+   * Who decided the outcome, resolved at read time. `null` here carries one
+   * more meaning than it does on `createdByName`: `reviewedBy` is itself null on
+   * a record nobody has reviewed, so a null name can mean "no reviewer yet"
+   * rather than "the reviewer's profile is gone". `reviewedBy` is what tells
+   * those apart, which is why it stays on the DTO beside the name — rendering
+   * an unreviewed record as "deleted user" would claim someone decided it.
    */
-  reviewedByName?: string | null;
+  reviewedByName: string | null;
   reviewedAt: string | null;
   reviewNote: string | null;
   /**

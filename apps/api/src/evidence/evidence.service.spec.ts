@@ -88,6 +88,7 @@ function dataEntry(over: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
+    fullName: 'Entry User',
     role: 'data_entry',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1'],

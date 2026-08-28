@@ -65,6 +65,7 @@ function superAdmin(over: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-admin',
     email: 'admin@tonyai.local',
+    fullName: 'Admin User',
     role: 'super_admin',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
@@ -76,6 +77,7 @@ function dataEntry(over: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
+    fullName: 'Entry User',
     role: 'data_entry',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1'],

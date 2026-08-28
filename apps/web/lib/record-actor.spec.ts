@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { recordActorLabel } from './record-actor';
 
 /**
- * The four states an actor column has to keep apart. Only one of them is a
- * person, and only one of them is a person who is gone.
+ * The four states an actor column has to keep apart. Two of them are a person
+ * with an account, one is a person whose account is gone, and one is nobody at
+ * all — and only the last may render as an absence of any actor.
  */
 describe('recordActorLabel', () => {
   it('shows the name when there is one', () => {
@@ -19,11 +20,16 @@ describe('recordActorLabel', () => {
     expect(recordActorLabel(null, null)).toEqual({ text: '—', muted: true });
   });
 
-  it('shows an absence when the response did not resolve identities', () => {
-    // A write response carries the id and no name key at all. Undefined is not
-    // a claim about the person; it is a claim about the response.
-    expect(recordActorLabel('user-1', undefined)).toEqual({
-      text: '—',
+  it('says "unnamed user" for an account with a blank name, not "deleted user"', () => {
+    // `profiles.full_name` is NOT NULL but may be empty. A blank un-muted cell
+    // reads as a rendering bug, and "deleted user" would be a lie: this person
+    // still has an account.
+    expect(recordActorLabel('user-1', '')).toEqual({
+      text: 'unnamed user',
+      muted: true,
+    });
+    expect(recordActorLabel('user-1', '   ')).toEqual({
+      text: 'unnamed user',
       muted: true,
     });
   });
@@ -40,7 +46,7 @@ describe('recordActorLabel', () => {
 
   it('never renders the raw id', () => {
     // The whole point: an opaque uuid on screen is what this replaces.
-    for (const name of [null, undefined] as const) {
+    for (const name of [null, ''] as const) {
       expect(recordActorLabel('8f14e45f-ceea-467a-9f8e-1f1b1e2d3c4a', name).text).not.toContain(
         '8f14e45f',
       );

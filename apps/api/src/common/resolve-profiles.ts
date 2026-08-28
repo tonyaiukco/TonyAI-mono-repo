@@ -1,8 +1,12 @@
-import type { PrismaService } from '../prisma/prisma.service';
+import type { Prisma } from '@tonyai/db';
 
 export interface ResolvedProfile {
   email: string;
-  fullName: string | null;
+  /** `profiles.full_name` is `TEXT NOT NULL`, so this is a string — possibly a
+   *  blank one, which the caller has to decide how to render. It is NOT
+   *  nullable, and typing it as such invited a fallback to `email` that the
+   *  data model can never reach. */
+  fullName: string;
 }
 
 /**
@@ -21,7 +25,7 @@ export interface ResolvedProfile {
  * closes the door on a third hand-rolled version drifting from the other two.
  */
 export async function resolveProfiles(
-  prisma: Pick<PrismaService, 'profile'>,
+  prisma: Pick<Prisma.TransactionClient, 'profile'>,
   ids: readonly (string | null | undefined)[],
 ): Promise<Map<string, ResolvedProfile>> {
   const unique = [...new Set(ids.filter((id): id is string => !!id))];
@@ -44,8 +48,13 @@ export async function resolveProfiles(
  * person did this. The id is what tells them apart, which is why it stays on
  * the DTO beside the name.
  *
- * Falls back to email when a profile carries no full name, matching
- * `actorLabel` on the web side. A row that resolved to neither is not a name.
+ * NO email fallback. The first cut had one, mirroring `actorLabel` on the web
+ * side — but `full_name` is `TEXT NOT NULL`, so the fallback was unreachable
+ * code documented as a live state. Worse, it was a trapdoor: make the column
+ * nullable, or add SSO provisioning that leaves it blank, and every tenant
+ * reader of a record starts seeing a colleague's EMAIL ADDRESS, with no code
+ * change and no review. A display name is a defensible disclosure here; an
+ * address is a materially larger one.
  */
 export function actorDisplayName(
   id: string | null | undefined,
@@ -53,5 +62,5 @@ export function actorDisplayName(
 ): string | null {
   if (!id) return null;
   const profile = byId.get(id);
-  return profile ? (profile.fullName ?? profile.email) : null;
+  return profile ? profile.fullName : null;
 }

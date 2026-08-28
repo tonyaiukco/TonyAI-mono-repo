@@ -120,6 +120,7 @@ export class SupabaseAuthGuard implements CanActivate {
     const user: RequestUser = {
       id: profile.id,
       email: profile.email,
+      fullName: profile.fullName,
       role: profile.role,
       organisationId: profile.organisationId,
       accessibleSubsidiaryIds,

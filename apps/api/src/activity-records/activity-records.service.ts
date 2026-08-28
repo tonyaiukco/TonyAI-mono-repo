@@ -181,12 +181,18 @@ export class ActivityRecordsService {
    * to `ActivityRecordDTO` has to be placed on one side or the other instead of
    * silently reaching the audit log.
    *
-   * That forcing function only fires for REQUIRED fields: an optional one is
-   * assignable here whether or not it is named in the `Omit`, so this list is a
-   * hand-maintained assertion and not a compiler-enforced one. Every resolved
-   * field so far is optional, so the list has to be widened by hand — and
-   * `toAuditSnapshot returns nothing resolved at read time` in the spec is the
-   * check that actually holds it, because the compiler will not.
+   * The `Omit` is only half a guard, measured rather than assumed. A REQUIRED
+   * resolved field written here as a direct property is rejected (TS2561), and
+   * an optional one used to pass silently — which is one of the reasons
+   * `createdByName` and `reviewedByName` are required. But neither form is
+   * rejected when it arrives through a SPREAD: excess-property checking does
+   * not apply through one, and `...{ createdByName: … }` compiles clean.
+   *
+   * So the real guard is the spec's `lets NOTHING but a persisted column reach
+   * the append-only audit log`, which asserts this object's whole key SET. It
+   * fails on any new key rather than on a list of known-bad ones — a review
+   * proved a fourth resolved field (an actor email) reached the snapshot with
+   * both the compiler and the full suite green.
    */
   private toAuditSnapshot(
     r: ActivityRecord,
@@ -228,7 +234,7 @@ export class ActivityRecordsService {
   private toDTO(
     r: ActivityRecord & { location?: { name: string } | null },
     evidenceCount = 0,
-    actors?: Map<string, ResolvedProfile>,
+    actors: Map<string, ResolvedProfile>,
   ): ActivityRecordDTO {
     return {
       ...this.toAuditSnapshot(r, evidenceCount),
@@ -237,18 +243,40 @@ export class ActivityRecordsService {
       // same subsidiary/period/category can differ ONLY by location — and the
       // reviewer saw two identical-looking rows with no way to tell them apart.
       locationName: r.location?.name ?? null,
-      // Spread, not two `?? null` fields: with no map the keys are ABSENT from
-      // the response, which is a different claim from present-and-null. Absent
-      // means this response did not resolve identities (the write paths do not);
-      // null means it did and the profile is gone. Collapsing them would make
-      // every freshly created record read as authored by a deleted user.
-      ...(actors
-        ? {
-            createdByName: actorDisplayName(r.createdBy, actors),
-            reviewedByName: actorDisplayName(r.reviewedBy, actors),
-          }
-        : {}),
+      // `actors` is REQUIRED, not optional. Making it optional let the write
+      // paths return a DTO with these keys absent, and both screens splice a
+      // write response straight into state built from a read — so the name
+      // vanished from the row the instant a reviewer took the record into
+      // review. Requiring the map means there is no shape to forget to pass.
+      createdByName: actorDisplayName(r.createdBy, actors),
+      reviewedByName: actorDisplayName(r.reviewedBy, actors),
     };
+  }
+
+  /**
+   * The actor map for one or more records, without a query when the caller is
+   * the only actor involved.
+   *
+   * On a create that is always the case — `created_by` is the caller and
+   * `reviewed_by` is null — so a create costs ZERO extra queries. The guard has
+   * already loaded the caller's whole profile to build `RequestUser`, so the
+   * name is in hand before the request reaches this service.
+   */
+  private async actorsFor(
+    user: RequestUser,
+    records: readonly Pick<ActivityRecord, 'createdBy' | 'reviewedBy'>[],
+  ): Promise<Map<string, ResolvedProfile>> {
+    const known = new Map<string, ResolvedProfile>([
+      [user.id, { email: user.email, fullName: user.fullName }],
+    ]);
+    const unknown = records
+      .flatMap((r) => [r.createdBy, r.reviewedBy])
+      .filter((id): id is string => !!id && !known.has(id));
+    if (unknown.length === 0) return known;
+    for (const [id, profile] of await resolveProfiles(this.prisma, unknown)) {
+      known.set(id, profile);
+    }
+    return known;
   }
 
   /**
@@ -478,10 +506,7 @@ export class ActivityRecordsService {
     // One query for the whole page over both actor columns at once, never one
     // per row: `created_by` and `reviewed_by` have no FK to `profiles`, so
     // there is no `include` that could do this.
-    const actors = await resolveProfiles(
-      this.prisma,
-      rows.flatMap((r) => [r.createdBy, r.reviewedBy]),
-    );
+    const actors = await this.actorsFor(user, rows);
     return rows.map((r) => this.toDTO(r, r._count.evidence, actors));
   }
 
@@ -489,7 +514,7 @@ export class ActivityRecordsService {
     const record = await this.loadScoped(user, id);
     const [evidenceCount, actors] = await Promise.all([
       this.prisma.evidence.count({ where: { activityRecordId: id } }),
-      resolveProfiles(this.prisma, [record.createdBy, record.reviewedBy]),
+      this.actorsFor(user, [record]),
     ]);
     return this.toDTO(record, evidenceCount, actors);
   }
@@ -582,7 +607,7 @@ export class ActivityRecordsService {
     await this.auditCreateUpdateDelete(user, 'create', created.id, {
       after: this.toAuditSnapshot(created),
     });
-    return this.toDTO(created);
+    return this.toDTO(created, 0, await this.actorsFor(user, [created]));
   }
 
   async update(
@@ -715,7 +740,11 @@ export class ActivityRecordsService {
       before: this.toAuditSnapshot(existing),
       after: this.toAuditSnapshot(updated, updated._count.evidence),
     });
-    return this.toDTO(updated, updated._count.evidence);
+    return this.toDTO(
+      updated,
+      updated._count.evidence,
+      await this.actorsFor(user, [updated]),
+    );
   }
 
   async remove(
@@ -1096,6 +1125,10 @@ export class ActivityRecordsService {
           : {}),
       },
     });
-    return this.toDTO(updated, updated._count.evidence);
+    return this.toDTO(
+      updated,
+      updated._count.evidence,
+      await this.actorsFor(user, [updated]),
+    );
   }
 }

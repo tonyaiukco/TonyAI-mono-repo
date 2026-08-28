@@ -51,19 +51,24 @@ test('a submitted record reaches the queue and approving clears it', async ({
     .locator('table tbody tr', { hasText: 'TonyAI Trading' })
     .filter({ hasText: 'Q4 2026' });
   await expect(row).toContainText('submitted');
-  // The person, not the uuid. `created_by` has no FK to `profiles` — identity
-  // is joined at read time so an erasure removes the name and keeps the row —
-  // so until this resolution existed the queue showed nothing at all about who
-  // entered the number a reviewer is about to accept. The record above was
-  // created with the ADMIN's token, and the seed names that profile.
-  await expect(row).toContainText('Tony Admin');
   await row.click();
 
   // Both actors in the detail sheet, including the one nobody has filled in:
   // "not reviewed yet" is a fact about the record, and a field that appeared
   // only once populated would hide it.
-  await expect(page.getByText('Entered by')).toBeVisible();
-  await expect(page.getByText('Reviewed by')).toBeVisible();
+  //
+  // Labels only, deliberately. Here the viewer IS the creator, so asserting the
+  // VALUE could not tell "shows the record's author" apart from "shows whoever
+  // is logged in" — an implementation rendering `user.fullName` would pass. The
+  // value is asserted in the consultant test below, where the two differ.
+  // Scoped to the sheet, not the page: renaming the queue's column header to
+  // "Entered by" put a second copy of that exact string in the table head, and
+  // an unscoped `getByText` is then a strict-mode violation. The same duplicate
+  // -label hazard `pickByFieldLabel` already carries for the two `Unit` fields
+  // on /data-entry.
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByText('Entered by')).toBeVisible();
+  await expect(sheet.getByText('Reviewed by')).toBeVisible();
 
   await page.getByRole('button', { name: 'Approve' }).click();
   await expect(page.getByText('Record approved')).toBeVisible();
@@ -183,6 +188,15 @@ test('a consultant may send a record back but is not offered Approve', async ({
     .locator('table tbody tr', { hasText: 'TonyAI Gas' })
     .filter({ hasText: 'Natural Gas' })
     .filter({ hasText: 'Q1 2026' });
+
+  // The discriminating case for the actor column: this record was created with
+  // the ADMIN's token and is being read by the CONSULTANT. So the name has to
+  // be the author's, and must NOT be the viewer's — an implementation that
+  // rendered the logged-in user would be indistinguishable from a correct one
+  // in the two tests above, where the viewer is also the creator.
+  await expect(row).toContainText('Tony Admin');
+  await expect(row).not.toContainText('Cem Consultant');
+
   await row.click();
 
   // The control a consultant may not use is absent, and the page says why
@@ -203,6 +217,14 @@ test('a consultant may send a record back but is not offered Approve', async ({
   // a reviewer would have watched a record they had merely opened vanish.
   await expect(row).toBeVisible();
   await expect(row).toContainText('under review');
+  // ...and the author is STILL named. This is the exact click at which the
+  // actor column emptied: `review` leaves the record pending, so the write
+  // response is spliced straight into the row, and while the name fields were
+  // optional that response omitted them — the column fell back to an em dash on
+  // the very action that made this consultant the reviewer. Three review seats
+  // found it independently; the fields are required now, so there is no shape
+  // a write path can forget to fill.
+  await expect(row).toContainText('Tony Admin');
 
   const mid = await request.get(`${API_BASE}/activity-records/${id}`, {
     headers: bearer(token),

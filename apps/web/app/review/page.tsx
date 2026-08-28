@@ -292,7 +292,14 @@ export default function ReviewPage() {
                   <p className="text-sm text-muted-foreground">
                     {/* Precise: this is not hidden data. A data_entry user can
                         see these same records on Emissions — what they cannot do
-                        is decide them, and nobody may approve their own work. */}
+                        is decide them.
+                        (An earlier version of this comment claimed "nobody may
+                        approve their own work". That is false for super_admin,
+                        who may create, submit and approve one record; four eyes
+                        is a property of the consultant seat only. The actor
+                        columns added alongside this now SURFACE that — the same
+                        name on "Entered by" and "Reviewed by" — rather than
+                        preventing it.) */}
                     This is not hidden data — records you can already see on the
                     Emissions page are the same ones being decided here. Your role
                     is <span className="font-mono">{user.role}</span>.
@@ -338,7 +345,14 @@ export default function ReviewPage() {
                         <TableHead className="text-right">Activity</TableHead>
                         <TableHead className="text-right">tCO₂e</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Submitted by</TableHead>
+                        {/* "Entered by", not "Submitted by": this renders
+                            `createdBy`, the DRAFT AUTHOR. Nothing records who
+                            pressed Submit, and the two can differ — the author
+                            gate applies only to a RESUBMIT, so a colleague's
+                            first submit of someone else's draft is allowed.
+                            The same reason `createdAt` is headed "Created" and
+                            the age column "Age" rather than "Waiting". */}
+                        <TableHead>Entered by</TableHead>
                         <TableHead>Age</TableHead>
                       </TableRow>
                     </TableHeader>
