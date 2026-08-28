@@ -221,6 +221,17 @@ model ActivityRecord {
   reviewedBy     String?              @map("reviewed_by") @db.Uuid
   reviewedAt     DateTime?            @map("reviewed_at")
   reviewNote     String?              @map("review_note")
+  // When this record was last SUBMITTED for review — not when its draft was
+  // created. The review queue counts a reviewer's waiting time from here.
+  // MOST RECENT submit, not the first: a rejected record can be resubmitted, so
+  // this answers "how long has the current reviewer had it", matching how
+  // `reviewedAt` above is already overwritten on every review outcome. The full
+  // history stays in `audit_log`, which holds one `submit` row per attempt.
+  // Nullable, and stays null for every record that predates this column: the
+  // seed writes records straight to `approved` without ever submitting them, so
+  // a backfill finds nothing for them, and back-dating a guess would reinstate
+  // exactly the misstatement this column exists to end.
+  submittedAt    DateTime?            @map("submitted_at")
   // Who withdrew this figure, when, and why. Separate from
   // `reviewNote` on purpose — that is a reviewer's verdict on data still in the
   // inventory, this is the record of taking data OUT of it, and conflating them

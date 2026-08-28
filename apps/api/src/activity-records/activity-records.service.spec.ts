@@ -107,7 +107,7 @@ const PERSISTED_KEYS = [
   'periodValue', 'category', 'scope', 'status', 'activityValue',
   'activityUnit', 'input', 'calculation', 'createdBy', 'anomalyFlag',
   'anomalyBaselinePriorCount', 'anomalyBaselineTCo2e', 'varianceReason',
-  'reviewedBy', 'reviewedAt', 'reviewNote', 'voidReason', 'voidedBy',
+  'reviewedBy', 'reviewedAt', 'reviewNote', 'submittedAt', 'voidReason', 'voidedBy',
   'voidedAt', 'evidenceCount', 'createdAt', 'updatedAt',
 ].sort();
 
@@ -142,6 +142,7 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     anomalyBaselinePriorCount: null,
     anomalyBaselineTCo2e: null,
     varianceReason: null,
+    submittedAt: null,
     // Prisma `_count` shape returned when the service includes evidence counts.
     _count: { evidence: 0 },
     createdAt: now,
@@ -2448,5 +2449,114 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     // than as a legible assertion about what was audited.
     expect(diff.after).toBeDefined();
     expect(Object.keys(diff.after as object).sort()).toEqual(PERSISTED_KEYS);
+  });
+});
+
+/**
+ * When a record was submitted for review.
+ *
+ * The queue counted a reviewer's waiting time from `created_at`, i.e. from when
+ * the DRAFT was made — a record started in January and submitted in June read
+ * as five months overdue. The column was honestly headed "Age" for exactly that
+ * reason; this is what lets it become "Waiting" and mean it.
+ */
+describe('ActivityRecordsService — submittedAt', () => {
+  const submittable = (over: Partial<ActivityRecord> = {}) => ({
+    ...makeRecord({
+      id: 'rec-s',
+      subsidiaryId: 'sub-1',
+      status: ActivityRecordStatus.draft,
+      ...over,
+    }),
+    _count: { evidence: 1 },
+  });
+
+  const arrange = () => {
+    const { prisma, service } = build();
+    prisma.subsidiary.findUnique.mockResolvedValue(
+      makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', ...data }),
+      _count: { evidence: 1 },
+    }));
+    return { prisma, service };
+  };
+
+  it('stamps the submission time on submit', async () => {
+    const { prisma, service } = arrange();
+    prisma.activityRecord.findUnique.mockResolvedValue(submittable());
+
+    const dto = await service.submit(dataEntry(), 'rec-s');
+
+    const written = prisma.activityRecord.update.mock.calls.at(-1)![0].data;
+    expect(written.submittedAt).toBeInstanceOf(Date);
+    expect(dto.submittedAt).not.toBeNull();
+  });
+
+  it('re-stamps on a RESUBMIT rather than keeping the first attempt', async () => {
+    const { prisma, service } = arrange();
+    // A rejected record carries the previous attempt's stamp. Resubmitting
+    // starts the reviewer's clock again — which is the question the queue
+    // asks — and matches how `reviewedAt` is already overwritten on every
+    // review outcome. The per-attempt history lives in `audit_log`.
+    const first = new Date('2026-02-01T09:00:00.000Z');
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      submittable({
+        status: ActivityRecordStatus.rejected,
+        submittedAt: first,
+        createdBy: 'user-entry',
+      }),
+    );
+
+    await service.submit(dataEntry(), 'rec-s');
+
+    const written = prisma.activityRecord.update.mock.calls.at(-1)![0].data;
+    expect(written.submittedAt).toBeInstanceOf(Date);
+    expect((written.submittedAt as Date).getTime()).toBeGreaterThan(first.getTime());
+  });
+
+  // EVERY non-submit transition, not just approve. Testing one of them let two
+  // mutants live: stamping on `under_review` as well passed the whole suite,
+  // and that is the WP22-D regression in a new place — WP7 keeps a record in
+  // the queue through `under_review`, so a reviewer would watch the Waiting
+  // cell drop from 9d to 0d on the click that made them the reviewer.
+  const NON_SUBMIT: ReadonlyArray<
+    [string, (s: ReturnType<typeof arrange>['service']) => Promise<unknown>, ActivityRecordStatus]
+  > = [
+    ['startReview', (svc) => svc.startReview(superAdmin(), 'rec-s'), ActivityRecordStatus.submitted],
+    ['approve', (svc) => svc.approve(superAdmin(), 'rec-s'), ActivityRecordStatus.submitted],
+    ['reject', (svc) => svc.reject(superAdmin(), 'rec-s', 'Meter reading does not match.'), ActivityRecordStatus.submitted],
+    ['void', (svc) => svc.void(superAdmin(), 'rec-s', 'Duplicate of the site invoice for the month.'), ActivityRecordStatus.approved],
+  ];
+
+  it.each(NON_SUBMIT)('leaves it alone on %s', async (_name, act, from) => {
+    const { prisma, service } = arrange();
+    const stamped = new Date('2026-02-01T09:00:00.000Z');
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      submittable({ status: from, submittedAt: stamped }),
+    );
+
+    await act(service);
+
+    // The submission instant is the START of the reviewer's window. Every one
+    // of these either continues that window (startReview) or ends it
+    // (approve/reject/void); overwriting the start would erase how long it
+    // took, and on `startReview` it would do so while the row is still on
+    // screen showing the number.
+    const written = prisma.activityRecord.update.mock.calls.at(-1)![0].data;
+    expect(written).not.toHaveProperty('submittedAt');
+  });
+
+  it('is null on a record that has never been submitted', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ subsidiaryId: 'sub-1', submittedAt: null }),
+    );
+
+    // Every seeded record is in this state: the seed writes straight to
+    // `approved` and never calls the submit path, so the backfill found
+    // nothing for any of them. The screen has to render that as unknown.
+    expect((await service.get(dataEntry(), 'rec-1')).submittedAt).toBeNull();
   });
 });

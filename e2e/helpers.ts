@@ -460,3 +460,41 @@ export async function cleanupE2ETargets(request: APIRequestContext): Promise<voi
     await del(request, `${url}/rest/v1/subsidiary_denominators?unit=like.E2E-*`, headers),
   ]);
 }
+
+/**
+ * Back-date a record's `created_at` without touching `submitted_at`.
+ *
+ * The two fields are seconds apart for anything a test creates, so the Waiting
+ * column reads the same whichever one it counts from — which means an
+ * assertion on a freshly submitted record cannot tell a correct implementation
+ * from one that quietly fell back to `created_at`. Pulling `created_at` a month
+ * into the past manufactures the January-draft/June-submit case the column
+ * exists for, and makes the two answers differ by 30 days.
+ *
+ * Service-role and direct to PostgREST on purpose: the API has no endpoint for
+ * this, and it must not grow one — a client that can set its own timestamps can
+ * forge a submission time.
+ */
+export async function backdateCreatedAt(
+  request: APIRequestContext,
+  recordId: string,
+  days: number,
+): Promise<void> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const when = new Date(Date.now() - days * 86_400_000).toISOString();
+  const res = await request.patch(`${url}/rest/v1/activity_records?id=eq.${recordId}`, {
+    headers: {
+      apikey: service,
+      Authorization: `Bearer ${service}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    data: { created_at: when },
+  });
+  if (!res.ok()) {
+    throw new Error(`backdateCreatedAt failed: ${res.status()} ${await res.text()}`);
+  }
+}

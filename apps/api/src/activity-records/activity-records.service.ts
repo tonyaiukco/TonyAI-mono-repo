@@ -241,6 +241,7 @@ export class ActivityRecordsService {
       reviewedBy: r.reviewedBy,
       reviewedAt: r.reviewedAt ? r.reviewedAt.toISOString() : null,
       reviewNote: r.reviewNote,
+      submittedAt: r.submittedAt ? r.submittedAt.toISOString() : null,
       // Persisted columns, so they belong in the audit snapshot too — a void is
       // the transition whose provenance matters most.
       voidReason: r.voidReason,
@@ -1120,6 +1121,14 @@ export class ActivityRecordsService {
           : {}),
         ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
         ...(isReviewOutcome ? { reviewedBy: user.id, reviewedAt: new Date() } : {}),
+        // EVERY submit, not just the first. A resubmit after a rejection starts
+        // the reviewer's clock again, which is what the queue measures; the
+        // per-attempt history stays in `audit_log`. Same shape as `reviewedAt`
+        // directly above, deliberately — two fields answering "most recently,
+        // when" should not disagree about what "most recently" means.
+        ...(status === ActivityRecordStatus.submitted
+          ? { submittedAt: new Date() }
+          : {}),
         ...(isVoid
           ? {
               voidReason: extra.voidReason,

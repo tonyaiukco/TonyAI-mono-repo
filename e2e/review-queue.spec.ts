@@ -4,6 +4,7 @@ import {
   switchUser,
   bearer,
   getAccessToken,
+  backdateCreatedAt,
   createCommittedRecord,
   ADMIN_EMAIL,
   CONSULTANT_EMAIL,
@@ -51,7 +52,32 @@ test('a submitted record reaches the queue and approving clears it', async ({
     .locator('table tbody tr', { hasText: 'TonyAI Trading' })
     .filter({ hasText: 'Q4 2026' });
   await expect(row).toContainText('submitted');
-  await row.click();
+  // The Waiting cell reads a real number, not an em dash. That is the whole
+  // chain: the submit path stamped `submitted_at`, the DTO carried it, and the
+  // column counted from it. Before the column existed this cell counted from
+  // `createdAt` and was honestly headed "Age" for that reason.
+  //
+  // `0d` specifically — the record was submitted seconds ago. Every record that
+  // reaches this queue got here through the submit path, so it always has a
+  // stamp; the em-dash branch is for records the backfill could not reach, and
+  // those are all `approved`, which this queue filters out.
+  await expect(row).toContainText('0d');
+
+  // THE DISCRIMINATING CASE, and the one this column exists for. Pull the
+  // draft's creation a month into the past and leave the submission where it
+  // is: the two answers now differ by 30 days, so a screen that quietly fell
+  // back to `created_at` reads "30d" and one that reads the real stamp reads
+  // "0d". Without this, every assertion above passes on both implementations,
+  // because a test-created record is drafted and submitted in the same second.
+  await backdateCreatedAt(request, id, 30);
+  await page.reload();
+  const backdated = page
+    .locator('table tbody tr', { hasText: 'TonyAI Trading' })
+    .filter({ hasText: 'Q4 2026' });
+  await expect(backdated).toContainText('0d');
+  await expect(backdated).not.toContainText('30d');
+
+  await backdated.click();
 
   // Both actors in the detail sheet, including the one nobody has filled in:
   // "not reviewed yet" is a fact about the record, and a field that appeared
@@ -69,6 +95,11 @@ test('a submitted record reaches the queue and approving clears it', async ({
   const sheet = page.getByRole('dialog');
   await expect(sheet.getByText('Entered by')).toBeVisible();
   await expect(sheet.getByText('Reviewed by')).toBeVisible();
+  // Created AND Submitted, because they answer different questions and — on
+  // this back-dated record — carry different dates. A sheet showing one value
+  // against both labels would mean it is reading a single field for the pair.
+  await expect(sheet.getByText('Submitted')).toBeVisible();
+  await expect(sheet.getByText('not recorded')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Approve' }).click();
   await expect(page.getByText('Record approved')).toBeVisible();
@@ -248,10 +279,18 @@ test('a consultant may send a record back but is not offered Approve', async ({
   expect((await mid.json()).status).toBe('under_review');
 });
 
-test('the queue is ordered oldest-first', async ({ page, request }) => {
-  // Asserted on two records this test creates, in a known creation order, so it
-  // holds whether or not other specs have left rows behind. Reversing the sort
-  // left the suite green before this existed.
+test('the queue is ordered by longest WAIT, not by oldest draft', async ({ page, request }) => {
+  // Asserted on two records this test creates, in a known order, so it holds
+  // whether or not other specs have left rows behind. Reversing the sort left
+  // the suite green before this existed.
+  //
+  // The back-dating is what makes it discriminating. Both records are created
+  // and submitted back-to-back, so `created_at` order and `submitted_at` order
+  // are IDENTICAL — a version of this test without it passes whichever field
+  // the queue sorts on, which is exactly what it did before the column moved.
+  // Pulling the SECOND record's draft a year into the past inverts the two
+  // orders against each other: sorted by draft age it comes first, sorted by
+  // wait it comes last. Only one of those is the queue this screen claims.
   const token = await getAccessToken(request, ADMIN_EMAIL);
   await createCommittedRecord(request, token, {
     subsidiaryId: SUB.energy,
@@ -260,13 +299,14 @@ test('the queue is ordered oldest-first', async ({ page, request }) => {
     activityValue: 1200,
     activityUnit: 'm3',
   });
-  await createCommittedRecord(request, token, {
+  const draftedLongAgo = await createCommittedRecord(request, token, {
     subsidiaryId: SUB.energy,
     category: 'Fuel',
     periodValue: 'Q2',
     activityValue: 800,
     activityUnit: 'litres',
   });
+  await backdateCreatedAt(request, draftedLongAgo, 365);
 
   await login(page, ADMIN_EMAIL);
   await page.goto('/review');
@@ -274,10 +314,16 @@ test('the queue is ordered oldest-first', async ({ page, request }) => {
   await expect(rows.first()).toBeVisible();
 
   const text = await rows.allInnerTexts();
-  const older = text.findIndex((t) => t.includes('Natural Gas') && t.includes('Q2 2026'));
-  const newer = text.findIndex((t) => t.includes('Fuel') && t.includes('Q2 2026'));
-  expect(older).toBeGreaterThanOrEqual(0);
-  expect(newer).toBeGreaterThan(older);
+  const waitedLonger = text.findIndex((t) => t.includes('Natural Gas') && t.includes('Q2 2026'));
+  const draftedEarlier = text.findIndex((t) => t.includes('Fuel') && t.includes('Q2 2026'));
+  expect(waitedLonger).toBeGreaterThanOrEqual(0);
+  // The year-old DRAFT sorts BELOW the record that has actually waited longer.
+  // Sorting on `createdAt` would put it on top, which is the misstatement this
+  // column was introduced to end — moved out of the number and into the order.
+  expect(draftedEarlier).toBeGreaterThan(waitedLonger);
+  // ...and it says so: a year-old draft submitted seconds ago has waited 0 days.
+  expect(text[draftedEarlier]).toContain('0d');
+  expect(text[draftedEarlier]).not.toContain('365d');
 });
 
 test('the API — not the UI — is what stops a consultant approving', async ({
