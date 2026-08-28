@@ -51,7 +51,19 @@ test('a submitted record reaches the queue and approving clears it', async ({
     .locator('table tbody tr', { hasText: 'TonyAI Trading' })
     .filter({ hasText: 'Q4 2026' });
   await expect(row).toContainText('submitted');
+  // The person, not the uuid. `created_by` has no FK to `profiles` — identity
+  // is joined at read time so an erasure removes the name and keeps the row —
+  // so until this resolution existed the queue showed nothing at all about who
+  // entered the number a reviewer is about to accept. The record above was
+  // created with the ADMIN's token, and the seed names that profile.
+  await expect(row).toContainText('Tony Admin');
   await row.click();
+
+  // Both actors in the detail sheet, including the one nobody has filled in:
+  // "not reviewed yet" is a fact about the record, and a field that appeared
+  // only once populated would hide it.
+  await expect(page.getByText('Entered by')).toBeVisible();
+  await expect(page.getByText('Reviewed by')).toBeVisible();
 
   await page.getByRole('button', { name: 'Approve' }).click();
   await expect(page.getByText('Record approved')).toBeVisible();

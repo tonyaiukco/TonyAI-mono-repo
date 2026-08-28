@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -53,6 +53,7 @@ import {
 } from "@/lib/types";
 import { entityLabel } from "@/lib/void-view";
 import { ageLabel } from "@/lib/review-view";
+import { recordActorLabel } from "@/lib/record-actor";
 import {
   formatTCo2e,
   notCalculatedReason,
@@ -337,6 +338,7 @@ export default function ReviewPage() {
                         <TableHead className="text-right">Activity</TableHead>
                         <TableHead className="text-right">tCO₂e</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead>Submitted by</TableHead>
                         <TableHead>Age</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -344,7 +346,7 @@ export default function ReviewPage() {
                       {loading ? (
                         [...Array(6)].map((_, i) => (
                           <TableRow key={i}>
-                            <TableCell colSpan={7}>
+                            <TableCell colSpan={8}>
                               <Skeleton className="h-6 w-full" />
                             </TableCell>
                           </TableRow>
@@ -352,7 +354,7 @@ export default function ReviewPage() {
                       ) : visible.length === 0 ? (
                         <TableRow>
                           <TableCell
-                            colSpan={7}
+                            colSpan={8}
                             className="text-center py-8 text-muted-foreground"
                           >
                             {/* An empty queue is the good outcome here, not an
@@ -414,6 +416,27 @@ export default function ReviewPage() {
                               >
                                 {humanise(row.status)}
                               </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm whitespace-nowrap">
+                              {/* A reviewer decides someone else's number, so
+                                  whose it is belongs in the queue rather than
+                                  one click into the audit screen. */}
+                              {(() => {
+                                const actor = recordActorLabel(
+                                  row.createdBy,
+                                  row.createdByName,
+                                );
+                                return (
+                                  <span
+                                    className={cn(
+                                      actor.muted &&
+                                        "italic text-muted-foreground",
+                                    )}
+                                  >
+                                    {actor.text}
+                                  </span>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                               {/* Whole days since the record was CREATED — not
@@ -519,6 +542,30 @@ export default function ReviewPage() {
                 <span className="col-span-2">
                   {formatDate(selected.createdAt)}
                 </span>
+                {/* Both actors, always — including "not reviewed yet", which is
+                    a fact about the record a reviewer needs, and which a field
+                    that appeared only once populated would hide. */}
+                {(
+                  [
+                    ["Entered by", selected.createdBy, selected.createdByName],
+                    ["Reviewed by", selected.reviewedBy, selected.reviewedByName],
+                  ] as const
+                ).map(([label, id, name]) => {
+                  const actor = recordActorLabel(id, name);
+                  return (
+                    <Fragment key={label}>
+                      <span className="text-muted-foreground">{label}</span>
+                      <span
+                        className={cn(
+                          "col-span-2",
+                          actor.muted && "italic text-muted-foreground",
+                        )}
+                      >
+                        {actor.text}
+                      </span>
+                    </Fragment>
+                  );
+                })}
               </div>
 
               {/* Stated as its own block, not a dash in the table: approving

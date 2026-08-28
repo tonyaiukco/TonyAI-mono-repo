@@ -1379,6 +1379,23 @@ export interface ActivityRecordDTO {
    *  "not calculated" shape instead. */
   calculation: ActivityCalculationSnapshot;
   createdBy: string;
+  /**
+   * Who entered the record, resolved at read time — full name, falling back to
+   * the account email. THREE states, and they mean different things:
+   *
+   * - **absent** (`undefined`) — this response did not resolve identities. Only
+   *   reads do; a create/update/transition response answers "what is the record
+   *   now", not "who are these people", and paying a second query on the write
+   *   path to say something the caller already knows would be waste.
+   * - **`null`** — resolved, and there is no name: the profile was deleted.
+   *   Identity is joined at read time precisely so erasure works, and
+   *   `createdBy` survives as an opaque id.
+   * - **a string** — the person.
+   *
+   * Rendering absent and null the same way tells a reader something untrue, so
+   * the web side keeps them apart the way `actorLabel` does for the audit trail.
+   */
+  createdByName?: string | null;
   anomalyFlag: boolean;
   /**
    * What the verdict above was taken against: how many comparable periods
@@ -1422,6 +1439,14 @@ export interface ActivityRecordDTO {
   /** Who decided the review outcome, when, and why. `reviewNote` carries the
    * REVIEWER's words — a rejection reason never overwrites `varianceReason`. */
   reviewedBy: string | null;
+  /**
+   * Who decided the outcome, resolved at read time. Same three states as
+   * `createdByName`, plus one this field has and that one cannot: `reviewedBy`
+   * is itself null on a record nobody has reviewed, so a null name there means
+   * "no reviewer yet" rather than "the reviewer's profile is gone". `reviewedBy`
+   * is what tells those apart, which is why it stays on the DTO beside the name.
+   */
+  reviewedByName?: string | null;
   reviewedAt: string | null;
   reviewNote: string | null;
   /**

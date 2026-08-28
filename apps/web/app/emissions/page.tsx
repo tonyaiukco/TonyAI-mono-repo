@@ -73,6 +73,7 @@ import {
   voidReasonError,
   voidSuccessMessage,
 } from '@/lib/void-view';
+import { recordActorLabel } from '@/lib/record-actor';
 import type {
   ActivityRecordDTO,
   ActivityRecordStatus,
@@ -1236,6 +1237,21 @@ export default function EmissionsAnalysisPage() {
                 <div className="border-t border-border pt-4">
                   <h4 className="text-sm font-medium mb-3">Audit Trail</h4>
                   <div className="space-y-3 text-sm">
+                    {/* A block headed "Audit Trail" that named three timestamps
+                        and no person answered "when" and never "who" — the one
+                        question a trail exists for. Recoverable before this only
+                        by cross-referencing /audit by record id. */}
+                    {(
+                      [
+                        ['Entered by', selectedRecord.createdBy, selectedRecord.createdByName],
+                        ['Reviewed by', selectedRecord.reviewedBy, selectedRecord.reviewedByName],
+                      ] as const
+                    ).map(([label, id, name]) => {
+                      const actor = recordActorLabel(id, name);
+                      return (
+                        <Row key={label} label={label} value={actor.text} muted={actor.muted} />
+                      );
+                    })}
                     <Row label="Created At" value={formatDate(selectedRecord.createdAt)} />
                     <Row label="Updated At" value={formatDate(selectedRecord.updatedAt)} />
                     <Row label="Record ID" value={selectedRecord.id} mono />
@@ -1418,11 +1434,30 @@ export default function EmissionsAnalysisPage() {
   );
 }
 
-function Row({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function Row({
+  label,
+  value,
+  mono = false,
+  muted = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  /** The value is a description ("deleted user", an em dash), not a datum. */
+  muted?: boolean;
+}) {
   return (
     <div className="flex justify-between gap-4">
       <span className="text-muted-foreground shrink-0">{label}</span>
-      <span className={cn('text-right', mono && 'font-mono text-xs break-all')}>{value}</span>
+      <span
+        className={cn(
+          'text-right',
+          mono && 'font-mono text-xs break-all',
+          muted && 'italic text-muted-foreground',
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }

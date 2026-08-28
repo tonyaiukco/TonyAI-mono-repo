@@ -28,6 +28,11 @@ import {
   type ReportingPeriod,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  actorDisplayName,
+  resolveProfiles,
+  type ResolvedProfile,
+} from '../common/resolve-profiles';
 import { CalculationsService } from '../calculations/calculations.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
@@ -175,11 +180,18 @@ export class ActivityRecordsService {
    * Resolved fields belong in `toDTO`, which builds on this — so a field added
    * to `ActivityRecordDTO` has to be placed on one side or the other instead of
    * silently reaching the audit log.
+   *
+   * That forcing function only fires for REQUIRED fields: an optional one is
+   * assignable here whether or not it is named in the `Omit`, so this list is a
+   * hand-maintained assertion and not a compiler-enforced one. Every resolved
+   * field so far is optional, so the list has to be widened by hand — and
+   * `toAuditSnapshot returns nothing resolved at read time` in the spec is the
+   * check that actually holds it, because the compiler will not.
    */
   private toAuditSnapshot(
     r: ActivityRecord,
     evidenceCount = 0,
-  ): Omit<ActivityRecordDTO, 'locationName'> {
+  ): Omit<ActivityRecordDTO, 'locationName' | 'createdByName' | 'reviewedByName'> {
     return {
       id: r.id,
       subsidiaryId: r.subsidiaryId,
@@ -216,6 +228,7 @@ export class ActivityRecordsService {
   private toDTO(
     r: ActivityRecord & { location?: { name: string } | null },
     evidenceCount = 0,
+    actors?: Map<string, ResolvedProfile>,
   ): ActivityRecordDTO {
     return {
       ...this.toAuditSnapshot(r, evidenceCount),
@@ -224,6 +237,17 @@ export class ActivityRecordsService {
       // same subsidiary/period/category can differ ONLY by location — and the
       // reviewer saw two identical-looking rows with no way to tell them apart.
       locationName: r.location?.name ?? null,
+      // Spread, not two `?? null` fields: with no map the keys are ABSENT from
+      // the response, which is a different claim from present-and-null. Absent
+      // means this response did not resolve identities (the write paths do not);
+      // null means it did and the profile is gone. Collapsing them would make
+      // every freshly created record read as authored by a deleted user.
+      ...(actors
+        ? {
+            createdByName: actorDisplayName(r.createdBy, actors),
+            reviewedByName: actorDisplayName(r.reviewedBy, actors),
+          }
+        : {}),
     };
   }
 
@@ -451,15 +475,23 @@ export class ActivityRecordsService {
         location: { select: { name: true } },
       },
     });
-    return rows.map((r) => this.toDTO(r, r._count.evidence));
+    // One query for the whole page over both actor columns at once, never one
+    // per row: `created_by` and `reviewed_by` have no FK to `profiles`, so
+    // there is no `include` that could do this.
+    const actors = await resolveProfiles(
+      this.prisma,
+      rows.flatMap((r) => [r.createdBy, r.reviewedBy]),
+    );
+    return rows.map((r) => this.toDTO(r, r._count.evidence, actors));
   }
 
   async get(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
-    const evidenceCount = await this.prisma.evidence.count({
-      where: { activityRecordId: id },
-    });
-    return this.toDTO(record, evidenceCount);
+    const [evidenceCount, actors] = await Promise.all([
+      this.prisma.evidence.count({ where: { activityRecordId: id } }),
+      resolveProfiles(this.prisma, [record.createdBy, record.reviewedBy]),
+    ]);
+    return this.toDTO(record, evidenceCount, actors);
   }
 
   async create(
