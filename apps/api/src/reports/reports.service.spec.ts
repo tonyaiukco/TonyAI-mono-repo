@@ -2,6 +2,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ExcelJS from 'exceljs';
 import { ReportsService } from './reports.service';
 import { buildReportHtml } from './report-html';
+import {
+  BODY_COLUMNS,
+  DISCLOSURE_COLUMNS,
+  MARKED_WITHOUT_DISCLOSURE,
+  csvHeader,
+  csvLedgerRow,
+  csvWithdrawnRow,
+} from './report-columns';
+import type { ReportLedgerRow, ReportWithdrawnRow } from './report-data';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -1321,4 +1330,189 @@ describe('ReportsService', () => {
   });
 
 
+});
+
+/**
+ * The column vocabulary, and the guarantees that are types rather than tests.
+ *
+ * `apps/api/tsconfig.json` does not extend the root config and does not set
+ * `strict`, so `strictFunctionTypes` is OFF in this package and parameters are
+ * checked bivariantly — the usual "contravariance rejects the wrong row type"
+ * protection does not exist here. What does hold is the writers' concrete
+ * signatures, and these probes are what keep them honest: `pnpm typecheck`
+ * includes `src`, so a `@ts-expect-error` that stops erroring FAILS THE BUILD
+ * the day the guarantee is lost. That is the whole reason they are here rather
+ * than in a comment.
+ */
+describe('report column descriptors', () => {
+  const ledgerRow: ReportLedgerRow = {
+    subsidiaryName: 'Energy', locationId: null, locationName: null,
+    category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
+    activityValue: 1000, activityUnit: 'kWh', tCo2e: 0.44, status: 'approved',
+    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
+    anomalyBaselinePriorCount: 3,
+  };
+  const withdrawnRow: ReportWithdrawnRow = {
+    ...ledgerRow, status: 'voided', voidReason: 'Duplicate invoice.',
+    voidedAt: '2026-02-03 09:30',
+  };
+
+  it('refuses a withdrawn row in the ledger writer, at compile time', () => {
+    // @ts-expect-error `'voided'` is not in `Exclude<ActivityRecordStatus, 'voided'>`.
+    // This is the guarantee `ReportLedgerRow.status` exists to provide: a
+    // withdrawn figure written as a counted ledger row is back inside every
+    // total the record was deliberately taken out of.
+    csvLedgerRow(withdrawnRow);
+    // The right way round still compiles, so the probe above is about the
+    // status and not about some unrelated shape mismatch.
+    expect(csvLedgerRow(ledgerRow).split(',')[csvHeader().split(',').indexOf('status')]).toBe('approved');
+  });
+
+  it('marks every aggregatable column on a withdrawn row, and only those', () => {
+    const header = csvHeader().split(',');
+    const cells = csvWithdrawnRow(withdrawnRow).split(',');
+    const at = (name: string) => cells[header.indexOf(name)];
+
+    // Hand-written, NOT derived from `BODY_COLUMNS`. Deriving it would make the
+    // assertion "the marker appears wherever the descriptor says it should",
+    // which is a tautology that passes with `anomaly_flag` dropped from the
+    // set. This list is the independent statement of the requirement.
+    for (const column of ['activity_value', 'tco2e', 'evidence_files', 'anomaly_flag']) {
+      expect(at(column)).toBe('Withdrawn');
+    }
+    // ...and ONLY those. Every other body column keeps its real value, which is
+    // what proves "aggregatable" and not "on a withdrawn row" is the rule. The
+    // first cut of this test asserted two of the nine and called itself "only
+    // those": marking `reporting_period` passed the entire suite.
+    const unmarked: Record<string, string> = {
+      subsidiary: 'Energy', reporting_entity: 'Whole company',
+      category: 'Electricity', reporting_period: 'monthly',
+      period_value: 'January', activity_unit: 'kWh', status: 'voided',
+    };
+    for (const [column, value] of Object.entries(unmarked)) {
+      expect(at(column)).toBe(value);
+    }
+    // ...and the disclosure block is never marked: blanking it would leave a
+    // file saying a figure was withdrawn and refusing to say what.
+    expect(at('voided_activity_value')).toBe('1000');
+    expect(at('voided_tco2e')).toBe('0.44');
+  });
+
+  it('accounts for every marker, so deleting the compile-time guard fails here too', () => {
+    // `_markerParity` can be deleted outright: it compiles, and the suite stays
+    // green. This restates the same accounting invariant at runtime so the
+    // guard cannot be removed silently.
+    //
+    // NOT the harmful tautology the sibling test avoids: that one would derive
+    // the EXPECTED MARKER SET from `BODY_COLUMNS` and assert the writer matches
+    // it. This asserts that every aggregatable column is either restated by a
+    // disclosure column or listed as deliberately undisclosed — a claim about
+    // the declarations' consistency, which is what the type check states.
+    const restated = new Set<string>(
+      DISCLOSURE_COLUMNS.map((d) => d.restates).filter((k) => k !== null),
+    );
+    const exempt = new Set<string>(MARKED_WITHOUT_DISCLOSURE);
+    for (const column of BODY_COLUMNS.filter((c) => c.aggregatable)) {
+      const key: string = column.key;
+      expect(restated.has(key) || exempt.has(key)).toBe(true);
+    }
+    // And nothing is exempted that is not actually marked — an unbounded escape
+    // hatch would let a column be excused from a rule it never had.
+    for (const key of MARKED_WITHOUT_DISCLOSURE) {
+      expect(BODY_COLUMNS.find((c) => (c.key as string) === key)?.aggregatable).toBe(true);
+    }
+  });
+
+  it('leaves the disclosure block empty on a counted row', () => {
+    const header = csvHeader().split(',');
+    const cells = csvLedgerRow(ledgerRow).split(',');
+    for (const column of ['voided_activity_value', 'voided_tco2e', 'voided_at_utc', 'void_reason']) {
+      expect(cells[header.indexOf(column)]).toBe('');
+    }
+  });
+});
+
+/**
+ * The forged-ledger-row control, held on EVERY column rather than on two.
+ *
+ * A per-column bypass sweep measured the gap before this test existed: routing
+ * one column around `quote()` failed something for only 2 of the 15 —
+ * `period_value` and `void_reason`. `subsidiary`, `reporting_entity` and all
+ * four `voided_*` columns were silent, and the first two are user-supplied free
+ * text. A location named `Warehouse\rTotal,,,,,,,,,,999999,,,,` puts a
+ * fabricated row in a filed CSV behind no database row and no audit entry.
+ *
+ * The shipped writer is uniform, so this is coverage rather than a defect. It
+ * lands here because THIS package created the structure the risk needs: on
+ * `main` all fifteen cells were inline expressions in one array literal inside
+ * `generateCsv`, visible in a screenful; they are now eleven lambdas in another
+ * file, and F2/F3 add per-format renderers where a different escaper (HTML for
+ * the PDF) is genuinely needed. That is the moment someone puts escaping inside
+ * a renderer, and 13 of 15 columns would not notice.
+ */
+describe('no column can opt out of CSV neutralisation', () => {
+  /** Simultaneously a formula, a field-splitter and a record-splitter. */
+  const HOSTILE = '=HYPERLINK("evil"),\rTotal,,,999999';
+
+  /** A minimal RFC-4180 reader, written independently of the writer: counting
+   *  `\n` would miss exactly the `\r` forgery this exists to catch. */
+  const records = (csv: string): string[][] => {
+    const out: string[][] = [];
+    let row: string[] = [];
+    let field = '';
+    let quoted = false;
+    for (let i = 0; i < csv.length; i++) {
+      const c = csv[i];
+      if (quoted) {
+        if (c === '"' && csv[i + 1] === '"') { field += '"'; i++; }
+        else if (c === '"') quoted = false;
+        else field += c;
+      } else if (c === '"') quoted = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\r' || c === '\n') {
+        if (c === '\r' && csv[i + 1] === '\n') i++;
+        row.push(field); out.push(row); row = []; field = '';
+      } else field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); out.push(row); }
+    return out;
+  };
+
+  const base: ReportLedgerRow = {
+    subsidiaryName: 'Energy', locationId: null, locationName: null,
+    category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
+    activityValue: 1000, activityUnit: 'kWh', tCo2e: 0.44, status: 'approved',
+    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
+    anomalyBaselinePriorCount: 3,
+  };
+
+  /** Every string-typed field that can reach a cell. */
+  const STRING_FIELDS = [
+    'subsidiaryName', 'locationName', 'category', 'periodValue',
+    'reportingPeriod', 'activityUnit',
+  ] as const;
+
+  it.each(STRING_FIELDS)('neutralises a payload arriving through %s', (field) => {
+    const row = { ...base, [field]: HOSTILE } as ReportLedgerRow;
+    const csv = `${csvHeader()}\n${csvLedgerRow(row)}\n`;
+    const parsed = records(csv);
+
+    // ONE header and ONE data row. A bare `\r` reaching the file unquoted
+    // splits the row, and the extra line is a ledger entry nobody wrote.
+    expect(parsed).toHaveLength(2);
+    expect(parsed[1]).toHaveLength(csvHeader().split(',').length);
+    // ...and nothing a spreadsheet would execute on open.
+    for (const cell of parsed[1]) expect(cell).not.toMatch(/^[=+\-@]/);
+  });
+
+  it('neutralises the withdrawn row, disclosure block included', () => {
+    const row: ReportWithdrawnRow = {
+      ...base, status: 'voided', subsidiaryName: HOSTILE,
+      voidReason: HOSTILE, voidedAt: '2026-02-03 09:30',
+    };
+    const parsed = records(`${csvHeader()}\n${csvWithdrawnRow(row)}\n`);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[1]).toHaveLength(csvHeader().split(',').length);
+    for (const cell of parsed[1]) expect(cell).not.toMatch(/^[=+\-@]/);
+  });
 });

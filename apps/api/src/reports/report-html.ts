@@ -1,5 +1,5 @@
 import { entityLabel } from '@tonyai/shared-types';
-import type { ReportData } from './reports.service';
+import type { ReportData } from './report-data';
 
 /**
  * Branded, self-contained HTML for the audit-ready PDF (FR §5.1). Pure function

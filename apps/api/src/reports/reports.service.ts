@@ -1,14 +1,11 @@
 import { ForbiddenException, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import type {
-  EmissionsSummary,
   ReportExportType,
   ReportMetaDTO,
   ReportStatus,
-  ReportTemplate,
 } from '@tonyai/shared-types';
 import {
-  ANOMALY_BASELINE_PERIODS,
   entityLabel,
   isAnomalyEvaluated,
   PENDING_REVIEW_STATUSES,
@@ -17,6 +14,21 @@ import {
 import puppeteer, { type Browser } from 'puppeteer';
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  NOT_CALCULATED,
+  anomalyCell,
+  csvHeader,
+  csvLedgerRow,
+  csvWithdrawnRow,
+} from './report-columns';
+import type {
+  ReportData,
+  ReportEvidenceRow,
+  ReportFactorRow,
+  ReportLedgerRow,
+  ReportWithdrawnRow,
+  ReportWithdrawnTotals,
+} from './report-data';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { COUNTED_STATUSES, EmissionsService } from '../emissions/emissions.service';
@@ -27,196 +39,16 @@ import { buildReportHtml } from './report-html';
 // a report's summary tables and its own ledger can never silently diverge.
 const COMMITTED_STATUSES = COUNTED_STATUSES;
 
-/** One ledger row for the detail template / Excel raw-data sheet / CSV. */
-/**
- * What every export writes where a tCO₂e figure would go when the record's
- * category has no emission factor. One constant so the PDF, the Excel sheet and
- * the CSV cannot say three different things about the same row.
- */
-const NOT_CALCULATED = 'Not calculated';
-
-/**
- * What the anomaly column says for a record the VAR §4 rule never ran on.
- *
- * A blank in that column has always meant "checked, nothing unusual". Since
- * 2026-08-27 the rule needs three priors, so a blank would also cover "never
- * checked" — and on the dev database that is 30 of 96 committed records, in the
- * artifact an auditor keeps. Same instinct as NOT_CALCULATED above: say the
- * absence rather than print something indistinguishable from a measurement.
- *
- * ONE renderer for every format (`anomalyCell`), because the Excel sheet and
- * the CSV each hold their own column literals and this is exactly the kind of
- * difference that survives review — WP20 shipped a CSV and an Excel from one
- * request that disagreed about withdrawn rows for precisely this reason.
- */
-const NOT_EVALUATED = 'Not evaluated';
-
-function anomalyCell(r: {
-  anomalyFlag: boolean;
-  anomalyEvaluated: boolean;
-  anomalyBaselinePriorCount: number | null;
-}): string {
-  if (r.anomalyFlag) return 'yes';
-  if (r.anomalyEvaluated) return '';
-  const priors = r.anomalyBaselinePriorCount;
-  // Each absence names itself: the reader of a filed report cannot ask which
-  // one it was, and the three have different remedies — a factor, more months,
-  // or nothing at all.
-  if (priors === null) return `${NOT_EVALUATED} (no figure)`;
-  if (priors >= ANOMALY_BASELINE_PERIODS) return `${NOT_EVALUATED} (baseline is zero)`;
-  return `${NOT_EVALUATED} (${priors} of ${ANOMALY_BASELINE_PERIODS} priors)`;
-}
-
-/**
- * What the flat exports write in the tCO₂e column of a WITHDRAWN row.
- *
- * Text, never a number, and never blank: the withdrawn rows share one table
- * with the counted ledger in the CSV, so anything numeric there would be
- * summed straight back into a total the record was deliberately taken out of.
- * The figure that left is carried in its own `withdrawn_tco2e` column instead,
- * where a SUM over it answers a different question on purpose.
- */
-const WITHDRAWN = 'Withdrawn';
-
-export interface ReportLedgerRow {
-  subsidiaryName: string;
-  /** The location id, carried beside the name because `entityLabel` keys on the
-   *  PAIR: the id is the fact, the name is a decoration the query may or may not
-   *  have loaded. Free — it is on the record row already. */
-  locationId: string | null;
-  /** The site this figure is attributed to, or `null` for a whole-company row.
-   *  Kept null-able rather than pre-labelled so the three writers all put the
-   *  same phrase on it (`entityLabel`) instead of three near-synonyms. Without
-   *  it a re-attribution from the company to a site changes nothing visible in
-   *  any export, and the two halves of a double-counted month are
-   *  indistinguishable in the ledger an auditor keeps. */
-  locationName: string | null;
-  category: string;
-  periodValue: string;
-  reportingPeriod: string;
-  activityValue: number;
-  activityUnit: string;
-  /** What the activity value became after unit conversion, and by what factor.
-   *  Without these the ledger prints "5,000 cubic_metres → 10.4 tCO₂e" beside a
-   *  factor quoted per kWh, and the ×11.36 between them appears nowhere — the
-   *  figure cannot be recomputed from the report, which is what ISO 14064-1
-   *  §9.3.1 and GHG Protocol Ch.7 ask a report to make possible. */
-  normalizedValue?: number;
-  normalizedUnit?: string;
-  conversionFactor?: number;
-  /** `null` when the record's category has no emission factor and therefore
-   *  produced no figure (WP17 — Water). Deliberately not `0`: an audit-ready
-   *  ledger that prints a measured zero where nothing was measured cannot be
-   *  told apart from a genuine zero afterwards, and the report is the artifact
-   *  an auditor keeps. Every writer renders it as "Not calculated". */
-  tCo2e: number | null;
-  /** Narrowed so "the ledger holds no withdrawn figure" is a compile error
-   *  rather than only a test: `ReportWithdrawnRow` extends this type, so a
-   *  withdrawn row is otherwise assignable straight into `records` and into the
-   *  ledger writers. Same allow-list instinct as `COUNTED_STATUSES`. */
-  status: Exclude<ActivityRecordStatus, 'voided'>;
-  evidenceCount: number;
-  anomalyFlag: boolean;
-  /** Whether the VAR §4 rule actually RAN on this record — `anomalyFlag: false`
-   *  covers both "checked, clean" and "never checked", and only one of those is
-   *  a statement a filed report may make. Derived once here through the shared
-   *  `isAnomalyEvaluated` predicate so no writer re-derives it. */
-  anomalyEvaluated: boolean;
-  /** The window it was judged against: null (no figure of its own), 0–2 (short)
-   *  or 3 (evaluated). Printed inside the anomaly column rather than as a new
-   *  column — the ledger already carries ten hand-maintained column literals
-   *  across three writers, and this adds no eleventh. */
-  anomalyBaselinePriorCount: number | null;
-}
-
-/**
- * One figure withdrawn from this reporting year — a ledger row plus why it left.
- *
- * It extends `ReportLedgerRow` rather than restating it because a withdrawal
- * disclosure is only meaningful beside the same identifying columns the ledger
- * uses: the reader has to be able to tell which of two entries for one month
- * was removed, and before WP18's Reporting Entity row the two were
- * distinguishable only by activity value.
- */
-export interface ReportWithdrawnRow extends Omit<ReportLedgerRow, 'status'> {
-  status: 'voided';
-  /** Why the figure was withdrawn — required at the API (min 10 chars) and
-   *  uncorrectable afterwards, so it is quoted verbatim, never summarised. */
-  voidReason: string | null;
-  voidedAt: string | null;
-}
-
-/** One deduplicated factor snapshot (audit traceability core, FR §3.5/§5). */
-export interface ReportFactorRow {
-  category: string;
-  geographyCode: string;
-  factorValue: number;
-  factorUnit: string;
-  methodology: string;
-  source: string;
-  version: string;
-  /** Set when records under this factor went through a unit conversion. The
-   *  basis is disclosed here because for natural gas it is an ASSUMPTION, not a
-   *  definition, and a factor appendix that hides it is not audit-traceable. */
-  conversionBasis?: string;
-}
-
-export interface ReportEvidenceRow {
-  subsidiaryName: string;
-  category: string;
-  periodValue: string;
-  fileCount: number;
-  fileNames: string[];
-}
-
-/**
- * How much left the inventory, alongside how many rows did.
- *
- * An assurer's first question about a restatement is its magnitude, and
- * materiality is measured in tonnes, not in rows. Computed once in `assemble`
- * so the banner, the Excel line and the table footer cannot state three
- * different numbers — the `recordCount` lesson, applied before it happens.
- */
-export interface ReportWithdrawnTotals {
-  count: number;
-  /** Sum over the withdrawn rows that HAD a figure. */
-  tCo2e: number;
-  /** Withdrawn rows whose category has no emission factor, so nothing was
-   *  removed from the totals by withdrawing them (WP17 — Water). Disclosed
-   *  rather than folded in, because "269.9 tCO2e withdrawn" beside 6 rows must
-   *  not imply all six carried tonnage. */
-  uncalculatedCount: number;
-}
-
-/** Everything a report renders — assembled once, shared by PDF/Excel/CSV. */
-export interface ReportData {
-  template: ReportTemplate;
-  templateName: string;
-  organisationName: string;
-  subsidiaryName: string | null;
-  year: number;
-  generatedAt: string;
-  generatedBy: string;
-  status: ReportStatus;
-  incompleteRatio: number;
-  includeMethodologyNotes: boolean;
-  includeEvidenceSummary: boolean;
-  summary: EmissionsSummary;
-  records: ReportLedgerRow[];
-  /** Records withdrawn from this year — disclosed by every format, counted by
-   *  none of them. Empty is the normal case and every writer says nothing then.
-   *
-   *  This is the artifact's disclosure set BY CONSTRUCTION: every writer counts
-   *  `withdrawn.length`, never `meta.voidedCount`. The two are computed by
-   *  different queries with identical predicates and agree today; if this list
-   *  ever gains a cap or a filter, a banner reading the meta would under-report
-   *  the very table printed beneath it. `meta.voidedCount` is the SCREEN's
-   *  number (it has no list to count). */
-  withdrawn: ReportWithdrawnRow[];
-  withdrawnTotals: ReportWithdrawnTotals;
-  factors: ReportFactorRow[];
-  evidenceSummary: ReportEvidenceRow[];
-}
+// Re-exported so every existing importer keeps working; the definitions moved
+// to `report-data.ts` to break the value-import cycle the descriptors create.
+export type {
+  ReportLedgerRow,
+  ReportWithdrawnRow,
+  ReportFactorRow,
+  ReportEvidenceRow,
+  ReportWithdrawnTotals,
+  ReportData,
+} from './report-data';
 
 /**
  * What `GET /reports/meta` returns. This is the wire contract itself, not a
@@ -677,61 +509,10 @@ export class ReportsService implements OnModuleDestroy {
     // The `voided_*` block is the suffix. Machine-readable identifiers use the
     // status word (`voided`, matching the `status` column that discriminates
     // the two row kinds); "withdrawn" is for the humans reading the PDF.
-    const header = [
-      'subsidiary', 'reporting_entity', 'category', 'reporting_period',
-      'period_value', 'activity_value', 'activity_unit', 'tco2e', 'status',
-      'evidence_files', 'anomaly_flag', 'voided_activity_value', 'voided_tco2e',
-      'voided_at_utc', 'void_reason',
-    ];
-    const cell = (v: string | number | boolean): string => {
-      let s = String(v);
-      // Neutralize spreadsheet formula injection on user-influenced text.
-      if (/^[=+\-@]/.test(s)) s = `'${s}`;
-      // A BARE `\r` has to be quoted too, not just `\n`: most parsers end a
-      // record on it, so a withdrawal reason containing one would split into a
-      // second row — a fabricated ledger line, in the artifact a reader trusts,
-      // behind no database row and no audit entry. A browser sends `\r\n`, so
-      // reaching this needs a deliberate API call; it is still a forgery.
-      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
     const lines = [
-      header.join(','),
-      ...data.records.map((r) =>
-        [
-          r.subsidiaryName, entityLabel(r), r.category, r.reportingPeriod,
-          r.periodValue,
-          // Same reasoning as the Excel sheet: an empty cell in a numeric
-          // column is read as zero by whatever consumes the CSV next.
-          r.activityValue, r.activityUnit, r.tCo2e ?? NOT_CALCULATED, r.status, r.evidenceCount,
-          anomalyCell(r),
-          // The `voided_*` columns are empty for a counted row, and empty is
-          // the right word here: this row was never withdrawn.
-          '', '', '', '',
-        ]
-          .map(cell)
-          .join(','),
-      ),
-      // Withdrawn records share the table rather than getting a second file:
-      // one header row keeps the export parseable. EVERY column a reader could
-      // aggregate therefore carries the marker on these rows — not just tCO₂e.
-      // The first cut protected the tCO₂e column alone and left the real
-      // `activity_value` in place, which overstated total electricity by
-      // 394 MWh and total fuel by 36,000 litres on the seeded year: energy
-      // consumption is a reported figure in its own right (GRI 302-1, CSRD
-      // E1-5), and the Excel from the same request gave a different answer.
-      // What was withdrawn is reported in the `voided_*` block, where summing
-      // answers a different question on purpose.
-      ...data.withdrawn.map((r) =>
-        [
-          r.subsidiaryName, entityLabel(r), r.category, r.reportingPeriod,
-          r.periodValue, WITHDRAWN, r.activityUnit, WITHDRAWN, r.status,
-          WITHDRAWN, WITHDRAWN,
-          r.activityValue, r.tCo2e ?? NOT_CALCULATED, r.voidedAt ?? '',
-          r.voidReason ?? '',
-        ]
-          .map(cell)
-          .join(','),
-      ),
+      csvHeader(),
+      ...data.records.map((r) => csvLedgerRow(r)),
+      ...data.withdrawn.map((r) => csvWithdrawnRow(r)),
     ];
     await this.audit(user, q, 'csv', data.summary.recordCount, data.withdrawnTotals.count);
     return lines.join('\n') + '\n';
