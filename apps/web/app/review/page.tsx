@@ -52,6 +52,7 @@ import {
   type SubsidiaryDTO,
 } from "@/lib/types";
 import { entityLabel } from "@/lib/void-view";
+import { ageLabel } from "@/lib/review-view";
 import {
   formatTCo2e,
   notCalculatedReason,
@@ -80,15 +81,6 @@ function formatDate(iso: string): string {
     month: "short",
     year: "numeric",
   });
-}
-
-/** Whole days since the record was CREATED — not since it was submitted, which
- * nothing records yet. The column is named "Age" for exactly that reason. */
-function daysSince(iso: string): number {
-  return Math.max(
-    0,
-    Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000),
-  );
 }
 
 export default function ReviewPage() {
@@ -424,7 +416,11 @@ export default function ReviewPage() {
                               </Badge>
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                              {daysSince(row.createdAt)}d
+                              {/* Whole days since the record was CREATED — not
+                                  since it was submitted, which nothing records
+                                  yet. The column is headed "Age" for exactly
+                                  that reason. */}
+                              {ageLabel(row.createdAt)}
                             </TableCell>
                           </TableRow>
                         ))
