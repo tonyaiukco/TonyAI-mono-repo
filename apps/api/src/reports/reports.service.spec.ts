@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ExcelJS from 'exceljs';
 import { ReportsService } from './reports.service';
 import { buildReportHtml } from './report-html';
+import { csvHeader, csvLedgerRow, csvWithdrawnRow } from './report-columns';
+import type { ReportLedgerRow, ReportWithdrawnRow } from './report-data';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -1321,4 +1323,72 @@ describe('ReportsService', () => {
   });
 
 
+});
+
+/**
+ * The column vocabulary, and the guarantees that are types rather than tests.
+ *
+ * `apps/api/tsconfig.json` does not extend the root config and does not set
+ * `strict`, so `strictFunctionTypes` is OFF in this package and parameters are
+ * checked bivariantly — the usual "contravariance rejects the wrong row type"
+ * protection does not exist here. What does hold is the writers' concrete
+ * signatures, and these probes are what keep them honest: `pnpm typecheck`
+ * includes `src`, so a `@ts-expect-error` that stops erroring FAILS THE BUILD
+ * the day the guarantee is lost. That is the whole reason they are here rather
+ * than in a comment.
+ */
+describe('report column descriptors', () => {
+  const ledgerRow: ReportLedgerRow = {
+    subsidiaryName: 'Energy', locationId: null, locationName: null,
+    category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
+    activityValue: 1000, activityUnit: 'kWh', tCo2e: 0.44, status: 'approved',
+    evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
+    anomalyBaselinePriorCount: 3,
+  };
+  const withdrawnRow: ReportWithdrawnRow = {
+    ...ledgerRow, status: 'voided', voidReason: 'Duplicate invoice.',
+    voidedAt: '2026-02-03 09:30',
+  };
+
+  it('refuses a withdrawn row in the ledger writer, at compile time', () => {
+    // @ts-expect-error `'voided'` is not in `Exclude<ActivityRecordStatus, 'voided'>`.
+    // This is the guarantee `ReportLedgerRow.status` exists to provide: a
+    // withdrawn figure written as a counted ledger row is back inside every
+    // total the record was deliberately taken out of.
+    csvLedgerRow(withdrawnRow);
+    // The right way round still compiles, so the probe above is about the
+    // status and not about some unrelated shape mismatch.
+    expect(csvLedgerRow(ledgerRow)).toContain('approved');
+  });
+
+  it('marks every aggregatable column on a withdrawn row, and only those', () => {
+    const header = csvHeader().split(',');
+    const cells = csvWithdrawnRow(withdrawnRow).split(',');
+    const at = (name: string) => cells[header.indexOf(name)];
+
+    // Hand-written, NOT derived from `BODY_COLUMNS`. Deriving it would make the
+    // assertion "the marker appears wherever the descriptor says it should",
+    // which is a tautology that passes with `anomaly_flag` dropped from the
+    // set. This list is the independent statement of the requirement.
+    for (const column of ['activity_value', 'tco2e', 'evidence_files', 'anomaly_flag']) {
+      expect(at(column)).toBe('Withdrawn');
+    }
+    // A unit is a word and is not summable; the status is the discriminator and
+    // must keep saying `voided`. Both sit BESIDE marked columns, which is what
+    // proves "aggregatable" and not "on a withdrawn row" is the rule.
+    expect(at('activity_unit')).toBe('kWh');
+    expect(at('status')).toBe('voided');
+    // ...and the disclosure block is never marked: blanking it would leave a
+    // file saying a figure was withdrawn and refusing to say what.
+    expect(at('voided_activity_value')).toBe('1000');
+    expect(at('voided_tco2e')).toBe('0.44');
+  });
+
+  it('leaves the disclosure block empty on a counted row', () => {
+    const header = csvHeader().split(',');
+    const cells = csvLedgerRow(ledgerRow).split(',');
+    for (const column of ['voided_activity_value', 'voided_tco2e', 'voided_at_utc', 'void_reason']) {
+      expect(cells[header.indexOf(column)]).toBe('');
+    }
+  });
 });
