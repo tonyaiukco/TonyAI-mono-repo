@@ -9,6 +9,8 @@ import {
   csvHeader,
   csvLedgerRow,
   csvWithdrawnRow,
+  excelLedgerHeader,
+  excelLedgerRow,
 } from './report-columns';
 import type { ReportLedgerRow, ReportWithdrawnRow } from './report-data';
 import { PrismaService } from '../prisma/prisma.service';
@@ -792,6 +794,49 @@ describe('ReportsService', () => {
       }
     });
 
+    it('Excel: the total row is exactly as wide as the header, and its note lands under Reason', async () => {
+      stubRecords(prisma, [makeRecord(), voidedRecord(), voidedWaterRecord()]);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+      const sheet = wb.getWorksheet('Withdrawn Records')!;
+      const header = (sheet.getRow(1).values as string[]).slice(1);
+      const total = (sheet.getRow(4).values as unknown[]).slice(1);
+
+      // ARITY, asserted independently of the header's own derivation — and this
+      // is the assertion the refactor needed rather than deserved. Deriving the
+      // total row from the LEDGER's list instead of the withdrawn sheet's (the
+      // plausible copy-paste, twelve lines up) passed all 61 tests: the tonnage
+      // sits at index 7 in both lists by coincidence, so every name lookup
+      // agreed, while the row ran one cell past the last column and dropped the
+      // uncalculated-count disclosure entirely.
+      expect(total).toHaveLength(header.length);
+
+      const at = (name: string) => total[header.indexOf(name)];
+      expect(at('tCO₂e removed')).toBe(0.44);
+      // The note is a factual claim about the file, and nothing held it: saying
+      // "3 of these carry no emissions figure" when one does is a misstatement
+      // in an artifact an auditor keeps.
+      expect(at('Reason')).toBe('1 of these carry no emissions figure');
+      // ...and every other column is blank, so a stray total on another atom —
+      // an activity figure summing kWh and cubic metres, say — cannot appear.
+      expect(header.filter((h) => total[header.indexOf(h)] !== '')).toEqual([
+        'Subsidiary', 'tCO₂e removed', 'Reason',
+      ]);
+    });
+
+    it('Excel: the withdrawn sheet is header-only when nothing was withdrawn', async () => {
+      stubRecords(prisma, [makeRecord()]);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+      const sheet = wb.getWorksheet('Withdrawn Records')!;
+      // The sheet is deliberately always present — a workbook whose sheet list
+      // depends on the data cannot be read by anything automated. But a clean
+      // year must not get a "Total withdrawn … 0" row, which reads as a
+      // measured zero rather than as nothing having been withdrawn.
+      expect(sheet.rowCount).toBe(1);
+      expect(String(sheet.getRow(1).getCell(1).value)).toBe('Subsidiary');
+    });
+
     it('says "Not calculated" for a withdrawn row that never had a figure', async () => {
       stubRecords(prisma, [makeRecord(), voidedWaterRecord()]);
 
@@ -1366,6 +1411,17 @@ describe('report column descriptors', () => {
     // The right way round still compiles, so the probe above is about the
     // status and not about some unrelated shape mismatch.
     expect(csvLedgerRow(ledgerRow).split(',')[csvHeader().split(',').indexOf('status')]).toBe('approved');
+  });
+
+  it('refuses a withdrawn row in the EXCEL ledger writer too', () => {
+    // F1 shipped three writer entry points with one probe; F2 added three more
+    // with none, so the "concrete signatures plus `@ts-expect-error`" guarantee
+    // was half-applied. Widening `excelLedgerRow` to accept both row kinds
+    // typechecked clean and passed the whole suite — a second door into the
+    // counted ledger sheet.
+    // @ts-expect-error `'voided'` is not in `Exclude<ActivityRecordStatus, 'voided'>`.
+    excelLedgerRow(withdrawnRow);
+    expect(excelLedgerRow(ledgerRow)[excelLedgerHeader().indexOf('Status')]).toBe('approved');
   });
 
   it('marks every aggregatable column on a withdrawn row, and only those', () => {
