@@ -6,7 +6,6 @@ import type {
   ReportStatus,
 } from '@tonyai/shared-types';
 import {
-  entityLabel,
   isAnomalyEvaluated,
   PENDING_REVIEW_STATUSES,
   REPORT_TEMPLATES,
@@ -15,7 +14,11 @@ import puppeteer, { type Browser } from 'puppeteer';
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  NOT_CALCULATED,
+  excelLedgerHeader,
+  excelLedgerRow,
+  excelWithdrawnHeader,
+  excelWithdrawnRow,
+  excelWithdrawnTotalRow,
   anomalyCell,
   csvHeader,
   csvLedgerRow,
@@ -443,20 +446,8 @@ export class ReportsService implements OnModuleDestroy {
 
     // Sheet 2 — Raw Activity Data (the committed ledger)
     const s2 = wb.addWorksheet('Raw Activity Data');
-    s2.addRow([
-      'Subsidiary', 'Reporting entity', 'Category', 'Reporting period', 'Period',
-      'Activity value', 'Unit', 'tCO₂e', 'Status', 'Evidence files', 'Anomaly flag',
-    ]);
-    for (const r of data.records) {
-      s2.addRow([
-        r.subsidiaryName, entityLabel(r), r.category, r.reportingPeriod, r.periodValue,
-        // A text cell, not an empty numeric one: a blank in a tCO₂e column
-        // sums as zero the moment someone drags a SUM over it, which is the
-        // same misstatement as writing 0 — only harder to notice.
-        r.activityValue, r.activityUnit, r.tCo2e ?? NOT_CALCULATED, r.status, r.evidenceCount,
-        anomalyCell(r),
-      ]);
-    }
+    s2.addRow(excelLedgerHeader());
+    for (const r of data.records) s2.addRow(excelLedgerRow(r));
 
     // Sheet 3 — Withdrawn Records (the restatement disclosure), directly after
     // the ledger it was taken out of.
@@ -464,25 +455,10 @@ export class ReportsService implements OnModuleDestroy {
     // the data cannot be read by anything automated, and an empty sheet with a
     // header states "nothing was withdrawn" where a missing one states nothing.
     const s3 = wb.addWorksheet('Withdrawn Records');
-    s3.addRow([
-      'Subsidiary', 'Reporting entity', 'Category', 'Reporting period', 'Period',
-      'Activity value', 'Unit', 'tCO₂e removed', 'Withdrawn (UTC)', 'Reason',
-    ]);
-    for (const r of data.withdrawn) {
-      s3.addRow([
-        r.subsidiaryName, entityLabel(r), r.category, r.reportingPeriod,
-        r.periodValue, r.activityValue, r.activityUnit, r.tCo2e ?? NOT_CALCULATED,
-        r.voidedAt ?? '', r.voidReason ?? '',
-      ]);
-    }
+    s3.addRow(excelWithdrawnHeader());
+    for (const r of data.withdrawn) s3.addRow(excelWithdrawnRow(r));
     if (data.withdrawn.length > 0) {
-      s3.addRow([
-        'Total withdrawn', '', '', '', '', '', '',
-        data.withdrawnTotals.tCo2e, '',
-        data.withdrawnTotals.uncalculatedCount > 0
-          ? `${data.withdrawnTotals.uncalculatedCount} of these carry no emissions figure`
-          : '',
-      ]);
+      s3.addRow(excelWithdrawnTotalRow(data.withdrawnTotals));
     }
 
     // Sheet 4 — Factors Used (immutable snapshots, audit traceability)
