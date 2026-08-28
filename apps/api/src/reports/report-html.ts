@@ -1,6 +1,6 @@
-import { entityLabel } from '@tonyai/shared-types';
 import type { ReportData } from './report-data';
 import {
+  NOT_CALCULATED,
   esc,
   pdfLedgerHeadRow,
   pdfLedgerRow,
@@ -109,7 +109,7 @@ export function buildReportHtml(data: ReportData): string {
   </div>
   ${
     data.summary.uncalculatedRecordCount > 0
-      ? `<p class="note"><strong>${data.summary.uncalculatedRecordCount}</strong> of these ${data.summary.recordCount} records carry no emissions figure, because no emission factor is available for their category. They are listed in the detail ledger as &ldquo;Not calculated&rdquo; and contribute nothing to the totals above.</p>`
+      ? `<p class="note"><strong>${data.summary.uncalculatedRecordCount}</strong> of these ${data.summary.recordCount} records carry no emissions figure, because no emission factor is available for their category. They are listed in the detail ledger as &ldquo;${NOT_CALCULATED}&rdquo; and contribute nothing to the totals above.</p>`
       : ''
   }
   ${

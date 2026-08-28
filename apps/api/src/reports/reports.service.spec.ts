@@ -1181,6 +1181,72 @@ describe('ReportsService', () => {
       ]);
     });
 
+    it('PDF: the total figure lands under the column it totals, formatted', async () => {
+      stubRecords(prisma, [
+        makeRecord(),
+        makeRecord({ id: 'rec-void', status: 'voided', periodValue: 'February',
+          voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
+          voidedAt: new Date('2026-02-03T09:30:00.000Z') }),
+      ]);
+      const html = buildReportHtml(await service.assemble(admin, q));
+      const headers = headersUnder(html, 'Withdrawn from this inventory');
+      const row = rowContaining(html, 'Total withdrawn');
+
+      // The span arithmetic was asserted; where the figure LANDS was not. `4/1/2`
+      // and `3/1/3` both sum to seven, and the second puts the tonnage under
+      // "Period". Walk the spans to find the figure's real column index.
+      let index = 0;
+      let landed: string | null = null;
+      for (const m of row.matchAll(/<td([^>]*)>([\s\S]*?)<\/td>/g)) {
+        const span = Number(/colspan="(\d+)"/.exec(m[1])?.[1] ?? 1);
+        if (m[2].includes('<strong>') && !m[2].includes('Total withdrawn')) {
+          landed = headers[index];
+        }
+        index += span;
+      }
+      expect(landed).toBe('tCO₂e removed');
+
+      // ...and it is the right number, formatted like every other figure on the
+      // page. Printing `count` here made the footer contradict the banner three
+      // lines above it, with the whole suite green.
+      expect(row).toContain('<strong>0.4</strong>');
+      // Right-aligned, like the column it sits under.
+      expect(row).toMatch(/<td class="num"[^>]*><strong>0\.4<\/strong><\/td>/);
+    });
+
+    it('PDF: every numeric column is right-aligned, head and cell alike', async () => {
+      stubRecords(prisma, [
+        makeRecord({
+          calculation: {
+            tCo2e: 0.2071, factorId: 'f-gas', factorValue: 0.18227,
+            factorUnit: 'kgCO2e/kWh', methodology: 'location-based',
+            source: 'demo', version: '2024.1', geographyCode: 'TR',
+            normalizedValue: 1136, normalizedUnit: 'kWh', conversionFactor: 11.36,
+          },
+        }),
+      ]);
+      const html = buildReportHtml(await service.assemble(admin, q));
+      const start = html.indexOf('<h2>Activity records ledger</h2>');
+      const thead = html.slice(start, html.indexOf('</thead>', start));
+      const bodyStart = html.indexOf('<tbody>', start);
+      const firstRow = html.slice(bodyStart, html.indexOf('</tr>', bodyStart));
+
+      // `class="num"` has to be on BOTH, and the cell-binding tests check index
+      // rather than class — so a mismatch between the two literals was invisible.
+      // Sourcing them from one descriptor is the fix; this is what says so.
+      // Only `tCO₂e` was pinned before, so dropping `num` from the other three
+      // was silent.
+      const heads = [...thead.matchAll(/<th(?:\s[^>]*)?>([\s\S]*?)<\/th>/g)];
+      const cells = [...firstRow.matchAll(/<td([^>]*)>/g)];
+      expect(cells).toHaveLength(heads.length);
+      const NUMERIC = ['Activity', 'Normalised', 'tCO₂e', 'Evidence'];
+      heads.forEach((h, i) => {
+        const wantNum = NUMERIC.includes(h[1]);
+        expect(h[0].includes('class="num"')).toBe(wantNum);
+        expect(cells[i][1].includes('class="num"')).toBe(wantNum);
+      });
+    });
+
     it('PDF: the total row spans exactly the width of the table above it', async () => {
       stubRecords(prisma, [makeRecord(), withdrawnFixture()]);
       const html = buildReportHtml(await service.assemble(admin, q));
