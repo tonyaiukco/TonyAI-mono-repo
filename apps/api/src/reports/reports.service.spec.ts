@@ -61,6 +61,18 @@ const SUMMARY = {
   statusesIncluded: ['submitted', 'under_review', 'approved', 'locked'] as ActivityRecordStatus[],
 } satisfies EmissionsSummary;
 
+/** The `<th>` labels of the table under a given `<h2>`, in document order.
+ *  Module scope because two blocks read it: the column-order goldens, and the
+ *  cell-binding assertions that zip these against the row beneath them. */
+function headersUnder(html: string, heading: string): string[] {
+  const start = html.indexOf(`<h2>${heading}</h2>`);
+  expect(start).toBeGreaterThan(-1);
+  const thead = html.slice(start, html.indexOf('</thead>', start));
+  // `<th(?:\s…)?>` and not `<th[^>]*>`: the latter also matches the opening
+  // `<thead>`, which swallows the first real header.
+  return [...thead.matchAll(/<th(?:\s[^>]*)?>([\s\S]*?)<\/th>/g)].map((m) => m[1]);
+}
+
 function makeRecord(overrides: Record<string, unknown> = {}) {
   return {
     id: 'rec-1',
@@ -1016,16 +1028,6 @@ describe('ReportsService', () => {
         voidedAt: new Date('2026-02-03T09:30:00.000Z'),
       });
 
-    /** The `<th>` labels of the table under a given `<h2>`, in document order. */
-    const headersUnder = (html: string, heading: string): string[] => {
-      const start = html.indexOf(`<h2>${heading}</h2>`);
-      expect(start).toBeGreaterThan(-1);
-      const thead = html.slice(start, html.indexOf('</thead>', start));
-      // `<th(?:\s…)?>` and not `<th[^>]*>`: the latter also matches the
-      // opening `<thead>`, which swallows the first real header.
-      return [...thead.matchAll(/<th(?:\s[^>]*)?>([\s\S]*?)<\/th>/g)].map((m) => m[1]);
-    };
-
     /** The `<tr>` containing a given phrase, whole. */
     const rowContaining = (html: string, phrase: string): string => {
       const i = html.indexOf(phrase);
@@ -1139,5 +1141,184 @@ describe('ReportsService', () => {
       expect(spanned).toBe(width);
     });
   });
+
+  // --- the cells, bound to the headers above them ----------------------------
+
+  /**
+   * What #72's goldens do NOT reach, measured before writing this: the PDF's
+   * `<td>` order is pinned by nothing at all. Every existing PDF cell assertion
+   * is `toContain` over the whole document, and the goldens extract `<th>`
+   * only — so swapping two cells in the row template puts a period value under
+   * the Category heading with the entire suite green, including all three PDF
+   * goldens.
+   *
+   * These bind cell INDEX to header INDEX. They read by name, which is what
+   * makes them legible, but the lookup is positional, which is what makes them
+   * bite. This is the prerequisite for consolidating the column literals: the
+   * PDF half of that refactor is unverifiable without it.
+   */
+  describe('the cells sit under the headers they belong to', () => {
+    /** Inner text of the first data row's `<td>`s, in document order. */
+    const firstRowCells = (html: string, heading: string): string[] => {
+      const start = html.indexOf(`<h2>${heading}</h2>`);
+      expect(start).toBeGreaterThan(-1);
+      const bodyStart = html.indexOf('<tbody>', start);
+      const row = html.slice(bodyStart, html.indexOf('</tr>', bodyStart));
+      return [...row.matchAll(/<td(?:\s[^>]*)?>([\s\S]*?)<\/td>/g)].map((m) =>
+        m[1].replace(/\s+/g, ' ').trim(),
+      );
+    };
+
+    /** Header label -> the cell rendered beneath it. Fails loudly on a width
+     *  mismatch rather than silently zipping the shorter of the two. */
+    const cellsByHeader = (html: string, heading: string): Record<string, string> => {
+      const headers = headersUnder(html, heading);
+      const cells = firstRowCells(html, heading);
+      expect(cells).toHaveLength(headers.length);
+      return Object.fromEntries(headers.map((h, i) => [h, cells[i]]));
+    };
+
+    /** A record whose unit needs converting, so the `Normalised` column takes
+     *  its REAL branch. No fixture in this file set these three fields, so
+     *  every test that has ever run took the `&mdash;` path — the one column
+     *  that exists for a named compliance reason (ISO 14064-1 §9.3.1) had zero
+     *  cell coverage. */
+    const convertedRecord = () =>
+      makeRecord({
+        category: 'Natural Gas',
+        activityValue: 100,
+        activityUnit: 'cubic_metres',
+        calculation: {
+          tCo2e: 0.2071,
+          factorId: 'f-gas',
+          factorValue: 0.18227,
+          factorUnit: 'kgCO2e/kWh',
+          methodology: 'location-based',
+          source: 'demo',
+          version: '2024.1',
+          geographyCode: 'TR',
+          normalizedValue: 1136,
+          normalizedUnit: 'kWh',
+          conversionFactor: 11.36,
+        },
+      });
+
+    it('PDF ledger: every value under its own heading', async () => {
+      stubRecords(prisma, [convertedRecord()]);
+      const cells = cellsByHeader(
+        buildReportHtml(await service.assemble(admin, q)),
+        'Activity records ledger',
+      );
+
+      expect(cells['Subsidiary']).toBe('Energy');
+      expect(cells['Category']).toBe('Natural Gas');
+      expect(cells['Period']).toBe('January');
+      expect(cells['Status']).toBe('approved');
+      expect(cells['Evidence']).toBe('1');
+      // Value AND unit in one cell: the PDF merges them because it is a
+      // printed A4 page, which is why it has no standalone Unit column.
+      expect(cells['Activity']).toBe('100 cubic_metres');
+      // The compliance column, on its real branch at last. ISO 14064-1 §9.3.1
+      // asks a reader to be able to recompute the figure, so the multiplier is
+      // part of the cell and not decoration.
+      expect(cells['Normalised']).toContain('1,136 kWh');
+      expect(cells['Normalised']).toContain('11.36');
+      // ONE decimal, because the PDF's formatter is `maximumFractionDigits: 1`
+      // while the CSV emits full precision (0.2071). A real cross-format
+      // divergence, pinned so a consolidation cannot quietly unify the two —
+      // changing the printed rounding changes an artifact an auditor keeps.
+      expect(cells['tCO₂e']).toBe('0.2');
+    });
+
+    it('PDF ledger: an unconvertible unit renders a dash, not a zero', async () => {
+      stubRecords(prisma, [makeRecord()]);
+      const cells = cellsByHeader(
+        buildReportHtml(await service.assemble(admin, q)),
+        'Activity records ledger',
+      );
+      // kWh needs no conversion, so there is nothing to state. A `0` here would
+      // assert a measured quantity of zero.
+      expect(cells['Normalised']).toBe('&mdash;');
+      expect(cells['Activity']).toBe('1,000 kWh');
+    });
+
+    it('PDF withdrawn: every value under its own heading', async () => {
+      stubRecords(prisma, [
+        makeRecord(),
+        makeRecord({
+          id: 'rec-void',
+          status: 'voided',
+          periodValue: 'February',
+          voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
+          voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+        }),
+      ]);
+      const cells = cellsByHeader(
+        buildReportHtml(await service.assemble(admin, q)),
+        'Withdrawn from this inventory',
+      );
+
+      expect(cells['Subsidiary']).toBe('Energy');
+      expect(cells['Category']).toBe('Electricity');
+      expect(cells['Period']).toBe('February');
+      expect(cells['tCO₂e removed']).toBe('0.4'); // one decimal, as above
+      expect(cells['Withdrawn (UTC)']).toBe('2026-02-03 09:30');
+      expect(cells['Reason']).toContain('Duplicate of the Istanbul HQ');
+      // The withdrawn table carries no activity quantity at all — an A4-width
+      // decision, and the reason this table is 7 columns where Excel is 10.
+      expect(Object.keys(cells)).not.toContain('Activity');
+    });
+
+    it('Excel: every data cell under its own header, both sheets', async () => {
+      stubRecords(prisma, [
+        convertedRecord(),
+        makeRecord({
+          id: 'rec-void',
+          status: 'voided',
+          periodValue: 'February',
+          activityValue: 900,
+          voidReason: 'Meter read against the wrong building.',
+          voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+        }),
+      ]);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+
+      // #72 pinned row 1 — the HEADER — in full on both sheets. The DATA rows
+      // were pinned at three positions on the ledger and four on withdrawn, so
+      // a header and a row built by two traversals could fall out of step and
+      // put Status under Evidence files with nothing failing.
+      const pairs = (sheet: string) => {
+        const ws = wb.getWorksheet(sheet)!;
+        const header = (ws.getRow(1).values as string[]).slice(1);
+        const data = (ws.getRow(2).values as unknown[]).slice(1);
+        expect(data).toHaveLength(header.length);
+        return Object.fromEntries(header.map((h, i) => [h, data[i]]));
+      };
+
+      const ledger = pairs('Raw Activity Data');
+      expect(ledger['Subsidiary']).toBe('Energy');
+      expect(ledger['Category']).toBe('Natural Gas');
+      expect(ledger['Reporting period']).toBe('monthly');
+      expect(ledger['Period']).toBe('January');
+      expect(ledger['Unit']).toBe('cubic_metres');
+      expect(ledger['Status']).toBe('approved');
+      expect(ledger['Evidence files']).toBe(1);
+      // Numbers, not strings: a stringified tCO₂e stops summing in the
+      // workbook an auditor opens.
+      expect(ledger['Activity value']).toBe(100);
+      expect(typeof ledger['tCO₂e']).toBe('number');
+
+      const withdrawn = pairs('Withdrawn Records');
+      expect(withdrawn['Subsidiary']).toBe('Energy');
+      expect(withdrawn['Period']).toBe('February');
+      expect(withdrawn['Unit']).toBe('kWh');
+      expect(withdrawn['Activity value']).toBe(900);
+      expect(withdrawn['Withdrawn (UTC)']).toBe('2026-02-03 09:30');
+      expect(withdrawn['Reason']).toContain('wrong building');
+      expect(typeof withdrawn['tCO₂e removed']).toBe('number');
+    });
+  });
+
 
 });
