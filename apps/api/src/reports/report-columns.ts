@@ -4,6 +4,7 @@ import type {
   ReportLedgerRow,
   ReportRowBase,
   ReportWithdrawnRow,
+  ReportWithdrawnTotals,
 } from './report-data';
 
 /**
@@ -86,6 +87,27 @@ export const WITHDRAWN = 'Withdrawn';
 /** What a flat-export cell may hold before quoting. */
 export type CellValue = string | number;
 
+interface ExcelSlot<R> {
+  readonly label: string;
+  /**
+   * Returns `CellValue`, and the `number` half is load-bearing: exceljs writes
+   * a JS number as a numeric cell and a string as text, so stringifying a
+   * tCO₂e stops it summing in the workbook an auditor opens. A shared
+   * `format()` helper across the three formats would do exactly that, which is
+   * why each format declares its own renderer rather than sharing one.
+   */
+  readonly cell: (r: R) => CellValue;
+  /**
+   * The sheet's total row, for the columns that have one. Present on exactly
+   * three atoms; absent everywhere else, and the writer emits `''` for those.
+   *
+   * Derived rather than hand-padded: the old total row was ten slots with seven
+   * empty strings counted by hand, so its alignment with the header was a
+   * property of nobody re-counting.
+   */
+  readonly total?: (t: ReportWithdrawnTotals) => CellValue;
+}
+
 interface CsvSlot<R> {
   /** The machine-readable header. Snake case, and spelled with the STATUS word
    *  (`voided`) rather than the human one (`withdrawn`), matching the `status`
@@ -120,6 +142,7 @@ export interface ColumnSpec<R> {
    *  omission. A column absent from a format is a decision someone made, and an
    *  absent key is invisible in review. */
   readonly csv: CsvSlot<R> | null;
+  readonly excel: ExcelSlot<R> | null;
 }
 
 /**
@@ -133,36 +156,52 @@ export interface ColumnSpec<R> {
  */
 export const BODY_COLUMNS = [
   { key: 'subsidiary', aggregatable: false,
-    csv: { label: 'subsidiary', cell: (r) => r.subsidiaryName } },
+    csv: { label: 'subsidiary', cell: (r) => r.subsidiaryName },
+    excel: { label: 'Subsidiary', cell: (r) => r.subsidiaryName,
+             total: () => 'Total withdrawn' } },
   { key: 'reporting_entity', aggregatable: false,
     // `entityLabel` and not an inlined `?? 'Whole company'`: one phrase across
     // all three formats AND the web, which is the door WP20 closed.
-    csv: { label: 'reporting_entity', cell: (r) => entityLabel(r) } },
+    csv: { label: 'reporting_entity', cell: (r) => entityLabel(r) },
+    excel: { label: 'Reporting entity', cell: (r) => entityLabel(r) } },
   { key: 'category', aggregatable: false,
-    csv: { label: 'category', cell: (r) => r.category } },
+    csv: { label: 'category', cell: (r) => r.category },
+    excel: { label: 'Category', cell: (r) => r.category } },
   { key: 'reporting_period', aggregatable: false,
-    csv: { label: 'reporting_period', cell: (r) => r.reportingPeriod } },
+    csv: { label: 'reporting_period', cell: (r) => r.reportingPeriod },
+    excel: { label: 'Reporting period', cell: (r) => r.reportingPeriod } },
   { key: 'period_value', aggregatable: false,
-    csv: { label: 'period_value', cell: (r) => r.periodValue } },
+    csv: { label: 'period_value', cell: (r) => r.periodValue },
+    excel: { label: 'Period', cell: (r) => r.periodValue } },
   { key: 'activity_value', aggregatable: true,
-    csv: { label: 'activity_value', cell: (r) => r.activityValue } },
+    csv: { label: 'activity_value', cell: (r) => r.activityValue },
+    excel: { label: 'Activity value', cell: (r) => r.activityValue } },
   // A unit is a word, and words are not summable — but this one sits next to a
   // marked value on a withdrawn row, which is what proves "aggregatable" and
   // not "on a withdrawn row" is the right discriminator.
   { key: 'activity_unit', aggregatable: false,
-    csv: { label: 'activity_unit', cell: (r) => r.activityUnit } },
+    csv: { label: 'activity_unit', cell: (r) => r.activityUnit },
+    excel: { label: 'Unit', cell: (r) => r.activityUnit } },
   { key: 'tco2e', aggregatable: true,
     // `??` on an explicit null, never `||` and never `?? 0`: a category with no
     // factor has no figure, and a zero there is a measured quantity of zero.
-    csv: { label: 'tco2e', cell: (r) => r.tCo2e ?? NOT_CALCULATED } },
+    csv: { label: 'tco2e', cell: (r) => r.tCo2e ?? NOT_CALCULATED },
+    // A text cell, not an empty numeric one: a blank in a tCO₂e column sums as
+    // zero the moment someone drags a SUM over it — the same misstatement as
+    // writing 0, only harder to notice.
+    excel: { label: 'tCO₂e', cell: (r) => r.tCo2e ?? NOT_CALCULATED,
+             total: (t) => t.tCo2e } },
   // The authoritative discriminator between the two row kinds. Never marked —
   // a withdrawn row must keep saying `voided`.
   { key: 'status', aggregatable: false,
-    csv: { label: 'status', cell: (r) => r.status } },
+    csv: { label: 'status', cell: (r) => r.status },
+    excel: { label: 'Status', cell: (r) => r.status } },
   { key: 'evidence_files', aggregatable: true,
-    csv: { label: 'evidence_files', cell: (r) => r.evidenceCount } },
+    csv: { label: 'evidence_files', cell: (r) => r.evidenceCount },
+    excel: { label: 'Evidence files', cell: (r) => r.evidenceCount } },
   { key: 'anomaly_flag', aggregatable: true,
-    csv: { label: 'anomaly_flag', cell: (r) => anomalyCell(r) } },
+    csv: { label: 'anomaly_flag', cell: (r) => anomalyCell(r) },
+    excel: { label: 'Anomaly flag', cell: (r) => anomalyCell(r) } },
   // `as const satisfies`, not a plain annotation: the annotation widens every
   // `key` to `string`, and the parity check below has to read the literals.
   // `satisfies` still checks the shape, so the row type stays pinned.
@@ -180,6 +219,11 @@ export const BODY_COLUMNS = [
 export interface DisclosureColumn {
   readonly key: string;
   readonly label: string;
+  /** The label on the Excel withdrawn SHEET, for the two disclosures that
+   *  appear there. `null` for the two the sheet does not carry — the sheet
+   *  restates by column rather than by suffix, so `voided_activity_value` and
+   *  `voided_tco2e` are the sheet's own `Activity value` and `tCO₂e removed`. */
+  readonly excelLabel: string | null;
   /** The body column whose real value moves here on a withdrawn row, or `null`
    *  for a disclosure with no counterpart. This link is what the parity check
    *  below reads. */
@@ -188,13 +232,13 @@ export interface DisclosureColumn {
 }
 
 export const DISCLOSURE_COLUMNS = [
-  { key: 'voided_activity_value', label: 'voided_activity_value',
+  { key: 'voided_activity_value', label: 'voided_activity_value', excelLabel: null,
     restates: 'activity_value', cell: (r) => r.activityValue },
-  { key: 'voided_tco2e', label: 'voided_tco2e',
+  { key: 'voided_tco2e', label: 'voided_tco2e', excelLabel: null,
     restates: 'tco2e', cell: (r) => r.tCo2e ?? NOT_CALCULATED },
-  { key: 'voided_at_utc', label: 'voided_at_utc',
+  { key: 'voided_at_utc', label: 'voided_at_utc', excelLabel: 'Withdrawn (UTC)',
     restates: null, cell: (r) => r.voidedAt ?? '' },
-  { key: 'void_reason', label: 'void_reason',
+  { key: 'void_reason', label: 'void_reason', excelLabel: 'Reason',
     restates: null, cell: (r) => r.voidReason ?? '' },
 ] as const satisfies readonly DisclosureColumn[];
 
@@ -370,4 +414,94 @@ export function csvWithdrawnRow(r: ReportWithdrawnRow): string {
   ]
     .map(quote)
     .join(',');
+}
+
+// --- Excel -------------------------------------------------------------------
+
+/** A body column by key, type-checked against the declared keys. */
+function body<K extends (typeof BODY_COLUMNS)[number]['key']>(key: K) {
+  return BODY_COLUMNS.find((c) => (c.key as string) === key)!;
+}
+
+/** A disclosure column by key. */
+function disclosure<K extends (typeof DISCLOSURE_COLUMNS)[number]['key']>(key: K) {
+  return DISCLOSURE_COLUMNS.find((d) => (d.key as string) === key)!;
+}
+
+/**
+ * The `Raw Activity Data` sheet: every body column, in order.
+ *
+ * The Excel ledger happens to be exactly the CSV's body set — same columns,
+ * same order, different labels — so it needs no list of its own. That is a fact
+ * about today's contract, not a rule; if the two ever diverge, this becomes an
+ * explicit list like the withdrawn sheet below rather than a filter that
+ * quietly follows the CSV.
+ */
+export function excelLedgerHeader(): string[] {
+  return BODY_COLUMNS.filter((c) => c.excel).map((c) => c.excel!.label);
+}
+
+export function excelLedgerRow(r: ReportLedgerRow): CellValue[] {
+  return BODY_COLUMNS.filter((c) => c.excel).map((c) => c.excel!.cell(r));
+}
+
+/**
+ * The `Withdrawn Records` sheet — a DIFFERENT table, not a variant of the
+ * ledger, which is why it gets its own list.
+ *
+ * It drops Status, Evidence files and Anomaly flag, adds the withdrawal's date
+ * and reason, and renames tCO₂e to make the direction explicit. And note what
+ * it does NOT do: the values are REAL and unmarked. The `WITHDRAWN` marker
+ * belongs to the CSV alone, because only the CSV shares one table with the
+ * counted ledger. Summing this sheet answers "how much was withdrawn", which is
+ * a question worth being able to ask.
+ */
+const WITHDRAWN_SHEET: readonly {
+  readonly label: string;
+  readonly cell: (r: ReportWithdrawnRow) => CellValue;
+  readonly total?: (t: ReportWithdrawnTotals) => CellValue;
+}[] = [
+  body('subsidiary').excel,
+  body('reporting_entity').excel,
+  body('category').excel,
+  body('reporting_period').excel,
+  body('period_value').excel,
+  body('activity_value').excel,
+  body('activity_unit').excel,
+  // Same cell, different label: "removed" states the direction on a sheet whose
+  // whole subject is subtraction. One renderer, so the number cannot disagree
+  // with the ledger's.
+  { ...body('tco2e').excel, label: 'tCO₂e removed' },
+  {
+    label: disclosure('voided_at_utc').excelLabel!,
+    cell: disclosure('voided_at_utc').cell,
+  },
+  {
+    label: disclosure('void_reason').excelLabel!,
+    cell: disclosure('void_reason').cell,
+    total: (t) =>
+      t.uncalculatedCount > 0
+        ? `${t.uncalculatedCount} of these carry no emissions figure`
+        : '',
+  },
+];
+
+export function excelWithdrawnHeader(): string[] {
+  return WITHDRAWN_SHEET.map((c) => c.label);
+}
+
+export function excelWithdrawnRow(r: ReportWithdrawnRow): CellValue[] {
+  return WITHDRAWN_SHEET.map((c) => c.cell(r));
+}
+
+/**
+ * The sheet's total row, derived from the same list that built its header.
+ *
+ * It used to be ten literal slots with seven empty strings, so the tonnage
+ * landing under `tCO₂e removed` was a property of nobody re-counting. Now the
+ * arity and the alignment cannot desynchronise from the header: a column with
+ * no `total` contributes a blank, in its own position.
+ */
+export function excelWithdrawnTotalRow(t: ReportWithdrawnTotals): CellValue[] {
+  return WITHDRAWN_SHEET.map((c) => c.total?.(t) ?? '');
 }
