@@ -68,13 +68,18 @@ export function anomalyCell(r: {
 }
 
 /**
- * What the flat exports write in every AGGREGATABLE column of a withdrawn row.
+ * What the CSV — and ONLY the CSV — writes in every aggregatable column of a
+ * withdrawn row.
  *
- * Text, never a number, and never blank: the withdrawn rows share one table
- * with the counted ledger in the CSV, so anything numeric there would be summed
- * straight back into a total the record was deliberately taken out of. What was
- * withdrawn is carried in the `voided_*` block instead, where summing answers a
- * different question on purpose.
+ * The marker is not a property of the column. It is a property of SHARING ONE
+ * TABLE with the counted ledger, and the CSV is the only format that does:
+ * anything numeric there would be summed straight back into a total the record
+ * was deliberately taken out of. The Excel puts withdrawn rows on their own
+ * sheet and the PDF in its own table, so both correctly print the real values
+ * unmarked — summing those answers a different question, on purpose.
+ *
+ * Whoever writes the `excel` or `pdf` slot in F2/F3 should read that twice:
+ * inheriting this rule into either would destroy that format's disclosure.
  */
 export const WITHDRAWN = 'Withdrawn';
 
@@ -100,7 +105,9 @@ export interface ColumnSpec<R> {
    * anomalies are in this file" is a question a reader asks. `activity_unit`
    * holds a word and is NOT. Classifying by "is it a number?" gets both wrong.
    *
-   * This property is what puts the `WITHDRAWN` marker on a shared-table row.
+   * This property is what puts the `WITHDRAWN` marker on a row in a SHARED
+   * table — the CSV, and nothing else. Excel and PDF give withdrawn records
+   * their own sheet and table and print real values there.
    * Before it, the four markers were placed by hand-counted LIST POSITION with
    * nothing tying a marker to its column, and the first cut of that protected
    * `tco2e` alone: exported activity was overstated by 429,815 units — 394 MWh
@@ -108,7 +115,7 @@ export interface ColumnSpec<R> {
    * Energy consumption is a reported figure in its own right (GRI 302-1,
    * CSRD E1-5), so that was a misstatement, not a cosmetic slip.
    */
-  readonly aggregatable: boolean;
+  readonly aggregatable: true | false;
   /** Explicit `null` for a format this column does not appear in — never
    *  omission. A column absent from a format is a decision someone made, and an
    *  absent key is invisible in review. */
@@ -240,6 +247,40 @@ type Accounted = Restated | (typeof MARKED_WITHOUT_DISCLOSURE)[number];
 export const _markerParity: Exact<Aggregatable, Accounted> = true;
 
 /**
+ * Fails to compile if a column whose cell can return a NUMBER is declared
+ * non-aggregatable.
+ *
+ * The check above verifies ACCOUNTING — every declared marker has somewhere to
+ * go. It cannot verify CLASSIFICATION, because `aggregatable` is a human
+ * judgement with no oracle, and that leaves the 429,815-unit  class reachable from
+ * the other direction: add a column with `aggregatable: false` whose cell
+ * returns a number, and every withdrawn row prints its real value into a column
+ * a reader sums. Measured before this existed — it compiled clean, and the only
+ * thing that fired was the header golden, whose message asks you to update a
+ * literal rather than to reconsider aggregability.
+ *
+ * ONE-WAY on purpose. A numeric cell must be declared aggregatable; the reverse
+ * is NOT required, because `anomaly_flag` returns a string and is summable all
+ * the same ("how many anomalies are in this file"). Words that count still need
+ * a human to say so.
+ */
+type UndeclaredNumeric = (typeof BODY_COLUMNS)[number] extends infer C
+  ? C extends {
+      key: infer K;
+      aggregatable: false;
+      csv: { cell: (r: ReportRowBase) => infer V };
+    }
+    ? number extends V
+      ? K
+      : never
+    : never
+  : never;
+
+export const _numericParity: [UndeclaredNumeric] extends [never]
+  ? true
+  : UndeclaredNumeric = true;
+
+/**
  * RFC-4180 quoting plus spreadsheet-formula neutralisation, applied by the row
  * writers below to EVERY cell as the last transform.
  *
@@ -286,6 +327,21 @@ export function csvHeader(): string {
  * entry points make passing a withdrawn row a plain object-assignability error
  * (`'voided'` is not in `Exclude<ActivityRecordStatus, 'voided'>`), which fires
  * regardless of that flag. The spec pins it with `@ts-expect-error`.
+ *
+ * TWO LIMITS on that claim, both measured rather than assumed.
+ *
+ * It protects every NEW call site. The one existing production caller is not
+ * protected by the type at all: `reports.service.ts` narrows with an `as
+ * Exclude<…>` when it builds the ledger, so widening the query to include
+ * `voided` compiles clean. That cast predates this work; a runtime narrowing in
+ * `assemble` is the real fix and does not belong in a byte-identical refactor.
+ *
+ * And a column whose renderer is typed over the WRONG row kind is rejected by
+ * `as const` — which preserves each lambda's declared parameter type into the
+ * union, so the call site is checked — not by these signatures. Dropping
+ * `as const` would remove that, and the `@ts-expect-error` probe would not
+ * notice; it breaks `_markerParity` first, which is what makes the chain
+ * self-reinforcing rather than merely lucky.
  */
 export function csvLedgerRow(r: ReportLedgerRow): string {
   return [

@@ -1,11 +1,9 @@
 import { ForbiddenException, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import type {
-  EmissionsSummary,
   ReportExportType,
   ReportMetaDTO,
   ReportStatus,
-  ReportTemplate,
 } from '@tonyai/shared-types';
 import {
   entityLabel,
@@ -18,7 +16,6 @@ import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   NOT_CALCULATED,
-  WITHDRAWN,
   anomalyCell,
   csvHeader,
   csvLedgerRow,
@@ -53,9 +50,13 @@ export type {
   ReportData,
 } from './report-data';
 
-/** One ledger row for the detail template / Excel raw-data sheet / CSV. */
-
-
+/**
+ * What `GET /reports/meta` returns. This is the wire contract itself, not a
+ * structural twin of it: the two were hand-written copies of one shape with
+ * nothing tying them together, so a field added to either could sit unread on
+ * the other — the exact drift `COUNTED_STATUSES` and the period vocabulary were
+ * both consolidated to end.
+ */
 export type ReportMeta = ReportMetaDTO;
 
 @Injectable()
@@ -510,8 +511,8 @@ export class ReportsService implements OnModuleDestroy {
     // the two row kinds); "withdrawn" is for the humans reading the PDF.
     const lines = [
       csvHeader(),
-      ...data.records.map(csvLedgerRow),
-      ...data.withdrawn.map(csvWithdrawnRow),
+      ...data.records.map((r) => csvLedgerRow(r)),
+      ...data.withdrawn.map((r) => csvWithdrawnRow(r)),
     ];
     await this.audit(user, q, 'csv', data.summary.recordCount, data.withdrawnTotals.count);
     return lines.join('\n') + '\n';

@@ -172,11 +172,3 @@ export interface ReportData {
   factors: ReportFactorRow[];
   evidenceSummary: ReportEvidenceRow[];
 }
-
-/**
- * What `GET /reports/meta` returns. This is the wire contract itself, not a
- * structural twin of it: the two were hand-written copies of one shape with
- * nothing tying them together, so a field added to either could sit unread on
- * the other — the exact drift `COUNTED_STATUSES` and the period vocabulary were
- * both consolidated to end.
- */
