@@ -1,17 +1,20 @@
 import { entityLabel } from '@tonyai/shared-types';
 import type { ReportData } from './report-data';
+import {
+  esc,
+  pdfLedgerHeadRow,
+  pdfLedgerRow,
+  pdfNumber,
+  pdfWithdrawnHeadRow,
+  pdfWithdrawnRow,
+  pdfWithdrawnTotalRow,
+} from './report-columns';
 
 /**
  * Branded, self-contained HTML for the audit-ready PDF (FR §5.1). Pure function
  * of the assembled data — no I/O — so it is unit-testable without Puppeteer.
  * Puppeteer renders this via `page.setContent` (no web route, no auth replay).
  */
-
-const fmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
-
-function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 const STATUS_LABEL: Record<string, { text: string; color: string }> = {
   approved: { text: 'Approved', color: '#059669' },
@@ -26,7 +29,7 @@ export function buildReportHtml(data: ReportData): string {
   const categoryRows = data.summary.byCategory
     .map(
       (c) => `<tr><td>${esc(c.category)}</td><td>Scope ${c.scope}</td>
-        <td class="num">${fmt.format(c.tCo2e)}</td><td class="num">${fmt.format(c.percentOfTotal)}%</td>
+        <td class="num">${pdfNumber.format(c.tCo2e)}</td><td class="num">${pdfNumber.format(c.percentOfTotal)}%</td>
         <td class="num">${c.recordCount}</td></tr>`,
     )
     .join('');
@@ -34,30 +37,12 @@ export function buildReportHtml(data: ReportData): string {
   const subsidiaryRows = data.summary.bySubsidiary
     .map(
       (r) => `<tr><td>${esc(r.subsidiaryName)}</td>
-        <td class="num">${fmt.format(r.tCo2e)}</td><td class="num">${fmt.format(r.percentOfTotal)}%</td>
+        <td class="num">${pdfNumber.format(r.tCo2e)}</td><td class="num">${pdfNumber.format(r.percentOfTotal)}%</td>
         <td class="num">${r.recordCount}</td></tr>`,
     )
     .join('');
 
-  const ledgerRows = isDetail
-    ? data.records
-        .map(
-          (r) => `<tr><td>${esc(r.subsidiaryName)}</td><td>${esc(entityLabel(r))}</td><td>${esc(r.category)}</td>
-          <td>${esc(r.periodValue)}</td><td class="num">${fmt.format(r.activityValue)} ${esc(r.activityUnit)}</td>
-          <td class="num">${
-            r.conversionFactor && r.normalizedValue !== undefined
-              ? `${fmt.format(r.normalizedValue)} ${esc(r.normalizedUnit ?? '')} <span class="note">(&times;${r.conversionFactor})</span>`
-              : '&mdash;'
-          }</td>
-          <td class="num">${
-            r.tCo2e === null
-              ? '<span class="note">Not calculated</span>'
-              : fmt.format(r.tCo2e)
-          }</td><td>${esc(r.status)}</td>
-          <td class="num">${r.evidenceCount}</td></tr>`,
-        )
-        .join('')
-    : '';
+  const ledgerRows = isDetail ? data.records.map(pdfLedgerRow).join('') : '';
 
   const factorRows = data.factors
     .map(
@@ -73,18 +58,7 @@ export function buildReportHtml(data: ReportData): string {
 
   // Every cell here is user-authored — a site name and a free-text reason of up
   // to 2,000 characters — so all of it goes through `esc`.
-  const withdrawnRows = data.withdrawn
-    .map(
-      (r) => `<tr><td>${esc(r.subsidiaryName)}</td><td>${esc(entityLabel(r))}</td>
-      <td>${esc(r.category)}</td><td>${esc(r.periodValue)}</td>
-      <td class="num">${
-        r.tCo2e === null
-          ? '<span class="note">Not calculated</span>'
-          : fmt.format(r.tCo2e)
-      }</td><td>${esc(r.voidedAt ?? '—')}</td>
-      <td>${esc(r.voidReason ?? '—')}</td></tr>`,
-    )
-    .join('');
+  const withdrawnRows = data.withdrawn.map(pdfWithdrawnRow).join('');
 
   const evidenceRows = data.evidenceSummary
     .map(
@@ -123,14 +97,14 @@ export function buildReportHtml(data: ReportData): string {
 
   ${
     data.incompleteRatio > 0.15
-      ? `<div class="warn"><strong>Data warning:</strong> ${fmt.format(data.incompleteRatio * 100)}% of this period's records are draft/rejected — not suitable for final reporting.</div>`
+      ? `<div class="warn"><strong>Data warning:</strong> ${pdfNumber.format(data.incompleteRatio * 100)}% of this period's records are draft/rejected — not suitable for final reporting.</div>`
       : ''
   }
 
   <div class="tiles">
-    <div class="tile"><div class="l">Scope 1</div><div class="v">${fmt.format(data.summary.totals.scope1)} tCO₂e</div></div>
-    <div class="tile"><div class="l">Scope 2</div><div class="v">${fmt.format(data.summary.totals.scope2)} tCO₂e</div></div>
-    <div class="tile"><div class="l">Total</div><div class="v">${fmt.format(data.summary.totals.total)} tCO₂e</div></div>
+    <div class="tile"><div class="l">Scope 1</div><div class="v">${pdfNumber.format(data.summary.totals.scope1)} tCO₂e</div></div>
+    <div class="tile"><div class="l">Scope 2</div><div class="v">${pdfNumber.format(data.summary.totals.scope2)} tCO₂e</div></div>
+    <div class="tile"><div class="l">Total</div><div class="v">${pdfNumber.format(data.summary.totals.total)} tCO₂e</div></div>
     <div class="tile"><div class="l">Committed records</div><div class="v">${data.summary.recordCount}</div></div>
   </div>
   ${
@@ -144,7 +118,7 @@ export function buildReportHtml(data: ReportData): string {
           data.withdrawnTotals.count === 1
             ? 'record was withdrawn from this reporting year after approval, removing'
             : 'records were withdrawn from this reporting year after approval, removing'
-        } <strong>${fmt.format(data.withdrawnTotals.tCo2e)} tCO₂e</strong> from the inventory.${
+        } <strong>${pdfNumber.format(data.withdrawnTotals.tCo2e)} tCO₂e</strong> from the inventory.${
           data.withdrawnTotals.uncalculatedCount > 0
             ? ` ${data.withdrawnTotals.uncalculatedCount} of them carry no emissions figure, so withdrawing ${
                 data.withdrawnTotals.uncalculatedCount === 1 ? 'it' : 'them'
@@ -170,7 +144,7 @@ export function buildReportHtml(data: ReportData): string {
   ${
     isDetail
       ? `<h2>Activity records ledger</h2>
-  <table><thead><tr><th>Subsidiary</th><th>Reporting entity</th><th>Category</th><th>Period</th><th class="num">Activity</th><th class="num">Normalised</th><th class="num">tCO₂e</th><th>Status</th><th class="num">Evidence</th></tr></thead>
+  <table><thead>${pdfLedgerHeadRow()}</thead>
   <tbody>${ledgerRows}</tbody></table>`
       : ''
   }
@@ -183,9 +157,8 @@ export function buildReportHtml(data: ReportData): string {
     data.withdrawn.length > 0
       ? `<h2>Withdrawn from this inventory</h2>
   <p class="note">These figures were approved and then withdrawn. They stop counting towards totals, reports and invoice coverage from the moment of withdrawal, so nothing above includes them; each entry stays on record with the reason given, and the withdrawal itself is in the audit log. A withdrawal is not a deletion — the period it covered reopens so a corrected figure can be entered in its place.</p>
-  <table><thead><tr><th>Subsidiary</th><th>Reporting entity</th><th>Category</th><th>Period</th><th class="num">tCO₂e removed</th><th>Withdrawn (UTC)</th><th>Reason</th></tr></thead>
-  <tbody>${withdrawnRows}<tr><td colspan="4"><strong>Total withdrawn</strong></td>
-  <td class="num"><strong>${fmt.format(data.withdrawnTotals.tCo2e)}</strong></td><td colspan="2"></td></tr></tbody></table>`
+  <table><thead>${pdfWithdrawnHeadRow()}</thead>
+  <tbody>${withdrawnRows}${pdfWithdrawnTotalRow(data.withdrawnTotals)}</tbody></table>`
       : ''
   }
 
