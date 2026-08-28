@@ -142,6 +142,7 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     anomalyBaselinePriorCount: null,
     anomalyBaselineTCo2e: null,
     varianceReason: null,
+    submittedAt: null,
     // Prisma `_count` shape returned when the service includes evidence counts.
     _count: { evidence: 0 },
     createdAt: now,
@@ -2515,20 +2516,36 @@ describe('ActivityRecordsService — submittedAt', () => {
     expect((written.submittedAt as Date).getTime()).toBeGreaterThan(first.getTime());
   });
 
-  it('leaves it alone on every transition that is not a submit', async () => {
+  // EVERY non-submit transition, not just approve. Testing one of them let two
+  // mutants live: stamping on `under_review` as well passed the whole suite,
+  // and that is the WP22-D regression in a new place — WP7 keeps a record in
+  // the queue through `under_review`, so a reviewer would watch the Waiting
+  // cell drop from 9d to 0d on the click that made them the reviewer.
+  const NON_SUBMIT: ReadonlyArray<
+    [string, (s: ReturnType<typeof arrange>['service']) => Promise<unknown>, ActivityRecordStatus]
+  > = [
+    ['startReview', (svc) => svc.startReview(superAdmin(), 'rec-s'), ActivityRecordStatus.submitted],
+    ['approve', (svc) => svc.approve(superAdmin(), 'rec-s'), ActivityRecordStatus.submitted],
+    ['reject', (svc) => svc.reject(superAdmin(), 'rec-s', 'Meter reading does not match.'), ActivityRecordStatus.submitted],
+    ['void', (svc) => svc.void(superAdmin(), 'rec-s', 'Duplicate of the site invoice for the month.'), ActivityRecordStatus.approved],
+  ];
+
+  it.each(NON_SUBMIT)('leaves it alone on %s', async (_name, act, from) => {
     const { prisma, service } = arrange();
     const stamped = new Date('2026-02-01T09:00:00.000Z');
     prisma.activityRecord.findUnique.mockResolvedValue(
-      submittable({ status: ActivityRecordStatus.submitted, submittedAt: stamped }),
+      submittable({ status: from, submittedAt: stamped }),
     );
 
-    // Approving must not move it: the reviewer's waiting time ENDED here, and
-    // overwriting the start of that window would erase how long it took.
-    await service.approve(superAdmin(), 'rec-s');
+    await act(service);
 
+    // The submission instant is the START of the reviewer's window. Every one
+    // of these either continues that window (startReview) or ends it
+    // (approve/reject/void); overwriting the start would erase how long it
+    // took, and on `startReview` it would do so while the row is still on
+    // screen showing the number.
     const written = prisma.activityRecord.update.mock.calls.at(-1)![0].data;
     expect(written).not.toHaveProperty('submittedAt');
-    expect(written.reviewedAt).toBeInstanceOf(Date);
   });
 
   it('is null on a record that has never been submitted', async () => {

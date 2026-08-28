@@ -52,3 +52,29 @@ export function waitingLabel(iso: string | null, now: number = Date.now()): stri
   const days = daysSince(iso, now);
   return days === null ? '—' : `${days}d`;
 }
+
+/**
+ * Queue order: longest wait first.
+ *
+ * Sorts on the same field the Waiting column measures. It used to sort on
+ * `createdAt`, which was consistent while the column also counted from there —
+ * but once the column moved to `submittedAt` the two disagreed, and the row
+ * ORDER is what a reviewer acts on. A record drafted in January and submitted
+ * this morning sorted above one submitted a month ago, showing `0d` at the top
+ * of a queue whose whole purpose is "deal with the oldest first".
+ *
+ * NULLS LAST, and never a fallback to `createdAt` for the sort key — that would
+ * smuggle the discarded field back in through the ordering after taking it out
+ * of the number. A null wait is unknown, and an unknown wait has no claim on
+ * the top of the queue. In practice it is nearly unreachable here: this queue
+ * shows pending records only, and everything that reaches `submitted` went
+ * through the submit path and carries a stamp.
+ */
+export function byLongestWait<T extends { submittedAt: string | null }>(
+  a: T,
+  b: T,
+): number {
+  if (a.submittedAt === null) return b.submittedAt === null ? 0 : 1;
+  if (b.submittedAt === null) return -1;
+  return a.submittedAt.localeCompare(b.submittedAt);
+}

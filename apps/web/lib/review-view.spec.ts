@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { daysSince, waitingLabel } from './review-view';
+import { byLongestWait, daysSince, waitingLabel } from './review-view';
 
 /**
  * The review queue's waiting column. It is the only number on that screen a
@@ -72,5 +72,47 @@ describe('waitingLabel', () => {
     // the seed writes records straight to `approved` without submitting them.
     expect(waitingLabel(null, NOW)).toBe('—');
     expect(waitingLabel('not a date', NOW)).toBe('—');
+  });
+});
+
+/**
+ * Queue order. The column and the sort have to measure the same thing: the
+ * number was right and the list order argued with it, which is worse than both
+ * being consistently less useful — a reviewer acts on the order.
+ */
+describe('byLongestWait', () => {
+  const rec = (id: string, submittedAt: string | null) => ({ id, submittedAt });
+
+  it('puts the longest wait first', () => {
+    const rows = [
+      rec('recent', '2026-08-27T10:00:00.000Z'),
+      rec('oldest', '2026-07-01T10:00:00.000Z'),
+      rec('middle', '2026-08-01T10:00:00.000Z'),
+    ].sort(byLongestWait);
+    expect(rows.map((r) => r.id)).toEqual(['oldest', 'middle', 'recent']);
+  });
+
+  it('orders by SUBMISSION, not by when the draft was started', () => {
+    // The case the whole column exists for: a record drafted in January and
+    // submitted this morning has waited hours, not eight months, and must not
+    // sit at the top of a queue that means "deal with the oldest first".
+    const rows = [
+      { id: 'old-draft', createdAt: '2026-01-05T09:00:00.000Z', submittedAt: '2026-08-28T09:00:00.000Z' },
+      { id: 'waited', createdAt: '2026-08-01T09:00:00.000Z', submittedAt: '2026-08-05T09:00:00.000Z' },
+    ].sort(byLongestWait);
+    expect(rows.map((r) => r.id)).toEqual(['waited', 'old-draft']);
+  });
+
+  it('sorts an unknown wait LAST, never by falling back to createdAt', () => {
+    // Falling back for the sort key would smuggle the discarded field back in
+    // through the ordering after taking it out of the number. An unknown wait
+    // has no claim on the top of the queue.
+    const rows = [
+      rec('unknown', null),
+      rec('waited', '2026-07-01T10:00:00.000Z'),
+      rec('also-unknown', null),
+    ].sort(byLongestWait);
+    expect(rows[0].id).toBe('waited');
+    expect(rows.slice(1).map((r) => r.id).sort()).toEqual(['also-unknown', 'unknown']);
   });
 });

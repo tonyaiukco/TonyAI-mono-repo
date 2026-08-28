@@ -52,7 +52,7 @@ import {
   type SubsidiaryDTO,
 } from "@/lib/types";
 import { entityLabel } from "@/lib/void-view";
-import { waitingLabel } from "@/lib/review-view";
+import { byLongestWait, waitingLabel } from "@/lib/review-view";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
   formatTCo2e,
@@ -115,12 +115,15 @@ export default function ReviewPage() {
         api.listActivityRecords({ status: PENDING_REVIEW_STATUSES }),
         api.listSubsidiaries(),
       ]);
-      // Oldest first: a review queue sorted newest-first buries the record that
-      // has waited longest, which is the one most likely to hold up a period
-      // close. The API returns newest-first for every other screen.
-      setRows(
-        [...records].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-      );
+      // Longest wait first: a review queue sorted newest-first buries the
+      // record that has waited longest, which is the one most likely to hold
+      // up a period close. The API returns newest-first for every other screen.
+      //
+      // Sorted on the field the Waiting column MEASURES. It sorted on
+      // `createdAt` while the column counted from there too; once the column
+      // moved, the two disagreed and the row order — which is what a reviewer
+      // acts on — kept the old misstatement.
+      setRows([...records].sort(byLongestWait));
       setSubsidiaries(subs);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
@@ -350,8 +353,9 @@ export default function ReviewPage() {
                             pressed Submit, and the two can differ — the author
                             gate applies only to a RESUBMIT, so a colleague's
                             first submit of someone else's draft is allowed.
-                            The same reason `createdAt` is headed "Created" and
-                            the age column "Age" rather than "Waiting". */}
+                            The column beside it IS headed "Waiting" now,
+                            because the record carries a real `submittedAt`;
+                            WHO submitted is still not recorded, only WHEN. */}
                         <TableHead>Entered by</TableHead>
                         <TableHead>Waiting</TableHead>
                       </TableRow>

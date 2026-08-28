@@ -34,12 +34,24 @@ ALTER TABLE "activity_records" ADD COLUMN "submitted_at" TIMESTAMP(3);
 -- Backfill from the audit trail, which already holds the answer.
 --
 -- `audit_log.entity_id` is TEXT while `activity_records.id` is UUID, so the
--- join needs the cast — without it this is a type error, not a silent no-op.
--- The (entity, entity_id) index from the init migration serves this lookup.
+-- join needs the cast, and the direction matters: `ar.id::text` is safe, while
+-- `entity_id::uuid` would abort the whole migration on the first malformed id
+-- in an unconstrained TEXT column. This is a sequential scan over `audit_log`,
+-- not an index lookup — `action` is not in the (entity, entity_id) index and
+-- `activity_record` is the dominant entity value, so the planner reads the
+-- table. Correct, and irrelevant for a one-shot migration.
 --
 -- Rows with no `submit` row keep NULL, deliberately. On a freshly seeded
 -- database that is EVERY record: the seed writes them straight to `approved`
--- and never calls the submit path, so it produces no audit rows at all. The
+-- and never calls the submit path, so it produces no audit rows at all.
+--
+-- Two other rows keep NULL, and neither is a defect. `action = 'submit'` only
+-- exists from 20260730194540 (WP7's audit taxonomy) — before it, a submit was
+-- logged as `update` with the move buried in `diff.transition`, so a record
+-- submitted before that migration is not reachable from here. And `transition()`
+-- writes the row and its audit entry in two separate transactions, so a submit
+-- whose audit write failed leaves no row to find. Both fail SAFE: NULL, which
+-- the screen renders as unknown, rather than a back-dated guess. The
 -- queue renders an em dash for those rather than falling back to `created_at`,
 -- because falling back would quietly reinstate the very misstatement this
 -- column exists to end.

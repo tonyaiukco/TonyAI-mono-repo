@@ -260,7 +260,6 @@ The rule needs **three** prior committed periods. Fewer than three means the rul
 - Dashboard has no organisation switcher (single-org seed).
 
 **Known gaps already in the backlog — skip reporting:**
-- `/review` and `/emissions` show raw user **ids** for who submitted and who approved, instead of names.
 - The activity-record list is **not paginated** on the wire: `/review` fetches every pending record and pages in memory, and `/emissions` → History fetches the whole history and does not page at all.
 - The review queue loads only when you open it; a record submitted afterwards does not appear until you reload.
 - The count of records the anomaly rule did not evaluate is computed and sent to the browser, but **no screen shows it yet**.

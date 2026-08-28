@@ -114,7 +114,7 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
-| REV-01 | As admin: open **Review Queue** in the sidebar | Table lists only records awaiting a decision (`submitted` / `under_review`), oldest first, with subsidiary, period, category, activity, tCO₂e, status and **Age** | |
+| REV-01 | As admin: open **Review Queue** in the sidebar | Table lists only records awaiting a decision (`submitted` / `under_review`), **longest wait first**, with subsidiary, period, category, activity, tCO₂e, status, **Entered by** and **Waiting** | |
 | REV-02 | Click a row | Detail panel opens showing the subsidiary, the activity value, the calculated tCO₂e, the **factor source + version**, the evidence file(s) and a *Reason* box | |
 | REV-03 | Click the evidence file name | The uploaded file opens in a new tab (signed link). **If it does not open, do not decide the record** — report it | |
 | REV-04 | Try **Reject** with the reason box empty | Reject is disabled — a rejection must say what to fix | |
