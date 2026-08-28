@@ -44,6 +44,17 @@ describe('recordActorLabel', () => {
     });
   });
 
+  it('survives a value the type says cannot arrive', () => {
+    // Deliberately cast: the DTO makes the key required, so this is unreachable
+    // in-version. It is reachable across versions — Phase 2 puts web and api in
+    // separate revisions and web can roll forward first — and this runs inside
+    // the review queue's row `.map()`, so a throw here loses the whole table,
+    // not one cell.
+    expect(
+      recordActorLabel('user-1', undefined as unknown as string | null),
+    ).toEqual({ text: '—', muted: true });
+  });
+
   it('never renders the raw id', () => {
     // The whole point: an opaque uuid on screen is what this replaces.
     for (const name of [null, ''] as const) {

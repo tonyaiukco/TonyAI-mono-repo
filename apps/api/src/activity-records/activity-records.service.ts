@@ -157,6 +157,23 @@ function requireCanonicalPeriodValue(
   return canonical;
 }
 
+/** The resolved-at-read-time fields, named once so both the DTO's audit
+ *  snapshot and the guard below stay in step. */
+type ResolvedRecordFields = 'locationName' | 'createdByName' | 'reviewedByName';
+
+/**
+ * The record's persisted columns, and a compile error for anything resolved.
+ *
+ * The `?: never` half is load-bearing and is not decoration: `Omit` alone is an
+ * excess-property check, which a spread bypasses. Optional-`never` makes each
+ * resolved key unassignable to anything but `undefined`, which a spread cannot
+ * bypass — measured against `{ ...dto }`, `...{ createdByName }` and a fourth
+ * novel field. Do not "simplify" this back to a plain `Omit`.
+ */
+type ActivityRecordAuditSnapshot = Omit<ActivityRecordDTO, ResolvedRecordFields> & {
+  [K in ResolvedRecordFields]?: never;
+};
+
 @Injectable()
 export class ActivityRecordsService {
   constructor(
@@ -181,23 +198,27 @@ export class ActivityRecordsService {
    * to `ActivityRecordDTO` has to be placed on one side or the other instead of
    * silently reaching the audit log.
    *
-   * The `Omit` is only half a guard, measured rather than assumed. A REQUIRED
-   * resolved field written here as a direct property is rejected (TS2561), and
-   * an optional one used to pass silently — which is one of the reasons
-   * `createdByName` and `reviewedByName` are required. But neither form is
-   * rejected when it arrives through a SPREAD: excess-property checking does
-   * not apply through one, and `...{ createdByName: … }` compiles clean.
+   * A bare `Omit` was only half a guard, measured rather than assumed. It
+   * rejects a resolved field written here as a DIRECT property (TS2561, and
+   * only because those fields are required — an optional one passed silently),
+   * but not one arriving through a SPREAD: excess-property checking does not
+   * cross a spread, so `...{ createdByName: … }` compiled clean, and so did
+   * `return { ...dto }` — which is LITERALLY the mistake described above.
    *
-   * So the real guard is the spec's `lets NOTHING but a persisted column reach
-   * the append-only audit log`, which asserts this object's whole key SET. It
-   * fails on any new key rather than on a list of known-bad ones — a review
-   * proved a fourth resolved field (an actor email) reached the snapshot with
-   * both the compiler and the full suite green.
+   * `ActivityRecordAuditSnapshot` closes that by adding `?: never` for each
+   * resolved key, turning the check from excess-property into ASSIGNABILITY,
+   * which a spread cannot slip past. The resulting error text is obscure
+   * ("Type 'string' is not assignable to type 'undefined'"), hence this note.
+   *
+   * The runtime belt to that brace is the spec's `lets NOTHING but a persisted
+   * column reach the append-only audit log`, which asserts this object's whole
+   * key SET — it catches a key the compiler cannot see at all, such as one
+   * built through `Object.fromEntries`.
    */
   private toAuditSnapshot(
     r: ActivityRecord,
     evidenceCount = 0,
-  ): Omit<ActivityRecordDTO, 'locationName' | 'createdByName' | 'reviewedByName'> {
+  ): ActivityRecordAuditSnapshot {
     return {
       id: r.id,
       subsidiaryId: r.subsidiaryId,
@@ -1033,7 +1054,14 @@ export class ActivityRecordsService {
     user: RequestUser,
     action: 'create' | 'update' | 'delete',
     entityId: string,
-    diff: Record<string, unknown>,
+    // NOT `Record<string, unknown>`. That bag let a resolved name be added at a
+    // CALL SITE rather than inside the mapper — `before: { ...this.toAuditSnapshot(x),
+    // createdByName: 'Eda Entry' }` compiled clean and passed the whole suite,
+    // and `audit_log` has no correction path. Typed, the same line is TS2561.
+    diff: {
+      before?: ActivityRecordAuditSnapshot;
+      after?: ActivityRecordAuditSnapshot;
+    },
   ): Promise<void> {
     await this.audit.record(user, { action, entity: 'activity_record', entityId, diff });
   }

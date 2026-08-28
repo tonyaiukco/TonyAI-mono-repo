@@ -141,6 +141,22 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   await expect(drawer.getByText('Why this figure was withdrawn')).toBeVisible();
   await expect(drawer.getByText(REASON)).toBeVisible();
 
+  // ...and the author is STILL named. This is the `/emissions` half of a defect
+  // three review seats found: the void response is written into `records` AND
+  // `selectedRecord` while the drawer deliberately stays open, so when the
+  // actor names were optional they vanished here — "Entered by —" on the
+  // confirmation of the one irreversible act in the product. The names are
+  // required now, so a write response cannot omit them.
+  await expect(drawer.getByText('Entered by')).toBeVisible();
+  // TWICE, and the count is the assertion. One admin created this record,
+  // approved it and withdrew it, so the same name stands against both actors —
+  // which is the segregation-of-duties gap made visible rather than prevented.
+  // Four eyes is a property of the consultant seat only; before these columns
+  // existed, a self-approval was discoverable solely from /audit, which
+  // data_entry and consultant cannot read. `toBeVisible()` here is a strict
+  // -mode violation for exactly that reason, so do not "fix" it with .first().
+  await expect(drawer.getByText('Tony Admin')).toHaveCount(2);
+
   // And the server agrees. Without this the test would pass on a UI that
   // rendered an optimistic result and dropped the request.
   const token = await getAccessToken(request, ADMIN_EMAIL);

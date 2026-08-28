@@ -94,6 +94,24 @@ function createCalcMock(scope = 2) {
 }
 
 let seq = 0;
+/**
+ * Every column `toAuditSnapshot` is allowed to carry, and nothing else.
+ *
+ * Written out rather than derived, because deriving it from the function's
+ * own output would assert nothing. `audit_log` is append-only with no
+ * correction path, so a field reaching it is permanent — this list failing is
+ * the intended outcome of adding one, resolved or persisted.
+ */
+const PERSISTED_KEYS = [
+  'id', 'subsidiaryId', 'locationId', 'reportingYear', 'reportingPeriod',
+  'periodValue', 'category', 'scope', 'status', 'activityValue',
+  'activityUnit', 'input', 'calculation', 'createdBy', 'anomalyFlag',
+  'anomalyBaselinePriorCount', 'anomalyBaselineTCo2e', 'varianceReason',
+  'reviewedBy', 'reviewedAt', 'reviewNote', 'voidReason', 'voidedBy',
+  'voidedAt', 'evidenceCount', 'createdAt', 'updatedAt',
+].sort();
+
+
 function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
   seq += 1;
   const now = new Date('2026-01-01T00:00:00.000Z');
@@ -480,8 +498,11 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
 
     expect(dto.locationName).toBe('Ankara Plant');
     const diff = audit.record.mock.calls[0][1].diff as any;
-    expect(diff.before).not.toHaveProperty('locationName');
-    expect(diff.after).not.toHaveProperty('locationName');
+    // Whole key SET, on BOTH halves. A named check ("no `locationName`") is the
+    // shape that let a fourth resolved field through, and `diff.before` was
+    // asserted nowhere at all — on the very path this leak has a history on.
+    expect(Object.keys(diff.before).sort()).toEqual(PERSISTED_KEYS);
+    expect(Object.keys(diff.after).sort()).toEqual(PERSISTED_KEYS);
   });
 
   /**
@@ -2277,23 +2298,6 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     { id: 'user-admin', email: 'admin@tonyai.local', fullName: 'Admin User' },
   ];
 
-  /**
-   * Every column `toAuditSnapshot` is allowed to carry, and nothing else.
-   *
-   * Written out rather than derived, because deriving it from the function's
-   * own output would assert nothing. `audit_log` is append-only with no
-   * correction path, so a field reaching it is permanent — this list failing is
-   * the intended outcome of adding one, resolved or persisted.
-   */
-  const PERSISTED_KEYS = [
-    'id', 'subsidiaryId', 'locationId', 'reportingYear', 'reportingPeriod',
-    'periodValue', 'category', 'scope', 'status', 'activityValue',
-    'activityUnit', 'input', 'calculation', 'createdBy', 'anomalyFlag',
-    'anomalyBaselinePriorCount', 'anomalyBaselineTCo2e', 'varianceReason',
-    'reviewedBy', 'reviewedAt', 'reviewNote', 'voidReason', 'voidedBy',
-    'voidedAt', 'evidenceCount', 'createdAt', 'updatedAt',
-  ].sort();
-
   it('list resolves BOTH actor columns in a single query for the whole page', async () => {
     const { prisma, service } = build();
     prisma.profile.findMany.mockResolvedValue(PROFILES);
@@ -2439,6 +2443,10 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     // `...{ createdByName }` and `...{ createdByEmail }`. This assertion is
     // what covers that form, and it is the form a real leak would take.
     const { diff } = audit.record.mock.calls.at(-1)![1] as { diff: Record<string, unknown> };
+    // Kept from the first cut: without it a snapshot that came back undefined
+    // fails as `TypeError: Cannot convert undefined or null to object` rather
+    // than as a legible assertion about what was audited.
+    expect(diff.after).toBeDefined();
     expect(Object.keys(diff.after as object).sort()).toEqual(PERSISTED_KEYS);
   });
 });

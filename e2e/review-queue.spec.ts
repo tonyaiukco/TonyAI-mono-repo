@@ -140,6 +140,19 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
     page.getByText('Invoice total does not match the meter reading'),
   ).toBeVisible();
 
+  // The discriminating placement for `/emissions`: this drawer is open as the
+  // ENTRY user on a record the ADMIN created, so the name has to be the
+  // author's and not the viewer's. `/review` is covered the same way in the
+  // consultant test; this is the other screen that renders actors.
+  const drawer = page.getByRole('dialog');
+  await expect(drawer.getByText('Entered by')).toBeVisible();
+  // The admin both entered and rejected this record, so the name stands twice.
+  await expect(drawer.getByText('Tony Admin')).toHaveCount(2);
+  // The discriminator: the VIEWER is Eda Entry, and her name must appear
+  // nowhere in this drawer. Without it, an implementation rendering the
+  // logged-in user rather than the record's actors would pass everything else.
+  await expect(drawer.getByText('Eda Entry')).toHaveCount(0);
+
   // Resubmitting reverses a reviewer's decision, so it is gated on authorship.
   // This user can SEE the subsidiary but did not author the record; without the
   // gate they could make the rejection disappear while remaining forbidden from
@@ -195,6 +208,9 @@ test('a consultant may send a record back but is not offered Approve', async ({
   // rendered the logged-in user would be indistinguishable from a correct one
   // in the two tests above, where the viewer is also the creator.
   await expect(row).toContainText('Tony Admin');
+  // The negative is only meaningful because the positive above runs first on
+  // the SAME locator: `not.toContainText` passes vacuously against a locator
+  // matching zero elements. Do not reorder these.
   await expect(row).not.toContainText('Cem Consultant');
 
   await row.click();

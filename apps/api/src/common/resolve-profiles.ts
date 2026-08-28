@@ -23,6 +23,13 @@ export interface ResolvedProfile {
  * actors. Extracted from `AuditService.list`, which held the only copy in the
  * API: doing it before a second caller exists is the cheapest moment, and it
  * closes the door on a third hand-rolled version drifting from the other two.
+ *
+ * NOT TENANT-SCOPED. There is no organisation predicate here, and adding one
+ * would need a caller-supplied org. Both current callers are safe by
+ * construction — the ids come from rows already filtered by
+ * `accessibleSubsidiaryIds`, so a name cannot ride out on a record the caller
+ * cannot see — but a future caller passing user-supplied ids turns this into a
+ * cross-tenant name oracle. The safety lives at the call site, not in here.
  */
 export async function resolveProfiles(
   prisma: Pick<Prisma.TransactionClient, 'profile'>,

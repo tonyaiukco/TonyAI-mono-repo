@@ -35,6 +35,19 @@ export function recordActorLabel(
 ): ActorLabel {
   if (id === null) return { text: '—', muted: true };
   if (name === null) return { text: 'deleted user', muted: true };
+  // Third, and ONLY third. The type says the key is always present, but this
+  // value crosses an HTTP boundary: a web bundle rolled forward ahead of the
+  // API — which Phase 2 makes possible, since the two become separate
+  // Container Apps revisions — receives `undefined`, and `.trim()` on it used
+  // to throw inside the review queue's row `.map()`, losing the whole table
+  // rather than blanking one cell.
+  //
+  // Order is the whole trick, and two obvious shortenings are both wrong.
+  // `typeof name !== 'string'` hoisted above the null check swallows it, since
+  // `typeof null` is 'object' — "deleted user" then becomes unreachable, which
+  // is what the spec caught when this was written that way. `!name` folds the
+  // blank-name case in too, and a blank name is a person with an account.
+  if (typeof name !== 'string') return { text: '—', muted: true };
   return name.trim() === ''
     ? { text: 'unnamed user', muted: true }
     : { text: name, muted: false };

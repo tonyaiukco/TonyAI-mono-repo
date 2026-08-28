@@ -1467,6 +1467,12 @@ export interface ActivityRecordDTO {
    */
   voidReason: string | null;
   voidedBy: string | null;
+  /* Deliberately NOT accompanied by a `voidedByName`. The two actors that got
+   * resolved names are the two that got columns; adding a third REQUIRED field
+   * with no consumer is the one thing that is expensive to undo. The gap is
+   * real though — FR §5.4 ties a withdrawal to ISO 14064-1 §9.3.1
+   * traceability, and today the reason is rendered while the person is only in
+   * `/audit`. Filed as a follow-up, not overlooked. */
   voidedAt: string | null;
   /** Number of evidence files linked to this record (FR §4.1). */
   evidenceCount: number;

@@ -164,6 +164,7 @@ function stubRecords(prisma: PrismaMock, records: Record<string, unknown>[]): vo
 const admin: RequestUser = {
   id: 'admin-1',
   email: 'admin@tonyai.local',
+  fullName: 'Admin User',
   role: 'super_admin',
   organisationId: 'org-1',
   accessibleSubsidiaryIds: ['sub-1', 'sub-2'],

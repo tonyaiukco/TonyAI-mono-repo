@@ -91,7 +91,16 @@ const ACCESSIBLE_QUERY = {
   // accessible set is the caller's own row and nothing else. That id is not a
   // seed constant — the auth user is created at seed time — so it comes from
   // the token.
-  profiles: null,
+  //
+  // What this proves is the DB layer, which is NOT the layer WP22 changed: the
+  // API reads `profiles` as the owner, so RLS is defence-in-depth here. The
+  // containment argument for the API path is that actor ids come from records
+  // already filtered by `accessibleSubsidiaryIds`.
+  //
+  // `undefined`, not `null`: `count()` defaults its query on `undefined` only,
+  // so if this assignment is ever re-sequenced below the loop the probe fails
+  // loudly instead of quietly fetching `?null` and passing by luck.
+  profiles: undefined,
 };
 
 // --- PostgREST helpers -------------------------------------------------------
