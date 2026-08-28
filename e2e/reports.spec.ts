@@ -71,10 +71,12 @@ test('reports: data_entry can view report data but has no export controls', asyn
  * back out of the real export with its reason attached. Until this shipped, an
  * export silently dropped withdrawn records and said nothing about it.
  *
- * API-level on purpose: the browser download path is already covered above, and
- * the claim under test is about the artifact's CONTENT. Writes live in the
- * quarterly space (global teardown reclaims it) on a (subsidiary, category,
- * quarter) tuple no other spec uses.
+ * Mostly API-level: the browser download path is already covered above, and the
+ * central claim is about the artifact's CONTENT. It ends at the browser for the
+ * one claim the artifact cannot make — that the SCREEN discloses the same thing
+ * before anyone generates a file. Writes live in the quarterly space (global
+ * teardown reclaims it) on a (subsidiary, category, quarter) tuple no other
+ * spec uses.
  */
 /** A seeded location belonging to `SUB.gas` (TonyAI Gas · London). */
 const GAS_LONDON_LOCATION = '33333333-3333-3333-3333-333333330003';
@@ -88,6 +90,7 @@ async function withdrawnCount(request: APIRequestContext, token: string): Promis
 }
 
 test('reports: a withdrawn figure is disclosed in the export, not silently omitted', async ({
+  page,
   request,
 }) => {
   const REASON = 'Withdrawn by the reports E2E — duplicate of the quarterly site invoice.';
@@ -143,4 +146,22 @@ test('reports: a withdrawn figure is disclosed in the export, not silently omitt
   // WP18 repaired), so an absolute assertion is satisfied by the neighbours and
   // would pass with the endpoint ignoring this withdrawal entirely.
   expect(await withdrawnCount(request, token)).toBe(before + 1);
+
+  // And the screen says it too, BEFORE anyone generates a file. The sentence
+  // itself lives in `lib/report-view.ts` with its own unit spec, so the copy is
+  // held; what nothing exercised is the wiring — that the page reads `meta` and
+  // that the string reaches the DOM. Asserting the COUNT rather than the phrase
+  // is what makes this bite: a banner built from the wrong field (the committed
+  // count, say) still reads as a grammatical English sentence.
+  //
+  // The page defaults to `DEFAULT_REPORTING_YEAR`, which is `E2E_YEAR`, and the
+  // suite runs with `workers: 1`, so the count the API just returned is the one
+  // the page will load.
+  await login(page, ADMIN_EMAIL);
+  await page.goto('/reports');
+  await expect(
+    page.getByText(
+      new RegExp(`${before + 1} records? (was|were) withdrawn from this reporting year`),
+    ),
+  ).toBeVisible();
 });
