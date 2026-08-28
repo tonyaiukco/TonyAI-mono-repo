@@ -87,6 +87,63 @@ export const WITHDRAWN = 'Withdrawn';
 /** What a flat-export cell may hold before quoting. */
 export type CellValue = string | number;
 
+/**
+ * What a PDF cell may hold.
+ *
+ * A plain string is USER DATA and the writer escapes it. `{ html }` is trusted
+ * markup and the trust is spelled out where it is granted, which is the whole
+ * point: before F3 the PDF's escaping lived inside two template literals a
+ * reviewer read whole, and afterwards it is sixteen renderers, each of which
+ * can forget `esc`. A forgotten one puts a user's withdrawal reason into a
+ * filed PDF unescaped — a `<` there truncates a cell in the artifact an auditor
+ * keeps. Returning a bare string cannot skip escaping, and granting trust is a
+ * greppable decision.
+ *
+ * Same instinct as `csv: null` never being an omission: the unsafe case has to
+ * be spelled out.
+ *
+ * What this does NOT do, stated because the docblock used to imply otherwise:
+ * granting trust does not force escaping INSIDE the grant. `rawHtml(userText)`
+ * still compiles. The surface went from every cell position to the two grants
+ * that interpolate data, and both now defend themselves — but a tagged template
+ * that escapes interpolations by default is the shape that makes forgetting
+ * inexpressible, and that is filed rather than done here.
+ */
+export type PdfCell = string | { readonly html: string };
+
+/** Trusted markup, and a place to explain why each time. */
+export function rawHtml(html: string): PdfCell {
+  return { html };
+}
+
+/**
+ * Escapes what the PDF interpolates. Quote-unaware on purpose — nothing
+ * interpolates into an attribute, and the day something does this must grow
+ * `"` and `'` with it.
+ */
+export function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * The PDF's number format — ONE decimal, where the CSV emits full precision.
+ * A real cross-format divergence: this is a printed A4 page, and changing the
+ * rounding changes an artifact an auditor keeps.
+ */
+export const pdfNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
+
+interface PdfSlot<R> {
+  readonly label: string;
+  /**
+   * Right-aligned, i.e. `class="num"`. It has to appear on BOTH the `<th>` and
+   * the `<td>` and they must agree; sourcing them from one descriptor is what
+   * makes that true. The cell-binding tests check index, not class, so a
+   * mismatch between the two literals was invisible.
+   */
+  readonly num?: boolean;
+  readonly cell: (r: R) => PdfCell;
+}
+
 interface ExcelSlot<R> {
   readonly label: string;
   /**
@@ -148,10 +205,18 @@ export interface ColumnSpec<R> {
    *  absent key is invisible in review. */
   readonly csv: CsvSlot<R> | null;
   readonly excel: ExcelSlot<R> | null;
+  readonly pdf: PdfSlot<R> | null;
 }
 
 /**
- * The body columns, read by BOTH row kinds — one list, not two. A duplicated
+ * The body columns, read by BOTH row kinds — one list, not two.
+ *
+ * THE ORDER OF THIS LIST IS A FILED-ARTIFACT CONTRACT IN THREE FORMATS. CSV
+ * column order is parsed by downstream consumers, and since F3 the printed A4
+ * page reads it too — so reordering to please one format silently reorders the
+ * other two. New columns are APPENDED, never inserted. Four full-array goldens
+ * will fail if you do; they ask you to update a literal, which is not the same
+ * as asking you to reconsider. A duplicated
  * list is the divergence this file exists to prevent.
  *
  * Typed over `ReportRowBase` (status widened to the full union) so a single
@@ -163,30 +228,73 @@ export const BODY_COLUMNS = [
   { key: 'subsidiary', aggregatable: false,
     csv: { label: 'subsidiary', cell: (r) => r.subsidiaryName },
     excel: { label: 'Subsidiary', cell: (r) => r.subsidiaryName,
-             withdrawnTotal: () => 'Total withdrawn' } },
+             withdrawnTotal: () => 'Total withdrawn' },
+    pdf: { label: 'Subsidiary', cell: (r) => r.subsidiaryName } },
   { key: 'reporting_entity', aggregatable: false,
     // `entityLabel` and not an inlined `?? 'Whole company'`: one phrase across
     // all three formats AND the web, which is the door WP20 closed.
     csv: { label: 'reporting_entity', cell: (r) => entityLabel(r) },
-    excel: { label: 'Reporting entity', cell: (r) => entityLabel(r) } },
+    excel: { label: 'Reporting entity', cell: (r) => entityLabel(r) },
+    pdf: { label: 'Reporting entity', cell: (r) => entityLabel(r) } },
   { key: 'category', aggregatable: false,
     csv: { label: 'category', cell: (r) => r.category },
-    excel: { label: 'Category', cell: (r) => r.category } },
+    excel: { label: 'Category', cell: (r) => r.category },
+    pdf: { label: 'Category', cell: (r) => r.category } },
   { key: 'reporting_period', aggregatable: false,
     csv: { label: 'reporting_period', cell: (r) => r.reportingPeriod },
-    excel: { label: 'Reporting period', cell: (r) => r.reportingPeriod } },
+    excel: { label: 'Reporting period', cell: (r) => r.reportingPeriod },
+    // Dropped from the PDF: it is a printed A4 page, and the period VALUE
+    // already reads unambiguously.
+    pdf: null },
   { key: 'period_value', aggregatable: false,
     csv: { label: 'period_value', cell: (r) => r.periodValue },
-    excel: { label: 'Period', cell: (r) => r.periodValue } },
+    excel: { label: 'Period', cell: (r) => r.periodValue },
+    pdf: { label: 'Period', cell: (r) => r.periodValue } },
   { key: 'activity_value', aggregatable: true,
     csv: { label: 'activity_value', cell: (r) => r.activityValue },
-    excel: { label: 'Activity value', cell: (r) => r.activityValue } },
+    excel: { label: 'Activity value', cell: (r) => r.activityValue },
+    // MERGED with the unit, which is why the PDF has no standalone Unit column
+    // and is 9 wide where Excel is 11. The unit is escaped; the number is not
+    // user data.
+    // A BARE STRING, not `rawHtml`: the cell emits no markup, so the writer
+    // escapes the whole thing and the hand-written `esc` that used to live
+    // inside the template — which nothing tested, and whose deletion left the
+    // suite green — is gone by construction.
+    pdf: { label: 'Activity', num: true,
+           cell: (r) => `${pdfNumber.format(r.activityValue)} ${r.activityUnit}` } },
   // A unit is a word, and words are not summable — but this one sits next to a
   // marked value on a withdrawn row, which is what proves "aggregatable" and
   // not "on a withdrawn row" is the right discriminator.
   { key: 'activity_unit', aggregatable: false,
     csv: { label: 'activity_unit', cell: (r) => r.activityUnit },
-    excel: { label: 'Unit', cell: (r) => r.activityUnit } },
+    excel: { label: 'Unit', cell: (r) => r.activityUnit },
+    pdf: null },
+  /**
+   * PDF ONLY, and it is there for a named reason: ISO 14064-1 §9.3.1 and GHG
+   * Protocol Ch.7 ask a reader to be able to RECOMPUTE the figure, so the
+   * printed report carries the normalised quantity and the multiplier that
+   * produced it. The flat exports carry the factor appendix instead.
+   *
+   * This column is why `body()` had to be narrowed in F2: declaring it with two
+   * null slots produced nine errors in a list that has nothing to do with it.
+   */
+  { key: 'normalised', aggregatable: false, csv: null, excel: null,
+    pdf: { label: 'Normalised', num: true,
+           cell: (r) =>
+             r.conversionFactor &&
+             Number.isFinite(r.conversionFactor) &&
+             r.normalizedValue !== undefined
+               ? // The one remaining grant that interpolates data, so both
+                 // interpolations defend themselves: the unit through `esc`,
+                 // the factor through `Number.isFinite`. `tCo2e` is guarded the
+                 // same way where the snapshot is read; `conversionFactor` came
+                 // off the same unchecked `as` cast and was not.
+                 rawHtml(
+                   `${pdfNumber.format(r.normalizedValue)} ${esc(r.normalizedUnit ?? '')} <span class="note">(&times;${r.conversionFactor})</span>`,
+                 )
+               // An em dash, not a zero: nothing was converted, and a 0 there
+               // is a measured quantity of zero.
+               : rawHtml('&mdash;') } },
   { key: 'tco2e', aggregatable: true,
     // `??` on an explicit null, never `||` and never `?? 0`: a category with no
     // factor has no figure, and a zero there is a measured quantity of zero.
@@ -195,18 +303,28 @@ export const BODY_COLUMNS = [
     // zero the moment someone drags a SUM over it — the same misstatement as
     // writing 0, only harder to notice.
     excel: { label: 'tCO₂e', cell: (r) => r.tCo2e ?? NOT_CALCULATED,
-             withdrawnTotal: (t) => t.tCo2e } },
+             withdrawnTotal: (t) => t.tCo2e },
+    pdf: { label: 'tCO₂e', num: true,
+           cell: (r) =>
+             r.tCo2e === null
+               ? rawHtml(`<span class="note">${NOT_CALCULATED}</span>`)
+               : pdfNumber.format(r.tCo2e) } },
   // The authoritative discriminator between the two row kinds. Never marked —
   // a withdrawn row must keep saying `voided`.
   { key: 'status', aggregatable: false,
     csv: { label: 'status', cell: (r) => r.status },
-    excel: { label: 'Status', cell: (r) => r.status } },
+    excel: { label: 'Status', cell: (r) => r.status },
+    pdf: { label: 'Status', cell: (r) => r.status } },
   { key: 'evidence_files', aggregatable: true,
     csv: { label: 'evidence_files', cell: (r) => r.evidenceCount },
-    excel: { label: 'Evidence files', cell: (r) => r.evidenceCount } },
+    excel: { label: 'Evidence files', cell: (r) => r.evidenceCount },
+    pdf: { label: 'Evidence', num: true,
+           cell: (r) => String(r.evidenceCount) } },
   { key: 'anomaly_flag', aggregatable: true,
     csv: { label: 'anomaly_flag', cell: (r) => anomalyCell(r) },
-    excel: { label: 'Anomaly flag', cell: (r) => anomalyCell(r) } },
+    excel: { label: 'Anomaly flag', cell: (r) => anomalyCell(r) },
+    // Dropped from the PDF, like the reporting period: A4 width.
+    pdf: null },
   // `as const satisfies`, not a plain annotation: the annotation widens every
   // `key` to `string`, and the parity check below has to read the literals.
   // `satisfies` still checks the shape, so the row type stays pinned.
@@ -229,7 +347,10 @@ export interface DisclosureColumn {
    *  one. `null` where the Excel withdrawn sheet does not carry the column: it
    *  restates by column rather than by suffix, so `voided_activity_value` and
    *  `voided_tco2e` are that sheet's own `Activity value` and `tCO₂e removed`.
-   *  F3 adds a `pdf` slot here instead of a third parallel label field. */
+   *  F3 did NOT add a `pdf` slot here: the printed table free-stands both
+   *  renderers, because its empty is an em dash where Excel's is a blank. A
+   *  fourth partially-populated axis for two of four disclosures costs more
+   *  than it buys. */
   readonly excel: { readonly label: string } | null;
   /** The body column whose real value moves here on a withdrawn row, or `null`
    *  for a disclosure with no counterpart. This link is what the parity check
@@ -559,4 +680,104 @@ export function excelWithdrawnRow(r: ReportWithdrawnRow): CellValue[] {
  */
 export function excelWithdrawnTotalRow(t: ReportWithdrawnTotals): CellValue[] {
   return WITHDRAWN_SHEET.map((c) => c.withdrawnTotal?.(t) ?? '');
+}
+
+// --- PDF ---------------------------------------------------------------------
+
+/** Render one cell's inner HTML: a plain string is user data and is escaped. */
+function pdfInner(v: PdfCell): string {
+  return typeof v === 'string' ? esc(v) : v.html;
+}
+
+function pdfCells<R>(slots: readonly PdfSlot<R>[], r: R): string {
+  return slots
+    .map((c) => `<td${c.num ? ' class="num"' : ''}>${pdfInner(c.cell(r))}</td>`)
+    .join('');
+}
+
+function pdfHead<R>(slots: readonly PdfSlot<R>[]): string {
+  return slots
+    // Escaped even though every label is a module literal today: `label` is
+    // typed `string`, and a per-report dynamic one would otherwise be raw.
+    .map((c) => `<th${c.num ? ' class="num"' : ''}>${esc(c.label)}</th>`)
+    .join('');
+}
+
+/** The printed ledger: nine columns, narrower than the other two on purpose. */
+const PDF_LEDGER: readonly PdfSlot<ReportRowBase>[] = BODY_COLUMNS.filter(
+  (c) => c.pdf,
+).map((c) => c.pdf!);
+
+export function pdfLedgerHeadRow(): string {
+  return `<tr>${pdfHead(PDF_LEDGER)}</tr>`;
+}
+
+export function pdfLedgerRow(r: ReportLedgerRow): string {
+  return `<tr>${pdfCells(PDF_LEDGER, r)}</tr>`;
+}
+
+/**
+ * The printed restatement table: seven columns, and it carries NO activity
+ * quantity at all — an A4-width decision, and why it is 7 where Excel is 10.
+ * Its own list, like the Excel sheet's, because it is a different table.
+ */
+const PDF_WITHDRAWN: readonly PdfSlot<ReportWithdrawnRow>[] = [
+  body('subsidiary').pdf,
+  body('reporting_entity').pdf,
+  body('category').pdf,
+  body('period_value').pdf,
+  { ...body('tco2e').pdf, label: 'tCO₂e removed' },
+  // The literal glyph, not `&mdash;`: these are plain strings, so the writer
+  // escapes them, and an entity here would print as visible `&mdash;` text in a
+  // filed PDF. Its sibling eight lines up uses the entity because that one is a
+  // `rawHtml` grant. One plausible "unify these" edit breaks exactly this way.
+  { label: 'Withdrawn (UTC)', cell: (r) => r.voidedAt ?? '—' },
+  { label: 'Reason', cell: (r) => r.voidReason ?? '—' },
+];
+
+export function pdfWithdrawnHeadRow(): string {
+  return `<tr>${pdfHead(PDF_WITHDRAWN)}</tr>`;
+}
+
+export function pdfWithdrawnRow(r: ReportWithdrawnRow): string {
+  return `<tr>${pdfCells(PDF_WITHDRAWN, r)}</tr>`;
+}
+
+/**
+ * The printed total row, declared as explicit spans rather than derived.
+ *
+ * Deliberately NOT the Excel total row's shape, and not derivable from a
+ * per-column `total?` either — the two diverge in three independent ways, one
+ * of them content. Here the tonnage is FORMATTED and bolded rather than a raw
+ * number; the label occupies one wide cell rather than column 1 alone; and the
+ * uncalculated-record note is ABSENT, because on the PDF it lives in the banner
+ * above the table.
+ *
+ * And spans must not be run-length-encoded from "columns without a total": that
+ * yields `<td>Total withdrawn</td><td colspan="3">`, where this produces
+ * `<td colspan="4">Total withdrawn</td>` — the label lands in a narrow first
+ * column and wraps, changing the printed page.
+ *
+ * TWO invariants matter and only one was asserted. The spans summing to the
+ * table's width was; where the tonnage LANDS was not, so `3/1/2`... `3/1/3`
+ * still sums to seven and puts the figure under "Period". Nor was the figure
+ * itself: printing `t.count` here made the footer contradict the banner three
+ * lines above it, with the whole suite green. Both are asserted now.
+ */
+export function pdfWithdrawnTotalRow(t: ReportWithdrawnTotals): string {
+  const cells: readonly { html: string; span: number; num?: boolean }[] = [
+    { html: '<strong>Total withdrawn</strong>', span: 4 },
+    { html: `<strong>${pdfNumber.format(t.tCo2e)}</strong>`, span: 1, num: true },
+    // Derived, so a new withdrawn column self-aligns instead of relying on the
+    // spec to notice. The FOUR above stays a literal — deriving it by
+    // run-length-encoding "columns without a total" would split the label into
+    // its own narrow cell and change the printed page.
+    { html: '', span: PDF_WITHDRAWN.length - 5 },
+  ];
+  return `<tr>${cells
+    .map(
+      (c) =>
+        `<td${c.num ? ' class="num"' : ''}${c.span > 1 ? ` colspan="${c.span}"` : ''}>${c.html}</td>`,
+    )
+    .join('')}</tr>`;
 }
