@@ -978,4 +978,165 @@ describe('ReportsService', () => {
       }
     });
   });
+
+  // --- the column order every writer commits to -----------------------------
+
+  /**
+   * Golden assertions on column ORDER and MEMBERSHIP — one per format, per
+   * table, plus the two total rows whose alignment is positional.
+   *
+   * They exist because the report writers hold THIRTEEN hand-maintained
+   * literals (the PDF's `<th>`s and its `<td>`s, the Excel header and its rows,
+   * the CSV header and its rows — once for the ledger and again for withdrawn
+   * records — plus an Excel and a PDF total row) and nothing pinned their
+   * order. Measured before writing these: a change that silently REORDERED
+   * columns passed the whole suite. The CSV assertions read by column name, so
+   * everything after position 3 was free to move; the PDF assertions are
+   * label-based `toContain` over one HTML string, so its order was entirely
+   * unconstrained; the Excel sheets pinned only a handful of positions.
+   *
+   * The three formats deliberately do NOT agree with one another. The PDF is a
+   * printed A4 page: it drops the unit and anomaly columns and merges value
+   * with unit, while carrying `Normalised` — which the other two lack — because
+   * ISO 14064-1 §9.3.1 asks the reader to be able to recompute the figure. The
+   * CSV alone carries the `voided_*` suffix, because its two row kinds share
+   * one table rather than getting a second file. Every one of those divergences
+   * is load-bearing, which is precisely why each writer needs its own golden:
+   * there is no cross-format invariant to fall back on.
+   */
+  describe('the column order every writer commits to', () => {
+    const withdrawnFixture = () =>
+      makeRecord({
+        id: 'rec-void',
+        status: 'voided',
+        periodValue: 'February',
+        activityValue: 900,
+        voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
+        voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+      });
+
+    /** The `<th>` labels of the table under a given `<h2>`, in document order. */
+    const headersUnder = (html: string, heading: string): string[] => {
+      const start = html.indexOf(`<h2>${heading}</h2>`);
+      expect(start).toBeGreaterThan(-1);
+      const thead = html.slice(start, html.indexOf('</thead>', start));
+      // `<th(?:\s…)?>` and not `<th[^>]*>`: the latter also matches the
+      // opening `<thead>`, which swallows the first real header.
+      return [...thead.matchAll(/<th(?:\s[^>]*)?>([\s\S]*?)<\/th>/g)].map((m) => m[1]);
+    };
+
+    /** The `<tr>` containing a given phrase, whole. */
+    const rowContaining = (html: string, phrase: string): string => {
+      const i = html.indexOf(phrase);
+      expect(i).toBeGreaterThan(-1);
+      return html.slice(html.lastIndexOf('<tr>', i), html.indexOf('</tr>', i));
+    };
+
+    const excelHeader = async (sheetName: string): Promise<string[]> => {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+      const values = wb.getWorksheet(sheetName)!.getRow(1).values as string[];
+      return values.slice(1); // exceljs pads index 0
+    };
+
+    it('CSV: the ledger header, in full and in order', async () => {
+      stubRecords(prisma, [makeRecord(), withdrawnFixture()]);
+      const csv = await service.generateCsv(admin, q);
+
+      // Full-array equality, not a prefix. The previous assertion covered the
+      // first three names, which left the twelve that carry every number.
+      expect(csv.trim().split('\n')[0].split(',')).toEqual([
+        'subsidiary', 'reporting_entity', 'category', 'reporting_period',
+        'period_value', 'activity_value', 'activity_unit', 'tco2e', 'status',
+        'evidence_files', 'anomaly_flag', 'voided_activity_value',
+        'voided_tco2e', 'voided_at_utc', 'void_reason',
+      ]);
+    });
+
+    it('CSV: every row has exactly as many cells as the header, on both row kinds', async () => {
+      stubRecords(prisma, [makeRecord(), withdrawnFixture()]);
+      const lines = (await service.generateCsv(admin, q)).trim().split('\n');
+
+      // The withdrawn row's four `Withdrawn` markers are placed by POSITION,
+      // with nothing tying a marker to its column name. An arity check is what
+      // catches a marker gained or lost when the columns move: the fixture is
+      // comma-free on purpose, so a plain split is exact here.
+      const width = lines[0].split(',').length;
+      expect(width).toBe(15);
+      for (const line of lines.slice(1)) {
+        expect(line.split(',')).toHaveLength(width);
+      }
+    });
+
+    it('Excel: the ledger sheet header, in full and in order', async () => {
+      stubRecords(prisma, [makeRecord()]);
+      expect(await excelHeader('Raw Activity Data')).toEqual([
+        'Subsidiary', 'Reporting entity', 'Category', 'Reporting period',
+        'Period', 'Activity value', 'Unit', 'tCO₂e', 'Status',
+        'Evidence files', 'Anomaly flag',
+      ]);
+    });
+
+    it('Excel: the withdrawn sheet header, in full and in order', async () => {
+      stubRecords(prisma, [makeRecord(), withdrawnFixture()]);
+      expect(await excelHeader('Withdrawn Records')).toEqual([
+        'Subsidiary', 'Reporting entity', 'Category', 'Reporting period',
+        'Period', 'Activity value', 'Unit', 'tCO₂e removed',
+        'Withdrawn (UTC)', 'Reason',
+      ]);
+    });
+
+    it('Excel: the total row lands under the column it totals', async () => {
+      stubRecords(prisma, [makeRecord(), withdrawnFixture()]);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+      const sheet = wb.getWorksheet('Withdrawn Records')!;
+      const header = (sheet.getRow(1).values as string[]).slice(1);
+      const total = (sheet.getRow(3).values as unknown[]).slice(1);
+
+      // The total row is seven empty strings and a number in a hand-counted
+      // slot. Asserting the tonnage sits under `tCO₂e removed` — rather than at
+      // literal index 8 — is what survives the columns being reordered, and
+      // what fails if the padding stops matching the header.
+      expect(total[0]).toBe('Total withdrawn');
+      expect(total[header.indexOf('tCO₂e removed')]).toBe(0.44);
+    });
+
+    it('PDF: the ledger table headers, in full and in order', async () => {
+      stubRecords(prisma, [makeRecord()]);
+      const html = buildReportHtml(await service.assemble(admin, q));
+
+      // Narrower than the other two BY DESIGN: no standalone unit column (it is
+      // merged into Activity) and no anomaly column, because this is an A4
+      // page. `Normalised` is here and nowhere else — ISO 14064-1 §9.3.1.
+      expect(headersUnder(html, 'Activity records ledger')).toEqual([
+        'Subsidiary', 'Reporting entity', 'Category', 'Period', 'Activity',
+        'Normalised', 'tCO₂e', 'Status', 'Evidence',
+      ]);
+    });
+
+    it('PDF: the withdrawn table headers, in full and in order', async () => {
+      stubRecords(prisma, [makeRecord(), withdrawnFixture()]);
+      const html = buildReportHtml(await service.assemble(admin, q));
+      expect(headersUnder(html, 'Withdrawn from this inventory')).toEqual([
+        'Subsidiary', 'Reporting entity', 'Category', 'Period', 'tCO₂e removed',
+        'Withdrawn (UTC)', 'Reason',
+      ]);
+    });
+
+    it('PDF: the total row spans exactly the width of the table above it', async () => {
+      stubRecords(prisma, [makeRecord(), withdrawnFixture()]);
+      const html = buildReportHtml(await service.assemble(admin, q));
+      const width = headersUnder(html, 'Withdrawn from this inventory').length;
+
+      // Two hardcoded colspans plus a cell — 4 + 1 + 2. Add a column to the
+      // header and the arithmetic silently stops matching, which a browser
+      // renders as a table with a short last row rather than as an error.
+      const spanned = [...rowContaining(html, 'Total withdrawn').matchAll(/<td([^>]*)>/g)]
+        .map((m) => Number(/colspan="(\d+)"/.exec(m[1])?.[1] ?? 1))
+        .reduce((a, b) => a + b, 0);
+      expect(spanned).toBe(width);
+    });
+  });
+
 });
