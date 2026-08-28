@@ -51,7 +51,18 @@ test('a submitted record reaches the queue and approving clears it', async ({
     .locator('table tbody tr', { hasText: 'TonyAI Trading' })
     .filter({ hasText: 'Q4 2026' });
   await expect(row).toContainText('submitted');
+  // The Waiting cell reads a real number, not an em dash. That is the whole
+  // chain: the submit path stamped `submitted_at`, the DTO carried it, and the
+  // column counted from it. Before the column existed this cell counted from
+  // `createdAt` and was honestly headed "Age" for that reason.
+  //
+  // `0d` specifically — the record was submitted seconds ago. Every record that
+  // reaches this queue got here through the submit path, so it always has a
+  // stamp; the em-dash branch is for records the backfill could not reach, and
+  // those are all `approved`, which this queue filters out.
+  await expect(row).toContainText('0d');
   await row.click();
+  await expect(page.getByRole('dialog').getByText('Submitted')).toBeVisible();
 
   // Both actors in the detail sheet, including the one nobody has filled in:
   // "not reviewed yet" is a fact about the record, and a field that appeared

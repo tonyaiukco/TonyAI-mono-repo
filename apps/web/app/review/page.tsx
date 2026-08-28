@@ -52,7 +52,7 @@ import {
   type SubsidiaryDTO,
 } from "@/lib/types";
 import { entityLabel } from "@/lib/void-view";
-import { ageLabel } from "@/lib/review-view";
+import { waitingLabel } from "@/lib/review-view";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
   formatTCo2e,
@@ -353,7 +353,7 @@ export default function ReviewPage() {
                             The same reason `createdAt` is headed "Created" and
                             the age column "Age" rather than "Waiting". */}
                         <TableHead>Entered by</TableHead>
-                        <TableHead>Age</TableHead>
+                        <TableHead>Waiting</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -453,11 +453,15 @@ export default function ReviewPage() {
                               })()}
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                              {/* Whole days since the record was CREATED — not
-                                  since it was submitted, which nothing records
-                                  yet. The column is headed "Age" for exactly
-                                  that reason. */}
-                              {ageLabel(row.createdAt)}
+                              {/* Whole days since the record was SUBMITTED, so
+                                  the column measures a reviewer's backlog
+                                  rather than how long ago a draft was started.
+                                  It was headed "Age" and counted from
+                                  `createdAt` until the record carried a real
+                                  submission time. An em dash means never
+                                  submitted — never a fallback to `createdAt`,
+                                  which is the misstatement this replaced. */}
+                              {waitingLabel(row.submittedAt)}
                             </TableCell>
                           </TableRow>
                         ))
@@ -549,12 +553,25 @@ export default function ReviewPage() {
                     ? `${selected.calculation.source} v${selected.calculation.version}`
                     : NO_FACTOR_LABEL}
                 </span>
-                {/* `createdAt` is when the DRAFT was created, not when it was
-                    submitted — there is no `submittedAt` column yet. Labelling it
-                    "Submitted" asserted a date the record does not carry. */}
+                {/* Both, because they answer different questions: when the
+                    work was started, and when it reached this queue. They are
+                    the same date only for a record submitted the day it was
+                    drafted. */}
                 <span className="text-muted-foreground">Created</span>
                 <span className="col-span-2">
                   {formatDate(selected.createdAt)}
+                </span>
+                <span className="text-muted-foreground">Submitted</span>
+                <span
+                  className={cn(
+                    "col-span-2",
+                    selected.submittedAt === null &&
+                      "italic text-muted-foreground",
+                  )}
+                >
+                  {selected.submittedAt === null
+                    ? "not recorded"
+                    : formatDate(selected.submittedAt)}
                 </span>
                 {/* Both actors, always — including "not reviewed yet", which is
                     a fact about the record a reviewer needs, and which a field

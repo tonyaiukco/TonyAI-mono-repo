@@ -1457,6 +1457,22 @@ export interface ActivityRecordDTO {
   reviewedAt: string | null;
   reviewNote: string | null;
   /**
+   * When this record was last SUBMITTED for review, or null if it never was.
+   *
+   * Most recent submit, not the first: a rejected record can be resubmitted, so
+   * this answers "how long has the current reviewer had it" — which is what a
+   * queue is for — and matches how `reviewedAt` is already overwritten on every
+   * review outcome. `audit_log` keeps one `submit` row per attempt, so the full
+   * history is not lost.
+   *
+   * Null on every record that predates the column and on every seeded record:
+   * the seed writes straight to `approved` without ever submitting, so the
+   * backfill finds nothing for them. Screens must render that as unknown, never
+   * fall back to `createdAt` — that fallback IS the misstatement this field
+   * exists to end.
+   */
+  submittedAt: string | null;
+  /**
    * Why an approved figure was withdrawn, by whom, and when. Null on
    * every record that has not been voided.
    *

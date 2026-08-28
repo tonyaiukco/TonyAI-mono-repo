@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { daysSince, ageLabel } from './review-view';
+import { daysSince, waitingLabel } from './review-view';
 
 /**
- * The review queue's age column. It is the only number on that screen a
+ * The review queue's waiting column. It is the only number on that screen a
  * reviewer uses to decide what to pick up next, and until this spec existed it
  * had no coverage at all — it lived inside `app/review/page.tsx`, which the
  * web vitest config does not collect.
@@ -10,6 +10,12 @@ import { daysSince, ageLabel } from './review-view';
 describe('daysSince', () => {
   // A fixed instant, so the arithmetic is pinned rather than racing the clock.
   const NOW = Date.parse('2026-08-28T12:00:00.000Z');
+
+  it('reads null for a record that was never submitted', () => {
+    // Not 0, and never a silent fallback to `createdAt`: an absent submission
+    // time is the honest answer for every record the backfill could not reach.
+    expect(daysSince(null, NOW)).toBeNull();
+  });
 
   it('counts whole days, floored', () => {
     // 47 hours is one whole day of waiting, not two. Rounding here would age
@@ -49,19 +55,22 @@ describe('daysSince', () => {
 
 /**
  * What the cell actually reads. Covered separately from the arithmetic because
- * the unknown-age case is a rendering decision, not a calculation.
+ * the unknown-wait case is a rendering decision, not a calculation.
  */
-describe('ageLabel', () => {
+describe('waitingLabel', () => {
   const NOW = Date.parse('2026-08-28T12:00:00.000Z');
 
   it('renders whole days with the unit', () => {
-    expect(ageLabel('2026-08-26T13:00:00.000Z', NOW)).toBe('1d');
-    expect(ageLabel('2026-08-28T00:00:00.000Z', NOW)).toBe('0d');
+    expect(waitingLabel('2026-08-26T13:00:00.000Z', NOW)).toBe('1d');
+    expect(waitingLabel('2026-08-28T00:00:00.000Z', NOW)).toBe('0d');
   });
 
-  it('renders an unknown age as an em dash, never as 0d', () => {
-    // "0d" would tell a reviewer the record arrived today. An unknown age has
-    // to look unknown — it is the only wrong answer here anyone would act on.
-    expect(ageLabel('not a date', NOW)).toBe('—');
+  it('renders an unknown wait as an em dash, never as 0d', () => {
+    // "0d" would tell a reviewer the record arrived today. An unknown wait has
+    // to look unknown — it is the only wrong answer here anyone would act on,
+    // and on a freshly seeded database EVERY record is in this state, because
+    // the seed writes records straight to `approved` without submitting them.
+    expect(waitingLabel(null, NOW)).toBe('—');
+    expect(waitingLabel('not a date', NOW)).toBe('—');
   });
 });
