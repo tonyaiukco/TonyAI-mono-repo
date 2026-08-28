@@ -197,6 +197,7 @@ export function makeSuperAdmin(overrides: Partial<RequestUser> = {}): RequestUse
   return {
     id: 'user-admin',
     email: 'admin@tonyai.local',
+    fullName: 'Admin User',
     role: 'super_admin',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3', 'sub-4', 'sub-5'],
@@ -208,6 +209,7 @@ export function makeDataEntry(overrides: Partial<RequestUser> = {}): RequestUser
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
+    fullName: 'Entry User',
     role: 'data_entry',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],

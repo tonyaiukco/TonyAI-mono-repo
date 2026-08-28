@@ -8,6 +8,7 @@ import type {
   UserRole,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveProfiles } from '../common/resolve-profiles';
 import type { RequestUser } from '../auth/auth.types';
 import { ListAuditQueryDto } from './dto/list-audit-query.dto';
 
@@ -139,14 +140,7 @@ export class AuditService {
 
     // `audit_log.user_id` has no FK (the row must survive the actor's deletion),
     // so the actor is resolved separately — one query for the page, not per row.
-    const userIds = [...new Set(rows.map((r) => r.userId).filter((id): id is string => !!id))];
-    const profiles = userIds.length
-      ? await this.prisma.profile.findMany({
-          where: { id: { in: userIds } },
-          select: { id: true, email: true, fullName: true },
-        })
-      : [];
-    const byId = new Map(profiles.map((p) => [p.id, p]));
+    const byId = await resolveProfiles(this.prisma, rows.map((r) => r.userId));
 
     return {
       items: rows.map((r) => {

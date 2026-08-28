@@ -28,6 +28,11 @@ import {
   type ReportingPeriod,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  actorDisplayName,
+  resolveProfiles,
+  type ResolvedProfile,
+} from '../common/resolve-profiles';
 import { CalculationsService } from '../calculations/calculations.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
@@ -152,6 +157,23 @@ function requireCanonicalPeriodValue(
   return canonical;
 }
 
+/** The resolved-at-read-time fields, named once so both the DTO's audit
+ *  snapshot and the guard below stay in step. */
+type ResolvedRecordFields = 'locationName' | 'createdByName' | 'reviewedByName';
+
+/**
+ * The record's persisted columns, and a compile error for anything resolved.
+ *
+ * The `?: never` half is load-bearing and is not decoration: `Omit` alone is an
+ * excess-property check, which a spread bypasses. Optional-`never` makes each
+ * resolved key unassignable to anything but `undefined`, which a spread cannot
+ * bypass — measured against `{ ...dto }`, `...{ createdByName }` and a fourth
+ * novel field. Do not "simplify" this back to a plain `Omit`.
+ */
+type ActivityRecordAuditSnapshot = Omit<ActivityRecordDTO, ResolvedRecordFields> & {
+  [K in ResolvedRecordFields]?: never;
+};
+
 @Injectable()
 export class ActivityRecordsService {
   constructor(
@@ -175,11 +197,28 @@ export class ActivityRecordsService {
    * Resolved fields belong in `toDTO`, which builds on this — so a field added
    * to `ActivityRecordDTO` has to be placed on one side or the other instead of
    * silently reaching the audit log.
+   *
+   * A bare `Omit` was only half a guard, measured rather than assumed. It
+   * rejects a resolved field written here as a DIRECT property (TS2561, and
+   * only because those fields are required — an optional one passed silently),
+   * but not one arriving through a SPREAD: excess-property checking does not
+   * cross a spread, so `...{ createdByName: … }` compiled clean, and so did
+   * `return { ...dto }` — which is LITERALLY the mistake described above.
+   *
+   * `ActivityRecordAuditSnapshot` closes that by adding `?: never` for each
+   * resolved key, turning the check from excess-property into ASSIGNABILITY,
+   * which a spread cannot slip past. The resulting error text is obscure
+   * ("Type 'string' is not assignable to type 'undefined'"), hence this note.
+   *
+   * The runtime belt to that brace is the spec's `lets NOTHING but a persisted
+   * column reach the append-only audit log`, which asserts this object's whole
+   * key SET — it catches a key the compiler cannot see at all, such as one
+   * built through `Object.fromEntries`.
    */
   private toAuditSnapshot(
     r: ActivityRecord,
     evidenceCount = 0,
-  ): Omit<ActivityRecordDTO, 'locationName'> {
+  ): ActivityRecordAuditSnapshot {
     return {
       id: r.id,
       subsidiaryId: r.subsidiaryId,
@@ -216,6 +255,7 @@ export class ActivityRecordsService {
   private toDTO(
     r: ActivityRecord & { location?: { name: string } | null },
     evidenceCount = 0,
+    actors: Map<string, ResolvedProfile>,
   ): ActivityRecordDTO {
     return {
       ...this.toAuditSnapshot(r, evidenceCount),
@@ -224,7 +264,40 @@ export class ActivityRecordsService {
       // same subsidiary/period/category can differ ONLY by location — and the
       // reviewer saw two identical-looking rows with no way to tell them apart.
       locationName: r.location?.name ?? null,
+      // `actors` is REQUIRED, not optional. Making it optional let the write
+      // paths return a DTO with these keys absent, and both screens splice a
+      // write response straight into state built from a read — so the name
+      // vanished from the row the instant a reviewer took the record into
+      // review. Requiring the map means there is no shape to forget to pass.
+      createdByName: actorDisplayName(r.createdBy, actors),
+      reviewedByName: actorDisplayName(r.reviewedBy, actors),
     };
+  }
+
+  /**
+   * The actor map for one or more records, without a query when the caller is
+   * the only actor involved.
+   *
+   * On a create that is always the case — `created_by` is the caller and
+   * `reviewed_by` is null — so a create costs ZERO extra queries. The guard has
+   * already loaded the caller's whole profile to build `RequestUser`, so the
+   * name is in hand before the request reaches this service.
+   */
+  private async actorsFor(
+    user: RequestUser,
+    records: readonly Pick<ActivityRecord, 'createdBy' | 'reviewedBy'>[],
+  ): Promise<Map<string, ResolvedProfile>> {
+    const known = new Map<string, ResolvedProfile>([
+      [user.id, { email: user.email, fullName: user.fullName }],
+    ]);
+    const unknown = records
+      .flatMap((r) => [r.createdBy, r.reviewedBy])
+      .filter((id): id is string => !!id && !known.has(id));
+    if (unknown.length === 0) return known;
+    for (const [id, profile] of await resolveProfiles(this.prisma, unknown)) {
+      known.set(id, profile);
+    }
+    return known;
   }
 
   /**
@@ -451,15 +524,20 @@ export class ActivityRecordsService {
         location: { select: { name: true } },
       },
     });
-    return rows.map((r) => this.toDTO(r, r._count.evidence));
+    // One query for the whole page over both actor columns at once, never one
+    // per row: `created_by` and `reviewed_by` have no FK to `profiles`, so
+    // there is no `include` that could do this.
+    const actors = await this.actorsFor(user, rows);
+    return rows.map((r) => this.toDTO(r, r._count.evidence, actors));
   }
 
   async get(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
-    const evidenceCount = await this.prisma.evidence.count({
-      where: { activityRecordId: id },
-    });
-    return this.toDTO(record, evidenceCount);
+    const [evidenceCount, actors] = await Promise.all([
+      this.prisma.evidence.count({ where: { activityRecordId: id } }),
+      this.actorsFor(user, [record]),
+    ]);
+    return this.toDTO(record, evidenceCount, actors);
   }
 
   async create(
@@ -550,7 +628,7 @@ export class ActivityRecordsService {
     await this.auditCreateUpdateDelete(user, 'create', created.id, {
       after: this.toAuditSnapshot(created),
     });
-    return this.toDTO(created);
+    return this.toDTO(created, 0, await this.actorsFor(user, [created]));
   }
 
   async update(
@@ -683,7 +761,11 @@ export class ActivityRecordsService {
       before: this.toAuditSnapshot(existing),
       after: this.toAuditSnapshot(updated, updated._count.evidence),
     });
-    return this.toDTO(updated, updated._count.evidence);
+    return this.toDTO(
+      updated,
+      updated._count.evidence,
+      await this.actorsFor(user, [updated]),
+    );
   }
 
   async remove(
@@ -972,7 +1054,14 @@ export class ActivityRecordsService {
     user: RequestUser,
     action: 'create' | 'update' | 'delete',
     entityId: string,
-    diff: Record<string, unknown>,
+    // NOT `Record<string, unknown>`. That bag let a resolved name be added at a
+    // CALL SITE rather than inside the mapper — `before: { ...this.toAuditSnapshot(x),
+    // createdByName: 'Eda Entry' }` compiled clean and passed the whole suite,
+    // and `audit_log` has no correction path. Typed, the same line is TS2561.
+    diff: {
+      before?: ActivityRecordAuditSnapshot;
+      after?: ActivityRecordAuditSnapshot;
+    },
   ): Promise<void> {
     await this.audit.record(user, { action, entity: 'activity_record', entityId, diff });
   }
@@ -1064,6 +1153,10 @@ export class ActivityRecordsService {
           : {}),
       },
     });
-    return this.toDTO(updated, updated._count.evidence);
+    return this.toDTO(
+      updated,
+      updated._count.evidence,
+      await this.actorsFor(user, [updated]),
+    );
   }
 }

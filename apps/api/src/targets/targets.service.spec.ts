@@ -64,6 +64,7 @@ type PrismaMock = ReturnType<typeof createPrismaMock>;
 const admin: RequestUser = {
   id: 'admin-1',
   email: 'admin@tonyai.local',
+  fullName: 'Admin User',
   role: 'super_admin',
   accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
 } as RequestUser;
@@ -71,6 +72,7 @@ const admin: RequestUser = {
 const entry: RequestUser = {
   id: 'entry-1',
   email: 'entry@tonyai.local',
+  fullName: 'Entry User',
   role: 'data_entry',
   accessibleSubsidiaryIds: ['sub-1'],
 } as RequestUser;

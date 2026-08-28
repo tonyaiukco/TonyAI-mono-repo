@@ -70,6 +70,8 @@ const record = (over: Partial<ActivityRecordDTO> = {}): ActivityRecordDTO => ({
   input: null,
   calculation: calculated(56.144),
   createdBy: 'user-1',
+  createdByName: 'Entry User',
+  reviewedByName: null,
   anomalyFlag: false,
   anomalyBaselinePriorCount: 3,
   anomalyBaselineTCo2e: 54.2,

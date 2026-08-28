@@ -57,6 +57,11 @@ function createPrismaMock() {
     auditLog: {
       create: vi.fn(),
     },
+    // Default []: no actor resolves, so every resolved name reads null — the
+    // deleted-profile case. Tests that care about a real name stub it.
+    profile: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   };
 }
 type PrismaMock = ReturnType<typeof createPrismaMock>;
@@ -89,6 +94,24 @@ function createCalcMock(scope = 2) {
 }
 
 let seq = 0;
+/**
+ * Every column `toAuditSnapshot` is allowed to carry, and nothing else.
+ *
+ * Written out rather than derived, because deriving it from the function's
+ * own output would assert nothing. `audit_log` is append-only with no
+ * correction path, so a field reaching it is permanent — this list failing is
+ * the intended outcome of adding one, resolved or persisted.
+ */
+const PERSISTED_KEYS = [
+  'id', 'subsidiaryId', 'locationId', 'reportingYear', 'reportingPeriod',
+  'periodValue', 'category', 'scope', 'status', 'activityValue',
+  'activityUnit', 'input', 'calculation', 'createdBy', 'anomalyFlag',
+  'anomalyBaselinePriorCount', 'anomalyBaselineTCo2e', 'varianceReason',
+  'reviewedBy', 'reviewedAt', 'reviewNote', 'voidReason', 'voidedBy',
+  'voidedAt', 'evidenceCount', 'createdAt', 'updatedAt',
+].sort();
+
+
 function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
   seq += 1;
   const now = new Date('2026-01-01T00:00:00.000Z');
@@ -151,6 +174,7 @@ function superAdmin(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-admin',
     email: 'admin@tonyai.local',
+    fullName: 'Admin User',
     role: 'super_admin',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
@@ -162,6 +186,7 @@ function dataEntry(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-entry',
     email: 'entry@tonyai.local',
+    fullName: 'Entry User',
     role: 'data_entry',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1'],
@@ -173,6 +198,7 @@ function consultant(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-consultant',
     email: 'consultant@tonyai.local',
+    fullName: 'Consultant User',
     role: 'consultant',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1', 'sub-2'],
@@ -472,8 +498,11 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
 
     expect(dto.locationName).toBe('Ankara Plant');
     const diff = audit.record.mock.calls[0][1].diff as any;
-    expect(diff.before).not.toHaveProperty('locationName');
-    expect(diff.after).not.toHaveProperty('locationName');
+    // Whole key SET, on BOTH halves. A named check ("no `locationName`") is the
+    // shape that let a fourth resolved field through, and `diff.before` was
+    // asserted nowhere at all — on the very path this leak has a history on.
+    expect(Object.keys(diff.before).sort()).toEqual(PERSISTED_KEYS);
+    expect(Object.keys(diff.after).sort()).toEqual(PERSISTED_KEYS);
   });
 
   /**
@@ -2241,5 +2270,183 @@ describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
         periodValue: 'Annual',
       },
     });
+  });
+});
+
+/**
+ * Who entered a record, and who decided it — resolved at read time.
+ *
+ * `/review` and `/emissions` showed NOTHING about either: a reviewer could not
+ * see who submitted the record they were deciding, and "who approved this" was
+ * recoverable only by cross-referencing `/audit`. `created_by` and `reviewed_by`
+ * are plain UUIDs with no FK to `profiles` (the row must survive the actor's
+ * deletion), so there is no `include` — the join happens here.
+ */
+
+/**
+ * Who entered a record, and who decided it — resolved at read time.
+ *
+ * `/review` and `/emissions` showed NOTHING about either: a reviewer could not
+ * see who submitted the record they were deciding, and "who approved this" was
+ * recoverable only by cross-referencing `/audit`. `created_by` and `reviewed_by`
+ * are plain UUIDs with no FK to `profiles` (the row must survive the actor's
+ * deletion), so there is no `include` — the join happens here.
+ */
+describe('ActivityRecordsService — actor names are resolved', () => {
+  const PROFILES = [
+    { id: 'user-entry', email: 'entry@tonyai.local', fullName: 'Entry User' },
+    { id: 'user-admin', email: 'admin@tonyai.local', fullName: 'Admin User' },
+  ];
+
+  it('list resolves BOTH actor columns in a single query for the whole page', async () => {
+    const { prisma, service } = build();
+    prisma.profile.findMany.mockResolvedValue(PROFILES);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      { ...makeRecord({ id: 'r1', reviewedBy: 'user-admin' }), _count: { evidence: 1 } },
+      { ...makeRecord({ id: 'r2', reviewedBy: 'user-admin' }), _count: { evidence: 0 } },
+    ]);
+
+    // A consultant, so neither actor is the caller and both need looking up.
+    const rows = await service.list(consultant(), {});
+
+    expect(rows.map((r) => r.createdByName)).toEqual(['Entry User', 'Entry User']);
+    expect(rows.map((r) => r.reviewedByName)).toEqual(['Admin User', 'Admin User']);
+    // ONE query for the page, not one per row and not one per column. The queue
+    // pulls every pending record, so per-row resolution is the shape that
+    // quietly turns a review screen into an N+1.
+    expect(prisma.profile.findMany).toHaveBeenCalledTimes(1);
+    // Sorted, and only the id set is pinned: asserting the literal array would
+    // fix the ORDER of a `Set` iteration and forbid ever adding a field to this
+    // `where` — a test failing because someone HARDENED the query is a test
+    // that will be deleted rather than read.
+    const where = prisma.profile.findMany.mock.calls[0][0].where;
+    expect([...where.id.in].sort()).toEqual(['user-admin', 'user-entry']);
+  });
+
+  it('get resolves the record it returns', async () => {
+    const { prisma, service } = build();
+    prisma.profile.findMany.mockResolvedValue(PROFILES);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-in', subsidiaryId: 'sub-1', reviewedBy: 'user-admin' }),
+    );
+
+    const dto = await service.get(consultant(), 'rec-in');
+    expect(dto.createdByName).toBe('Entry User');
+    expect(dto.reviewedByName).toBe('Admin User');
+  });
+
+  it('names the caller on a create WITHOUT a profile query', async () => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(
+      makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
+    );
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    const dto = await service.create(dataEntry(), CREATE_DTO);
+
+    // `created_by` on a create is always the caller, and the auth guard has
+    // already loaded that whole profile to build `RequestUser`. This is the
+    // measurement behind making the field required: the cost that argued for
+    // resolving on reads only is, on the commonest write, zero.
+    expect(dto.createdByName).toBe('Entry User');
+    expect(dto.reviewedByName).toBeNull();
+    expect(prisma.profile.findMany).not.toHaveBeenCalled();
+  });
+
+  it('carries the names on update and on a review transition', async () => {
+    const { prisma, service } = build();
+    prisma.profile.findMany.mockResolvedValue(PROFILES);
+    // `update` re-runs the calc, which needs the subsidiary's geography.
+    prisma.subsidiary.findUnique.mockResolvedValue(
+      makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
+    );
+    prisma.activityRecord.findUnique.mockResolvedValue({
+      ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1' }),
+      _count: { evidence: 0 },
+    });
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1', ...data }),
+      _count: { evidence: 0 },
+    }));
+
+    // Both screens splice a write response straight into state built from a
+    // read. When these responses omitted the names, the actor column emptied
+    // the instant a reviewer acted — and "Reviewed by —" appeared on a record
+    // whose reviewer had just been set by that very click.
+    const updated = await service.update(dataEntry(), 'rec-u', { activityValue: 5000 });
+    expect(updated.createdByName).toBe('Entry User');
+
+    prisma.activityRecord.findUnique.mockResolvedValue({
+      ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1', status: ActivityRecordStatus.submitted }),
+      _count: { evidence: 1 },
+    });
+    const reviewed = await service.approve(superAdmin(), 'rec-u');
+    expect(reviewed.createdByName).toBe('Entry User');
+    expect(reviewed.reviewedByName).toBe('Admin User');
+    expect(reviewed.reviewedBy).toBe('user-admin');
+  });
+
+  it('reads null — not the raw id — when the actor profile is gone', async () => {
+    const { prisma, service } = build();
+    prisma.profile.findMany.mockResolvedValue([]);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ subsidiaryId: 'sub-1', reviewedBy: 'user-admin' }),
+    );
+
+    const dto = await service.get(consultant(), 'rec-1');
+    // Erasure has to remove the NAME and keep the row. Leaking the uuid back
+    // as a display value would undo exactly what read-time resolution buys.
+    expect(dto.createdByName).toBeNull();
+    expect(dto.reviewedByName).toBeNull();
+    expect(dto.createdBy).toBe('user-entry');
+  });
+
+  it('distinguishes "nobody has reviewed this" from "the reviewer is gone"', async () => {
+    const { prisma, service } = build();
+    prisma.profile.findMany.mockResolvedValue(PROFILES);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ subsidiaryId: 'sub-1', reviewedBy: null }),
+    );
+
+    const dto = await service.get(consultant(), 'rec-1');
+    // Both read `reviewedByName: null`. `reviewedBy` is what tells them apart,
+    // which is why it stays on the DTO next to the name — rendering an
+    // unreviewed record as "deleted user" would claim someone decided it.
+    expect(dto.reviewedByName).toBeNull();
+    expect(dto.reviewedBy).toBeNull();
+  });
+
+  it('lets NOTHING but a persisted column reach the append-only audit log', async () => {
+    const { prisma, service } = build(2);
+    prisma.subsidiary.findUnique.mockResolvedValue(
+      makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }),
+    );
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ ...data, id: 'rec-new' }),
+    );
+
+    await service.create(dataEntry(), CREATE_DTO);
+
+    // A WHOLE-KEY-SET assertion, not a list of forbidden names. The first cut
+    // checked three known keys were absent, and a review proved that a FOURTH
+    // resolved field — an actor email, say — reached the snapshot with both the
+    // compiler and the full suite green. This fails on any new key, which
+    // forces the decision to be made rather than defaulted.
+    //
+    // The compiler helps too, but only halfway, and the half matters: with the
+    // name fields REQUIRED, `Omit` rejects one written as a direct property
+    // (measured: TS2561) where an optional one passed silently. It does NOT
+    // reject the same field arriving through a SPREAD — excess-property
+    // checking does not apply through one, measured at 0 errors for both
+    // `...{ createdByName }` and `...{ createdByEmail }`. This assertion is
+    // what covers that form, and it is the form a real leak would take.
+    const { diff } = audit.record.mock.calls.at(-1)![1] as { diff: Record<string, unknown> };
+    // Kept from the first cut: without it a snapshot that came back undefined
+    // fails as `TypeError: Cannot convert undefined or null to object` rather
+    // than as a legible assertion about what was audited.
+    expect(diff.after).toBeDefined();
+    expect(Object.keys(diff.after as object).sort()).toEqual(PERSISTED_KEYS);
   });
 });

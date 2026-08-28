@@ -56,6 +56,12 @@ const TENANT_TABLES = [
   // the ENABLE bit, not what the policy actually returns — so the one table
   // holding personal data was the one whose containment was never asserted.
   'subsidiaries',
+  // `profiles` joined for the same reason `subsidiaries` did. It has always
+  // held personal data, but until WP22 the only API surface exposing another
+  // person's identity was `/audit`, which is super_admin-only. Record actor
+  // names now flow to every tenant reader, so the containment of the table
+  // behind them has to be asserted rather than assumed from the ENABLE bit.
+  'profiles',
   'activity_records',
   'locations',
   'evidence',
@@ -81,6 +87,20 @@ const ACCESSIBLE_QUERY = {
   period_locks: `select=id&subsidiary_id=in.${ACC}`,
   targets: `select=id&subsidiary_id=in.${ACC}`,
   subsidiary_denominators: `select=id&subsidiary_id=in.${ACC}`,
+  // Filled in below: `profiles_select_own` is `id = auth.uid()`, so the
+  // accessible set is the caller's own row and nothing else. That id is not a
+  // seed constant — the auth user is created at seed time — so it comes from
+  // the token.
+  //
+  // What this proves is the DB layer, which is NOT the layer WP22 changed: the
+  // API reads `profiles` as the owner, so RLS is defence-in-depth here. The
+  // containment argument for the API path is that actor ids come from records
+  // already filtered by `accessibleSubsidiaryIds`.
+  //
+  // `undefined`, not `null`: `count()` defaults its query on `undefined` only,
+  // so if this assignment is ever re-sequenced below the loop the probe fails
+  // loudly instead of quietly fetching `?null` and passing by luck.
+  profiles: undefined,
 };
 
 // --- PostgREST helpers -------------------------------------------------------
@@ -106,6 +126,12 @@ async function getToken(email) {
   return (await res.json()).access_token;
 }
 const getEntryToken = () => getToken(ENTRY_EMAIL);
+
+/** The `sub` claim — the caller's own profile id. `profiles` is keyed on
+ *  `auth.uid()`, so its expected row set is "exactly this one". */
+function subjectOf(jwt) {
+  return JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString()).sub;
+}
 
 function svc(method, path, body) {
   return fetch(`${URL_}/rest/v1/${path}`, {
@@ -225,6 +251,7 @@ async function main() {
     // period locks show up as closed periods on real subsidiaries.
     await seedPeriodLocks();
     await seedForeignSubsidiary();
+    ACCESSIBLE_QUERY.profiles = `select=id&id=eq.${subjectOf(token)}`;
     for (const table of TENANT_TABLES) {
       console.log(`▸ ${table}`);
       const anon = await count(table);

@@ -53,6 +53,23 @@ test('a submitted record reaches the queue and approving clears it', async ({
   await expect(row).toContainText('submitted');
   await row.click();
 
+  // Both actors in the detail sheet, including the one nobody has filled in:
+  // "not reviewed yet" is a fact about the record, and a field that appeared
+  // only once populated would hide it.
+  //
+  // Labels only, deliberately. Here the viewer IS the creator, so asserting the
+  // VALUE could not tell "shows the record's author" apart from "shows whoever
+  // is logged in" — an implementation rendering `user.fullName` would pass. The
+  // value is asserted in the consultant test below, where the two differ.
+  // Scoped to the sheet, not the page: renaming the queue's column header to
+  // "Entered by" put a second copy of that exact string in the table head, and
+  // an unscoped `getByText` is then a strict-mode violation. The same duplicate
+  // -label hazard `pickByFieldLabel` already carries for the two `Unit` fields
+  // on /data-entry.
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByText('Entered by')).toBeVisible();
+  await expect(sheet.getByText('Reviewed by')).toBeVisible();
+
   await page.getByRole('button', { name: 'Approve' }).click();
   await expect(page.getByText('Record approved')).toBeVisible();
 
@@ -123,6 +140,19 @@ test('rejecting requires a reason, and that reason reaches the submitter', async
     page.getByText('Invoice total does not match the meter reading'),
   ).toBeVisible();
 
+  // The discriminating placement for `/emissions`: this drawer is open as the
+  // ENTRY user on a record the ADMIN created, so the name has to be the
+  // author's and not the viewer's. `/review` is covered the same way in the
+  // consultant test; this is the other screen that renders actors.
+  const drawer = page.getByRole('dialog');
+  await expect(drawer.getByText('Entered by')).toBeVisible();
+  // The admin both entered and rejected this record, so the name stands twice.
+  await expect(drawer.getByText('Tony Admin')).toHaveCount(2);
+  // The discriminator: the VIEWER is Eda Entry, and her name must appear
+  // nowhere in this drawer. Without it, an implementation rendering the
+  // logged-in user rather than the record's actors would pass everything else.
+  await expect(drawer.getByText('Eda Entry')).toHaveCount(0);
+
   // Resubmitting reverses a reviewer's decision, so it is gated on authorship.
   // This user can SEE the subsidiary but did not author the record; without the
   // gate they could make the rejection disappear while remaining forbidden from
@@ -171,6 +201,18 @@ test('a consultant may send a record back but is not offered Approve', async ({
     .locator('table tbody tr', { hasText: 'TonyAI Gas' })
     .filter({ hasText: 'Natural Gas' })
     .filter({ hasText: 'Q1 2026' });
+
+  // The discriminating case for the actor column: this record was created with
+  // the ADMIN's token and is being read by the CONSULTANT. So the name has to
+  // be the author's, and must NOT be the viewer's — an implementation that
+  // rendered the logged-in user would be indistinguishable from a correct one
+  // in the two tests above, where the viewer is also the creator.
+  await expect(row).toContainText('Tony Admin');
+  // The negative is only meaningful because the positive above runs first on
+  // the SAME locator: `not.toContainText` passes vacuously against a locator
+  // matching zero elements. Do not reorder these.
+  await expect(row).not.toContainText('Cem Consultant');
+
   await row.click();
 
   // The control a consultant may not use is absent, and the page says why
@@ -191,6 +233,14 @@ test('a consultant may send a record back but is not offered Approve', async ({
   // a reviewer would have watched a record they had merely opened vanish.
   await expect(row).toBeVisible();
   await expect(row).toContainText('under review');
+  // ...and the author is STILL named. This is the exact click at which the
+  // actor column emptied: `review` leaves the record pending, so the write
+  // response is spliced straight into the row, and while the name fields were
+  // optional that response omitted them — the column fell back to an em dash on
+  // the very action that made this consultant the reviewer. Three review seats
+  // found it independently; the fields are required now, so there is no shape
+  // a write path can forget to fill.
+  await expect(row).toContainText('Tony Admin');
 
   const mid = await request.get(`${API_BASE}/activity-records/${id}`, {
     headers: bearer(token),

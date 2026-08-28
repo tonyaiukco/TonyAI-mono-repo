@@ -37,6 +37,7 @@ function makeUser(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
     id: 'user-1',
     email: 'admin@tonyai.local',
+    fullName: '1 User',
     role: 'super_admin',
     organisationId: 'org-1',
     accessibleSubsidiaryIds: ['sub-1'],
