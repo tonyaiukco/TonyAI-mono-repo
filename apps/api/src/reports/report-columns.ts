@@ -1,5 +1,6 @@
 import { entityLabel } from '@tonyai/shared-types';
 import { ANOMALY_BASELINE_PERIODS } from '@tonyai/shared-types';
+import { csvField, type CellValue } from '../common/csv-cell';
 import type {
   ReportLedgerRow,
   ReportRowBase,
@@ -84,8 +85,14 @@ export function anomalyCell(r: {
  */
 export const WITHDRAWN = 'Withdrawn';
 
-/** What a flat-export cell may hold before quoting. */
-export type CellValue = string | number;
+/**
+ * What a flat-export cell may hold before quoting.
+ *
+ * Re-exported, not redeclared: the type and the transform that consumes it
+ * (`../common/csv-cell`) travel together, and every column below is typed
+ * against this name.
+ */
+export type { CellValue };
 
 /**
  * What a PDF cell may hold.
@@ -457,31 +464,6 @@ export const _numericParity: [UndeclaredNumeric] extends [never]
   : UndeclaredNumeric = true;
 
 /**
- * RFC-4180 quoting plus spreadsheet-formula neutralisation, applied by the row
- * writers below to EVERY cell as the last transform.
- *
- * Two properties are load-bearing and neither is obvious:
- *
- * ORDER. The formula prefix runs BEFORE the quote test, so a `'`-prefixed
- * string is then quoted only if it also contains a separator. Reversing them
- * yields `'"…"`.
- *
- * THE BARE `\r`. Most parsers end a record on it, so a withdrawal reason
- * containing one would split into a second row — a fabricated ledger line, in
- * the artifact a reader trusts, behind no database row and no audit entry. A
- * browser sends `\r\n`, so reaching this needs a deliberate API call; it is
- * still a forgery.
- *
- * It must never move into a per-column renderer: one column could then opt out,
- * and the opt-out is a forged row.
- */
-function quote(v: CellValue): string {
-  let s = String(v);
-  if (/^[=+\-@]/.test(s)) s = `'${s}`;
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-/**
  * The header, and the only one: withdrawn records share this table rather than
  * getting a second file, because one header row keeps the export parseable.
  */
@@ -489,7 +471,13 @@ export function csvHeader(): string {
   return [
     ...BODY_COLUMNS.filter((c) => c.csv).map((c) => c.csv!.label),
     ...DISCLOSURE_COLUMNS.map((d) => d.label),
-  ].join(',');
+  ]
+    // Identity for all fifteen labels, which is the point: they are module
+    // literals today, and the golden that pins them fails with a message
+    // asking you to update a literal — so a sixteenth column with a hostile
+    // label could be waved through by editing both sides. The header is a row.
+    .map(csvField)
+    .join(',');
 }
 
 /**
@@ -526,7 +514,7 @@ export function csvLedgerRow(r: ReportLedgerRow): string {
     // withdrawn.
     ...DISCLOSURE_COLUMNS.map(() => ''),
   ]
-    .map(quote)
+    .map(csvField)
     .join(',');
 }
 
@@ -544,7 +532,7 @@ export function csvWithdrawnRow(r: ReportWithdrawnRow): string {
     ),
     ...DISCLOSURE_COLUMNS.map((d) => d.cell(r)),
   ]
-    .map(quote)
+    .map(csvField)
     .join(',');
 }
 
