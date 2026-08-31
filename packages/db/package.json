@@ -12,7 +12,7 @@
     "reset": "prisma migrate reset --force && node scripts/reclaim-evidence.mjs --apply --older-than=0",
     "seed": "tsx prisma/seed.ts",
     "studio": "prisma studio",
-    "lint": "echo \"(db) no lint\" && exit 0",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "evidence:reclaim": "node scripts/reclaim-evidence.mjs",
     "test": "vitest run --passWithNoTests",

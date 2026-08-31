@@ -6,7 +6,7 @@
     "dev": "next dev --port 3000",
     "build": "next build",
     "start": "next start --port 3000",
-    "lint": "echo \"(web) lint placeholder \u2014 eslint to be configured by qa-auditor\" && exit 0",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node next.config.test.mjs && vitest run --passWithNoTests"
   },

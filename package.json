@@ -2,13 +2,14 @@
   "name": "tonyai",
   "version": "0.0.0",
   "private": true,
-  "description": "TonyAI \u2014 Enterprise carbon accounting / ESG SaaS (monorepo)",
+  "description": "TonyAI — Enterprise carbon accounting / ESG SaaS (monorepo)",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "setup": "bash scripts/bootstrap.sh",
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "lint": "turbo run lint",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "typecheck": "turbo run typecheck && pnpm typecheck:e2e",
     "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "test": "turbo run test",
@@ -27,10 +28,17 @@
     "docker:down": "bash scripts/compose-dev.sh down"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.61.1",
     "@types/node": "^22",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.2.0",
+    "eslint-plugin-import-x": "^4.17.1",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^17.11.0",
     "turbo": "^2.3.3",
-    "typescript": "5.7.3"
+    "typescript": "5.7.3",
+    "typescript-eslint": "^8.68.0"
   },
   "engines": {
     "node": ">=20"

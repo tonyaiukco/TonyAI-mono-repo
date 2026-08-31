@@ -19,7 +19,6 @@ import {
   excelWithdrawnHeader,
   excelWithdrawnRow,
   excelWithdrawnTotalRow,
-  anomalyCell,
   csvHeader,
   csvLedgerRow,
   csvWithdrawnRow,

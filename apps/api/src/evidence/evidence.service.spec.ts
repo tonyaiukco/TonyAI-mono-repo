@@ -169,6 +169,9 @@ describe('EvidenceService', () => {
     expect(dto.fileName).toBe(name);
     const key = storage.upload.mock.calls[0][1] as string;
     expect(key).toMatch(/^rec-1\//);
+    // The control range IS the assertion here: it pins that the storage key
+    // is pure ASCII, which is the whole point of the sanitiser under test.
+    // eslint-disable-next-line no-control-regex
     expect(key, 'the object key must not carry non-ASCII').toMatch(/^[\u0000-\u007F]*$/);
   });
 

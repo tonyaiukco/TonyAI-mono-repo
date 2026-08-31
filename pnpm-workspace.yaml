@@ -18,3 +18,7 @@ allowBuilds:
   prisma: true
   puppeteer: true
   sharp: true
+  # eslint-plugin-import-x's native resolver. Its postinstall only links the
+  # platform binary that pnpm already installed as an optional dependency;
+  # verified that lint resolves `@tonyai/*` workspace imports with it OFF.
+  unrs-resolver: false

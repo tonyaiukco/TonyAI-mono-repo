@@ -56,6 +56,9 @@ export function EmissionsCharts({ subsidiaries }: EmissionsChartsProps) {
     { name: 'Missing', value: statusCounts.missing, color: COLORS.missing, percent: total > 0 ? Math.round((statusCounts.missing / total) * 100) : 0 },
   ];
 
+  // Recharts passes its tooltip render prop an internal payload shape that
+  // its published types do not export in a usable form.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (

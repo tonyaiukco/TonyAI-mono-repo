@@ -7,7 +7,6 @@ import {
 import { randomUUID } from 'node:crypto';
 import {
   ActivityRecordStatus,
-  Prisma,
   type ActivityRecord,
   type Evidence,
 } from '@tonyai/db';
@@ -118,7 +117,7 @@ export class EvidenceService {
     // uuid — the user's real name lives in `fileName` and now also rides on the
     // signed URL's download parameter. Transliterating instead would buy nothing
     // and risk collisions.
-    const safeName = file.originalname.replace(/[^\w.\-]+/g, '_').slice(0, 120);
+    const safeName = file.originalname.replace(/[^\w.-]+/g, '_').slice(0, 120);
     const storagePath = `${recordId}/${randomUUID()}-${safeName}`;
     await this.storage.upload(
       EVIDENCE_BUCKET,
