@@ -58,7 +58,9 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   workers: 1,
-  reporter: [['list']],
+  // Under CI the list reporter scrolls past in a log nobody reads; the HTML
+  // report is uploaded as an artifact instead.
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
   timeout: 60_000,
   expect: { timeout: 10_000 },
 
@@ -69,7 +71,12 @@ export default defineConfig({
 
   use: {
     baseURL: 'http://localhost:3000',
-    trace: 'on-first-retry',
+    // NOT `on-first-retry`: `retries` is 0 — deliberately, because the suite is
+    // serial against one shared database and a retried write-heavy test would
+    // collide with its own leftovers — so there is never a first retry and that
+    // setting captured a trace exactly never. This one fires on the run that
+    // actually failed, which is the only one there is.
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
 
@@ -86,7 +93,9 @@ export default defineConfig({
       cwd: apiDir,
       url: 'http://localhost:3001/api/v1/health',
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      // 180s rather than 120s: tuned on a laptop, but a 2-vCPU CI runner has to
+    // cold-build Nest / cold-compile Next before the health check can pass.
+    timeout: 180_000,
       stdout: 'pipe',
       stderr: 'pipe',
     },
@@ -95,7 +104,9 @@ export default defineConfig({
       cwd: __dirname,
       url: 'http://localhost:3000/login',
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      // 180s rather than 120s: tuned on a laptop, but a 2-vCPU CI runner has to
+    // cold-build Nest / cold-compile Next before the health check can pass.
+    timeout: 180_000,
       stdout: 'pipe',
       stderr: 'pipe',
     },

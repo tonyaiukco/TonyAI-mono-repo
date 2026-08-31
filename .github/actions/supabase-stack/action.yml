@@ -1,0 +1,84 @@
+name: Supabase local stack
+description: >
+  Bring up the local Supabase stack, apply migrations, seed it, and export every
+  key the API, the web app and the probes need — all as job env, no secrets.
+
+inputs:
+  cli-version:
+    description: >
+      Pinned Supabase CLI version. NOT cosmetic: newer CLIs sign asymmetrically
+      and stopped emitting some legacy key names, and this repo's API runs an
+      HS256-capable `auto` scheme that wants JWT_SECRET. 2.67.1 is the version
+      the bootstrap script is known-good against.
+    required: false
+    default: 2.67.1
+
+runs:
+  using: composite
+  steps:
+    - uses: supabase/setup-cli@v1
+      with:
+        version: ${{ inputs.cli-version }}
+
+    # `studio`, `mailpit` and `realtime` are developer conveniences; `supavisor`
+    # is the connection pooler, disabled in config.toml anyway; `edge-runtime`
+    # serves functions this project has none of. Everything the probes and the
+    # seed touch stays: postgres, kong, gotrue, postgrest, storage-api.
+    - name: Start Supabase
+      shell: bash
+      run: supabase start -x studio,mailpit,realtime,edge-runtime,supavisor
+
+    # Derived, never hardcoded. The local keys ARE well-known demo values (so no
+    # GitHub secret is involved at all), but their exact bytes differ per CLI
+    # version — baking them in is how storage and auth break silently on a bump.
+    # This is the same read `scripts/bootstrap.sh` does.
+    - name: Export Supabase env
+      shell: bash
+      run: |
+        set -euo pipefail
+        eval "$(supabase status -o env | grep -E '^(ANON_KEY|SERVICE_ROLE_KEY|JWT_SECRET|API_URL|DB_URL)=')"
+        for required in ANON_KEY SERVICE_ROLE_KEY API_URL DB_URL; do
+          if [ -z "${!required:-}" ]; then
+            echo "::error::supabase status did not report $required — the pinned CLI has changed its output. See scripts/bootstrap.sh, which guards the same thing."
+            exit 1
+          fi
+        done
+
+        {
+          echo "DATABASE_URL=$DB_URL"
+          echo "DIRECT_URL=$DB_URL"
+          echo "SUPABASE_URL=$API_URL"
+          echo "SUPABASE_SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY"
+          # What the probes read.
+          echo "E2E_SUPABASE_URL=$API_URL"
+          echo "E2E_SUPABASE_ANON_KEY=$ANON_KEY"
+          echo "E2E_SUPABASE_SERVICE_KEY=$SERVICE_ROLE_KEY"
+          # What the web app inlines AT BUILD TIME.
+          echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
+          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON_KEY"
+          echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:3001/api/v1"
+          # The API. Without ALLOW_INSECURE_LOCAL_AUTH the API refuses to boot
+          # and the failure surfaces as a 120s health-check timeout.
+          echo "PORT=3001"
+          echo "WEB_ORIGIN=http://localhost:3000"
+          echo "ALLOW_INSECURE_LOCAL_AUTH=true"
+        } >> "$GITHUB_ENV"
+
+        if [ -n "${JWT_SECRET:-}" ]; then
+          echo "SUPABASE_JWT_SECRET=$JWT_SECRET" >> "$GITHUB_ENV"
+          echo "SUPABASE_JWT_SCHEME=auto" >> "$GITHUB_ENV"
+        else
+          echo "::notice::No JWT_SECRET from this CLI — falling back to the JWKS scheme."
+          echo "SUPABASE_JWT_SCHEME=jwks" >> "$GITHUB_ENV"
+        fi
+
+    # `deploy`, never `reset`: a `migrate reset` drops the PostgREST grants
+    # migration the probes depend on, and config.toml points [db.seed] at a
+    # seed.sql that does not exist, so a CLI-side reset would run nothing.
+    - name: Migrate and seed
+      shell: bash
+      run: |
+        set -euo pipefail
+        pnpm --filter @tonyai/db run deploy
+        pnpm --filter @tonyai/db run generate
+        pnpm --filter @tonyai/db run seed

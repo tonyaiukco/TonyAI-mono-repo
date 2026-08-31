@@ -43,6 +43,49 @@ jobs:
       - name: Test
         run: pnpm test
 
+  # The database-layer security gate, and the only one that runs on every PR.
+  #
+  # Tenant isolation in this product is two-layer: the NestJS guard is the
+  # primary control, Supabase RLS is defence-in-depth. Unit tests cover the
+  # guard; NOTHING covered RLS in CI until this job, and the probes talk to
+  # PostgREST directly — bypassing the guard entirely — so they are the only
+  # mechanism that can prove the second layer holds on its own.
+  #
+  # It also runs the sweep that fails if any table in `public` ships with RLS
+  # off, which is the failure a single new migration is always one step away
+  # from.
+  #
+  # ~34 checks, no browser, no Next build, zero secrets: the local Supabase keys
+  # are published demo values and are derived at job time rather than stored.
+  # The full Playwright suite is deliberately NOT here — it is serial against one
+  # shared database and would add 25-35 billed minutes to every push. It runs
+  # nightly instead, in `e2e.yml`.
+  rls-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/supabase-stack
+
+      - name: RLS containment probes
+        run: pnpm rls:probe
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          supabase status || true
+          docker ps || true
+
   # Proof-of-build for the container images (no registry push, no cloud creds —
   # the Azure deploy pipeline (push to ACR + Container Apps via GitHub OIDC)
   # lands in the credit-dependent half of Phase 2).

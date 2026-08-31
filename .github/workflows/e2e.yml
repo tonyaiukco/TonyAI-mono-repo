@@ -1,0 +1,76 @@
+# The end-to-end gate.
+#
+# Deliberately NOT on pull_request. The suite is serial by construction —
+# `workers: 1`, one shared database, cross-spec tuple reservations — so it
+# cannot be sharded without giving each shard its own database, and this repo is
+# private, so 25-35 minutes on every push is billed and would change how people
+# work. Nightly catches drift within 24 hours, which is the thing that actually
+# matters here: the `rbac-tenant` approval fixture broke on 2026-08-20 and
+# survived ten merged PRs because nothing ran it.
+#
+# Run it on demand before merging anything that touches a user flow:
+#   gh workflow run e2e.yml
+name: E2E
+
+on:
+  schedule:
+    # 03:00 UTC — after the working day in UK/TR, before the next one starts.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+# A manual run supersedes an in-flight nightly rather than queueing behind it.
+concurrency:
+  group: e2e
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/supabase-stack
+
+      # `--with-deps` also installs the shared libraries Chromium needs, which
+      # the API's own bundled Puppeteer then relies on — `reports.spec.ts`
+      # generates a real PDF through it.
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Playwright starts both servers itself and rebuilds the API first
+      # (a stale dist/ silently green'd six specs once). Every value it needs is
+      # already in the job env from the composite action.
+      - name: E2E
+        run: pnpm e2e
+
+      # The RLS layer, re-checked after 84 tests have written and deleted rows.
+      - name: RLS containment probes
+        run: pnpm rls:probe
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          supabase status || true
+          docker ps || true
