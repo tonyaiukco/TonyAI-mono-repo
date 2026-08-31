@@ -10,6 +10,7 @@ import type {
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveProfiles } from '../common/resolve-profiles';
 import type { RequestUser } from '../auth/auth.types';
+import { DEFAULT_AUDIT_LIMIT, MAX_AUDIT_LIMIT } from './audit.constants';
 import { ListAuditQueryDto } from './dto/list-audit-query.dto';
 
 /**
@@ -32,15 +33,6 @@ import { ListAuditQueryDto } from './dto/list-audit-query.dto';
  * The API is the primary control (Prisma connects as the owner and bypasses
  * RLS), so this check is what actually enforces it. */
 const READ_ROLES = new Set<UserRole>(['super_admin']);
-
-const DEFAULT_LIMIT = 50;
-/**
- * Hard ceiling, enforced HERE as well as in the DTO. The DTO's `@Max` only runs
- * for HTTP callers going through the global ValidationPipe — an internal caller
- * (an export job, a second controller) could otherwise ask for `take: 1e9` and
- * pull the whole trail into memory. Exported so the DTO uses the same number.
- */
-export const MAX_AUDIT_LIMIT = 200;
 
 /** Accepts a transaction client so the audit row commits with the mutation. */
 type Writer = Pick<Prisma.TransactionClient, 'auditLog'>;
@@ -99,12 +91,12 @@ export class AuditService {
       return {
         items: [],
         total: 0,
-        limit: Math.min(Math.max(query.limit ?? DEFAULT_LIMIT, 1), MAX_AUDIT_LIMIT),
+        limit: Math.min(Math.max(query.limit ?? DEFAULT_AUDIT_LIMIT, 1), MAX_AUDIT_LIMIT),
         offset: Math.max(query.offset ?? 0, 0),
       };
     }
 
-    const limit = Math.min(Math.max(query.limit ?? DEFAULT_LIMIT, 1), MAX_AUDIT_LIMIT);
+    const limit = Math.min(Math.max(query.limit ?? DEFAULT_AUDIT_LIMIT, 1), MAX_AUDIT_LIMIT);
     const offset = Math.max(query.offset ?? 0, 0);
 
     const where: Prisma.AuditLogWhereInput = {
