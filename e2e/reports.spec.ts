@@ -142,9 +142,12 @@ test('reports: a withdrawn figure is disclosed in the export, not silently omitt
   // that also appeared as a counted ledger row would be back in every total.
   expect(lines.filter((l) => l.includes('54321')).length).toBe(1);
 
-  // Relative, not `> 0`: this database already holds withdrawn records (the six
-  // WP18 repaired), so an absolute assertion is satisfied by the neighbours and
-  // would pass with the endpoint ignoring this withdrawal entirely.
+  // Relative, not `> 0`, and relative is what makes it environment-independent.
+  // A long-lived dev database holds withdrawn records already (the six WP18
+  // repaired), and there an absolute assertion is satisfied by the neighbours
+  // and would pass with the endpoint ignoring this withdrawal entirely. A
+  // freshly reset seed holds ZERO, where `> 0` would pass for the wrong reason
+  // in the other direction. `before + 1` is the only form true of both.
   expect(await withdrawnCount(request, token)).toBe(before + 1);
 
   // And the screen says it too, BEFORE anyone generates a file. The sentence

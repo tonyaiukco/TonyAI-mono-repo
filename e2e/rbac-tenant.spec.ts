@@ -111,14 +111,31 @@ test('a non-approver role is refused with 403, not 404 (approval is super_admin 
   request,
 }) => {
   // Decision 2026-07-30: the seat that prepares data does not approve it.
-  // There is no seeded consultant, so this asserts the rule at the boundary
-  // that matters: the record IS visible to this user (so not a 404) — their
-  // ROLE simply may not approve it. Uses a seeded record, so no writes and no
-  // interaction with the anomaly baseline.
+  // Asserted at the boundary that matters: the record IS visible to this user
+  // (so not a 404) — their ROLE simply may not approve it. Uses a seeded
+  // record, so no writes and no interaction with the anomaly baseline.
+  //
+  // `data_entry` rather than the consultant deliberately: the consultant's own
+  // approve-403 is covered in `review-queue.spec.ts`, and this is the seat that
+  // enters data, which is where "prepared it, therefore may approve it" would
+  // actually be assumed.
+  //
+  // THE SERIES IS PART OF THE FIXTURE, not an arbitrary pick. WP18 made
+  // site-reported months exclusive, so the seed SKIPS the company-level row for
+  // six (subsidiary, category, month) tuples — Energy·Electricity and
+  // Logistics·Fuel, January through March (`seed.ts`, `siteReportedKeys`). This
+  // test asked for Energy·Electricity·January, which is one of them, so
+  // `findRecordId` threw before the assertion below ever ran. Natural Gas keeps
+  // all twelve company-level months and is in no `LOCATION_ACTIVITY` entry.
+  //
+  // It broke silently for a reason worth knowing: on a long-lived dev database
+  // the yielded row still existed as `voided`, the list endpoint does not
+  // filter voided rows, and `approve()` checks role BEFORE status — so the test
+  // passed there and failed only after a fresh `pnpm db:reset`.
   const token = await getAccessToken(request, ENTRY_EMAIL);
   const id = await findRecordId(request, token, {
     subsidiaryId: SUB.energy,
-    category: 'Electricity',
+    category: 'Natural Gas',
     periodValue: 'January',
     reportingPeriod: 'monthly',
   });
