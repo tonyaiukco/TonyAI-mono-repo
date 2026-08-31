@@ -94,19 +94,45 @@ export default defineConfig({
       url: 'http://localhost:3001/api/v1/health',
       reuseExistingServer: !process.env.CI,
       // 180s rather than 120s: tuned on a laptop, but a 2-vCPU CI runner has to
-    // cold-build Nest / cold-compile Next before the health check can pass.
-    timeout: 180_000,
+      // cold-build Nest and build Next before the health check can pass.
+      timeout: 180_000,
       stdout: 'pipe',
       stderr: 'pipe',
     },
     {
-      command: 'pnpm --filter @tonyai/web dev',
+      /**
+       * Production build under CI, dev server locally.
+       *
+       * Not a preference — measured. On the first CI run the very FIRST browser
+       * test failed on a 10s expect timeout waiting for the dashboard heading,
+       * while the next test hitting the same page passed in 5.3s: `next dev`
+       * compiles each route on first hit, and a 2-vCPU runner is slow enough
+       * that the cold compile outran the assertion. Raising the timeout would
+       * have hidden the cause and slowed every genuine failure; `next start`
+       * removes the class outright and tests the artifact that actually ships.
+       *
+       * Safe here because every page under `app/` is a client component — no
+       * server data fetching, no `generateStaticParams`, no dev-only behaviour
+       * in the specs — and `next.config.mjs` applies `output: 'standalone'`
+       * only in PHASE_PRODUCTION_BUILD, so `next start` is the supported path.
+       *
+       * REQUIRES the Supabase keys to be in env BEFORE this runs: the browser
+       * client inlines `NEXT_PUBLIC_*` at BUILD time, so a build without them
+       * produces an app whose auth client is constructed with `undefined`. The
+       * CI job exports them before calling `pnpm e2e`.
+       *
+       * Locally it stays `dev`, so running the suite against a server you are
+       * editing keeps working.
+       */
+      command: process.env.CI
+        ? 'pnpm --filter @tonyai/web build && pnpm --filter @tonyai/web start'
+        : 'pnpm --filter @tonyai/web dev',
       cwd: __dirname,
       url: 'http://localhost:3000/login',
       reuseExistingServer: !process.env.CI,
       // 180s rather than 120s: tuned on a laptop, but a 2-vCPU CI runner has to
-    // cold-build Nest / cold-compile Next before the health check can pass.
-    timeout: 180_000,
+      // cold-build Nest and build Next before the health check can pass.
+      timeout: 180_000,
       stdout: 'pipe',
       stderr: 'pipe',
     },
