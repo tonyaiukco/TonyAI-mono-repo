@@ -1392,10 +1392,18 @@ export interface ActivityRecordDTO {
    * the exact moment a reviewer took the record into review — and on the void
    * confirmation, which is the one irreversible act in the product.
    *
-   * Required also restores a compiler check that optional silently removed:
-   * `Omit<ActivityRecordDTO, …>` rejects a REQUIRED field it names being spread
-   * into the audit snapshot, and ignores an optional one. `audit_log` is
-   * append-only with no correction path, so that guard has to be real.
+   * What REQUIRED actually buys, stated precisely because the first version of
+   * this note got it wrong: a write path CANNOT OMIT the field. Leaving it out
+   * of the single `toDTO` every response funnels through is a compile error,
+   * which is the whole defence against the regression above.
+   *
+   * It is NOT what keeps a resolved name out of the audit snapshot — that was
+   * true of the bare-`Omit` predecessor and is no longer true. The guard is now
+   * `[K in ResolvedRecordFields]?: never`, an assignability check that fires on
+   * a required field AND an optional one, and on a spread as well as a direct
+   * property. Measured all four ways when `voidedByName` was added. `audit_log`
+   * is append-only with no correction path, so that guard has to be real — and
+   * it is real independently of this decision.
    *
    * The cost that motivated `optional` turned out to be near zero: the auth
    * guard already loads the caller's whole profile on every request, so a
@@ -1483,12 +1491,24 @@ export interface ActivityRecordDTO {
    */
   voidReason: string | null;
   voidedBy: string | null;
-  /* Deliberately NOT accompanied by a `voidedByName`. The two actors that got
-   * resolved names are the two that got columns; adding a third REQUIRED field
-   * with no consumer is the one thing that is expensive to undo. The gap is
-   * real though — FR §5.4 ties a withdrawal to ISO 14064-1 §9.3.1
-   * traceability, and today the reason is rendered while the person is only in
-   * `/audit`. Filed as a follow-up, not overlooked. */
+  /**
+   * Who withdrew the figure, resolved at read time.
+   *
+   * The third FK-less actor, and the last one to get a name. It was left out
+   * deliberately when `createdByName` and `reviewedByName` landed — a third
+   * REQUIRED field with no consumer is expensive to undo — and is added now
+   * that a consumer exists. `null` carries the same two meanings it does on
+   * `reviewedByName`: `voidedBy` is itself null on a record nobody withdrew, so
+   * a null name can mean "never withdrawn" rather than "the profile is gone".
+   * `voidedBy` stays on the DTO beside it as the discriminator.
+   *
+   * WHY IT MATTERS MORE HERE THAN ON THE OTHER TWO. A withdrawal is the one
+   * action this product cannot undo: the reason is uncorrectable by design and
+   * the record is terminal. FR §5.4 ties it to ISO 14064-1 §9.3.1
+   * traceability, and until now a restatement said WHEN and WHY but never WHO
+   * — the person was reachable only by opening `/audit` and knowing to look.
+   */
+  voidedByName: string | null;
   voidedAt: string | null;
   /** Number of evidence files linked to this record (FR §4.1). */
   evidenceCount: number;

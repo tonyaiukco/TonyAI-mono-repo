@@ -148,14 +148,20 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   // confirmation of the one irreversible act in the product. The names are
   // required now, so a write response cannot omit them.
   await expect(drawer.getByText('Entered by')).toBeVisible();
-  // TWICE, and the count is the assertion. One admin created this record,
-  // approved it and withdrew it, so the same name stands against both actors —
-  // which is the segregation-of-duties gap made visible rather than prevented.
-  // Four eyes is a property of the consultant seat only; before these columns
-  // existed, a self-approval was discoverable solely from /audit, which
-  // data_entry and consultant cannot read. `toBeVisible()` here is a strict
-  // -mode violation for exactly that reason, so do not "fix" it with .first().
-  await expect(drawer.getByText('Tony Admin')).toHaveCount(2);
+  // THREE TIMES, and the count is the assertion. One admin created this
+  // record, approved it AND withdrew it, so the same name stands against all
+  // three actors — which is the segregation-of-duties gap made visible rather
+  // than prevented. Four eyes is a property of the consultant seat only;
+  // before these columns existed, a self-approval was discoverable solely from
+  // /audit, which data_entry and consultant cannot read. `toBeVisible()` here
+  // is a strict-mode violation for exactly that reason, so do not "fix" it
+  // with .first().
+  //
+  // It was two until `voidedByName` landed. The third occurrence is the
+  // withdrawer, and it makes the point stronger rather than weaker: the same
+  // person entered the figure, accepted it, and took it back out of the
+  // inventory, with nothing in the product stopping any of the three.
+  await expect(drawer.getByText('Tony Admin')).toHaveCount(3);
 
   // And the server agrees. Without this the test would pass on a UI that
   // rendered an optimistic result and dropped the request.

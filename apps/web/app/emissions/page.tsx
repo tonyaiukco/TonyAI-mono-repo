@@ -355,6 +355,14 @@ export default function EmissionsAnalysisPage() {
       )
     : null;
   const voidBlockedBy = voidReasonError(voidReason);
+  // Resolved once here rather than twice in the branch below, matching how
+  // the sibling actor rows are built. Safe to compute unconditionally: the
+  // helper's own first branch turns a null id into the muted em dash, and
+  // the block that reads it only renders on a voided record anyway.
+  const voidActor = recordActorLabel(
+    selectedRecord?.voidedBy ?? null,
+    selectedRecord?.voidedByName ?? null,
+  );
 
   const totals = summary?.totals ?? { scope1: 0, scope2: 0, scope3: 0, total: 0 };
   const byCategory = summary?.byCategory ?? [];
@@ -1291,6 +1299,29 @@ export default function EmissionsAnalysisPage() {
                     <p className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
                       {selectedRecord.voidReason?.trim() ||
                         "No reason was recorded — this predates the requirement."}
+                    </p>
+                    {/* WHO and WHEN, beside the why. The DTO has promised all
+                        three since the withdrawal shipped ("why an approved
+                        figure was withdrawn, by whom, and when") while this
+                        block rendered only the reason — the person was
+                        reachable solely through /audit, which is
+                        super_admin-only, so for every other seat a restatement
+                        named nobody. FR §5.4 ties a withdrawal to
+                        ISO 14064-1 §9.3.1 traceability, and a restatement with
+                        no attributable actor does not meet it. */}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Withdrawn by{' '}
+                      <span
+                        className={
+                          voidActor.muted ? 'italic' : 'font-medium text-foreground'
+                        }
+                      >
+                        {voidActor.text}
+                      </span>
+                      {selectedRecord.voidedAt
+                        ? ` on ${formatDate(selectedRecord.voidedAt)}`
+                        : ''}
+                      .
                     </p>
                     <p className="mt-2 text-xs text-muted-foreground">
                       It stays on record for the audit trail and counts towards

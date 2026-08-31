@@ -311,7 +311,24 @@ test('the queue is ordered by longest WAIT, not by oldest draft', async ({ page,
   await login(page, ADMIN_EMAIL);
   await page.goto('/review');
   const rows = page.locator('table tbody tr');
-  await expect(rows.first()).toBeVisible();
+
+  // Wait for the TWO ROWS THIS TEST ASSERTS ON, not merely for "a row".
+  //
+  // `allInnerTexts()` does NOT auto-wait — it reads every current match once
+  // and never retries — so `expect(rows.first()).toBeVisible()` followed by a
+  // bulk read is a race: the first row can be on screen while the rest of the
+  // queue is still being committed, and the read then returns a set these
+  // records are not in yet. It is the only `allInnerTexts()` in the suite.
+  //
+  // It cost two CI runs to see, because the failure LOOKS impossible: the
+  // error-context snapshot, captured after the assertion, shows both rows
+  // present, so the page was right and only the moment of reading was wrong.
+  // Being ordered by wait is the property under test, so the rows have to be
+  // there before the order is read.
+  const rowFor = (category: string) =>
+    rows.filter({ hasText: category }).filter({ hasText: 'Q2 2026' });
+  await expect(rowFor('Natural Gas')).toHaveCount(1);
+  await expect(rowFor('Fuel')).toHaveCount(1);
 
   const text = await rows.allInnerTexts();
   const waitedLonger = text.findIndex((t) => t.includes('Natural Gas') && t.includes('Q2 2026'));
