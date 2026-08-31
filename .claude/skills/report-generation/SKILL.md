@@ -77,7 +77,16 @@ Produce audit-ready file artifacts from live data. The **canonical exemplar** is
    extension + non-empty file size.
 6. Deps note: `puppeteer` needs `allowBuilds` in `pnpm-workspace.yaml` (pnpm 11)
    and downloads Chromium on postinstall; keep it API-only. `exceljs` for
-   multi-sheet xlsx; plain string-building for CSV (quote `[",\n]`).
+   multi-sheet xlsx; plain string-building for CSV — but **never hand-roll the
+   cell**: call `csvField()` from `apps/api/src/common/csv-cell.ts`. It quotes
+   `[",\r\n]` (the bare `\r` too — most parsers end a record on it, so a
+   reason containing one forges a ledger row behind no database row and no
+   audit entry) and neutralises `/^\s*[=+\-@]/` BEFORE quoting, so the `'`
+   lands inside the quotes. The leading `\s*` is not cosmetic: anchored at
+   index 0 the guard let `"   =SUM(A1)"` through raw AND unquoted. Finite
+   numbers pass through unstringified — `-` leads a formula and every negative
+   number, and text `'-12.5` is skipped by Excel's SUM while the xlsx writes a
+   real numeric cell for the same column.
 
 ## Anti-patterns
 - Rendering a web route with Puppeteer (double-auth trap, needs a running web server).
@@ -88,3 +97,12 @@ Produce audit-ready file artifacts from live data. The **canonical exemplar** is
   that quotes its own section title satisfies `toContain('<title text>')` with
   the section deleted — assert the heading markup).
 - Computing a count that explains an omission and then not returning it.
+- Neutralising inside a per-column renderer. One column can then opt out, and
+  the opt-out is a forged row; keep it as the last transform over every cell.
+- Asserting neutralisation with the writer's own regex (`expect(cell).not
+  .toMatch(/^[=+\-@]/)`). It asks the writer about the writer — a cell holding
+  `   =SUM(A1)` passes it and executes on open. Strip leading whitespace in the
+  assertion first.
+- Neutralising the **xlsx** path. exceljs writes a string as a string cell and
+  Excel does not evaluate one on open; prefixing there would stringify tCO₂e
+  and break numeric parity with the CSV.

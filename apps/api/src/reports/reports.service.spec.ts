@@ -570,6 +570,39 @@ describe('ReportsService', () => {
       expect(typeof cellsByCategory.get('Electricity')).toBe('number');
     });
 
+    it('a negative figure stays a NUMBER in both flat formats, so the two files agree', async () => {
+      // The branch `neutraliseCell` exists for, pinned above the pure function
+      // because its justification is a claim about TWO writers. `-` leads a
+      // formula and every negative number: stringify first and the CSV ships
+      // `'-12.5`, which Excel's SUM skips, while the xlsx writes a real numeric
+      // cell for the same column — one query, two files, two different totals.
+      //
+      // Built through the calculation snapshot, not the create path: `@Min(0)`
+      // on the DTO refuses a negative today, which is exactly why this closes
+      // the branch BEFORE bulk upload (WP8) parses figures out of a user's
+      // spreadsheet and makes it reachable.
+      const negative = makeRecord({
+        calculation: { ...makeRecord().calculation, tCo2e: -12.5 },
+      });
+      stubRecords(prisma, [negative]);
+      const csv = await service.generateCsv(admin, q);
+      const header = csv.trim().split('\n')[0].split(',');
+      const cell = csv.trim().split('\n')[1].split(',')[header.indexOf('tco2e')];
+
+      expect(cell).toBe('-12.5');
+      expect(cell.startsWith("'")).toBe(false);
+
+      stubRecords(prisma, [negative]);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+      const excel = wb.getWorksheet('Raw Activity Data')!.getRow(2).getCell(8).value;
+
+      expect(typeof excel).toBe('number');
+      // The property that matters is not either value alone: it is that the
+      // two files say the same thing about the same figure.
+      expect(cell).toBe(String(excel));
+    });
+
     it('the PDF prints the label for water, a number for the calculated row, and reconciles its own tile', async () => {
       stubRecords(prisma, [makeRecord(), waterRecord()]);
       const data = await service.assemble(admin, {
@@ -1558,11 +1591,21 @@ describe('report column descriptors', () => {
  * The forged-ledger-row control, held on EVERY column rather than on two.
  *
  * A per-column bypass sweep measured the gap before this test existed: routing
- * one column around `quote()` failed something for only 2 of the 15 —
+ * one column around the cell writer failed something for only 2 of the 15 —
  * `period_value` and `void_reason`. `subsidiary`, `reporting_entity` and all
  * four `voided_*` columns were silent, and the first two are user-supplied free
  * text. A location named `Warehouse\rTotal,,,,,,,,,,999999,,,,` puts a
  * fabricated row in a filed CSV behind no database row and no audit entry.
+ *
+ * RE-MEASURED on this branch, because the figure above is about `main` and a
+ * stale coverage number reads as a current one: the ledger now catches **6 of
+ * 15** (`subsidiary`, `reporting_entity`, `category`, `reporting_period`,
+ * `period_value`, `activity_unit`) and the withdrawn row **7 of 15** (those six
+ * plus `void_reason`) — up from 2, which is what the withdrawn matrix below
+ * bought. The nine and eight that survive are `activity_value`, `tco2e`,
+ * `status`, `evidence_files`, `anomaly_flag`, the `voided_*` block and the
+ * `WITHDRAWN` markers: every one is system-generated, and none can carry a
+ * character a user typed. Every column that CAN is covered in both writers.
  *
  * The shipped writer is uniform, so this is coverage rather than a defect. It
  * lands here because THIS package created the structure the risk needs: on
@@ -1575,6 +1618,33 @@ describe('report column descriptors', () => {
 describe('no column can opt out of CSV neutralisation', () => {
   /** Simultaneously a formula, a field-splitter and a record-splitter. */
   const HOSTILE = '=HYPERLINK("evil"),\rTotal,,,999999';
+
+  /**
+   * The same attack behind whitespace. A spreadsheet skips leading whitespace
+   * before deciding a cell is a formula, so a guard anchored at index 0 sees a
+   * harmless space and lets the payload through — unprefixed AND, carrying no
+   * separator of its own here, unquoted.
+   */
+  const PAYLOADS = [
+    ['bare', HOSTILE],
+    ['space-led', `   ${HOSTILE}`],
+    ['tab-led', `\t${HOSTILE}`],
+    ['nbsp-led', `\u00A0@SUM(A1)`],
+    // The pure shape of the defect, and the reason it was invisible: no
+    // separator of its own, so the quote test does not catch it either and the
+    // payload reaches the file completely untouched. The three above all carry
+    // HOSTILE's `,` and `\r`, so they are quoted whatever the guard does.
+    ['space-led, no separator', '   =SUM(A1)'],
+  ] as const;
+
+  /**
+   * Would a spreadsheet execute this cell on open?
+   *
+   * It strips leading whitespace FIRST, and that is the whole point: asserting
+   * `/^[=+\-@]/` against the raw cell asks the writer's own regex about the
+   * writer, and `   =SUM(A1)` passes it while executing.
+   */
+  const executable = (cell: string) => /^[=+\-@]/.test(cell.replace(/^\s+/, ''));
 
   /** A minimal RFC-4180 reader, written independently of the writer: counting
    *  `\n` would miss exactly the `\r` forgery this exists to catch. */
@@ -1608,14 +1678,27 @@ describe('no column can opt out of CSV neutralisation', () => {
     anomalyBaselinePriorCount: 3,
   };
 
-  /** Every string-typed field that can reach a cell. */
+  /**
+   * Every string-typed field that can reach a cell.
+   *
+   * `locationName` is the one that does not mean what its case names say: it
+   * reaches the cell through `entityLabel`, which calls `.trim()`, and JS
+   * `trim()` strips space, tab, NBSP and BOM — so its four payloads all arrive
+   * at the writer identical to `bare`. Kept because the bare case is real
+   * coverage of the column; do not read its whitespace variants as evidence
+   * that the whitespace path is exercised there.
+   */
   const STRING_FIELDS = [
     'subsidiaryName', 'locationName', 'category', 'periodValue',
     'reportingPeriod', 'activityUnit',
   ] as const;
 
-  it.each(STRING_FIELDS)('neutralises a payload arriving through %s', (field) => {
-    const row = { ...base, [field]: HOSTILE } as ReportLedgerRow;
+  it.each(
+    STRING_FIELDS.flatMap((field) =>
+      PAYLOADS.map(([label, payload]) => [field, label, payload] as const),
+    ),
+  )('neutralises a %s payload arriving through %s', (field, _label, payload) => {
+    const row = { ...base, [field]: payload } as ReportLedgerRow;
     const csv = `${csvHeader()}\n${csvLedgerRow(row)}\n`;
     const parsed = records(csv);
 
@@ -1624,17 +1707,33 @@ describe('no column can opt out of CSV neutralisation', () => {
     expect(parsed).toHaveLength(2);
     expect(parsed[1]).toHaveLength(csvHeader().split(',').length);
     // ...and nothing a spreadsheet would execute on open.
-    for (const cell of parsed[1]) expect(cell).not.toMatch(/^[=+\-@]/);
+    for (const cell of parsed[1]) expect(executable(cell)).toBe(false);
   });
 
-  it('neutralises the withdrawn row, disclosure block included', () => {
-    const row: ReportWithdrawnRow = {
-      ...base, status: 'voided', subsidiaryName: HOSTILE,
-      voidReason: HOSTILE, voidedAt: '2026-02-03 09:30',
-    };
+  /**
+   * The withdrawn writer takes the SAME matrix, and it earned it: a measured
+   * bypass sweep on the one hand-built case this replaces caught 2 columns of
+   * 15, against the ledger's 6. `reporting_entity`, `category`, `period_value`
+   * and `activity_unit` all carry user free text on a withdrawn row and none
+   * of them was covered. The realistic regression — escaping migrating into a
+   * `CsvSlot.cell` — hits both writers, so the ledger case would catch it; a
+   * withdrawn-only special case would not, and this file already contains one
+   * (the `WITHDRAWN` marker).
+   */
+  const WITHDRAWN_FIELDS = [...STRING_FIELDS, 'voidReason'] as const;
+
+  it.each(
+    WITHDRAWN_FIELDS.flatMap((field) =>
+      PAYLOADS.map(([label, payload]) => [field, label, payload] as const),
+    ),
+  )('neutralises a %s payload arriving through %s on the withdrawn row', (field, _label, payload) => {
+    const row = {
+      ...base, status: 'voided', voidReason: 'superseded',
+      voidedAt: '2026-02-03 09:30', [field]: payload,
+    } as ReportWithdrawnRow;
     const parsed = records(`${csvHeader()}\n${csvWithdrawnRow(row)}\n`);
     expect(parsed).toHaveLength(2);
     expect(parsed[1]).toHaveLength(csvHeader().split(',').length);
-    for (const cell of parsed[1]) expect(cell).not.toMatch(/^[=+\-@]/);
+    for (const cell of parsed[1]) expect(executable(cell)).toBe(false);
   });
 });
