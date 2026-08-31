@@ -79,6 +79,10 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # The seed imports @tonyai/shared-types at RUNTIME through its `dist`,
+        # so a workspace link is not enough — it has to be built first. Same
+        # step the `build` job runs before typecheck.
+        pnpm --filter @tonyai/shared-types run build
         pnpm --filter @tonyai/db run deploy
         pnpm --filter @tonyai/db run generate
         pnpm --filter @tonyai/db run seed
