@@ -22,9 +22,9 @@ import type { ActorLabel } from '@/lib/audit-view';
  * mistake `actorLabel` exists to prevent on the audit trail, which is why this
  * returns that shape and reuses its muted convention.
  *
- * There is deliberately no "not resolved" state: `createdByName` and
- * `reviewedByName` are REQUIRED on the DTO, so every response that carries a
- * record carries its actors. An earlier cut made them optional and resolved
+ * There is deliberately no "not resolved" state: `createdByName`,
+ * `reviewedByName` and `voidedByName` are all REQUIRED on the DTO, so every
+ * response that carries a record carries its actors. An earlier cut made them optional and resolved
  * them only on reads, and both screens then rendered an em dash for a record
  * that plainly had an author, because a write response had been spliced into
  * state built from a read.

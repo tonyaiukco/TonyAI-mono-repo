@@ -158,7 +158,11 @@ function requireCanonicalPeriodValue(
 
 /** The resolved-at-read-time fields, named once so both the DTO's audit
  *  snapshot and the guard below stay in step. */
-type ResolvedRecordFields = 'locationName' | 'createdByName' | 'reviewedByName';
+type ResolvedRecordFields =
+  | 'locationName'
+  | 'createdByName'
+  | 'reviewedByName'
+  | 'voidedByName';
 
 /**
  * The record's persisted columns, and a compile error for anything resolved.
@@ -271,6 +275,7 @@ export class ActivityRecordsService {
       // review. Requiring the map means there is no shape to forget to pass.
       createdByName: actorDisplayName(r.createdBy, actors),
       reviewedByName: actorDisplayName(r.reviewedBy, actors),
+      voidedByName: actorDisplayName(r.voidedBy, actors),
     };
   }
 
@@ -278,20 +283,21 @@ export class ActivityRecordsService {
    * The actor map for one or more records, without a query when the caller is
    * the only actor involved.
    *
-   * On a create that is always the case — `created_by` is the caller and
-   * `reviewed_by` is null — so a create costs ZERO extra queries. The guard has
+   * On a create that is always the case — `created_by` is the caller, and
+   * `reviewed_by` and `voided_by` are both null — so a create costs ZERO extra
+   * queries. The guard has
    * already loaded the caller's whole profile to build `RequestUser`, so the
    * name is in hand before the request reaches this service.
    */
   private async actorsFor(
     user: RequestUser,
-    records: readonly Pick<ActivityRecord, 'createdBy' | 'reviewedBy'>[],
+    records: readonly Pick<ActivityRecord, 'createdBy' | 'reviewedBy' | 'voidedBy'>[],
   ): Promise<Map<string, ResolvedProfile>> {
     const known = new Map<string, ResolvedProfile>([
       [user.id, { email: user.email, fullName: user.fullName }],
     ]);
     const unknown = records
-      .flatMap((r) => [r.createdBy, r.reviewedBy])
+      .flatMap((r) => [r.createdBy, r.reviewedBy, r.voidedBy])
       .filter((id): id is string => !!id && !known.has(id));
     if (unknown.length === 0) return known;
     for (const [id, profile] of await resolveProfiles(this.prisma, unknown)) {
@@ -524,9 +530,9 @@ export class ActivityRecordsService {
         location: { select: { name: true } },
       },
     });
-    // One query for the whole page over both actor columns at once, never one
-    // per row: `created_by` and `reviewed_by` have no FK to `profiles`, so
-    // there is no `include` that could do this.
+    // One query for the whole page over all THREE actor columns at once, never
+    // one per row: `created_by`, `reviewed_by` and `voided_by` have no FK to
+    // `profiles`, so there is no `include` that could do this.
     const actors = await this.actorsFor(user, rows);
     return rows.map((r) => this.toDTO(r, r._count.evidence, actors));
   }

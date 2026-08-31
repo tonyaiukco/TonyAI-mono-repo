@@ -1263,6 +1263,54 @@ describe('ActivityRecordsService — transition rules', () => {
       expect(dto.voidedAt).not.toBeNull();
     });
 
+    it('names the person on the WRITE response, not only on a later read', async () => {
+      const { prisma, service } = build();
+      prisma.profile.findMany.mockResolvedValue([]);
+      prisma.activityRecord.findUnique.mockResolvedValue(approved());
+      prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+        makeRecord({ id: 'rec-v', ...data }),
+      );
+
+      const dto = await service.void(superAdmin(), 'rec-v', 'Superseded by the site invoice');
+
+      // The exact regression three review seats independently found on the
+      // reviewer column in WP22 PR D: both screens splice a write response into
+      // read-built state, so a write path that omits the name empties the
+      // column at the very click that sets the actor — "Withdrawn by —" on a
+      // figure this request just withdrew.
+      //
+      // `profile.findMany` returns NOTHING here on purpose: the acting user is
+      // seeded into the actor map from the request itself, so resolving them
+      // must not depend on a database round-trip that the write path has no
+      // reason to make.
+      expect(dto.voidedByName).toBe('Admin User');
+    });
+
+    it('distinguishes "never withdrawn" from "the person who withdrew it is gone"', async () => {
+      const { prisma, service } = build();
+      prisma.profile.findMany.mockResolvedValue([]);
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        makeRecord({ subsidiaryId: 'sub-1', voidedBy: 'user-ghost' }),
+      );
+
+      const dto = await service.get(consultant(), 'rec-1');
+
+      // Both read `voidedByName: null`; `voidedBy` is the discriminator, which
+      // is why it stays on the DTO beside the name. Rendering a never-withdrawn
+      // record as "withdrawn by a deleted user" would claim a restatement that
+      // never happened — and a withdrawal is the one action here that cannot be
+      // undone.
+      expect(dto.voidedByName).toBeNull();
+      expect(dto.voidedBy).toBe('user-ghost');
+
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        makeRecord({ subsidiaryId: 'sub-1', voidedBy: null }),
+      );
+      const never = await service.get(consultant(), 'rec-1');
+      expect(never.voidedByName).toBeNull();
+      expect(never.voidedBy).toBeNull();
+    });
+
     it('is super_admin only — a consultant may reject, never withdraw', async () => {
       const { prisma, service } = build();
       prisma.activityRecord.findUnique.mockResolvedValue(approved());
@@ -2389,6 +2437,28 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     expect(reviewed.reviewedBy).toBe('user-admin');
   });
 
+  it('resolves a withdrawal by SOMEONE ELSE, which the acting-user shortcut cannot', async () => {
+    const { prisma, service } = build();
+    // The mock RESPECTS its filter, and that is the whole point of this test.
+    // `mockResolvedValue(PROFILES)` answers every query with every profile, so
+    // a name resolves whether or not its id was ever asked for — under that
+    // mock, deleting `voidedBy` from `actorsFor`'s gather passes. Measured:
+    // that mutation left all 116 tests green until this filter existed.
+    prisma.profile.findMany.mockImplementation(({ where }: any) =>
+      PROFILES.filter((profile) => where.id.in.includes(profile.id)),
+    );
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ subsidiaryId: 'sub-1', voidedBy: 'user-admin' }),
+    );
+
+    // Reading SOMEONE ELSE's withdrawal is the only path that needs the query:
+    // on a withdrawal the actor is the requesting user, who is seeded into the
+    // actor map from the request itself, so the write response resolves the
+    // name whether or not the column is gathered at all.
+    const dto = await service.get(consultant(), 'rec-1');
+    expect(dto.voidedByName).toBe('Admin User');
+  });
+
   it('reads null — not the raw id — when the actor profile is gone', async () => {
     const { prisma, service } = build();
     prisma.profile.findMany.mockResolvedValue([]);
@@ -2401,6 +2471,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     // as a display value would undo exactly what read-time resolution buys.
     expect(dto.createdByName).toBeNull();
     expect(dto.reviewedByName).toBeNull();
+    expect(dto.voidedByName).toBeNull();
     expect(dto.createdBy).toBe('user-entry');
   });
 
