@@ -17,10 +17,6 @@ on:
     # 03:00 UTC — after the working day in UK/TR, before the next one starts.
     - cron: '0 3 * * *'
   workflow_dispatch:
-  # TEMPORARY-PROVE-IT: remove before merge. `workflow_dispatch` only works
-  # once the file is on the default branch, so this is the only way to know the
-  # workflow runs green BEFORE merging it.
-  pull_request:
 
 # A manual run supersedes an in-flight nightly rather than queueing behind it.
 concurrency:

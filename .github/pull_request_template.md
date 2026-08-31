@@ -11,7 +11,7 @@
 - [ ] `pnpm typecheck`
 - [ ] `pnpm build`
 - [ ] `pnpm test`
-- [ ] Manual / e2e check (describe below)
+- [ ] Manual / e2e check (describe below) — the suite runs nightly, not per PR; run `gh workflow run e2e.yml` for a change that touches a user flow
 
 ## Checklist
 
