@@ -12,7 +12,6 @@ import {
   isEvidenceRequired,
   isInvoiceTracked,
   type ActivityCalculationSnapshot,
-  type CalculationResult,
   type Category,
   type DataStatus,
   type EmissionsByCategory,
@@ -638,7 +637,6 @@ export class EmissionsService {
         // factor-less must not report a measured zero.
         let tCo2e: number | null = null;
         let uncalculatedRecordCount = 0;
-        let voidedRecordCount = 0;
         // At cell scope rather than inside the `live.length` branch below, so a
         // cell holding no records reports 0 instead of nothing.
         let awaitingReviewRecords = 0;
@@ -671,7 +669,7 @@ export class EmissionsService {
         // `voidedRecordCount`, so the cell can say what happened rather than
         // pretending nothing is there.
         const live = recs.filter((r) => r.status !== ActivityRecordStatus.voided);
-        voidedRecordCount = recs.length - live.length;
+        const voidedRecordCount = recs.length - live.length;
 
         if (live.length === 0) {
           status = 'missing';

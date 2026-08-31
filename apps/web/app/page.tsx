@@ -41,7 +41,6 @@ import { DEFAULT_REPORTING_YEAR } from '@/lib/types';
 import type {
   DashboardKpi,
   EmissionsSummary,
-  Subsidiary,
   TrackingMatrixRow,
   SubsidiaryDTO,
   TrackingMatrixDTO,

@@ -779,6 +779,10 @@ export default function EmissionsAnalysisPage() {
                             dataKey="size"
                             nameKey="name"
                             stroke="hsl(var(--border))"
+                            // Recharts types its `content` render prop as a union its own
+                            // shape callbacks do not satisfy; typing this properly means
+                            // reaching into recharts internals.
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             content={(({ x, y, width, height, name, color }: any) => (
                               <g>
                                 <rect
@@ -805,6 +809,7 @@ export default function EmissionsAnalysisPage() {
                                   </text>
                                 )}
                               </g>
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             )) as any}
                           />
                         </ResponsiveContainer>

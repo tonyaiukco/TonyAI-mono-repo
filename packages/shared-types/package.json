@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "echo \"(shared-types) no lint\" && exit 0",
+    "lint": "eslint .",
     "test": "vitest run --passWithNoTests"
   },
   "devDependencies": {

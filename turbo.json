@@ -40,7 +40,11 @@
         "generated/**"
       ]
     },
-    "lint": {},
+    "lint": {
+      "dependsOn": [
+        "^build"
+      ]
+    },
     "typecheck": {
       "dependsOn": [
         "^build"

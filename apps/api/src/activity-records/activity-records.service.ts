@@ -23,7 +23,6 @@ import {
   type ActivityCalculationSnapshot,
   type ActivityRecordDTO,
   type AuditAction,
-  type CalculationResult,
   type Category,
   type ReportingPeriod,
 } from '@tonyai/shared-types';

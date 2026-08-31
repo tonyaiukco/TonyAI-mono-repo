@@ -27,6 +27,13 @@ jobs:
       - name: Build shared packages
         run: pnpm --filter @tonyai/shared-types run build
 
+      # After Prisma generate and the shared-types build: the import resolver
+      # follows `@tonyai/*` through their build output. Errors gate the merge;
+      # warnings print without failing (today: six `exhaustive-deps` memoisation
+      # warnings, tracked as a follow-up rather than swallowed).
+      - name: Lint
+        run: pnpm lint
+
       - name: Typecheck
         run: pnpm typecheck
 

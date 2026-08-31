@@ -331,6 +331,7 @@ Run from the repo root (Turborepo fans out to each package):
 | `pnpm setup` | One‑command local bootstrap (deps, Supabase, `.env` sync, migrate, seed) |
 | `pnpm dev` | Run web + api in watch mode |
 | `pnpm build` | Build all packages |
+| `pnpm lint` | ESLint 9 (flat config, one root `eslint.config.mjs`) over all 277 files — every workspace plus `e2e/`, `scripts/` and the root configs. **Run at the root, not through Turbo:** a per-workspace fan-out silently skips every file that belongs to no workspace. `pnpm lint:fix` applies the fixable ones |
 | `pnpm typecheck` | Type‑check the whole repo, `e2e/` and `playwright.config.ts` included (`tsconfig.e2e.json` — Playwright's own runner strips types without checking them) |
 | `pnpm test` | Unit tests (Vitest) |
 | `pnpm e2e` | Playwright E2E: demo flow, gates, RBAC, smoke (requires Supabase running) |
