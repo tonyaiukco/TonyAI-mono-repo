@@ -506,7 +506,18 @@ async function main() {
   // write a record whose `locationId` belonged to a different subsidiary than
   // its `subsidiaryId` — which the API's own ownership check refuses — while
   // the skip-set below suppressed the wrong subsidiary's month.
-  const LOCATION_ACTIVITY = [
+  /**
+ * Site-reported series. Since WP18 these are EXCLUSIVE: the company-level loop
+ * below skips any month a location already reports, so no (subsidiary, category,
+ * month) tuple is written twice.
+ *
+ * The consequence for anyone writing a fixture: the six tuples this produces —
+ * Energy·Electricity and Logistics·Fuel, January through March — have NO
+ * company-level record. An E2E helper looking one up by subsidiary+category+
+ * period with no `locationId` will not find it and will throw. That is exactly
+ * how `rbac-tenant.spec.ts` broke, silently, for ten merged PRs.
+ */
+const LOCATION_ACTIVITY = [
     { location: LOCATIONS[0], category: 'Electricity', unit: 'kWh', base: 40000 },
     { location: LOCATIONS[5], category: 'Fuel', unit: 'litres', base: 6000 },
   ];
