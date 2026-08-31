@@ -9,7 +9,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
-import { MAX_AUDIT_LIMIT } from '../audit.service';
+import { MAX_AUDIT_LIMIT } from '../audit.constants';
 import {
   AUDIT_ACTIONS,
   AUDIT_ENTITIES,
