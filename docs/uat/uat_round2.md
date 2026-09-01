@@ -3,7 +3,10 @@
 > **Purpose:** the single document for the second UAT round. It covers (a) whether
 > round-1 feedback actually landed, and (b) the capabilities built since — none of
 > which existed when you tested in July.
-> **Version:** 2026-08-27 · Phase 1 + Phase-3 packages WP7, WP15, WP16, WP17, WP18, WP19, WP20, WP21.
+> **Version:** 2026-09-02 · Phase 1 + Phase-3 packages WP7, WP15–WP22, plus the
+> follow-ups merged since (the withdrawer's name on screen, and the exports that
+> name them). The catalog was first written 2026-08-27; everything WP22 and later
+> added is marked **new in 2026-09-02** where it appears.
 > **Scope under test:** Scope 1 & 2 carbon accounting, local environment.
 > **Baseline for round 1** stays in [`uat_phase1.md`](uat_phase1.md) — anything not
 > mentioned here is unchanged and its round-1 cases still apply.
@@ -28,6 +31,8 @@ Round 2 also introduces things round 1 never saw, and they change what the app
 | **Reports say what was taken out** | PDF, Excel and CSV all disclose withdrawals and name the **reporting entity** (site or whole company) of every row. | An export can no longer drop a figure silently. |
 | **The anomaly check says what it judged against** | It needs **three** prior periods. Fewer than three means *not evaluated* — which is a different claim from *not anomalous*. | Round 1 could not tell "checked and clean" from "never checked". |
 | **There is an audit-trail screen** | `/audit`, super_admin only. | Round 1 was told the audit log existed but had no UI. It has one now. |
+| **Every record says who touched it** *(new in 2026-09-02)* | The review queue names who **entered** a record and how long it has been **waiting**; the detail panels name who entered it and who **decided** it; a withdrawal names who withdrew it. | Round 1 could see *that* a record was approved but never *by whom* — the person was reachable only through `/audit`, which only an admin can open. |
+| **Exports name the withdrawer, and open cleanly on Windows** *(new in 2026-09-02)* | Every export carries the withdrawer's **user id** — an opaque id, deliberately not a name (§6.5) — and the CSV now opens as UTF-8 in Excel on Windows. | Round 1 never opened an export on Windows, where Turkish names came out mojibaked. |
 
 ---
 
@@ -68,6 +73,8 @@ the single most likely reason a case below "fails".
 | The same total elsewhere | `/emissions` → **Summary** shows three cards rounded to whole tonnes — Scope 1 **1,211**, Scope 2 **1,696**, Scope 3 **0** — and no combined figure. The dashboard KPI card abbreviates it to **2.9k**. All three are the same number rendered differently |
 | Data Collection Status totals (dashboard) | **5 complete · 3 incomplete · 47 missing** |
 | Review queue (`/review`) | **empty** — every seeded record is already approved |
+| **Entered by / Reviewed by** on any seeded record | **Entered by Tony Admin · Reviewed by —.** All 96 seeded records were written straight to `approved` without passing through a person's review, so the reviewer really is blank. Only a record **you** approve (§4.3) names a reviewer. **Expected — please do not file it.** |
+| Review queue **Waiting** column | Nothing to see on the fresh seed (the queue is empty). A record you submit yourself reads `0d`; one whose submission predates this build reads an em dash, never `0d` |
 | Period locks | **none** |
 
 > **Note the change from round 1.** The inventory read ≈3,177 tCO₂e in July. It
@@ -157,6 +164,8 @@ immediately."* It no longer does — anywhere.
 | GATE-02 | As `entry@tonyai.local`: create a draft on **TonyAI Logistics · Natural Gas**, attach a file, **Submit for review** | The cell does **not** go green. It reads amber and says how many entries are awaiting review | |
 | GATE-03 | Read the wording on that amber cell | Something like *"1 entry is keyed in but nobody has reviewed it yet, so this category is not finished."* Is that the right sentence for the person who has to act on it? | |
 | GATE-04 | As admin: approve that record in `/review`, then reload the dashboard | The cell turns green now — and only now | |
+| GATE-04a *(new)* | Before approving it, look at that row in the queue | An **Entered by** column names **Eda Entry** — the person who keyed it, not the admin reading the screen — and a **Waiting** column reads `0d`, measured from when it was submitted rather than when it was created | |
+| GATE-04b *(new)* | After approving it, open the same record in `/emissions` → History → its detail panel | **Entered by Eda Entry** and **Reviewed by Tony Admin**: the pair that was invisible in round 1. (Every *seeded* record still reads *Reviewed by —* — see §2.2) | |
 | GATE-05 | Look at **TonyAI Logistics · Fuel** on the fresh seed | Amber even though every entry in it is already approved — because one of them is **flagged as anomalous**. The cell itself does not say so: the reason surfaces in the dashboard **Alerts** panel (*"Anomaly flag on Fuel records"*), and the record is July 2026 in `/emissions` → History. **Tell us if that is too far to look** — an amber with no on-cell reason is exactly the kind of thing round 2 should catch | |
 | GATE-06 | As admin: create a draft anywhere and do **not** submit it | That cell goes amber too — a draft is something left to look at | |
 
@@ -173,7 +182,7 @@ wrong, it is **withdrawn**, with a reason that becomes part of the record.
 | VOID-04 | Type a real reason (e.g. `Meter misread — supplier issued a corrected invoice.`) → **Withdraw from inventory** | A confirmation appears naming the record in full — *category · subsidiary · reporting entity · period · year* — and the exact tonnage it removes | |
 | VOID-05 | Read the consequences in that dialog | Five statements, including **"It cannot be undone."** and that your reason is **printed verbatim in every generated report**. Confirm the dialog gives you enough to check the click against | |
 | VOID-06 | Press **Cancel** | Nothing happens. The record is still approved | |
-| VOID-07 | Repeat and confirm with **Withdraw** | The record's badge turns grey and struck through, and the panel shows **"Why this figure was withdrawn"** with your reason | |
+| VOID-07 | Repeat and confirm with **Withdraw** | The record's badge turns grey and struck through, and the panel shows **"Why this figure was withdrawn"** with your reason — and beneath it *(new in 2026-09-02)* **"Withdrawn by Tony Admin"** with the date. Round 1's version named nobody | |
 | VOID-08 | Check the total on `/reports` (2026, whole organisation) | It has dropped by exactly the tonnage the dialog named: **2,906.6 → 2,842.8 tCO₂e** (April at TonyAI Energy is 63.800). On `/emissions` → Summary the **Scope 2** card goes **1,696 → 1,632**. *(If you did §4.3 first, the starting figure is higher — check the difference, not the absolute.)* | |
 | VOID-09 | Dashboard → **hover** the same cell | The withdrawn entry is reported separately as **"Withdrawn (counts towards nothing)"** while *Entries (all statuses)* still reads 12 — so the cell reconciles rather than looking like it lost one | |
 | VOID-10 | `/audit` | A new row naming you, whose **Change** column reads *Approved → Voided*. Your reason is in the row's **detail panel**, not in the table | |
@@ -204,12 +213,14 @@ correctly invisible.
 | DISC-03 | **Download PDF** → *Executive Summary* | Under the metric tiles, a **Restatement** paragraph naming the count and the tonnage removed; further down a **"Withdrawn from this inventory"** table (subsidiary, reporting entity, category, period, tCO₂e removed, withdrawn-at, reason, withdrawn-by — the last being an opaque user id, and an em dash where a record carries none) ending in **Total withdrawn** | |
 | DISC-04 | **Download PDF** → *GHG Protocol Detail* | Everything above, **plus** the activity-records ledger — and the ledger now carries a **Reporting entity** column reading the site's name or *Whole company* | |
 | DISC-05 | **Export Excel** | **Four** sheets: *Summary*, *Raw Activity Data*, **Withdrawn Records**, *Factors Used*. The Withdrawn Records sheet is present **even when empty** | |
+| DISC-05a *(new)* | Excel → *Withdrawn Records* sheet, **last** column | **Withdrawn by (user id)** — the same opaque id the CSV's `voided_by` carries. Empty when a withdrawal has no actor; the PDF prints an em dash there instead | |
 | DISC-06 | Excel → *Summary* sheet | A row reading **"Withdrawn records (excluded from every figure below)"** with the count and the tonnage removed — always present, including at zero | |
 | DISC-07 | Excel → *Raw Activity Data* | **Reporting entity** is the **second** column | |
 | DISC-08 | **Export CSV**, open in a spreadsheet | 16 columns, the last being `voided_by` (an opaque user id, never a name). Withdrawn rows sit in the same table with `status = voided`; their numeric cells read the word **`Withdrawn`** and the real figures move into `voided_activity_value` / `voided_tco2e`, beside `voided_at_utc` and `void_reason` | |
 | DISC-09 | Sum the whole `tco2e` column in the spreadsheet | It equals the total the app reports — because a withdrawn row contributes text, not a number. This is the check that used to fail: before this change the same file summed to more than the inventory | |
 | DISC-10 | Sign in as `review@tonyai.local` → `/reports` | A consultant **can** generate and export | |
 | DISC-11 | Sign in as `entry@tonyai.local` → `/reports` | Preview visible, tenant-scoped to its 2 subsidiaries, **no export buttons** — a role note instead | |
+| DISC-13 *(new — **needs a Windows machine with Excel**)* | Export the CSV, then **double-click the file** to open it in Excel on Windows | Turkish text renders correctly — `TonyAI Enerji A.Ş.`, not `TonyAI Enerji A.Åž.`. **Round 1 never tested this and it was a genuine defect until this build**: the download carries a UTF-8 byte-order mark now, because the header that says "this is UTF-8" is gone once the file is on disk and Windows then guesses. If you have no Windows machine, say so and skip — it is the one case macOS cannot exercise | |
 | DISC-12 | Every report you generate, then `/audit` | One row per generation, recording the template, year and export type | |
 
 ### 4.7 The anomaly check says what it judged against (WP21)
@@ -250,6 +261,7 @@ The rule needs **three** prior committed periods. Fewer than three means the rul
 - **No Google Places autofill** on addresses (round-1 SUB-3) — needs an API key, billing and a product decision.
 - **Refrigerants and Mobile Combustion have no factors** (round-1 DE-4, DE-5) — Phase 4. Sm³ for natural gas is refused for the same reason (DE-3).
 - **Bulk review has no UI** — `/review` decides one record at a time.
+- **Seeded records name no reviewer.** All 96 were written straight to `approved` without a review step, so **Reviewed by** is blank on every one of them. Records you approve yourself do name you. (Their **Waiting** time is blank for the same reason: they were never submitted.)
 - **Bulk CSV upload** of activity data is not built yet — it is the next package.
 - **Reports are scoped by year + subsidiary only**; scope/category-filtered exports and report sharing (link/email) come later.
 - **A withdrawal cannot be undone** — by design. The corrected figure is entered as a new record.
@@ -276,7 +288,7 @@ Not bugs — decisions. Round 2 exists partly to test these.
 2. **Is "not evaluated" understood?** A record with fewer than three prior periods was never checked. We report that but deliberately do **not** colour the cell amber for it. Right call?
 3. **Is withdrawal the right model?** An approved figure cannot be edited, only withdrawn with a reason and replaced. Does that match how your organisation restates a published number?
 4. **Is the per-location view worth the extra reading?** `3 of 24` carries more information than a tick, but it also demands more of the reader. Would you want it on every subsidiary, or only where invoices really are per site?
-5. **The report disclosure** — is a restatement banner plus a "Withdrawn from this inventory" table enough for an auditor, or does it need to name who withdrew it?
+5. **The withdrawer, named two different ways — is the split defensible?** The *screen* names the person (*Withdrawn by Tony Admin*). Every *export* carries their **opaque user id** instead, and never their name. The reasoning: a filed report cannot be recalled, so putting a natural person's name into one is a data-protection commitment we have not yet answered (erasure, redaction), while the id still lets a verifier with system access identify who acted. **Is that id enough for your auditor, or does a filed report have to carry the name?** This is the question we would most like answered this round.
 
 ---
 
@@ -320,13 +332,13 @@ Round-1 feedback and its routing are in
 
 ---
 
-## 9. Automation baseline — measured on this build, 2026-08-27
+## 9. Automation baseline — measured on this build, 2026-09-02
 
 Everything below was run and passed before this document was issued:
 
-- **757 unit tests** across 32 files — 548 API, 105 web, 63 shared-types, 41 database tooling. Covers the calculation engine to the digit, tenant isolation, RBAC, every lifecycle gate, the completeness rule, the withdrawal path, report assembly and the anomaly baseline.
+- **934 unit tests** across 35 files — 708 API, 122 web, 63 shared-types, 41 database tooling. Covers the calculation engine to the digit, tenant isolation, RBAC, every lifecycle gate, the completeness rule, the withdrawal path, report assembly and the anomaly baseline.
 - **84 end-to-end tests** (Playwright, real browser against the real API and database) — login, the full data-entry lifecycle including evidence upload and approval, all three gates, RBAC and tenant negatives, the completeness dashboard, the review gate, withdrawal, the audit trail, targets, and report downloads verified by filename and file signature.
-- **31 live RLS containment probes** — the database independently hides cross-tenant rows even when the API is bypassed, and a consultant cannot write or withdraw a figure through it.
+- **34 live RLS containment probes** — the database independently hides cross-tenant rows even when the API is bypassed, and a consultant cannot write or withdraw a figure through it.
 - Every mutation writes an append-only **audit log** row.
 
 These prove the mechanics. What they cannot test is whether the product answers

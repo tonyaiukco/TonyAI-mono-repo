@@ -211,7 +211,7 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | --- | --- | --- | --- |
 | EMIS-01 | Open all four tabs (Summary / Breakdown / History / Trends) | Live data everywhere; 2026 total is **2,906.61 tCO₂e** on the pristine seed (it read ≈3,177 before the six double-counted months were removed — see the round-2 catalog §2.2) | |
 | EMIS-02 | Apply a Scope filter and a Category filter | All tabs update consistently | |
-| EMIS-03 | History tab: open a record's detail sheet | Full calculation snapshot: factor value, source, version, methodology | |
+| EMIS-03 | History tab: open a record's detail sheet | Full calculation snapshot: factor value, source, version, methodology — and who **entered** and **decided** the record (a seeded record reads *Reviewed by —*: it was never reviewed by a person) | |
 | EMIS-04 | **Targets** tab | 3 demo targets: one **On track**, one **At risk**, one honest **"Progress n/a"** (baseline year has no later data) | |
 | EMIS-05 | As admin: add a target (use the seeded 2023/2030 pattern), then delete it | Create + delete round-trip with toasts | |
 | EMIS-06 | Toggle **Absolute → Intensity** | Four metric cards (tCO₂e per m² / FTE / M EUR / unit) computed from configured denominators | |
@@ -228,8 +228,8 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | REP-04 | **Download PDF** (2026, Methodology notes ticked) | Branded multi-page A4 `tonyai-executive_summary-2026.pdf` with totals, tables and the **emission-factor appendix** (value/source/version) | |
 | REP-05 | Template → **GHG Protocol Detail** → Download PDF | PDF additionally contains the full activity-records ledger | |
 | REP-06 | Tick **Evidence summary** → Download PDF | Evidence appendix lists **file names + counts** (no links — they expire by design) | |
-| REP-07 | **Export Excel** | 3 sheets: *Summary*, *Raw Activity Data*, *Factors Used* | |
-| REP-08 | **Export CSV** | Committed ledger, one row per record, evidence counts included | |
+| REP-07 | **Export Excel** | **4** sheets: *Summary*, *Raw Activity Data*, **Withdrawn Records**, *Factors Used* — the withdrawn sheet is written even when it is empty | |
+| REP-08 | **Export CSV** | **16 columns.** Committed ledger, one row per record, evidence counts included — plus any withdrawn rows in the same table (`status = voided`, their summable cells reading `Withdrawn`) and the `voided_*` disclosure block. The file opens with a UTF-8 byte-order mark so Excel on Windows reads Turkish names correctly | |
 | REP-09 | Scope the report to a single subsidiary | All outputs shrink to that subsidiary | |
 | REP-10 | Sign in as `entry@tonyai.local` → `/reports` | Preview visible (tenant-scoped to its 2 subsidiaries) but **no export buttons** — role note shown instead | |
 
@@ -266,8 +266,12 @@ The demo dataset can always be restored with `pnpm db:reset`.
 
 ## 5b. Results
 
-**Round 2 is open (2026-08-27):** the catalog is
-[`uat_round2.md`](uat_round2.md); its §3 is the round-1 close-out check.
+**Round 2 is open — catalog refreshed 2026-09-02:**
+[`uat_round2.md`](uat_round2.md) is the document to test against; its §3 is the
+round-1 close-out check. **Read it rather than this file for anything it
+covers** — the rows in this script that WP20–WP22 changed (REP-07, REP-08,
+EMIS-03) have been corrected, but round 2 is where the current behaviour is
+described in full.
 
 **Round 1 feedback received (2026-07-27, product-owner walkthrough):**
 [`uat_phase1_feedback_round1.md`](uat_phase1_feedback_round1.md) — 16 items across
@@ -301,7 +305,7 @@ items is in [`../roadmap_docs/project-status.md`](../roadmap_docs/project-status
 
 ## 7. Automation baseline (already verified before this UAT)
 
-- **757 unit tests** (548 API · 105 web · 63 shared-types · 41 database tooling) — calculation engine (unit conversions to the digit), tenant isolation, RBAC, all lifecycle gates incl. the review transition, the completeness rule, the withdrawal path, targets/intensity math, report assembly/status honesty, the anomaly baseline, JWT verification under both signing schemes.
+- **934 unit tests** (708 API · 122 web · 63 shared-types · 41 database tooling) — calculation engine (unit conversions to the digit), tenant isolation, RBAC, all lifecycle gates incl. the review transition, the completeness rule, the withdrawal path, targets/intensity math, report assembly/status honesty, the anomaly baseline, JWT verification under both signing schemes.
 - **84 end-to-end tests** (Playwright) — login, CRUD, full data-entry lifecycle incl. evidence upload and approval, all three gates, RBAC/tenant negatives, analytics/dashboard smoke, the completeness dashboard, the review gate, record withdrawal, the audit trail, targets round-trip, report downloads (exact filenames + magic-byte checks) and the data_entry no-export rule.
-- **31 live RLS containment probes** — the database layer independently hides cross-tenant rows even when the API is bypassed, and a consultant can neither write nor withdraw a figure through it.
+- **34 live RLS containment probes** — the database layer independently hides cross-tenant rows even when the API is bypassed, and a consultant can neither write nor withdraw a figure through it.
 - Every mutation writes an append-only **audit log** row.
