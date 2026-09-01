@@ -692,8 +692,15 @@ export function excelWithdrawnRow(r: ReportWithdrawnRow): CellValue[] {
  * `BODY_COLUMNS` instead — the plausible copy-paste from `excelLedgerRow` above
  * — passed the entire suite: the tonnage is at index 7 in both lists by
  * coincidence, so every name lookup agreed while the row ran a cell past the
- * last column and silently dropped the uncalculated-count disclosure. The
- * spec's arity assertion is what actually holds this; the derivation does not.
+ * last column and silently dropped the uncalculated-count disclosure.
+ *
+ * **The arity assertion no longer holds this, and that changed silently.** It
+ * worked while this sheet had 10 slots against 11 excel-bearing body columns;
+ * adding the actor made both 11, so the copy-paste now produces a row of the
+ * RIGHT length whose only defect is the missing disclosure. What holds it is a
+ * spec that reads the uncalculated note out of the `Reason` slot by name —
+ * that slot exists on this list alone — with the totals built by the test
+ * rather than by a fixture that happens to contain an uncalculated record.
  */
 export function excelWithdrawnTotalRow(t: ReportWithdrawnTotals): CellValue[] {
   return WITHDRAWN_SHEET.map((c) => c.withdrawnTotal?.(t) ?? '');
