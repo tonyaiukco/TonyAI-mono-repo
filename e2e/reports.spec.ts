@@ -38,7 +38,7 @@ test('reports: live preview + PDF/Excel/CSV downloads', async ({ page }) => {
   const cases = [
     { button: 'Download PDF', file: 'tonyai-executive_summary-2026.pdf', magic: '%PDF', toast: 'PDF report generated' },
     { button: 'Export Excel', file: 'tonyai-executive_summary-2026.xlsx', magic: 'PK', toast: 'EXCEL report generated' },
-    { button: 'Export CSV', file: 'tonyai-executive_summary-2026.csv', magic: 'subsidiary,', toast: 'CSV report generated' },
+    { button: 'Export CSV', file: 'tonyai-executive_summary-2026.csv', magic: '\uFEFFsubsidiary,', toast: 'CSV report generated' },
   ] as const;
 
   for (const c of cases) {

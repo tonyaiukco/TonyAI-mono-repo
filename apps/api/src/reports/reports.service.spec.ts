@@ -121,6 +121,7 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
     location: null,
     voidReason: null,
     voidedAt: null,
+    voidedBy: null,
     evidence: [{ fileName: 'invoice-jan.pdf' }],
     createdAt: now,
     updatedAt: now,
@@ -661,6 +662,7 @@ describe('ReportsService', () => {
         activityValue: 900,
         voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
         voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+        voidedBy: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
         ...overrides,
       });
 
@@ -1113,6 +1115,7 @@ describe('ReportsService', () => {
         activityValue: 900,
         voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
         voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+        voidedBy: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
       });
 
     /** The `<tr>` containing a given phrase, whole. */
@@ -1139,8 +1142,30 @@ describe('ReportsService', () => {
         'subsidiary', 'reporting_entity', 'category', 'reporting_period',
         'period_value', 'activity_value', 'activity_unit', 'tco2e', 'status',
         'evidence_files', 'anomaly_flag', 'voided_activity_value',
-        'voided_tco2e', 'voided_at_utc', 'void_reason',
+        'voided_tco2e', 'voided_at_utc', 'void_reason', 'voided_by',
       ]);
+    });
+
+    it('CSV: the file opens with a UTF-8 BOM, before the first header byte', async () => {
+      stubRecords(prisma, [makeRecord()]);
+      const csv = await service.generateCsv(admin, q);
+
+      // NOT trimmed, and that is the entire point of this test. Every other CSV
+      // assertion in this file calls `.trim()` first, and `String.prototype.trim()`
+      // strips U+FEFF — so before this existed, deleting the BOM left the whole
+      // suite green and the only thing that would have failed was one Playwright
+      // line. Asserted on BYTES, because what fails without it is a byte-level
+      // decode: the response header says `charset=utf-8`, but that is gone once
+      // the file is on disk, and Excel-on-Windows then reads a double-clicked
+      // .csv with the ANSI codepage and mojibakes every Turkish name in it.
+      expect(Buffer.from(csv, 'utf8').subarray(0, 3)).toEqual(
+        Buffer.from([0xef, 0xbb, 0xbf]),
+      );
+
+      // ...and it is the WRITER's BOM, not the vocabulary's: inside `csvHeader()`
+      // it would land within the first FIELD, where `csvField` re-examines it.
+      expect(csvHeader().startsWith('subsidiary,')).toBe(true);
+      expect(csv.slice(1).startsWith('subsidiary,')).toBe(true);
     });
 
     it('CSV: every row has exactly as many cells as the header, on both row kinds', async () => {
@@ -1152,7 +1177,7 @@ describe('ReportsService', () => {
       // catches a marker gained or lost when the columns move: the fixture is
       // comma-free on purpose, so a plain split is exact here.
       const width = lines[0].split(',').length;
-      expect(width).toBe(15);
+      expect(width).toBe(16);
       for (const line of lines.slice(1)) {
         expect(line.split(',')).toHaveLength(width);
       }
@@ -1172,7 +1197,7 @@ describe('ReportsService', () => {
       expect(await excelHeader('Withdrawn Records')).toEqual([
         'Subsidiary', 'Reporting entity', 'Category', 'Reporting period',
         'Period', 'Activity value', 'Unit', 'tCO₂e removed',
-        'Withdrawn (UTC)', 'Reason',
+        'Withdrawn (UTC)', 'Reason', 'Withdrawn by (user id)',
       ]);
     });
 
@@ -1210,7 +1235,7 @@ describe('ReportsService', () => {
       const html = buildReportHtml(await service.assemble(admin, q));
       expect(headersUnder(html, 'Withdrawn from this inventory')).toEqual([
         'Subsidiary', 'Reporting entity', 'Category', 'Period', 'tCO₂e removed',
-        'Withdrawn (UTC)', 'Reason',
+        'Withdrawn (UTC)', 'Reason', 'Withdrawn by',
       ]);
     });
 
@@ -1404,6 +1429,7 @@ describe('ReportsService', () => {
           periodValue: 'February',
           voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
           voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+          voidedBy: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
         }),
       ]);
       const cells = cellsByHeader(
@@ -1417,9 +1443,36 @@ describe('ReportsService', () => {
       expect(cells['tCO₂e removed']).toBe('0.4'); // one decimal, as above
       expect(cells['Withdrawn (UTC)']).toBe('2026-02-03 09:30');
       expect(cells['Reason']).toContain('Duplicate of the Istanbul HQ');
+      // The opaque id, printed verbatim and never resolved to a name.
+      expect(cells['Withdrawn by']).toBe('7c9e6679-7425-40de-944b-e07fc1f90ae7');
       // The withdrawn table carries no activity quantity at all — an A4-width
-      // decision, and the reason this table is 7 columns where Excel is 10.
+      // decision, and the reason this table is 8 columns where Excel is 11.
       expect(Object.keys(cells)).not.toContain('Activity');
+    });
+
+    it('PDF withdrawn: an absent actor prints the em dash, not an empty cell', async () => {
+      // `voided_by` is nullable in the schema (no FK, by design), so the branch
+      // exists and needs a defined rendering. It takes the em dash because its
+      // two siblings in this table do — where the CSV and Excel take `''` — and
+      // an empty printed cell reads as a column the writer forgot rather than
+      // as an actor the record does not carry.
+      stubRecords(prisma, [
+        makeRecord(),
+        makeRecord({
+          id: 'rec-void',
+          status: 'voided',
+          periodValue: 'February',
+          voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
+          voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+          voidedBy: null,
+        }),
+      ]);
+      const cells = cellsByHeader(
+        buildReportHtml(await service.assemble(admin, q)),
+        'Withdrawn from this inventory',
+      );
+
+      expect(cells['Withdrawn by']).toBe('—');
     });
 
     it('Excel: every data cell under its own header, both sheets', async () => {
@@ -1432,6 +1485,7 @@ describe('ReportsService', () => {
           activityValue: 900,
           voidReason: 'Meter read against the wrong building.',
           voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+          voidedBy: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
         }),
       ]);
       const wb = new ExcelJS.Workbook();
@@ -1469,6 +1523,7 @@ describe('ReportsService', () => {
       expect(withdrawn['Activity value']).toBe(900);
       expect(withdrawn['Withdrawn (UTC)']).toBe('2026-02-03 09:30');
       expect(withdrawn['Reason']).toContain('wrong building');
+      expect(withdrawn['Withdrawn by (user id)']).toBe('7c9e6679-7425-40de-944b-e07fc1f90ae7');
       expect(typeof withdrawn['tCO₂e removed']).toBe('number');
     });
   });
@@ -1498,7 +1553,7 @@ describe('report column descriptors', () => {
   };
   const withdrawnRow: ReportWithdrawnRow = {
     ...ledgerRow, status: 'voided', voidReason: 'Duplicate invoice.',
-    voidedAt: '2026-02-03 09:30',
+    voidedAt: '2026-02-03 09:30', voidedBy: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
   };
 
   it('refuses a withdrawn row in the ledger writer, at compile time', () => {
@@ -1551,6 +1606,10 @@ describe('report column descriptors', () => {
     // file saying a figure was withdrawn and refusing to say what.
     expect(at('voided_activity_value')).toBe('1000');
     expect(at('voided_tco2e')).toBe('0.44');
+    // Including the actor: it is a disclosure, so the marker rule must not
+    // reach it either. A `WITHDRAWN` here would name no one while looking like
+    // an answer.
+    expect(at('voided_by')).toBe('7c9e6679-7425-40de-944b-e07fc1f90ae7');
   });
 
   it('accounts for every marker, so deleting the compile-time guard fails here too', () => {
@@ -1581,7 +1640,9 @@ describe('report column descriptors', () => {
   it('leaves the disclosure block empty on a counted row', () => {
     const header = csvHeader().split(',');
     const cells = csvLedgerRow(ledgerRow).split(',');
-    for (const column of ['voided_activity_value', 'voided_tco2e', 'voided_at_utc', 'void_reason']) {
+    for (const column of [
+      'voided_activity_value', 'voided_tco2e', 'voided_at_utc', 'void_reason', 'voided_by',
+    ]) {
       expect(cells[header.indexOf(column)]).toBe('');
     }
   });
@@ -1599,10 +1660,10 @@ describe('report column descriptors', () => {
  *
  * RE-MEASURED on this branch, because the figure above is about `main` and a
  * stale coverage number reads as a current one: the ledger now catches **6 of
- * 15** (`subsidiary`, `reporting_entity`, `category`, `reporting_period`,
- * `period_value`, `activity_unit`) and the withdrawn row **7 of 15** (those six
+ * 16** (`subsidiary`, `reporting_entity`, `category`, `reporting_period`,
+ * `period_value`, `activity_unit`) and the withdrawn row **7 of 16** (those six
  * plus `void_reason`) — up from 2, which is what the withdrawn matrix below
- * bought. The nine and eight that survive are `activity_value`, `tco2e`,
+ * bought. The ten and nine that survive are `activity_value`, `tco2e`,
  * `status`, `evidence_files`, `anomaly_flag`, the `voided_*` block and the
  * `WITHDRAWN` markers: every one is system-generated, and none can carry a
  * character a user typed. Every column that CAN is covered in both writers.
@@ -1613,7 +1674,7 @@ describe('report column descriptors', () => {
  * `generateCsv`, visible in a screenful; they are now eleven lambdas in another
  * file, and F2/F3 add per-format renderers where a different escaper (HTML for
  * the PDF) is genuinely needed. That is the moment someone puts escaping inside
- * a renderer, and 13 of 15 columns would not notice.
+ * a renderer, and 14 of 16 columns would not notice.
  */
 describe('no column can opt out of CSV neutralisation', () => {
   /** Simultaneously a formula, a field-splitter and a record-splitter. */

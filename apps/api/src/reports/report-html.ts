@@ -79,7 +79,12 @@ export function buildReportHtml(data: ReportData): string {
   .tile .v { font-size: 20px; font-weight: 700; } .tile .l { color: #6e6e73; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
   table { width: 100%; border-collapse: collapse; margin: 8px 0 16px; }
   th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #6e6e73; border-bottom: 1.5px solid #d2d2d7; padding: 6px 8px; }
-  td { padding: 6px 8px; border-bottom: 1px solid #f0f0f2; } .num { text-align: right; font-variant-numeric: tabular-nums; }
+  /* overflow-wrap lets a 36-char UUID break inside its own cell: the withdrawn
+     table's eighth column has no natural break opportunity, and without this it
+     widens the table off the A4 page. Ordinary prose is unaffected -- the rule
+     only applies where a token would otherwise overflow. (No backticks in this
+     block: it lives inside a template literal, and one would close it.) */
+  td { padding: 6px 8px; border-bottom: 1px solid #f0f0f2; overflow-wrap: anywhere; } .num { text-align: right; font-variant-numeric: tabular-nums; }
   .warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
   .note { color: #6e6e73; font-size: 10px; margin-top: 4px; }
   footer { margin-top: 28px; border-top: 1px solid #e5e5ea; padding-top: 10px; color: #6e6e73; font-size: 10px; }

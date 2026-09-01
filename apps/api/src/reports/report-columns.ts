@@ -375,6 +375,18 @@ export const DISCLOSURE_COLUMNS = [
     restates: null, cell: (r) => r.voidedAt ?? '' },
   { key: 'void_reason', label: 'void_reason', excel: { label: 'Reason' },
     restates: null, cell: (r) => r.voidReason ?? '' },
+  // Appended last, and that is a contract rather than a habit: the CSV's rule
+  // since `reporting_entity` was inserted is that new columns go on the end, so
+  // a formula pinned to a column position keeps reading the same column.
+  //
+  // `restates: null` — it discloses an actor, not a value moved out of a body
+  // column, so the marker-parity check has nothing to pair it with.
+  //
+  // The Excel label says `(user id)` because a bare "Withdrawn by" over a UUID
+  // reads as a truncated name; the CSV label stays snake_case with the STATUS
+  // word, matching `voided_at_utc` beside it.
+  { key: 'voided_by', label: 'voided_by', excel: { label: 'Withdrawn by (user id)' },
+    restates: null, cell: (r) => r.voidedBy ?? '' },
 ] as const satisfies readonly DisclosureColumn[];
 
 /**
@@ -628,6 +640,9 @@ const WITHDRAWN_SHEET: readonly ExcelSlot<ReportWithdrawnRow>[] = [
         ? `${t.uncalculatedCount} of these carry no emissions figure`
         : '',
   },
+  // Eleventh, after Reason. No `withdrawnTotal`: an actor does not aggregate,
+  // and the writer emits `''` for the total row's cell under it.
+  { ...disclosure('voided_by').excel!, cell: disclosure('voided_by').cell },
 ];
 
 /**
@@ -705,9 +720,21 @@ export function pdfLedgerRow(r: ReportLedgerRow): string {
 }
 
 /**
- * The printed restatement table: seven columns, and it carries NO activity
- * quantity at all — an A4-width decision, and why it is 7 where Excel is 10.
+ * The printed restatement table: eight columns, and it carries NO activity
+ * quantity at all — an A4-width decision, and why it is 8 where Excel is 11.
  * Its own list, like the Excel sheet's, because it is a different table.
+ *
+ * The eighth is the withdrawing actor, and it is a COLUMN rather than a line in
+ * the note above the table because the fact is per-row: with two withdrawals by
+ * two different people, a section-level note either lists both ids bound to
+ * neither row or drops the association — the "discloses one of two, reads as
+ * complete" failure this section exists to end. The cost is real and was
+ * measured rather than assumed: A4 at 10 mm margins less the 48 px body padding
+ * leaves ~622 px of table, so a column goes from ~89 px to ~78 px, and a 36-char
+ * UUID is ~227 px with no natural break. `td { overflow-wrap: anywhere }` in
+ * `report-html.ts` is what pays for it — the id wraps inside its own cell
+ * instead of widening the table or squeezing `Reason`, which holds free text up
+ * to 2,000 characters.
  */
 const PDF_WITHDRAWN: readonly PdfSlot<ReportWithdrawnRow>[] = [
   body('subsidiary').pdf,
@@ -721,6 +748,9 @@ const PDF_WITHDRAWN: readonly PdfSlot<ReportWithdrawnRow>[] = [
   // `rawHtml` grant. One plausible "unify these" edit breaks exactly this way.
   { label: 'Withdrawn (UTC)', cell: (r) => r.voidedAt ?? '—' },
   { label: 'Reason', cell: (r) => r.voidReason ?? '—' },
+  // The em dash for the same reason as its two siblings above: a plain string,
+  // escaped by the writer, so an entity would print as visible `&mdash;` text.
+  { label: 'Withdrawn by', cell: (r) => r.voidedBy ?? '—' },
 ];
 
 export function pdfWithdrawnHeadRow(): string {
