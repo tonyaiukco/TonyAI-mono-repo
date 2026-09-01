@@ -9,6 +9,9 @@ import {
   csvHeader,
   csvLedgerRow,
   csvWithdrawnRow,
+  pdfClass,
+  pdfWithdrawnHeadRow,
+  pdfWithdrawnRow,
   excelLedgerHeader,
   excelLedgerRow,
 } from './report-columns';
@@ -1645,6 +1648,38 @@ describe('report column descriptors', () => {
     ]) {
       expect(cells[header.indexOf(column)]).toBe('');
     }
+  });
+
+  /**
+   * The printed actor column's wrap opt-in.
+   *
+   * `brk` is a one-word flag whose whole effect lives in CSS, which makes it the
+   * kind of thing a later cleanup deletes ("this class isn't in the stylesheet
+   * I'm reading"). Nothing else fails when it goes: the column still renders,
+   * every golden still passes, and the only symptom is a 36-char id with
+   * nowhere to break widening the withdrawn table off the A4 page — in a PDF
+   * nobody re-renders during review.
+   */
+  it('marks the actor column as breakable, on both the header and the cell', () => {
+    expect(pdfWithdrawnHeadRow()).toContain('<th class="brk">Withdrawn by</th>');
+    expect(pdfWithdrawnRow(withdrawnRow)).toContain(
+      `<td class="brk">${withdrawnRow.voidedBy}</td>`,
+    );
+    // ...and nowhere else: it is the only column whose value is an unbreakable
+    // token, and applying it broadly is what narrows unrelated columns.
+    expect(pdfWithdrawnHeadRow().match(/class="brk"/g)).toHaveLength(1);
+  });
+
+  it('emits one class attribute however many flags a column sets', () => {
+    // `<td class="num" class="brk">` is valid-looking HTML where the browser
+    // keeps the first and drops the rest, so the second flag would do nothing.
+    // No shipped column sets both, which is exactly why this is asserted on the
+    // helper rather than on a rendered row.
+    const slot = (num?: boolean, brk?: boolean) => ({ label: 'x', num, brk, cell: () => 'v' });
+    expect(pdfClass(slot(true, true))).toBe(' class="num brk"');
+    expect(pdfClass(slot(true, false))).toBe(' class="num"');
+    expect(pdfClass(slot(false, true))).toBe(' class="brk"');
+    expect(pdfClass(slot())).toBe('');
   });
 });
 

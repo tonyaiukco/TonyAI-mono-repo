@@ -148,6 +148,20 @@ interface PdfSlot<R> {
    * mismatch between the two literals was invisible.
    */
   readonly num?: boolean;
+  /**
+   * `class="brk"` — this column may break a word to fit, because its value is
+   * one unbreakable token (a UUID) rather than prose.
+   *
+   * Declared per column and deliberately NOT set globally on `td`:
+   * `overflow-wrap: anywhere` also feeds the auto table-layout algorithm a
+   * smaller min-content width, so applied to every cell it silently narrows
+   * OTHER columns. Measured on a real Chromium render — the global rule pulled
+   * the ledger's `Status` column from 67px to 57px, which is where `approved`
+   * stops fitting on one line, and a squeezed `.num` cell could break a figure
+   * mid-number in a filed PDF. Same reasoning as `num`: it has to appear on
+   * both the `<th>` and the `<td>`, so it is sourced from one descriptor.
+   */
+  readonly brk?: boolean;
   readonly cell: (r: R) => PdfCell;
 }
 
@@ -692,17 +706,28 @@ function pdfInner(v: PdfCell): string {
   return typeof v === 'string' ? esc(v) : v.html;
 }
 
+/**
+ * ONE class attribute, however many flags are set.
+ *
+ * Emitting `class` per flag produces `<td class="num" class="brk">`, where a
+ * browser keeps the first and drops the rest — so adding a second flag to a
+ * column that already has one would silently do nothing. No column sets both
+ * today; this is what stops the first one that does from being a puzzle.
+ */
+export function pdfClass<R>(c: PdfSlot<R>): string {
+  const names = [c.num ? 'num' : '', c.brk ? 'brk' : ''].filter(Boolean);
+  return names.length > 0 ? ` class="${names.join(' ')}"` : '';
+}
+
 function pdfCells<R>(slots: readonly PdfSlot<R>[], r: R): string {
-  return slots
-    .map((c) => `<td${c.num ? ' class="num"' : ''}>${pdfInner(c.cell(r))}</td>`)
-    .join('');
+  return slots.map((c) => `<td${pdfClass(c)}>${pdfInner(c.cell(r))}</td>`).join('');
 }
 
 function pdfHead<R>(slots: readonly PdfSlot<R>[]): string {
   return slots
     // Escaped even though every label is a module literal today: `label` is
     // typed `string`, and a per-report dynamic one would otherwise be raw.
-    .map((c) => `<th${c.num ? ' class="num"' : ''}>${esc(c.label)}</th>`)
+    .map((c) => `<th${pdfClass(c)}>${esc(c.label)}</th>`)
     .join('');
 }
 
@@ -750,7 +775,7 @@ const PDF_WITHDRAWN: readonly PdfSlot<ReportWithdrawnRow>[] = [
   { label: 'Reason', cell: (r) => r.voidReason ?? '—' },
   // The em dash for the same reason as its two siblings above: a plain string,
   // escaped by the writer, so an entity would print as visible `&mdash;` text.
-  { label: 'Withdrawn by', cell: (r) => r.voidedBy ?? '—' },
+  { label: 'Withdrawn by', brk: true, cell: (r) => r.voidedBy ?? '—' },
 ];
 
 export function pdfWithdrawnHeadRow(): string {

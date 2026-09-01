@@ -163,7 +163,11 @@ silently would misstate the inventory by omission:
   `voided_at_utc`, `void_reason` and `voided_by` — sixteen columns in all.
   The file also opens with a **UTF-8 BOM**, so a double-clicked export decodes
   as UTF-8 on Windows rather than through the ANSI codepage; without it every
-  Turkish name in the file mojibakes.
+  Turkish name in the file mojibakes. **Column POSITIONS are unchanged by the
+  BOM, but the first column's NAME is not:** a parser that does not strip it
+  reads the first header field as `\uFEFFsubsidiary`. Read the file as
+  `utf-8-sig` (Python) or its equivalent if you key on the first column by name;
+  every other column is unaffected.
 
 **Who withdrew a figure is disclosed as the opaque `voided_by` UUID, never a
 resolved name** (decision 2026-09-01). A report is a filed artifact that cannot
