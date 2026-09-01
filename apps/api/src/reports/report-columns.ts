@@ -148,6 +148,20 @@ interface PdfSlot<R> {
    * mismatch between the two literals was invisible.
    */
   readonly num?: boolean;
+  /**
+   * `class="brk"` — this column may break a word to fit, because its value is
+   * one unbreakable token (a UUID) rather than prose.
+   *
+   * Declared per column and deliberately NOT set globally on `td`:
+   * `overflow-wrap: anywhere` also feeds the auto table-layout algorithm a
+   * smaller min-content width, so applied to every cell it silently narrows
+   * OTHER columns. Measured on a real Chromium render — the global rule pulled
+   * the ledger's `Status` column from 67px to 57px, which is where `approved`
+   * stops fitting on one line, and a squeezed `.num` cell could break a figure
+   * mid-number in a filed PDF. Same reasoning as `num`: it has to appear on
+   * both the `<th>` and the `<td>`, so it is sourced from one descriptor.
+   */
+  readonly brk?: boolean;
   readonly cell: (r: R) => PdfCell;
 }
 
@@ -375,6 +389,18 @@ export const DISCLOSURE_COLUMNS = [
     restates: null, cell: (r) => r.voidedAt ?? '' },
   { key: 'void_reason', label: 'void_reason', excel: { label: 'Reason' },
     restates: null, cell: (r) => r.voidReason ?? '' },
+  // Appended last, and that is a contract rather than a habit: the CSV's rule
+  // since `reporting_entity` was inserted is that new columns go on the end, so
+  // a formula pinned to a column position keeps reading the same column.
+  //
+  // `restates: null` — it discloses an actor, not a value moved out of a body
+  // column, so the marker-parity check has nothing to pair it with.
+  //
+  // The Excel label says `(user id)` because a bare "Withdrawn by" over a UUID
+  // reads as a truncated name; the CSV label stays snake_case with the STATUS
+  // word, matching `voided_at_utc` beside it.
+  { key: 'voided_by', label: 'voided_by', excel: { label: 'Withdrawn by (user id)' },
+    restates: null, cell: (r) => r.voidedBy ?? '' },
 ] as const satisfies readonly DisclosureColumn[];
 
 /**
@@ -628,6 +654,9 @@ const WITHDRAWN_SHEET: readonly ExcelSlot<ReportWithdrawnRow>[] = [
         ? `${t.uncalculatedCount} of these carry no emissions figure`
         : '',
   },
+  // Eleventh, after Reason. No `withdrawnTotal`: an actor does not aggregate,
+  // and the writer emits `''` for the total row's cell under it.
+  { ...disclosure('voided_by').excel!, cell: disclosure('voided_by').cell },
 ];
 
 /**
@@ -663,8 +692,15 @@ export function excelWithdrawnRow(r: ReportWithdrawnRow): CellValue[] {
  * `BODY_COLUMNS` instead — the plausible copy-paste from `excelLedgerRow` above
  * — passed the entire suite: the tonnage is at index 7 in both lists by
  * coincidence, so every name lookup agreed while the row ran a cell past the
- * last column and silently dropped the uncalculated-count disclosure. The
- * spec's arity assertion is what actually holds this; the derivation does not.
+ * last column and silently dropped the uncalculated-count disclosure.
+ *
+ * **The arity assertion no longer holds this, and that changed silently.** It
+ * worked while this sheet had 10 slots against 11 excel-bearing body columns;
+ * adding the actor made both 11, so the copy-paste now produces a row of the
+ * RIGHT length whose only defect is the missing disclosure. What holds it is a
+ * spec that reads the uncalculated note out of the `Reason` slot by name —
+ * that slot exists on this list alone — with the totals built by the test
+ * rather than by a fixture that happens to contain an uncalculated record.
  */
 export function excelWithdrawnTotalRow(t: ReportWithdrawnTotals): CellValue[] {
   return WITHDRAWN_SHEET.map((c) => c.withdrawnTotal?.(t) ?? '');
@@ -677,17 +713,28 @@ function pdfInner(v: PdfCell): string {
   return typeof v === 'string' ? esc(v) : v.html;
 }
 
+/**
+ * ONE class attribute, however many flags are set.
+ *
+ * Emitting `class` per flag produces `<td class="num" class="brk">`, where a
+ * browser keeps the first and drops the rest — so adding a second flag to a
+ * column that already has one would silently do nothing. No column sets both
+ * today; this is what stops the first one that does from being a puzzle.
+ */
+export function pdfClass<R>(c: PdfSlot<R>): string {
+  const names = [c.num ? 'num' : '', c.brk ? 'brk' : ''].filter(Boolean);
+  return names.length > 0 ? ` class="${names.join(' ')}"` : '';
+}
+
 function pdfCells<R>(slots: readonly PdfSlot<R>[], r: R): string {
-  return slots
-    .map((c) => `<td${c.num ? ' class="num"' : ''}>${pdfInner(c.cell(r))}</td>`)
-    .join('');
+  return slots.map((c) => `<td${pdfClass(c)}>${pdfInner(c.cell(r))}</td>`).join('');
 }
 
 function pdfHead<R>(slots: readonly PdfSlot<R>[]): string {
   return slots
     // Escaped even though every label is a module literal today: `label` is
     // typed `string`, and a per-report dynamic one would otherwise be raw.
-    .map((c) => `<th${c.num ? ' class="num"' : ''}>${esc(c.label)}</th>`)
+    .map((c) => `<th${pdfClass(c)}>${esc(c.label)}</th>`)
     .join('');
 }
 
@@ -705,9 +752,21 @@ export function pdfLedgerRow(r: ReportLedgerRow): string {
 }
 
 /**
- * The printed restatement table: seven columns, and it carries NO activity
- * quantity at all — an A4-width decision, and why it is 7 where Excel is 10.
+ * The printed restatement table: eight columns, and it carries NO activity
+ * quantity at all — an A4-width decision, and why it is 8 where Excel is 11.
  * Its own list, like the Excel sheet's, because it is a different table.
+ *
+ * The eighth is the withdrawing actor, and it is a COLUMN rather than a line in
+ * the note above the table because the fact is per-row: with two withdrawals by
+ * two different people, a section-level note either lists both ids bound to
+ * neither row or drops the association — the "discloses one of two, reads as
+ * complete" failure this section exists to end. The cost is real and was
+ * measured rather than assumed: A4 at 10 mm margins less the 48 px body padding
+ * leaves ~622 px of table, so a column goes from ~89 px to ~78 px, and a 36-char
+ * UUID is ~227 px with no natural break. `td { overflow-wrap: anywhere }` in
+ * `report-html.ts` is what pays for it — the id wraps inside its own cell
+ * instead of widening the table or squeezing `Reason`, which holds free text up
+ * to 2,000 characters.
  */
 const PDF_WITHDRAWN: readonly PdfSlot<ReportWithdrawnRow>[] = [
   body('subsidiary').pdf,
@@ -721,6 +780,9 @@ const PDF_WITHDRAWN: readonly PdfSlot<ReportWithdrawnRow>[] = [
   // `rawHtml` grant. One plausible "unify these" edit breaks exactly this way.
   { label: 'Withdrawn (UTC)', cell: (r) => r.voidedAt ?? '—' },
   { label: 'Reason', cell: (r) => r.voidReason ?? '—' },
+  // The em dash for the same reason as its two siblings above: a plain string,
+  // escaped by the writer, so an entity would print as visible `&mdash;` text.
+  { label: 'Withdrawn by', brk: true, cell: (r) => r.voidedBy ?? '—' },
 ];
 
 export function pdfWithdrawnHeadRow(): string {

@@ -319,6 +319,9 @@ export class ReportsService implements OnModuleDestroy {
       voidedAt: r.voidedAt
         ? r.voidedAt.toISOString().slice(0, 16).replace('T', ' ')
         : null,
+      // Straight through, unresolved: `load()` reads with `include`, so the id
+      // is already here, and resolving it would put a name in a filed file.
+      voidedBy: r.voidedBy,
     }));
     const withdrawnTotals: ReportWithdrawnTotals = {
       count: withdrawn.length,
@@ -490,7 +493,18 @@ export class ReportsService implements OnModuleDestroy {
       ...data.withdrawn.map((r) => csvWithdrawnRow(r)),
     ];
     await this.audit(user, q, 'csv', data.summary.recordCount, data.withdrawnTotals.count);
-    return lines.join('\n') + '\n';
+    // U+FEFF, and it belongs HERE rather than in `csvHeader()` or the
+    // controller. The response already says `charset=utf-8`, but that header is
+    // gone once the file is on disk, and Excel-on-Windows then decodes a
+    // double-clicked .csv with the ANSI codepage — which mojibakes every
+    // Turkish name in it. A BOM inside `csvHeader()` would land INSIDE the first
+    // field, where `csvField` re-examines it; in the controller it would ship
+    // with no unit coverage, since there is no controller spec.
+    //
+    // Not a security property: a multi-byte UTF-8 sequence misdecoded as any
+    // single-byte codepage never yields a byte < 0x80, so it can neither
+    // manufacture a formula lead nor break the RFC-4180 framing. Pure fidelity.
+    return '\uFEFF' + lines.join('\n') + '\n';
   }
 
   /** Generation log (report_page.md §10): one audit row per generated artifact.

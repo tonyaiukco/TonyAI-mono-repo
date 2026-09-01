@@ -38,7 +38,7 @@ test('reports: live preview + PDF/Excel/CSV downloads', async ({ page }) => {
   const cases = [
     { button: 'Download PDF', file: 'tonyai-executive_summary-2026.pdf', magic: '%PDF', toast: 'PDF report generated' },
     { button: 'Export Excel', file: 'tonyai-executive_summary-2026.xlsx', magic: 'PK', toast: 'EXCEL report generated' },
-    { button: 'Export CSV', file: 'tonyai-executive_summary-2026.csv', magic: 'subsidiary,', toast: 'CSV report generated' },
+    { button: 'Export CSV', file: 'tonyai-executive_summary-2026.csv', magic: '\uFEFFsubsidiary,', toast: 'CSV report generated' },
   ] as const;
 
   for (const c of cases) {
@@ -138,6 +138,18 @@ test('reports: a withdrawn figure is disclosed in the export, not silently omitt
   for (const column of ['tco2e', 'activity_value', 'evidence_files', 'anomaly_flag']) {
     expect(at(row!, column)).toBe('Withdrawn');
   }
+  // The actor, compared against the record's OWN `voidedBy` rather than merely
+  // matched as "some UUID" — a service reading `createdBy` would emit a real
+  // UUID from the same row and pass a shape check. This is the only place the
+  // column `void()` writes and the column the export reads are proven to be the
+  // same one; every unit spec sets `voidedBy` by hand on a mocked row.
+  const record = await request.get(`${API_BASE}/activity-records/${id}`, {
+    headers: bearer(token),
+  });
+  expect(record.ok()).toBe(true);
+  const { voidedBy } = (await record.json()) as { voidedBy: string | null };
+  expect(voidedBy).toBeTruthy();
+  expect(at(row!, 'voided_by')).toBe(voidedBy);
   // ...and it is the ONLY line carrying this activity value: a withdrawn record
   // that also appeared as a counted ledger row would be back in every total.
   expect(lines.filter((l) => l.includes('54321')).length).toBe(1);

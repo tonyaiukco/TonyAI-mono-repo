@@ -99,6 +99,22 @@ export interface ReportWithdrawnRow extends Omit<ReportLedgerRow, 'status'> {
    *  uncorrectable afterwards, so it is quoted verbatim, never summarised. */
   voidReason: string | null;
   voidedAt: string | null;
+  /**
+   * WHO withdrew the figure, as the opaque `voided_by` UUID — never a resolved
+   * name (user decision, 2026-09-01).
+   *
+   * A report is a filed artifact that cannot be recalled, so writing a natural
+   * person's name into one is a KVKK/GDPR commitment the erasure and
+   * report-redaction questions have not yet answered; the id satisfies
+   * ISO 14064-1 §9.3.1 for a verifier with system access without making that
+   * commitment. It is also why reports still resolve no profiles: the id is
+   * already on the row, so this disclosure costs no query.
+   *
+   * Nullable because the column is (`voided_by` carries no FK by design — a
+   * deleted profile takes the name, never the id), and because every COUNTED
+   * ledger row has it null.
+   */
+  voidedBy: string | null;
 }
 
 /** One deduplicated factor snapshot (audit traceability core, FR §3.5/§5). */

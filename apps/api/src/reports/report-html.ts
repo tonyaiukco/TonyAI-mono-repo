@@ -79,7 +79,25 @@ export function buildReportHtml(data: ReportData): string {
   .tile .v { font-size: 20px; font-weight: 700; } .tile .l { color: #6e6e73; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
   table { width: 100%; border-collapse: collapse; margin: 8px 0 16px; }
   th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #6e6e73; border-bottom: 1.5px solid #d2d2d7; padding: 6px 8px; }
-  td { padding: 6px 8px; border-bottom: 1px solid #f0f0f2; } .num { text-align: right; font-variant-numeric: tabular-nums; }
+  td { padding: 6px 8px; border-bottom: 1px solid #f0f0f2; }
+  /* Opt-in per column, via PdfSlot.brk -- never on every td. A 36-char UUID is
+     one unbreakable token (~227px) with nowhere to wrap, so without this the
+     withdrawn table's eighth column widens off the A4 page; but applied
+     globally, overflow-wrap also feeds the table layout algorithm a smaller
+     min-content width and silently narrows other columns (measured: the
+     ledger's Status column went 67px to 57px, where approved stops fitting on
+     one line). All three declarations were measured on a real render: bare
+     overflow-wrap collapses this column to its 1-char min-content -- 47px, the
+     id in nine short lines -- so min-width holds it open, and 10px, the size
+     the report already uses for its notes and headers, is the reading this
+     column deserves: a machine identifier a verifier copies, not prose. The
+     width it gives back goes to Reason, which is free text. (No backticks in
+     this block: it lives inside a template literal, and one would close it.) */
+  .brk { font-size: 10px; min-width: 76px; }
+  /* The break itself is on the CELL only. On the <th> it split the heading
+     mid-word (WITHDRAW / N BY) -- the label is prose and wraps at its space
+     like every other heading; it is the value below it that has no space. */
+  td.brk { overflow-wrap: anywhere; } .num { text-align: right; font-variant-numeric: tabular-nums; }
   .warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
   .note { color: #6e6e73; font-size: 10px; margin-top: 4px; }
   footer { margin-top: 28px; border-top: 1px solid #e5e5ea; padding-top: 10px; color: #6e6e73; font-size: 10px; }

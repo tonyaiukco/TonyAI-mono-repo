@@ -9,7 +9,15 @@ import {
   csvHeader,
   csvLedgerRow,
   csvWithdrawnRow,
+  pdfClass,
+  pdfLedgerHeadRow,
+  pdfLedgerRow,
+  pdfWithdrawnHeadRow,
+  pdfWithdrawnRow,
   excelLedgerHeader,
+  excelWithdrawnHeader,
+  excelWithdrawnRow,
+  excelWithdrawnTotalRow,
   excelLedgerRow,
 } from './report-columns';
 import type { ReportLedgerRow, ReportWithdrawnRow } from './report-data';
@@ -121,6 +129,7 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
     location: null,
     voidReason: null,
     voidedAt: null,
+    voidedBy: null,
     evidence: [{ fileName: 'invoice-jan.pdf' }],
     createdAt: now,
     updatedAt: now,
@@ -661,6 +670,7 @@ describe('ReportsService', () => {
         activityValue: 900,
         voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
         voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+        voidedBy: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
         ...overrides,
       });
 
@@ -793,6 +803,46 @@ describe('ReportsService', () => {
       expect(at(withdrawn, 'subsidiary')).toBe('Energy');
     });
 
+    it('binds each withdrawal to its OWN actor, in all three formats', async () => {
+      // The property the eighth PDF column exists for, and the one nothing
+      // asserted. Every withdrawn fixture in this file carried the same id (or
+      // none), so stamping withdrawal #1's actor onto every withdrawn row —
+      // in the service mapper or at any of the three writer call sites —
+      // passed all 129 tests. A filed report that attributes a withdrawal to
+      // the wrong person is a worse artifact than one with no actor column,
+      // and it is the exact failure the column was chosen over a section note
+      // to avoid.
+      const ALICE = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+      const BOB = 'c0ffee00-dead-4bee-9f00-123456789abc';
+      stubRecords(prisma, [
+        makeRecord(),
+        voidedRecord({ id: 'v-alice', periodValue: 'February', voidedBy: ALICE }),
+        voidedRecord({ id: 'v-bob', periodValue: 'March', voidedBy: BOB }),
+      ]);
+
+      const { lines, at } = columns(await service.generateCsv(admin, q));
+      expect(at(lines.find((l) => l.includes('February'))!, 'voided_by')).toBe(ALICE);
+      expect(at(lines.find((l) => l.includes('March'))!, 'voided_by')).toBe(BOB);
+
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+      const ws = wb.getWorksheet('Withdrawn Records')!;
+      const head = (ws.getRow(1).values as string[]).slice(1);
+      const actor = head.indexOf('Withdrawn by (user id)');
+      const period = head.indexOf('Period');
+      const sheet = [2, 3].map((n) => (ws.getRow(n).values as unknown[]).slice(1));
+      expect(sheet.find((r) => r[period] === 'February')![actor]).toBe(ALICE);
+      expect(sheet.find((r) => r[period] === 'March')![actor]).toBe(BOB);
+
+      const html = buildReportHtml(await service.assemble(admin, q));
+      const rowFor = (p: string) =>
+        [...html.matchAll(/<tr>[\s\S]*?<\/tr>/g)].map((m) => m[0]).find((tr) => tr.includes(`>${p}<`))!;
+      expect(rowFor('February')).toContain(ALICE);
+      expect(rowFor('February')).not.toContain(BOB);
+      expect(rowFor('March')).toContain(BOB);
+      expect(rowFor('March')).not.toContain(ALICE);
+    });
+
     it('discloses a withdrawal in the same table without adding it to any total', async () => {
       stubRecords(prisma, [
         makeRecord(),
@@ -811,6 +861,10 @@ describe('ReportsService', () => {
       // What left is stated — in its OWN columns.
       expect(at(withdrawn, 'voided_tco2e')).toBe('0.44');
       expect(at(withdrawn, 'voided_activity_value')).toBe('900');
+      // The actor, so this fixture's `voidedBy` is load-bearing rather than
+      // decoration: without this line the CSV has no value assertion for the
+      // column anywhere in the service-level suite.
+      expect(at(withdrawn, 'voided_by')).toBe('7c9e6679-7425-40de-944b-e07fc1f90ae7');
       // ...and EVERY column a reader could aggregate carries the marker on a
       // withdrawn row. Protecting tCO₂e alone still overstated total energy
       // consumption — itself a reported figure (GRI 302-1, CSRD E1-5) — and
@@ -1113,6 +1167,7 @@ describe('ReportsService', () => {
         activityValue: 900,
         voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
         voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+        voidedBy: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
       });
 
     /** The `<tr>` containing a given phrase, whole. */
@@ -1139,8 +1194,30 @@ describe('ReportsService', () => {
         'subsidiary', 'reporting_entity', 'category', 'reporting_period',
         'period_value', 'activity_value', 'activity_unit', 'tco2e', 'status',
         'evidence_files', 'anomaly_flag', 'voided_activity_value',
-        'voided_tco2e', 'voided_at_utc', 'void_reason',
+        'voided_tco2e', 'voided_at_utc', 'void_reason', 'voided_by',
       ]);
+    });
+
+    it('CSV: the file opens with a UTF-8 BOM, before the first header byte', async () => {
+      stubRecords(prisma, [makeRecord()]);
+      const csv = await service.generateCsv(admin, q);
+
+      // NOT trimmed, and that is the entire point of this test. Every other CSV
+      // assertion in this file calls `.trim()` first, and `String.prototype.trim()`
+      // strips U+FEFF — so before this existed, deleting the BOM left the whole
+      // suite green and the only thing that would have failed was one Playwright
+      // line. Asserted on BYTES, because what fails without it is a byte-level
+      // decode: the response header says `charset=utf-8`, but that is gone once
+      // the file is on disk, and Excel-on-Windows then reads a double-clicked
+      // .csv with the ANSI codepage and mojibakes every Turkish name in it.
+      expect(Buffer.from(csv, 'utf8').subarray(0, 3)).toEqual(
+        Buffer.from([0xef, 0xbb, 0xbf]),
+      );
+
+      // ...and it is the WRITER's BOM, not the vocabulary's: inside `csvHeader()`
+      // it would land within the first FIELD, where `csvField` re-examines it.
+      expect(csvHeader().startsWith('subsidiary,')).toBe(true);
+      expect(csv.slice(1).startsWith('subsidiary,')).toBe(true);
     });
 
     it('CSV: every row has exactly as many cells as the header, on both row kinds', async () => {
@@ -1152,7 +1229,7 @@ describe('ReportsService', () => {
       // catches a marker gained or lost when the columns move: the fixture is
       // comma-free on purpose, so a plain split is exact here.
       const width = lines[0].split(',').length;
-      expect(width).toBe(15);
+      expect(width).toBe(16);
       for (const line of lines.slice(1)) {
         expect(line.split(',')).toHaveLength(width);
       }
@@ -1172,7 +1249,7 @@ describe('ReportsService', () => {
       expect(await excelHeader('Withdrawn Records')).toEqual([
         'Subsidiary', 'Reporting entity', 'Category', 'Reporting period',
         'Period', 'Activity value', 'Unit', 'tCO₂e removed',
-        'Withdrawn (UTC)', 'Reason',
+        'Withdrawn (UTC)', 'Reason', 'Withdrawn by (user id)',
       ]);
     });
 
@@ -1210,7 +1287,7 @@ describe('ReportsService', () => {
       const html = buildReportHtml(await service.assemble(admin, q));
       expect(headersUnder(html, 'Withdrawn from this inventory')).toEqual([
         'Subsidiary', 'Reporting entity', 'Category', 'Period', 'tCO₂e removed',
-        'Withdrawn (UTC)', 'Reason',
+        'Withdrawn (UTC)', 'Reason', 'Withdrawn by',
       ]);
     });
 
@@ -1285,13 +1362,21 @@ describe('ReportsService', () => {
       const html = buildReportHtml(await service.assemble(admin, q));
       const width = headersUnder(html, 'Withdrawn from this inventory').length;
 
-      // Two hardcoded colspans plus a cell — 4 + 1 + 2. Add a column to the
-      // header and the arithmetic silently stops matching, which a browser
-      // renders as a table with a short last row rather than as an error.
+      // The trailing span is DERIVED (`PDF_WITHDRAWN.length - 5`), so adding a
+      // column moves both sides of this equality together and it cannot fail
+      // from that any more — the eighth column proved it by landing green. What
+      // it still holds: the derivation being replaced by a literal, and the
+      // leading `4` drifting. What it did NOT hold until the line below, since
+      // both keep the sum at the table's width: widening the tonnage to two
+      // columns while shortening the filler to match, which straddles the
+      // bolded figure across two columns of a filed page.
       const spanned = [...rowContaining(html, 'Total withdrawn').matchAll(/<td([^>]*)>/g)]
         .map((m) => Number(/colspan="(\d+)"/.exec(m[1])?.[1] ?? 1))
         .reduce((a, b) => a + b, 0);
       expect(spanned).toBe(width);
+      expect(/<td class="num"([^>]*)>/.exec(rowContaining(html, 'Total withdrawn'))![1]).not.toContain(
+        'colspan',
+      );
     });
   });
 
@@ -1404,6 +1489,7 @@ describe('ReportsService', () => {
           periodValue: 'February',
           voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
           voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+          voidedBy: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
         }),
       ]);
       const cells = cellsByHeader(
@@ -1417,9 +1503,36 @@ describe('ReportsService', () => {
       expect(cells['tCO₂e removed']).toBe('0.4'); // one decimal, as above
       expect(cells['Withdrawn (UTC)']).toBe('2026-02-03 09:30');
       expect(cells['Reason']).toContain('Duplicate of the Istanbul HQ');
+      // The opaque id, printed verbatim and never resolved to a name.
+      expect(cells['Withdrawn by']).toBe('7c9e6679-7425-40de-944b-e07fc1f90ae7');
       // The withdrawn table carries no activity quantity at all — an A4-width
-      // decision, and the reason this table is 7 columns where Excel is 10.
+      // decision, and the reason this table is 8 columns where Excel is 11.
       expect(Object.keys(cells)).not.toContain('Activity');
+    });
+
+    it('PDF withdrawn: an absent actor prints the em dash, not an empty cell', async () => {
+      // `voided_by` is nullable in the schema (no FK, by design), so the branch
+      // exists and needs a defined rendering. It takes the em dash because its
+      // two siblings in this table do — where the CSV and Excel take `''` — and
+      // an empty printed cell reads as a column the writer forgot rather than
+      // as an actor the record does not carry.
+      stubRecords(prisma, [
+        makeRecord(),
+        makeRecord({
+          id: 'rec-void',
+          status: 'voided',
+          periodValue: 'February',
+          voidReason: 'Duplicate of the Istanbul HQ invoice for the same month.',
+          voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+          voidedBy: null,
+        }),
+      ]);
+      const cells = cellsByHeader(
+        buildReportHtml(await service.assemble(admin, q)),
+        'Withdrawn from this inventory',
+      );
+
+      expect(cells['Withdrawn by']).toBe('—');
     });
 
     it('Excel: every data cell under its own header, both sheets', async () => {
@@ -1432,6 +1545,7 @@ describe('ReportsService', () => {
           activityValue: 900,
           voidReason: 'Meter read against the wrong building.',
           voidedAt: new Date('2026-02-03T09:30:00.000Z'),
+          voidedBy: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
         }),
       ]);
       const wb = new ExcelJS.Workbook();
@@ -1469,6 +1583,7 @@ describe('ReportsService', () => {
       expect(withdrawn['Activity value']).toBe(900);
       expect(withdrawn['Withdrawn (UTC)']).toBe('2026-02-03 09:30');
       expect(withdrawn['Reason']).toContain('wrong building');
+      expect(withdrawn['Withdrawn by (user id)']).toBe('7c9e6679-7425-40de-944b-e07fc1f90ae7');
       expect(typeof withdrawn['tCO₂e removed']).toBe('number');
     });
   });
@@ -1498,7 +1613,7 @@ describe('report column descriptors', () => {
   };
   const withdrawnRow: ReportWithdrawnRow = {
     ...ledgerRow, status: 'voided', voidReason: 'Duplicate invoice.',
-    voidedAt: '2026-02-03 09:30',
+    voidedAt: '2026-02-03 09:30', voidedBy: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
   };
 
   it('refuses a withdrawn row in the ledger writer, at compile time', () => {
@@ -1551,6 +1666,10 @@ describe('report column descriptors', () => {
     // file saying a figure was withdrawn and refusing to say what.
     expect(at('voided_activity_value')).toBe('1000');
     expect(at('voided_tco2e')).toBe('0.44');
+    // Including the actor: it is a disclosure, so the marker rule must not
+    // reach it either. A `WITHDRAWN` here would name no one while looking like
+    // an answer.
+    expect(at('voided_by')).toBe('7c9e6679-7425-40de-944b-e07fc1f90ae7');
   });
 
   it('accounts for every marker, so deleting the compile-time guard fails here too', () => {
@@ -1581,9 +1700,83 @@ describe('report column descriptors', () => {
   it('leaves the disclosure block empty on a counted row', () => {
     const header = csvHeader().split(',');
     const cells = csvLedgerRow(ledgerRow).split(',');
-    for (const column of ['voided_activity_value', 'voided_tco2e', 'voided_at_utc', 'void_reason']) {
+    for (const column of [
+      'voided_activity_value', 'voided_tco2e', 'voided_at_utc', 'void_reason', 'voided_by',
+    ]) {
       expect(cells[header.indexOf(column)]).toBe('');
     }
+  });
+
+  /**
+   * The printed actor column's wrap opt-in.
+   *
+   * `brk` is a one-word flag whose whole effect lives in CSS, which makes it the
+   * kind of thing a later cleanup deletes ("this class isn't in the stylesheet
+   * I'm reading"). Nothing else fails when it goes: the column still renders,
+   * every golden still passes, and the only symptom is a 36-char id with
+   * nowhere to break widening the withdrawn table off the A4 page — in a PDF
+   * nobody re-renders during review.
+   */
+  it('marks the actor column as breakable, on both the header and the cell', () => {
+    expect(pdfWithdrawnHeadRow()).toContain('<th class="brk">Withdrawn by</th>');
+    expect(pdfWithdrawnRow(withdrawnRow)).toContain(
+      `<td class="brk">${withdrawnRow.voidedBy}</td>`,
+    );
+    // ...and nowhere else: it is the only column whose value is an unbreakable
+    // token, and applying it broadly is what narrows unrelated columns. The
+    // LEDGER is the table that regression was measured on (Status 67px → 57px),
+    // so it is the one this has to check — the withdrawn table alone let
+    // `brk: true` on a ledger column through.
+    expect(pdfWithdrawnHeadRow().match(/class="brk"/g)).toHaveLength(1);
+    expect(pdfLedgerHeadRow()).not.toContain('brk');
+    expect(pdfLedgerRow(ledgerRow)).not.toContain('brk');
+  });
+
+  it('derives the withdrawn total row from the withdrawn sheet, not the body columns', () => {
+    // Until the actor column landed, this was held by an arity assertion: the
+    // sheet had 10 slots against 11 excel-bearing body columns, so the
+    // copy-paste from `excelLedgerRow` produced a row of the wrong length. The
+    // eleventh column made both lists 11 and that check stopped discriminating
+    // — silently, with the suite green. The `Reason` slot carries the
+    // uncalculated-count note and exists on THIS list only, so reading it by
+    // name is what distinguishes the two derivations. The totals are built
+    // here rather than taken from a fixture: the surviving assertion elsewhere
+    // only fires when a fixture happens to include an uncalculated record.
+    const header = excelWithdrawnHeader();
+    const total = excelWithdrawnTotalRow({ count: 2, tCo2e: 1.5, uncalculatedCount: 1 });
+
+    expect(total).toHaveLength(header.length);
+    expect(total[header.indexOf('tCO₂e removed')]).toBe(1.5);
+    expect(total[header.indexOf('Reason')]).toBe('1 of these carry no emissions figure');
+    expect(total[header.indexOf('Withdrawn by (user id)')]).toBe('');
+  });
+
+  it('leaves the actor cell empty in the data formats when a withdrawal carries none', () => {
+    // The PDF's em dash was pinned; its CSV and Excel counterparts were not, so
+    // `?? ''` could become `?? 'unknown'` — a filed artifact naming an actor
+    // nobody is — or lose the guard entirely, which prints the literal `null`
+    // through `csvField(String(null))`. The divergence between the two
+    // renderings is deliberate and now pinned on both sides of it.
+    const noActor = { ...withdrawnRow, voidedBy: null };
+    const header = csvHeader().split(',');
+
+    expect(csvWithdrawnRow(noActor).split(',')[header.indexOf('voided_by')]).toBe('');
+    expect(
+      excelWithdrawnRow(noActor)[excelWithdrawnHeader().indexOf('Withdrawn by (user id)')],
+    ).toBe('');
+    expect(pdfWithdrawnRow(noActor)).toContain('<td class="brk">—</td>');
+  });
+
+  it('emits one class attribute however many flags a column sets', () => {
+    // `<td class="num" class="brk">` is valid-looking HTML where the browser
+    // keeps the first and drops the rest, so the second flag would do nothing.
+    // No shipped column sets both, which is exactly why this is asserted on the
+    // helper rather than on a rendered row.
+    const slot = (num?: boolean, brk?: boolean) => ({ label: 'x', num, brk, cell: () => 'v' });
+    expect(pdfClass(slot(true, true))).toBe(' class="num brk"');
+    expect(pdfClass(slot(true, false))).toBe(' class="num"');
+    expect(pdfClass(slot(false, true))).toBe(' class="brk"');
+    expect(pdfClass(slot())).toBe('');
   });
 });
 
@@ -1599,10 +1792,10 @@ describe('report column descriptors', () => {
  *
  * RE-MEASURED on this branch, because the figure above is about `main` and a
  * stale coverage number reads as a current one: the ledger now catches **6 of
- * 15** (`subsidiary`, `reporting_entity`, `category`, `reporting_period`,
- * `period_value`, `activity_unit`) and the withdrawn row **7 of 15** (those six
+ * 16** (`subsidiary`, `reporting_entity`, `category`, `reporting_period`,
+ * `period_value`, `activity_unit`) and the withdrawn row **7 of 16** (those six
  * plus `void_reason`) — up from 2, which is what the withdrawn matrix below
- * bought. The nine and eight that survive are `activity_value`, `tco2e`,
+ * bought. The ten and nine that survive are `activity_value`, `tco2e`,
  * `status`, `evidence_files`, `anomaly_flag`, the `voided_*` block and the
  * `WITHDRAWN` markers: every one is system-generated, and none can carry a
  * character a user typed. Every column that CAN is covered in both writers.
@@ -1613,7 +1806,7 @@ describe('report column descriptors', () => {
  * `generateCsv`, visible in a screenful; they are now eleven lambdas in another
  * file, and F2/F3 add per-format renderers where a different escaper (HTML for
  * the PDF) is genuinely needed. That is the moment someone puts escaping inside
- * a renderer, and 13 of 15 columns would not notice.
+ * a renderer, and 14 of 16 columns would not notice.
  */
 describe('no column can opt out of CSV neutralisation', () => {
   /** Simultaneously a formula, a field-splitter and a record-splitter. */
