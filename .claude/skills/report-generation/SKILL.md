@@ -45,10 +45,18 @@ Produce audit-ready file artifacts from live data. The **canonical exemplar** is
   `@tonyai/shared-types` — one phrase, three formats, and the same one the app
   shows). A ledger keyed on subsidiary alone cannot tell two figures for one
   month apart.
-- **One label constant per absent/derived value, shared by all three writers.**
-  Six column literals for one column set is the standing trap in this module:
-  the PDF `<th>`s, its `<td>`s, the Excel header, its rows, the CSV header and
-  its rows. Adding a column is six edits — check every one.
+- **A column is DECLARED once, in `report-columns.ts`, and the writers read it.**
+  Six hand-maintained literals for one column set — the PDF `<th>`s, its
+  `<td>`s, the Excel header, its rows, the CSV header and its rows — used to be
+  the standing trap here; WP22 replaced them with one `ColumnSpec` per column
+  carrying a per-format slot (`csv` / `excel` / `pdf`, `null` where a format
+  does not take it). **Adding a column is now one descriptor**, plus an entry in
+  each hand-written table list that wants it (`WITHDRAWN_SHEET`,
+  `PDF_WITHDRAWN` — the ledgers derive theirs). Append it; never insert one,
+  because a formula pinned to a column position reads its neighbour after an
+  insert. And declare `aggregatable` by asking "could a reader SUM or COUNT
+  this?", never by the value's type: `anomaly_flag` holds a word and IS
+  aggregatable, `activity_unit` holds a word and is not.
 - **Honesty rules carry over:** committed statuses only; evidence appears as
   *file names + counts*, never signed URLs (they expire); completeness/status
   (`approved | draft | contains_incomplete_data`) computed from real record
@@ -82,7 +90,15 @@ Produce audit-ready file artifacts from live data. The **canonical exemplar** is
    `[",\r\n]` (the bare `\r` too — most parsers end a record on it, so a
    reason containing one forges a ledger row behind no database row and no
    audit entry) and neutralises `/^\s*[=+\-@]/` BEFORE quoting, so the `'`
-   lands inside the quotes. The leading `\s*` is not cosmetic: anchored at
+   lands inside the quotes. **Prepend a UTF-8 BOM to the finished CSV** — in the
+   writer, after the rows are joined, never inside the header (there it lands
+   within the first FIELD, where `csvField` re-examines it) and never in the
+   controller (no controller spec, so it ships uncovered). The response header
+   says `charset=utf-8`, but that is gone once the file is on disk and
+   Excel-on-Windows then decodes it with the ANSI codepage. **Assert it on
+   BYTES, untrimmed:** every ordinary CSV assertion calls `.trim()` first, and
+   `String.prototype.trim()` strips U+FEFF — so a trimmed test cannot fail when
+   the BOM disappears. The leading `\s*` is not cosmetic: anchored at
    index 0 the guard let `"   =SUM(A1)"` through raw AND unquoted. Finite
    numbers pass through unstringified — `-` leads a formula and every negative
    number, and text `'-12.5` is skipped by Excel's SUM while the xlsx writes a
