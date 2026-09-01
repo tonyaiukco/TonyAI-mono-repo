@@ -93,7 +93,11 @@ export function buildReportHtml(data: ReportData): string {
      column deserves: a machine identifier a verifier copies, not prose. The
      width it gives back goes to Reason, which is free text. (No backticks in
      this block: it lives inside a template literal, and one would close it.) */
-  .brk { overflow-wrap: anywhere; font-size: 10px; min-width: 76px; } .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .brk { font-size: 10px; min-width: 76px; }
+  /* The break itself is on the CELL only. On the <th> it split the heading
+     mid-word (WITHDRAW / N BY) -- the label is prose and wraps at its space
+     like every other heading; it is the value below it that has no space. */
+  td.brk { overflow-wrap: anywhere; } .num { text-align: right; font-variant-numeric: tabular-nums; }
   .warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
   .note { color: #6e6e73; font-size: 10px; margin-top: 4px; }
   footer { margin-top: 28px; border-top: 1px solid #e5e5ea; padding-top: 10px; color: #6e6e73; font-size: 10px; }
