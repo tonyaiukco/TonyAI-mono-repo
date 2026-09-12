@@ -31,6 +31,10 @@ import {
   unitsForCategory,
   type CalculationResult,
   type UncalculatedSnapshot,
+  BULK_UPLOAD_COLUMNS,
+  BULK_UPLOAD_REQUIRED_COLUMNS,
+  BULK_UPLOAD_ERROR_CODES,
+  BULK_UPLOAD_WARNING_CODES,
 } from './index';
 
 /**
@@ -584,3 +588,45 @@ describe('anomalyNotEvaluated', () => {
     expect(anomalyNotEvaluated(2).priorCount).toBe(2);
   });
 });
+
+describe('bulk upload — the column contract', () => {
+  /**
+   * Pinned element by element, for the same reason `MONTH_NAMES` is: this list
+   * IS the template's column order, PR 3 generates the downloadable template
+   * from it, and swapping two entries survived the entire 819-test API suite.
+   * A user filling in a template whose `activityValue` and `activityUnit` had
+   * quietly traded places would have every row refused — or worse, not.
+   */
+  it('is exactly these columns, in this order', () => {
+    expect([...BULK_UPLOAD_COLUMNS]).toEqual([
+      'subsidiaryId',
+      'locationId',
+      'reportingYear',
+      'reportingPeriod',
+      'periodValue',
+      'category',
+      'activityValue',
+      'activityUnit',
+      'varianceReason',
+    ]);
+  });
+
+  it('requires everything except the two that mean something when blank', () => {
+    // A blank `locationId` is the whole company — a real reporting entity, not
+    // a missing value — and most records carry no variance reason at all.
+    const optional = BULK_UPLOAD_COLUMNS.filter(
+      (c) => !(BULK_UPLOAD_REQUIRED_COLUMNS as readonly string[]).includes(c),
+    );
+    expect(optional).toEqual(['locationId', 'varianceReason']);
+  });
+
+  it('keeps errors and warnings disjoint', () => {
+    // They live in one report under two keys, and a single union let
+    // `errors[]` legally carry `formula_lead` — a row that imported fine.
+    const overlap = BULK_UPLOAD_ERROR_CODES.filter((c) =>
+      (BULK_UPLOAD_WARNING_CODES as readonly string[]).includes(c),
+    );
+    expect(overlap).toEqual([]);
+  });
+});
+

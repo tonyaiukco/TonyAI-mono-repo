@@ -14,6 +14,8 @@ one matching your resource type and mirror its structure:
 ## When to use
 Adding any new tenant-owned entity to the API (e.g. locations, evidence, suppliers, targets).
 For read-only rollups (totals, breakdowns, matrices, trends) use **`aggregation-endpoint`** instead.
+For an endpoint that ingests MANY rows from an uploaded file into an existing resource, use
+**`bulk-ingest`** — it owns no table and routes every row through this resource's own create service.
 
 ## Rules (must hold)
 - **Tenant scope every read.** The owning subsidiary id must be in `RequestUser.accessibleSubsidiaryIds`

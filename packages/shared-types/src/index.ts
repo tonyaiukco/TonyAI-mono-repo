@@ -2555,3 +2555,205 @@ export interface ListAuditParams {
   limit?: number;
   offset?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Bulk upload (WP8)
+// ---------------------------------------------------------------------------
+
+/**
+ * The columns a bulk file must carry, in the order the template writes them.
+ *
+ * Reporting entities are named by ID, not by name. A name would need
+ * resolution rules this PR is not the place to invent — two sites legitimately
+ * share a name, and guessing which one a row means would silently attribute
+ * emissions to the wrong entity. The template download (PR 3) is what makes
+ * ids typeable: it arrives pre-filled with the entities the user can reach.
+ */
+export const BULK_UPLOAD_COLUMNS = [
+  'subsidiaryId',
+  'locationId',
+  'reportingYear',
+  'reportingPeriod',
+  'periodValue',
+  'category',
+  'activityValue',
+  'activityUnit',
+  'varianceReason',
+] as const;
+
+export type BulkUploadColumn = (typeof BULK_UPLOAD_COLUMNS)[number];
+
+/** Columns a row cannot omit. `locationId` blank means the whole company. */
+export const BULK_UPLOAD_REQUIRED_COLUMNS = [
+  'subsidiaryId',
+  'reportingYear',
+  'reportingPeriod',
+  'periodValue',
+  'category',
+  'activityValue',
+  'activityUnit',
+] as const satisfies readonly BulkUploadColumn[];
+
+/**
+ * The row cap, and the arithmetic behind it.
+ *
+ * Every row goes through the same service path a single create uses. A dry run
+ * is four to five uncached queries (period lock, subsidiary, optional location,
+ * emission factor, anomaly baseline); an APPLY adds the insert and the record's
+ * own audit row, so **six to seven**. At the cap that is ~6,000-7,000 round
+ * trips inside one synchronous HTTP request, and ~12,000 for the realistic
+ * dry-run-then-apply cycle.
+ * The alternative — a queue — is not available: Azure Container Apps scales to
+ * zero, so post-response background work is not safe to start.
+ *
+ * 1,000 is ~10x the entire seeded dataset (102 records), so it is generous for
+ * the data this product actually holds, and small enough that the request
+ * finishes. If real files outgrow it, the escape hatch is ACA Jobs, not a
+ * bigger number here.
+ */
+export const BULK_UPLOAD_MAX_ROWS = 1000;
+
+/**
+ * 2 MiB, deliberately NOT evidence's 10 MiB.
+ *
+ * An evidence file is streamed to storage; a bulk file is parsed into memory
+ * AND expanded into row objects, so the resident cost is a multiple of the
+ * bytes on the wire.
+ */
+export const BULK_UPLOAD_MAX_SIZE_BYTES = 2 * 1024 * 1024;
+
+/**
+ * The extension is the gate; the MIME list is advisory.
+ *
+ * Browsers disagree about spreadsheets — Windows sends `.csv` as
+ * `application/vnd.ms-excel` and sometimes `application/octet-stream` — so an
+ * exact MIME match (which is what the evidence module does) refuses a
+ * perfectly ordinary "Save as CSV". The declared type is client-controlled and
+ * buys no security; the extension picks the parser, and the parser itself is
+ * what actually refuses a file that is not a spreadsheet.
+ *
+ * The list is still exported because the browser's file picker needs it for
+ * its `accept=` attribute.
+ */
+export const BULK_UPLOAD_ALLOWED_MIME_TYPES = [
+  'text/csv',
+  'application/csv',
+  'text/plain',
+  'application/vnd.ms-excel',
+  'application/octet-stream',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+] as const;
+
+export const BULK_UPLOAD_ALLOWED_EXTENSIONS = ['.csv', '.xlsx'] as const;
+
+/**
+ * Why one row was refused, or what a caller should look at before applying.
+ *
+ * `row` is the file's own line number with the header as line 1, so it matches
+ * what the user sees in Excel. Machine-readable `code` plus human `message`:
+ * the code is what a client groups by, the message is what a person reads.
+ */
+export interface BulkUploadRowIssue {
+  row: number;
+  column: BulkUploadColumn | null;
+  code: BulkUploadIssueCode;
+  message: string;
+}
+
+/**
+ * Why a row was REFUSED. Split from the warnings deliberately: a report's two
+ * lists are different kinds of thing — these stop a row, those do not — and one
+ * union let `errors[]` legally carry `formula_lead`.
+ */
+export const BULK_UPLOAD_ERROR_CODES = [
+  /** The row failed DTO validation (type, range, vocabulary, length). */
+  'invalid',
+  /** Another row in the SAME file already claims this reporting slot. */
+  'duplicate_in_file',
+  /** A stored record already claims this reporting slot. */
+  'duplicate_existing',
+  /** The reporting entity named by the row could not be resolved. */
+  'not_found',
+  /**
+   * No emission factor covers this category, geography and year.
+   *
+   * Its own code because it is the archetypal bulk-import failure — importing
+   * 2019-2020 history for a category whose factor library starts in 2021 —
+   * and because it used to be reported as `not_found`, which told the user
+   * they had an access problem and sent them hunting for a permissions bug.
+   */
+  'no_factor',
+  /** The reporting period is closed. */
+  'period_locked',
+  /** Anything the server did not anticipate; the row is refused, not applied. */
+  'unexpected',
+] as const;
+
+export type BulkUploadErrorCode = (typeof BULK_UPLOAD_ERROR_CODES)[number];
+
+/** Things worth saying about a row that was, or would be, imported anyway. */
+export const BULK_UPLOAD_WARNING_CODES = [
+  /** The cell would be read as a formula by a spreadsheet. */
+  'formula_lead',
+  /**
+   * Anomalous with no variance reason: it imports, but it cannot then be
+   * submitted for review until someone explains it.
+   */
+  'would_block_submit',
+  /**
+   * This category cannot be submitted without an evidence file, and bulk
+   * upload cannot attach one. Derived from the category alone, no query — and
+   * worth saying, because a user importing 500 electricity rows would
+   * otherwise see no warnings at all and meet the wall later.
+   */
+  'evidence_required',
+] as const;
+
+export type BulkUploadWarningCode = (typeof BULK_UPLOAD_WARNING_CODES)[number];
+
+/** Every code a report can carry — for an exhaustive client-side label map. */
+export const BULK_UPLOAD_ISSUE_CODES = [
+  ...BULK_UPLOAD_ERROR_CODES,
+  ...BULK_UPLOAD_WARNING_CODES,
+] as const;
+
+export type BulkUploadIssueCode = BulkUploadErrorCode | BulkUploadWarningCode;
+
+/**
+ * A row that would be, or was, written.
+ *
+ * Carries the row's IDENTITY, not just its outcome: a dry-run preview has to
+ * show the user what is about to be imported, and a client that had only
+ * `{row, tCo2e}` would have to re-parse the file in the browser to name the
+ * entity, period and category — a second implementation of row semantics.
+ * `periodValue` is the CANONICAL spelling the server will store, not the one
+ * the file wrote, so the preview shows what actually lands.
+ *
+ * `tCo2e` is `null` when the category is tracked but not calculated (Water).
+ * Sum only the non-null values — a client folding with `?? 0` turns "no figure
+ * exists" into a reported zero, which is the defect this null exists to avoid.
+ */
+export interface BulkUploadAcceptedRow {
+  row: number;
+  /** `null` on a dry run — nothing was written, so there is no id. */
+  recordId: string | null;
+  subsidiaryId: string;
+  locationId: string | null;
+  reportingYear: number;
+  reportingPeriod: ReportingPeriod;
+  periodValue: string;
+  category: Category;
+  tCo2e: number | null;
+  anomalous: boolean;
+}
+
+export interface BulkUploadReportDTO {
+  dryRun: boolean;
+  fileName: string;
+  sizeBytes: number;
+  /** Data rows found in the file, excluding the header. */
+  totalRows: number;
+  accepted: BulkUploadAcceptedRow[];
+  errors: BulkUploadRowIssue[];
+  warnings: BulkUploadRowIssue[];
+}

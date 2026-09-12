@@ -58,6 +58,19 @@ interface AnomalyParams {
 // typically filled by someone outside the holding company. Data preparation
 // belongs to the tenant's own data_entry staff.
 const WRITE_ROLES = new Set(['data_entry', 'super_admin']);
+
+/**
+ * The sentence a uniqueness conflict comes back with, in ONE place.
+ *
+ * Exported because the bulk importer has to tell a duplicate apart from a
+ * locked period, and both arrive as `ConflictException`. Matching on a
+ * retyped substring made that coupling invisible: rewording this string left
+ * the entire suite green while every real conflict started reporting as
+ * "the period is locked — ask a super_admin to unlock it", about a period
+ * that was never locked.
+ */
+export const DUPLICATE_RECORD_MESSAGE =
+  'An activity record already exists for this reporting entity, period and category.';
 // Roles allowed to take a record into review and to reject it ("flag for
 // revision" in permissions_and_roles.md §3).
 const REVIEW_ROLES = new Set(['consultant', 'super_admin']);
@@ -703,9 +716,7 @@ export class ActivityRecordsService {
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === 'P2002'
       ) {
-        throw new ConflictException(
-          'An activity record already exists for this reporting entity, period and category.',
-        );
+        throw new ConflictException(DUPLICATE_RECORD_MESSAGE);
       }
       throw e;
     }
@@ -835,9 +846,7 @@ export class ActivityRecordsService {
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === 'P2002'
       ) {
-        throw new ConflictException(
-          'An activity record already exists for this reporting entity, period and category.',
-        );
+        throw new ConflictException(DUPLICATE_RECORD_MESSAGE);
       }
       throw e;
     }

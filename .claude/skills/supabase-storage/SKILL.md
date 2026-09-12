@@ -1,6 +1,6 @@
 ---
 name: supabase-storage
-description: Add a private, tenant-scoped Supabase Storage bucket to TonyAI — file uploads flow THROUGH the NestJS API (service-role), never the browser; metadata lives in a Prisma table with RLS, binaries in the bucket, downloads via short-lived signed URLs. Use when a feature needs file attachments (evidence, report exports, capacity documents, bulk-upload sources).
+description: Add a private, tenant-scoped Supabase Storage bucket to TonyAI — file uploads flow THROUGH the NestJS API (service-role), never the browser; metadata lives in a Prisma table with RLS, binaries in the bucket, downloads via short-lived signed URLs. Use when a feature needs file attachments (evidence, report exports, capacity documents).
 ---
 
 # supabase-storage
@@ -9,7 +9,7 @@ Store user files without weakening the two-layer tenant model. The **canonical r
 `evidence` feature: `apps/api/src/storage/` + `apps/api/src/evidence/` + the `evidence` table & RLS.
 
 ## When to use
-Any file attachment tied to a tenant-scoped entity (evidence, capacity reports, report exports, bulk-upload CSVs).
+Any file attachment tied to a tenant-scoped entity (evidence, capacity reports, report exports, generated export files).
 
 ## Rules (must hold)
 - **Upload through the API, not the browser.** The browser posts multipart to a NestJS route; the API validates
