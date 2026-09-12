@@ -15,6 +15,7 @@ import {
 import {
   GEOGRAPHY_CODES,
   MAX_LOCATIONS_PER_CREATE,
+  SUBSIDIARY_TEXT_MAX_LENGTH,
   TRACKING_GRANULARITIES,
   type TrackingGranularity,
 } from '@tonyai/shared-types';
@@ -25,16 +26,23 @@ import { CreateSubsidiaryLocationDto } from '../../locations/dto/create-location
 
 
 export class CreateSubsidiaryDto {
+  // All six free-text descriptors are bounded, not just the names: one class
+  // of field, every one unbounded `text` in Postgres, every one reaching a
+  // PDF, an Excel sheet and a CSV cell verbatim. #81 decided what such a cell
+  // may start with; this decides how long it may be.
   @IsString()
   @MinLength(2)
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   legalName!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   tradingName?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   location?: string;
 
   @IsString()
@@ -43,14 +51,17 @@ export class CreateSubsidiaryDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   businessArea?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   sector?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   designatedPerson?: string;
 
   /**

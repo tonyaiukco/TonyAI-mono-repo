@@ -2,7 +2,10 @@ import 'reflect-metadata';
 import { plainToInstance, type ClassConstructor } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { describe, expect, it } from 'vitest';
-import { MAX_LOCATIONS_PER_CREATE } from '@tonyai/shared-types';
+import {
+  MAX_LOCATIONS_PER_CREATE,
+  SUBSIDIARY_TEXT_MAX_LENGTH,
+} from '@tonyai/shared-types';
 import { CreateSubsidiaryDto } from './create-subsidiary.dto';
 import { CreateSubsidiaryLocationDto } from '../../locations/dto/create-location.dto';
 import { UpdateSubsidiaryDto } from './update-subsidiary.dto';
@@ -262,5 +265,62 @@ describe('subsidiary contact fields — validation', () => {
       { whitelist: true, forbidNonWhitelisted: true },
     );
     expect(errors).toHaveLength(1);
+  });
+});
+
+/**
+ * The free-text descriptors are the other half of #81. That change decided
+ * what a CSV cell may START with; nothing decided how long it may be — and all
+ * six of these reach a PDF, an Excel sheet and a CSV cell verbatim, out of
+ * `text` columns with no bound of their own.
+ *
+ * Asserted across both classes for the reason this file already exists: the
+ * two DTOs are hand-maintained twins, and a rule added to one side only is
+ * this repo's most repeated defect.
+ */
+describe('subsidiary free-text fields — bounded', () => {
+  const FIELDS = [
+    'legalName',
+    'tradingName',
+    'location',
+    'businessArea',
+    'sector',
+    'designatedPerson',
+  ];
+  const AT_CAP = 'x'.repeat(SUBSIDIARY_TEXT_MAX_LENGTH);
+  const OVER_CAP = 'x'.repeat(SUBSIDIARY_TEXT_MAX_LENGTH + 1);
+
+  it('pins the cap to a literal', () => {
+    // Every case below derives its boundary from the constant, which proves
+    // only that the import worked: raising it to 1,000,000 left the whole
+    // suite green. This line is what makes widening it a deliberate edit.
+    expect(SUBSIDIARY_TEXT_MAX_LENGTH).toBe(200);
+  });
+
+  it.each(FIELDS)('%s is capped on both DTOs', (field) => {
+    expect(createErrors({ [field]: AT_CAP })).toHaveLength(0);
+    expect(updateErrors({ [field]: AT_CAP })).toHaveLength(0);
+
+    const onCreate = createErrors({ [field]: OVER_CAP });
+    const onUpdate = updateErrors({ [field]: OVER_CAP });
+    expect(onCreate).toHaveLength(1);
+    expect(onUpdate).toHaveLength(1);
+    expect(Object.keys(onCreate[0].constraints ?? {})).toContain('maxLength');
+    expect(Object.keys(onUpdate[0].constraints ?? {})).toContain('maxLength');
+  });
+
+  it('still refuses a one-character legal name', () => {
+    // The cap must not have displaced `@MinLength(2)`, which is the older rule.
+    expect(Object.keys(createErrors({ legalName: 'A' })[0]?.constraints ?? {})).toContain(
+      'minLength',
+    );
+    expect(Object.keys(updateErrors({ legalName: 'A' })[0]?.constraints ?? {})).toContain(
+      'minLength',
+    );
+  });
+
+  it('leaves the five optional descriptors optional', () => {
+    expect(createErrors({})).toHaveLength(0);
+    expect(updateErrors({})).toHaveLength(0);
   });
 });

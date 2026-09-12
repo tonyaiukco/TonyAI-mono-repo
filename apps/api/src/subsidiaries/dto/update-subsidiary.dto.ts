@@ -12,23 +12,31 @@ import {
 } from 'class-validator';
 import {
   GEOGRAPHY_CODES,
+  SUBSIDIARY_TEXT_MAX_LENGTH,
   TRACKING_GRANULARITIES,
   type TrackingGranularity,
 } from '@tonyai/shared-types';
 import { blankToNull } from '../../common/blank-to-null';
 
 export class UpdateSubsidiaryDto {
+  // All six free-text descriptors are bounded, not just the names: one class
+  // of field, every one unbounded `text` in Postgres, every one reaching a
+  // PDF, an Excel sheet and a CSV cell verbatim. #81 decided what such a cell
+  // may start with; this decides how long it may be.
   @IsOptional()
   @IsString()
   @MinLength(2)
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   legalName?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   tradingName?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   location?: string;
 
   @IsOptional()
@@ -38,14 +46,17 @@ export class UpdateSubsidiaryDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   businessArea?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   sector?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(SUBSIDIARY_TEXT_MAX_LENGTH)
   designatedPerson?: string;
 
   /**

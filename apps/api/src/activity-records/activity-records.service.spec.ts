@@ -2631,3 +2631,217 @@ describe('ActivityRecordsService — submittedAt', () => {
     expect((await service.get(dataEntry(), 'rec-1')).submittedAt).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+
+/**
+ * `previewCreate` is everything `create` DECIDES, with nothing it WRITES.
+ *
+ * It exists so the bulk importer (WP8) can offer a dry-run that provably
+ * persists nothing. The mechanism matters: this service opens no transaction,
+ * so there is no rollback to hide behind — the claim "the dry-run wrote
+ * nothing" is only as good as an assertion against the write spies, which is
+ * what this block is. If a future change moves any write into the prepare half,
+ * these fail, and they fail before a user has imported a thousand rows into a
+ * dry run.
+ *
+ * The gates are asserted here too, not only on `create`. A read-only seam that
+ * skipped the role, tenant or period-lock check would be a way to ask the
+ * server questions about a tenant you cannot reach.
+ */
+describe('ActivityRecordsService — previewCreate is the read-only half of create', () => {
+  let prisma: PrismaMock;
+  let service: ActivityRecordsService;
+
+  beforeEach(() => {
+    audit.record.mockClear();
+    ({ prisma, service } = build());
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+  });
+
+  /** Every spy on the mock that would leave a trace behind. */
+  function expectNothingWritten() {
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  }
+
+  it('returns the decisions create would make, and writes nothing', async () => {
+    const prepared = await service.previewCreate(dataEntry(), CREATE_DTO);
+
+    expect(prepared.periodValue).toBe('Annual');
+    expect(prepared.scope).toBe(2);
+    expect(isCalculated(prepared.calculation)).toBe(true);
+    expect(prepared.verdict).toEqual({
+      anomalous: false,
+      priorCount: 0,
+      baseline: null,
+    });
+    expectNothingWritten();
+  });
+
+  it('canonicalises the period spelling the same way create does', async () => {
+    // The stored spelling IS the identity of the period, so a dry-run that
+    // reported on " annual " would be answering about a different slot than
+    // the apply would write to.
+    const prepared = await service.previewCreate(dataEntry(), {
+      ...CREATE_DTO,
+      periodValue: '  aNNual ',
+    });
+    expect(prepared.periodValue).toBe('Annual');
+    expectNothingWritten();
+  });
+
+  it('refuses a period value that names no period of that granularity', async () => {
+    await expect(
+      service.previewCreate(dataEntry(), {
+        ...CREATE_DTO,
+        periodValue: 'Michaelmas',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expectNothingWritten();
+  });
+
+  it('enforces the role gate BEFORE it queries anything', async () => {
+    // consultant is review-only: it may not author records, and asking the
+    // server to price one is authoring it in every sense but the write.
+    // The query assertion is the half that matters: asserting only that a
+    // ForbiddenException eventually emerges leaves the gate free to move
+    // below the lock lookup, which a mutation proved survives the suite.
+    await expect(
+      service.previewCreate(consultant(), CREATE_DTO),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.periodLock.findFirst).not.toHaveBeenCalled();
+    expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
+    expectNothingWritten();
+  });
+
+  it('refuses an inaccessible subsidiary as a 404, with a lock in place', async () => {
+    // The lock is mocked PRESENT deliberately. With the default empty mock
+    // this case passed while the period-lock lookup still ran against another
+    // tenant's subsidiary — so the 409/404 split answered "does that
+    // subsidiary exist and is that period closed" for a tenant the caller
+    // cannot see. Three review seats found it independently.
+    prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+
+    await expect(
+      service.previewCreate(dataEntry(), {
+        ...CREATE_DTO,
+        subsidiaryId: 'sub-99',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(prisma.periodLock.findFirst).not.toHaveBeenCalled();
+    expect(prisma.subsidiary.findUnique).not.toHaveBeenCalled();
+    expectNothingWritten();
+  });
+
+  it('refuses a malformed subsidiary id before Prisma can see it', async () => {
+    // `subsidiaryId` is `@IsString`, not `@IsUUID` (the seed's ids are not
+    // RFC-4122), but the column is `uuid`: a malformed value reaching a query
+    // throws P2023, which the exception filter turns into a 500. In a bulk
+    // import that is one 500 and one Sentry event per bad cell.
+    await expect(
+      service.previewCreate(dataEntry(), {
+        ...CREATE_DTO,
+        subsidiaryId: 'not-a-uuid',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.periodLock.findFirst).not.toHaveBeenCalled();
+    expectNothingWritten();
+  });
+
+  it('returns the identities it validated, not just the derived values', async () => {
+    // A bulk importer assembling its write from a row template cannot safely
+    // re-read the dto the way `create` does. If the preview hands back only
+    // the derived half, an unvalidated subsidiaryId can carry a snapshot that
+    // WAS validated, and nothing downstream re-checks it.
+    const prepared = await service.previewCreate(dataEntry(), CREATE_DTO);
+    expect(prepared.subsidiaryId).toBe('sub-1');
+    expect(prepared.locationId).toBeNull();
+  });
+
+  it('still enforces the period-lock gate', async () => {
+    prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+    await expect(
+      service.previewCreate(dataEntry(), CREATE_DTO),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expectNothingWritten();
+  });
+
+  it('evaluates the anomaly baseline against committed priors', async () => {
+    // The verdict is the one thing a dry-run can surface that a plain
+    // validation pass cannot: an anomalous row with no variance reason imports
+    // fine and can then never be submitted.
+    // Monthly, and the third prior comes from the previous year, for the same
+    // reason the anomaly block above says: only two months precede March in
+    // 2024, and the baseline query orders by the ordinal key, not the year.
+    const prior = (periodValue: string, reportingYear?: number) =>
+      makeRecord({
+        reportingPeriod: 'monthly',
+        periodValue,
+        ...(reportingYear !== undefined ? { reportingYear } : {}),
+        status: ActivityRecordStatus.approved,
+        calculation: { tCo2e: 5, factorId: 'f-1' },
+      });
+    prisma.activityRecord.findMany.mockResolvedValue([
+      prior('December', 2023),
+      prior('January'),
+      prior('February'),
+    ]);
+
+    // Baseline avg = 5; the calc stub returns 19.8 → +296%.
+    const prepared = await service.previewCreate(dataEntry(), {
+      ...CREATE_DTO,
+      reportingPeriod: 'monthly' as const,
+      periodValue: 'March',
+    });
+
+    expect(prepared.verdict.anomalous).toBe(true);
+    expect(prepared.verdict.priorCount).toBe(3);
+    expectNothingWritten();
+  });
+
+  it('create runs the read half exactly once, and audits exactly once', async () => {
+    // The complement of every assertion above: extracting the read half must
+    // not have left `create` writing nothing, auditing twice — or previewing
+    // twice. Nothing pinned the read half's call count before, so duplicating
+    // the call inside `create` passed the whole suite; at one call per row
+    // that is two extra queries per imported record, silently.
+    const { prisma, calc, service } = build();
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.create.mockResolvedValue(makeRecord());
+
+    await service.create(dataEntry(), CREATE_DTO);
+
+    expect(prisma.periodLock.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.subsidiary.findUnique).toHaveBeenCalledTimes(1);
+    expect(calc.compute).toHaveBeenCalledTimes(1);
+    expect(prisma.activityRecord.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.activityRecord.create).toHaveBeenCalledTimes(1);
+    expect(audit.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes the VALIDATED identities and the variance reason it was given', async () => {
+    // `varianceReason` had no write-path assertion at all on create: replacing
+    // it with a hardcoded null left 735 tests green. WP8 imports variance
+    // reasons precisely so anomalous rows can clear the submit gate, so
+    // dropping one on the way in would be silent and consequential.
+    const { prisma, service } = build();
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.create.mockResolvedValue(makeRecord());
+
+    await service.create(dataEntry(), {
+      ...CREATE_DTO,
+      varianceReason: 'Meter replaced mid-period',
+    });
+
+    const { data } = prisma.activityRecord.create.mock.calls[0][0];
+    expect(data.subsidiaryId).toBe('sub-1');
+    expect(data.locationId).toBeNull();
+    expect(data.varianceReason).toBe('Meter replaced mid-period');
+  });
+});
+

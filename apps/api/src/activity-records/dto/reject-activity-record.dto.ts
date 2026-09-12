@@ -1,5 +1,6 @@
 import { Transform } from 'class-transformer';
 import { IsString, MaxLength, MinLength } from 'class-validator';
+import { EXPLANATION_MAX_LENGTH } from '@tonyai/shared-types';
 
 /**
  * Body of POST /api/v1/activity-records/:id/reject.
@@ -16,6 +17,6 @@ export class RejectActivityRecordDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @MinLength(1)
-  @MaxLength(2000)
+  @MaxLength(EXPLANATION_MAX_LENGTH)
   varianceReason!: string;
 }

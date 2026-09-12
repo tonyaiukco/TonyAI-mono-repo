@@ -546,14 +546,75 @@ export class ActivityRecordsService {
     return this.toDTO(record, evidenceCount, actors);
   }
 
-  async create(
+  /**
+   * Everything `create` decides BEFORE it writes anything — the role gate, the
+   * tenant gate, the canonical period spelling, the period-lock gate, the
+   * calculation snapshot and the anomaly verdict — with no write and no audit
+   * row of its own.
+   *
+   * Extracted so the bulk importer (WP8) can offer a dry-run that PROVABLY
+   * persists nothing. The obvious alternative, running the batch inside a
+   * rolled-back transaction, is not available here: this service opens no
+   * transaction at all (`create` writes through the default client and audits
+   * afterwards), and Prisma's interactive-transaction timeout would not survive
+   * a thousand-row loop even if it did. A read-only seam is the mechanism the
+   * code actually supports, and "no write happened" is then a claim a spec can
+   * assert against the write spies rather than a claim about a rollback.
+   *
+   * It keeps the role gate deliberately, even though a bulk caller checks the
+   * role once per batch: a security control that only runs on the path someone
+   * remembered to guard is not a control.
+   *
+   * **It does NOT decide uniqueness.** The `NULLS NOT DISTINCT` conflict is
+   * raised by Postgres on the insert and reaches `create` as a `P2002`, so a
+   * preview cannot see it: a caller previewing a batch must detect duplicates
+   * itself — against the rows already stored AND against the rest of the file.
+   *
+   * **It costs four to five queries per call** (period lock, subsidiary,
+   * optional location, emission factor, anomaly baseline), none of them cached.
+   * At one call per row that is the constraint a bulk row cap is chosen
+   * against, and the reason a batch caller should hoist what it can.
+   *
+   * Public rather than private because that IS the point of the extraction —
+   * `create` is the only caller today, and the next one is outside this class.
+   */
+  async previewCreate(
     user: RequestUser,
     dto: CreateActivityRecordDto,
-  ): Promise<ActivityRecordDTO> {
+  ): Promise<{
+    /**
+     * The identities this method VALIDATED, returned rather than left for the
+     * caller to re-read off its own input. `create` could re-read `dto` safely
+     * because it holds the same object; a bulk importer assembling a write from
+     * a row template could not, and an unvalidated `subsidiaryId` carrying a
+     * snapshot that WAS validated is a cross-tenant write nothing downstream
+     * re-checks. This class already warns about that shape 130 lines above:
+     * upstream ordering is a convention, and a convention is not a mechanism.
+     */
+    subsidiaryId: string;
+    locationId: string | null;
+    periodValue: string;
+    calculation: ActivityCalculationSnapshot;
+    scope: number;
+    verdict: AnomalyVerdict;
+  }> {
     if (!WRITE_ROLES.has(user.role)) {
       throw new ForbiddenException(
         'Your role may not create activity records',
       );
+    }
+    // Tenant gate FIRST, before any query — `computeSnapshot` keeps its own
+    // copy as the mechanism, but by the time it runs the period-lock lookup
+    // has already asked the database about a subsidiary this caller may not be
+    // able to see. That cost two things: a 409-vs-404 split that answers
+    // "does this subsidiary exist and is that period closed" for another
+    // tenant, and — because `subsidiaryId` is deliberately not `@IsUUID` and
+    // the column is `uuid` — a malformed id reaching Prisma as a P2023, which
+    // the exception filter turns into a 500. One bad cell per row would have
+    // done that once per row. Every other service that takes a body
+    // `subsidiaryId` already checks the set as its first statement.
+    if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
+      throw new NotFoundException('Subsidiary not found');
     }
     // Canonicalised, not merely validated. Everything downstream compares RAW
     // strings — the uniqueness index, both period-lock lookups, the seed's own
@@ -591,6 +652,23 @@ export class ActivityRecordsService {
       periodValue,
     });
 
+    return {
+      subsidiaryId: dto.subsidiaryId,
+      locationId: dto.locationId ?? null,
+      periodValue,
+      calculation,
+      scope,
+      verdict,
+    };
+  }
+
+  async create(
+    user: RequestUser,
+    dto: CreateActivityRecordDto,
+  ): Promise<ActivityRecordDTO> {
+    const { subsidiaryId, locationId, periodValue, calculation, scope, verdict } =
+      await this.previewCreate(user, dto);
+
     let created: ActivityRecord & { location: { name: string } | null };
     try {
       created = await this.prisma.activityRecord.create({
@@ -599,8 +677,8 @@ export class ActivityRecordsService {
         // has no location seconds after being handed one.
         include: { location: { select: { name: true } } },
         data: {
-          subsidiaryId: dto.subsidiaryId,
-          locationId: dto.locationId ?? null,
+          subsidiaryId,
+          locationId,
           reportingYear: dto.reportingYear,
           reportingPeriod: dto.reportingPeriod,
           periodValue,

@@ -1554,6 +1554,24 @@ export interface VoidInput {
 }
 
 /**
+ * How long an explanation ABOUT a figure may be — one number for all three.
+ *
+ * This product now carries three of them, and they were three independent
+ * literal `2000`s: `voidReason` (why a reported figure was withdrawn),
+ * `reviewNote` (why a reviewer sent a record back — the field on
+ * `RejectActivityRecordDto`, confusingly NAMED `varianceReason`), and
+ * `varianceReason` itself (why a figure deviates from its baseline). They are
+ * the same act — a person accounting for a number to another person who will
+ * read it verbatim — so they take the same bound from one place.
+ *
+ * The alternative was to give `varianceReason` its own constant "mirroring"
+ * the reviewer's 2,000. Three seats independently called that what it is:
+ * coincidence dressed as a rule. Raising one of two matching literals is
+ * exactly the drift `VOID_REASON_*` was extracted to prevent.
+ */
+export const EXPLANATION_MAX_LENGTH = 2000;
+
+/**
  * How long a void reason has to be, in ONE place.
  *
  * The browser and the DTO used to hold these as independent literals, and a
@@ -1569,7 +1587,45 @@ export interface VoidInput {
  * that will disagree with itself, and this one gates an irreversible write.
  */
 export const VOID_REASON_MIN_LENGTH = 10;
-export const VOID_REASON_MAX_LENGTH = 2000;
+export const VOID_REASON_MAX_LENGTH = EXPLANATION_MAX_LENGTH;
+
+/**
+ * The upper bound on a `periodValue`, on records and period locks alike.
+ *
+ * NOT the mechanism that keeps the two matchable — `canonicalPeriodValue`
+ * is. Both write paths reduce the value to one of the seventeen tokens above
+ * and reject anything else, so neither column can hold a string over nine
+ * characters with or without this cap. (An earlier draft of this comment
+ * claimed a one-sided cap would make a lock unmatchable by its own records.
+ * It cannot: the canonicaliser refuses the long value first, on both sides.)
+ *
+ * What it buys is the refusal happening BEFORE the work: a bulk importer reads
+ * cells out of a file it did not write, and a multi-megabyte cell should not
+ * travel through the DTO pipeline and a vocabulary lookup — whose 400 echoes
+ * the value back — to be told it is not `January`. 32 over a longest token of
+ * `September` (9) is headroom for a vocabulary that grows, not for a user.
+ */
+export const PERIOD_VALUE_MAX_LENGTH = 32;
+
+/**
+ * The upper bound on the free-text descriptors of a subsidiary — `legalName`,
+ * `tradingName`, `location`, `businessArea`, `sector`, `designatedPerson`.
+ *
+ * All six, not just the names: they are one class of field, every one is
+ * unbounded `text` in Postgres, and every one reaches a generated PDF, an
+ * Excel sheet and a CSV cell verbatim. #81 decided what such a cell may START
+ * with; nothing decided how long it may be.
+ *
+ * 200 clears UK Companies House's 160-character company-name limit and a full
+ * Turkish legal form (`… Sanayi ve Ticaret Anonim Şirketi`) with room to
+ * spare. It is the one cap here a real user can plausibly reach, which is why
+ * the number is argued rather than assumed.
+ *
+ * Still uncapped and deliberately out of scope: the location, target and
+ * intensity-denominator DTOs. Capping those belongs with the modules that own
+ * them — and one E2E spec asserts a 413 on a 400-character location name.
+ */
+export const SUBSIDIARY_TEXT_MAX_LENGTH = 200;
 
 /**
  * What a record with no location is called, everywhere it is named.
