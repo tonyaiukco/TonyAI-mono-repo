@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import ExcelJS from 'exceljs';
 import {
   BadRequestException,
   ConflictException,
@@ -91,6 +92,8 @@ let seq = 0;
 
 function build() {
   const prisma = {
+    subsidiary: { findMany: vi.fn().mockResolvedValue([]) },
+    location: { findMany: vi.fn().mockResolvedValue([]) },
     // `create` is spied even though this service never calls it: asserting
     // "the dry run wrote nothing" against a mock that lacks the method only
     // works by accident (the call throws a TypeError, which becomes an
@@ -865,6 +868,132 @@ describe('BulkUploadService — a dry run touches no write API at all', () => {
     // spy a stray write throws a TypeError that the row catch turns into an
     // `unexpected` error, and the suite fails for the wrong reason.
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+  });
+});
+
+/** Two tenants in one database, so an unscoped query has something to leak. */
+const ALL_SUBSIDIARIES = [
+  { id: 'sub-1', legalName: 'Mine Ltd.', tradingName: null, geographyCode: 'TR' },
+  { id: 'sub-9', legalName: 'Other Tenant Ltd.', tradingName: null, geographyCode: 'UK' },
+];
+const ALL_LOCATIONS = [
+  { id: 'loc-1', subsidiaryId: 'sub-1', name: 'My Site', geographyCode: 'TR' },
+  { id: 'loc-9', subsidiaryId: 'sub-9', name: 'Their Site', geographyCode: 'UK' },
+];
+
+/** Everything the reference sheet of a generated template says. */
+async function referenceTextOf(buffer: Buffer): Promise<string> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+  const sheet = workbook.worksheets[1];
+  const lines: string[] = [];
+  sheet.eachRow({ includeEmpty: false }, (row) => {
+    const cells: string[] = [];
+    row.eachCell({ includeEmpty: true }, (cell) =>
+      cells.push(String(cell.value ?? '')),
+    );
+    lines.push(cells.join(' | '));
+  });
+  return lines.join('\n');
+}
+
+describe('BulkUploadService — the template', () => {
+  /** Filters like a real database would, so an unscoped query returns BOTH. */
+  function twoTenants(prisma: ReturnType<typeof build>['prisma']): void {
+    prisma.subsidiary.findMany.mockImplementation(
+      ({ where }: { where?: { id?: { in?: string[] } } }) =>
+        Promise.resolve(
+          ALL_SUBSIDIARIES.filter((s) => where?.id?.in?.includes(s.id) ?? true),
+        ),
+    );
+    prisma.location.findMany.mockImplementation(
+      ({ where }: { where?: { subsidiaryId?: { in?: string[] } } }) =>
+        Promise.resolve(
+          ALL_LOCATIONS.filter(
+            (l) => where?.subsidiaryId?.in?.includes(l.subsidiaryId) ?? true,
+          ),
+        ),
+    );
+  }
+
+  it('names only what this caller can reach — asserted on the FILE', async () => {
+    // Asserting the `where` of `calls[0]` proved only the shape of one query.
+    // A mutant that kept that query untouched and merged a SECOND, unscoped
+    // one passed all 53 service tests, handing every user an XLSX naming
+    // every subsidiary and location in the database — the quietest possible
+    // tenant leak, in a file people email around. The bytes are the only
+    // assertion that survives that.
+    const { prisma, service } = build();
+    twoTenants(prisma);
+
+    const text = await referenceTextOf(
+      await service.template(dataEntry({ accessibleSubsidiaryIds: ['sub-1'] })),
+    );
+
+    expect(text).toContain('sub-1');
+    expect(text).toContain('Mine Ltd.');
+    expect(text).toContain('My Site');
+    expect(text).not.toContain('sub-9');
+    expect(text).not.toContain('Other Tenant Ltd.');
+    expect(text).not.toContain('Their Site');
+  });
+
+  it('drops a location whose parent this caller cannot reach', async () => {
+    // Defence in depth inside the builder: even handed a foreign location it
+    // renders none, because it walks subsidiaries and looks locations up
+    // under them.
+    const { prisma, service } = build();
+    prisma.subsidiary.findMany.mockResolvedValue([ALL_SUBSIDIARIES[0]]);
+    prisma.location.findMany.mockResolvedValue(ALL_LOCATIONS);
+
+    const text = await referenceTextOf(await service.template(dataEntry()));
+
+    expect(text).toContain('My Site');
+    expect(text).not.toContain('Their Site');
+  });
+
+  it('scopes both queries to the accessible set', async () => {
+    const { prisma, service } = build();
+
+    await service.template(dataEntry({ accessibleSubsidiaryIds: ['sub-1'] }));
+
+    expect(prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({
+      id: { in: ['sub-1'] },
+    });
+    expect(prisma.location.findMany.mock.calls[0][0].where).toEqual({
+      subsidiaryId: { in: ['sub-1'] },
+    });
+  });
+
+  it('returns a workbook the importer can read back', async () => {
+    const { prisma, service } = build();
+    prisma.subsidiary.findMany.mockResolvedValue([
+      {
+        id: 'sub-1',
+        legalName: 'Sub One',
+        tradingName: null,
+        geographyCode: 'TR',
+      },
+    ]);
+
+    const buffer = await service.template(dataEntry());
+
+    // Magic bytes: a real .xlsx is a zip, and a caller that got JSON here
+    // would find out only when Excel refused the download.
+    expect(buffer.subarray(0, 2).toString()).toBe('PK');
+    expect(buffer.length).toBeGreaterThan(1000);
+  });
+
+  it('writes nothing', async () => {
+    const { prisma, records, audit, service } = build();
+
+    await service.template(dataEntry());
+
+    expect(records.create).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    // No audit row either: a download is not a mutation, and audit_log has no
+    // correction path for rows written on a read.
+    expect(audit.record).not.toHaveBeenCalled();
   });
 });
 

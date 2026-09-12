@@ -62,6 +62,64 @@ describe('BulkUploadController — the route', () => {
     expect(service.import).toHaveBeenCalledWith(user, file, { dryRun: true });
   });
 
+  it('offers the template at GET /bulk-upload/template', () => {
+    expect(route('template')).toEqual({
+      path: 'template',
+      method: RequestMethod.GET,
+    });
+  });
+
+  it('gives the template its own, looser limit', () => {
+    // NOT because a tighter one would eat the import budget — throttler keys
+    // include the handler name, so the two routes could never share a bucket,
+    // and an earlier version of this test was named for that false premise.
+    // The reason is cost: this workbook is tens of milliseconds against an
+    // import's thousands.
+    const handler = BulkUploadController.prototype.template;
+    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler)).toBe(20);
+    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', BulkUploadController.prototype.import)).toBe(5);
+  });
+
+  it('hands the template route the caller, and the download headers', async () => {
+    // Metadata alone left five mutations alive, every one of them shipping:
+    // passing `{...user, accessibleSubsidiaryIds: []}` (an entity-less
+    // template for everyone, forever), returning an empty buffer, mislabelling
+    // it `text/csv`, renaming the file, and dropping `Content-Disposition`
+    // entirely so an XLSX renders as binary garbage in the tab. This is the
+    // same gap the header comment on this file exists to record.
+    const buffer = Buffer.from('PK-not-really-a-workbook');
+    const service = { template: vi.fn().mockResolvedValue(buffer) };
+    const controller = new BulkUploadController(
+      service as unknown as BulkUploadService,
+    );
+    const sent: unknown[] = [];
+    const headers: Record<string, unknown>[] = [];
+    const res = {
+      set: vi.fn((h: Record<string, unknown>) => {
+        headers.push(h);
+        return res;
+      }),
+      send: vi.fn((b: unknown) => sent.push(b)),
+    };
+    const user = { id: 'user-1', accessibleSubsidiaryIds: ['sub-1'] } as never;
+
+    await controller.template(user, res as never);
+
+    // The caller, untouched — not a copy with an emptied access set.
+    expect(service.template).toHaveBeenCalledWith(user);
+    expect(sent).toEqual([buffer]);
+    expect(headers[0]).toMatchObject({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition':
+        'attachment; filename="tonyai-bulk-upload-template.xlsx"',
+      'Content-Length': buffer.length,
+      // The body is this caller's own entity register and the response
+      // carries no `Vary: Authorization`.
+      'Cache-Control': 'no-store',
+    });
+  });
+
   it('is rate-limited per USER, not per socket address', () => {
     // `ThrottlerGuard`'s default tracker is `req.ip`, and this API never
     // enables `trust proxy` — behind a reverse proxy that is one bucket for
