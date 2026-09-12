@@ -544,8 +544,16 @@ export async function seedE2EFactor(request: APIRequestContext): Promise<void> {
   assertLocalTarget(url);
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  // `updated_at` is Prisma's `@updatedAt`, which Prisma fills in — the column
+  // itself has no database default, unlike `created_at`. A raw PostgREST
+  // insert bypasses Prisma entirely, so it has to be supplied here or the row
+  // is refused with a not-null violation. (The existing service-role
+  // precedent, `backdateCreatedAt`, is an UPDATE and never met this.)
+  const now = new Date().toISOString();
   const rows = ['TR', 'UK', 'EU'].map((geographyCode) => ({
     id: randomUUID(),
+    created_at: now,
+    updated_at: now,
     category: E2E_BULK_CATEGORY,
     geography_code: geographyCode,
     reporting_year: E2E_YEAR,
