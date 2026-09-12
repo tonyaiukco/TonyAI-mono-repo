@@ -388,3 +388,25 @@ describe('parseRows — XLSX, the dangerous format', () => {
     ).toBe('Meter replaced');
   });
 });
+
+describe('parseRows — only the first worksheet is data', () => {
+  it('refuses a workbook whose header is on sheet 2', async () => {
+    // The guarantee the template depends on, pinned where the code that
+    // implements it lives. Every other XLSX fixture here is single-sheet, so
+    // changing `worksheets[0]` to `worksheets[1] ?? worksheets[0]` left all
+    // 42 of them green while breaking the template contract.
+    const wb = new ExcelJS.Workbook();
+    const notes = wb.addWorksheet('Notes');
+    notes.addRow(['These are notes, not columns']);
+    const data = wb.addWorksheet('Records');
+    data.addRow(HEADER.split(','));
+    data.addRow([
+      'sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '',
+    ]);
+
+    await expect(
+      parseRows(Buffer.from(await wb.xlsx.writeBuffer()), 'two-sheets.xlsx'),
+    ).rejects.toThrow(/column/i);
+  });
+});
+

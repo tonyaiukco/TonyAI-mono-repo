@@ -1,11 +1,14 @@
 import {
   Body,
   Controller,
+  Get,
   Post,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import { BULK_UPLOAD_MAX_SIZE_BYTES } from '@tonyai/shared-types';
@@ -23,6 +26,41 @@ import { UserThrottlerGuard } from './user-throttler.guard';
 @UseGuards(UserThrottlerGuard)
 export class BulkUploadController {
   constructor(private readonly service: BulkUploadService) {}
+
+  /**
+   * The import template: an XLSX whose first sheet carries exactly the columns
+   * the importer accepts, and whose second sheet — which the importer never
+   * reads — lists the caller's own reporting entities and the vocabularies.
+   *
+   * Its own, looser throttle — **not** because a tighter one would eat the
+   * import budget. Throttler keys include the handler name, so a limit here
+   * would have its own bucket and could never consume a unit of `import`'s;
+   * an earlier version of this comment said otherwise and was simply wrong.
+   * The real reason is cost: building this workbook is tens of milliseconds
+   * against an import's thousands, so holding it to five a minute would
+   * ration the cheap half of the feature to protect the expensive one.
+   */
+  @Get('template')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async template(
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const buffer = await this.service.template(user);
+    res
+      .set({
+        'Content-Type':
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition':
+          'attachment; filename="tonyai-bulk-upload-template.xlsx"',
+        'Content-Length': buffer.length,
+        // The body is this caller's own entity register, and the response
+        // carries no `Vary: Authorization`. Behind a caching intermediary an
+        // ETag match could otherwise serve one tenant's register to another.
+        'Cache-Control': 'no-store',
+      })
+      .send(buffer);
+  }
 
   /**
    * Import activity records from a CSV/XLSX (multipart `file`), optionally as
