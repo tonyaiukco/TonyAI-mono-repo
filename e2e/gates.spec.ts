@@ -81,7 +81,10 @@ test('gate: anomalous value shows the banner and blocks submit without a varianc
   await expect(variance).toBeVisible();
 
   // Attach evidence (Electricity is evidence-required) so only the anomaly gate remains.
-  await page.locator('input[type="file"]').setInputFiles(EVIDENCE_FIXTURE);
+  // Scoped to the vault — see the note in data-entry-happy.spec.ts.
+  await page
+    .locator('[data-testid="evidence-vault-input"]')
+    .setInputFiles(EVIDENCE_FIXTURE);
   await expect(page.getByText('Evidence uploaded')).toBeVisible();
 
   // Submit with an empty variance → blocked by the client anomaly guard.

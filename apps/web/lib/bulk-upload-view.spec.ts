@@ -1,0 +1,454 @@
+import { describe, it, expect } from 'vitest';
+import {
+  BULK_UPLOAD_ISSUE_CODES,
+  BULK_UPLOAD_MAX_SIZE_BYTES,
+  BULK_UPLOAD_COLUMNS,
+} from '@/lib/types';
+import type {
+  BulkUploadAcceptedRow,
+  BulkUploadReportDTO,
+  BulkUploadRowIssue,
+} from '@/lib/types';
+import { ApiError } from '@/lib/api';
+import {
+  applyConfirmation,
+  applySuccessMessage,
+  canBulkUpload,
+  COLUMN_LABEL,
+  fileAcceptAttribute,
+  groupIssues,
+  ISSUE_CODE_LABEL,
+  MAX_ISSUE_ROWS_PER_GROUP,
+  preflightFile,
+  sizeCapLabel,
+  summarise,
+  tonnesLabel,
+  totalTonnes,
+  uploadErrorMessage,
+} from '@/lib/bulk-upload-view';
+
+/**
+ * This module is the whole of what can be tested about bulk upload on the
+ * client: `vitest.config.ts` collects only `lib/**`, so anything left in the
+ * panel has no coverage in either direction. Every sentence a user reads, and
+ * every decision about whether a file is even sent, therefore lives here.
+ */
+function accepted(over: Partial<BulkUploadAcceptedRow> = {}): BulkUploadAcceptedRow {
+  return {
+    row: 2,
+    recordId: null,
+    subsidiaryId: 'sub-1',
+    locationId: null,
+    reportingYear: 2024,
+    reportingPeriod: 'monthly',
+    periodValue: 'January',
+    category: 'Electricity',
+    tCo2e: 1.5,
+    anomalous: false,
+    ...over,
+  };
+}
+
+function issue(over: Partial<BulkUploadRowIssue> = {}): BulkUploadRowIssue {
+  return {
+    row: 2,
+    column: null,
+    code: 'invalid',
+    message: 'something is wrong',
+    ...over,
+  };
+}
+
+function report(over: Partial<BulkUploadReportDTO> = {}): BulkUploadReportDTO {
+  return {
+    dryRun: true,
+    fileName: 'data.csv',
+    sizeBytes: 1024,
+    totalRows: 1,
+    accepted: [accepted()],
+    errors: [],
+    warnings: [],
+    ...over,
+  };
+}
+
+describe('preflightFile', () => {
+  it('lets a real spreadsheet through', () => {
+    expect(preflightFile({ name: 'q1.csv', size: 2048 })).toBeNull();
+    expect(preflightFile({ name: 'Q1 2024.XLSX', size: 2048 })).toBeNull();
+  });
+
+  it('refuses the wrong file type before a request is spent', () => {
+    // The budget is five imports a minute per user, and a dry run plus an
+    // apply already spends two. A refusal the client can see costs none.
+    expect(preflightFile({ name: 'notes.txt', size: 10 })).toMatch(/\.csv or \.xlsx/);
+    expect(preflightFile({ name: 'noextension', size: 10 })).not.toBeNull();
+  });
+
+  it('refuses a file over the size cap, naming the limit', () => {
+    const message = preflightFile({
+      name: 'huge.csv',
+      size: BULK_UPLOAD_MAX_SIZE_BYTES + 1,
+    });
+    expect(message).toContain(sizeCapLabel());
+    // The MEASURED size is deliberately absent: at 2.04 MB, one decimal place
+    // produced "That file is 2.0 MB. The limit is 2 MB."
+    expect(message).not.toMatch(/2\.0 MB/);
+    expect(preflightFile({ name: 'ok.csv', size: BULK_UPLOAD_MAX_SIZE_BYTES })).toBeNull();
+  });
+
+  it('refuses an empty file', () => {
+    expect(preflightFile({ name: 'empty.csv', size: 0 })).toMatch(/empty/i);
+  });
+
+  it('pins the caps to literals', () => {
+    // Every case above derives its boundary from the constant it imports,
+    // which proves only that the import worked.
+    expect(BULK_UPLOAD_MAX_SIZE_BYTES).toBe(2 * 1024 * 1024);
+    expect(sizeCapLabel()).toBe('2 MB');
+    // Shrinking this to 1 left the whole suite green, and it lives in `lib/`
+    // precisely so it can be held to account.
+    expect(MAX_ISSUE_ROWS_PER_GROUP).toBe(50);
+  });
+});
+
+describe('fileAcceptAttribute', () => {
+  it('is derived from the server’s own list, not typed out', () => {
+    // The evidence vault hardcodes its `accept`; when the server's list
+    // changed, nothing failed. This one cannot drift.
+    expect(fileAcceptAttribute()).toBe('.csv,.xlsx');
+  });
+});
+
+describe('the label maps are exhaustive', () => {
+  it('names every issue code the server can emit', () => {
+    // `Record<BulkUploadIssueCode, string>` makes a new code a compile error
+    // rather than a blank label in front of a user. This asserts the runtime
+    // half: that the map has no gaps and no strays.
+    expect(Object.keys(ISSUE_CODE_LABEL).sort()).toEqual(
+      [...BULK_UPLOAD_ISSUE_CODES].sort(),
+    );
+  });
+
+  it('names every column', () => {
+    expect(Object.keys(COLUMN_LABEL).sort()).toEqual(
+      [...BULK_UPLOAD_COLUMNS].sort(),
+    );
+  });
+
+  it('gives every entry a real, distinct label', () => {
+    // Keys alone are not the contract. Swapping `subsidiaryId` and
+    // `locationId` passed all 156 tests — and `COLUMN_LABEL[issue.column]` is
+    // the ONLY thing telling a user which cell to fix, so the panel would
+    // have sent them to the Site column when the entity id was wrong.
+    // Emptying a label passed too, rendering "· 17 rows" with no subject.
+    for (const [map, size] of [
+      [ISSUE_CODE_LABEL, BULK_UPLOAD_ISSUE_CODES.length],
+      [COLUMN_LABEL, BULK_UPLOAD_COLUMNS.length],
+    ] as const) {
+      const values = Object.values(map);
+      expect(values.every((v) => v.trim().length > 0)).toBe(true);
+      expect(new Set(values).size).toBe(size);
+    }
+  });
+
+  it('names the two entity columns apart from each other', () => {
+    // The swap above, pinned by meaning rather than by distinctness alone.
+    expect(COLUMN_LABEL.subsidiaryId).toMatch(/entity/i);
+    expect(COLUMN_LABEL.locationId).toMatch(/site/i);
+  });
+});
+
+describe('groupIssues', () => {
+  it('gathers one problem at a time, commonest first', () => {
+    const groups = groupIssues([
+      issue({ row: 5, code: 'period_locked' }),
+      issue({ row: 3, code: 'invalid' }),
+      issue({ row: 2, code: 'invalid' }),
+      issue({ row: 9, code: 'invalid' }),
+    ]);
+
+    expect(groups.map((g) => g.code)).toEqual(['invalid', 'period_locked']);
+    expect(groups[0].count).toBe(3);
+    // Row order inside a group, because the user works down their file.
+    expect(groups[0].rows.map((r) => r.row)).toEqual([2, 3, 9]);
+  });
+
+  it('carries the human label beside the code', () => {
+    expect(groupIssues([issue({ code: 'no_factor' })])[0].label).toBe(
+      ISSUE_CODE_LABEL.no_factor,
+    );
+  });
+
+  it('is stable when two problems are equally common', () => {
+    const groups = groupIssues([
+      issue({ code: 'period_locked' }),
+      issue({ code: 'invalid' }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].label.localeCompare(groups[1].label)).toBeLessThan(0);
+  });
+
+  it('says nothing about nothing', () => {
+    expect(groupIssues([])).toEqual([]);
+  });
+});
+
+describe('totalTonnes', () => {
+  it('adds up the figures', () => {
+    expect(totalTonnes([accepted({ tCo2e: 1.5 }), accepted({ tCo2e: 2.25 })])).toBe(3.75);
+  });
+
+  it('returns null rather than zero when nothing was calculated', () => {
+    // Water is tracked by invoice and never calculated. A client folding with
+    // `?? 0` turns "no figure exists" into a REPORTED zero entering the
+    // inventory, which is the defect the nullable field exists to prevent.
+    expect(totalTonnes([accepted({ tCo2e: null })])).toBeNull();
+    expect(totalTonnes([])).toBeNull();
+    expect(tonnesLabel([accepted({ tCo2e: null })])).toMatch(/No calculated figure/);
+  });
+
+  it('skips the nulls rather than counting them as zero', () => {
+    expect(totalTonnes([accepted({ tCo2e: 4 }), accepted({ tCo2e: null })])).toBe(4);
+  });
+});
+
+describe('summarise', () => {
+  it('calls a clean dry run clean', () => {
+    const s = summarise(report({ totalRows: 1 }));
+    expect(s.tone).toBe('clean');
+    expect(s.headline).toMatch(/would be imported/);
+    expect(s.detail).toBeNull();
+  });
+
+  it('uses the past tense once rows have actually been written', () => {
+    const s = summarise(report({ dryRun: false }));
+    expect(s.headline).toMatch(/were imported/);
+  });
+
+  it('counts affected ROWS, not issues', () => {
+    // One row can carry several issues, so `errors.length` is not "rows that
+    // failed" — and telling a user 4 rows failed out of 3 costs trust in
+    // every other number on the screen.
+    const s = summarise(
+      report({
+        totalRows: 3,
+        accepted: [accepted({ row: 2 })],
+        errors: [
+          issue({ row: 3, column: 'activityValue' }),
+          issue({ row: 3, column: 'activityUnit' }),
+          issue({ row: 4 }),
+        ],
+      }),
+    );
+    expect(s.tone).toBe('partial');
+    expect(s.errorCount).toBe(3);
+    expect(s.affectedRows).toBe(2);
+    expect(s.detail).toMatch(/2 rows were not/);
+  });
+
+  it('uses the singular for one bad row', () => {
+    const s = summarise(
+      report({ totalRows: 2, accepted: [accepted()], errors: [issue({ row: 3 })] }),
+    );
+    expect(s.detail).toMatch(/1 row was not/);
+  });
+
+  it('says plainly when nothing can be imported', () => {
+    const s = summarise(
+      report({ totalRows: 2, accepted: [], errors: [issue({ row: 2 }), issue({ row: 3 })] }),
+    );
+    expect(s.tone).toBe('refused');
+    expect(s.headline).toMatch(/No rows/);
+    expect(s.detail).toMatch(/2 rows/);
+  });
+});
+
+describe('the copy that warns about drafts', () => {
+  it('says so before anything is written', () => {
+    // `draft` is in neither the counted statuses nor the review queue's, so
+    // an import moves no total — including the completeness panel on the same
+    // screen. A user not told this reports it as a bug.
+    const text = applyConfirmation(report({ accepted: [accepted(), accepted()] }));
+    expect(text).toMatch(/drafts/i);
+    expect(text).toMatch(/review queue/i);
+    expect(text).toMatch(/cannot be undone/i);
+    expect(text).toContain('2 rows');
+  });
+
+  it('names the tonnage it is about to write', () => {
+    expect(applyConfirmation(report({ accepted: [accepted({ tCo2e: 1.5 })] }))).toContain(
+      '1.500 tCO₂e',
+    );
+  });
+
+  it('does not claim a figure when there is none', () => {
+    expect(applyConfirmation(report({ accepted: [accepted({ tCo2e: null })] }))).toMatch(
+      /No calculated figure/,
+    );
+  });
+
+  it('says it again afterwards', () => {
+    expect(applySuccessMessage(report({ dryRun: false }))).toMatch(/drafts/i);
+    expect(applySuccessMessage(report({ dryRun: false }))).toMatch(/submit/i);
+  });
+});
+
+describe('uploadErrorMessage', () => {
+  it('explains the throttle instead of repeating the status', () => {
+    const text = uploadErrorMessage(new ApiError('Too Many Requests', 429));
+    expect(text).toMatch(/wait a minute/i);
+    // The budget is shared, which is the part a user cannot guess.
+    expect(text).toMatch(/dry run/i);
+  });
+
+  it('supplies the size sentence for a 413, which may carry no body', () => {
+    // Multer's limit fires before any of our code, and the proxy's 413 is
+    // often not JSON at all — so this must not rely on `message`.
+    expect(uploadErrorMessage(new ApiError('API 413', 413))).toContain('2 MB');
+  });
+
+  it('keeps the server’s own sentence for everything else', () => {
+    // The 400s are written for the person reading them: "Unrecognised
+    // column(s): activity_value. Expected: …" is more useful than anything
+    // this module could invent.
+    expect(
+      uploadErrorMessage(
+        new ApiError('Unrecognised column(s): activity_value.', 400),
+      ),
+    ).toBe('Unrecognised column(s): activity_value.');
+  });
+
+  it('survives something that is not an ApiError', () => {
+    expect(uploadErrorMessage(new Error('offline'))).toBe('offline');
+    expect(uploadErrorMessage('nonsense')).toMatch(/failed/i);
+  });
+});
+
+describe('canBulkUpload', () => {
+  it.each([
+    ['data_entry', true],
+    ['super_admin', true],
+    ['consultant', false],
+    ['executive_viewer', false],
+  ])('%s', (role, allowed) => {
+    // Mirrors the server's WRITE_ROLES. The UI hides what a role cannot do;
+    // it does not decide it.
+    expect(canBulkUpload({ role })).toBe(allowed);
+  });
+
+  it('hides the panel from a signed-out shell', () => {
+    expect(canBulkUpload(null)).toBe(false);
+  });
+});
+
+describe('the verdict carries what the report would otherwise hide', () => {
+  it('says how many rows warn, even when none failed', () => {
+    // The commonest real shape, and it had no test: every row of an
+    // electricity file carries `evidence_required`. The clean verdict used to
+    // say only "All 40 rows would be imported." with the warnings in a
+    // COLLAPSED group — an unqualified success for a file where nothing can
+    // subsequently be submitted.
+    const s = summarise(
+      report({
+        totalRows: 3,
+        accepted: [accepted(), accepted(), accepted()],
+        warnings: [
+          issue({ row: 2, code: 'evidence_required' }),
+          issue({ row: 3, code: 'evidence_required' }),
+          issue({ row: 4, code: 'evidence_required' }),
+        ],
+      }),
+    );
+
+    expect(s.tone).toBe('clean');
+    expect(s.warningCount).toBe(3);
+    expect(s.detail).toMatch(/3 rows need attention/i);
+    expect(s.detail).toMatch(/submitted/i);
+  });
+
+  it('uses the singular for one warned row', () => {
+    const s = summarise(
+      report({ warnings: [issue({ code: 'would_block_submit' })] }),
+    );
+    expect(s.detail).toMatch(/1 row needs attention/i);
+  });
+
+  it('says the rows are drafts on the surface that SURVIVES', () => {
+    // It was in the confirm dialog (dismissed) and the success toast (fades).
+    // The verdict block is the only thing still on screen when the user looks
+    // at the completeness panel one column away and finds it unchanged.
+    const s = summarise(report({ dryRun: false, totalRows: 1 }));
+    expect(s.detail).toMatch(/drafts/i);
+    expect(s.detail).toMatch(/review queue/i);
+  });
+
+  it('does not mention drafts before anything is written', () => {
+    expect(summarise(report({ totalRows: 1 })).detail).toBeNull();
+  });
+
+  it('keeps the past tense when an apply imported nothing', () => {
+    const s = summarise(
+      report({ dryRun: false, totalRows: 1, accepted: [], errors: [issue()] }),
+    );
+    expect(s.headline).toMatch(/were imported/);
+  });
+});
+
+describe('retry advice', () => {
+  it('says to upload the file again after a DRY RUN', () => {
+    const s = summarise(
+      report({ totalRows: 2, accepted: [accepted()], errors: [issue({ row: 3 })] }),
+    );
+    expect(s.detail).toMatch(/upload it again/i);
+  });
+
+  it('says to upload ONLY the failed rows after a real import', () => {
+    // Re-sending the corrected whole file would return the rows that already
+    // succeeded as `duplicate_existing` — the advice would manufacture the
+    // next problem.
+    const s = summarise(
+      report({
+        dryRun: false,
+        totalRows: 2,
+        accepted: [accepted()],
+        errors: [issue({ row: 3 })],
+      }),
+    );
+    expect(s.detail).toMatch(/only those rows/i);
+    expect(s.detail).not.toMatch(/upload it again/i);
+  });
+});
+
+describe('tonnesLabel', () => {
+  it('states a whole-set figure plainly', () => {
+    expect(tonnesLabel([accepted({ tCo2e: 1.5 }), accepted({ tCo2e: 1.5 })])).toBe(
+      '3.000 tCO₂e',
+    );
+  });
+
+  it('says how much of the set a partial figure covers', () => {
+    // A Water + Electricity file yields one figure and one row count, and an
+    // unqualified "4.000 tCO₂e" beside "40 rows" reads as the total for all
+    // forty. Avoiding `?? 0` per row and then re-creating it in the aggregate
+    // is the same defect one layer up — and this is a number someone pastes
+    // into a report.
+    const label = tonnesLabel([
+      accepted({ tCo2e: 4 }),
+      accepted({ tCo2e: null }),
+      accepted({ tCo2e: null }),
+    ]);
+    expect(label).toContain('4.000 tCO₂e');
+    expect(label).toMatch(/1 of 3 rows/);
+    expect(label).toMatch(/2 have no calculated figure/);
+  });
+});
+
+describe('uploadErrorMessage — the remaining branch', () => {
+  it('explains a role refusal', () => {
+    expect(uploadErrorMessage(new ApiError('Forbidden', 403))).toMatch(
+      /cannot import/i,
+    );
+  });
+});
+

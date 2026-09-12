@@ -50,7 +50,11 @@ test('data entry: draft → live preview → evidence → submit → approve →
   await expect(page.getByLabel('Reason for variance *')).toHaveCount(0);
 
   // Attach the required evidence (hidden file input under the vault).
-  await page.locator('input[type="file"]').setInputFiles(EVIDENCE_FIXTURE);
+  // Scoped to the vault: the page now also carries the bulk-import input, and
+  // a bare `input[type="file"]` matches both, which is a strict-mode failure.
+  await page
+    .locator('[data-testid="evidence-vault-input"]')
+    .setInputFiles(EVIDENCE_FIXTURE);
   await expect(page.getByText('Evidence uploaded')).toBeVisible();
   await expect(page.getByText('sample-invoice.pdf')).toBeVisible();
 
