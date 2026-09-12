@@ -63,6 +63,12 @@ in `e2e/helpers.ts`.
   Subsidiary skeleton resolves.
 - Deleting an approved record via the API in teardown (the remove gate forbids it) — rely on the quarterly
   wipe instead.
+- Assuming a killed run tidied up after itself. Playwright skips `globalTeardown` on SIGINT or a crash,
+  and `pnpm db:seed` deletes nothing — so the fixture factor and any quarterly rows survive both. The
+  repair is the next `pnpm e2e` (its `globalSetup` sweeps before it seeds) or `pnpm db:reset`. Worst
+  case is a stranded `submitted` record: the API refuses to delete it, and once the fixture factor is
+  gone it refuses to edit it too (`update` recomputes, and the category has no factor) — service role
+  only.
 - Assuming E2E is unwired from CI. It has run **nightly** since 2026-09-01 via
   `.github/workflows/e2e.yml`, plus `workflow_dispatch` — trigger it on a branch before merge with
   `gh workflow run e2e.yml --ref <branch>` (~25-35 min). It is deliberately NOT on `pull_request`

@@ -134,6 +134,26 @@ interface SeedFactor {
   version: string;
 }
 
+/**
+ * RESERVED: a version beginning `0000-` belongs to a TEST FIXTURE, never to a
+ * sourced factor.
+ *
+ * The E2E suite seeds `0000-E2E-FIXTURE` for a category this library does not
+ * cover (`e2e/helpers.ts`, `seedE2EFactor`), because every category it DOES
+ * cover is evidence-required and a bulk import cannot attach a file. The suite
+ * removes it at teardown, and `main()` below sweeps the prefix on every seed —
+ * which is the repair for an E2E run killed before its teardown ran.
+ *
+ * The prefix is also what keeps such a row from shadowing a real factor:
+ * `findFactor` takes the highest `version` for a (category, geography, year),
+ * and leading zeroes sort below every plausible real version. Treat that as the
+ * last line of defence rather than the first — the ordering is lexicographic,
+ * which is separately recorded as unsafe (`"2024.2" > "2024.10"`). If you are
+ * adding the real factor for such a category, nothing here needs changing; just
+ * do not adopt this prefix for it.
+ */
+export const FIXTURE_VERSION_PREFIX = '0000-';
+
 const EMISSION_FACTORS: SeedFactor[] = [
   // --- Scope 2: purchased electricity (kgCO2e/kWh) — DEMO_YEAR ---
   { category: 'Electricity', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.2071, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
@@ -430,6 +450,24 @@ async function main() {
       where: { id: s.id },
       data: { trackingGranularity: s.trackingGranularity },
     });
+  }
+
+  // Sweep any stranded test fixture BEFORE seeding the real library. Playwright
+  // skips its `globalTeardown` on SIGINT or a crash, and until this existed
+  // `pnpm db:seed` deleted nothing — so an interrupted E2E run left a fabricated
+  // factor in place, and the obvious repair did not remove it. While it sits
+  // there its category calculates at a made-up rate instead of being refused,
+  // and every record entered against it freezes that rate into an immutable
+  // snapshot this sweep cannot undo. Scoped to the reserved prefix, so it can
+  // only ever remove a row something deliberately labelled as a fixture.
+  const strandedFixtures = await prisma.emissionFactor.deleteMany({
+    where: { version: { startsWith: FIXTURE_VERSION_PREFIX } },
+  });
+  if (strandedFixtures.count > 0) {
+    console.log(
+      `Removed ${strandedFixtures.count} stranded test-fixture factor(s) ` +
+        `(version ${FIXTURE_VERSION_PREFIX}*) left by an interrupted E2E run.`,
+    );
   }
 
   console.log('Seeding emission factors (reference data)...');

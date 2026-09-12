@@ -122,6 +122,9 @@ test('an unreachable id is indistinguishable from one that does not exist', asyn
     });
 
     const { failed } = await res.json();
+    // Without this the test can pass having proved nothing: `{ ...undefined }`
+    // is `{}`, so an empty `failed` array compares equal to itself.
+    expect(failed).toHaveLength(2);
     const [foreign, absent] = failed;
     // Byte-identical apart from the id itself.
     expect({ ...foreign, recordId: '' }).toEqual({ ...absent, recordId: '' });

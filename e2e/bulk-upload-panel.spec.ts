@@ -8,6 +8,7 @@ import {
   deleteRecordsAsService,
   E2E_BULK_CATEGORY,
   E2E_PERIOD,
+  E2E_YEAR,
   ENTRY_EMAIL,
   getAccessToken,
   login,
@@ -34,7 +35,14 @@ import {
  * would then fail while asserting something else entirely.
  */
 const LANE_PERIOD = 'Q2';
-const laneQuery = `subsidiary_id=eq.${SUB.energy}&reporting_period=eq.${E2E_PERIOD}&period_value=eq.${LANE_PERIOD}&category=eq.${E2E_BULK_CATEGORY}`;
+/**
+ * `reporting_year` is not decoration. These ids are fed to
+ * `deleteRecordsAsService`, which deletes with the service role — past the
+ * period lock, past the status gates and past RLS. Unscoped by year it reaches
+ * all twelve the UI now offers, which is the same unscoped-wipe hazard
+ * `cleanupQuarterly` was narrowed to avoid.
+ */
+const laneQuery = `subsidiary_id=eq.${SUB.energy}&reporting_year=eq.${E2E_YEAR}&reporting_period=eq.${E2E_PERIOD}&period_value=eq.${LANE_PERIOD}&category=eq.${E2E_BULK_CATEGORY}`;
 
 const csv = (activityValue: number) =>
   buildBulkCsv([{ subsidiaryId: SUB.energy, periodValue: LANE_PERIOD, activityValue }]);
@@ -264,7 +272,7 @@ test('an all-evidence import explains itself instead of offering a dead button',
     const ids = (
       await serviceReadRecords(
         request,
-        `subsidiary_id=eq.${SUB.energy}&reporting_period=eq.${E2E_PERIOD}&period_value=eq.Q3&category=eq.Electricity`,
+        `subsidiary_id=eq.${SUB.energy}&reporting_year=eq.${E2E_YEAR}&reporting_period=eq.${E2E_PERIOD}&period_value=eq.Q3&category=eq.Electricity`,
       )
     ).map((r) => String(r.id));
     await deleteRecordsAsService(request, ids);

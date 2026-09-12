@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
-import type { BulkUploadRowIssue } from '@tonyai/shared-types';
+import type { BulkUploadAcceptedRow, BulkUploadRowIssue } from '@tonyai/shared-types';
 import {
   ADMIN_EMAIL,
+  ENTRY_EMAIL,
   buildBulkCsv,
   deleteRecordsAsService,
   E2E_BULK_CATEGORY,
@@ -28,8 +29,14 @@ import {
  * seeded row can collide; the collision risk is other SPECS, and the teardown
  * below is what keeps it one-directional.
  *
- * Budget: the import route allows five requests per minute per user, so this
- * file keeps to four as `admin@`.
+ * Budget: the import route allows five requests per minute per user. This file
+ * makes SIX imports — one per test — so the last three run as `entry@`, which
+ * the lane allows because `SUB.energy` is inside that user's access set. The
+ * header used to claim "four as admin@"; it was six from the first commit, and
+ * the sixth came back 429 in the first run where the five before it all
+ * reached the server. It failed as `TypeError: … reading 'map'` in a test
+ * asserting row-level codes — the throttle blaming the wrong code, which is
+ * precisely what the `beforeAll` below exists to prevent.
  */
 const LANE = { subsidiaryId: SUB.energy, periodValue: 'Q3' };
 
@@ -145,6 +152,17 @@ test('a dry run writes nothing — asserted against the database, not the report
   // No ids, by contract — not placeholder ids.
   expect(report.accepted.every((a: { recordId: null }) => a.recordId === null)).toBe(true);
 
+  // The FIGURE, per row. The fixture factor is 7 kgCO2e per tonne and `tonnes`
+  // normalises by identity, so these three numbers are the only place in the
+  // suite where the normalisation and the factor multiply are both observable —
+  // and each is derived from its own row's value, so a preview that computed
+  // every row from the first would fail here rather than agree with itself.
+  expect(report.accepted.map((a: BulkUploadAcceptedRow) => [a.row, a.tCo2e])).toEqual([
+    [2, 0.084],
+    [3, 0.098],
+    [4, 0.077],
+  ]);
+
   // The two proofs the report cannot give, and either alone can be faked:
   expect(await laneRows(request)).toHaveLength(before);
   const audit = await readAuditSince(request, {
@@ -165,7 +183,7 @@ test('an apply writes one audit row per record, plus one for the batch', async (
   // CLAUDE.md calls audit-on-every-mutation non-negotiable, and the unit suite
   // structurally cannot see the per-record rows: the bulk service mocks the
   // record service wholesale.
-  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const token = await getAccessToken(request, ENTRY_EMAIL);
   const since = new Date().toISOString();
   let created: string[] = [];
 
@@ -213,7 +231,7 @@ test('a refused file still leaves a trace on the audit trail', async ({ request 
   // The one event most worth keeping is the one that accomplished nothing. The
   // import's batch row used to be written only after the loop, so a refusal
   // left no trace at all.
-  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const token = await getAccessToken(request, ENTRY_EMAIL);
   const since = new Date().toISOString();
 
   const res = await postBulkImport(request, token, {
@@ -235,7 +253,7 @@ test('the row-level refusals arrive with the codes the contract names', async ({
   request,
 }) => {
   // A dry run, so the whole table costs one request and writes nothing.
-  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const token = await getAccessToken(request, ENTRY_EMAIL);
   const csv = buildBulkCsv([
     { ...LANE, activityValue: 12 },
     // The same slot twice in one file — a conflict Postgres would only raise

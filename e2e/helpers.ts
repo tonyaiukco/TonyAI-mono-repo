@@ -278,8 +278,23 @@ export async function lockPeriod(
  */
 /** Teardown deletes with the service-role key, so it must never be pointed at a
  *  shared database. `supabaseEnv()` reads whatever the local env files say. */
+const LOCAL_SUPABASE_HOSTS = ['127.0.0.1', 'localhost'];
+
 function assertLocalTarget(url: string): void {
-  if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(url)) {
+  // The HOSTNAME, parsed — not a prefix match on the string. A prefix regex
+  // reads the userinfo as the host: `http://localhost:54321@evil.example.com`
+  // satisfies `^https?://localhost:` while `new URL(url).hostname` is
+  // `evil.example.com`. That needs an attacker who can already write the
+  // gitignored `.env`, so it was hardening rather than a hole — but this file
+  // now puts a factor INSERT, a factor DELETE and a record DELETE behind this
+  // one check, so it should mean what it says.
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    hostname = '';
+  }
+  if (!LOCAL_SUPABASE_HOSTS.includes(hostname)) {
     throw new Error(
       `Refusing to run E2E teardown against a non-local Supabase (${url}). ` +
         'These deletes bypass RLS.',
@@ -518,13 +533,22 @@ export const E2E_BULK_CATEGORY = 'Waste';
 export const E2E_BULK_UNIT = 'tonnes';
 
 /**
- * The version string, chosen so it can never shadow a real factor.
+ * The version string, chosen so it does not shadow a real factor.
  *
  * `findFactor` orders by `version DESC` and takes the first row, so a version
  * that sorts ABOVE a real one (`E2E-…` beats `2026.1` lexically) would silently
  * take precedence the day someone seeds a genuine Waste factor. Leading zeroes
- * put this below every plausible real version instead: the fixture applies only
- * while nothing real exists, which is exactly its remit.
+ * put this below every plausible real version instead — measured against the
+ * database's own collation, not assumed: below `2026.1`, `2025.1`, `AR6`,
+ * `DEFRA-2024` and `v1`, under `en_US.UTF-8`, `C` and ICU alike.
+ *
+ * Not a guarantee, and it should not be read as one: `'0.1'` sorts BELOW this
+ * string, and the resolver's lexicographic ordering is already recorded as
+ * unsafe (`"2024.2" > "2024.10"`). The controls that actually hold are the
+ * reserved `0000-` prefix (documented beside the factor table in
+ * `packages/db/prisma/seed.ts`), the teardown, and the fact that every field of
+ * the row says it is a fixture. The ordering is a fourth line of defence, not
+ * the first.
  */
 export const E2E_FACTOR_VERSION = '0000-E2E-FIXTURE';
 
@@ -558,24 +582,45 @@ export async function seedE2EFactor(request: APIRequestContext): Promise<void> {
     geography_code: geographyCode,
     reporting_year: E2E_YEAR,
     scope: 3,
-    factor_value: 1,
-    factor_unit: `kgCO2e/${E2E_BULK_UNIT}`,
+    // Not 1. `tonnes` normalises with an identity multiplier, so a factor of 1
+    // would make the whole chain an identity — `kgCo2e === activityValue` —
+    // and a regression that dropped either the normalisation or the factor
+    // multiply would compute the right answer anyway. 7 keeps the arithmetic
+    // trivial (12 t -> 84 kg -> 0.084 t) while leaving both steps observable,
+    // and is still orders of magnitude below any published waste factor, so it
+    // cannot be mistaken for a sourced value.
+    factor_value: 7,
+    // Singular denominator, following the library's own convention
+    // (`kgCO2e/litre`, `kgCO2e/kWh`). This string is display-only — it is
+    // printed verbatim into the record drawer and the PDF appendix, while
+    // `normalized_unit` is the one the calculator matches on.
+    factor_unit: 'kgCO2e/tonne',
     normalized_unit: E2E_BULK_UNIT,
     methodology: 'E2E fixture — not a methodology',
     source: 'E2E FIXTURE — not a real emission factor, not for reporting',
     version: E2E_FACTOR_VERSION,
   }));
-  const res = await request.post(`${url}/rest/v1/emission_factors`, {
-    headers: {
-      apikey: service,
-      Authorization: `Bearer ${service}`,
-      'Content-Type': 'application/json',
-      // Idempotent: a previous run that died before teardown must not make the
-      // next one fail on the (category, geography, year, version) unique index.
-      Prefer: 'return=minimal,resolution=merge-duplicates',
+  // `on_conflict` is not optional here. PostgREST infers the conflict target
+  // from the PRIMARY KEY unless it is told otherwise, and every call generates
+  // a fresh `id` — so without this, `merge-duplicates` resolves on `id`, misses
+  // the (category, geography, year, version) unique index, and a row left by a
+  // run that died before teardown comes back as a 409. What has been covering
+  // that so far is `cleanupE2EFactors` running immediately before this in
+  // `globalSetup`, which is a different guarantee than the one the header
+  // claims.
+  const conflictTarget = 'category,geography_code,reporting_year,version';
+  const res = await request.post(
+    `${url}/rest/v1/emission_factors?on_conflict=${conflictTarget}`,
+    {
+      headers: {
+        apikey: service,
+        Authorization: `Bearer ${service}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal,resolution=merge-duplicates',
+      },
+      data: rows,
     },
-    data: rows,
-  });
+  );
   if (!res.ok()) {
     throw new Error(`seedE2EFactor failed: ${res.status()} ${await res.text()}`);
   }
@@ -762,7 +807,18 @@ export async function deleteRecordsAsService(
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
   const list = ids.map((id) => `"${id}"`).join(',');
+  // Files BEFORE rows, for the same reason `cleanupQuarterly` does it: the
+  // `Evidence.activityRecord` FK is ON DELETE CASCADE, so the moment the rows
+  // go the object keys are unknowable and the files are orphaned forever. This
+  // helper deleted the evidence ROWS and left the objects — one leaked file per
+  // run, on a bucket that had already grown to 1501 objects against 102 rows
+  // once before anyone counted.
+  const paths = await evidencePathsFor(
+    request,
+    `select=storage_path&activity_record_id=in.(${list})`,
+  );
   reportCleanup([
+    await removeEvidenceObjects(request, paths),
     await del(request, `${url}/rest/v1/evidence?activity_record_id=in.(${list})`, headers),
     await del(request, `${url}/rest/v1/activity_records?id=in.(${list})`, headers),
   ]);
