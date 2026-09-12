@@ -263,7 +263,7 @@ function afterword(
   }
   if (!report.dryRun) {
     parts.push(
-      'Imported rows are drafts: they count towards no total and do not appear in the review queue until they are submitted.',
+      'Imported rows are drafts: they count towards no total and do not appear in the review queue until they are submitted below.',
     );
   }
   return parts.length > 0 ? parts.join(' ') : null;
@@ -312,12 +312,19 @@ export function applyConfirmation(report: BulkUploadReportDTO): string {
   );
 }
 
-/** The toast after a successful apply. Same caveat, shorter. */
+/**
+ * The toast after a successful apply.
+ *
+ * It used to end "Submit them for review to count them towards your
+ * inventory" — true, and for one release the only way to do it was opening
+ * every draft in the form below. The panel now offers the remedy directly, so
+ * the sentence points at it.
+ */
 export function applySuccessMessage(report: BulkUploadReportDTO): string {
   const count = report.accepted.length;
   return `${formatNumber(count)} ${
     count === 1 ? 'record' : 'records'
-  } imported as drafts. Submit them for review to count them towards your inventory.`;
+  } imported as drafts. Send them for review below to count them towards your inventory.`;
 }
 
 /**

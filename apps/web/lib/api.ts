@@ -39,6 +39,7 @@ import type {
   UpdateSubsidiaryInput,
   UpdateTargetInput,
   BulkUploadReportDTO,
+  BulkSubmitReportDTO,
 } from "@tonyai/shared-types";
 import { getSupabaseBrowserClient } from "./supabase";
 
@@ -391,6 +392,19 @@ export const api = {
     if (!res.ok) throw await apiError(res);
     return (await res.json()) as BulkUploadReportDTO;
   },
+
+  /**
+   * Send many imported drafts for review at once.
+   *
+   * Ids, not a filter: there is no batch id to filter on, and a draft is
+   * submittable by any colleague who can see the subsidiary — so a filter
+   * would sweep someone else's work-in-progress into review unenumerated.
+   */
+  bulkSubmitActivityRecords: (recordIds: string[]) =>
+    apiFetch<BulkSubmitReportDTO>("/activity-records/bulk-submit", {
+      method: "POST",
+      body: JSON.stringify({ recordIds }),
+    }),
 
   /** Download the import template (XLSX), pre-filled with reachable entities. */
   downloadBulkUploadTemplate: async (): Promise<void> => {

@@ -102,4 +102,5 @@ export class BulkUploadController {
   ) {
     return this.service.import(user, file, options);
   }
+
 }
