@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import type { BulkUploadRowIssue } from '@tonyai/shared-types';
 import {
   ADMIN_EMAIL,
   buildBulkCsv,
@@ -32,12 +33,23 @@ import {
  */
 const LANE = { subsidiaryId: SUB.energy, periodValue: 'Q3' };
 
-/** Three rows that pass every gate on a freshly seeded database. */
+/**
+ * Three rows that pass every gate on a freshly seeded database.
+ *
+ * Three period values rather than three years, and `E2E_YEAR` is load-bearing
+ * twice over. The fixture factor is seeded for that year alone, so a row dated
+ * a year earlier is refused `no_factor` — asserted deliberately further down,
+ * having first arrived here as a failure. And `cleanupQuarterly` sweeps that
+ * year alone, so a row outside it would outlive the run that wrote it.
+ *
+ * Q1 is free: `data-entry-happy` writes Electricity there, and the category is
+ * part of the uniqueness key, so that is a different slot.
+ */
 const rows = (over: Partial<Parameters<typeof buildBulkCsv>[0][number]>[] = []) =>
   buildBulkCsv([
     { ...LANE, activityValue: 12, ...over[0] },
     { ...LANE, periodValue: 'Q4', activityValue: 14, ...over[1] },
-    { ...LANE, reportingYear: E2E_YEAR - 1, activityValue: 11, ...over[2] },
+    { ...LANE, periodValue: 'Q1', activityValue: 11, ...over[2] },
   ]);
 
 async function laneRows(request: Parameters<typeof serviceReadRecords>[0]) {
@@ -231,17 +243,33 @@ test('the row-level refusals arrive with the codes the contract names', async ({
     { ...LANE, activityValue: 13 },
     { ...LANE, periodValue: 'Q4', activityValue: 'N/A' },
     { ...LANE, periodValue: 'Q4', category: 'Refrigerants', activityValue: 5, activityUnit: 'tonnes' },
+    // The same category and unit as row 2, one year earlier. The factor
+    // library is year-scoped with no fallback, and the fixture covers
+    // `E2E_YEAR` alone — so this row can only be refused if the importer reads
+    // `reportingYear` PER ROW and carries it into the factor lookup. A column
+    // dropped on the floor would default to the file's other rows and import
+    // cleanly. It is also the case `toIssue` was written for: history older
+    // than the factor library, reported as coverage rather than access.
+    { ...LANE, periodValue: 'Q1', reportingYear: E2E_YEAR - 1, activityValue: 9 },
   ]);
 
   const report = await (
     await postBulkImport(request, token, { buffer: csv, dryRun: 'true' })
   ).json();
 
-  const codes = report.errors.map((e: { code: string }) => e.code);
-  expect(codes).toContain('duplicate_in_file');
-  expect(codes).toContain('invalid');
-  // The archetypal bulk-import failure, and the one that used to be reported
-  // as a tenant/permission problem.
-  expect(codes).toContain('no_factor');
+  // Code BY ROW, not a bag of codes: four right codes attached to the wrong
+  // four lines would satisfy any `toContain`, and the row number is the only
+  // part of an issue the user can act on — it is the line they open in Excel.
+  // Row 1 is the header, so the data starts at 2.
+  expect(
+    Object.fromEntries(report.errors.map((e: BulkUploadRowIssue) => [e.row, e.code])),
+  ).toEqual({
+    3: 'duplicate_in_file',
+    4: 'invalid',
+    // The archetypal bulk-import failure, and the one that used to be reported
+    // as a tenant/permission problem.
+    5: 'no_factor',
+    6: 'no_factor',
+  });
   expect(report.accepted).toHaveLength(1);
 });

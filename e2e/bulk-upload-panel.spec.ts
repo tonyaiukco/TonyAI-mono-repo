@@ -252,8 +252,12 @@ test('an all-evidence import explains itself instead of offering a dead button',
     await page.locator('[data-testid="bulk-import-confirm"]').click();
     await expect(page.getByText(/imported as drafts/i)).toBeVisible();
 
+    // The whole sentence, count included, and in the singular because one row
+    // was imported: `blockedReason` picks its verb and pronoun from that count,
+    // so a looser matcher would pass on copy that says "1 records need".
     await expect(page.locator('[data-testid="bulk-submit-blocked"]')).toContainText(
-      /need an evidence file before they can be submitted, and an import cannot attach one/,
+      'All 1 imported record needs an evidence file before it can be submitted, ' +
+        'and an import cannot attach one.',
     );
     await expect(page.locator('[data-testid="bulk-submit-button"]')).toHaveCount(0);
   } finally {
