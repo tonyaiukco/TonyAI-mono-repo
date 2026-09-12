@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
 export const PASSWORD = 'TonyAI!2026';
@@ -498,3 +499,255 @@ export async function backdateCreatedAt(
     throw new Error(`backdateCreatedAt failed: ${res.status()} ${await res.text()}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// WP8 — bulk upload and bulk submit
+// ---------------------------------------------------------------------------
+
+/**
+ * The category a bulk-submit E2E can actually use, and why it needs a fixture.
+ *
+ * Every category the seeded factor library covers — Electricity, Natural Gas,
+ * Fuel — is evidence-required, and so is Water, the one factorless category the
+ * calc engine will record. So on a seeded database the set of rows that can be
+ * IMPORTED and the set that can be BULK-SUBMITTED are disjoint, and the panel's
+ * submit button never renders. `seedE2EFactor` opens a lane: one factor row for
+ * a non-evidence category, labelled unmistakably as a fixture.
+ */
+export const E2E_BULK_CATEGORY = 'Waste';
+export const E2E_BULK_UNIT = 'tonnes';
+
+/**
+ * The version string, chosen so it can never shadow a real factor.
+ *
+ * `findFactor` orders by `version DESC` and takes the first row, so a version
+ * that sorts ABOVE a real one (`E2E-…` beats `2026.1` lexically) would silently
+ * take precedence the day someone seeds a genuine Waste factor. Leading zeroes
+ * put this below every plausible real version instead: the fixture applies only
+ * while nothing real exists, which is exactly its remit.
+ */
+export const E2E_FACTOR_VERSION = '0000-E2E-FIXTURE';
+
+/**
+ * A factor row for a non-evidence category, so a bulk submit has something to
+ * submit.
+ *
+ * **This is not an emission factor.** Its value is arithmetically convenient
+ * and cites no source, and every field says so — `source`, `methodology` and
+ * `version` all name it as a test fixture. CLAUDE.md forbids inventing factor
+ * values precisely because a number that looks authoritative becomes one; the
+ * defence here is not the number but the labelling, plus a version that cannot
+ * outrank a sourced factor and a teardown that removes it.
+ */
+export async function seedE2EFactor(request: APIRequestContext): Promise<void> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const rows = ['TR', 'UK', 'EU'].map((geographyCode) => ({
+    id: randomUUID(),
+    category: E2E_BULK_CATEGORY,
+    geography_code: geographyCode,
+    reporting_year: E2E_YEAR,
+    scope: 3,
+    factor_value: 1,
+    factor_unit: `kgCO2e/${E2E_BULK_UNIT}`,
+    normalized_unit: E2E_BULK_UNIT,
+    methodology: 'E2E fixture — not a methodology',
+    source: 'E2E FIXTURE — not a real emission factor, not for reporting',
+    version: E2E_FACTOR_VERSION,
+  }));
+  const res = await request.post(`${url}/rest/v1/emission_factors`, {
+    headers: {
+      apikey: service,
+      Authorization: `Bearer ${service}`,
+      'Content-Type': 'application/json',
+      // Idempotent: a previous run that died before teardown must not make the
+      // next one fail on the (category, geography, year, version) unique index.
+      Prefer: 'return=minimal,resolution=merge-duplicates',
+    },
+    data: rows,
+  });
+  if (!res.ok()) {
+    throw new Error(`seedE2EFactor failed: ${res.status()} ${await res.text()}`);
+  }
+}
+
+/** Remove the fixture factor. Keyed on the version sentinel, like the others. */
+export async function cleanupE2EFactors(request: APIRequestContext): Promise<void> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  reportCleanup([
+    await del(
+      request,
+      `${url}/rest/v1/emission_factors?version=eq.${encodeURIComponent(E2E_FACTOR_VERSION)}`,
+      headers,
+    ),
+  ]);
+}
+
+/** One row of a bulk-upload file, in the importer's own column order. */
+export interface BulkRow {
+  subsidiaryId: string;
+  locationId?: string;
+  reportingYear?: number;
+  reportingPeriod?: string;
+  periodValue: string;
+  category?: string;
+  activityValue: number | string;
+  activityUnit?: string;
+  varianceReason?: string;
+}
+
+/**
+ * Build a CSV body in the spec rather than committing a fixture file.
+ *
+ * The rows have to carry live seed UUIDs and a period value the running spec
+ * owns — both of which are constants in this file. A committed `.csv` would
+ * hard-code one subsidiary and drift the first time the lanes move.
+ */
+export function buildBulkCsv(rows: BulkRow[]): Buffer {
+  const header =
+    'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
+  const lines = rows.map((r) =>
+    [
+      r.subsidiaryId,
+      r.locationId ?? '',
+      String(r.reportingYear ?? E2E_YEAR),
+      r.reportingPeriod ?? E2E_PERIOD,
+      r.periodValue,
+      r.category ?? E2E_BULK_CATEGORY,
+      String(r.activityValue),
+      r.activityUnit ?? E2E_BULK_UNIT,
+      r.varianceReason ?? '',
+    ].join(','),
+  );
+  return Buffer.from([header, ...lines].join('\n'), 'utf8');
+}
+
+/**
+ * Post a bulk import.
+ *
+ * `fieldName` is a parameter for one reason: the multipart field name is closed
+ * over inside the class `FileInterceptor('file', …)` generates, so no unit test
+ * can vary it and no browser can either — the web client always sends `file`.
+ * Posting it as anything else is a property only this layer can check.
+ */
+export async function postBulkImport(
+  request: APIRequestContext,
+  token: string,
+  opts: {
+    buffer: Buffer;
+    fileName?: string;
+    mimeType?: string;
+    dryRun: 'true' | 'false';
+    fieldName?: string;
+  },
+) {
+  return request.post(`${API_BASE}/bulk-upload/activity-records`, {
+    headers: bearer(token),
+    multipart: {
+      [opts.fieldName ?? 'file']: {
+        name: opts.fileName ?? 'bulk.csv',
+        mimeType: opts.mimeType ?? 'text/csv',
+        buffer: opts.buffer,
+      },
+      dryRun: opts.dryRun,
+    },
+  });
+}
+
+/** Attach the sample invoice to a record — the middle step of a committed record. */
+export async function attachEvidence(
+  request: APIRequestContext,
+  token: string,
+  recordId: string,
+): Promise<void> {
+  const res = await request.post(`${API_BASE}/activity-records/${recordId}/evidence`, {
+    headers: bearer(token),
+    multipart: {
+      file: {
+        name: 'sample-invoice.pdf',
+        mimeType: 'application/pdf',
+        buffer: readFileSync(EVIDENCE_FIXTURE),
+      },
+    },
+  });
+  if (!res.ok()) {
+    throw new Error(`attachEvidence failed: ${res.status()} ${await res.text()}`);
+  }
+}
+
+/**
+ * Audit rows written since a timestamp.
+ *
+ * The per-record rows are invisible to the unit suite — the bulk services mock
+ * the record service wholesale — so "every mutation writes an audit row", which
+ * CLAUDE.md calls non-negotiable, is only checkable here.
+ */
+export async function readAuditSince(
+  request: APIRequestContext,
+  token: string,
+  filter: { entity?: string; action?: string; since: string },
+): Promise<{ entityId: string | null; action: string; diff: Record<string, unknown> }[]> {
+  const search = new URLSearchParams({ limit: '200' });
+  if (filter.entity) search.set('entity', filter.entity);
+  if (filter.action) search.set('action', filter.action);
+  const res = await request.get(`${API_BASE}/audit?${search.toString()}`, {
+    headers: bearer(token),
+  });
+  if (!res.ok()) throw new Error(`readAuditSince failed: ${res.status()}`);
+  const body = await res.json();
+  const rows = (body.rows ?? body) as {
+    createdAt: string;
+    entityId: string | null;
+    action: string;
+    diff: Record<string, unknown>;
+  }[];
+  return rows.filter((r) => r.createdAt >= filter.since);
+}
+
+/** Read activity_records straight from PostgREST, past the API's own gates. */
+export async function serviceReadRecords(
+  request: APIRequestContext,
+  query: string,
+): Promise<Record<string, unknown>[]> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const res = await request.get(`${url}/rest/v1/activity_records?${query}`, {
+    headers: { apikey: service, Authorization: `Bearer ${service}` },
+  });
+  if (!res.ok()) throw new Error(`serviceReadRecords failed: ${res.status()}`);
+  return res.json();
+}
+
+/**
+ * Delete records with the service role.
+ *
+ * Required, not a convenience: the API refuses to delete a `submitted` record,
+ * and a bulk-submit spec's whole job is producing them. Left behind, they make
+ * `lockPeriod` return 409 in a spec four files later, with an error that names
+ * neither this file nor the record.
+ */
+export async function deleteRecordsAsService(
+  request: APIRequestContext,
+  ids: string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  const list = ids.map((id) => `"${id}"`).join(',');
+  reportCleanup([
+    await del(request, `${url}/rest/v1/evidence?activity_record_id=in.(${list})`, headers),
+    await del(request, `${url}/rest/v1/activity_records?id=in.(${list})`, headers),
+  ]);
+}
+

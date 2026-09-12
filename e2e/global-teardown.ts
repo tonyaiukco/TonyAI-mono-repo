@@ -3,6 +3,7 @@ import {
   cleanupQuarterly,
   cleanupE2ELocations,
   cleanupE2ESubsidiaries,
+  cleanupE2EFactors,
   cleanupE2ETargets,
 } from './helpers';
 
@@ -14,6 +15,7 @@ export default async function globalTeardown(): Promise<void> {
     await cleanupE2ETargets(ctx);
     await cleanupE2ESubsidiaries(ctx);
     await cleanupE2ELocations(ctx);
+    await cleanupE2EFactors(ctx);
   } finally {
     await ctx.dispose();
   }

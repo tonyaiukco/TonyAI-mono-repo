@@ -511,7 +511,11 @@ export function BulkUploadPanel({
             <Button variant="ghost" onClick={() => setConfirming(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void apply()} disabled={working}>
+            <Button
+              data-testid="bulk-import-confirm"
+              onClick={() => void apply()}
+              disabled={working}
+            >
               Import
             </Button>
           </DialogFooter>
