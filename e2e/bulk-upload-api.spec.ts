@@ -107,7 +107,7 @@ test('a Turkish filename survives multipart, into the report AND the audit row',
   // `toBe`, never a regex: mojibake still contains letters.
   expect((await res.json()).fileName).toBe(NAME);
 
-  const audit = await readAuditSince(request, token, {
+  const audit = await readAuditSince(request, {
     entity: 'activity_record',
     action: 'create',
     since,
@@ -135,7 +135,7 @@ test('a dry run writes nothing — asserted against the database, not the report
 
   // The two proofs the report cannot give, and either alone can be faked:
   expect(await laneRows(request)).toHaveLength(before);
-  const audit = await readAuditSince(request, token, {
+  const audit = await readAuditSince(request, {
     entity: 'activity_record',
     action: 'create',
     since,
@@ -164,7 +164,7 @@ test('an apply writes one audit row per record, plus one for the batch', async (
     created = report.accepted.map((a: { recordId: string }) => a.recordId);
     expect(created).toHaveLength(3);
 
-    const audit = await readAuditSince(request, token, {
+    const audit = await readAuditSince(request, {
       entity: 'activity_record',
       action: 'create',
       since,
@@ -211,7 +211,7 @@ test('a refused file still leaves a trace on the audit trail', async ({ request 
   });
   expect(res.status()).toBe(400);
 
-  const audit = await readAuditSince(request, token, {
+  const audit = await readAuditSince(request, {
     entity: 'activity_record',
     action: 'create',
     since,

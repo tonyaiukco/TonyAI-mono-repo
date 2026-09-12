@@ -698,24 +698,33 @@ export async function attachEvidence(
  */
 export async function readAuditSince(
   request: APIRequestContext,
-  token: string,
   filter: { entity?: string; action?: string; since: string },
 ): Promise<{ entityId: string | null; action: string; diff: Record<string, unknown> }[]> {
+  // The token is obtained here rather than taken as a parameter: reading the
+  // trail is super_admin-only, and a caller passing the token they happened to
+  // have produces a 403 that reads like a bug in the thing under test.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
   const search = new URLSearchParams({ limit: '200' });
   if (filter.entity) search.set('entity', filter.entity);
   if (filter.action) search.set('action', filter.action);
   const res = await request.get(`${API_BASE}/audit?${search.toString()}`, {
     headers: bearer(token),
   });
-  if (!res.ok()) throw new Error(`readAuditSince failed: ${res.status()}`);
-  const body = await res.json();
-  const rows = (body.rows ?? body) as {
-    createdAt: string;
-    entityId: string | null;
-    action: string;
-    diff: Record<string, unknown>;
-  }[];
-  return rows.filter((r) => r.createdAt >= filter.since);
+  if (!res.ok()) {
+    throw new Error(`readAuditSince failed: ${res.status()} ${await res.text()}`);
+  }
+  // `{ items, total, limit, offset }` — read from the service rather than
+  // guessed. The first version reached for `rows`, got `undefined`, and failed
+  // as `rows.filter is not a function` three tests away from the cause.
+  const { items } = (await res.json()) as {
+    items: {
+      createdAt: string;
+      entityId: string | null;
+      action: string;
+      diff: Record<string, unknown>;
+    }[];
+  };
+  return items.filter((r) => r.createdAt >= filter.since);
 }
 
 /** Read activity_records straight from PostgREST, past the API's own gates. */

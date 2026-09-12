@@ -178,7 +178,7 @@ test('a draft with evidence really does move, and only once', async ({ request }
     expect(row.submitted_at).not.toBeNull();
 
     // The per-record audit row, which the unit suite cannot see.
-    const audit = await readAuditSince(request, entryToken, {
+    const audit = await readAuditSince(request, {
       entity: 'activity_record',
       action: 'submit',
       since,
@@ -202,7 +202,6 @@ test('a role that may not author gets one 403, and it is recorded', async ({ req
   // is audited, because a seat probing the write surface is the interaction
   // most worth keeping on an append-only trail.
   const consultantToken = await getAccessToken(request, CONSULTANT_EMAIL);
-  const adminToken = await getAccessToken(request, ADMIN_EMAIL);
   const since = new Date().toISOString();
 
   const res = await submitMany(request, consultantToken, [randomUUID()]);
@@ -212,7 +211,7 @@ test('a role that may not author gets one 403, and it is recorded', async ({ req
     'Your role may not submit activity records',
   );
 
-  const audit = await readAuditSince(request, adminToken, {
+  const audit = await readAuditSince(request, {
     entity: 'activity_record',
     action: 'submit',
     since,

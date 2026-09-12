@@ -171,35 +171,52 @@ test('the confirm dialog is the only path to a write, and a double-click writes 
   }
 });
 
-test('a second file supersedes the first — the verdict names the file it previewed', async ({
+test('a second pick during a dry run is refused, and the verdict names the file it previewed', async ({
   page,
   request,
 }) => {
-  // The defect both PR-3b review seats found independently: two dry runs can be
-  // in flight, the responses can land in either order, and without a sequence
-  // guard the older one overwrites the newer report while `file` holds the
-  // newer file — so Import would post a file the user never previewed.
+  // Both PR-3b review seats found the same race: two dry runs in flight, the
+  // responses landing in either order, the older overwriting the newer report
+  // while `file` held the newer file — so Import would post a file the user
+  // never previewed.
   //
-  // The first response is delayed deliberately, because a race that only
-  // sometimes reproduces is a test that only sometimes tests.
+  // Two guards shipped for it, and this test asserts the one that is actually
+  // reachable. `dryRun()` refuses to start while another is in flight, so a
+  // second pick makes NO request at all. (The request-sequence ref behind it is
+  // belt-and-braces for a path that no longer exists: `busy` used to be cleared
+  // out from under a running dry run by the template download's `finally`, and
+  // the template now has its own flag.) The first version of this test asserted
+  // the superseding behaviour instead, and failed — correctly — because the
+  // shipped code prevents it.
   await login(page, ENTRY_EMAIL);
   await page.goto('/data-entry');
 
+  let posts = 0;
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && r.url().includes('/bulk-upload/activity-records')) {
+      posts += 1;
+    }
+  });
+
+  // The first response is held so the second pick lands while it is in flight —
+  // a race that only sometimes reproduces is a test that only sometimes tests.
   let seen = 0;
   await page.route('**/bulk-upload/activity-records', async (route) => {
     seen += 1;
-    if (seen === 1) await new Promise((r) => setTimeout(r, 2000));
+    if (seen === 1) await new Promise((r) => setTimeout(r, 3000));
     await route.continue();
   });
 
   const input = page.locator('[data-testid="bulk-upload-input"]');
   await input.setInputFiles({ name: 'first.csv', mimeType: 'text/csv', buffer: csv(31) });
+  await expect(page.getByText(/nothing is being written/)).toBeVisible();
   await input.setInputFiles({ name: 'second.csv', mimeType: 'text/csv', buffer: csv(32) });
 
-  // The filename is rendered on the verdict precisely so the screen cannot lie
-  // about which file it previewed.
-  await expect(page.getByText('second.csv')).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText('first.csv')).toHaveCount(0);
+  // The filename on the verdict exists precisely so the screen cannot lie about
+  // which file it previewed.
+  await expect(page.getByText('first.csv')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('second.csv')).toHaveCount(0);
+  expect(posts, 'a pick during a dry run must not start a second one').toBe(1);
   expect(await laneCount(request), 'neither dry run may write').toBe(0);
 });
 
