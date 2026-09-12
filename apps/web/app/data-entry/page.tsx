@@ -55,6 +55,8 @@ import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import { CoveragePanel } from "@/components/data-entry/coverage-panel";
+import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
+import { canBulkUpload } from "@/lib/bulk-upload-view";
 import {
   ACTIVITY_UNITS,
   appliesUnitConversion,
@@ -1079,6 +1081,28 @@ function DataEntryPageInner() {
                   )}
                 </CardContent>
               </Card>
+
+              {/* Many records at once — the alternative to the form below.
+                  Above the record fields and NOT inside the `editingId` gate:
+                  an importer has no open record, and this is the only thing on
+                  the page a user reaches before having one. */}
+              <BulkUploadPanel
+                canManage={canBulkUpload(user)}
+                onImported={() => {
+                  // Both the previous-submissions list and CoveragePanel are
+                  // looking at pre-import numbers at the exact moment the user
+                  // checks them for confirmation. `refreshRecords` bumps
+                  // `coverageKey` itself, so one call is the whole refresh.
+                  //
+                  // Scoped to the SELECTED subsidiary, while an import can
+                  // span every entity the caller can reach — so importing for
+                  // one entity while looking at another correctly changes
+                  // nothing on screen. The panel's own verdict is what reports
+                  // the outcome; widening this would mean refetching every
+                  // accessible subsidiary on every import.
+                  if (subsidiaryId) void refreshRecords(subsidiaryId);
+                }}
+              />
 
               {/* Activity value — the calc driver */}
               <Card>

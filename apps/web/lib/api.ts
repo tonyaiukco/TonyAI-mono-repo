@@ -38,6 +38,7 @@ import type {
   UpdateLocationInput,
   UpdateSubsidiaryInput,
   UpdateTargetInput,
+  BulkUploadReportDTO,
 } from "@tonyai/shared-types";
 import { getSupabaseBrowserClient } from "./supabase";
 
@@ -71,6 +72,35 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Turn a failed response into an `ApiError` carrying the server's own sentence.
+ *
+ * Extracted because there were three byte-identical copies — in `apiFetch`, in
+ * `uploadEvidence` and in `downloadReport` — and the two multipart/blob calls
+ * this file gains next would have made five. The duplication exists at all
+ * because `apiFetch` sets `Content-Type: application/json` unconditionally,
+ * which suppresses the browser's multipart boundary, so a file upload cannot
+ * go through the wrapper.
+ *
+ * RETURNS the error rather than throwing it, so every call site reads
+ * `throw await apiError(res)`. A helper that throws is one a caller can
+ * `await` without `throw` — or call without `await` — and both compile clean,
+ * because `no-floating-promises` is deliberately off in this repo.
+ */
+async function apiError(res: Response): Promise<ApiError> {
+  let message: string | string[] = `API ${res.status}`;
+  try {
+    const body = await res.json();
+    message = body.message ?? message;
+  } catch {
+    /* a 413 from the proxy, or any non-JSON body — keep the status sentence */
+  }
+  return new ApiError(
+    Array.isArray(message) ? message.join(", ") : message,
+    res.status,
+  );
+}
+
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -78,19 +108,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     ...((options.headers as Record<string, string>) ?? {}),
   };
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
-  if (!res.ok) {
-    let message = `API ${res.status}`;
-    try {
-      const body = await res.json();
-      message = body.message ?? message;
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(
-      Array.isArray(message) ? message.join(", ") : message,
-      res.status,
-    );
-  }
+  if (!res.ok) throw await apiError(res);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
@@ -222,19 +240,7 @@ export const api = {
       `${BASE_URL}/activity-records/${recordId}/evidence`,
       { method: "POST", headers: await authHeaders(), body: form },
     );
-    if (!res.ok) {
-      let message = `API ${res.status}`;
-      try {
-        const body = await res.json();
-        message = body.message ?? message;
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(
-        Array.isArray(message) ? message.join(", ") : message,
-        res.status,
-      );
-    }
+    if (!res.ok) throw await apiError(res);
     return (await res.json()) as EvidenceDTO;
   },
   getEvidenceUrl: (id: string) =>
@@ -346,20 +352,57 @@ export const api = {
     const res = await fetch(`${BASE_URL}/reports/${kind}?${search.toString()}`, {
       headers: await authHeaders(),
     });
-    if (!res.ok) {
-      let message = `API ${res.status}`;
-      try {
-        message = (await res.json()).message ?? message;
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(Array.isArray(message) ? message.join(", ") : message, res.status);
-    }
+    if (!res.ok) throw await apiError(res);
     const blob = await res.blob();
     const disposition = res.headers.get("Content-Disposition") ?? "";
     const filename =
       /filename="([^"]+)"/.exec(disposition)?.[1] ??
       `tonyai-report.${kind === "excel" ? "xlsx" : kind}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  // --- Bulk upload (WP8) ---
+
+  /**
+   * Import activity records from a CSV/XLSX.
+   *
+   * `dryRun` is REQUIRED by the server and sent as the literal `"true"` or
+   * `"false"`: the DTO accepts only those two spellings, and `"yes"`, `"1"` or
+   * an omitted field is a 400 — deliberately, because this flag decides
+   * whether up to a thousand irreversible audited records are written.
+   */
+  bulkUploadActivityRecords: async (
+    file: File,
+    dryRun: boolean,
+  ): Promise<BulkUploadReportDTO> => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("dryRun", dryRun ? "true" : "false");
+    const res = await fetch(`${BASE_URL}/bulk-upload/activity-records`, {
+      method: "POST",
+      headers: await authHeaders(),
+      body: form,
+    });
+    if (!res.ok) throw await apiError(res);
+    return (await res.json()) as BulkUploadReportDTO;
+  },
+
+  /** Download the import template (XLSX), pre-filled with reachable entities. */
+  downloadBulkUploadTemplate: async (): Promise<void> => {
+    const res = await fetch(`${BASE_URL}/bulk-upload/template`, {
+      headers: await authHeaders(),
+    });
+    if (!res.ok) throw await apiError(res);
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition") ?? "";
+    const filename =
+      /filename="([^"]+)"/.exec(disposition)?.[1] ??
+      "tonyai-bulk-upload-template.xlsx";
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

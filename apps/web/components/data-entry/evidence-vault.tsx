@@ -152,9 +152,8 @@ export function EvidenceVault({
               setDragOver(false);
               void uploadFiles(e.dataTransfer.files);
             }}
-            onClick={() => inputRef.current?.click()}
             className={cn(
-              "flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors",
+              "flex flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors",
               dragOver
                 ? "border-primary bg-primary/5"
                 : "border-border hover:border-primary/40 hover:bg-muted/40",
@@ -165,13 +164,35 @@ export function EvidenceVault({
             ) : (
               <Upload className="h-5 w-5 text-muted-foreground" />
             )}
-            <p className="text-sm font-medium text-foreground">
-              {uploading ? "Uploading…" : "Drop files or click to upload"}
-            </p>
+            {uploading ? (
+              <p className="text-sm font-medium text-foreground" role="status">
+                Uploading…
+              </p>
+            ) : (
+              /* A real button, not a clickable div: the input is
+                 `display:none` and therefore unfocusable, so without this
+                 there was no keyboard path to attaching evidence at all. The
+                 div stays the drop SURFACE. */
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => inputRef.current?.click()}
+              >
+                Choose files
+              </Button>
+            )}
             <p className="text-xs text-muted-foreground">PDF, JPG, PNG, XLSX, CSV · max 10 MB</p>
             <input
               ref={inputRef}
               type="file"
+              // Named so E2E can reach THIS input. Data Entry now carries two
+              // hidden file inputs (the other imports a whole file of
+              // records), and Playwright's strict mode fails on a bare
+              // `input[type="file"]` the moment there is more than one.
+              // Disambiguating with `.first()` would pin DOM order, which is
+              // not a contract.
+              data-testid="evidence-vault-input"
               accept={ACCEPT}
               multiple
               className="hidden"
