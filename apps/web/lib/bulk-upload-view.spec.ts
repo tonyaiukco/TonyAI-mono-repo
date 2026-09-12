@@ -290,7 +290,7 @@ describe('the copy that warns about drafts', () => {
 
   it('says it again afterwards', () => {
     expect(applySuccessMessage(report({ dryRun: false }))).toMatch(/drafts/i);
-    expect(applySuccessMessage(report({ dryRun: false }))).toMatch(/submit/i);
+    expect(applySuccessMessage(report({ dryRun: false }))).toMatch(/send them for review/i);
   });
 });
 

@@ -18,6 +18,7 @@ import {
   computeAnomalyVerdict,
   COUNTED_STATUSES,
   PERIOD_VALUES,
+  SUBMITTABLE_STATUSES as SUBMITTABLE_STATUSES_CONTRACT,
   isCalculated,
   isEvidenceRequired,
   type ActivityCalculationSnapshot,
@@ -60,6 +61,19 @@ interface AnomalyParams {
 const WRITE_ROLES = new Set(['data_entry', 'super_admin']);
 
 /**
+ * May this user author activity records at all?
+ *
+ * A predicate rather than the `Set`, which was briefly exported and should not
+ * have been: it is the authorization rule for every record write, and an
+ * exported mutable `Set` is one `WRITE_ROLES.add('executive_viewer')` away
+ * from widening three gates process-wide with nothing failing and no audit
+ * trail. Callers get the answer; the rule stays here.
+ */
+export function mayWriteActivityRecords(user: RequestUser): boolean {
+  return WRITE_ROLES.has(user.role);
+}
+
+/**
  * The sentence a uniqueness conflict comes back with, in ONE place.
  *
  * Exported because the bulk importer has to tell a duplicate apart from a
@@ -71,6 +85,38 @@ const WRITE_ROLES = new Set(['data_entry', 'super_admin']);
  */
 export const DUPLICATE_RECORD_MESSAGE =
   'An activity record already exists for this reporting entity, period and category.';
+
+/**
+ * The two things `submit` refuses with a `ForbiddenException`, in ONE place.
+ *
+ * Exported for the same reason as the message above, and the stakes are higher
+ * here: a bulk submit has to tell them apart, because they are not the same
+ * kind of failure. A ROLE refusal is one 403 for the whole request — a role
+ * cannot change mid-batch. An AUTHOR refusal is per record, and a batch that
+ * aborted on the first rejected row someone else wrote would discard the
+ * report for every id after it.
+ */
+export const SUBMIT_ROLE_REFUSAL = 'Your role may not submit activity records';
+export const RESUBMIT_AUTHOR_REFUSAL =
+  'You may only resubmit activity records you created';
+
+/**
+ * The two `BadRequestException`s `submit` raises that a caller must tell apart.
+ *
+ * Both sentences interpolate a value, so what is exported is the STABLE
+ * FRAGMENT each is built from — and the templates below are built from these,
+ * so a reworded sentence cannot leave a matcher reading for text nobody
+ * produces any more. The anomaly refusal interpolates nothing and is exported
+ * whole.
+ *
+ * This is the `DUPLICATE_RECORD_MESSAGE` lesson applied a second time, on a
+ * path where getting it wrong tells a user their evidence is missing when
+ * their period is closed.
+ */
+export const EVIDENCE_REFUSAL_FRAGMENT =
+  'requires at least one evidence file before submitting';
+export const VARIANCE_REFUSAL =
+  'This value deviates significantly from the historical average — add a variance comment before submitting.';
 // Roles allowed to take a record into review and to reject it ("flag for
 // revision" in permissions_and_roles.md §3).
 const REVIEW_ROLES = new Set(['consultant', 'super_admin']);
@@ -97,10 +143,12 @@ export const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
 // inventory with no API path back, while pinning its report to
 // `contains_incomplete_data`. Found by review before the reviewer UI made
 // rejection a one-click action.
-const SUBMITTABLE_STATUSES = new Set<ActivityRecordStatus>([
-  ActivityRecordStatus.draft,
-  ActivityRecordStatus.rejected,
-]);
+// The lifecycle rule now lives in the contract, because it was written down
+// three times: here, and twice in the browser. `isSubmittable` is the answer;
+// this Set is the API's index into it.
+const SUBMITTABLE_STATUSES = new Set<ActivityRecordStatus>(
+  SUBMITTABLE_STATUSES_CONTRACT as readonly ActivityRecordStatus[],
+);
 
 // --- Anomaly detection (VAR §4) --------------------------------------------
 // A value is anomalous when it deviates > ±50% from the rolling average of the
@@ -130,7 +178,7 @@ const BASELINE_STATUSES: ActivityRecordStatus[] = [...COUNTED_STATUSES];
  * Reads the shared vocabulary rather than a local lower-case copy of it — that
  * copy was one of six, and it is the reason nothing in this file could say what
  * the canonical spelling of a month WAS. */
-function periodOrdinal(reportingPeriod: string, periodValue: string): number {
+export function periodOrdinal(reportingPeriod: string, periodValue: string): number {
   const canonical = canonicalPeriodValue(reportingPeriod, periodValue);
   if (canonical === null) return 0;
   const allowed: readonly string[] =
@@ -893,7 +941,7 @@ export class ActivityRecordsService {
   async submit(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
     if (!WRITE_ROLES.has(user.role)) {
-      throw new ForbiddenException('Your role may not submit activity records');
+      throw new ForbiddenException(SUBMIT_ROLE_REFUSAL);
     }
     if (!SUBMITTABLE_STATUSES.has(record.status)) {
       throw new BadRequestException(
@@ -911,9 +959,7 @@ export class ActivityRecordsService {
       user.role !== 'super_admin' &&
       record.createdBy !== user.id
     ) {
-      throw new ForbiddenException(
-        'You may only resubmit activity records you created',
-      );
+      throw new ForbiddenException(RESUBMIT_AUTHOR_REFUSAL);
     }
     // Period-lock gate (FR §4.2): no submissions into a closed period.
     await this.assertPeriodNotLocked(
@@ -930,7 +976,7 @@ export class ActivityRecordsService {
       });
       if (evidenceCount === 0) {
         throw new BadRequestException(
-          `Category "${record.category}" requires at least one evidence file before submitting.`,
+          `Category "${record.category}" ${EVIDENCE_REFUSAL_FRAGMENT}.`,
         );
       }
     }
@@ -955,9 +1001,7 @@ export class ActivityRecordsService {
       excludeId: record.id,
     });
     if (verdict.anomalous && !record.varianceReason?.trim()) {
-      throw new BadRequestException(
-        'This value deviates significantly from the historical average — add a variance comment before submitting.',
-      );
+      throw new BadRequestException(VARIANCE_REFUSAL);
     }
     // The note is deliberately KEPT. Clearing it on resubmit was the first cut,
     // and it was wrong twice over: `reviewedBy`/`reviewedAt` survived anyway, so

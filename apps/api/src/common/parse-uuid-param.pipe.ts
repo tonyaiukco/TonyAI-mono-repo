@@ -21,7 +21,7 @@ import { BadRequestException, Injectable, type PipeTransform } from '@nestjs/com
  * 32 hex digits. So the job here is exactly "do not hand Prisma something that
  * will raise P2023", and this pattern is that set, no wider and no narrower.
  */
-const UUID_SHAPE =
+export const UUID_SHAPE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**

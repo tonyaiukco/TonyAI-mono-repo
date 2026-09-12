@@ -2757,3 +2757,199 @@ export interface BulkUploadReportDTO {
   errors: BulkUploadRowIssue[];
   warnings: BulkUploadRowIssue[];
 }
+
+// ---------------------------------------------------------------------------
+// Bulk submit (WP8) — send many imported drafts for review at once.
+// ---------------------------------------------------------------------------
+
+/**
+ * The id cap, and the arithmetic behind it.
+ *
+ * Every id goes through `ActivityRecordsService.submit`: four to seven uncached
+ * queries — the scoped load, the period lock, the evidence count (only for an
+ * evidence-required category), the anomaly baseline (only for a record with a
+ * figure), the status write, the audit row, plus a profile lookup when a
+ * rejected record's reviewer is not the caller. Six, typically. At the cap that
+ * is ~6,000 round trips in one synchronous request — and unlike the import
+ * there is no dry-run-then-apply doubling, so this is the CHEAPER half of the
+ * pair that produced the rows.
+ *
+ * Deliberately the same number as `BULK_UPLOAD_MAX_ROWS`, and deliberately NOT
+ * an alias of it. Two budgets that happen to coincide: that one bounds a
+ * FILE's rows, this one a JSON array's length. Aliasing would mean raising
+ * either one for its own reason silently raises the other — and the pairing
+ * (one import of a thousand rows, one submit of a thousand ids) is exactly why
+ * both have to be separately stateable.
+ *
+ * One bound the import does not have: the API installs no body-parser limit,
+ * so Express's 100 KB JSON default applies. A thousand UUIDs is ~39 KB of
+ * body; two thousand would be ~78 KB. Raising this cap means setting an
+ * explicit limit first.
+ */
+export const BULK_SUBMIT_MAX_IDS = 1000;
+
+/**
+ * The statuses a record can be submitted FROM — the lifecycle rule, in the
+ * contract rather than in three places.
+ *
+ * It was already written down twice: a module-local `Set` in the API service,
+ * and a hand-written `status === 'draft' || status === 'rejected'` on the Data
+ * Entry screen's own submission list. A bulk-submit UI over that list would
+ * have made three.
+ */
+export const SUBMITTABLE_STATUSES = [
+  'draft',
+  'rejected',
+] as const satisfies readonly ActivityRecordStatus[];
+
+/** True when a record is at a point in its life where it can be submitted. */
+export function isSubmittable(status: string): boolean {
+  return (SUBMITTABLE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * What a BULK submit will accept, which is narrower than what `submit` will.
+ *
+ * `rejected` is deliberately excluded. Resubmitting reverses a reviewer's
+ * decision — the single-record path treats that as serious enough to carry an
+ * author gate — and a route that would flip a thousand of them at once is a
+ * mass reviewer-decision-reversal endpoint, which is not what "the other half
+ * of an import" means. Those go back one at a time, where someone reads the
+ * reviewer's note before overturning it.
+ */
+export const BULK_SUBMITTABLE_STATUSES = [
+  'draft',
+] as const satisfies readonly ActivityRecordStatus[];
+
+/**
+ * Every way a bulk submit can refuse ONE record — one code per precondition in
+ * `ActivityRecordsService.submit`, in the order that method checks them.
+ *
+ * There is no warning half, unlike the import's codes. The import needed one
+ * because a row could be written and still be unusable; a submit either moves
+ * the record or does not.
+ *
+ * The ROLE gate is absent on purpose: a role cannot change mid-batch, so it is
+ * one 403 for the whole request rather than N identical issues.
+ */
+export const BULK_SUBMIT_ISSUE_CODES = [
+  /**
+   * No such record, or its subsidiary is not yours. One code for both,
+   * deliberately: the API never discloses which, or it becomes an existence
+   * oracle for another tenant's ids.
+   */
+  'not_found',
+  /**
+   * Not a `draft`. The commonest bulk failure by far — a second click after a
+   * partial success hits this on every id that worked the first time — and it
+   * also covers a `rejected` record, which this route deliberately refuses
+   * (see `BULK_SUBMITTABLE_STATUSES`).
+   */
+  'not_submittable',
+  /**
+   * Someone else wrote it.
+   *
+   * Stricter than the single-record path, which gates only a RESUBMISSION and
+   * so lets any colleague who can see the subsidiary submit a draft. At one
+   * click that is a curiosity; at a thousand ids in one call it is a way to
+   * sweep a colleague's half-finished month into review, where they can no
+   * longer edit it and only a reviewer can send it back. Enumerability is a
+   * forensics property, not a control.
+   */
+  'not_author',
+  /** The reporting period is closed. */
+  'period_locked',
+  /**
+   * The category requires an evidence file and this record has none.
+   *
+   * The import reports `evidence_required` as a WARNING on these same rows;
+   * here it is the refusal that warning was about. Nothing in the bulk path can
+   * clear it — a bulk import cannot attach a file, and `Evidence` belongs to
+   * exactly one record, so one invoice cannot cover twelve months. These are
+   * cleared one record at a time, on purpose: it is an ISO 14064-1 evidence
+   * control, not a convenience.
+   */
+  'evidence_required',
+  /**
+   * Anomalous against the baseline as recomputed NOW, with no variance reason.
+   * The import's `would_block_submit` warning, arrived at.
+   */
+  'variance_reason_required',
+  /** Anything the server did not anticipate. The record was NOT submitted. */
+  'unexpected',
+] as const;
+
+export type BulkSubmitIssueCode = (typeof BULK_SUBMIT_ISSUE_CODES)[number];
+
+/**
+ * Why one record was not submitted.
+ *
+ * Keyed by `recordId`, not by a row number: there is no file here, and
+ * `BulkUploadRowIssue.row` is the spreadsheet line the user sees in Excel. A
+ * synthetic index would be a number the client sorts by and the user cannot
+ * find anywhere.
+ */
+export interface BulkSubmitIssue {
+  recordId: string;
+  code: BulkSubmitIssueCode;
+  /** The server's own sentence, already written for the person reading it. */
+  message: string;
+}
+
+/** A record that moved to `submitted`. */
+export interface BulkSubmitAcceptedRecord {
+  recordId: string;
+  subsidiaryId: string;
+  locationId: string | null;
+  reportingYear: number;
+  reportingPeriod: ReportingPeriod;
+  periodValue: string;
+  category: Category;
+  /**
+   * `null` when the category is tracked but not calculated (Water). Sum only
+   * the non-null values — folding with `?? 0` turns "no figure exists" into a
+   * reported zero, the same rule as `BulkUploadAcceptedRow.tCo2e`.
+   */
+  tCo2e: number | null;
+  /**
+   * The verdict as RE-DERIVED at submit, which can differ from the one the
+   * import stamped: `submit` recomputes against the baseline as it stands now.
+   *
+   * And within one batch it is ORDER-DEPENDENT, which the import is not.
+   * `BASELINE_STATUSES` excludes `draft`, so imported rows cannot shift each
+   * other's verdict — but `submitted` is in `COUNTED_STATUSES`, so record N+1's
+   * baseline can include record N, submitted moments earlier in this same loop.
+   * Submitting twelve months January-first is not the same as December-first.
+   */
+  anomalous: boolean;
+}
+
+/**
+ * The outcome of one bulk submit.
+ *
+ * No transaction spans the batch — `ActivityRecordsService` opens none — so a
+ * failure part-way leaves the earlier records submitted. `submitted` lists them
+ * individually for the same reason the import's `accepted` does: a partial
+ * application the caller cannot enumerate is a data-integrity incident.
+ */
+export interface BulkSubmitReportDTO {
+  /** Ids the caller asked for, after de-duplication. */
+  requested: number;
+  submitted: BulkSubmitAcceptedRecord[];
+  failed: BulkSubmitIssue[];
+}
+
+/**
+ * Every requested id lands in exactly one of the two lists.
+ *
+ * Stated because a client summarising the outcome depends on it — "N of M
+ * submitted, the rest are still drafts" is only true if nothing fell through —
+ * and because a loop that `break`s instead of `continue`s would quietly
+ * violate it while every count still looked plausible.
+ */
+export function bulkSubmitReportIsComplete(
+  report: BulkSubmitReportDTO,
+): boolean {
+  return report.submitted.length + report.failed.length === report.requested;
+}
+

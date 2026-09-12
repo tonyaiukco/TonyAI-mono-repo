@@ -8,7 +8,13 @@ import {
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
 import { isCalculated, PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
 import type { CalculationResult } from '@tonyai/shared-types';
-import { ActivityRecordsService } from './activity-records.service';
+import {
+  ActivityRecordsService,
+  EVIDENCE_REFUSAL_FRAGMENT,
+  RESUBMIT_AUTHOR_REFUSAL,
+  SUBMIT_ROLE_REFUSAL,
+  VARIANCE_REFUSAL,
+} from './activity-records.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CalculationsService } from '../calculations/calculations.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -974,8 +980,11 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
       ForbiddenException,
     );
 
-    await expect(service.submit(consultant(), 'rec-c')).rejects.toBeInstanceOf(
-      ForbiddenException,
+    // The SENTENCE, not just the class: the bulk importer re-throws on exact
+    // equality with this constant to avoid mislabelling a role problem as an
+    // authorship one, and nothing else in the repo pinned the wording.
+    await expect(service.submit(consultant(), 'rec-c')).rejects.toThrow(
+      SUBMIT_ROLE_REFUSAL,
     );
 
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
@@ -1133,7 +1142,7 @@ describe('ActivityRecordsService — transition rules', () => {
     );
 
     await expect(service.submit(dataEntry(), 'rec-n')).rejects.toThrow(
-      /only resubmit activity records you created/i,
+      RESUBMIT_AUTHOR_REFUSAL,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -1494,8 +1503,13 @@ describe('ActivityRecordsService — transition rules', () => {
     );
     prisma.evidence.count.mockResolvedValue(0); // no evidence attached
 
+    // Against the EXPORTED fragment, not a retyped prefix of it. The bulk
+    // importer discriminates this refusal from the status one by that exact
+    // string, so a reworded tail ("… evidence file." losing "before
+    // submitting") would keep this regex green while every bulk evidence
+    // refusal silently became "Already moved on".
     await expect(service.submit(dataEntry(), 'rec-e')).rejects.toThrow(
-      /requires at least one evidence file/,
+      EVIDENCE_REFUSAL_FRAGMENT,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -1999,7 +2013,12 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(draftForSubmit());
     prisma.activityRecord.findMany.mockResolvedValue([priorMonth('December', 10, 2023), priorMonth('January', 10), priorMonth('February', 10)]);
 
-    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toThrow(/variance comment|deviates/i);
+    // The whole constant, not a loose alternation: the bulk mapper compares
+    // this message for EXACT equality, so `/variance comment|deviates/i`
+    // matched a reworded sentence that the mapper then failed to recognise.
+    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toThrow(
+      VARIANCE_REFUSAL,
+    );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 

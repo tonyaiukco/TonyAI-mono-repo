@@ -57,6 +57,7 @@ import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import { CoveragePanel } from "@/components/data-entry/coverage-panel";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
 import { canBulkUpload } from "@/lib/bulk-upload-view";
+import { isSubmittable } from "@/lib/types";
 import {
   ACTIVITY_UNITS,
   appliesUnitConversion,
@@ -1427,7 +1428,9 @@ function DataEntryPageInner() {
                             // that answer. The hover affordance below carries the
                             // distinction instead.
                             className={`flex w-full items-center gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-left transition-colors ${
-                              r.status === "draft" || r.status === "rejected"
+                              // The lifecycle rule from the contract, not a
+                              // third hand-written copy of it.
+                              isSubmittable(r.status)
                                 ? "hover:border-primary/40 hover:bg-secondary"
                                 : "cursor-default"
                             }`}

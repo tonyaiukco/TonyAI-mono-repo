@@ -12,7 +12,19 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import type { BulkUploadReportDTO, BulkUploadRowIssue } from "@/lib/types";
+import type {
+  BulkSubmitReportDTO,
+  BulkUploadReportDTO,
+  BulkUploadRowIssue,
+} from "@/lib/types";
+import {
+  eligibleForSubmit,
+  failuresToShow,
+  submitConfirmation,
+  submitErrorMessage,
+  SUBMIT_ISSUE_LABEL,
+  summariseSubmit,
+} from "@/lib/bulk-submit-view";
 import {
   applyConfirmation,
   applySuccessMessage,
@@ -57,7 +69,7 @@ import { cn } from "@/lib/utils";
  * confirm dialog, because it writes up to a thousand individually audited
  * records that cannot be undone in bulk.
  */
-type Busy = "none" | "checking" | "importing";
+type Busy = "none" | "checking" | "importing" | "submitting";
 
 export function BulkUploadPanel({
   canManage,
@@ -87,6 +99,10 @@ export function BulkUploadPanel({
   const [report, setReport] = useState<BulkUploadReportDTO | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [confirmingSubmit, setConfirmingSubmit] = useState(false);
+  const [submitReport, setSubmitReport] = useState<BulkSubmitReportDTO | null>(
+    null,
+  );
 
   const working = busy !== "none";
 
@@ -95,6 +111,7 @@ export function BulkUploadPanel({
     setFile(null);
     setReport(null);
     setRefusal(null);
+    setSubmitReport(null);
     setDragOver(false);
     if (inputRef.current) inputRef.current.value = "";
   }
@@ -129,6 +146,7 @@ export function BulkUploadPanel({
     try {
       const checked = await api.bulkUploadActivityRecords(picked, true);
       if (seq !== requestSeq.current) return;
+      setSubmitReport(null);
       setReport(checked);
     } catch (e) {
       if (seq !== requestSeq.current) return;
@@ -150,6 +168,7 @@ export function BulkUploadPanel({
       // NOT cleared: the error list is the user's work list, and a partial
       // import is real — no transaction spans the batch.
       setReport(applied);
+      setSubmitReport(null);
       toast.success(applySuccessMessage(applied));
       verdictRef.current?.focus();
     } catch (e) {
@@ -163,6 +182,28 @@ export function BulkUploadPanel({
     }
   }
 
+  /**
+   * Send the rows that just landed for review.
+   *
+   * The other half of an import: rows arrive as `draft`, and a draft counts
+   * towards no total and appears in no review queue.
+   */
+  async function submitImported(recordIds: string[]) {
+    if (working) return;
+    setConfirmingSubmit(false);
+    setBusy("submitting");
+    try {
+      setSubmitReport(await api.bulkSubmitActivityRecords(recordIds));
+    } catch (e) {
+      toast.error(submitErrorMessage(e));
+    } finally {
+      setBusy("none");
+      // In `finally` for the same reason the import's is: no transaction spans
+      // the batch, so a request that failed may still have moved records.
+      onImported();
+    }
+  }
+
   // Nothing to show and nothing to offer: a card explaining an absence is
   // still a card the reader has to parse.
   if (!canManage) return null;
@@ -170,6 +211,12 @@ export function BulkUploadPanel({
   const summary = report ? summarise(report) : null;
   const errorGroups = report ? groupIssues(report.errors) : [];
   const warningGroups = report ? groupIssues(report.warnings) : [];
+  // Only after a real import: a dry run's rows carry no id, by contract.
+  const eligible =
+    report && !report.dryRun
+      ? eligibleForSubmit(report.accepted)
+      : { recordIds: [], needingEvidence: 0, overCap: 0, blockedReason: null };
+  const submitSummary = submitReport ? summariseSubmit(submitReport) : null;
 
   return (
     <Card>
@@ -323,7 +370,85 @@ export function BulkUploadPanel({
               </>
             )}
 
+            {eligible.blockedReason && !submitReport && (
+              <div
+                className="flex items-start gap-2 rounded-lg border border-status-incomplete-text/30 bg-status-incomplete-bg/60 px-3 py-2.5 text-sm text-status-incomplete-text"
+                data-testid="bulk-submit-blocked"
+                role="status"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>{eligible.blockedReason}</p>
+              </div>
+            )}
+
+            {submitReport && submitSummary && (
+              <div className="space-y-1.5">
+                <div
+                  role="status"
+                  className={cn(
+                    "flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm",
+                    submitSummary.tone === "clean" &&
+                      "border-status-complete-text/30 bg-status-complete-bg text-status-complete-text",
+                    submitSummary.tone !== "clean" &&
+                      "border-status-incomplete-text/30 bg-status-incomplete-bg text-status-incomplete-text",
+                  )}
+                >
+                  {submitSummary.tone === "clean" ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  )}
+                  <div>
+                    <p className="font-medium">{submitSummary.headline}</p>
+                    {submitSummary.detail && <p>{submitSummary.detail}</p>}
+                  </div>
+                </div>
+                {submitReport.failed.length > 0 && (
+                  <div
+                    className="rounded-lg border border-status-missing-text/30 bg-status-missing-bg/60 px-3 py-2 text-xs"
+                    data-testid="bulk-submit-failures"
+                  >
+                    <ul className="space-y-1">
+                      {failuresToShow(submitReport.failed).shown.map((f) => (
+                        <li key={f.recordId}>
+                          <span className="font-medium">
+                            {SUBMIT_ISSUE_LABEL[f.code]}
+                          </span>
+                          <span className="block opacity-80">{f.message}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {failuresToShow(submitReport.failed).remainder > 0 && (
+                      <p className="mt-1.5 opacity-80">
+                        +{failuresToShow(submitReport.failed).remainder} more not
+                        shown.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex flex-wrap gap-2">
+              {!report.dryRun && !submitReport && eligible.recordIds.length > 0 && (
+                <Button
+                  size="sm"
+                  data-testid="bulk-submit-button"
+                  onClick={() => setConfirmingSubmit(true)}
+                  disabled={working}
+                >
+                  {busy === "submitting" ? (
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  {/* "records", not "rows" — imported spreadsheet rows are
+                      records by the time they can be submitted, and the
+                      confirm dialog one click later already said so. */}
+                  Send {eligible.recordIds.length.toLocaleString("en-GB")}{" "}
+                  {eligible.recordIds.length === 1 ? "record" : "records"} for
+                  review
+                  {eligible.overCap > 0 ? ` (${eligible.overCap} more after this)` : ""}
+                </Button>
+              )}
               {report.dryRun && summary.acceptedCount > 0 && (
                 <Button
                   size="sm"
@@ -350,6 +475,29 @@ export function BulkUploadPanel({
           </div>
         )}
       </CardContent>
+
+      <Dialog open={confirmingSubmit} onOpenChange={setConfirmingSubmit}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send these for review?</DialogTitle>
+            <DialogDescription>
+              {submitConfirmation(eligible.recordIds)}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setConfirmingSubmit(false)}>
+              Cancel
+            </Button>
+            <Button
+              data-testid="bulk-submit-confirm"
+              onClick={() => void submitImported(eligible.recordIds)}
+              disabled={working}
+            >
+              Send for review
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirming} onOpenChange={setConfirming}>
         <DialogContent>

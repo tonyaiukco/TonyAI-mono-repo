@@ -35,6 +35,9 @@ import {
   BULK_UPLOAD_REQUIRED_COLUMNS,
   BULK_UPLOAD_ERROR_CODES,
   BULK_UPLOAD_WARNING_CODES,
+  BULK_SUBMIT_ISSUE_CODES,
+  BULK_SUBMIT_MAX_IDS,
+  BULK_UPLOAD_MAX_ROWS,
 } from './index';
 
 /**
@@ -627,6 +630,38 @@ describe('bulk upload — the column contract', () => {
       (BULK_UPLOAD_WARNING_CODES as readonly string[]).includes(c),
     );
     expect(overlap).toEqual([]);
+  });
+});
+
+describe('bulk submit — the code list', () => {
+  it('covers every precondition submit() enforces, and nothing else', () => {
+    // One code per gate, in that method's own order. A code with no gate is a
+    // state the server cannot emit and a client must still switch on; a gate
+    // with no code comes back as `unexpected` and tells the user nothing.
+    expect([...BULK_SUBMIT_ISSUE_CODES]).toEqual([
+      'not_found',
+      'not_submittable',
+      'not_author',
+      'period_locked',
+      'evidence_required',
+      'variance_reason_required',
+      'unexpected',
+    ]);
+  });
+
+  it('has no warning half, unlike the import’s', () => {
+    // The import needed one because a row could be written and still be
+    // unusable. A submit either moves the record or does not.
+    expect(BULK_SUBMIT_ISSUE_CODES).not.toContain('formula_lead');
+    expect(BULK_SUBMIT_ISSUE_CODES).not.toContain('would_block_submit');
+  });
+
+  it('caps ids separately from the import’s rows, at the same number', () => {
+    // Two budgets that coincide — a file's rows and a JSON array's length —
+    // and deliberately not aliases, so raising either for its own reason
+    // cannot silently raise the other.
+    expect(BULK_SUBMIT_MAX_IDS).toBe(1000);
+    expect(BULK_UPLOAD_MAX_ROWS).toBe(1000);
   });
 });
 
