@@ -6,12 +6,20 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
-import { CATEGORIES, REPORTING_PERIODS } from '@tonyai/shared-types';
+import { Transform } from 'class-transformer';
+import {
+  CATEGORIES,
+  EXPLANATION_MAX_LENGTH,
+  PERIOD_VALUE_MAX_LENGTH,
+  REPORTING_PERIODS,
+} from '@tonyai/shared-types';
 import type { Category, ReportingPeriod } from '@tonyai/shared-types';
 import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
+import { blankToNull } from '../../common/blank-to-null';
 
 
 /**
@@ -40,9 +48,14 @@ export class UpdateActivityRecordDto {
   @IsIn(REPORTING_PERIODS as readonly string[])
   reportingPeriod?: ReportingPeriod;
 
+  // Bounded as well as non-empty. The cap is NOT what keeps a record and a
+  // period lock matchable — `canonicalPeriodValue` is, on both write paths —
+  // it is the refusal that happens before the DTO pipeline and the vocabulary
+  // lookup, whose 400 echoes the value back. See PERIOD_VALUE_MAX_LENGTH.
   @IsOptional()
   @IsString()
   @MinLength(1)
+  @MaxLength(PERIOD_VALUE_MAX_LENGTH)
   periodValue?: string;
 
   @IsOptional()
@@ -65,7 +78,14 @@ export class UpdateActivityRecordDto {
   @IsObject()
   input?: Record<string, unknown> | null;
 
+  // Unbounded `text` in Postgres, rendered verbatim to a reviewer, and one of
+  // the three explanations-about-a-figure that share EXPLANATION_MAX_LENGTH.
+  // `blankToNull` for the same reason the contact fields carry it: an empty
+  // CSV cell is the archetypal bulk-import value, and without it the column
+  // ends up with three spellings of "no explanation".
   @IsOptional()
   @IsString()
+  @Transform(blankToNull)
+  @MaxLength(EXPLANATION_MAX_LENGTH)
   varianceReason?: string | null;
 }
