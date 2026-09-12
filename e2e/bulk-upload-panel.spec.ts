@@ -26,8 +26,9 @@ import {
  * confirm dialog and its double-click window have no coverage in either
  * direction and never will. This is where they run.
  *
- * Lane: `SUB.energy` / quarterly 2026 / Q1 is taken by `data-entry-happy`, so
- * this file uses Q2.
+ * Lane: `SUB.energy` / quarterly `E2E_YEAR` / Q2 `Waste` for the import cycle,
+ * plus Q3 `Electricity` for the one test that needs an evidence-required
+ * category. Q1 is `data-entry-happy`'s.
  *
  * The four import tests below deliberately SPLIT ACROSS TWO USERS. Each does a
  * dry run and an apply, the import route allows five a minute per user, and

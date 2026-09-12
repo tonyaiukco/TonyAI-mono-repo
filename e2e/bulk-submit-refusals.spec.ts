@@ -16,6 +16,7 @@ import {
   postBulkImport,
   readAuditSince,
   serviceReadRecords,
+  waitOutImportThrottle,
   SUB,
 } from './helpers';
 
@@ -29,13 +30,27 @@ import {
  * record in its tuple is pending review, and the API refuses to delete a
  * submitted record, so the `finally` here must go through the service role.
  *
- * Lane: `SUB.logistics` / quarterly 2026 / Q3 and Q4 — the least contended of
- * the two subsidiaries `entry@` can reach. `SUB.trading` Q1 is never touched:
- * that is the tuple `gates` locks.
+ * Lane: `SUB.logistics` / quarterly `E2E_YEAR` / Q2, Q3 and Q4 — the least
+ * contended of the two subsidiaries `entry@` can reach. Q2 is the one this file
+ * also LOCKS, and unlocks again in its `finally`. `SUB.trading` Q1 is never
+ * touched: that is the tuple `gates` locks.
  */
 const SUBSIDIARY = SUB.logistics;
 
 test.describe.configure({ mode: 'serial' });
+/**
+ * This file spends four imports, and it used to rely on nothing that sorts
+ * before `bulk-s…` touching the import route — an invariant written down
+ * nowhere, which the first spec to break it would turn into a 429 inside a test
+ * asserting something else. It buys its own window instead, like the other
+ * three bulk files.
+ */
+test.beforeAll(async () => {
+  // The hook's own timeout defaults to the test timeout, which is 60s — one
+  // second less than the wait it has to make.
+  test.setTimeout(90_000);
+  await waitOutImportThrottle();
+});
 
 /** Import one row and return its id — the arrange step for most cases here. */
 async function importOne(
@@ -74,9 +89,16 @@ function submitMany(
   });
 }
 
-test('every refusal comes back with its own code and its own sentence', async ({
+test('each refusal a seeded database can reach names its own record, code and sentence', async ({
   request,
 }) => {
+  // Five of the seven `BULK_SUBMIT_ISSUE_CODES`. `unexpected` is unreachable by
+  // design — it is the catch-all for an exception nobody classified — and
+  // `variance_reason_required` needs an anomaly baseline (three committed
+  // priors in the same subsidiary+category+period) that costs more to arrange
+  // than the refusal is worth proving twice: the import already warns
+  // `would_block_submit` for it, and that path has unit coverage.
+  // `not_submittable` is the second test below.
   const adminToken = await getAccessToken(request, ADMIN_EMAIL);
   const entryToken = await getAccessToken(request, ENTRY_EMAIL);
   const created: string[] = [];
@@ -103,26 +125,31 @@ test('every refusal comes back with its own code and its own sentence', async ({
     const locked = await importOne(request, entryToken, 'Q2');
     created.push(locked);
 
-    const res = await submitMany(request, entryToken, [
-      randomUUID(), // not_found
-      needsEvidence,
-      someoneElses,
-    ]);
+    const absentId = randomUUID(); // not_found
+    const res = await submitMany(request, entryToken, [absentId, needsEvidence, someoneElses]);
 
     expect(res.ok()).toBe(true);
     const body = await res.json();
-    const byCode = Object.fromEntries(
-      body.failed.map((f: { code: string; message: string }) => [f.code, f.message]),
+    // Keyed by RECORD, not by code. A bag of codes is byte-identical whether
+    // each refusal names its own record or every one of them names the first —
+    // and that mutation (`toIssue(eligible[0].id, …)`, or a positional lookup
+    // in `preflight`) tells a user their COLLEAGUE's row is the one missing an
+    // invoice. The set of codes cannot see it.
+    const byRecord: Record<string, { code: string; message: string }> = Object.fromEntries(
+      body.failed.map((f: { recordId: string; code: string; message: string }) => [f.recordId, f]),
     );
 
-    expect(Object.keys(byCode).sort()).toEqual(
-      ['evidence_required', 'not_author', 'not_found'].sort(),
+    expect(Object.keys(byRecord).sort()).toEqual(
+      [absentId, needsEvidence, someoneElses].sort(),
     );
-    expect(byCode.not_found).toBe('This record does not exist, or it is not yours.');
-    expect(byCode.not_author).toBe('Someone else created this record.');
+    expect(byRecord[absentId].code).toBe('not_found');
+    expect(byRecord[absentId].message).toBe('This record does not exist, or it is not yours.');
+    expect(byRecord[someoneElses].code).toBe('not_author');
+    expect(byRecord[someoneElses].message).toBe('Someone else created this record.');
+    expect(byRecord[needsEvidence].code).toBe('evidence_required');
     // The exported fragment, not a retyped prefix: the bulk mapper
     // discriminates this refusal from the status one by that exact string.
-    expect(byCode.evidence_required).toContain(
+    expect(byRecord[needsEvidence].message).toContain(
       'requires at least one evidence file before submitting',
     );
     // Every requested id lands in exactly one list.

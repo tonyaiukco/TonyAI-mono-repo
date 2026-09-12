@@ -25,9 +25,11 @@ import {
  * unreachable from a mocked suite. This file is those claims. Every assertion
  * here died as a mutation somewhere and survived the unit suite.
  *
- * Lane: `SUB.energy` / quarterly 2026 / Q3. The seed writes monthly only, so no
- * seeded row can collide; the collision risk is other SPECS, and the teardown
- * below is what keeps it one-directional.
+ * Lane: `SUB.energy` / quarterly `E2E_YEAR` / Q3, Q4 and Q1, category `Waste`.
+ * The seed writes monthly only, so no seeded row can collide; the collision
+ * risk is other SPECS, and the teardown below is what keeps it one-directional.
+ * Q1 is free despite `data-entry-happy` writing there because the category is
+ * part of the uniqueness key.
  *
  * Budget: the import route allows five requests per minute per user. This file
  * makes SIX imports — one per test — so the last three run as `entry@`, which
@@ -219,6 +221,10 @@ test('an apply writes one audit row per record, plus one for the batch', async (
     // Every imported row is a draft that carries a figure — the fixture factor
     // exists so a non-evidence category can be calculated at all.
     const stored = await serviceReadRecords(request, `id=in.(${created.map((id) => `"${id}"`).join(',')})`);
+    // `[].every()` is `true`. Without this line, a read that matched nothing —
+    // a PostgREST change, an id format change — would satisfy all three
+    // assertions below having looked at no rows at all.
+    expect(stored).toHaveLength(3);
     expect(stored.every((r) => r.status === 'draft')).toBe(true);
     expect(stored.every((r) => r.category === E2E_BULK_CATEGORY)).toBe(true);
     expect(stored.every((r) => r.activity_unit === E2E_BULK_UNIT)).toBe(true);

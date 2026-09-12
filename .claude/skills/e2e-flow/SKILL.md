@@ -71,6 +71,6 @@ in `e2e/helpers.ts`.
   only.
 - Assuming E2E is unwired from CI. It has run **nightly** since 2026-09-01 via
   `.github/workflows/e2e.yml`, plus `workflow_dispatch` — trigger it on a branch before merge with
-  `gh workflow run e2e.yml --ref <branch>` (~25-35 min). It is deliberately NOT on `pull_request`
+  `gh workflow run e2e.yml --ref <branch>` (~13 min end to end, of which Playwright itself is ~8; the "25-35 min" in the workflow header was never measured). It is deliberately NOT on `pull_request`
   (serial by construction, billed per push), so `pnpm e2e` still stays out of the turbo `test`
   pipeline — but `pnpm typecheck` does cover `e2e/` on every PR.
