@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import ExcelJS from 'exceljs';
 import { BULK_UPLOAD_COLUMNS } from '@tonyai/shared-types';
 import {
+  ADMIN_EMAIL,
   buildBulkCsv,
   deleteRecordsAsService,
   E2E_BULK_CATEGORY,
@@ -12,6 +13,7 @@ import {
   login,
   OUT_OF_SCOPE_SUB,
   serviceReadRecords,
+  waitOutImportThrottle,
   SUB,
 } from './helpers';
 
@@ -25,6 +27,11 @@ import {
  *
  * Lane: `SUB.energy` / quarterly 2026 / Q1 is taken by `data-entry-happy`, so
  * this file uses Q2.
+ *
+ * The four import tests below deliberately SPLIT ACROSS TWO USERS. Each does a
+ * dry run and an apply, the import route allows five a minute per user, and
+ * eight in one window is a 429 in whichever test happens to be third — which
+ * would then fail while asserting something else entirely.
  */
 const LANE_PERIOD = 'Q2';
 const laneQuery = `subsidiary_id=eq.${SUB.energy}&reporting_period=eq.${E2E_PERIOD}&period_value=eq.${LANE_PERIOD}&category=eq.${E2E_BULK_CATEGORY}`;
@@ -37,6 +44,20 @@ async function laneCount(request: Parameters<typeof serviceReadRecords>[0]) {
 }
 
 test.describe.configure({ mode: 'serial' });
+/**
+ * The import route allows five requests per minute per user, and the bulk group
+ * makes far more than two users can spend in one window — so each of these
+ * files opens with a fresh one. Counted rather than hoped for: a 429 inside a
+ * test that was asserting something else is a failure that blames the wrong
+ * code.
+ */
+test.beforeAll(async () => {
+  // The hook's own timeout defaults to the test timeout, which is 60s — one
+  // second less than the wait it has to make.
+  test.setTimeout(90_000);
+  await waitOutImportThrottle();
+});
+
 
 test('the template downloads, and names only the entities this user can reach', async ({
   page,
@@ -189,7 +210,9 @@ test('an all-evidence import explains itself instead of offering a dead button',
   // The product decision recorded on 2026-09-12: on seeded data every
   // importable category requires an evidence file and an import cannot attach
   // one, so the submit half is correctly unreachable. The panel says why.
-  await login(page, ENTRY_EMAIL);
+  //
+  // As admin@ — the second half of this file's throttle budget.
+  await login(page, ADMIN_EMAIL);
   await page.goto('/data-entry');
 
   const electricity = buildBulkCsv([
@@ -234,7 +257,7 @@ test('a non-evidence import offers the submit button, and it moves the records',
   // The other side of the same decision, reachable only because global setup
   // seeds a fixture factor for a non-evidence category. This is the one flow
   // that exercises the submit button and its own confirm dialog in a browser.
-  await login(page, ENTRY_EMAIL);
+  await login(page, ADMIN_EMAIL);
   await page.goto('/data-entry');
 
   try {

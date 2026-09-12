@@ -759,3 +759,20 @@ export async function deleteRecordsAsService(
   ]);
 }
 
+/**
+ * Wait out the import route's rate-limit window.
+ *
+ * The route allows five requests per minute PER USER, the whole bulk group runs
+ * in well under a minute, and the group needs far more than the ten requests
+ * two authoring users can make in one window. So the waiting is not incidental
+ * — it is the price of testing a rate-limited endpoint at all, and spending it
+ * explicitly at file boundaries is better than discovering it as a 429 in a
+ * test that was asserting something else entirely.
+ *
+ * The window is a minute plus a second's slack; call it from `beforeAll` and
+ * raise that hook's timeout.
+ */
+export async function waitOutImportThrottle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 61_000));
+}
+

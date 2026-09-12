@@ -42,12 +42,17 @@ async function importOne(
   request: Parameters<typeof serviceReadRecords>[0],
   token: string,
   periodValue: string,
-  activityValue = 10,
-  varianceReason?: string,
+  over: { category?: string; activityUnit?: string; activityValue?: number } = {},
 ): Promise<string> {
   const res = await postBulkImport(request, token, {
     buffer: buildBulkCsv([
-      { subsidiaryId: SUBSIDIARY, periodValue, activityValue, varianceReason },
+      {
+        subsidiaryId: SUBSIDIARY,
+        periodValue,
+        activityValue: over.activityValue ?? 10,
+        category: over.category,
+        activityUnit: over.activityUnit,
+      },
     ]),
     dryRun: 'false',
   });
@@ -78,9 +83,16 @@ test('every refusal comes back with its own code and its own sentence', async ({
   let lockId: string | null = null;
 
   try {
-    // evidence_required — an imported draft in a category that needs a file,
-    // which an import cannot attach. The warning the import gave, arrived at.
-    const needsEvidence = await importOne(request, entryToken, 'Q3');
+    // evidence_required — and it has to be an EVIDENCE-REQUIRED category to
+    // produce that refusal. The fixture category this file otherwise uses
+    // (`Waste`) exists precisely because it needs no evidence, so importing
+    // there and calling the variable `needsEvidence` produced a record that
+    // submitted cleanly and a test that asserted a code the server never sent.
+    const needsEvidence = await importOne(request, entryToken, 'Q3', {
+      category: 'Electricity',
+      activityUnit: 'kWh',
+      activityValue: 120000,
+    });
     created.push(needsEvidence);
 
     // not_author — admin writes it, entry@ tries to send it.

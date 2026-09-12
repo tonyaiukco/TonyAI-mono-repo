@@ -15,6 +15,7 @@ import {
   OUT_OF_SCOPE_SUB,
   postBulkImport,
   serviceReadRecords,
+  waitOutImportThrottle,
   SUB,
 } from './helpers';
 
@@ -27,6 +28,20 @@ import {
  * isolation, and the names say so.
  */
 test.describe.configure({ mode: 'serial' });
+/**
+ * The import route allows five requests per minute per user, and the bulk group
+ * makes far more than two users can spend in one window — so each of these
+ * files opens with a fresh one. Counted rather than hoped for: a 429 inside a
+ * test that was asserting something else is a failure that blames the wrong
+ * code.
+ */
+test.beforeAll(async () => {
+  // The hook's own timeout defaults to the test timeout, which is 60s — one
+  // second less than the wait it has to make.
+  test.setTimeout(90_000);
+  await waitOutImportThrottle();
+});
+
 
 async function createDraftOn(
   request: Parameters<typeof serviceReadRecords>[0],
