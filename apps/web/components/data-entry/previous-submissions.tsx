@@ -29,13 +29,15 @@ import { api } from "@/lib/api";
 import { formatTCo2e } from "@/lib/calculation-display";
 import {
   allEligibleSelected,
-  BULK_SUBMIT_MAX_IDS,
+  capRefusedNotice,
   draftsSubmitLabel,
   failuresToShow,
+  liveSelection,
   othersWarning,
   selectableDrafts,
-  selectedFromOthers,
   selectAllEligible,
+  selectAllNotices,
+  selectedFromOthers,
   submitConfirmation,
   submitErrorMessage,
   SUBMIT_ISSUE_LABEL,
@@ -54,8 +56,10 @@ import type {
 /**
  * The record list beside the Data Entry form.
  *
- * Lifted out of `page.tsx` unchanged. It is not filtered by author or by
- * status on purpose: it is the surface WP18 left for resolving a
+ * Lifted out of `page.tsx`, rendering byte-identically — the one substitution
+ * was the tCO₂e cell, which built the "Not calculated" label itself instead of
+ * calling `formatTCo2e`, the module that exists to own that compliance rule.
+ * It is not filtered by author or by status on purpose: it is the surface WP18 left for resolving a
  * double-counted month, which means it has to show the rows that caused one.
  *
  * Note what this file cannot have: `vitest.config.ts` collects only `lib/**`,
@@ -151,8 +155,10 @@ export function PreviousSubmissions({
   // longer selectable — submitted by this very call, or edited in another tab —
   // has to leave the selection, or the next submit sends ids the server will
   // refuse and the count on the button is a lie.
-  const live = selected.filter((id) => selectableIds.includes(id));
-  const showSelection = user !== null && selectableIds.length > 0;
+  const live = liveSelection(selected, selectableIds);
+  // `selectableIds` is already empty when there is no user, so this is the
+  // whole condition.
+  const showSelection = selectableIds.length > 0;
   // The master control speaks for what `select all` can take — your own rows —
   // not for rows you ticked one at a time from someone else.
   const liveOwn = live.filter((id) => ownSelectableIds.includes(id));
@@ -163,9 +169,7 @@ export function PreviousSubmissions({
   function toggle(id: string) {
     const next = toggleSelected(live, id);
     if (next.refusedByCap) {
-      toast.info(
-        `${BULK_SUBMIT_MAX_IDS.toLocaleString("en-GB")} records is the most one submission can carry.`,
-      );
+      toast.info(capRefusedNotice());
       return;
     }
     setReport(null);
@@ -179,15 +183,12 @@ export function PreviousSubmissions({
     const { selected: next, overCap } = selectAllEligible(ownSelectableIds);
     setReport(null);
     setSelected(next);
-    if (selectableIds.length > ownSelectableIds.length) {
-      toast.info(
-        `Selected your own ${next.length.toLocaleString("en-GB")}. Records entered by someone else have to be ticked one at a time.`,
-      );
-    }
-    if (overCap > 0) {
-      toast.info(
-        `Selected the first ${next.length.toLocaleString("en-GB")}. ${overCap.toLocaleString("en-GB")} more can go in a second submission.`,
-      );
+    for (const notice of selectAllNotices(
+      next.length,
+      selectableIds.length - ownSelectableIds.length,
+      overCap,
+    )) {
+      toast.info(notice);
     }
   }
 
@@ -332,7 +333,16 @@ export function PreviousSubmissions({
                         className="mt-3.5 shrink-0"
                         checked={live.includes(r.id)}
                         onCheckedChange={() => toggle(r.id)}
-                        aria-label={`Select ${r.periodValue} ${r.reportingYear} ${r.category}`}
+                        // The reporting ENTITY too, for the reason spelled out
+                        // forty lines below: uniqueness includes `location_id`,
+                        // so a whole-subsidiary row and a site row for the same
+                        // period and category are two different records. Without
+                        // it their checkboxes carry byte-identical accessible
+                        // names — indistinguishable to a screen reader, and a
+                        // strict-mode collision for anything locating them.
+                        aria-label={`Select ${r.periodValue} ${r.reportingYear} ${r.category}, ${
+                          r.locationId ? (r.locationName ?? "A site") : "Whole subsidiary"
+                        }`}
                       />
                     ) : (
                       // Keeps the rows aligned. A DISABLED checkbox was the
@@ -422,10 +432,11 @@ export function PreviousSubmissions({
         )}
       </CardContent>
 
-      {/* Mounted only while open, unlike the import panel's. Both dialogs live
-          on this page, and an always-mounted second copy of the same
-          description would be two matches for one `getByText` in a shipped
-          spec — a strict-mode failure in a test that is about something else. */}
+      {/* Mounted only while open. Not for the reason first written here — a
+          closed Radix dialog has no `forceMount` and is absent from the DOM
+          either way, so there was never a duplicate-text hazard. The real
+          difference is that this skips the `submitConfirmation(live)` CALL,
+          where the panel's JSX children are evaluated on every render. */}
       {confirming && (
         <Dialog open onOpenChange={setConfirming}>
           <DialogContent>

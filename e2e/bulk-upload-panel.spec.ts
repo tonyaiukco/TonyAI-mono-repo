@@ -152,8 +152,15 @@ test('the confirm dialog is the only path to a write, and a double-click writes 
       buffer: csv(21),
     });
 
-    // The dry run starts on pick, and says so.
-    await expect(page.getByText(/nothing is being written/)).toBeVisible();
+    // The dry run starts on pick, and says so — asserted on the VERDICT, which
+    // is stable, rather than on the "…nothing is being written" banner, which
+    // renders only while `busy === 'checking'`. That banner was the original
+    // assertion and it is a race by construction: the dry run came back in
+    // 73ms on one CI run, React never painted the intermediate state, and the
+    // test failed for ten seconds against a request that had succeeded. The
+    // claim is the same either way — `would be`, not `were`, is what says
+    // nothing was written.
+    await expect(page.getByText(/would be imported/)).toBeVisible();
     const importButton = page.getByRole('button', { name: /^Import / });
     await expect(importButton).toBeVisible();
     expect(posts).toBe(1);
@@ -218,6 +225,9 @@ test('a second pick during a dry run is refused, and the verdict names the file 
 
   const input = page.locator('[data-testid="bulk-upload-input"]');
   await input.setInputFiles({ name: 'first.csv', mimeType: 'text/csv', buffer: csv(31) });
+  // The banner IS the right assertion here, unlike in the test above: the route
+  // handler holds the first response for three seconds, so `busy === 'checking'`
+  // is a state this test deliberately creates rather than one it hopes to catch.
   await expect(page.getByText(/nothing is being written/)).toBeVisible();
   await input.setInputFiles({ name: 'second.csv', mimeType: 'text/csv', buffer: csv(32) });
 

@@ -465,6 +465,60 @@ export function allEligibleSelected(
   return takeable > 0 && selectedCount >= takeable;
 }
 
+/**
+ * The selection, minus anything that has stopped being selectable.
+ *
+ * Selection is ids held against a list that refetches under it — a record
+ * submitted by this very call, edited in another tab, or moved by a colleague
+ * stops being eligible while its id is still ticked. Without this the next
+ * submit sends ids the server refuses and the count on the button is a lie.
+ * Here rather than inline in the component because it is the guard, not the
+ * rendering.
+ */
+export function liveSelection(
+  selected: string[],
+  selectableIds: string[],
+): string[] {
+  return selected.filter((id) => selectableIds.includes(id));
+}
+
+/** Told when a tick is refused because the request cannot carry more ids. */
+export function capRefusedNotice(): string {
+  return `${formatNumber(
+    BULK_SUBMIT_MAX_IDS,
+  )} records is the most one submission can carry.`;
+}
+
+/**
+ * What "select all" has to admit, or `null` when it took everything.
+ *
+ * Two things can hold it back and they are separate sentences because they have
+ * separate remedies: rows someone else entered are ticked one at a time, and
+ * rows past the cap go in a second submission.
+ */
+export function selectAllNotices(
+  taken: number,
+  skippedOthers: number,
+  overCap: number,
+): string[] {
+  const notices: string[] = [];
+  if (skippedOthers > 0) {
+    notices.push(
+      `Selected your own ${formatNumber(taken)}. ${formatNumber(skippedOthers)} ${
+        skippedOthers === 1 ? 'record was' : 'records were'
+      } entered by someone else — those are ticked one at a time.`,
+    );
+  }
+  if (overCap > 0) {
+    notices.push(
+      `Selected the first ${formatNumber(taken)}. ${formatNumber(
+        overCap,
+      )} more can go in a second submission.`,
+    );
+  }
+  return notices;
+}
+
 /** The label on the bulk bar's button. */
 export function draftsSubmitLabel(selectedCount: number): string {
   return `Send ${formatNumber(selectedCount)} ${

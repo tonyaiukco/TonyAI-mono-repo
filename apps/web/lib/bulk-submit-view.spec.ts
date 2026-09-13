@@ -9,7 +9,9 @@ import { ApiError } from '@/lib/api';
 import {
   allEligibleSelected,
   authoredBy,
+  capRefusedNotice,
   draftsSubmitLabel,
+  liveSelection,
   eligibleForSubmit,
   failuresToShow,
   isPeriodLockedFor,
@@ -18,6 +20,7 @@ import {
   othersWarning,
   selectableDrafts,
   selectAllEligible,
+  selectAllNotices,
   selectedFromOthers,
   submitBlockReason,
   submitConfirmation,
@@ -378,10 +381,20 @@ describe('submitBlockReason', () => {
     );
   });
 
-  it("refuses someone else's record, and lets a super_admin through", () => {
+  it("refuses someone else's record for every role but super_admin", () => {
+    // Parameterised over the whole enum, because the exemption is a LIST
+    // membership test and widening it by one role is a one-word edit. With
+    // only `data_entry` and `super_admin` exercised, adding `consultant` to
+    // the exemption was invisible.
     const theirs = draft({ createdBy: 'user-them' });
-    expect(submitBlockReason(theirs, ME, [])).toBe('Entered by someone else.');
     expect(submitBlockReason(theirs, { ...ME, role: 'super_admin' }, [])).toBeNull();
+    expect(submitBlockReason(theirs, ME, [])).toBe('Entered by someone else.');
+    // The other two are refused earlier, by the role gate — which is itself the
+    // point: no non-super_admin role reaches a colleague's record.
+    for (const role of ['consultant', 'executive_viewer'] as const) {
+      expect(submitBlockReason(theirs, { ...ME, role }, [])).not.toBeNull();
+      expect(submitBlockReason(theirs, { ...ME, role }, [])).not.toBe(null);
+    }
   });
 
   it('refuses a closed period, naming it', () => {
@@ -392,6 +405,24 @@ describe('submitBlockReason', () => {
     const needs = draft({ category: 'Electricity' });
     expect(submitBlockReason(needs, ME, [])).toBe('Needs an evidence file.');
     expect(submitBlockReason({ ...needs, evidenceCount: 1 }, ME, [])).toBeNull();
+  });
+
+  it('keeps the server\'s ORDER when two gates fail at once', () => {
+    // Each branch was tested alone, so every reordering of them survived: no
+    // fixture failed two at the same time. The order is not cosmetic — it
+    // decides which sentence the user reads, and therefore what they try next.
+    const theirsAndLocked = draft({ createdBy: 'user-them' });
+    expect(submitBlockReason(theirsAndLocked, ME, [lock()])).toBe(
+      'Entered by someone else.',
+    );
+    const lockedAndNeedsFile = draft({ category: 'Electricity' });
+    expect(submitBlockReason(lockedAndNeedsFile, ME, [lock()])).toBe(
+      'Q1 2026 is locked.',
+    );
+    // And the role gate outranks all three.
+    expect(
+      submitBlockReason(theirsAndLocked, { ...ME, role: 'consultant' }, [lock()]),
+    ).toBe('Your role cannot submit records.');
   });
 
   it('checks status before authorship, the way the server does', () => {
@@ -458,6 +489,37 @@ describe('selectableDrafts', () => {
     });
   });
 
+  it('carries the locks through — the composition, not just the branch', () => {
+    // The mutation this exists for: `submitBlockReason(row, user, [])` inside
+    // this function, or `locks={locks}` dropped from the JSX. Every other test
+    // here passes an empty lock list, so both were invisible — and the result
+    // is a checkbox on a draft in a closed period, which comes back
+    // `period_locked` for the whole batch the user ticked around it.
+    const rows = [draft({ id: 'open' }), draft({ id: 'closed', periodValue: 'Q4' })];
+    const { selectableIds, reasonById } = selectableDrafts(rows, ME, [
+      lock({ periodValue: 'Q4' }),
+    ]);
+    expect(selectableIds).toEqual(['open']);
+    expect(reasonById.closed).toBe('Q4 2026 is locked.');
+  });
+
+  it('spells out each reason, not just which rows have one', () => {
+    // Asserting `Object.keys(reasonById)` alone let every value be replaced by
+    // the wrong sentence — or by the row id — with the test still green.
+    const { reasonById } = selectableDrafts(
+      [
+        draft({ id: 'theirs', createdBy: 'user-them' }),
+        draft({ id: 'rejected', status: 'rejected' }),
+        draft({ id: 'needs-file', category: 'Electricity' }),
+      ],
+      ME,
+      [],
+    );
+    expect(reasonById.theirs).toBe('Entered by someone else.');
+    expect(reasonById['needs-file']).toBe('Needs an evidence file.');
+    expect(reasonById.rejected).toMatch(/open it on its own/);
+  });
+
   it('keeps the order it was given', () => {
     const { selectableIds } = selectableDrafts(
       [draft({ id: 'c' }), draft({ id: 'a' }), draft({ id: 'b' })],
@@ -475,6 +537,16 @@ describe('toggleSelected', () => {
       selected: ['b'],
       refusedByCap: false,
     });
+  });
+
+  it('accepts the last tick that fits', () => {
+    // Only the refusing side was pinned, so `>= CAP - 1` and a hardcoded 999
+    // both survived: the cap could silently lose a record with nothing red.
+    const nearly = Array.from({ length: BULK_SUBMIT_MAX_IDS - 1 }, (_, i) => `r${i}`);
+    const { selected, refusedByCap } = toggleSelected(nearly, 'last');
+    expect(refusedByCap).toBe(false);
+    expect(selected).toHaveLength(BULK_SUBMIT_MAX_IDS);
+    expect(selected.at(-1)).toBe('last');
   });
 
   it('refuses to grow past the cap, and says so', () => {
@@ -560,8 +632,15 @@ describe('what a super_admin may sweep', () => {
   it('exempts a super_admin from the author gate, and nobody else', () => {
     const theirs = draft({ createdBy: 'user-them' });
     expect(authoredBy(theirs, ADMIN)).toBe(true);
-    expect(authoredBy(theirs, ME)).toBe(false);
     expect(authoredBy(draft({ createdBy: ME.id }), ME)).toBe(true);
+    // Every other role, asserted on the exported predicate directly. Through
+    // `submitBlockReason` the role gate refuses these two first, so widening
+    // the exemption to one of them is unreachable there and survives every
+    // test — but this function is exported, and the next caller may not have a
+    // role gate in front of it.
+    for (const role of ['data_entry', 'consultant', 'executive_viewer'] as const) {
+      expect(authoredBy(theirs, { id: ME.id, role })).toBe(false);
+    }
   });
 });
 
@@ -577,5 +656,42 @@ describe('allEligibleSelected', () => {
     // unchecked — and an unchecked master sends `on = true`, which re-selects
     // the same thousand. The control could never be used to clear.
     expect(allEligibleSelected(BULK_SUBMIT_MAX_IDS, BULK_SUBMIT_MAX_IDS + 50)).toBe(true);
+  });
+});
+
+describe('liveSelection', () => {
+  it('drops ids that have stopped being selectable', () => {
+    // The stale-id guard. Without it the next submit sends ids the server
+    // refuses and the count on the button is a lie.
+    expect(liveSelection(['a', 'b', 'c'], ['a', 'c'])).toEqual(['a', 'c']);
+    expect(liveSelection(['a'], [])).toEqual([]);
+    expect(liveSelection([], ['a'])).toEqual([]);
+  });
+});
+
+describe('the notices select-all owes the user', () => {
+  it('says nothing when it took everything', () => {
+    expect(selectAllNotices(5, 0, 0)).toEqual([]);
+  });
+
+  it('separates the two reasons, because the remedies differ', () => {
+    const [others] = selectAllNotices(3, 2, 0);
+    expect(others).toMatch(/Selected your own 3/);
+    expect(others).toMatch(/2 records were entered by someone else/);
+    expect(others).toMatch(/ticked one at a time/);
+
+    const [over] = selectAllNotices(1000, 0, 7);
+    expect(over).toMatch(/Selected the first 1,000/);
+    expect(over).toMatch(/7 more can go in a second submission/);
+
+    expect(selectAllNotices(1000, 4, 7)).toHaveLength(2);
+  });
+
+  it('agrees with itself about one record', () => {
+    expect(selectAllNotices(3, 1, 0)[0]).toMatch(/1 record was entered by someone else/);
+  });
+
+  it('names the cap in the refusal, from the constant', () => {
+    expect(capRefusedNotice()).toBe('1,000 records is the most one submission can carry.');
   });
 });
