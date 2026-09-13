@@ -44,7 +44,7 @@ import {
   summariseSubmit,
   toggleSelected,
 } from "@/lib/bulk-submit-view";
-import { isSubmittable } from "@/lib/types";
+import { isSubmittable, WHOLE_COMPANY_ENTITY_LABEL } from "@/lib/types";
 import type {
   ActivityRecordDTO,
   ActivityRecordStatus,
@@ -223,7 +223,10 @@ export function PreviousSubmissions({
               data-testid="drafts-select-all"
               checked={allEligibleSelected(liveOwn.length, ownSelectableIds.length)}
               onCheckedChange={(on) => (on ? selectAll() : setSelected([]))}
-              aria-label="Select every draft you entered and can send"
+              // Starts with the visible text (WCAG 2.5.3, label in name): a
+              // voice-control user says what they see — "Select all 3" — and a
+              // name that never contains it cannot be activated that way.
+              aria-label={`Select all ${ownSelectableIds.length}: every draft you entered and can send`}
             />
             Select all {ownSelectableIds.length}
           </label>
@@ -341,7 +344,7 @@ export function PreviousSubmissions({
                         // names — indistinguishable to a screen reader, and a
                         // strict-mode collision for anything locating them.
                         aria-label={`Select ${r.periodValue} ${r.reportingYear} ${r.category}, ${
-                          r.locationId ? (r.locationName ?? "A site") : "Whole subsidiary"
+                          r.locationId ? (r.locationName ?? "A site") : WHOLE_COMPANY_ENTITY_LABEL
                         }`}
                       />
                     ) : (
@@ -402,13 +405,16 @@ export function PreviousSubmissions({
                         {[
                           r.category,
                           // `locationName` is optional on the contract,
-                          // so a bare `??` would label a site row
-                          // "Whole subsidiary" if the include were ever
+                          // so a bare `??` would label a site row as the
+                          // whole company if the include were ever
                           // dropped — a false claim on the one screen
-                          // built to tell the two apart.
+                          // built to tell the two apart. The label is the
+                          // shared one: this list said "Whole subsidiary"
+                          // while the import template and every report say
+                          // "Whole company" about the same records.
                           r.locationId
                             ? (r.locationName ?? "A site")
-                            : "Whole subsidiary",
+                            : WHOLE_COMPANY_ENTITY_LABEL,
                           formatTCo2e(
                             r.calculation,
                             (v) => `${numberFmt.format(v)} tCO₂e`,

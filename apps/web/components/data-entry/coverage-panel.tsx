@@ -21,7 +21,7 @@ interface CoveragePanelProps {
   subsidiaryId: string;
   reportingYear: number;
   category: string;
-  /** The form's location field; `""` is "Whole subsidiary". */
+  /** The form's location field; `""` is the whole company. */
   locationId: string;
   reportingPeriod: string;
   periodValue: string;

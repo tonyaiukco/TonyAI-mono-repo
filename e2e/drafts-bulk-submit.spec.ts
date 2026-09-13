@@ -126,7 +126,7 @@ test('sends the drafts that were ticked, and leaves the rest a draft', async ({
     await page.locator('[data-testid="drafts-submit-button"]').click();
     // The sentence this dialog exists for: there is no author-side un-submit.
     await expect(page.getByRole('dialog')).toContainText(
-      /Only a reviewer can send them back/,
+      /Only a reviewer can send it back/,
     );
     await page.locator('[data-testid="drafts-submit-confirm"]').click();
 

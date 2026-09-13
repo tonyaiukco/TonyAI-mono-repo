@@ -107,11 +107,12 @@ export function eligibleForSubmit(
   if (withIds.length === 0) {
     blockedReason = null;
   } else if (recordIds.length === 0) {
-    blockedReason = `All ${formatNumber(needingEvidence)} imported ${
-      needingEvidence === 1 ? 'record needs' : 'records need'
-    } an evidence file before ${
-      needingEvidence === 1 ? 'it' : 'they'
-    } can be submitted, and an import cannot attach one. Open each record below to add its invoice.`;
+    // Never "All 1 imported record needs … Open each record below" — the
+    // wording the E2E suite had pinned verbatim for a one-row import.
+    blockedReason =
+      needingEvidence === 1
+        ? 'The imported record needs an evidence file before it can be submitted, and an import cannot attach one. Open it below to add its invoice.'
+        : `All ${formatNumber(needingEvidence)} imported records need an evidence file before they can be submitted, and an import cannot attach one. Open each record below to add its invoice.`;
   }
 
   return { recordIds, needingEvidence, overCap, blockedReason };
@@ -142,9 +143,10 @@ export function failuresToShow(failed: BulkSubmitIssue[]): {
 /** What the confirm step says. */
 export function submitConfirmation(recordIds: string[]): string {
   const n = recordIds.length;
+  const them = n === 1 ? 'it' : 'them';
   return (
     `Send ${formatNumber(n)} ${n === 1 ? 'record' : 'records'} for review. ` +
-    `Only a reviewer can send them back — there is no way to un-submit them yourself.`
+    `Only a reviewer can send ${them} back — there is no way to un-submit ${them} yourself.`
   );
 }
 
@@ -164,9 +166,11 @@ export function summariseSubmit(report: BulkSubmitReportDTO): SubmitSummary {
       tone: 'refused',
       headline: 'No records were submitted.',
       detail:
-        failed > 0
-          ? `All ${formatNumber(failed)} need attention first — see below.`
-          : 'There was nothing to submit.',
+        failed === 1
+          ? 'It needs attention first — see below.'
+          : failed > 1
+            ? `All ${formatNumber(failed)} need attention first — see below.`
+            : 'There was nothing to submit.',
     };
   }
   if (failed === 0) {

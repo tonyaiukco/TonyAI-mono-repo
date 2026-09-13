@@ -27,7 +27,7 @@ import {
 } from "@/lib/bulk-submit-view";
 import {
   applyConfirmation,
-  applySuccessMessage,
+  applyToast,
   BULK_UPLOAD_MAX_ROWS,
   COLUMN_LABEL,
   fileAcceptAttribute,
@@ -37,6 +37,7 @@ import {
   rowCount,
   sizeCapLabel,
   summarise,
+  templateErrorMessage,
   tonnesLabel,
   uploadErrorMessage,
   type IssueGroup,
@@ -122,7 +123,7 @@ export function BulkUploadPanel({
       await api.downloadBulkUploadTemplate();
       toast.success("Template downloaded");
     } catch (e) {
-      toast.error(uploadErrorMessage(e));
+      toast.error(templateErrorMessage(e));
     } finally {
       setTemplateBusy(false);
     }
@@ -169,7 +170,8 @@ export function BulkUploadPanel({
       // import is real — no transaction spans the batch.
       setReport(applied);
       setSubmitReport(null);
-      toast.success(applySuccessMessage(applied));
+      const outcome = applyToast(applied);
+      toast[outcome.kind](outcome.message);
       verdictRef.current?.focus();
     } catch (e) {
       toast.error(uploadErrorMessage(e));
@@ -242,9 +244,9 @@ export function BulkUploadPanel({
 
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Rows name reporting entities by id, so start from the template — it
-          arrives pre-filled with the entities you can reach, and its second
-          sheet lists which id is which.
+          Rows name reporting entities by id, so start from the template: its
+          Reference sheet lists the reporting entities you can import for, with
+          their ids.
         </p>
 
         {!report && (

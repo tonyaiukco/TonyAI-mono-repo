@@ -171,6 +171,13 @@ export interface BulkUploadSummary {
   /** DISTINCT rows carrying at least one error — not `errors.length`. */
   affectedRows: number;
   warningCount: number;
+  /**
+   * DISTINCT rows carrying at least one warning — the number the verdict
+   * prints. `warningCount` counts issues, and an anomalous electricity row
+   * carries two: printing that count told a user importing ONE row that
+   * "2 rows need attention" (measured against the real report).
+   */
+  warnedRows: number;
 }
 
 /** The one-glance verdict above the report. */
@@ -180,13 +187,15 @@ export function summarise(report: BulkUploadReportDTO): BulkUploadSummary {
   // failed" — and telling a user 1,400 rows failed out of 1,000 is the kind
   // of arithmetic that costs trust in every other number on the screen.
   const affectedRows = new Set(report.errors.map((e) => e.row)).size;
-  const verb = report.dryRun ? 'would be imported' : 'were imported';
+  // The same arithmetic for the warnings, which did not get it.
+  const warnedRows = new Set(report.warnings.map((w) => w.row)).size;
 
   const counts = {
     acceptedCount,
     errorCount: report.errors.length,
     affectedRows,
     warningCount: report.warnings.length,
+    warnedRows,
   };
 
   if (acceptedCount === 0) {
@@ -195,33 +204,52 @@ export function summarise(report: BulkUploadReportDTO): BulkUploadSummary {
       tone: 'refused',
       headline: `No rows ${report.dryRun ? 'can be imported' : 'were imported'}.`,
       detail:
-        affectedRows > 0
-          ? `All ${rowCount(affectedRows)} in the file have a problem to fix.`
-          : 'The file has no rows to import.',
+        affectedRows === 1
+          ? 'The one row in the file has a problem to fix.'
+          : affectedRows > 1
+            ? `All ${rowCount(affectedRows)} in the file have a problem to fix.`
+            : 'The file has no rows to import.',
     };
   }
   if (affectedRows === 0) {
     return {
       ...counts,
       tone: 'clean',
-      headline: `All ${rowCount(acceptedCount)} ${verb}.`,
+      // Never "All 1 row were imported." — measured, and the one-row file is
+      // the first thing anyone tries.
+      headline:
+        acceptedCount === 1
+          ? `1 row ${report.dryRun ? 'would be imported' : 'was imported'}.`
+          : `All ${rowCount(acceptedCount)} ${
+              report.dryRun ? 'would be imported' : 'were imported'
+            }.`,
       // Never null any more. A clean verdict used to say nothing else, which
       // is how a file whose every row warns `evidence_required` rendered as
       // an unqualified success — and, after an apply, how the persistent
       // surface stayed silent about the drafts while the completeness panel
       // one column away showed identical numbers.
-      detail: afterword(report, counts.warningCount),
+      detail: afterword(report, warnedRows),
     };
   }
   return {
     ...counts,
     tone: 'partial',
-    headline: `${formatNumber(acceptedCount)} of ${formatNumber(
-      report.totalRows,
-    )} rows ${verb}.`,
-    detail: `${
-      affectedRows === 1 ? '1 row was' : `${formatNumber(affectedRows)} rows were`
-    } not. ${retryAdvice(report)}${afterword(report, counts.warningCount) ?? ''}`,
+    headline: `${formatNumber(acceptedCount)} of ${formatNumber(report.totalRows)} rows ${
+      report.dryRun
+        ? 'would be imported'
+        : acceptedCount === 1
+          ? 'was imported'
+          : 'were imported'
+    }.`,
+    // Joined with a space. Concatenated, the screen read "…upload it again.5
+    // rows need attention before they can be submitted" (measured).
+    detail: [
+      `${affectedRows === 1 ? '1 row was' : `${formatNumber(affectedRows)} rows were`} not.`,
+      retryAdvice(report, affectedRows),
+      afterword(report, warnedRows),
+    ]
+      .filter((part): part is string => part !== null)
+      .join(' '),
   };
 }
 
@@ -232,10 +260,13 @@ export function summarise(report: BulkUploadReportDTO): BulkUploadSummary {
  * user to fix their file and upload it AGAIN means re-sending the rows that
  * already succeeded, which comes back as a wall of `duplicate_existing`.
  */
-function retryAdvice(report: BulkUploadReportDTO): string {
+function retryAdvice(report: BulkUploadReportDTO, failedRows: number): string {
+  const one = failedRows === 1;
   return report.dryRun
-    ? 'Fix them in your file and upload it again.'
-    : 'Fix them and upload a file containing only those rows — re-sending the whole file would report the imported ones as duplicates.';
+    ? `Fix ${one ? 'it' : 'them'} in your file and upload the file again.`
+    : `Fix ${one ? 'it' : 'them'} and upload a file containing only ${
+        one ? 'that row' : 'those rows'
+      } — re-sending the whole file would report the imported ones as duplicates.`;
 }
 
 /**
@@ -243,27 +274,31 @@ function retryAdvice(report: BulkUploadReportDTO): string {
  * carry a warning, and that everything imported lands as a draft.
  *
  * `draft` is in neither the counted statuses nor the review queue's, so an
- * import moves no total — including the completeness panel sitting on the same
- * screen, which this panel deliberately refreshes. Saying it only in a dialog
- * the user dismisses and a toast that fades is saying it nowhere.
+ * import moves no total and no invoice fraction — including on the
+ * completeness panel sitting on the same screen, which this panel deliberately
+ * refreshes (a cell holding a draft does turn amber: a draft is something left
+ * to look at). Saying it only in a dialog the user dismisses and a toast that
+ * fades is saying it nowhere.
  */
 function afterword(
   report: BulkUploadReportDTO,
-  warningCount: number,
+  warnedRows: number,
 ): string | null {
   const parts: string[] = [];
-  if (warningCount > 0) {
+  if (warnedRows > 0) {
     parts.push(
-      `${formatNumber(warningCount)} ${
-        warningCount === 1 ? 'row needs' : 'rows need'
+      `${formatNumber(warnedRows)} ${
+        warnedRows === 1 ? 'row needs' : 'rows need'
       } attention before ${
-        warningCount === 1 ? 'it' : 'they'
+        warnedRows === 1 ? 'it' : 'they'
       } can be submitted — see below.`,
     );
   }
   if (!report.dryRun) {
     parts.push(
-      'Imported rows are drafts: they count towards no total and do not appear in the review queue until they are submitted below.',
+      report.accepted.length === 1
+        ? 'The imported row is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.'
+        : 'Imported rows are drafts: they count towards no total and do not appear in the review queue until they are submitted below.',
     );
   }
   return parts.length > 0 ? parts.join(' ') : null;
@@ -286,9 +321,10 @@ export function tonnesLabel(rows: BulkUploadAcceptedRow[]): string {
   const counted = rows.filter((r) => r.tCo2e !== null).length;
   const figure = `${formatNumber(total, 3)} tCO₂e`;
   if (counted === rows.length) return figure;
-  return `${figure} across ${counted} of ${rowCount(rows.length)}; ${
-    rows.length - counted
-  } have no calculated figure`;
+  const missing = rows.length - counted;
+  return `${figure} across ${counted} of ${rowCount(rows.length)}; ${missing} ${
+    missing === 1 ? 'has' : 'have'
+  } no calculated figure`;
 }
 
 /**
@@ -297,15 +333,22 @@ export function tonnesLabel(rows: BulkUploadAcceptedRow[]): string {
  * Names the count, the tonnage, and the thing a user would otherwise discover
  * afterwards: the rows land as drafts. `draft` is in neither the counted
  * statuses nor the review queue's, so an import moves no total and fills no
- * queue until each row is submitted — and the completeness panel sitting on
- * the same screen will not move either.
+ * queue until each row is submitted.
  */
 export function applyConfirmation(report: BulkUploadReportDTO): string {
   const count = report.accepted.length;
+  const tonnes = tonnesLabel(report.accepted);
+  if (count === 1) {
+    // "Each becomes its own record … cannot be undone in bulk" is a sentence
+    // about many rows; said about one it reads as a warning that does not apply.
+    return (
+      `Import 1 row (${tonnes}). ` +
+      `It arrives as a draft: it is not counted towards any total and does not ` +
+      `appear in the review queue until it is submitted.`
+    );
+  }
   return (
-    `Import ${formatNumber(count)} ${count === 1 ? 'row' : 'rows'} (${tonnesLabel(
-      report.accepted,
-    )}). ` +
+    `Import ${formatNumber(count)} rows (${tonnes}). ` +
     `Each becomes its own record, and this cannot be undone in bulk. ` +
     `They arrive as drafts: they are not counted towards any total and do not ` +
     `appear in the review queue until they are submitted.`
@@ -322,9 +365,26 @@ export function applyConfirmation(report: BulkUploadReportDTO): string {
  */
 export function applySuccessMessage(report: BulkUploadReportDTO): string {
   const count = report.accepted.length;
-  return `${formatNumber(count)} ${
-    count === 1 ? 'record' : 'records'
-  } imported as drafts. Send them for review below to count them towards your inventory.`;
+  return count === 1
+    ? '1 record imported as a draft. Send it for review below to count it towards your inventory.'
+    : `${formatNumber(count)} records imported as drafts. Send them for review below to count them towards your inventory.`;
+}
+
+/**
+ * The toast after an apply returned — which is not the same thing as "it
+ * worked".
+ *
+ * A 200 can carry zero accepted rows (every row refused at write time — a
+ * period locked between the dry run and the apply, say), and the success toast
+ * used to fire for it anyway: "0 records imported as drafts".
+ */
+export function applyToast(report: BulkUploadReportDTO): {
+  kind: 'success' | 'warning';
+  message: string;
+} {
+  return report.accepted.length > 0
+    ? { kind: 'success', message: applySuccessMessage(report) }
+    : { kind: 'warning', message: 'No rows were imported — the report below says why.' };
 }
 
 /**
@@ -354,8 +414,24 @@ export function uploadErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'The import failed.';
 }
 
+/**
+ * The sentence for a failed template download.
+ *
+ * It used to borrow `uploadErrorMessage`, whose 429 blames "import attempts"
+ * and dry runs — neither of which a download spends: throttler keys include
+ * the handler, so the template route has a budget of its own.
+ */
+export function templateErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 429) {
+      return 'Too many template downloads. Wait a minute and try again.';
+    }
+    return error.message;
+  }
+  return error instanceof Error ? error.message : 'The template could not be downloaded.';
+}
+
 /** Only the two roles the server lets author records see the panel at all. */
 export function canBulkUpload(user: { role: string } | null): boolean {
   return !!user && ['data_entry', 'super_admin'].includes(user.role);
 }
-
