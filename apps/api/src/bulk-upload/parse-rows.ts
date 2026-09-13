@@ -38,7 +38,7 @@ export function extensionOf(fileName: string): string | null {
 }
 
 /**
- * Map the file's header row onto the canonical columns.
+ * Map the file's header row onto the canonical columns, POSITION BY POSITION.
  *
  * Tolerant of case and surrounding whitespace, because a spreadsheet round-trip
  * changes both. Intolerant of anything else: an unrecognised header is a
@@ -46,20 +46,37 @@ export function extensionOf(fileName: string): string | null {
  * `ValidationPipe` takes with `forbidNonWhitelisted`, and for the same reason.
  * A file whose `activity_value` column was ignored imports every row with a
  * missing value and looks like a data problem rather than a header problem.
+ *
+ * The result is aligned with the header: entry `i` is the column the file's
+ * `i`-th cell belongs to, or `null` where the header cell is blank. It used to
+ * be a compacted list while cells are read by position, so one blank header
+ * cell (`…,activityUnit,,varianceReason`) shifted every later column one place
+ * to the left — the unlabelled column's text was stored as the variance reason
+ * and the real reason was dropped, with no error at all.
  */
-function mapHeader(header: readonly string[]): BulkUploadColumn[] {
-  const mapped: BulkUploadColumn[] = [];
+function mapHeader(header: readonly string[]): (BulkUploadColumn | null)[] {
+  const positions: (BulkUploadColumn | null)[] = [];
   const unknown: string[] = [];
   for (const raw of header) {
-    const key = COLUMN_BY_LOWER.get(raw.trim().toLowerCase());
-    if (key) mapped.push(key);
-    else if (raw.trim() !== '') unknown.push(raw.trim());
+    const trimmed = raw.trim();
+    const key = COLUMN_BY_LOWER.get(trimmed.toLowerCase());
+    positions.push(key ?? null);
+    if (!key && trimmed !== '') unknown.push(trimmed);
   }
   if (unknown.length > 0) {
+    // Bounded, because this sentence is echoed into the response AND into the
+    // audit row's `reason`: a 2 MiB header row was stored there whole (a
+    // 1,960,160-character reason, measured) in a table with no delete path.
+    const shown = unknown.slice(0, 5).map((h) => {
+      const chars = Array.from(h);
+      return chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : h;
+    });
+    const more = unknown.length > 5 ? ` (+${unknown.length - 5} more)` : '';
     throw new BadRequestException(
-      `Unrecognised column(s): ${unknown.join(', ')}. Expected: ${BULK_UPLOAD_COLUMNS.join(', ')}.`,
+      `Unrecognised column(s): ${shown.join(', ')}${more}. Expected: ${BULK_UPLOAD_COLUMNS.join(', ')}.`,
     );
   }
+  const mapped = positions.filter((c): c is BulkUploadColumn => c !== null);
   const missing = BULK_UPLOAD_REQUIRED_COLUMNS.filter(
     (c) => !mapped.includes(c),
   );
@@ -75,7 +92,20 @@ function mapHeader(header: readonly string[]): BulkUploadColumn[] {
     }
     seen.add(c);
   }
-  return mapped;
+  return positions;
+}
+
+/**
+ * Refuse a value that no header names.
+ *
+ * A cell under a blank header, or past the header's last cell, cannot be
+ * imported — and dropping it would lose something the user typed without
+ * saying so. The same stance as an unrecognised header, one row lower.
+ */
+function unlabelledValue(row: number, column: number): BadRequestException {
+  return new BadRequestException(
+    `Row ${row} has a value in column ${column}, which has no header. Name the column or clear it.`,
+  );
 }
 
 function emptyCells(): Record<BulkUploadColumn, string> {
@@ -157,23 +187,35 @@ function parseCsv(buffer: Buffer): ParsedRow[] {
   // Capped here as well as in the service: the service's check runs AFTER this
   // function returns, so a parser that builds the whole table first has
   // already paid the cost the cap exists to refuse.
-  if (table.length - 1 > BULK_UPLOAD_MAX_ROWS) {
+  //
+  // POPULATED rows are counted, not lines. Every CSV writer ends a file with a
+  // newline, which papaparse returns as one more, empty, row — so counting
+  // `table.length` refused a file of exactly 1,000 rows saved from Excel as
+  // "1001 rows", at the one size the cap advertises. The XLSX path already
+  // counts populated rows; this now agrees with it.
+  //
+  // And a blank line is dropped BEFORE anything is built for it. 2 MiB of bare
+  // newlines is ~2.1M lines, and building a cells object for each one held the
+  // event loop for ~1.3 s before the file was refused as empty (measured) —
+  // five times a minute, for any user who may import.
+  const populated: number[] = [];
+  for (let i = 1; i < table.length; i += 1) {
+    if (table[i]?.some((cell) => (cell ?? '').trim() !== '')) populated.push(i);
+  }
+  if (populated.length > BULK_UPLOAD_MAX_ROWS) {
     throw new BadRequestException(
-      `The file has ${table.length - 1} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
+      `The file has ${populated.length} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
     );
   }
-  const rows: ParsedRow[] = [];
-  for (let i = 1; i < table.length; i += 1) {
+  return populated.map((i) => {
     const cells = emptyCells();
-    columns.forEach((column, index) => {
-      cells[column] = table[i]?.[index] ?? '';
+    (table[i] ?? []).forEach((value, index) => {
+      const column = columns[index] ?? null;
+      if (column) cells[column] = value ?? '';
+      else if ((value ?? '').trim() !== '') throw unlabelledValue(i + 1, index + 1);
     });
-    // A trailing newline is one blank row in every CSV writer there is;
-    // refusing the file over it would be indefensible.
-    if (isBlankRow(cells)) continue;
-    rows.push({ row: i + 1, cells });
-  }
-  return rows;
+    return { row: i + 1, cells };
+  });
 }
 
 async function parseXlsx(buffer: Buffer): Promise<ParsedRow[]> {
@@ -191,7 +233,7 @@ async function parseXlsx(buffer: Buffer): Promise<ParsedRow[]> {
   headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
     header[colNumber - 1] = cellToString(cell.value);
   });
-  const columns = mapHeader(header.map((h) => h ?? ''));
+  const columns = mapHeader(Array.from(header, (h) => h ?? ''));
 
   // `actualRowCount` (populated rows), never `rowCount` (the highest row
   // INDEX). A 6.6 KB workbook whose single data row sits at Excel's maximum
@@ -212,8 +254,14 @@ async function parseXlsx(buffer: Buffer): Promise<ParsedRow[]> {
   sheet.eachRow({ includeEmpty: false }, (sheetRow, rowNumber) => {
     if (rowNumber === 1) return;
     const cells = emptyCells();
-    columns.forEach((column, index) => {
-      cells[column] = cellToString(sheetRow.getCell(index + 1).value);
+    // The cells that exist, and only those — for the same reason as above:
+    // `getCell(n)` materialises one, and a stray value at column XFD would
+    // otherwise cost 16,384 of them for its row.
+    sheetRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+      const value = cellToString(cell.value);
+      const column = columns[colNumber - 1] ?? null;
+      if (column) cells[column] = value;
+      else if (value.trim() !== '') throw unlabelledValue(rowNumber, colNumber);
     });
     if (isBlankRow(cells)) return;
     rows.push({ row: rowNumber, cells });

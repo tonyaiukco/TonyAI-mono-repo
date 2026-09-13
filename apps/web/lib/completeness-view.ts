@@ -303,7 +303,7 @@ export type EntryCoverage =
 export interface EntryCoverageInput {
   data: SubsidiaryCompletenessDTO;
   category: string;
-  /** The form's location field; `""` means "Whole subsidiary". */
+  /** The form's location field; `""` means the whole company. */
   locationId: string;
   reportingPeriod: string;
   /** The form's period value — a month name when `reportingPeriod` is monthly. */

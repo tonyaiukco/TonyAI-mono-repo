@@ -13,6 +13,7 @@ import { ApiError } from '@/lib/api';
 import {
   applyConfirmation,
   applySuccessMessage,
+  applyToast,
   canBulkUpload,
   COLUMN_LABEL,
   fileAcceptAttribute,
@@ -22,6 +23,7 @@ import {
   preflightFile,
   sizeCapLabel,
   summarise,
+  templateErrorMessage,
   tonnesLabel,
   totalTonnes,
   uploadErrorMessage,
@@ -32,6 +34,10 @@ import {
  * client: `vitest.config.ts` collects only `lib/**`, so anything left in the
  * panel has no coverage in either direction. Every sentence a user reads, and
  * every decision about whether a file is even sent, therefore lives here.
+ *
+ * The cases marked "measured" were read off the REAL verdict — the server's
+ * report for a fixture file, fed through this module — while the UAT round-2
+ * catalog was being written. Each one is a sentence a tester would have filed.
  */
 function accepted(over: Partial<BulkUploadAcceptedRow> = {}): BulkUploadAcceptedRow {
   return {
@@ -221,9 +227,21 @@ describe('summarise', () => {
     expect(s.detail).toBeNull();
   });
 
+  it('does not say "All 1 row" about a one-row file', () => {
+    // Measured: "All 1 row would be imported." and, after the apply, "All 1 row
+    // were imported." — and a one-row file is the first thing anyone tries.
+    expect(summarise(report()).headline).toBe('1 row would be imported.');
+    expect(summarise(report({ totalRows: 2, accepted: [accepted(), accepted({ row: 3 })] })).headline).toBe(
+      'All 2 rows would be imported.',
+    );
+  });
+
   it('uses the past tense once rows have actually been written', () => {
-    const s = summarise(report({ dryRun: false }));
-    expect(s.headline).toMatch(/were imported/);
+    expect(summarise(report({ dryRun: false })).headline).toBe('1 row was imported.');
+    expect(
+      summarise(report({ dryRun: false, totalRows: 2, accepted: [accepted(), accepted({ row: 3 })] }))
+        .headline,
+    ).toBe('All 2 rows were imported.');
   });
 
   it('counts affected ROWS, not issues', () => {
@@ -254,13 +272,31 @@ describe('summarise', () => {
     expect(s.detail).toMatch(/1 row was not/);
   });
 
+  it('agrees the verb with a single imported row after a partial apply', () => {
+    const s = summarise(
+      report({
+        dryRun: false,
+        totalRows: 3,
+        accepted: [accepted()],
+        errors: [issue({ row: 3 }), issue({ row: 4 })],
+      }),
+    );
+    expect(s.headline).toBe('1 of 3 rows was imported.');
+  });
+
   it('says plainly when nothing can be imported', () => {
     const s = summarise(
       report({ totalRows: 2, accepted: [], errors: [issue({ row: 2 }), issue({ row: 3 })] }),
     );
     expect(s.tone).toBe('refused');
     expect(s.headline).toMatch(/No rows/);
-    expect(s.detail).toMatch(/2 rows/);
+    expect(s.detail).toBe('All 2 rows in the file have a problem to fix.');
+  });
+
+  it('uses the singular when the only row has a problem', () => {
+    // Measured: "All 1 row in the file have a problem to fix."
+    const s = summarise(report({ accepted: [], errors: [issue()] }));
+    expect(s.detail).toBe('The one row in the file has a problem to fix.');
   });
 });
 
@@ -276,6 +312,14 @@ describe('the copy that warns about drafts', () => {
     expect(text).toContain('2 rows');
   });
 
+  it('does not promise "each" and "in bulk" about a single row', () => {
+    const text = applyConfirmation(report());
+    expect(text).toContain('Import 1 row');
+    expect(text).toMatch(/arrives as a draft/);
+    expect(text).toMatch(/review queue/i);
+    expect(text).not.toMatch(/\b(each|they|drafts)\b/i);
+  });
+
   it('names the tonnage it is about to write', () => {
     expect(applyConfirmation(report({ accepted: [accepted({ tCo2e: 1.5 })] }))).toContain(
       '1.500 tCO₂e',
@@ -288,9 +332,32 @@ describe('the copy that warns about drafts', () => {
     );
   });
 
-  it('says it again afterwards', () => {
-    expect(applySuccessMessage(report({ dryRun: false }))).toMatch(/drafts/i);
-    expect(applySuccessMessage(report({ dryRun: false }))).toMatch(/send them for review/i);
+  it('says it again afterwards, in the right number', () => {
+    const two = report({ dryRun: false, accepted: [accepted(), accepted({ row: 3 })] });
+    expect(applySuccessMessage(two)).toBe(
+      '2 records imported as drafts. Send them for review below to count them towards your inventory.',
+    );
+    // Measured: "1 record imported as drafts."
+    expect(applySuccessMessage(report({ dryRun: false }))).toBe(
+      '1 record imported as a draft. Send it for review below to count it towards your inventory.',
+    );
+  });
+});
+
+describe('applyToast', () => {
+  it('reports success for what was written', () => {
+    expect(applyToast(report({ dryRun: false }))).toEqual({
+      kind: 'success',
+      message: applySuccessMessage(report({ dryRun: false })),
+    });
+  });
+
+  it('does not report success for an apply that wrote nothing', () => {
+    // A 200 can carry zero accepted rows, and the success toast fired for it
+    // anyway: "0 records imported as drafts".
+    const outcome = applyToast(report({ dryRun: false, accepted: [], errors: [issue()] }));
+    expect(outcome.kind).toBe('warning');
+    expect(outcome.message).not.toMatch(/imported as/);
   });
 });
 
@@ -325,6 +392,21 @@ describe('uploadErrorMessage', () => {
   });
 });
 
+describe('templateErrorMessage', () => {
+  it('does not blame an import budget the download never spent', () => {
+    const text = templateErrorMessage(new ApiError('Too Many Requests', 429));
+    expect(text).toMatch(/template/i);
+    expect(text).toMatch(/wait a minute/i);
+    expect(text).not.toMatch(/import|dry run/i);
+  });
+
+  it('keeps the server’s sentence otherwise, and survives a non-ApiError', () => {
+    expect(templateErrorMessage(new ApiError('Session expired', 401))).toBe('Session expired');
+    expect(templateErrorMessage(new Error('offline'))).toBe('offline');
+    expect(templateErrorMessage('nonsense')).toMatch(/could not be downloaded/i);
+  });
+});
+
 describe('canBulkUpload', () => {
   it.each([
     ['data_entry', true],
@@ -352,7 +434,7 @@ describe('the verdict carries what the report would otherwise hide', () => {
     const s = summarise(
       report({
         totalRows: 3,
-        accepted: [accepted(), accepted(), accepted()],
+        accepted: [accepted(), accepted({ row: 3 }), accepted({ row: 4 })],
         warnings: [
           issue({ row: 2, code: 'evidence_required' }),
           issue({ row: 3, code: 'evidence_required' }),
@@ -363,8 +445,25 @@ describe('the verdict carries what the report would otherwise hide', () => {
 
     expect(s.tone).toBe('clean');
     expect(s.warningCount).toBe(3);
+    expect(s.warnedRows).toBe(3);
     expect(s.detail).toMatch(/3 rows need attention/i);
     expect(s.detail).toMatch(/submitted/i);
+  });
+
+  it('counts warned ROWS, not warnings', () => {
+    // Measured: an anomalous electricity row carries two warnings, and the
+    // verdict told a user importing ONE row that "2 rows need attention".
+    const s = summarise(
+      report({
+        warnings: [
+          issue({ row: 2, code: 'evidence_required' }),
+          issue({ row: 2, code: 'would_block_submit' }),
+        ],
+      }),
+    );
+    expect(s.warningCount).toBe(2);
+    expect(s.warnedRows).toBe(1);
+    expect(s.detail).toBe('1 row needs attention before it can be submitted — see below.');
   });
 
   it('uses the singular for one warned row', () => {
@@ -378,9 +477,13 @@ describe('the verdict carries what the report would otherwise hide', () => {
     // It was in the confirm dialog (dismissed) and the success toast (fades).
     // The verdict block is the only thing still on screen when the user looks
     // at the completeness panel one column away and finds it unchanged.
-    const s = summarise(report({ dryRun: false, totalRows: 1 }));
-    expect(s.detail).toMatch(/drafts/i);
-    expect(s.detail).toMatch(/review queue/i);
+    const one = summarise(report({ dryRun: false, totalRows: 1 }));
+    expect(one.detail).toMatch(/is a draft/i);
+    expect(one.detail).toMatch(/review queue/i);
+    const two = summarise(
+      report({ dryRun: false, totalRows: 2, accepted: [accepted(), accepted({ row: 3 })] }),
+    );
+    expect(two.detail).toMatch(/are drafts/i);
   });
 
   it('does not mention drafts before anything is written', () => {
@@ -400,14 +503,14 @@ describe('retry advice', () => {
     const s = summarise(
       report({ totalRows: 2, accepted: [accepted()], errors: [issue({ row: 3 })] }),
     );
-    expect(s.detail).toMatch(/upload it again/i);
+    expect(s.detail).toMatch(/upload the file again/i);
   });
 
   it('says to upload ONLY the failed rows after a real import', () => {
     // Re-sending the corrected whole file would return the rows that already
     // succeeded as `duplicate_existing` — the advice would manufacture the
     // next problem.
-    const s = summarise(
+    const one = summarise(
       report({
         dryRun: false,
         totalRows: 2,
@@ -415,8 +518,91 @@ describe('retry advice', () => {
         errors: [issue({ row: 3 })],
       }),
     );
-    expect(s.detail).toMatch(/only those rows/i);
-    expect(s.detail).not.toMatch(/upload it again/i);
+    expect(one.detail).toMatch(/only that row/i);
+    expect(one.detail).not.toMatch(/upload the file again/i);
+    const two = summarise(
+      report({
+        dryRun: false,
+        totalRows: 3,
+        accepted: [accepted()],
+        errors: [issue({ row: 3 }), issue({ row: 4 })],
+      }),
+    );
+    expect(two.detail).toMatch(/only those rows/i);
+  });
+
+  it('separates the advice from the sentence after it', () => {
+    // Measured: concatenated without a space, the screen read "…upload it
+    // again.5 rows need attention before they can be submitted".
+    const s = summarise(
+      report({
+        totalRows: 2,
+        accepted: [accepted()],
+        errors: [issue({ row: 3 })],
+        warnings: [issue({ row: 2, code: 'evidence_required' })],
+      }),
+    );
+    expect(s.detail).toBe(
+      '1 row was not. Fix it in your file and upload the file again. 1 row needs attention before it can be submitted — see below.',
+    );
+  });
+
+  it('counts warned ROWS in the partial verdict too', () => {
+    // The branch the measured "5 rows need attention" came from — and the
+    // warned-rows test above only ever went through the clean one.
+    const s = summarise(
+      report({
+        totalRows: 3,
+        accepted: [accepted(), accepted({ row: 3 })],
+        errors: [issue({ row: 4 })],
+        warnings: [
+          issue({ row: 2, code: 'evidence_required' }),
+          issue({ row: 2, code: 'would_block_submit' }),
+        ],
+      }),
+    );
+    expect(s.detail).toBe(
+      '1 row was not. Fix it in your file and upload the file again. 1 row needs attention before it can be submitted — see below.',
+    );
+  });
+
+  it('counts failed ROWS in the advice, not errors', () => {
+    // One row carrying two errors is still "it" and "that row".
+    const s = summarise(
+      report({
+        dryRun: false,
+        totalRows: 2,
+        accepted: [accepted()],
+        errors: [issue({ row: 3 }), issue({ row: 3, column: 'activityUnit' })],
+      }),
+    );
+    expect(s.detail).toBe(
+      '1 row was not. Fix it and upload a file containing only that row — re-sending the whole file would report the imported ones as duplicates. The imported row is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.',
+    );
+  });
+
+  it('joins the warning sentence and the draft sentence with a space', () => {
+    expect(
+      summarise(report({ dryRun: false, warnings: [issue({ row: 2, code: 'evidence_required' })] }))
+        .detail,
+    ).toBe(
+      '1 row needs attention before it can be submitted — see below. The imported row is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.',
+    );
+  });
+
+  it('uses the plural pronoun for several warned rows', () => {
+    expect(
+      summarise(
+        report({
+          totalRows: 2,
+          accepted: [accepted(), accepted({ row: 3 })],
+          warnings: [
+            issue({ row: 2, code: 'evidence_required' }),
+            issue({ row: 3, code: 'evidence_required' }),
+          ],
+        }),
+      ).detail,
+    ).toBe('2 rows need attention before they can be submitted — see below.');
   });
 });
 
@@ -442,6 +628,13 @@ describe('tonnesLabel', () => {
     expect(label).toMatch(/1 of 3 rows/);
     expect(label).toMatch(/2 have no calculated figure/);
   });
+
+  it('agrees the verb when one row has no figure', () => {
+    // Measured: "16.105 tCO₂e across 1 of 2 rows; 1 have no calculated figure".
+    expect(tonnesLabel([accepted({ tCo2e: 4 }), accepted({ tCo2e: null })])).toBe(
+      '4.000 tCO₂e across 1 of 2 rows; 1 has no calculated figure',
+    );
+  });
 });
 
 describe('uploadErrorMessage — the remaining branch', () => {
@@ -451,4 +644,3 @@ describe('uploadErrorMessage — the remaining branch', () => {
     );
   });
 });
-

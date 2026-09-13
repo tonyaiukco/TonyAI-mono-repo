@@ -913,7 +913,7 @@ function DataEntryPageInner() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__whole__">Whole subsidiary</SelectItem>
+                        <SelectItem value="__whole__">{WHOLE_COMPANY_ENTITY_LABEL}</SelectItem>
                         {availableLocations.map((l) => (
                           <SelectItem key={l.id} value={l.id}>
                             {l.name} ({l.geographyCode})

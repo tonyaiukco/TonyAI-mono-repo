@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { BulkUploadAcceptedRow, BulkUploadRowIssue } from '@tonyai/shared-types';
 import {
   ADMIN_EMAIL,
+  CONSULTANT_EMAIL,
   ENTRY_EMAIL,
   buildBulkCsv,
   deleteRecordsAsService,
@@ -296,4 +297,47 @@ test('the row-level refusals arrive with the codes the contract names', async ({
     6: 'no_factor',
   });
   expect(report.accepted).toHaveLength(1);
+});
+
+test('a role that may not author records is refused before its file is parsed — and audited', async ({
+  request,
+}) => {
+  // The claim the unit suite can only make against a mocked audit writer. A
+  // consultant's import used to be refused from inside the row loop, past the
+  // audited pre-flight, so it left no row on the trail — and a file whose every
+  // row was invalid came back as a 200 report. A roles guard added on the route
+  // later would bring that back with every unit test green; this would fail.
+  //
+  // Budget: the throttle is keyed per user, so the consultant spends none of
+  // the six imports the header counts.
+  const token = await getAccessToken(request, CONSULTANT_EMAIL);
+  // A margin and a name only this test writes: the database clock (a Docker VM
+  // on a laptop) can lag the runner's, and a bare `since` would then miss the
+  // very row this test exists to find.
+  const since = new Date(Date.now() - 60_000).toISOString();
+  const fileName = `consultant-probe-${Date.now()}.txt`;
+
+  const res = await postBulkImport(request, token, {
+    // Not a spreadsheet, on purpose: a file refusal is a 400, so a 403 here can
+    // only mean the role was answered before the file was looked at.
+    buffer: Buffer.from('not a spreadsheet'),
+    fileName,
+    dryRun: 'true',
+  });
+  expect(res.status()).toBe(403);
+  expect((await res.json()).message).toBe('Your role may not create activity records');
+
+  const audit = await readAuditSince(request, {
+    entity: 'activity_record',
+    action: 'create',
+    since,
+  });
+  expect(
+    audit.some(
+      (r) =>
+        r.diff?.fileName === fileName &&
+        r.diff?.refused === true &&
+        r.diff?.reason === 'Your role may not create activity records',
+    ),
+  ).toBe(true);
 });

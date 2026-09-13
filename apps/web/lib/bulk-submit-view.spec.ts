@@ -97,7 +97,20 @@ describe('eligibleForSubmit', () => {
     expect(recordIds).toEqual([]);
     expect(blockedReason).toMatch(/evidence file/i);
     expect(blockedReason).toMatch(/cannot attach/i);
-    expect(blockedReason).toContain('2');
+    expect(blockedReason).toBe(
+      'All 2 imported records need an evidence file before they can be submitted, and an import cannot attach one. Open each record below to add its invoice.',
+    );
+  });
+
+  it('uses the singular for one imported record', () => {
+    // It read "All 1 imported record needs an evidence file … Open each record
+    // below to add its invoice." — pinned verbatim by the E2E suite.
+    const { blockedReason } = eligibleForSubmit([
+      imported({ recordId: 'a', category: 'Water' }),
+    ]);
+    expect(blockedReason).toBe(
+      'The imported record needs an evidence file before it can be submitted, and an import cannot attach one. Open it below to add its invoice.',
+    );
   });
 
   it('says nothing at all when there was no import to speak of', () => {
@@ -168,12 +181,18 @@ describe('submitConfirmation', () => {
     // in front of someone about to move four hundred records.
     const text = submitConfirmation(['a', 'b']);
     expect(text).toContain('2 records');
-    expect(text).toMatch(/only a reviewer/i);
-    expect(text).toMatch(/un-submit/i);
+    expect(text).toMatch(/only a reviewer can send them back/i);
+    expect(text).toMatch(/un-submit them yourself/i);
   });
 
-  it('uses the singular for one', () => {
-    expect(submitConfirmation(['a'])).toContain('1 record ');
+  it('uses the singular for one — including the pronoun', () => {
+    // "Send 1 record for review. Only a reviewer can send them back" read as
+    // though more than one record were leaving.
+    const text = submitConfirmation(['a']);
+    expect(text).toContain('1 record ');
+    expect(text).toContain('Only a reviewer can send it back');
+    expect(text).toContain('un-submit it yourself');
+    expect(text).not.toMatch(/\bthem\b/);
   });
 });
 
@@ -216,10 +235,16 @@ describe('summariseSubmit', () => {
   });
 
   it('says plainly when nothing moved', () => {
-    const s = summariseSubmit(report({ requested: 1, failed: [refused()] }));
+    const s = summariseSubmit(report({ requested: 2, failed: [refused(), refused()] }));
     expect(s.tone).toBe('refused');
     expect(s.headline).toMatch(/No records were submitted/);
-    expect(s.detail).toMatch(/All 1 need attention/);
+    expect(s.detail).toBe('All 2 need attention first — see below.');
+  });
+
+  it('does not say "All 1" when the only record was refused', () => {
+    // Measured: "No records were submitted. All 1 need attention first".
+    const s = summariseSubmit(report({ requested: 1, failed: [refused()] }));
+    expect(s.detail).toBe('It needs attention first — see below.');
   });
 });
 

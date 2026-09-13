@@ -422,14 +422,64 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     expect(report.errors[0].message).not.toMatch(/ECONNREFUSED|SELECT|10\.0\.0\.5/);
   });
 
-  it('rethrows a role refusal as one 403, not a thousand row errors', async () => {
+  it('answers the role before the file — an unreadable one still gets the 403', async () => {
+    const { service } = build();
+
+    await expect(
+      service.import(
+        dataEntry({ role: 'consultant' }),
+        csvFile([row()], { originalname: 'x.exe' }),
+        DRY,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses a role that may not author records before parsing its file — and audits it', async () => {
+    // It used to be refused only by the record service inside the loop, so
+    // the 403 was thrown past the audited pre-flight and before the batch row:
+    // a consultant's import attempt left no trace at all. A READABLE file on
+    // purpose: without the gate, every "not called" below would fail.
+    const { audit, prisma, records, service } = build();
+
+    await expect(
+      service.import(dataEntry({ role: 'consultant' }), csvFile([row()]), DRY),
+    ).rejects.toThrow(new ForbiddenException('Your role may not create activity records'));
+
+    expect(records.previewCreate).not.toHaveBeenCalled();
+    expect(records.create).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record.mock.calls[0][0]).toMatchObject({ role: 'consultant' });
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({
+      refused: true,
+      dryRun: true,
+      reason: 'Your role may not create activity records',
+    });
+  });
+
+  it.each(['consultant', 'executive_viewer'] as const)(
+    'refuses a %s even when no row would have reached the record service',
+    async (role) => {
+      // Every row fails validation, so the loop's own role check never ran and
+      // this caller used to get a 200 report instead of a refusal.
+      const { service } = build();
+
+      await expect(
+        service.import(dataEntry({ role }), csvFile([row({ activityValue: 'abc' })]), DRY),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    },
+  );
+
+  it('still rethrows a refusal the record service raises mid-file as one 403', async () => {
+    // A backstop, not the gate — but a thousand identical "forbidden" row
+    // errors would still be a worse answer than one 403.
     const { records, service } = build();
     records.previewCreate.mockRejectedValue(
       new ForbiddenException('Your role may not create activity records'),
     );
 
     await expect(
-      service.import(dataEntry({ role: 'consultant' }), csvFile([row(), row({ periodValue: 'February' })]), DRY),
+      service.import(dataEntry(), csvFile([row(), row({ periodValue: 'February' })]), DRY),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
@@ -504,6 +554,59 @@ describe('BulkUploadService — warnings', () => {
     expect(records.create.mock.calls[0][1].varianceReason).toBe(
       '-15% after a line shutdown',
     );
+  });
+
+  it('reports warnings only for rows that are, or would be, imported', async () => {
+    // A warning says what happens before a row "can be submitted", which is
+    // noise on a row that will never exist — and counted into the verdict it
+    // told a user importing one row of ten that five needed attention.
+    const { service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([
+        row(), // row 2: imports, and carries the evidence warning
+        row({ periodValue: 'February', activityValue: 'abc', varianceReason: '=SUM(A1)' }), // row 3: invalid
+      ]),
+      DRY,
+    );
+
+    expect(report.accepted.map((a) => a.row)).toEqual([2]);
+    expect(report.errors.map((e) => [e.row, e.code])).toEqual([[3, 'invalid']]);
+    expect(report.warnings.map((w) => [w.row, w.code])).toEqual([[2, 'evidence_required']]);
+  });
+
+  it('drops a row’s warnings when the preview refuses it', async () => {
+    // The measured shape: an electricity row the record service refuses (a
+    // period its granularity does not have) AFTER the evidence warning had
+    // already been pushed.
+    const { records, service } = build();
+    records.previewCreate.mockRejectedValueOnce(
+      new BadRequestException('"Q5" is not a valid period for a quarterly record.'),
+    );
+
+    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+
+    expect(report.errors).toHaveLength(1);
+    expect(report.warnings).toEqual([]);
+  });
+
+  it('drops a row’s warnings when the write itself refuses it', async () => {
+    const { records, service } = build();
+    records.create.mockRejectedValueOnce(
+      new NotFoundException(
+        'No emission factor found for category "Electricity", geography "TR", year 2019',
+      ),
+    );
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ varianceReason: '=1+1' })]),
+      NOTHING,
+    );
+
+    expect(report.errors[0]).toMatchObject({ row: 2, code: 'no_factor' });
+    expect(report.warnings).toEqual([]);
   });
 });
 
@@ -995,5 +1098,262 @@ describe('BulkUploadService — the template', () => {
     // correction path for rows written on a read.
     expect(audit.record).not.toHaveBeenCalled();
   });
+});
+
+describe('BulkUploadService — what the UAT-prep review passes found', () => {
+  it.each(['data_entry', 'super_admin'] as const)('lets a %s through the role gate', async (role) => {
+    // The gate is the record service's own rule. Narrowing it to one role
+    // passed every test until this one.
+    const { audit, service } = build();
+
+    const report = await service.import(dataEntry({ role }), csvFile([row()]), DRY);
+
+    expect(report.accepted).toHaveLength(1);
+    expect(audit.record.mock.calls[0][1].diff).not.toHaveProperty('refused');
+  });
+
+  it('states the entity refusal as its reason alone', async () => {
+    // The panel prints "Nothing was imported." under every whole-file refusal;
+    // the sentence saying it as well put it on screen twice.
+    const { service } = build();
+
+    await expect(
+      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: 'sub-99' })]), NOTHING),
+    ).rejects.toThrow(
+      new BadRequestException(
+        'Row(s) 3 name a reporting entity that does not exist or is not yours.',
+      ),
+    );
+  });
+
+  it('neither leaks a refused row’s warning into the next row nor repeats one', async () => {
+    const { service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([
+        row(),
+        row({ periodValue: 'February', activityValue: 'abc', varianceReason: '=SUM(A1)' }),
+        row({ periodValue: 'March' }),
+      ]),
+      DRY,
+    );
+
+    expect(report.accepted.map((a) => a.row)).toEqual([2, 4]);
+    expect(report.warnings.map((w) => [w.row, w.code])).toEqual([
+      [2, 'evidence_required'],
+      [4, 'evidence_required'],
+    ]);
+  });
+
+  it.each([[''], [null], [undefined], [0]])(
+    'refuses a non-boolean dryRun (%s) instead of importing',
+    async (value) => {
+      // The DTO makes it a boolean over HTTP. Every other caller used to reach a
+      // branch that writes records whenever the flag is not truthy.
+      const { audit, records, service } = build();
+
+      const error = await service
+        .import(dataEntry(), csvFile([row()]), { dryRun: value as unknown as boolean })
+        .catch((e: unknown) => e);
+      // The class as well as the words: `toThrow(instance)` compares messages
+      // only, and a plain Error here would reach the caller as a 500.
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as Error).message).toBe('dryRun must be true or false.');
+      expect(records.create).not.toHaveBeenCalled();
+      expect(records.previewCreate).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reports a refusal raised after a row was written on its row, not as a bare 403', async () => {
+    // No transaction spans the batch: rethrowing here would hand the caller a
+    // 403 for a file that was partly imported, with no report and no batch row.
+    const { audit, records, service } = build();
+    records.create
+      .mockImplementationOnce((_user, dto) =>
+        Promise.resolve({
+          id: 'rec-1',
+          calculation: SNAPSHOT,
+          anomalyFlag: false,
+          periodValue: dto.periodValue,
+          varianceReason: null,
+        }),
+      )
+      .mockRejectedValueOnce(new ForbiddenException('Your role may not create activity records'));
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row(), row({ periodValue: 'February' })]),
+      NOTHING,
+    );
+
+    expect(report.accepted.map((a) => a.recordId)).toEqual(['rec-1']);
+    expect(report.errors.map((e) => e.row)).toEqual([3]);
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({ acceptedCount: 1, rejectedCount: 1 });
+  });
+
+  it('stores a filename Postgres will accept — no NUL, no half of a character', async () => {
+    // Either shape made the audit write fail, and a failed write is swallowed
+    // by design — so the refusal the row exists to keep left no trace at all.
+    const { audit, service } = build();
+
+    await expect(
+      service.import(
+        dataEntry({ role: 'consultant' }),
+        csvFile([row()], { originalname: 'probe\u0000.csv' }),
+        DRY,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({ fileName: 'probe.csv' });
+
+    // 254 characters and an emoji: a UTF-16 slice to 255 kept half of it.
+    const long = `${'a'.repeat(254)}😀.csv`;
+    await service.import(dataEntry(), csvFile([row()], { originalname: long }), DRY);
+    expect(audit.record.mock.calls[1][1].diff).toMatchObject({
+      fileName: `${'a'.repeat(254)}😀`,
+    });
+  });
+
+  it('cleans the refusal reason too — it can echo the file’s own header', async () => {
+    // The second caller-controlled string in the diff, and the retry used to
+    // leave it in place: a NUL in a header cell failed both writes.
+    const { audit, service } = build();
+    const file = {
+      ...csvFile([]),
+      buffer: Buffer.from(`${HEADER},bad\u0000col\n${row()}`),
+    } as Express.Multer.File;
+
+    await expect(service.import(dataEntry(), file, DRY)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    const { reason } = audit.record.mock.calls[0][1].diff as { reason: string };
+    expect(reason).toContain('Unrecognised column(s): badcol.');
+    expect(reason).not.toContain('\u0000');
+  });
+
+  it('drops the characters that disguise a name in the audit drawer', async () => {
+    // Rendered, `invoice_<U+202E>fdp.xlsx` read as a PDF, and a zero-width
+    // space made two different names look identical.
+    const { audit, service } = build();
+
+    await service.import(
+      dataEntry(),
+      csvFile([row()], { originalname: 'invoice_\u202Efdp\u200B.csv' }),
+      DRY,
+    );
+
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({
+      fileName: 'invoice_fdp.csv',
+    });
+  });
+
+  it('writes a refused row again without the caller’s text when the database rejects a value', async () => {
+    // Belt and braces for the shapes nobody has found yet — and only for a
+    // value rejection, which fails before anything commits.
+    const { audit, service } = build();
+    audit.record.mockRejectedValueOnce(
+      Object.assign(new Error('unsupported Unicode escape sequence'), { code: '22P05' }),
+    );
+
+    await expect(
+      service.import(dataEntry(), csvFile([row()], { originalname: 'x.exe' }), DRY),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(audit.record).toHaveBeenCalledTimes(2);
+    // Everything else the first write carried survives; only the two caller
+    // strings go. A retry that kept `{ refused }` alone passed a looser check.
+    const first = { ...(audit.record.mock.calls[0][1].diff as Record<string, unknown>) };
+    delete first.fileName;
+    delete first.reason;
+    expect(audit.record.mock.calls[1][1].diff).toEqual({ ...first, callerTextOmitted: true });
+  });
+
+  it('retries the post-import summary row too, keeping its counts', async () => {
+    // The row that summarises an apply is the one the per-record rows cannot
+    // replace; a direct write there lost it to the same filename, silently.
+    const { audit, service } = build();
+    audit.record.mockRejectedValueOnce(
+      Object.assign(new Error('unsupported Unicode escape sequence'), { code: '22P05' }),
+    );
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row(), row({ periodValue: 'February' })]),
+      NOTHING,
+    );
+
+    expect(report.accepted).toHaveLength(2);
+    expect(audit.record).toHaveBeenCalledTimes(2);
+    const retried = audit.record.mock.calls[1][1].diff as Record<string, unknown>;
+    expect(retried).toMatchObject({
+      bulk: true,
+      dryRun: false,
+      totalRows: 2,
+      acceptedCount: 2,
+      rejectedCount: 0,
+      callerTextOmitted: true,
+    });
+    expect(retried).not.toHaveProperty('fileName');
+  });
+
+  it.each([0x01, 0x0a, 0x1f, 0x7f, 0x80, 0x9f, 0xd800])(
+    'drops code unit %d from a stored name',
+    async (code) => {
+      // Every control character and an unpaired surrogate, not just U+0000:
+      // the docblock promises all of them.
+      const { audit, service } = build();
+
+      await service.import(
+        dataEntry(),
+        csvFile([row()], { originalname: `x${String.fromCharCode(code)}.csv` }),
+        DRY,
+      );
+
+      expect(audit.record.mock.calls[0][1].diff).toMatchObject({ fileName: 'x.csv' });
+    },
+  );
+
+  it('does not retry a failure that could have committed — that would write the row twice', async () => {
+    // A dropped connection or a timeout can fail AFTER the insert committed,
+    // and `audit_log` has no delete path for the duplicate.
+    const { audit, service } = build();
+    audit.record.mockRejectedValueOnce(new Error('Connection terminated unexpectedly'));
+
+    await expect(
+      service.import(dataEntry(), csvFile([row()], { originalname: 'x.exe' }), DRY),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(audit.record).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([[''], ['   ']])(
+    'keeps a blank reporting entity (%j) out of the stored-slot query',
+    async (blank) => {
+      // Postgres refuses '' as a uuid (P2023). This query runs outside every
+      // catch, so one blank cell was a 500 with no report and no audit row. The
+      // mock says no the way the database does — a mock that cannot say no is
+      // not a test. Whitespace too: a filter placed before the trim would let
+      // '   ' through, to reach Postgres as ''.
+      const { prisma, service } = build();
+      prisma.activityRecord.findMany.mockImplementation(
+        (args: { where: { subsidiaryId: { in: string[] } } }) =>
+          args.where.subsidiaryId.in.includes('')
+            ? Promise.reject(new Error('P2023: Error creating UUID, invalid length'))
+            : Promise.resolve([]),
+      );
+
+      const report = await service.import(
+        dataEntry(),
+        csvFile([row(), row({ subsidiaryId: blank })]),
+        DRY,
+      );
+
+      expect(report.accepted).toHaveLength(1);
+      expect(report.errors[0]).toMatchObject({ row: 3, code: 'invalid' });
+    },
+  );
 });
 

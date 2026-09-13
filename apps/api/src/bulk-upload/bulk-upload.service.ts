@@ -28,6 +28,7 @@ import {
 import {
   ActivityRecordsService,
   DUPLICATE_RECORD_MESSAGE,
+  mayWriteActivityRecords,
 } from '../activity-records/activity-records.service';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
@@ -78,7 +79,8 @@ const COLUMN_NAMES = new Set<string>(BULK_UPLOAD_COLUMNS);
  *
  * Not a product rule — a bound on one synchronous request. Generous enough
  * that no realistic tenant meets it (the largest measured was 10,200 rows at
- * 274 KB), small enough that 60 downloads a minute cannot pin a replica.
+ * 274 KB), small enough that the route's own throttle (see
+ * `bulk-upload.controller.ts`) cannot pin a replica with it.
  */
 const TEMPLATE_ENTITY_LIMIT = 5000;
 
@@ -111,12 +113,28 @@ export class BulkUploadService {
     options: BulkUploadOptionsDto,
   ): Promise<BulkUploadReportDTO> {
     const { dryRun } = options;
+    // The DTO is what makes this a boolean over HTTP; this is what makes the
+    // service refuse rather than guess for any other caller. The loop writes
+    // records whenever `dryRun` is not truthy, so `''`, `0`, `null` or
+    // `undefined` reaching it would mean an import nobody asked for.
+    if (typeof dryRun !== 'boolean') {
+      throw new BadRequestException('dryRun must be true or false.');
+    }
     // Every refusal below this line is audited before it is thrown. The
     // batch row used to be written only after the loop, which meant the one
     // event most worth keeping — a user uploading a file naming another
     // tenant's subsidiaries, or a role that may not author records trying to
     // — left NO trace at all on an append-only compliance trail.
     const rows = await this.auditedRefusal(user, file, dryRun, async () => {
+      // The role FIRST, before the file is parsed. It used to be enforced only
+      // by the record service inside the loop, so its 403 was thrown past this
+      // audited pre-flight and before the batch row: a consultant's import
+      // attempt — the second event the comment above names — still left no
+      // trace (measured: zero audit writes). And a file whose every row failed
+      // validation never reached that check, so the same caller got a 200
+      // report back instead of a refusal. (Multer has already buffered the
+      // upload by now; the 2 MB limit's 413 fires before this service runs.)
+      this.assertMayImport(user);
       this.assertAcceptableFile(file);
       const upload = file as Express.Multer.File;
       const parsed = await parseRows(upload.buffer, upload.originalname);
@@ -148,11 +166,15 @@ export class BulkUploadService {
           { accepted, errors, warnings },
         );
       } catch (error) {
-        // A role that may not author records cannot become one mid-file, so
-        // this can only fire on the first row, before anything is written —
-        // and a thousand identical "forbidden" entries would be a worse answer
-        // than one 403.
-        if (error instanceof ForbiddenException) throw error;
+        // A backstop now, not the gate: the role is refused in the audited
+        // pre-flight above. One 403 beats a thousand identical "forbidden"
+        // rows — but only while nothing has been accepted. After that it would
+        // throw away the report of a partial import (no transaction spans the
+        // batch) and skip the batch audit row below, so it is reported on its
+        // own row like any other refusal.
+        if (error instanceof ForbiddenException && accepted.length === 0) {
+          throw error;
+        }
         errors.push(this.toIssue(parsed.row, error));
       }
     }
@@ -167,17 +189,14 @@ export class BulkUploadService {
     // the caller a 500 with no report — a partial import nobody can enumerate,
     // which is the exact failure this module's design exists to prevent.
     try {
-      await this.audit.record(user, {
-        action: 'create',
-        entity: 'activity_record',
-        // No single entity — the `report` rows set the precedent for this shape.
-        entityId: null,
-        diff: this.batchDiff(upload, dryRun, {
+      await this.recordBatch(
+        user,
+        this.batchDiff(upload, dryRun, {
           totalRows: rows.length,
           acceptedCount: accepted.length,
           rejectedCount: errors.length,
         }),
-      });
+      );
     } catch (error) {
       this.logger.error(
         `bulk import batch audit row failed to write (${accepted.length} records were created)`,
@@ -242,7 +261,7 @@ export class BulkUploadService {
         },
         orderBy: { name: 'asc' },
         // Bounded: measured at 10,000 locations the build is 169 ms and 46 MB,
-        // and this route allows 60 a minute per user. The cap keeps the worst
+        // and this route is throttled per user (see the controller). The cap keeps the worst
         // case off a shared replica; the sheet says when it has bitten, which
         // is the part that must never be silent — a register that quietly
         // omits a site is worse than one that admits it is truncated.
@@ -275,6 +294,13 @@ export class BulkUploadService {
     },
   ): Promise<void> {
     const { row, cells } = parsed;
+    // A row's warnings are published only together with the row itself: they
+    // describe a row that is, or would be, imported — which is what the
+    // contract's warning codes already say they are. Pushed eagerly, a refused
+    // row carried "needs an evidence file before it can be submitted", and the
+    // verdict told a user importing one row of ten that five rows needed
+    // attention (measured).
+    const rowWarnings: BulkUploadRowIssue[] = [];
 
     // FLAG, never neutralise and never refuse. Prefixing an apostrophe on the
     // way IN would store it, re-neutralise it on the next export and corrupt
@@ -282,7 +308,7 @@ export class BulkUploadService {
     // shutdown", which leads with `-` and is an ordinary variance reason.
     // There is no rendering context on ingest, so the value is inert here.
     if (isFormulaLead(cells.varianceReason ?? '')) {
-      out.warnings.push({
+      rowWarnings.push({
         row,
         column: 'varianceReason',
         code: 'formula_lead',
@@ -353,7 +379,7 @@ export class BulkUploadService {
     // upload cannot attach one — so a user importing 500 electricity rows
     // would otherwise see no warnings at all and meet the wall later.
     if (isEvidenceRequired(dto.category)) {
-      out.warnings.push({
+      rowWarnings.push({
         row,
         column: 'category',
         code: 'evidence_required',
@@ -367,7 +393,7 @@ export class BulkUploadService {
         row,
         preview.verdict.anomalous,
         dto.varianceReason,
-        out.warnings,
+        rowWarnings,
       );
       out.accepted.push({
         row,
@@ -376,6 +402,7 @@ export class BulkUploadService {
         tCo2e: this.figureOf(preview.calculation),
         anomalous: preview.verdict.anomalous,
       });
+      out.warnings.push(...rowWarnings);
       return;
     }
 
@@ -384,7 +411,7 @@ export class BulkUploadService {
       row,
       created.anomalyFlag,
       created.varianceReason,
-      out.warnings,
+      rowWarnings,
     );
     out.accepted.push({
       row,
@@ -393,6 +420,7 @@ export class BulkUploadService {
       tCo2e: this.figureOf(created.calculation),
       anomalous: created.anomalyFlag,
     });
+    out.warnings.push(...rowWarnings);
   }
 
   /**
@@ -421,6 +449,17 @@ export class BulkUploadService {
   }
 
   // -- batch pre-flight ------------------------------------------------------
+
+  /**
+   * The rule, and the sentence, the record service applies to every write —
+   * checked here as well so that the refusal happens inside `auditedRefusal`,
+   * before the file is read, rather than from inside the loop.
+   */
+  private assertMayImport(user: RequestUser): void {
+    if (!mayWriteActivityRecords(user)) {
+      throw new ForbiddenException('Your role may not create activity records');
+    }
+  }
 
   private assertAcceptableFile(file: Express.Multer.File | undefined): void {
     if (!file) throw new BadRequestException('No file was uploaded.');
@@ -484,8 +523,11 @@ export class BulkUploadService {
     const shown = offending.slice(0, 10).join(', ');
     const suffix =
       offending.length > 10 ? ` (+${offending.length - 10} more)` : '';
+    // The reason only. The consequence is the client's to state: the panel
+    // prints "Nothing was imported." under EVERY whole-file refusal, and this
+    // sentence saying it as well put it on screen twice.
     throw new BadRequestException(
-      `Row(s) ${shown}${suffix} name a reporting entity that does not exist or is not yours. Nothing was imported.`,
+      `Row(s) ${shown}${suffix} name a reporting entity that does not exist or is not yours.`,
     );
   }
 
@@ -504,7 +546,16 @@ export class BulkUploadService {
    */
   private async loadStoredKeys(rows: ParsedRow[]): Promise<Set<string>> {
     const subsidiaryIds = [
-      ...new Set(rows.map((r) => r.cells.subsidiaryId.trim())),
+      ...new Set(
+        rows
+          .map((r) => r.cells.subsidiaryId.trim())
+          // A BLANK id is refused on its own row by the DTO. Sent to Postgres
+          // it is not a uuid, and this query runs OUTSIDE every catch — so one
+          // empty cell raised P2023 and came back as a 500 with no report and
+          // no audit row. Every non-blank id here already passed the access
+          // check in the pre-flight.
+          .filter((id) => id !== ''),
+      ),
     ];
     const years = [
       ...new Set(
@@ -582,15 +633,18 @@ export class BulkUploadService {
       return await preflight();
     } catch (error) {
       try {
-        await this.audit.record(user, {
-          action: 'create',
-          entity: 'activity_record',
-          entityId: null,
-          diff: this.batchDiff(file, dryRun, {
+        await this.recordBatch(
+          user,
+          this.batchDiff(file, dryRun, {
             refused: true,
-            reason: error instanceof Error ? error.message : 'unknown',
+            // Caller-controlled too: "Unrecognised column(s): …" echoes the
+            // file's own header text. Cleaned and bounded like the filename.
+            reason: this.auditText(
+              error instanceof Error ? error.message : 'unknown',
+              500,
+            ),
           }),
-        });
+        );
       } catch (auditError) {
         // Never let the bookkeeping replace the user's actual error.
         this.logger.error(
@@ -603,12 +657,77 @@ export class BulkUploadService {
   }
 
   /**
+   * Write one batch row — and if the database refuses a VALUE in it, write it
+   * once more without the caller's text.
+   *
+   * Two strings in the diff come from the caller: the filename, and the
+   * refusal's reason (which can echo the file's header). Both callers swallow
+   * a failed write by design — the bookkeeping must never replace the user's
+   * answer — so a value the column would not store erased the trace of the
+   * very event the row exists to keep. `auditText` removes the shapes that
+   * were found; this covers the ones that were not.
+   *
+   * ONLY a value rejection is retried. Those fail before anything commits, so a
+   * second write cannot duplicate the first — whereas a dropped connection or a
+   * timeout can fail after the insert committed, and retrying that would write
+   * the row twice into a table with no delete path.
+   */
+  private async recordBatch(
+    user: RequestUser,
+    diff: Record<string, unknown>,
+  ): Promise<void> {
+    // No single entity — the `report` rows set the precedent for this shape.
+    const entry = {
+      action: 'create',
+      entity: 'activity_record',
+      entityId: null,
+    } as const;
+    try {
+      await this.audit.record(user, { ...entry, diff });
+    } catch (error) {
+      if (!this.isValueRejection(error)) throw error;
+      // Named, never quoted: the message can carry the rejected value itself.
+      this.logger.warn(
+        `bulk import audit row refused a value (${this.errorName(error)}); writing it again without the caller's text`,
+      );
+      const withoutCallerText: Record<string, unknown> = {
+        ...diff,
+        callerTextOmitted: true,
+      };
+      delete withoutCallerText.fileName;
+      delete withoutCallerText.reason;
+      await this.audit.record(user, { ...entry, diff: withoutCallerText });
+    }
+  }
+
+  /**
+   * The database refused a value, as opposed to failing to answer: Postgres'
+   * untranslatable-character, invalid-byte and invalid-text-representation
+   * classes, and Prisma's refusal of a malformed escape — the shapes measured
+   * against the real stack when a filename or reason carried U+0000 or half of
+   * a surrogate pair.
+   */
+  private isValueRejection(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : '';
+    return /\b(?:22P05|22021|22P02)\b|unsupported Unicode escape|invalid byte sequence|hex escape/i.test(
+      `${this.errorName(error)} ${message}`,
+    );
+  }
+
+  /** An error's class and code, for a log line that must not echo its value. */
+  private errorName(error: unknown): string {
+    const code = (error as { code?: unknown } | null)?.code;
+    const name = error instanceof Error ? error.constructor.name : typeof error;
+    return typeof code === 'string' ? `${name} ${code}` : name;
+  }
+
+  /**
    * What goes in the audit row's `diff`.
    *
-   * The filename is truncated. It is caller-controlled (busboy allows ~16 KB
-   * in a part header), it routinely carries a person's name, and `audit_log`
-   * has no delete path — so an untruncated one is un-erasable personal data
-   * under KVKK/GDPR, sized by the uploader.
+   * The filename is bounded. It is caller-controlled (busboy allows ~16 KB in
+   * a part header), it routinely carries a person's name, and `audit_log` has
+   * no delete path — so an unbounded one is un-erasable personal data under
+   * KVKK/GDPR, sized by the uploader.
    */
   private batchDiff(
     file: Express.Multer.File | undefined,
@@ -618,10 +737,44 @@ export class BulkUploadService {
     return {
       bulk: true,
       dryRun,
-      fileName: (file?.originalname ?? '').slice(0, 255),
+      fileName: this.auditText(file?.originalname, 255),
       sizeBytes: file?.size ?? 0,
       ...extra,
     };
+  }
+
+  /**
+   * Caller-controlled text — the filename, a refusal's reason — bounded and
+   * made storable.
+   *
+   * Two shapes made the audit write fail: U+0000, which Postgres refuses inside
+   * `jsonb` (busboy decodes `filename*=UTF-8''probe%00.csv` into exactly that),
+   * and a string cut mid-emoji by a UTF-16 `.slice`, which kept half of a
+   * surrogate pair. So control characters and unpaired surrogates are dropped,
+   * and the bound counts code points: the cut can no longer land inside a
+   * character. Bidi controls and invisible separators go too — rendered in the
+   * audit drawer, `invoice_<U+202E>fdp.xlsx` read as a PDF, and a zero-width
+   * space made two different names indistinguishable. ZWJ and ZWNJ stay: some
+   * scripts and emoji need them.
+   */
+  private auditText(value: string | undefined, max: number): string {
+    const kept: string[] = [];
+    // `for…of` walks code points; an unpaired surrogate arrives on its own.
+    for (const char of value ?? '') {
+      const code = char.codePointAt(0) ?? 0;
+      const control = code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+      const unpaired = char.length === 1 && code >= 0xd800 && code <= 0xdfff;
+      const disguise =
+        (code >= 0x202a && code <= 0x202e) ||
+        (code >= 0x2066 && code <= 0x2069) ||
+        code === 0x200b ||
+        code === 0x2060 ||
+        code === 0xfeff;
+      if (control || unpaired || disguise) continue;
+      kept.push(char);
+      if (kept.length === max) break;
+    }
+    return kept.join('');
   }
 
   // -- helpers ---------------------------------------------------------------
