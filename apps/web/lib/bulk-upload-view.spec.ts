@@ -546,6 +546,64 @@ describe('retry advice', () => {
       '1 row was not. Fix it in your file and upload the file again. 1 row needs attention before it can be submitted — see below.',
     );
   });
+
+  it('counts warned ROWS in the partial verdict too', () => {
+    // The branch the measured "5 rows need attention" came from — and the
+    // warned-rows test above only ever went through the clean one.
+    const s = summarise(
+      report({
+        totalRows: 3,
+        accepted: [accepted(), accepted({ row: 3 })],
+        errors: [issue({ row: 4 })],
+        warnings: [
+          issue({ row: 2, code: 'evidence_required' }),
+          issue({ row: 2, code: 'would_block_submit' }),
+        ],
+      }),
+    );
+    expect(s.detail).toBe(
+      '1 row was not. Fix it in your file and upload the file again. 1 row needs attention before it can be submitted — see below.',
+    );
+  });
+
+  it('counts failed ROWS in the advice, not errors', () => {
+    // One row carrying two errors is still "it" and "that row".
+    const s = summarise(
+      report({
+        dryRun: false,
+        totalRows: 2,
+        accepted: [accepted()],
+        errors: [issue({ row: 3 }), issue({ row: 3, column: 'activityUnit' })],
+      }),
+    );
+    expect(s.detail).toBe(
+      '1 row was not. Fix it and upload a file containing only that row — re-sending the whole file would report the imported ones as duplicates. The imported row is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.',
+    );
+  });
+
+  it('joins the warning sentence and the draft sentence with a space', () => {
+    expect(
+      summarise(report({ dryRun: false, warnings: [issue({ row: 2, code: 'evidence_required' })] }))
+        .detail,
+    ).toBe(
+      '1 row needs attention before it can be submitted — see below. The imported row is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.',
+    );
+  });
+
+  it('uses the plural pronoun for several warned rows', () => {
+    expect(
+      summarise(
+        report({
+          totalRows: 2,
+          accepted: [accepted(), accepted({ row: 3 })],
+          warnings: [
+            issue({ row: 2, code: 'evidence_required' }),
+            issue({ row: 3, code: 'evidence_required' }),
+          ],
+        }),
+      ).detail,
+    ).toBe('2 rows need attention before they can be submitted — see below.');
+  });
 });
 
 describe('tonnesLabel', () => {

@@ -97,7 +97,9 @@ describe('eligibleForSubmit', () => {
     expect(recordIds).toEqual([]);
     expect(blockedReason).toMatch(/evidence file/i);
     expect(blockedReason).toMatch(/cannot attach/i);
-    expect(blockedReason).toContain('2');
+    expect(blockedReason).toBe(
+      'All 2 imported records need an evidence file before they can be submitted, and an import cannot attach one. Open each record below to add its invoice.',
+    );
   });
 
   it('uses the singular for one imported record', () => {

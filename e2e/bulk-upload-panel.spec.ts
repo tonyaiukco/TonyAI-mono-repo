@@ -175,7 +175,7 @@ test('the confirm dialog is the only path to a write, and a double-click writes 
     // Confirm, double-clicked.
     await importButton.click();
     await page.locator('[data-testid="bulk-import-confirm"]').dblclick();
-    await expect(page.getByText(/imported as (a draft|drafts)/i)).toBeVisible();
+    await expect(page.getByText(/1 record imported as a draft\./)).toBeVisible();
 
     // Both assertions are needed: a second apply would come back all
     // `duplicate_existing`, so the row count alone would still read 1.
@@ -269,7 +269,7 @@ test('an all-evidence import explains itself instead of offering a dead button',
     });
     await page.getByRole('button', { name: /^Import / }).click();
     await page.locator('[data-testid="bulk-import-confirm"]').click();
-    await expect(page.getByText(/imported as (a draft|drafts)/i)).toBeVisible();
+    await expect(page.getByText(/1 record imported as a draft\./)).toBeVisible();
 
     // The whole sentence, in the singular because one row was imported:
     // `blockedReason` picks its wording from that count, so a looser matcher
@@ -309,11 +309,11 @@ test('a non-evidence import offers the submit button, and it moves the records',
     });
     await page.getByRole('button', { name: /^Import / }).click();
     await page.locator('[data-testid="bulk-import-confirm"]').click();
-    await expect(page.getByText(/imported as (a draft|drafts)/i)).toBeVisible();
+    await expect(page.getByText(/1 record imported as a draft\./)).toBeVisible();
 
     await page.locator('[data-testid="bulk-submit-button"]').click();
     // The sentence the dialog exists for: there is no author-side un-submit.
-    await expect(page.getByText(/Only a reviewer can send (it|them) back/)).toBeVisible();
+    await expect(page.getByText(/Only a reviewer can send it back/)).toBeVisible();
     await page.locator('[data-testid="bulk-submit-confirm"]').click();
 
     await expect(page.getByText(/now in the review queue/i)).toBeVisible();

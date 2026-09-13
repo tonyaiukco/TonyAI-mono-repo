@@ -117,7 +117,12 @@ test('sends the drafts that were ticked, and leaves the rest a draft', async ({
     // carries the reporting entity — so ticking the wrong row is not something
     // this test can do by accident.
     await list
-      .getByRole('checkbox', { name: new RegExp(`Select Q3 ${E2E_YEAR} ${E2E_BULK_CATEGORY}`) })
+      // Anchored at both ends: the name carries the reporting entity, and a
+      // prefix match stayed green whether this list said "Whole company" — as
+      // the template and every report do — or "Whole subsidiary".
+      .getByRole('checkbox', {
+        name: new RegExp(`^Select Q3 ${E2E_YEAR} ${E2E_BULK_CATEGORY}, Whole company$`),
+      })
       .check();
     await expect(page.locator('[data-testid="drafts-submit-bar"]')).toContainText(
       '1 selected',
@@ -220,6 +225,11 @@ test('a draft you cannot send has no checkbox, and the row says why', async ({
       name: new RegExp(`Select Q1 ${E2E_YEAR} ${E2E_BULK_CATEGORY}`),
     });
     await expect(mineBox).not.toBeChecked();
+    // Its spoken name starts with the text written beside it (WCAG 2.5.3): a
+    // voice-control user says "Select all 2" and has to be understood.
+    await expect(page.locator('[data-testid="drafts-select-all"]')).toHaveAccessibleName(
+      /^Select all \d+: every draft you entered and can send$/,
+    );
     await page.locator('[data-testid="drafts-select-all"]').click();
     await expect(mineBox).toBeChecked();
     await expect(page.locator('[data-testid="drafts-submit-bar"]')).toBeVisible();
