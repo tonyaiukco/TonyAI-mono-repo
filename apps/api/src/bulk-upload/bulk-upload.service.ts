@@ -28,6 +28,7 @@ import {
 import {
   ActivityRecordsService,
   DUPLICATE_RECORD_MESSAGE,
+  mayWriteActivityRecords,
 } from '../activity-records/activity-records.service';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
@@ -78,7 +79,8 @@ const COLUMN_NAMES = new Set<string>(BULK_UPLOAD_COLUMNS);
  *
  * Not a product rule — a bound on one synchronous request. Generous enough
  * that no realistic tenant meets it (the largest measured was 10,200 rows at
- * 274 KB), small enough that 60 downloads a minute cannot pin a replica.
+ * 274 KB), small enough that the route's own throttle (see
+ * `bulk-upload.controller.ts`) cannot pin a replica with it.
  */
 const TEMPLATE_ENTITY_LIMIT = 5000;
 
@@ -117,6 +119,14 @@ export class BulkUploadService {
     // tenant's subsidiaries, or a role that may not author records trying to
     // — left NO trace at all on an append-only compliance trail.
     const rows = await this.auditedRefusal(user, file, dryRun, async () => {
+      // The role FIRST, before the file is even read. It used to be enforced
+      // only by the record service inside the loop, so its 403 was thrown past
+      // this audited pre-flight and before the batch row: a consultant's
+      // import attempt — the second event the comment above names — still left
+      // no trace (measured: zero audit writes). And a file whose every row
+      // failed validation never reached that check, so the same caller got a
+      // 200 report back instead of a refusal.
+      this.assertMayImport(user);
       this.assertAcceptableFile(file);
       const upload = file as Express.Multer.File;
       const parsed = await parseRows(upload.buffer, upload.originalname);
@@ -148,10 +158,10 @@ export class BulkUploadService {
           { accepted, errors, warnings },
         );
       } catch (error) {
-        // A role that may not author records cannot become one mid-file, so
-        // this can only fire on the first row, before anything is written —
-        // and a thousand identical "forbidden" entries would be a worse answer
-        // than one 403.
+        // A backstop now, not the gate: the role is refused in the audited
+        // pre-flight above. If the record service ever refuses a row for a
+        // reason of its own, a thousand identical "forbidden" entries would
+        // still be a worse answer than one 403.
         if (error instanceof ForbiddenException) throw error;
         errors.push(this.toIssue(parsed.row, error));
       }
@@ -242,7 +252,7 @@ export class BulkUploadService {
         },
         orderBy: { name: 'asc' },
         // Bounded: measured at 10,000 locations the build is 169 ms and 46 MB,
-        // and this route allows 60 a minute per user. The cap keeps the worst
+        // and this route is throttled per user (see the controller). The cap keeps the worst
         // case off a shared replica; the sheet says when it has bitten, which
         // is the part that must never be silent — a register that quietly
         // omits a site is worse than one that admits it is truncated.
@@ -275,6 +285,13 @@ export class BulkUploadService {
     },
   ): Promise<void> {
     const { row, cells } = parsed;
+    // A row's warnings are published only together with the row itself: they
+    // describe a row that is, or would be, imported — which is what the
+    // contract's warning codes already say they are. Pushed eagerly, a refused
+    // row carried "needs an evidence file before it can be submitted", and the
+    // verdict told a user importing one row of ten that five rows needed
+    // attention (measured).
+    const rowWarnings: BulkUploadRowIssue[] = [];
 
     // FLAG, never neutralise and never refuse. Prefixing an apostrophe on the
     // way IN would store it, re-neutralise it on the next export and corrupt
@@ -282,7 +299,7 @@ export class BulkUploadService {
     // shutdown", which leads with `-` and is an ordinary variance reason.
     // There is no rendering context on ingest, so the value is inert here.
     if (isFormulaLead(cells.varianceReason ?? '')) {
-      out.warnings.push({
+      rowWarnings.push({
         row,
         column: 'varianceReason',
         code: 'formula_lead',
@@ -353,7 +370,7 @@ export class BulkUploadService {
     // upload cannot attach one — so a user importing 500 electricity rows
     // would otherwise see no warnings at all and meet the wall later.
     if (isEvidenceRequired(dto.category)) {
-      out.warnings.push({
+      rowWarnings.push({
         row,
         column: 'category',
         code: 'evidence_required',
@@ -367,7 +384,7 @@ export class BulkUploadService {
         row,
         preview.verdict.anomalous,
         dto.varianceReason,
-        out.warnings,
+        rowWarnings,
       );
       out.accepted.push({
         row,
@@ -376,6 +393,7 @@ export class BulkUploadService {
         tCo2e: this.figureOf(preview.calculation),
         anomalous: preview.verdict.anomalous,
       });
+      out.warnings.push(...rowWarnings);
       return;
     }
 
@@ -384,7 +402,7 @@ export class BulkUploadService {
       row,
       created.anomalyFlag,
       created.varianceReason,
-      out.warnings,
+      rowWarnings,
     );
     out.accepted.push({
       row,
@@ -393,6 +411,7 @@ export class BulkUploadService {
       tCo2e: this.figureOf(created.calculation),
       anomalous: created.anomalyFlag,
     });
+    out.warnings.push(...rowWarnings);
   }
 
   /**
@@ -421,6 +440,17 @@ export class BulkUploadService {
   }
 
   // -- batch pre-flight ------------------------------------------------------
+
+  /**
+   * The rule, and the sentence, the record service applies to every write —
+   * checked here as well so that the refusal happens inside `auditedRefusal`,
+   * before the file is read, rather than from inside the loop.
+   */
+  private assertMayImport(user: RequestUser): void {
+    if (!mayWriteActivityRecords(user)) {
+      throw new ForbiddenException('Your role may not create activity records');
+    }
+  }
 
   private assertAcceptableFile(file: Express.Multer.File | undefined): void {
     if (!file) throw new BadRequestException('No file was uploaded.');
@@ -484,8 +514,11 @@ export class BulkUploadService {
     const shown = offending.slice(0, 10).join(', ');
     const suffix =
       offending.length > 10 ? ` (+${offending.length - 10} more)` : '';
+    // The reason only. The consequence is the client's to state: the panel
+    // prints "Nothing was imported." under EVERY whole-file refusal, and this
+    // sentence saying it as well put it on screen twice.
     throw new BadRequestException(
-      `Row(s) ${shown}${suffix} name a reporting entity that does not exist or is not yours. Nothing was imported.`,
+      `Row(s) ${shown}${suffix} name a reporting entity that does not exist or is not yours.`,
     );
   }
 

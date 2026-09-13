@@ -422,14 +422,56 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     expect(report.errors[0].message).not.toMatch(/ECONNREFUSED|SELECT|10\.0\.0\.5/);
   });
 
-  it('rethrows a role refusal as one 403, not a thousand row errors', async () => {
+  it('refuses a role that may not author records BEFORE reading the file — and audits it', async () => {
+    // It used to be refused only by the record service inside the loop, so
+    // the 403 was thrown past the audited pre-flight and before the batch row:
+    // a consultant's import attempt left no trace at all.
+    const { audit, prisma, records, service } = build();
+
+    await expect(
+      service.import(
+        dataEntry({ role: 'consultant' }),
+        // Unreadable on purpose: the role refusal must win over a file refusal.
+        csvFile([row()], { originalname: 'x.exe' }),
+        DRY,
+      ),
+    ).rejects.toThrow(new ForbiddenException('Your role may not create activity records'));
+
+    expect(records.previewCreate).not.toHaveBeenCalled();
+    expect(records.create).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record.mock.calls[0][0]).toMatchObject({ role: 'consultant' });
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({
+      refused: true,
+      dryRun: true,
+      reason: 'Your role may not create activity records',
+    });
+  });
+
+  it.each(['consultant', 'executive_viewer'] as const)(
+    'refuses a %s even when no row would have reached the record service',
+    async (role) => {
+      // Every row fails validation, so the loop's own role check never ran and
+      // this caller used to get a 200 report instead of a refusal.
+      const { service } = build();
+
+      await expect(
+        service.import(dataEntry({ role }), csvFile([row({ activityValue: 'abc' })]), DRY),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    },
+  );
+
+  it('still rethrows a refusal the record service raises mid-file as one 403', async () => {
+    // A backstop, not the gate — but a thousand identical "forbidden" row
+    // errors would still be a worse answer than one 403.
     const { records, service } = build();
     records.previewCreate.mockRejectedValue(
       new ForbiddenException('Your role may not create activity records'),
     );
 
     await expect(
-      service.import(dataEntry({ role: 'consultant' }), csvFile([row(), row({ periodValue: 'February' })]), DRY),
+      service.import(dataEntry(), csvFile([row(), row({ periodValue: 'February' })]), DRY),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
@@ -504,6 +546,59 @@ describe('BulkUploadService — warnings', () => {
     expect(records.create.mock.calls[0][1].varianceReason).toBe(
       '-15% after a line shutdown',
     );
+  });
+
+  it('reports warnings only for rows that are, or would be, imported', async () => {
+    // A warning says what happens before a row "can be submitted", which is
+    // noise on a row that will never exist — and counted into the verdict it
+    // told a user importing one row of ten that five needed attention.
+    const { service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([
+        row(), // row 2: imports, and carries the evidence warning
+        row({ periodValue: 'February', activityValue: 'abc', varianceReason: '=SUM(A1)' }), // row 3: invalid
+      ]),
+      DRY,
+    );
+
+    expect(report.accepted.map((a) => a.row)).toEqual([2]);
+    expect(report.errors.map((e) => [e.row, e.code])).toEqual([[3, 'invalid']]);
+    expect(report.warnings.map((w) => [w.row, w.code])).toEqual([[2, 'evidence_required']]);
+  });
+
+  it('drops a row’s warnings when the preview refuses it', async () => {
+    // The measured shape: an electricity row the record service refuses (a
+    // period its granularity does not have) AFTER the evidence warning had
+    // already been pushed.
+    const { records, service } = build();
+    records.previewCreate.mockRejectedValueOnce(
+      new BadRequestException('"Q5" is not a valid period for a quarterly record.'),
+    );
+
+    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+
+    expect(report.errors).toHaveLength(1);
+    expect(report.warnings).toEqual([]);
+  });
+
+  it('drops a row’s warnings when the write itself refuses it', async () => {
+    const { records, service } = build();
+    records.create.mockRejectedValueOnce(
+      new NotFoundException(
+        'No emission factor found for category "Electricity", geography "TR", year 2019',
+      ),
+    );
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ varianceReason: '=1+1' })]),
+      NOTHING,
+    );
+
+    expect(report.errors[0]).toMatchObject({ row: 2, code: 'no_factor' });
+    expect(report.warnings).toEqual([]);
   });
 });
 

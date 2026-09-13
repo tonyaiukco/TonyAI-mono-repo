@@ -87,7 +87,8 @@ attachment), use `supabase-storage` instead.
    number (header = 1, so it matches what Excel shows). Map headers by NAME,
    case- and space-insensitively; refuse unknown, missing and duplicated
    columns rather than dropping them.
-4. **Service** — batch pre-flight (file, parse, row cap, tenant), one query for
+4. **Service** — batch pre-flight (role FIRST, then file, parse, row cap,
+   tenant — all inside the audited refusal), one query for
    stored keys, then the loop: flag → map → validate → dedupe → preview or
    create, catching per row and continuing.
 5. **Controller** — `FileInterceptor('file', { limits, defParamCharset: 'utf8' })`
@@ -112,8 +113,9 @@ attachment), use `supabase-storage` instead.
 
 ```ts
 for (const parsed of rows) {
+  const rowWarnings = [];                           // published only with an accepted row
   try {
-    if (isFormulaLead(cells.freeText)) warn(row, 'formula_lead');   // FLAG only
+    if (isFormulaLead(cells.freeText)) rowWarnings.push(flag(row, 'formula_lead'));  // FLAG only
     const mapped = mapRow(cells);                                   // strict parse
     if ('issue' in mapped) { error(row, mapped.issue); continue; }
     const dto = plainToInstance(CreateXxxDto, mapped.dto);
@@ -132,8 +134,9 @@ for (const parsed of rows) {
 
     if (dryRun) { const p = await svc.previewCreate(user, dto); accept(row, null, p); }
     else        { const r = await svc.create(user, dto);        accept(row, r.id, r); }
+    warnings.push(...rowWarnings);                  // only now: the row exists, or would
   } catch (e) {
-    if (e instanceof ForbiddenException) throw e;   // a role cannot change mid-file
+    if (e instanceof ForbiddenException) throw e;   // backstop: the role is refused in the audited pre-flight
     error(row, mapException(e));                    // continue — never abort
   }
 }
@@ -157,7 +160,26 @@ for (const parsed of rows) {
 - **`dryRun` must not coerce.** `Boolean('yes')` is `true` and `Boolean('0')` is
   `true`; a permissive flag imports a file the user asked to be told about, and
   every row is an audited write. Accept only recognised spellings of true/false
-  and let anything else fail `@IsBoolean`.
+  and let anything else fail `@IsBoolean` — **the empty string included**. The
+  WP8 exemplar shipped `'' → false`, so a blank `dryRun=` field imported the
+  whole file while the docblock above it promised a refusal.
+- **Check the role FIRST, inside the audited pre-flight.** Leaving it to the
+  create service means the 403 is thrown from the loop, past the audited
+  refusal and before the batch row — the attempt leaves no trace — and a file
+  whose every row fails validation never reaches the check, so the caller gets
+  a 200 report instead of a refusal. Keep the in-loop `ForbiddenException`
+  rethrow as a backstop only.
+- **Report warnings only for rows that are, or would be, imported.** Collect a
+  row's warnings locally and publish them with the accepted row. Pushed eagerly,
+  a refused row carried "needs an evidence file before it can be submitted",
+  and the verdict told a user importing one row of ten that five needed
+  attention.
+- **Cap POPULATED rows, not lines.** Every CSV writer ends a file with a newline
+  that the parser returns as one more empty row; counting lines refused exactly
+  1,000 rows saved from Excel as "1001 rows".
+- **Count distinct ROWS in every sentence that says "rows".** One row can carry
+  several errors and several warnings; `errors.length` and `warnings.length`
+  are issue counts.
 
 ## Verify
 

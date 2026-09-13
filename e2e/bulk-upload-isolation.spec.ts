@@ -152,7 +152,9 @@ test('a file naming an entity you cannot reach is refused WHOLE', async ({ reque
   expect(res.status()).toBe(400);
   const { message } = await res.json();
   expect(message).toMatch(/Row\(s\) 3\b/);
-  expect(message).toMatch(/Nothing was imported\./);
+  // The consequence is the panel's to state: it prints "Nothing was imported."
+  // under every whole-file refusal, and the server repeating it showed it twice.
+  expect(message).not.toMatch(/Nothing was imported/);
   // Including the row that WAS reachable.
   expect(
     await serviceReadRecords(

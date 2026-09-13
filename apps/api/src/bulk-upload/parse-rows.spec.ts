@@ -241,6 +241,34 @@ describe('parseRows — the row cap belongs to the parser', () => {
     );
     await expect(parseRows(csv(...ok), 'big.csv')).resolves.toHaveLength(1000);
   });
+
+  const thousand = () =>
+    Array.from({ length: 1000 }, (_, i) => ROW.replace(',2024,', `,${2000 + (i % 100)},`));
+
+  it('counts rows, not lines — a file ending in a newline is not one row longer', async () => {
+    // Every CSV writer ends a file with a newline, and papaparse returns it as
+    // one more, empty, row. Counting lines refused exactly 1,000 rows saved
+    // from Excel as "1001 rows" — at the one size the cap advertises.
+    const lf = Buffer.from(`${[HEADER, ...thousand()].join('\n')}\n`);
+    await expect(parseRows(lf, 'big.csv')).resolves.toHaveLength(1000);
+
+    // What Excel's "CSV UTF-8" writes: a BOM, CRLF, and a trailing CRLF.
+    const excel = Buffer.from(`\uFEFF${[HEADER, ...thousand()].join('\r\n')}\r\n`);
+    await expect(parseRows(excel, 'big.csv')).resolves.toHaveLength(1000);
+  });
+
+  it('does not let blank lines count towards the cap', async () => {
+    const spaced = csv(...thousand().flatMap((line) => [line, '', ' , , ']));
+    await expect(parseRows(spaced, 'big.csv')).resolves.toHaveLength(1000);
+  });
+
+  it('still refuses one populated row over, naming the real count', async () => {
+    const over = Array.from({ length: 1001 }, () => ROW);
+    const trailing = Buffer.from(`${[HEADER, ...over].join('\n')}\n\n`);
+    await expect(parseRows(trailing, 'big.csv')).rejects.toThrow(
+      'The file has 1001 rows; the limit is 1000. Split it and upload the parts.',
+    );
+  });
 });
 
 describe('parseRows — XLSX, the dangerous format', () => {

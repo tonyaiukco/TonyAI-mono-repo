@@ -53,6 +53,18 @@ describe('BulkUploadOptionsDto', () => {
     expect(parse({ dryRun: value }).errors).toHaveLength(1);
   });
 
+  it('refuses an EMPTY value — it used to mean "apply"', () => {
+    // `dryRun=` — the field present but blank — mapped to `false` and imported
+    // the whole file, while the docblock promised that anything unrecognised is
+    // refused. Measured against the built API before this was fixed.
+    expect(parse({ dryRun: '' }).errors).toHaveLength(1);
+  });
+
+  it('refuses null and undefined rather than defaulting to an apply', () => {
+    expect(parse({ dryRun: null }).errors).toHaveLength(1);
+    expect(parse({ dryRun: undefined }).errors).toHaveLength(1);
+  });
+
   it('refuses a repeated field, which arrives as an array', () => {
     expect(parse({ dryRun: ['true', 'false'] }).errors).toHaveLength(1);
   });

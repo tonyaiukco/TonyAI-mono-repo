@@ -157,9 +157,19 @@ function parseCsv(buffer: Buffer): ParsedRow[] {
   // Capped here as well as in the service: the service's check runs AFTER this
   // function returns, so a parser that builds the whole table first has
   // already paid the cost the cap exists to refuse.
-  if (table.length - 1 > BULK_UPLOAD_MAX_ROWS) {
+  //
+  // POPULATED rows are counted, not lines. Every CSV writer ends a file with a
+  // newline, which papaparse returns as one more, empty, row — so counting
+  // `table.length` refused a file of exactly 1,000 rows saved from Excel as
+  // "1001 rows", at the one size the cap advertises. The loop below already
+  // skips blank rows, and the XLSX path already counts populated rows; the CSV
+  // cap now agrees with both.
+  const populated = table
+    .slice(1)
+    .filter((cells) => cells.some((cell) => (cell ?? '').trim() !== '')).length;
+  if (populated > BULK_UPLOAD_MAX_ROWS) {
     throw new BadRequestException(
-      `The file has ${table.length - 1} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
+      `The file has ${populated} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
     );
   }
   const rows: ParsedRow[] = [];
