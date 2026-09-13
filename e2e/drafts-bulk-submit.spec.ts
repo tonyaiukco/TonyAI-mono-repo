@@ -78,9 +78,14 @@ test('sends the drafts that were ticked, and leaves the rest a draft', async ({
   const created: string[] = [];
 
   try {
+    // Pushed as each is created, not after the last one: a throw on the second
+    // would otherwise leave the first outside `created` and outside the
+    // `finally` — a stray `Q3`/`Waste` draft that fails this file's own
+    // `toHaveCount(0)` on the next run.
     const ticked = await createDraft(request, token, { periodValue: 'Q3' });
+    created.push(ticked);
     const untouched = await createDraft(request, token, { periodValue: 'Q4' });
-    created.push(ticked, untouched);
+    created.push(untouched);
 
     await login(page, ENTRY_EMAIL);
     await page.goto('/data-entry');
@@ -141,14 +146,16 @@ test('a draft you cannot send has no checkbox, and the row says why', async ({
 
   try {
     const mine = await createDraft(request, entryToken, { periodValue: 'Q1' });
+    created.push(mine);
     const theirs = await createDraft(request, adminToken, { periodValue: 'Q3' });
+    created.push(theirs);
     const needsInvoice = await createDraft(request, entryToken, {
       periodValue: 'Q4',
       category: 'Electricity',
       activityUnit: 'kWh',
       activityValue: 120000,
     });
-    created.push(mine, theirs, needsInvoice);
+    created.push(needsInvoice);
 
     await login(page, ENTRY_EMAIL);
     await page.goto('/data-entry');

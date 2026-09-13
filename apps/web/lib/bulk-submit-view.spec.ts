@@ -7,14 +7,18 @@ import type {
 } from '@/lib/types';
 import { ApiError } from '@/lib/api';
 import {
+  allEligibleSelected,
+  authoredBy,
   draftsSubmitLabel,
   eligibleForSubmit,
   failuresToShow,
   isPeriodLockedFor,
   MAX_FAILURES_SHOWN,
   needsEvidenceBeforeSubmit,
+  othersWarning,
   selectableDrafts,
   selectAllEligible,
+  selectedFromOthers,
   submitBlockReason,
   submitConfirmation,
   submitErrorMessage,
@@ -22,7 +26,11 @@ import {
   summariseSubmit,
   toggleSelected,
 } from '@/lib/bulk-submit-view';
-import type { LockedPeriod, SubmittableRow } from '@/lib/bulk-submit-view';
+import type {
+  LockedPeriod,
+  SubmittableRow,
+  SubmittingUser,
+} from '@/lib/bulk-submit-view';
 
 function imported(over: Partial<BulkUploadAcceptedRow> = {}): BulkUploadAcceptedRow {
   return {
@@ -273,11 +281,12 @@ describe('submitConfirmation — the zero case', () => {
 // Drafts that did not come from an import (PR 2c)
 // ---------------------------------------------------------------------------
 
-const ME = { id: 'user-me', role: 'data_entry' };
+const ME: SubmittingUser = { id: 'user-me', role: 'data_entry' };
 
 function draft(over: Partial<SubmittableRow> = {}): SubmittableRow {
   return {
     id: 'rec-1',
+    subsidiaryId: 'sub-1',
     status: 'draft',
     // A category that needs NO evidence, so each test below turns on the one
     // thing it is about. `Electricity` appears only where evidence is the point.
@@ -292,6 +301,7 @@ function draft(over: Partial<SubmittableRow> = {}): SubmittableRow {
 }
 
 const lock = (over: Partial<LockedPeriod> = {}): LockedPeriod => ({
+  subsidiaryId: 'sub-1',
   reportingYear: 2026,
   reportingPeriod: 'quarterly',
   periodValue: 'Q1',
@@ -337,6 +347,9 @@ describe('isPeriodLockedFor', () => {
     expect(isPeriodLockedFor(row, [lock({ reportingYear: 2025 })])).toBe(false);
     expect(isPeriodLockedFor(row, [lock({ reportingPeriod: 'monthly' })])).toBe(false);
     expect(isPeriodLockedFor(row, [lock({ periodValue: 'Q2' })])).toBe(false);
+    // The dimension a hand-written shape had dropped: a lock on ANOTHER
+    // subsidiary's identical period must not block this one.
+    expect(isPeriodLockedFor(row, [lock({ subsidiaryId: 'sub-2' })])).toBe(false);
     expect(isPeriodLockedFor(row, [])).toBe(false);
   });
 });
@@ -389,10 +402,20 @@ describe('submitBlockReason', () => {
     expect(submitBlockReason(row, ME, [])).toBe('Already approved.');
   });
 
-  it('offers nothing at all while the user is unknown', () => {
-    // `api.me()` is in flight on first paint. Offering a checkbox and then
-    // retracting it is worse than waiting.
-    expect(submitBlockReason(draft(), null, [])).not.toBeNull();
+  it('refuses a role that may not author records at all, before anything else', () => {
+    // The server refuses the WHOLE request with a 403 — it is not a per-record
+    // code — so a seat demoted out of the write roles would otherwise see live
+    // checkboxes and one refusal for everything it ticked. First, as the server
+    // checks it: a consultant looking at their own old draft gets THIS, not
+    // "Entered by someone else."
+    const mine = draft({ createdBy: 'user-me' });
+    expect(submitBlockReason(mine, { ...ME, role: 'consultant' }, [])).toBe(
+      'Your role cannot submit records.',
+    );
+    expect(submitBlockReason(mine, { ...ME, role: 'executive_viewer' }, [])).toBe(
+      'Your role cannot submit records.',
+    );
+    expect(submitBlockReason(mine, ME, [])).toBeNull();
   });
 
   it('never lets an anomaly flag decide anything', () => {
@@ -430,6 +453,7 @@ describe('selectableDrafts', () => {
   it('selects nothing while the user is unknown', () => {
     expect(selectableDrafts([draft()], null, [])).toEqual({
       selectableIds: [],
+      ownSelectableIds: [],
       reasonById: {},
     });
   });
@@ -485,5 +509,73 @@ describe('draftsSubmitLabel', () => {
     expect(draftsSubmitLabel(1)).toBe('Send 1 record for review');
     expect(draftsSubmitLabel(3)).toBe('Send 3 records for review');
     expect(draftsSubmitLabel(1200)).toBe('Send 1,200 records for review');
+  });
+});
+
+describe('what a super_admin may sweep', () => {
+  const ADMIN: SubmittingUser = { id: 'user-admin', role: 'super_admin' };
+
+  it('lets a super_admin tick a colleague\'s draft, but not sweep one', () => {
+    // The endpoint's own DTO refused to take a FILTER because it would let one
+    // user sweep another's work-in-progress into review in a single call. A
+    // "Select all 240" over other people's rows is that filter wearing a
+    // checkbox — so select-all takes only your own, while ticking one
+    // deliberately stays allowed, because the server allows it and one row at
+    // a time is a different act.
+    const rows = [
+      draft({ id: 'mine', createdBy: ADMIN.id }),
+      draft({ id: 'theirs', createdBy: 'user-them' }),
+    ];
+    const { selectableIds, ownSelectableIds } = selectableDrafts(rows, ADMIN, []);
+    expect(selectableIds).toEqual(['mine', 'theirs']);
+    expect(ownSelectableIds).toEqual(['mine']);
+  });
+
+  it('is the same list for everyone else, because the author gate already ran', () => {
+    const rows = [
+      draft({ id: 'mine', createdBy: ME.id }),
+      draft({ id: 'theirs', createdBy: 'user-them' }),
+    ];
+    const { selectableIds, ownSelectableIds } = selectableDrafts(rows, ME, []);
+    expect(selectableIds).toEqual(['mine']);
+    expect(ownSelectableIds).toEqual(['mine']);
+  });
+
+  it('counts what was ticked from someone else, and says so once', () => {
+    const rows = [
+      draft({ id: 'a', createdBy: ADMIN.id }),
+      draft({ id: 'b', createdBy: 'user-them' }),
+      draft({ id: 'c', createdBy: 'user-other' }),
+    ];
+    expect(selectedFromOthers(rows, ['a', 'b', 'c'], ADMIN)).toBe(2);
+    expect(selectedFromOthers(rows, ['a'], ADMIN)).toBe(0);
+    expect(selectedFromOthers(rows, ['a', 'b'], null)).toBe(0);
+
+    expect(othersWarning(0)).toBeNull();
+    expect(othersWarning(1)).toMatch(/1 of them was entered by someone else/);
+    expect(othersWarning(1)).toMatch(/only a reviewer can send it back/);
+    expect(othersWarning(2)).toMatch(/2 of them were entered by someone else/);
+  });
+
+  it('exempts a super_admin from the author gate, and nobody else', () => {
+    const theirs = draft({ createdBy: 'user-them' });
+    expect(authoredBy(theirs, ADMIN)).toBe(true);
+    expect(authoredBy(theirs, ME)).toBe(false);
+    expect(authoredBy(draft({ createdBy: ME.id }), ME)).toBe(true);
+  });
+});
+
+describe('allEligibleSelected', () => {
+  it('is true when everything takeable is taken', () => {
+    expect(allEligibleSelected(3, 3)).toBe(true);
+    expect(allEligibleSelected(2, 3)).toBe(false);
+    expect(allEligibleSelected(0, 0)).toBe(false);
+  });
+
+  it('compares against the CAP, so the master control can still clear', () => {
+    // It compared against the raw count, so above the cap it was permanently
+    // unchecked — and an unchecked master sends `on = true`, which re-selects
+    // the same thousand. The control could never be used to clear.
+    expect(allEligibleSelected(BULK_SUBMIT_MAX_IDS, BULK_SUBMIT_MAX_IDS + 50)).toBe(true);
   });
 });

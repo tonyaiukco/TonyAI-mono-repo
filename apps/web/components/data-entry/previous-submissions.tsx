@@ -28,10 +28,13 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { formatTCo2e } from "@/lib/calculation-display";
 import {
+  allEligibleSelected,
   BULK_SUBMIT_MAX_IDS,
   draftsSubmitLabel,
   failuresToShow,
+  othersWarning,
   selectableDrafts,
+  selectedFromOthers,
   selectAllEligible,
   submitConfirmation,
   submitErrorMessage,
@@ -140,7 +143,7 @@ export function PreviousSubmissions({
   const [submitting, setSubmitting] = useState(false);
   const [report, setReport] = useState<BulkSubmitReportDTO | null>(null);
 
-  const { selectableIds, reasonById } = useMemo(
+  const { selectableIds, ownSelectableIds, reasonById } = useMemo(
     () => selectableDrafts(records, user, locks),
     [records, user, locks],
   );
@@ -150,6 +153,11 @@ export function PreviousSubmissions({
   // refuse and the count on the button is a lie.
   const live = selected.filter((id) => selectableIds.includes(id));
   const showSelection = user !== null && selectableIds.length > 0;
+  // The master control speaks for what `select all` can take — your own rows —
+  // not for rows you ticked one at a time from someone else.
+  const liveOwn = live.filter((id) => ownSelectableIds.includes(id));
+  const fromOthers = selectedFromOthers(records, live, user);
+  const warning = othersWarning(fromOthers);
   const summary = report ? summariseSubmit(report) : null;
 
   function toggle(id: string) {
@@ -165,9 +173,17 @@ export function PreviousSubmissions({
   }
 
   function selectAll() {
-    const { selected: next, overCap } = selectAllEligible(selectableIds);
+    // Own rows only — see `DraftSelection.ownSelectableIds`. A `super_admin`
+    // may still tick a colleague's row deliberately; what they cannot do is
+    // sweep a subsidiary's worth of other people's drafts with one click.
+    const { selected: next, overCap } = selectAllEligible(ownSelectableIds);
     setReport(null);
     setSelected(next);
+    if (selectableIds.length > ownSelectableIds.length) {
+      toast.info(
+        `Selected your own ${next.length.toLocaleString("en-GB")}. Records entered by someone else have to be ticked one at a time.`,
+      );
+    }
     if (overCap > 0) {
       toast.info(
         `Selected the first ${next.length.toLocaleString("en-GB")}. ${overCap.toLocaleString("en-GB")} more can go in a second submission.`,
@@ -200,15 +216,15 @@ export function PreviousSubmissions({
           <Clock className="h-4 w-4 text-muted-foreground" />
           Previous submissions
         </CardTitle>
-        {selectableIds.length > 0 && (
+        {ownSelectableIds.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <Checkbox
               data-testid="drafts-select-all"
-              checked={live.length > 0 && live.length === selectableIds.length}
+              checked={allEligibleSelected(liveOwn.length, ownSelectableIds.length)}
               onCheckedChange={(on) => (on ? selectAll() : setSelected([]))}
-              aria-label="Select every draft you can send"
+              aria-label="Select every draft you entered and can send"
             />
-            Select all {selectableIds.length}
+            Select all {ownSelectableIds.length}
           </label>
         )}
       </CardHeader>
@@ -415,7 +431,17 @@ export function PreviousSubmissions({
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Send these for review?</DialogTitle>
-              <DialogDescription>{submitConfirmation(live)}</DialogDescription>
+              <DialogDescription>
+                {submitConfirmation(live)}
+                {/* The sentence the shared one cannot carry: on the import
+                    surface every row is the importer's own by construction, so
+                    this case only exists here. */}
+                {warning && (
+                  <span className="mt-2 block" data-testid="drafts-submit-others">
+                    {warning}
+                  </span>
+                )}
+              </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setConfirming(false)}>

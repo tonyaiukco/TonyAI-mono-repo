@@ -1,15 +1,24 @@
 import {
+  acceptsBulkSubmit,
   BULK_SUBMIT_MAX_IDS,
-  isBulkSubmittable,
-  isEvidenceRequired,
   isSubmittable,
+  needsEvidenceBeforeSubmit,
 } from '@/lib/types';
 import type {
+  ActivityRecordDTO,
+  AuthUser,
   BulkSubmitIssue,
   BulkSubmitIssueCode,
   BulkSubmitReportDTO,
   BulkUploadAcceptedRow,
+  PeriodLockDTO,
 } from '@/lib/types';
+// The role gate, reused rather than written a fourth time. Its name is about
+// the import panel because that is where it started; the set it encodes is
+// `WRITE_ROLES`, which is what gates every record write including this one.
+// (Follow-up recorded in the status log: promote the server's
+// `mayWriteActivityRecords` into the contract and collapse the web copies.)
+import { canBulkUpload } from '@/lib/bulk-upload-view';
 import { ApiError } from '@/lib/api';
 import { formatNumber } from '@/lib/utils';
 
@@ -22,7 +31,7 @@ import { formatNumber } from '@/lib/utils';
  * component has no coverage in either direction.
  */
 
-export { BULK_SUBMIT_MAX_IDS } from '@/lib/types';
+export { BULK_SUBMIT_MAX_IDS, needsEvidenceBeforeSubmit } from '@/lib/types';
 
 /** What each refusal is called on screen. Exhaustive, so a new code is a
  *  compile error here rather than a blank label in front of a user. */
@@ -207,72 +216,82 @@ export function submitErrorMessage(error: unknown): string {
 // be someone else's, may already have moved on, and may carry evidence — so the
 // client mirrors the gates the server applies and offers a checkbox only where
 // all of them pass.
+//
+// The evidence rule itself is NOT here: it is `needsEvidenceBeforeSubmit` in
+// the contract, so that this gate and the one in `ActivityRecordsService.submit`
+// cannot drift. Re-exported above, because that is where this module's callers
+// already look for it.
 // ---------------------------------------------------------------------------
 
 /**
- * Does this record still need an evidence file before it can be submitted?
+ * The fields of a record this module reads.
  *
- * The one rule, shared by both submit surfaces. Category ALONE is not the rule
- * and never was — it only looked like it on the import surface, where every row
- * is new and therefore has no files. A draft that has been sitting on the
- * Previous-submissions list with its invoice attached is submittable, and a
- * category-only check would refuse it forever.
+ * `Pick` of the contract, not a hand-written shape. Restating them widened
+ * `status`, `category` and `reportingPeriod` to `string` — and
+ * `isPeriodLockedFor` compares `reportingPeriod` across two of these types, so
+ * two independently-widened `string`s would keep comparing green if the unions
+ * ever diverged. A period-lock mirror that fails OPEN is the one failure mode
+ * worth a type for.
  */
-export function needsEvidenceBeforeSubmit(row: {
-  category: string;
-  evidenceCount: number;
-}): boolean {
-  return isEvidenceRequired(row.category) && row.evidenceCount === 0;
-}
-
-/** The fields of a record this module actually reads. Structural, so the page
- *  passes `ActivityRecordDTO`s straight through and the spec needs no fixture
- *  of the whole contract. */
-export interface SubmittableRow {
-  id: string;
-  status: string;
-  category: string;
-  evidenceCount: number;
-  createdBy: string;
-  reportingYear: number;
-  reportingPeriod: string;
-  periodValue: string;
-}
+export type SubmittableRow = Pick<
+  ActivityRecordDTO,
+  | 'id'
+  | 'status'
+  | 'category'
+  | 'evidenceCount'
+  | 'createdBy'
+  | 'subsidiaryId'
+  | 'reportingYear'
+  | 'reportingPeriod'
+  | 'periodValue'
+>;
 
 /** Who is asking. `null` while `api.me()` is still in flight. */
-export interface SubmittingUser {
-  id: string;
-  role: string;
-}
+export type SubmittingUser = Pick<AuthUser, 'id' | 'role'>;
 
 /** The fields of a period lock this module reads. */
-export interface LockedPeriod {
-  reportingYear: number;
-  reportingPeriod: string;
-  periodValue: string;
-}
+export type LockedPeriod = Pick<
+  PeriodLockDTO,
+  'subsidiaryId' | 'reportingYear' | 'reportingPeriod' | 'periodValue'
+>;
 
 /** Is this record's own reporting period closed? */
 export function isPeriodLockedFor(
-  row: Pick<SubmittableRow, 'reportingYear' | 'reportingPeriod' | 'periodValue'>,
+  row: Pick<
+    SubmittableRow,
+    'subsidiaryId' | 'reportingYear' | 'reportingPeriod' | 'periodValue'
+  >,
   locks: LockedPeriod[],
 ): boolean {
   return locks.some(
     (l) =>
+      // `subsidiaryId` included even though every caller today fetches the
+      // locks and the records for the same subsidiary. Without it the
+      // comparison is one shared list away from under-blocking, and
+      // under-blocking here means offering a checkbox that returns
+      // `period_locked`.
+      l.subsidiaryId === row.subsidiaryId &&
       l.reportingYear === row.reportingYear &&
       l.reportingPeriod === row.reportingPeriod &&
       l.periodValue === row.periodValue,
   );
 }
 
+/** Is this record the caller's own to send? `super_admin` is exempt, exactly as
+ *  `preflight` is. */
+export function authoredBy(row: SubmittableRow, user: SubmittingUser): boolean {
+  return user.role === 'super_admin' || row.createdBy === user.id;
+}
+
 /**
  * Why this record has no checkbox, or `null` when it has one.
  *
- * The order is `preflight`'s order, so the sentence a user reads is the refusal
- * they would have been handed had the checkbox been offered anyway — status,
- * then authorship, then the two gates `submit` itself applies. Mirroring rather
- * than inventing is the whole point: a client rule the server does not share is
- * how a checkbox starts promising something that comes back refused.
+ * The order is the server's order — role, then status, then authorship, then
+ * the two gates `submit` itself applies — so the sentence a user reads is the
+ * refusal they would have been handed had the checkbox been offered anyway.
+ * Mirroring rather than inventing is the whole point: a client rule the server
+ * does not share is how a checkbox starts promising something that comes back
+ * refused.
  *
  * What is deliberately NOT mirrored is the anomaly gate. `anomalyFlag` on the
  * record is the verdict from when it was written, `submit` recomputes it, and
@@ -285,11 +304,14 @@ export function isPeriodLockedFor(
  */
 export function submitBlockReason(
   row: SubmittableRow,
-  user: SubmittingUser | null,
+  user: SubmittingUser,
   locks: LockedPeriod[],
 ): string | null {
-  if (!user) return 'Loading your account…';
-  if (!isBulkSubmittable(row.status)) {
+  // First, as the server does — and it refuses the WHOLE request, not the
+  // record, so without this a demoted seat gets a live button and one 403 for
+  // everything they ticked. `/data-entry` carries no role filter of its own.
+  if (!canBulkUpload(user)) return 'Your role cannot submit records.';
+  if (!acceptsBulkSubmit(row.status)) {
     // `rejected` is the one worth a sentence rather than a status echo: the
     // list presents it as editable, so a missing checkbox looks like a bug
     // instead of the deliberate exclusion it is.
@@ -297,9 +319,7 @@ export function submitBlockReason(
       ? 'Sent back by a reviewer — open it on its own, so the note gets read.'
       : `Already ${row.status.replace(/_/g, ' ')}.`;
   }
-  if (user.role !== 'super_admin' && row.createdBy !== user.id) {
-    return 'Entered by someone else.';
-  }
+  if (!authoredBy(row, user)) return 'Entered by someone else.';
   if (isPeriodLockedFor(row, locks)) {
     return `${row.periodValue} ${row.reportingYear} is locked.`;
   }
@@ -310,6 +330,20 @@ export function submitBlockReason(
 export interface DraftSelection {
   /** Ids that may be ticked, in the order they were given. */
   selectableIds: string[];
+  /**
+   * The subset a `select all` may take: the ones this user AUTHORED.
+   *
+   * Identical to `selectableIds` for everyone except a `super_admin`, whose
+   * author gate never fires — so without this, one control on a subsidiary's
+   * page reads "Select all 240" and sweeps two hundred of three colleagues'
+   * half-finished drafts into review, where they can no longer edit them and
+   * only a reviewer can send them back. The endpoint's own DTO refused to take
+   * a filter for exactly that reason; a select-all over other people's rows is
+   * that filter wearing a checkbox. Ticking one deliberately is still allowed,
+   * because the server allows it and doing it one row at a time is a different
+   * act.
+   */
+  ownSelectableIds: string[];
   /**
    * Why a row has no checkbox — but only for the rows that LOOK selectable.
    *
@@ -332,19 +366,50 @@ export function selectableDrafts(
   // `api.me()` is in flight — it would rather open a record than block one —
   // but offering a checkbox and then retracting it is the opposite trade, so
   // this one waits.
-  if (!user) return { selectableIds: [], reasonById: {} };
+  if (!user) return { selectableIds: [], ownSelectableIds: [], reasonById: {} };
 
   const selectableIds: string[] = [];
+  const ownSelectableIds: string[] = [];
   const reasonById: Record<string, string> = {};
   for (const row of rows) {
     const reason = submitBlockReason(row, user, locks);
     if (reason === null) {
       selectableIds.push(row.id);
+      if (row.createdBy === user.id) ownSelectableIds.push(row.id);
     } else if (isSubmittable(row.status)) {
       reasonById[row.id] = reason;
     }
   }
-  return { selectableIds, reasonById };
+  return { selectableIds, ownSelectableIds, reasonById };
+}
+
+/** How many of the selected records someone else entered. Zero for everyone
+ *  but a `super_admin`, whose author gate never fires. */
+export function selectedFromOthers(
+  rows: SubmittableRow[],
+  selectedIds: string[],
+  user: SubmittingUser | null,
+): number {
+  if (!user) return 0;
+  return rows.filter(
+    (r) => selectedIds.includes(r.id) && r.createdBy !== user.id,
+  ).length;
+}
+
+/**
+ * The extra sentence the confirm step needs when the selection is not all
+ * yours, or `null` when it is.
+ *
+ * Separate from `submitConfirmation`, which both surfaces share and where this
+ * case cannot arise — an import's rows are the importer's own by construction.
+ */
+export function othersWarning(count: number): string | null {
+  if (count <= 0) return null;
+  return `${formatNumber(count)} of ${
+    count === 1 ? 'them was' : 'them were'
+  } entered by someone else. They will not be able to edit ${
+    count === 1 ? 'it' : 'them'
+  } again — only a reviewer can send ${count === 1 ? 'it' : 'them'} back.`;
 }
 
 /**
@@ -382,6 +447,22 @@ export function selectAllEligible(selectableIds: string[]): {
     selected: selectableIds.slice(0, BULK_SUBMIT_MAX_IDS),
     overCap: Math.max(0, selectableIds.length - BULK_SUBMIT_MAX_IDS),
   };
+}
+
+/**
+ * Is the master checkbox checked?
+ *
+ * Against what `select all` can actually take, which is capped. Comparing
+ * against the raw count instead left the control permanently unchecked above
+ * the cap — and since an unchecked master sends `on = true`, clicking it just
+ * re-selected the same thousand and it could never be used to clear.
+ */
+export function allEligibleSelected(
+  selectedCount: number,
+  selectableCount: number,
+): boolean {
+  const takeable = Math.min(selectableCount, BULK_SUBMIT_MAX_IDS);
+  return takeable > 0 && selectedCount >= takeable;
 }
 
 /** The label on the bulk bar's button. */

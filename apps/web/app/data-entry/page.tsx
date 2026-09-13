@@ -299,6 +299,29 @@ function DataEntryPageInner() {
 
   // --- Data loading ---------------------------------------------------------
 
+  /**
+   * Keep the record list's evidence count in step with the vault.
+   *
+   * `evidenceCount` is a read-time snapshot from the list endpoint, and the
+   * checkbox on Previous submissions reads it — so without this, attaching the
+   * invoice an Electricity draft is waiting for leaves the row still saying
+   * "Needs an evidence file", with no checkbox, until something else happens to
+   * refetch. That is the one category the feature most needs to work on.
+   *
+   * `useCallback`, and not an inline arrow: `EvidenceVault.refresh` lists this
+   * among its dependencies and an effect calls it, so a handler with a new
+   * identity every render would refetch the vault forever. Patching the one row
+   * rather than refetching the list keeps it to no requests at all.
+   */
+  const handleEvidenceCountChange = useCallback(
+    (count: number) => {
+      setRecords((rows) =>
+        rows.map((r) => (r.id === editingId ? { ...r, evidenceCount: count } : r)),
+      );
+    },
+    [editingId],
+  );
+
   const refreshRecords = useCallback(async (subId: string) => {
     if (!subId) {
       setRecords([]);
@@ -324,6 +347,13 @@ function DataEntryPageInner() {
       // the one moment a user looks straight at it for confirmation.
       setCoverageKey((n) => n + 1);
     } catch (e) {
+      // Cleared, not kept. Leaving the previous subsidiary's rows on screen
+      // under the new subsidiary's header is bad enough while they are only
+      // openable; with checkboxes beside them it is an irreversible action
+      // offered against records the screen no longer claims to be showing.
+      setRecords([]);
+      setLocks([]);
+      setRecordsFetchedFor(null);
       toast.error((e as Error).message);
     } finally {
       setRecordsLoading(false);
@@ -1216,6 +1246,7 @@ function DataEntryPageInner() {
                   key={editingId}
                   recordId={editingId}
                   category={category}
+                  onCountChange={handleEvidenceCountChange}
                   // A consultant is review-only (decision 2026-07-30) and the
                   // evidence API 403s them, so offering upload/delete controls
                   // here only produced a button that always failed.
@@ -1343,6 +1374,11 @@ function DataEntryPageInner() {
               />
 
               <PreviousSubmissions
+                // Remounted per subsidiary, so a selection cannot survive a
+                // switch. Without it, A -> B -> A resurrects ticks the user
+                // made minutes ago, and a failed refetch leaves A's rows —
+                // still tickable — under B's header.
+                key={subsidiaryId}
                 records={records}
                 loading={recordsLoading}
                 onOpen={loadRecord}

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
+  acceptsBulkSubmit,
+  BULK_SUBMITTABLE_STATUSES,
+  isSubmittable,
+  needsEvidenceBeforeSubmit,
+  SUBMITTABLE_STATUSES,
   ANOMALY_BASELINE_PERIODS,
   anomalyNotEvaluated,
   computeAnomalyVerdict,
@@ -665,3 +670,50 @@ describe('bulk submit — the code list', () => {
   });
 });
 
+
+describe('the two submittable gates', () => {
+  it('pins what a BULK submit accepts, at the source', () => {
+    // The product's narrowest lifecycle gate, and until now it was asserted
+    // only downstream — by an API service spec and a web view spec. Widening
+    // it should go red HERE, in the contract's own suite, because widening it
+    // turns the route into a mass reviewer-decision-reversal endpoint.
+    expect(BULK_SUBMITTABLE_STATUSES).toEqual(['draft']);
+    expect(SUBMITTABLE_STATUSES).toEqual(['draft', 'rejected']);
+  });
+
+  it('keeps the narrow gate narrower than the wide one', () => {
+    // `rejected` is the whole difference, and the whole point.
+    expect(isSubmittable('rejected')).toBe(true);
+    expect(acceptsBulkSubmit('rejected')).toBe(false);
+    expect(acceptsBulkSubmit('draft')).toBe(true);
+    for (const status of ['submitted', 'under_review', 'approved', 'locked', 'voided']) {
+      expect(acceptsBulkSubmit(status)).toBe(false);
+      expect(isSubmittable(status)).toBe(false);
+    }
+  });
+
+  it('fails closed on anything that is not a status', () => {
+    for (const junk of ['', 'Draft', ' draft', 'DRAFT']) {
+      expect(acceptsBulkSubmit(junk)).toBe(false);
+      expect(isSubmittable(junk)).toBe(false);
+    }
+  });
+});
+
+describe('needsEvidenceBeforeSubmit', () => {
+  it('is category AND file count — the copy that was wrong for two work packages', () => {
+    expect(needsEvidenceBeforeSubmit({ category: 'Electricity', evidenceCount: 0 })).toBe(true);
+    // The case the category-only copy refused forever.
+    expect(needsEvidenceBeforeSubmit({ category: 'Electricity', evidenceCount: 1 })).toBe(false);
+    expect(needsEvidenceBeforeSubmit({ category: 'Business Travel', evidenceCount: 0 })).toBe(false);
+  });
+
+  it('covers every evidence-required category and nothing else', () => {
+    for (const category of EVIDENCE_REQUIRED_CATEGORIES) {
+      expect(needsEvidenceBeforeSubmit({ category, evidenceCount: 0 })).toBe(true);
+    }
+    for (const category of CATEGORIES.filter((c) => !EVIDENCE_REQUIRED_CATEGORIES.includes(c))) {
+      expect(needsEvidenceBeforeSubmit({ category, evidenceCount: 0 })).toBe(false);
+    }
+  });
+});
