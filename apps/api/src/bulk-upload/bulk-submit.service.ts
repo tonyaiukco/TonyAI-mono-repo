@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ActivityRecordStatus } from '@tonyai/db';
 import {
-  BULK_SUBMITTABLE_STATUSES,
+  acceptsBulkSubmit,
   isCalculated,
   type ActivityRecordDTO,
   type BulkSubmitAcceptedRecord,
@@ -182,9 +182,9 @@ export class BulkSubmitService {
         });
         continue;
       }
-      if (
-        !(BULK_SUBMITTABLE_STATUSES as readonly string[]).includes(row.status)
-      ) {
+      // The shared predicate, so the checkbox the client offers and the gate
+      // that answers it cannot drift apart.
+      if (!acceptsBulkSubmit(row.status)) {
         rejected.push({
           recordId: id,
           code: 'not_submittable',

@@ -21,6 +21,7 @@ import {
   SUBMITTABLE_STATUSES as SUBMITTABLE_STATUSES_CONTRACT,
   isCalculated,
   isEvidenceRequired,
+  needsEvidenceBeforeSubmit,
   type ActivityCalculationSnapshot,
   type ActivityRecordDTO,
   type AuditAction,
@@ -970,15 +971,17 @@ export class ActivityRecordsService {
     );
     // Evidence gate (FR §4.1 / §5.4): categories configured as evidence-required
     // cannot be submitted without at least one supporting file.
-    if (isEvidenceRequired(record.category)) {
-      const evidenceCount = await this.prisma.evidence.count({
-        where: { activityRecordId: id },
-      });
-      if (evidenceCount === 0) {
-        throw new BadRequestException(
-          `Category "${record.category}" ${EVIDENCE_REFUSAL_FRAGMENT}.`,
-        );
-      }
+    // The count is only worth a query when the category could need one, so the
+    // short-circuit stays here; the RULE over the two values is the contract's,
+    // shared with the checkbox the client offers, because it has already been
+    // copied wrongly once.
+    const evidenceCount = isEvidenceRequired(record.category)
+      ? await this.prisma.evidence.count({ where: { activityRecordId: id } })
+      : 0;
+    if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
+      throw new BadRequestException(
+        `Category "${record.category}" ${EVIDENCE_REFUSAL_FRAGMENT}.`,
+      );
     }
     // Anomaly gate (VAR §2.2 / §4.3 / §8): re-evaluate against the baseline as of
     // submit time — a comparable period may have been committed since the draft

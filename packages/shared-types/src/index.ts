@@ -1929,6 +1929,28 @@ export function isEvidenceRequired(category: string): boolean {
 }
 
 /**
+ * Does this record still need an evidence file before it can be submitted?
+ *
+ * Here, and not once per side, because it is a compliance rule and it has
+ * already been copied wrongly once: the bulk importer held a row back on its
+ * CATEGORY alone, which only looks like this rule because every imported row is
+ * brand new and therefore has no files. A draft that has been sitting on the
+ * record list with its invoice attached is submittable, and the category-only
+ * copy refused it forever. The count is an INPUT — the API counts rows, the web
+ * reads `ActivityRecordDTO.evidenceCount` — but the rule over those two values
+ * is one rule.
+ *
+ * The refusal SENTENCE stays with the thrower (`EVIDENCE_REFUSAL_FRAGMENT`);
+ * only the predicate lives here.
+ */
+export function needsEvidenceBeforeSubmit(row: {
+  category: string;
+  evidenceCount: number;
+}): boolean {
+  return isEvidenceRequired(row.category) && row.evidenceCount === 0;
+}
+
+/**
  * Categories tracked at INVOICE level for completeness: one invoice per
  * location per month (WP17 / round-1 DASH-3, product decision 2026-07-31).
  * Every other category stays a simple complete/incomplete.
@@ -2803,7 +2825,9 @@ export const SUBMITTABLE_STATUSES = [
 ] as const satisfies readonly ActivityRecordStatus[];
 
 /** True when a record is at a point in its life where it can be submitted. */
-export function isSubmittable(status: string): boolean {
+export function isSubmittable(
+  status: string,
+): status is (typeof SUBMITTABLE_STATUSES)[number] {
   return (SUBMITTABLE_STATUSES as readonly string[]).includes(status);
 }
 
@@ -2820,6 +2844,31 @@ export function isSubmittable(status: string): boolean {
 export const BULK_SUBMITTABLE_STATUSES = [
   'draft',
 ] as const satisfies readonly ActivityRecordStatus[];
+
+/**
+ * True when a record is at a point in its life where a BULK submit accepts it.
+ *
+ * The predicate rather than the array, because two gates have to agree — the
+ * server's `preflight` and the checkbox the client offers — and the one thing
+ * that must never happen is the client offering a selection the server refuses
+ * as `not_submittable`. `isSubmittable` is the trap: it admits `rejected`,
+ * which this path excludes on purpose.
+ *
+ * Deliberately NOT called `isBulkSubmittable`. That name shares a prefix with
+ * the wider predicate, so an editor offers `isSubmittable` first and the
+ * narrower one never surfaces — the completion list would quietly hand every
+ * caller the trap. This name reads as a statement about the ROUTE, which is
+ * what it is: `preflight`'s rule, not the lifecycle's.
+ *
+ * The return is a type guard so that code after an early `continue` on a
+ * refusal has `status` narrowed to `'draft'` — a future branch that tries to
+ * handle `rejected` there fails to compile instead of shipping.
+ */
+export function acceptsBulkSubmit(
+  status: string,
+): status is (typeof BULK_SUBMITTABLE_STATUSES)[number] {
+  return (BULK_SUBMITTABLE_STATUSES as readonly string[]).includes(status);
+}
 
 /**
  * Every way a bulk submit can refuse ONE record — one code per precondition in

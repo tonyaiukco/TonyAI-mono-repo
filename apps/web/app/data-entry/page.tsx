@@ -20,17 +20,13 @@ import {
 } from "@/components/ui/select";
 import {
   AlertCircle,
-  Ban,
   Calculator,
-  CheckCircle2,
-  Clock,
   Info,
   Leaf,
   LogOut,
   MoveRight,
   Save,
   Send,
-  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
@@ -56,8 +52,8 @@ import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import { CoveragePanel } from "@/components/data-entry/coverage-panel";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
+import { PreviousSubmissions } from "@/components/data-entry/previous-submissions";
 import { canBulkUpload } from "@/lib/bulk-upload-view";
-import { isSubmittable } from "@/lib/types";
 import {
   ACTIVITY_UNITS,
   appliesUnitConversion,
@@ -80,7 +76,6 @@ import {
 import type {
   ActivityCalculationSnapshot,
   ActivityRecordDTO,
-  ActivityRecordStatus,
   Category,
   LocationDTO,
   PeriodLockDTO,
@@ -105,53 +100,6 @@ const PERIODS: { value: ReportingPeriod; label: string }[] = [
 // The canonical vocabulary, from the contract rather than a local copy: this
 // dropdown decides what a user can send, and the server now stores exactly
 // these spellings. A copy that drifted would offer a value the API rejects.
-
-// --- Status badge styling (matches subsidiaries page emerald/amber palette) --
-
-const statusBadge: Record<
-  ActivityRecordStatus,
-  { label: string; className: string; icon: typeof CheckCircle2 }
-> = {
-  draft: {
-    label: "Draft",
-    className: "bg-muted text-muted-foreground border-border",
-    icon: Clock,
-  },
-  submitted: {
-    label: "Submitted",
-    className: "bg-blue-500/15 text-blue-600 border-blue-500/30",
-    icon: Send,
-  },
-  under_review: {
-    label: "Under review",
-    className: "bg-purple-500/15 text-purple-600 border-purple-500/30",
-    icon: Clock,
-  },
-  approved: {
-    label: "Approved",
-    className: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30",
-    icon: CheckCircle2,
-  },
-  rejected: {
-    label: "Rejected",
-    className: "bg-red-500/15 text-red-600 border-red-500/30",
-    icon: XCircle,
-  },
-  locked: {
-    label: "Locked",
-    className: "bg-slate-500/15 text-slate-600 border-slate-500/30",
-    icon: CheckCircle2,
-  },
-  // Deliberately muted rather than red. A voided record is not a failure or a
-  // rejection — it is a figure a reviewer accepted and someone later withdrew
-  // by an audited void. Red would read as "this went wrong"; `rejected` already owns
-  // that colour and means something different.
-  voided: {
-    label: "Voided",
-    className: "bg-muted text-muted-foreground border-border line-through",
-    icon: Ban,
-  },
-};
 
 const numberFmt = new Intl.NumberFormat("en-GB", {
   maximumFractionDigits: 3,
@@ -351,6 +299,29 @@ function DataEntryPageInner() {
 
   // --- Data loading ---------------------------------------------------------
 
+  /**
+   * Keep the record list's evidence count in step with the vault.
+   *
+   * `evidenceCount` is a read-time snapshot from the list endpoint, and the
+   * checkbox on Previous submissions reads it — so without this, attaching the
+   * invoice an Electricity draft is waiting for leaves the row still saying
+   * "Needs an evidence file", with no checkbox, until something else happens to
+   * refetch. That is the one category the feature most needs to work on.
+   *
+   * `useCallback`, and not an inline arrow: `EvidenceVault.refresh` lists this
+   * among its dependencies and an effect calls it, so a handler with a new
+   * identity every render would refetch the vault forever. Patching the one row
+   * rather than refetching the list keeps it to no requests at all.
+   */
+  const handleEvidenceCountChange = useCallback(
+    (count: number) => {
+      setRecords((rows) =>
+        rows.map((r) => (r.id === editingId ? { ...r, evidenceCount: count } : r)),
+      );
+    },
+    [editingId],
+  );
+
   const refreshRecords = useCallback(async (subId: string) => {
     if (!subId) {
       setRecords([]);
@@ -376,6 +347,13 @@ function DataEntryPageInner() {
       // the one moment a user looks straight at it for confirmation.
       setCoverageKey((n) => n + 1);
     } catch (e) {
+      // Cleared, not kept. Leaving the previous subsidiary's rows on screen
+      // under the new subsidiary's header is bad enough while they are only
+      // openable; with checkboxes beside them it is an irreversible action
+      // offered against records the screen no longer claims to be showing.
+      setRecords([]);
+      setLocks([]);
+      setRecordsFetchedFor(null);
       toast.error((e as Error).message);
     } finally {
       setRecordsLoading(false);
@@ -1268,6 +1246,7 @@ function DataEntryPageInner() {
                   key={editingId}
                   recordId={editingId}
                   category={category}
+                  onCountChange={handleEvidenceCountChange}
                   // A consultant is review-only (decision 2026-07-30) and the
                   // evidence API 403s them, so offering upload/delete controls
                   // here only produced a button that always failed.
@@ -1394,101 +1373,19 @@ function DataEntryPageInner() {
                 refreshKey={coverageKey}
               />
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    Previous submissions
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {recordsLoading ? (
-                    <div className="space-y-2">
-                      <Skeleton className="h-14 w-full" />
-                      <Skeleton className="h-14 w-full" />
-                    </div>
-                  ) : records.length === 0 ? (
-                    <p className="py-6 text-center text-sm text-muted-foreground">
-                      No submissions yet for this subsidiary.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {records.map((r) => {
-                        const badge = statusBadge[r.status];
-                        const Icon = badge.icon;
-                        return (
-                          <button
-                            key={r.id}
-                            type="button"
-                            onClick={() => loadRecord(r)}
-                            // Deliberately NOT aria-disabled: a non-editable row
-                            // still answers "why can't I edit this?" when
-                            // activated, and marking it disabled is what stops
-                            // assistive tech (and Playwright) from ever reaching
-                            // that answer. The hover affordance below carries the
-                            // distinction instead.
-                            className={`flex w-full items-center gap-3 rounded-lg border border-border bg-secondary/40 px-3 py-2.5 text-left transition-colors ${
-                              // The lifecycle rule from the contract, not a
-                              // third hand-written copy of it.
-                              isSubmittable(r.status)
-                                ? "hover:border-primary/40 hover:bg-secondary"
-                                : "cursor-default"
-                            }`}
-                          >
-                            <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="truncate text-sm font-medium text-foreground">
-                                  {r.periodValue} {r.reportingYear}
-                                </span>
-                                <Badge
-                                  variant="outline"
-                                  className={`px-1.5 py-0 text-[10px] ${badge.className}`}
-                                >
-                                  {badge.label}
-                                </Badge>
-                              </div>
-                              {/* The reporting entity, which this list did not
-                                  show. Uniqueness includes `location_id`, so a
-                                  whole-company record and a site record for the
-                                  same month and category are two different rows
-                                  — and here they were two identical-looking
-                                  lines. A user asked to resolve a
-                                  double-counted month could not tell which one
-                                  they were opening. Built as one string: the
-                                  same JSX whitespace trap as above. */}
-                              {/* A withdrawn figure is struck through here too:
-                                  the badge already says "Voided", but the
-                                  tonnes beside it read like any other row. */}
-                              <div
-                                className={cn(
-                                  'text-xs text-muted-foreground',
-                                  r.status === 'voided' && 'line-through',
-                                )}
-                              >
-                                {[
-                                  r.category,
-                                  // `locationName` is optional on the contract,
-                                  // so a bare `??` would label a site row
-                                  // "Whole subsidiary" if the include were ever
-                                  // dropped — a false claim on the one screen
-                                  // built to tell the two apart.
-                                  r.locationId
-                                    ? (r.locationName ?? "A site")
-                                    : "Whole subsidiary",
-                                  isCalculated(r.calculation)
-                                    ? `${numberFmt.format(r.calculation.tCo2e)} tCO₂e`
-                                    : NOT_CALCULATED_LABEL,
-                                ].join(" · ")}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+              <PreviousSubmissions
+                // Remounted per subsidiary, so a selection cannot survive a
+                // switch. Without it, A -> B -> A resurrects ticks the user
+                // made minutes ago, and a failed refetch leaves A's rows —
+                // still tickable — under B's header.
+                key={subsidiaryId}
+                records={records}
+                loading={recordsLoading}
+                onOpen={loadRecord}
+                user={user}
+                locks={locks}
+                onSubmitted={() => void refreshRecords(subsidiaryId)}
+              />
             </div>
           </div>
         </div>
