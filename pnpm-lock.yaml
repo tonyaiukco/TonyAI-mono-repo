@@ -17,6 +17,9 @@ importers:
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.61.1
+      '@tonyai/shared-types':
+        specifier: workspace:*
+        version: link:packages/shared-types
       '@types/node':
         specifier: ^22
         version: 22.20.0
@@ -32,6 +35,9 @@ importers:
       eslint-plugin-react-hooks:
         specifier: ^5.2.0
         version: 5.2.0(eslint@9.39.5(jiti@2.7.0))
+      exceljs:
+        specifier: ^4.4.0
+        version: 4.4.0
       globals:
         specifier: ^17.11.0
         version: 17.11.0

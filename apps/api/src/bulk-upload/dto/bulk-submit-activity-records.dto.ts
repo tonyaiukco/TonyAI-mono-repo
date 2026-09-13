@@ -8,7 +8,7 @@ import { BULK_SUBMIT_MAX_IDS } from '@tonyai/shared-types';
 import { UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
 
 /**
- * Body of POST /api/v1/bulk-upload/activity-records/submit.
+ * Body of POST /api/v1/activity-records/bulk-submit.
  *
  * Ids, never a filter. A filter would be fewer round trips and would survive a
  * page refresh, but there is no batch id to filter on — the importer writes no

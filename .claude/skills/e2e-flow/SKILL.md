@@ -11,15 +11,26 @@ Cover a whole flow through the real app: UI → NestJS → Supabase. The **canon
 in `e2e/helpers.ts`.
 
 ## Rules (must hold)
-- **Never touch the seed's space.** The seed is **monthly-2024 only**, so every E2E write goes in the
-  otherwise-empty **`quarterly` 2024** space (`E2E_YEAR` / `E2E_PERIOD`). `globalSetup` + `globalTeardown`
-  wipe all quarterly rows (service-role, evidence cascades) — so runs are idempotent and the seed is
-  preserved. If you need a new write space, keep it inside quarterly.
+- **Never touch the seed's space.** The seed is **monthly-only**, so every E2E write goes in the
+  otherwise-empty **`quarterly`** space of `E2E_YEAR` — read the constants, never retype the year: this
+  line said 2024 for a release after the seed moved to 2026. `globalSetup` + `globalTeardown` wipe all
+  quarterly rows (service-role, evidence cascades) — so runs are idempotent and the seed is preserved.
+  If you need a new write space, keep it inside quarterly.
+- **Clean up in the test's own `finally`, not by leaning on the global wipe.** That wipe runs once per
+  RUN; the specs in between never see it. A record left `submitted` makes `lockPeriod` 409 in a spec
+  several files later, with an error naming neither your file nor the record — and the API refuses to
+  delete a submitted record, so that teardown has to go through the service role
+  (`deleteRecordsAsService`).
+- **Budget the throttled routes.** Bulk import is 5/min per user and one UI import cycle spends two of
+  them. Alternate `ADMIN_EMAIL` / `ENTRY_EMAIL` across files, and give any test that deliberately
+  exhausts a bucket a file of its own.
 - **One subsidiary (or period value) per test.** Distinct tuples avoid the `NULLS NOT DISTINCT` 409 and
   keep anomaly baselines from bleeding across tests (the baseline is per subsidiary+category+period).
 - **Arrange heavy state via the API, act via the UI.** Building a committed record (draft → evidence →
-  submit) or an anomaly baseline through the UI is slow/flaky — use `createCommittedRecord`. All 2024
-  factor categories are evidence-required, so committing always needs a file.
+  submit) or an anomaly baseline through the UI is slow/flaky — use `createCommittedRecord`. Every
+  category the seed's factor library covers is evidence-required, so committing always needs a file —
+  and so does anything a bulk import produces. `seedE2EFactor` opens a non-evidence lane for the cases
+  that need one.
 - **Approve is API-only** (no UI) — use `getAccessToken` + `approveRecord` for any flow that needs an
   approved record.
 - **Select shadcn/Radix dropdowns by their field Label, not the trigger's accessible name.** Use
@@ -47,10 +58,19 @@ in `e2e/helpers.ts`.
    Both need the local stack up (Docker + Supabase).
 
 ## Anti-patterns
-- Writing in the monthly-2024 space (collides with the seed → 409, and pollutes analytics).
+- Writing in the seed's monthly space (collides with the seed → 409, and pollutes analytics).
 - `getByRole('combobox', { name })` on a Radix trigger, or `getByRole('combobox').first()` before the
   Subsidiary skeleton resolves.
 - Deleting an approved record via the API in teardown (the remove gate forbids it) — rely on the quarterly
   wipe instead.
-- Wiring E2E into CI — deferred to Phase 2 (needs Supabase in Actions). Keep `pnpm e2e` out of the turbo
-  `test` pipeline.
+- Assuming a killed run tidied up after itself. Playwright skips `globalTeardown` on SIGINT or a crash,
+  and `pnpm db:seed` deletes nothing — so the fixture factor and any quarterly rows survive both. The
+  repair is the next `pnpm e2e` (its `globalSetup` sweeps before it seeds) or `pnpm db:reset`. Worst
+  case is a stranded `submitted` record: the API refuses to delete it, and once the fixture factor is
+  gone it refuses to edit it too (`update` recomputes, and the category has no factor) — service role
+  only.
+- Assuming E2E is unwired from CI. It has run **nightly** since 2026-09-01 via
+  `.github/workflows/e2e.yml`, plus `workflow_dispatch` — trigger it on a branch before merge with
+  `gh workflow run e2e.yml --ref <branch>` (~13 min end to end, of which Playwright itself is ~8; the "25-35 min" in the workflow header was never measured). It is deliberately NOT on `pull_request`
+  (serial by construction, billed per push), so `pnpm e2e` still stays out of the turbo `test`
+  pipeline — but `pnpm typecheck` does cover `e2e/` on every PR.

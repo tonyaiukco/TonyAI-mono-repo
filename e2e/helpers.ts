@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
 export const PASSWORD = 'TonyAI!2026';
@@ -277,8 +278,23 @@ export async function lockPeriod(
  */
 /** Teardown deletes with the service-role key, so it must never be pointed at a
  *  shared database. `supabaseEnv()` reads whatever the local env files say. */
+const LOCAL_SUPABASE_HOSTS = ['127.0.0.1', 'localhost'];
+
 function assertLocalTarget(url: string): void {
-  if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(url)) {
+  // The HOSTNAME, parsed — not a prefix match on the string. A prefix regex
+  // reads the userinfo as the host: `http://localhost:54321@evil.example.com`
+  // satisfies `^https?://localhost:` while `new URL(url).hostname` is
+  // `evil.example.com`. That needs an attacker who can already write the
+  // gitignored `.env`, so it was hardening rather than a hole — but this file
+  // now puts a factor INSERT, a factor DELETE and a record DELETE behind this
+  // one check, so it should mean what it says.
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    hostname = '';
+  }
+  if (!LOCAL_SUPABASE_HOSTS.includes(hostname)) {
     throw new Error(
       `Refusing to run E2E teardown against a non-local Supabase (${url}). ` +
         'These deletes bypass RLS.',
@@ -498,3 +514,330 @@ export async function backdateCreatedAt(
     throw new Error(`backdateCreatedAt failed: ${res.status()} ${await res.text()}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// WP8 — bulk upload and bulk submit
+// ---------------------------------------------------------------------------
+
+/**
+ * The category a bulk-submit E2E can actually use, and why it needs a fixture.
+ *
+ * Every category the seeded factor library covers — Electricity, Natural Gas,
+ * Fuel — is evidence-required, and so is Water, the one factorless category the
+ * calc engine will record. So on a seeded database the set of rows that can be
+ * IMPORTED and the set that can be BULK-SUBMITTED are disjoint, and the panel's
+ * submit button never renders. `seedE2EFactor` opens a lane: one factor row for
+ * a non-evidence category, labelled unmistakably as a fixture.
+ */
+export const E2E_BULK_CATEGORY = 'Waste';
+export const E2E_BULK_UNIT = 'tonnes';
+
+/**
+ * The version string, chosen so it does not shadow a real factor.
+ *
+ * `findFactor` orders by `version DESC` and takes the first row, so a version
+ * that sorts ABOVE a real one (`E2E-…` beats `2026.1` lexically) would silently
+ * take precedence the day someone seeds a genuine Waste factor. Leading zeroes
+ * put this below every plausible real version instead — measured against the
+ * database's own collation, not assumed: below `2026.1`, `2025.1`, `AR6`,
+ * `DEFRA-2024` and `v1`, under `en_US.UTF-8`, `C` and ICU alike.
+ *
+ * Not a guarantee, and it should not be read as one: `'0.1'` sorts BELOW this
+ * string, and the resolver's lexicographic ordering is already recorded as
+ * unsafe (`"2024.2" > "2024.10"`). The controls that actually hold are the
+ * reserved `0000-` prefix (documented beside the factor table in
+ * `packages/db/prisma/seed.ts`), the teardown, and the fact that every field of
+ * the row says it is a fixture. The ordering is a fourth line of defence, not
+ * the first.
+ */
+export const E2E_FACTOR_VERSION = '0000-E2E-FIXTURE';
+
+/**
+ * A factor row for a non-evidence category, so a bulk submit has something to
+ * submit.
+ *
+ * **This is not an emission factor.** Its value is arithmetically convenient
+ * and cites no source, and every field says so — `source`, `methodology` and
+ * `version` all name it as a test fixture. CLAUDE.md forbids inventing factor
+ * values precisely because a number that looks authoritative becomes one; the
+ * defence here is not the number but the labelling, plus a version that cannot
+ * outrank a sourced factor and a teardown that removes it.
+ */
+export async function seedE2EFactor(request: APIRequestContext): Promise<void> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  // `updated_at` is Prisma's `@updatedAt`, which Prisma fills in — the column
+  // itself has no database default, unlike `created_at`. A raw PostgREST
+  // insert bypasses Prisma entirely, so it has to be supplied here or the row
+  // is refused with a not-null violation. (The existing service-role
+  // precedent, `backdateCreatedAt`, is an UPDATE and never met this.)
+  const now = new Date().toISOString();
+  const rows = ['TR', 'UK', 'EU'].map((geographyCode) => ({
+    id: randomUUID(),
+    created_at: now,
+    updated_at: now,
+    category: E2E_BULK_CATEGORY,
+    geography_code: geographyCode,
+    reporting_year: E2E_YEAR,
+    scope: 3,
+    // Not 1. `tonnes` normalises with an identity multiplier, so a factor of 1
+    // would make the whole chain an identity — `kgCo2e === activityValue` —
+    // and a regression that dropped either the normalisation or the factor
+    // multiply would compute the right answer anyway. 7 keeps the arithmetic
+    // trivial (12 t -> 84 kg -> 0.084 t) while leaving both steps observable,
+    // and is still orders of magnitude below any published waste factor, so it
+    // cannot be mistaken for a sourced value.
+    factor_value: 7,
+    // Singular denominator, following the library's own convention
+    // (`kgCO2e/litre`, `kgCO2e/kWh`). This string is display-only — it is
+    // printed verbatim into the record drawer and the PDF appendix, while
+    // `normalized_unit` is the one the calculator matches on.
+    factor_unit: 'kgCO2e/tonne',
+    normalized_unit: E2E_BULK_UNIT,
+    methodology: 'E2E fixture — not a methodology',
+    source: 'E2E FIXTURE — not a real emission factor, not for reporting',
+    version: E2E_FACTOR_VERSION,
+  }));
+  // `on_conflict` is not optional here. PostgREST infers the conflict target
+  // from the PRIMARY KEY unless it is told otherwise, and every call generates
+  // a fresh `id` — so without this, `merge-duplicates` resolves on `id`, misses
+  // the (category, geography, year, version) unique index, and a row left by a
+  // run that died before teardown comes back as a 409. What has been covering
+  // that so far is `cleanupE2EFactors` running immediately before this in
+  // `globalSetup`, which is a different guarantee than the one the header
+  // claims.
+  const conflictTarget = 'category,geography_code,reporting_year,version';
+  const res = await request.post(
+    `${url}/rest/v1/emission_factors?on_conflict=${conflictTarget}`,
+    {
+      headers: {
+        apikey: service,
+        Authorization: `Bearer ${service}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal,resolution=merge-duplicates',
+      },
+      data: rows,
+    },
+  );
+  if (!res.ok()) {
+    throw new Error(`seedE2EFactor failed: ${res.status()} ${await res.text()}`);
+  }
+}
+
+/** Remove the fixture factor. Keyed on the version sentinel, like the others. */
+export async function cleanupE2EFactors(request: APIRequestContext): Promise<void> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  reportCleanup([
+    await del(
+      request,
+      `${url}/rest/v1/emission_factors?version=eq.${encodeURIComponent(E2E_FACTOR_VERSION)}`,
+      headers,
+    ),
+  ]);
+}
+
+/** One row of a bulk-upload file, in the importer's own column order. */
+export interface BulkRow {
+  subsidiaryId: string;
+  locationId?: string;
+  reportingYear?: number;
+  reportingPeriod?: string;
+  periodValue: string;
+  category?: string;
+  activityValue: number | string;
+  activityUnit?: string;
+  varianceReason?: string;
+}
+
+/**
+ * Build a CSV body in the spec rather than committing a fixture file.
+ *
+ * The rows have to carry live seed UUIDs and a period value the running spec
+ * owns — both of which are constants in this file. A committed `.csv` would
+ * hard-code one subsidiary and drift the first time the lanes move.
+ */
+export function buildBulkCsv(rows: BulkRow[]): Buffer {
+  const header =
+    'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
+  const lines = rows.map((r) =>
+    [
+      r.subsidiaryId,
+      r.locationId ?? '',
+      String(r.reportingYear ?? E2E_YEAR),
+      r.reportingPeriod ?? E2E_PERIOD,
+      r.periodValue,
+      r.category ?? E2E_BULK_CATEGORY,
+      String(r.activityValue),
+      r.activityUnit ?? E2E_BULK_UNIT,
+      r.varianceReason ?? '',
+    ].join(','),
+  );
+  return Buffer.from([header, ...lines].join('\n'), 'utf8');
+}
+
+/**
+ * Post a bulk import.
+ *
+ * `fieldName` is a parameter for one reason: the multipart field name is closed
+ * over inside the class `FileInterceptor('file', …)` generates, so no unit test
+ * can vary it and no browser can either — the web client always sends `file`.
+ * Posting it as anything else is a property only this layer can check.
+ */
+export async function postBulkImport(
+  request: APIRequestContext,
+  token: string,
+  opts: {
+    buffer: Buffer;
+    fileName?: string;
+    mimeType?: string;
+    dryRun: 'true' | 'false';
+    fieldName?: string;
+  },
+) {
+  return request.post(`${API_BASE}/bulk-upload/activity-records`, {
+    headers: bearer(token),
+    multipart: {
+      [opts.fieldName ?? 'file']: {
+        name: opts.fileName ?? 'bulk.csv',
+        mimeType: opts.mimeType ?? 'text/csv',
+        buffer: opts.buffer,
+      },
+      dryRun: opts.dryRun,
+    },
+  });
+}
+
+/** Attach the sample invoice to a record — the middle step of a committed record. */
+export async function attachEvidence(
+  request: APIRequestContext,
+  token: string,
+  recordId: string,
+): Promise<void> {
+  const res = await request.post(`${API_BASE}/activity-records/${recordId}/evidence`, {
+    headers: bearer(token),
+    multipart: {
+      file: {
+        name: 'sample-invoice.pdf',
+        mimeType: 'application/pdf',
+        buffer: readFileSync(EVIDENCE_FIXTURE),
+      },
+    },
+  });
+  if (!res.ok()) {
+    throw new Error(`attachEvidence failed: ${res.status()} ${await res.text()}`);
+  }
+}
+
+/**
+ * Audit rows written since a timestamp.
+ *
+ * The per-record rows are invisible to the unit suite — the bulk services mock
+ * the record service wholesale — so "every mutation writes an audit row", which
+ * CLAUDE.md calls non-negotiable, is only checkable here.
+ */
+export async function readAuditSince(
+  request: APIRequestContext,
+  filter: { entity?: string; action?: string; since: string },
+): Promise<{ entityId: string | null; action: string; diff: Record<string, unknown> }[]> {
+  // The token is obtained here rather than taken as a parameter: reading the
+  // trail is super_admin-only, and a caller passing the token they happened to
+  // have produces a 403 that reads like a bug in the thing under test.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const search = new URLSearchParams({ limit: '200' });
+  if (filter.entity) search.set('entity', filter.entity);
+  if (filter.action) search.set('action', filter.action);
+  const res = await request.get(`${API_BASE}/audit?${search.toString()}`, {
+    headers: bearer(token),
+  });
+  if (!res.ok()) {
+    throw new Error(`readAuditSince failed: ${res.status()} ${await res.text()}`);
+  }
+  // `{ items, total, limit, offset }` — read from the service rather than
+  // guessed. The first version reached for `rows`, got `undefined`, and failed
+  // as `rows.filter is not a function` three tests away from the cause.
+  const { items } = (await res.json()) as {
+    items: {
+      createdAt: string;
+      entityId: string | null;
+      action: string;
+      diff: Record<string, unknown>;
+    }[];
+  };
+  return items.filter((r) => r.createdAt >= filter.since);
+}
+
+/** Read activity_records straight from PostgREST, past the API's own gates. */
+export async function serviceReadRecords(
+  request: APIRequestContext,
+  query: string,
+): Promise<Record<string, unknown>[]> {
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const res = await request.get(`${url}/rest/v1/activity_records?${query}`, {
+    headers: { apikey: service, Authorization: `Bearer ${service}` },
+  });
+  if (!res.ok()) throw new Error(`serviceReadRecords failed: ${res.status()}`);
+  return res.json();
+}
+
+/**
+ * Delete records with the service role.
+ *
+ * Required, not a convenience: the API refuses to delete a `submitted` record,
+ * and a bulk-submit spec's whole job is producing them. Left behind, they make
+ * `lockPeriod` return 409 in a spec four files later, with an error that names
+ * neither this file nor the record.
+ */
+export async function deleteRecordsAsService(
+  request: APIRequestContext,
+  ids: string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  const { url } = supabaseEnv();
+  assertLocalTarget(url);
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
+  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  const list = ids.map((id) => `"${id}"`).join(',');
+  // Files BEFORE rows, for the same reason `cleanupQuarterly` does it: the
+  // `Evidence.activityRecord` FK is ON DELETE CASCADE, so the moment the rows
+  // go the object keys are unknowable and the files are orphaned forever. This
+  // helper deleted the evidence ROWS and left the objects — one leaked file per
+  // run, on a bucket that had already grown to 1501 objects against 102 rows
+  // once before anyone counted.
+  const paths = await evidencePathsFor(
+    request,
+    `select=storage_path&activity_record_id=in.(${list})`,
+  );
+  reportCleanup([
+    await removeEvidenceObjects(request, paths),
+    await del(request, `${url}/rest/v1/evidence?activity_record_id=in.(${list})`, headers),
+    await del(request, `${url}/rest/v1/activity_records?id=in.(${list})`, headers),
+  ]);
+}
+
+/**
+ * Wait out the import route's rate-limit window.
+ *
+ * The route allows five requests per minute PER USER, the whole bulk group runs
+ * in well under a minute, and the group needs far more than the ten requests
+ * two authoring users can make in one window. So the waiting is not incidental
+ * — it is the price of testing a rate-limited endpoint at all, and spending it
+ * explicitly at file boundaries is better than discovering it as a 429 in a
+ * test that was asserting something else entirely.
+ *
+ * The window is a minute plus a second's slack; call it from `beforeAll` and
+ * raise that hook's timeout.
+ */
+export async function waitOutImportThrottle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 61_000));
+}
+

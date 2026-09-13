@@ -3,7 +3,7 @@
 # Deliberately NOT on pull_request. The suite is serial by construction —
 # `workers: 1`, one shared database, cross-spec tuple reservations — so it
 # cannot be sharded without giving each shard its own database, and this repo is
-# private, so 25-35 minutes on every push is billed and would change how people
+# private, so ~13 minutes on every push is billed and would change how people
 # work. Nightly catches drift within 24 hours, which is the thing that actually
 # matters here: the `rbac-tenant` approval fixture broke on 2026-08-20 and
 # survived ten merged PRs because nothing ran it.
@@ -54,7 +54,7 @@ jobs:
       - name: E2E
         run: pnpm e2e
 
-      # The RLS layer, re-checked after 84 tests have written and deleted rows.
+      # The RLS layer, re-checked after 104 tests have written and deleted rows.
       - name: RLS containment probes
         run: pnpm rls:probe
 
