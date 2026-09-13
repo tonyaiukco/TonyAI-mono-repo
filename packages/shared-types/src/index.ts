@@ -2822,6 +2822,19 @@ export const BULK_SUBMITTABLE_STATUSES = [
 ] as const satisfies readonly ActivityRecordStatus[];
 
 /**
+ * True when a record is at a point in its life where a BULK submit accepts it.
+ *
+ * The predicate rather than the array, because two gates have to agree — the
+ * server's `preflight` and the checkbox the client offers — and the one thing
+ * that must never happen is the client offering a selection the server refuses
+ * as `not_submittable`. `isSubmittable` is the trap: it admits `rejected`,
+ * which this path excludes on purpose.
+ */
+export function isBulkSubmittable(status: string): boolean {
+  return (BULK_SUBMITTABLE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
  * Every way a bulk submit can refuse ONE record — one code per precondition in
  * `ActivityRecordsService.submit`, in the order that method checks them.
  *

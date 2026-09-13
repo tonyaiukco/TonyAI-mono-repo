@@ -7,14 +7,22 @@ import type {
 } from '@/lib/types';
 import { ApiError } from '@/lib/api';
 import {
+  draftsSubmitLabel,
   eligibleForSubmit,
   failuresToShow,
+  isPeriodLockedFor,
   MAX_FAILURES_SHOWN,
+  needsEvidenceBeforeSubmit,
+  selectableDrafts,
+  selectAllEligible,
+  submitBlockReason,
   submitConfirmation,
   submitErrorMessage,
   SUBMIT_ISSUE_LABEL,
   summariseSubmit,
+  toggleSelected,
 } from '@/lib/bulk-submit-view';
+import type { LockedPeriod, SubmittableRow } from '@/lib/bulk-submit-view';
 
 function imported(over: Partial<BulkUploadAcceptedRow> = {}): BulkUploadAcceptedRow {
   return {
@@ -258,5 +266,224 @@ describe('submitConfirmation — the zero case', () => {
   it('does not claim a record when there are none', () => {
     // The dialog is always mounted, so this is evaluated on every render.
     expect(submitConfirmation([])).toContain('0 records');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Drafts that did not come from an import (PR 2c)
+// ---------------------------------------------------------------------------
+
+const ME = { id: 'user-me', role: 'data_entry' };
+
+function draft(over: Partial<SubmittableRow> = {}): SubmittableRow {
+  return {
+    id: 'rec-1',
+    status: 'draft',
+    // A category that needs NO evidence, so each test below turns on the one
+    // thing it is about. `Electricity` appears only where evidence is the point.
+    category: 'Business Travel',
+    evidenceCount: 0,
+    createdBy: ME.id,
+    reportingYear: 2026,
+    reportingPeriod: 'quarterly',
+    periodValue: 'Q1',
+    ...over,
+  };
+}
+
+const lock = (over: Partial<LockedPeriod> = {}): LockedPeriod => ({
+  reportingYear: 2026,
+  reportingPeriod: 'quarterly',
+  periodValue: 'Q1',
+  ...over,
+});
+
+describe('needsEvidenceBeforeSubmit', () => {
+  it('is category AND file count, not category alone', () => {
+    // The bug this function exists to prevent: a draft whose invoice is already
+    // attached, refused forever because of what category it is in.
+    expect(
+      needsEvidenceBeforeSubmit({ category: 'Electricity', evidenceCount: 1 }),
+    ).toBe(false);
+    expect(
+      needsEvidenceBeforeSubmit({ category: 'Electricity', evidenceCount: 0 }),
+    ).toBe(true);
+  });
+
+  it('leaves a category that never needed a file alone', () => {
+    expect(
+      needsEvidenceBeforeSubmit({ category: 'Business Travel', evidenceCount: 0 }),
+    ).toBe(false);
+  });
+
+  it('is the same rule the import surface applies', () => {
+    // Not a tautology: `eligibleForSubmit` passes `evidenceCount: 0` because an
+    // import cannot attach a file. If that literal is ever changed to read a
+    // field off the imported row — which carries none — this goes red rather
+    // than silently offering every evidence-required row.
+    const { recordIds, needingEvidence } = eligibleForSubmit([
+      imported({ recordId: 'a', category: 'Electricity' }),
+      imported({ recordId: 'b', category: 'Business Travel' }),
+    ]);
+    expect(recordIds).toEqual(['b']);
+    expect(needingEvidence).toBe(1);
+  });
+});
+
+describe('isPeriodLockedFor', () => {
+  it('matches on the whole tuple, not on the period value alone', () => {
+    const row = draft();
+    expect(isPeriodLockedFor(row, [lock()])).toBe(true);
+    expect(isPeriodLockedFor(row, [lock({ reportingYear: 2025 })])).toBe(false);
+    expect(isPeriodLockedFor(row, [lock({ reportingPeriod: 'monthly' })])).toBe(false);
+    expect(isPeriodLockedFor(row, [lock({ periodValue: 'Q2' })])).toBe(false);
+    expect(isPeriodLockedFor(row, [])).toBe(false);
+  });
+});
+
+describe('submitBlockReason', () => {
+  it('offers a checkbox when every gate passes', () => {
+    expect(submitBlockReason(draft(), ME, [])).toBeNull();
+  });
+
+  it('refuses a REJECTED record, and says why rather than echoing the status', () => {
+    // The trap: `isSubmittable` admits `rejected` and the list's own hover
+    // affordance treats it as editable, so reaching for the wrong predicate
+    // offers a checkbox the server answers with `not_submittable`. If this ever
+    // returns null, the contract has been widened by accident.
+    const reason = submitBlockReason(draft({ status: 'rejected' }), ME, []);
+    expect(reason).toMatch(/open it on its own/i);
+    expect(reason).not.toMatch(/Already rejected/);
+  });
+
+  it('echoes the status for a record that has already moved on', () => {
+    expect(submitBlockReason(draft({ status: 'submitted' }), ME, [])).toBe(
+      'Already submitted.',
+    );
+    expect(submitBlockReason(draft({ status: 'under_review' }), ME, [])).toBe(
+      'Already under review.',
+    );
+  });
+
+  it("refuses someone else's record, and lets a super_admin through", () => {
+    const theirs = draft({ createdBy: 'user-them' });
+    expect(submitBlockReason(theirs, ME, [])).toBe('Entered by someone else.');
+    expect(submitBlockReason(theirs, { ...ME, role: 'super_admin' }, [])).toBeNull();
+  });
+
+  it('refuses a closed period, naming it', () => {
+    expect(submitBlockReason(draft(), ME, [lock()])).toBe('Q1 2026 is locked.');
+  });
+
+  it('refuses an evidence-required record with no file, and allows one with a file', () => {
+    const needs = draft({ category: 'Electricity' });
+    expect(submitBlockReason(needs, ME, [])).toBe('Needs an evidence file.');
+    expect(submitBlockReason({ ...needs, evidenceCount: 1 }, ME, [])).toBeNull();
+  });
+
+  it('checks status before authorship, the way the server does', () => {
+    // Both wrong at once. The server answers `not_submittable` here, so that is
+    // the sentence the user must see — otherwise the screen blames the wrong
+    // thing and the user goes looking for a colleague who cannot help.
+    const row = draft({ status: 'approved', createdBy: 'user-them' });
+    expect(submitBlockReason(row, ME, [])).toBe('Already approved.');
+  });
+
+  it('offers nothing at all while the user is unknown', () => {
+    // `api.me()` is in flight on first paint. Offering a checkbox and then
+    // retracting it is worse than waiting.
+    expect(submitBlockReason(draft(), null, [])).not.toBeNull();
+  });
+
+  it('never lets an anomaly flag decide anything', () => {
+    // Deliberate: the stored verdict is from write time, `submit` recomputes it,
+    // and a batch shifts its own baseline. A client gate here would hide
+    // submittable records AND still let the refusal through.
+    const row = { ...draft(), anomalyFlag: true } as unknown as SubmittableRow;
+    expect(submitBlockReason(row, ME, [])).toBeNull();
+  });
+});
+
+describe('selectableDrafts', () => {
+  it('splits the list, and explains only the rows that looked selectable', () => {
+    const { selectableIds, reasonById } = selectableDrafts(
+      [
+        draft({ id: 'ok' }),
+        draft({ id: 'theirs', createdBy: 'user-them' }),
+        draft({ id: 'rejected', status: 'rejected' }),
+        draft({ id: 'approved', status: 'approved' }),
+        draft({ id: 'needs-file', category: 'Electricity' }),
+      ],
+      ME,
+      [],
+    );
+
+    expect(selectableIds).toEqual(['ok']);
+    // The approved row is absent: its badge already says so, and a reason on
+    // every row of a long list is noise. The two editable-looking ones are
+    // present, because a missing checkbox there reads as a bug.
+    expect(Object.keys(reasonById).sort()).toEqual(
+      ['needs-file', 'rejected', 'theirs'].sort(),
+    );
+  });
+
+  it('selects nothing while the user is unknown', () => {
+    expect(selectableDrafts([draft()], null, [])).toEqual({
+      selectableIds: [],
+      reasonById: {},
+    });
+  });
+
+  it('keeps the order it was given', () => {
+    const { selectableIds } = selectableDrafts(
+      [draft({ id: 'c' }), draft({ id: 'a' }), draft({ id: 'b' })],
+      ME,
+      [],
+    );
+    expect(selectableIds).toEqual(['c', 'a', 'b']);
+  });
+});
+
+describe('toggleSelected', () => {
+  it('ticks and unticks', () => {
+    expect(toggleSelected([], 'a')).toEqual({ selected: ['a'], refusedByCap: false });
+    expect(toggleSelected(['a', 'b'], 'a')).toEqual({
+      selected: ['b'],
+      refusedByCap: false,
+    });
+  });
+
+  it('refuses to grow past the cap, and says so', () => {
+    const full = Array.from({ length: BULK_SUBMIT_MAX_IDS }, (_, i) => `r${i}`);
+    const { selected, refusedByCap } = toggleSelected(full, 'one-too-many');
+    expect(refusedByCap).toBe(true);
+    expect(selected).toHaveLength(BULK_SUBMIT_MAX_IDS);
+    // Unticking still works at the cap — otherwise the only way out is a reload.
+    expect(toggleSelected(full, 'r0').refusedByCap).toBe(false);
+  });
+});
+
+describe('selectAllEligible', () => {
+  it('takes the first page and reports the leftover', () => {
+    const many = Array.from({ length: BULK_SUBMIT_MAX_IDS + 7 }, (_, i) => `r${i}`);
+    const { selected, overCap } = selectAllEligible(many);
+    expect(selected).toHaveLength(BULK_SUBMIT_MAX_IDS);
+    expect(selected[0]).toBe('r0');
+    expect(overCap).toBe(7);
+  });
+
+  it('reports no leftover when everything fits', () => {
+    expect(selectAllEligible(['a', 'b'])).toEqual({
+      selected: ['a', 'b'],
+      overCap: 0,
+    });
+  });
+});
+
+describe('draftsSubmitLabel', () => {
+  it('agrees with itself about the number', () => {
+    expect(draftsSubmitLabel(1)).toBe('Send 1 record for review');
+    expect(draftsSubmitLabel(3)).toBe('Send 3 records for review');
+    expect(draftsSubmitLabel(1200)).toBe('Send 1,200 records for review');
   });
 });

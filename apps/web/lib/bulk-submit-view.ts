@@ -1,4 +1,9 @@
-import { BULK_SUBMIT_MAX_IDS, isEvidenceRequired } from '@/lib/types';
+import {
+  BULK_SUBMIT_MAX_IDS,
+  isBulkSubmittable,
+  isEvidenceRequired,
+  isSubmittable,
+} from '@/lib/types';
 import type {
   BulkSubmitIssue,
   BulkSubmitIssueCode,
@@ -74,11 +79,15 @@ export function eligibleForSubmit(
   const withIds = rows.filter(
     (r): r is BulkUploadAcceptedRow & { recordId: string } => r.recordId !== null,
   );
-  const needingEvidence = withIds.filter((r) =>
-    isEvidenceRequired(r.category),
-  ).length;
+  // `evidenceCount: 0` is not an assumption — an import cannot attach a file,
+  // so a row this function has just been handed provably has none. Stated as a
+  // literal rather than left implicit in a category-only check, because the
+  // rule now has a second caller whose rows may carry files.
+  const needsEvidence = (r: BulkUploadAcceptedRow) =>
+    needsEvidenceBeforeSubmit({ category: r.category, evidenceCount: 0 });
+  const needingEvidence = withIds.filter(needsEvidence).length;
   const submittable = withIds
-    .filter((r) => !isEvidenceRequired(r.category))
+    .filter((r) => !needsEvidence(r))
     .map((r) => r.recordId);
   // From the FRONT: the caller's order is the import's order, and a tail slice
   // would silently prefer the end of the file.
@@ -187,4 +196,197 @@ export function submitErrorMessage(error: unknown): string {
     return error.message;
   }
   return error instanceof Error ? error.message : 'The submission failed.';
+}
+
+// ---------------------------------------------------------------------------
+// Drafts that did not come from an import (WP8 PR 2c).
+//
+// The same endpoint, a different source list: the records already on screen
+// under "Previous submissions" rather than the ones an import just wrote. That
+// makes three things the import surface never had to decide — a record here may
+// be someone else's, may already have moved on, and may carry evidence — so the
+// client mirrors the gates the server applies and offers a checkbox only where
+// all of them pass.
+// ---------------------------------------------------------------------------
+
+/**
+ * Does this record still need an evidence file before it can be submitted?
+ *
+ * The one rule, shared by both submit surfaces. Category ALONE is not the rule
+ * and never was — it only looked like it on the import surface, where every row
+ * is new and therefore has no files. A draft that has been sitting on the
+ * Previous-submissions list with its invoice attached is submittable, and a
+ * category-only check would refuse it forever.
+ */
+export function needsEvidenceBeforeSubmit(row: {
+  category: string;
+  evidenceCount: number;
+}): boolean {
+  return isEvidenceRequired(row.category) && row.evidenceCount === 0;
+}
+
+/** The fields of a record this module actually reads. Structural, so the page
+ *  passes `ActivityRecordDTO`s straight through and the spec needs no fixture
+ *  of the whole contract. */
+export interface SubmittableRow {
+  id: string;
+  status: string;
+  category: string;
+  evidenceCount: number;
+  createdBy: string;
+  reportingYear: number;
+  reportingPeriod: string;
+  periodValue: string;
+}
+
+/** Who is asking. `null` while `api.me()` is still in flight. */
+export interface SubmittingUser {
+  id: string;
+  role: string;
+}
+
+/** The fields of a period lock this module reads. */
+export interface LockedPeriod {
+  reportingYear: number;
+  reportingPeriod: string;
+  periodValue: string;
+}
+
+/** Is this record's own reporting period closed? */
+export function isPeriodLockedFor(
+  row: Pick<SubmittableRow, 'reportingYear' | 'reportingPeriod' | 'periodValue'>,
+  locks: LockedPeriod[],
+): boolean {
+  return locks.some(
+    (l) =>
+      l.reportingYear === row.reportingYear &&
+      l.reportingPeriod === row.reportingPeriod &&
+      l.periodValue === row.periodValue,
+  );
+}
+
+/**
+ * Why this record has no checkbox, or `null` when it has one.
+ *
+ * The order is `preflight`'s order, so the sentence a user reads is the refusal
+ * they would have been handed had the checkbox been offered anyway — status,
+ * then authorship, then the two gates `submit` itself applies. Mirroring rather
+ * than inventing is the whole point: a client rule the server does not share is
+ * how a checkbox starts promising something that comes back refused.
+ *
+ * What is deliberately NOT mirrored is the anomaly gate. `anomalyFlag` on the
+ * record is the verdict from when it was written, `submit` recomputes it, and
+ * a bulk submit shifts its own baseline as it goes — `submitted` counts, so
+ * record N entering review changes the baseline record N+1 is measured
+ * against. A client gate built on the stored flag would hide records that are
+ * perfectly submittable and still let `variance_reason_required` through. That
+ * one belongs in the failure report, where the server's own sentence explains
+ * it.
+ */
+export function submitBlockReason(
+  row: SubmittableRow,
+  user: SubmittingUser | null,
+  locks: LockedPeriod[],
+): string | null {
+  if (!user) return 'Loading your account…';
+  if (!isBulkSubmittable(row.status)) {
+    // `rejected` is the one worth a sentence rather than a status echo: the
+    // list presents it as editable, so a missing checkbox looks like a bug
+    // instead of the deliberate exclusion it is.
+    return row.status === 'rejected'
+      ? 'Sent back by a reviewer — open it on its own, so the note gets read.'
+      : `Already ${row.status.replace(/_/g, ' ')}.`;
+  }
+  if (user.role !== 'super_admin' && row.createdBy !== user.id) {
+    return 'Entered by someone else.';
+  }
+  if (isPeriodLockedFor(row, locks)) {
+    return `${row.periodValue} ${row.reportingYear} is locked.`;
+  }
+  if (needsEvidenceBeforeSubmit(row)) return 'Needs an evidence file.';
+  return null;
+}
+
+export interface DraftSelection {
+  /** Ids that may be ticked, in the order they were given. */
+  selectableIds: string[];
+  /**
+   * Why a row has no checkbox — but only for the rows that LOOK selectable.
+   *
+   * The list already shows a status badge, so spelling out "Already approved."
+   * beside an Approved badge is noise on every row of a long list. The rows
+   * that owe an explanation are the ones the list itself presents as editable
+   * (`SUBMITTABLE_STATUSES`, which is `draft` and `rejected`) and yet cannot be
+   * ticked. Everything else is already answered on screen.
+   */
+  reasonById: Record<string, string>;
+}
+
+/** Which of these records this user may send, and why not for the rest. */
+export function selectableDrafts(
+  rows: SubmittableRow[],
+  user: SubmittingUser | null,
+  locks: LockedPeriod[],
+): DraftSelection {
+  // No user, no checkboxes. `loadRecord` is deliberately permissive while
+  // `api.me()` is in flight — it would rather open a record than block one —
+  // but offering a checkbox and then retracting it is the opposite trade, so
+  // this one waits.
+  if (!user) return { selectableIds: [], reasonById: {} };
+
+  const selectableIds: string[] = [];
+  const reasonById: Record<string, string> = {};
+  for (const row of rows) {
+    const reason = submitBlockReason(row, user, locks);
+    if (reason === null) {
+      selectableIds.push(row.id);
+    } else if (isSubmittable(row.status)) {
+      reasonById[row.id] = reason;
+    }
+  }
+  return { selectableIds, reasonById };
+}
+
+/**
+ * Tick or untick one id.
+ *
+ * Refuses to grow past the cap rather than letting the request 400: the id list
+ * is validated by `@ArrayMaxSize` server-side, and a silent rejection of the
+ * whole batch is a worse answer than a checkbox that will not tick.
+ */
+export function toggleSelected(
+  selected: string[],
+  id: string,
+): { selected: string[]; refusedByCap: boolean } {
+  if (selected.includes(id)) {
+    return { selected: selected.filter((s) => s !== id), refusedByCap: false };
+  }
+  if (selected.length >= BULK_SUBMIT_MAX_IDS) {
+    return { selected, refusedByCap: true };
+  }
+  return { selected: [...selected, id], refusedByCap: false };
+}
+
+/**
+ * "Select all" — the first `BULK_SUBMIT_MAX_IDS`, and how many were left.
+ *
+ * From the FRONT, and the leftover is reported rather than dropped, for the
+ * same reason the import surface reports `overCap`: a screen that says
+ * "Send 1,000 records" after ticking 1,010 has silently abandoned ten.
+ */
+export function selectAllEligible(selectableIds: string[]): {
+  selected: string[];
+  overCap: number;
+} {
+  return {
+    selected: selectableIds.slice(0, BULK_SUBMIT_MAX_IDS),
+    overCap: Math.max(0, selectableIds.length - BULK_SUBMIT_MAX_IDS),
+  };
+}
+
+/** The label on the bulk bar's button. */
+export function draftsSubmitLabel(selectedCount: number): string {
+  return `Send ${formatNumber(selectedCount)} ${
+    selectedCount === 1 ? 'record' : 'records'
+  } for review`;
 }
