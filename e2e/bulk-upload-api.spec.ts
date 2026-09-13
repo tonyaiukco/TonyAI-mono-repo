@@ -311,12 +311,17 @@ test('a role that may not author records is refused before its file is parsed â€
   // Budget: the throttle is keyed per user, so the consultant spends none of
   // the six imports the header counts.
   const token = await getAccessToken(request, CONSULTANT_EMAIL);
-  const since = new Date().toISOString();
+  // A margin and a name only this test writes: the database clock (a Docker VM
+  // on a laptop) can lag the runner's, and a bare `since` would then miss the
+  // very row this test exists to find.
+  const since = new Date(Date.now() - 60_000).toISOString();
+  const fileName = `consultant-probe-${Date.now()}.txt`;
 
   const res = await postBulkImport(request, token, {
-    // Every row invalid on purpose: the old code never reached its role check
-    // for a file like this one.
-    buffer: buildBulkCsv([{ ...LANE, activityValue: 'N/A' }]),
+    // Not a spreadsheet, on purpose: a file refusal is a 400, so a 403 here can
+    // only mean the role was answered before the file was looked at.
+    buffer: Buffer.from('not a spreadsheet'),
+    fileName,
     dryRun: 'true',
   });
   expect(res.status()).toBe(403);
@@ -330,6 +335,7 @@ test('a role that may not author records is refused before its file is parsed â€
   expect(
     audit.some(
       (r) =>
+        r.diff?.fileName === fileName &&
         r.diff?.refused === true &&
         r.diff?.reason === 'Your role may not create activity records',
     ),

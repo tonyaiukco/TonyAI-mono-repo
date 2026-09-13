@@ -172,9 +172,11 @@ describe('parseRows — CSV', () => {
     // The sentence reaches the response and the audit row's `reason`; a 2 MiB
     // header row used to be stored there whole.
     const header = `${HEADER},${'x'.repeat(100)},b,c,d,e,f,g`;
-    await expect(
-      parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv'),
-    ).rejects.toThrow(
+    const error = await parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv').catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as Error).message).toBe(
       `Unrecognised column(s): ${'x'.repeat(40)}…, b, c, d, e (+2 more). Expected: ${HEADER.split(',').join(', ')}.`,
     );
   });
@@ -210,25 +212,39 @@ describe('parseRows — CSV', () => {
     expect(rows[0].cells.varianceReason).toBe('Meter replaced');
   });
 
+  // The class as well as the words: `toThrow(message)` compares messages only,
+  // and a plain Error here would reach the caller as a 500.
+  const csvRefusal = async (buffer: Buffer) => {
+    const error = await parseRows(buffer, 'x.csv').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BadRequestException);
+    return (error as Error).message;
+  };
+
   it('refuses a value under a blank header rather than dropping it', async () => {
-    await expect(
-      parseRows(
+    expect(
+      await csvRefusal(
         Buffer.from(
           [GAPPED, 'sub-1,,2024,monthly,January,Electricity,1200,kWh,stray note,Meter replaced'].join(
             '\n',
           ),
         ),
-        'x.csv',
       ),
-    ).rejects.toThrow(
-      'Row 2 has a value in column 9, which has no header. Name the column or clear it.',
+    ).toBe('Row 2 has a value in column 9, which has no header. Name the column or clear it.');
+  });
+
+  it('refuses a value past the last header, and ignores empty or whitespace trailing cells', async () => {
+    await expect(parseRows(csv(`${ROW},,,`), 'x.csv')).resolves.toHaveLength(1);
+    // A hand-edited file often ends its rows ", " — that is not a value.
+    const tab = String.fromCharCode(9);
+    await expect(parseRows(csv(`${ROW}, ,${tab}`), 'x.csv')).resolves.toHaveLength(1);
+    expect(await csvRefusal(csv(`${ROW},stray`))).toBe(
+      'Row 2 has a value in column 10, which has no header. Name the column or clear it.',
     );
   });
 
-  it('refuses a value past the last header, and ignores empty trailing cells', async () => {
-    await expect(parseRows(csv(`${ROW},,,`), 'x.csv')).resolves.toHaveLength(1);
-    await expect(parseRows(csv(`${ROW},stray`), 'x.csv')).rejects.toThrow(
-      'Row 2 has a value in column 10, which has no header. Name the column or clear it.',
+  it('refuses a row whose only value has no header, rather than skipping it as blank', async () => {
+    expect(await csvRefusal(csv(ROW, ',,,,,,,,,note'))).toBe(
+      'Row 3 has a value in column 10, which has no header. Name the column or clear it.',
     );
   });
 
@@ -249,7 +265,7 @@ describe('parseRows — CSV', () => {
 
 describe('parseRows — XLSX', () => {
   async function workbookBuffer(
-    rows: (string | number)[][],
+    rows: (string | number | null)[][],
   ): Promise<Buffer> {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Data');
@@ -272,30 +288,60 @@ describe('parseRows — XLSX', () => {
   });
 
   it('keeps every column in place when a header cell is blank', async () => {
+    // `null`, not `''`: a cleared cell is ABSENT from the sheet XML, which is
+    // what Excel saves. `''` is a real cell, and it hid a refactor that
+    // crashed on the hole.
     const buffer = await workbookBuffer([
-      [...HEADER.split(',').slice(0, 8), '', 'varianceReason'],
-      ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', 'Meter replaced'],
+      [...HEADER.split(',').slice(0, 8), null, 'varianceReason'],
+      ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', null, 'Meter replaced'],
     ]);
     const rows = await parseRows(buffer, 'data.xlsx');
     expect(rows[0].cells.activityUnit).toBe('kWh');
     expect(rows[0].cells.varianceReason).toBe('Meter replaced');
   });
 
+  // The class as well as the words: `toThrow(message)` compares messages only,
+  // and a plain Error here would reach the caller as a 500.
+  const refusal = async (buffer: Buffer) => {
+    const error = await parseRows(buffer, 'data.xlsx').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BadRequestException);
+    return (error as Error).message;
+  };
+
   it('refuses a value under a blank header, or past the last one', async () => {
     const gapped = await workbookBuffer([
       [...HEADER.split(',').slice(0, 8), '', 'varianceReason'],
       ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', 'stray', 'Meter replaced'],
     ]);
-    await expect(parseRows(gapped, 'data.xlsx')).rejects.toThrow(
+    expect(await refusal(gapped)).toBe(
       'Row 2 has a value in column 9, which has no header. Name the column or clear it.',
     );
     const wide = await workbookBuffer([
       HEADER.split(','),
       ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', 'stray'],
     ]);
-    await expect(parseRows(wide, 'data.xlsx')).rejects.toThrow(
+    expect(await refusal(wide)).toBe(
       'Row 2 has a value in column 10, which has no header. Name the column or clear it.',
     );
+  });
+
+  it('refuses a row whose only value has no header, rather than skipping it as blank', async () => {
+    const buffer = await workbookBuffer([
+      HEADER.split(','),
+      ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', ''],
+      [null, null, null, null, null, null, null, null, null, 'note'],
+    ]);
+    expect(await refusal(buffer)).toBe(
+      'Row 3 has a value in column 10, which has no header. Name the column or clear it.',
+    );
+  });
+
+  it('ignores a whitespace-only cell past the last header', async () => {
+    const buffer = await workbookBuffer([
+      HEADER.split(','),
+      ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', ' '],
+    ]);
+    await expect(parseRows(buffer, 'data.xlsx')).resolves.toHaveLength(1);
   });
 
   it('refuses a workbook whose header is wrong', async () => {

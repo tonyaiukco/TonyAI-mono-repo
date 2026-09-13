@@ -1153,11 +1153,13 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       // branch that writes records whenever the flag is not truthy.
       const { audit, records, service } = build();
 
-      await expect(
-        service.import(dataEntry(), csvFile([row()]), {
-          dryRun: value as unknown as boolean,
-        }),
-      ).rejects.toThrow(new BadRequestException('dryRun must be true or false.'));
+      const error = await service
+        .import(dataEntry(), csvFile([row()]), { dryRun: value as unknown as boolean })
+        .catch((e: unknown) => e);
+      // The class as well as the words: `toThrow(instance)` compares messages
+      // only, and a plain Error here would reach the caller as a 500.
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as Error).message).toBe('dryRun must be true or false.');
       expect(records.create).not.toHaveBeenCalled();
       expect(records.previewCreate).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
@@ -1261,11 +1263,58 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(audit.record).toHaveBeenCalledTimes(2);
-    const retried = audit.record.mock.calls[1][1].diff as Record<string, unknown>;
-    expect(retried).not.toHaveProperty('fileName');
-    expect(retried).not.toHaveProperty('reason');
-    expect(retried).toMatchObject({ refused: true, callerTextOmitted: true });
+    // Everything else the first write carried survives; only the two caller
+    // strings go. A retry that kept `{ refused }` alone passed a looser check.
+    const first = { ...(audit.record.mock.calls[0][1].diff as Record<string, unknown>) };
+    delete first.fileName;
+    delete first.reason;
+    expect(audit.record.mock.calls[1][1].diff).toEqual({ ...first, callerTextOmitted: true });
   });
+
+  it('retries the post-import summary row too, keeping its counts', async () => {
+    // The row that summarises an apply is the one the per-record rows cannot
+    // replace; a direct write there lost it to the same filename, silently.
+    const { audit, service } = build();
+    audit.record.mockRejectedValueOnce(
+      Object.assign(new Error('unsupported Unicode escape sequence'), { code: '22P05' }),
+    );
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row(), row({ periodValue: 'February' })]),
+      NOTHING,
+    );
+
+    expect(report.accepted).toHaveLength(2);
+    expect(audit.record).toHaveBeenCalledTimes(2);
+    const retried = audit.record.mock.calls[1][1].diff as Record<string, unknown>;
+    expect(retried).toMatchObject({
+      bulk: true,
+      dryRun: false,
+      totalRows: 2,
+      acceptedCount: 2,
+      rejectedCount: 0,
+      callerTextOmitted: true,
+    });
+    expect(retried).not.toHaveProperty('fileName');
+  });
+
+  it.each([0x01, 0x0a, 0x1f, 0x7f, 0x80, 0x9f, 0xd800])(
+    'drops code unit %d from a stored name',
+    async (code) => {
+      // Every control character and an unpaired surrogate, not just U+0000:
+      // the docblock promises all of them.
+      const { audit, service } = build();
+
+      await service.import(
+        dataEntry(),
+        csvFile([row()], { originalname: `x${String.fromCharCode(code)}.csv` }),
+        DRY,
+      );
+
+      expect(audit.record.mock.calls[0][1].diff).toMatchObject({ fileName: 'x.csv' });
+    },
+  );
 
   it('does not retry a failure that could have committed — that would write the row twice', async () => {
     // A dropped connection or a timeout can fail AFTER the insert committed,
@@ -1280,27 +1329,31 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     expect(audit.record).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a blank reporting entity out of the stored-slot query', async () => {
-    // Postgres refuses '' as a uuid (P2023). This query runs outside every
-    // catch, so one blank cell was a 500 with no report and no audit row. The
-    // mock says no the way the database does — a mock that cannot say no is not
-    // a test.
-    const { prisma, service } = build();
-    prisma.activityRecord.findMany.mockImplementation(
-      (args: { where: { subsidiaryId: { in: string[] } } }) =>
-        args.where.subsidiaryId.in.includes('')
-          ? Promise.reject(new Error('P2023: Error creating UUID, invalid length'))
-          : Promise.resolve([]),
-    );
+  it.each([[''], ['   ']])(
+    'keeps a blank reporting entity (%j) out of the stored-slot query',
+    async (blank) => {
+      // Postgres refuses '' as a uuid (P2023). This query runs outside every
+      // catch, so one blank cell was a 500 with no report and no audit row. The
+      // mock says no the way the database does — a mock that cannot say no is
+      // not a test. Whitespace too: a filter placed before the trim would let
+      // '   ' through, to reach Postgres as ''.
+      const { prisma, service } = build();
+      prisma.activityRecord.findMany.mockImplementation(
+        (args: { where: { subsidiaryId: { in: string[] } } }) =>
+          args.where.subsidiaryId.in.includes('')
+            ? Promise.reject(new Error('P2023: Error creating UUID, invalid length'))
+            : Promise.resolve([]),
+      );
 
-    const report = await service.import(
-      dataEntry(),
-      csvFile([row(), row({ subsidiaryId: '' })]),
-      DRY,
-    );
+      const report = await service.import(
+        dataEntry(),
+        csvFile([row(), row({ subsidiaryId: blank })]),
+        DRY,
+      );
 
-    expect(report.accepted).toHaveLength(1);
-    expect(report.errors[0]).toMatchObject({ row: 3, code: 'invalid' });
-  });
+      expect(report.accepted).toHaveLength(1);
+      expect(report.errors[0]).toMatchObject({ row: 3, code: 'invalid' });
+    },
+  );
 });
 
