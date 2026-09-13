@@ -206,14 +206,12 @@ The normative statement of the rule, including why the baseline key deviates fro
 Sticky action bar at the bottom of the page.
 
 ### Actions
-- `Bulk Upload`
 - `Save Draft`
 - `Submit for Review`
 
-### Behaviour
-#### Bulk Upload
-Opens modal for CSV or Excel ingestion workflow
+Bulk upload is not an action-bar action — it has its own panel on the page (§9).
 
+### Behaviour
 #### Save Draft
 - saves data in `draft` status
 - keeps record editable
@@ -228,7 +226,72 @@ Opens modal for CSV or Excel ingestion workflow
 
 ---
 
-## 9. Interaction States
+## 9. Bulk Upload and Bulk Submit
+
+This page can import many records at once and send many drafts for review at once. The importer is a `Bulk upload` panel on the page itself, not a modal workflow — the only dialogs are the confirmations before importing and before submitting. Bulk submit is offered in two places: by the panel, for the rows it has just imported, and by a checkbox list on `Previous submissions`, for drafts already on the list.
+
+The server-side rules behind this section, and the reasons for them, are in `README.md` (the WP8 bulk upload and bulk submit paragraphs).
+
+### 9.1 Bulk Upload Panel
+
+#### Placement and Access
+- sits between the `Reporting scope` card and the `Activity data` card, outside the "editing a record" (`editingId`) gate: it is the alternative to entering records one at a time, and an importer has no open record
+- rendered only for `data_entry` and `super_admin`; for any other role the panel is absent rather than disabled
+
+#### Template
+- `Download template` in the panel header downloads an XLSX
+- rows name reporting entities by **id**, and the template is what makes that typeable
+- sheet 1 holds only the nine import columns: a header row, dropdowns for the reporting period, period value and category, and no pre-filled entity rows
+- sheet 2 lists the reporting entities the user can reach (id, name, geography), the vocabularies, the unit list for each category and a worked example; the importer reads only the first worksheet, so sheet 2 is never imported
+
+#### Picking a File
+- `Choose a file`, or drop a file on the upload area: CSV or XLSX, up to 1,000 rows, max 2 MB
+- the browser first checks the extension, the size and that the file is not empty; a file that fails is refused with a toast and no request is sent
+- otherwise **picking or dropping the file starts the dry run** — there is no separate check step. While it runs, the upload area reads `Checking <file name>… nothing is being written.`
+- the dry run validates, prices and dedupes every row (against the rest of the file and against stored records that are not voided) and creates no records; the only row it writes is the batch's own audit entry
+- a refusal of the whole file is shown inside the panel, followed by `Nothing was imported.`
+
+#### Dry-Run Report
+- a verdict (how many rows would be imported), the tonnage of the accepted rows and the file name
+- problems are grouped by what is wrong rather than listed row by row. Errors keep a row out of the import. Warnings do not: they note that a row cannot be submitted as it stands (e.g. it needs an evidence file), or that its variance reason starts with a character a spreadsheet reads as a formula
+- actions: `Import N rows` (only when at least one row is accepted) and `Choose a different file`
+
+#### Confirm and Import
+- `Import N rows` opens an `Import these rows?` confirmation; no record is created until it is confirmed
+- the confirmation names the row count and the tonnage, says each row becomes its own record and the import cannot be undone in bulk, and says the rows **arrive as drafts**
+- rows are created one at a time through the ordinary create path, never a bulk upsert, so each gets its own immutable factor snapshot, the same lifecycle gates as a typed record and its own audit row
+- imported rows land as `draft`: they count towards no total and appear in no review queue, so the `Data collection status` panel on the same screen does not move until they are submitted. The verdict repeats this, and the toast reads `N records imported as drafts. Send them for review below to count them towards your inventory.`
+- no transaction spans the import, so a failure part-way through (e.g. a period lock landing mid-import) can leave part of the file written. The report is **not** cleared afterwards — the error list is the user's work list — and after a partial import the verdict advises uploading only the rows that failed, because re-sending the whole file would report the imported rows as duplicates
+- after every attempted import, successful or not, `Previous submissions` and the `Data collection status` panel refresh for the selected subsidiary
+- `Upload another file` resets the panel
+- limits: 1,000 rows, 2 MB and 5 imports per minute per user; a dry run and an import each count
+
+### 9.2 Bulk Submit
+
+Both entry points use the same bulk-submit endpoint. It submits the records one at a time through the same `submit` the form uses — so the status gate, the author gate on a resubmission, the period lock, the evidence requirement and the **recomputed** anomaly verdict all still run — in chronological order, whatever order they were selected in. On top of the single-record path:
+- **drafts only**: a `rejected` record is resubmitted on its own, so the reviewer's note gets read
+- **only records the user entered**, except for a `super_admin`, whose author gate never fires
+- at most 1,000 records per submission, and 10 submissions per minute per user
+- **no dry run, but always a confirmation**: `Send these for review?` states the count and that only a reviewer can send the records back — there is no author-side un-submit
+- the result is a verdict plus a per-record failure list in the server's own words. The anomaly verdict is recomputed at submit time, so the screen never tries to predict it
+
+#### From the Bulk Upload Panel
+- after a real import (not a dry run), `Send N records for review` sends the rows just imported
+- rows in an evidence-required category are held back, because an import cannot attach an evidence file; when that holds back every row, the panel says so instead of offering the button
+- after a submission, `Previous submissions` and the `Data collection status` panel refresh, even when the request fails
+- **on the seeded demo data this path submits nothing, by construction**: every category that can be imported there requires evidence — Electricity, Natural Gas and Fuel, the only categories the seeded factor library covers, and Water, which is recorded without a calculated figure
+
+#### From Previous Submissions
+- a row gets a checkbox only when every gate the client can check passes. The list applies the server's gates in the server's order — role, status, authorship, period lock — plus the evidence rule: an evidence-required category with no file attached, so a draft whose invoice is attached qualifies. The anomaly verdict is left to the server, so a ticked draft can still come back refused, e.g. for a missing variance reason
+- a `draft` or `rejected` row that cannot be ticked shows a one-line reason instead, e.g. `Sent back by a reviewer — open it on its own, so the note gets read.`, `Entered by someone else.` or `Needs an evidence file.`; rows in other statuses rely on their status badge
+- no checkboxes appear until the current user has loaded
+- `Select all N` takes only the records the current user entered, up to 1,000. A `super_admin` can still tick someone else's draft one at a time; the confirmation then says how many were entered by someone else, who will no longer be able to edit them
+- a selection shows a bar with `N selected`, `Clear` and `Send N records for review`; a tick beyond 1,000 is refused with a notice
+- when the request succeeds, the selection clears and the verdict and any per-record failures appear above the list; when the request itself fails, a toast explains why and the selection stays. The list refreshes either way, since a failed request may still have moved records
+
+---
+
+## 10. Interaction States
 
 ### Loading
 - shimmer or skeleton on calculation preview card
@@ -253,7 +316,7 @@ If record status is `submitted` or `approved`:
 
 ---
 
-## 10. Notes for Development
+## 11. Notes for Development
 - This page is for creation and submission, not historical analysis
 - Calculation preview must update in real time when enough valid data exists
 - Category navigation and badge states must stay in sync with current record state
