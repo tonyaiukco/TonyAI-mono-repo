@@ -168,6 +168,17 @@ describe('parseRows — CSV', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('bounds the header text it echoes back', async () => {
+    // The sentence reaches the response and the audit row's `reason`; a 2 MiB
+    // header row used to be stored there whole.
+    const header = `${HEADER},${'x'.repeat(100)},b,c,d,e,f,g`;
+    await expect(
+      parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv'),
+    ).rejects.toThrow(
+      `Unrecognised column(s): ${'x'.repeat(40)}…, b, c, d, e (+2 more). Expected: ${HEADER.split(',').join(', ')}.`,
+    );
+  });
+
   it('refuses a missing required column, naming it', async () => {
     const header = HEADER.replace(',activityValue', '');
     await expect(

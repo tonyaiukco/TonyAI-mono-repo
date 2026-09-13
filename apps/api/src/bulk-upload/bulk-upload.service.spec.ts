@@ -1214,10 +1214,47 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     });
   });
 
-  it('writes the refusal again without the filename if the first write fails', async () => {
-    // Belt and braces for the shapes of name nobody has found yet.
+  it('cleans the refusal reason too — it can echo the file’s own header', async () => {
+    // The second caller-controlled string in the diff, and the retry used to
+    // leave it in place: a NUL in a header cell failed both writes.
     const { audit, service } = build();
-    audit.record.mockRejectedValueOnce(new Error('unsupported Unicode escape sequence'));
+    const file = {
+      ...csvFile([]),
+      buffer: Buffer.from(`${HEADER},bad\u0000col\n${row()}`),
+    } as Express.Multer.File;
+
+    await expect(service.import(dataEntry(), file, DRY)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    const { reason } = audit.record.mock.calls[0][1].diff as { reason: string };
+    expect(reason).toContain('Unrecognised column(s): badcol.');
+    expect(reason).not.toContain('\u0000');
+  });
+
+  it('drops the characters that disguise a name in the audit drawer', async () => {
+    // Rendered, `invoice_<U+202E>fdp.xlsx` read as a PDF, and a zero-width
+    // space made two different names look identical.
+    const { audit, service } = build();
+
+    await service.import(
+      dataEntry(),
+      csvFile([row()], { originalname: 'invoice_\u202Efdp\u200B.csv' }),
+      DRY,
+    );
+
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({
+      fileName: 'invoice_fdp.csv',
+    });
+  });
+
+  it('writes a refused row again without the caller’s text when the database rejects a value', async () => {
+    // Belt and braces for the shapes nobody has found yet — and only for a
+    // value rejection, which fails before anything commits.
+    const { audit, service } = build();
+    audit.record.mockRejectedValueOnce(
+      Object.assign(new Error('unsupported Unicode escape sequence'), { code: '22P05' }),
+    );
 
     await expect(
       service.import(dataEntry(), csvFile([row()], { originalname: 'x.exe' }), DRY),
@@ -1226,7 +1263,21 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     expect(audit.record).toHaveBeenCalledTimes(2);
     const retried = audit.record.mock.calls[1][1].diff as Record<string, unknown>;
     expect(retried).not.toHaveProperty('fileName');
-    expect(retried).toMatchObject({ refused: true, fileNameOmitted: true });
+    expect(retried).not.toHaveProperty('reason');
+    expect(retried).toMatchObject({ refused: true, callerTextOmitted: true });
+  });
+
+  it('does not retry a failure that could have committed — that would write the row twice', async () => {
+    // A dropped connection or a timeout can fail AFTER the insert committed,
+    // and `audit_log` has no delete path for the duplicate.
+    const { audit, service } = build();
+    audit.record.mockRejectedValueOnce(new Error('Connection terminated unexpectedly'));
+
+    await expect(
+      service.import(dataEntry(), csvFile([row()], { originalname: 'x.exe' }), DRY),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(audit.record).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a blank reporting entity out of the stored-slot query', async () => {

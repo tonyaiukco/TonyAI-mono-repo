@@ -637,7 +637,12 @@ export class BulkUploadService {
           user,
           this.batchDiff(file, dryRun, {
             refused: true,
-            reason: error instanceof Error ? error.message : 'unknown',
+            // Caller-controlled too: "Unrecognised column(s): …" echoes the
+            // file's own header text. Cleaned and bounded like the filename.
+            reason: this.auditText(
+              error instanceof Error ? error.message : 'unknown',
+              500,
+            ),
           }),
         );
       } catch (auditError) {
@@ -652,14 +657,20 @@ export class BulkUploadService {
   }
 
   /**
-   * Write one batch row — and if it is refused, write it once more without the
-   * filename.
+   * Write one batch row — and if the database refuses a VALUE in it, write it
+   * once more without the caller's text.
    *
-   * The filename is the one caller-controlled string in the diff, and both
-   * callers swallow a failed write by design (the bookkeeping must never
-   * replace the user's answer). So a name the column would not store erased
-   * the trace of the very event the row exists to keep. `auditFileName`
-   * removes the two shapes that were found; this covers the ones that were not.
+   * Two strings in the diff come from the caller: the filename, and the
+   * refusal's reason (which can echo the file's header). Both callers swallow
+   * a failed write by design — the bookkeeping must never replace the user's
+   * answer — so a value the column would not store erased the trace of the
+   * very event the row exists to keep. `auditText` removes the shapes that
+   * were found; this covers the ones that were not.
+   *
+   * ONLY a value rejection is retried. Those fail before anything commits, so a
+   * second write cannot duplicate the first — whereas a dropped connection or a
+   * timeout can fail after the insert committed, and retrying that would write
+   * the row twice into a table with no delete path.
    */
   private async recordBatch(
     user: RequestUser,
@@ -674,14 +685,40 @@ export class BulkUploadService {
     try {
       await this.audit.record(user, { ...entry, diff });
     } catch (error) {
-      if (!('fileName' in diff)) throw error;
-      const withoutName: Record<string, unknown> = {
+      if (!this.isValueRejection(error)) throw error;
+      // Named, never quoted: the message can carry the rejected value itself.
+      this.logger.warn(
+        `bulk import audit row refused a value (${this.errorName(error)}); writing it again without the caller's text`,
+      );
+      const withoutCallerText: Record<string, unknown> = {
         ...diff,
-        fileNameOmitted: true,
+        callerTextOmitted: true,
       };
-      delete withoutName.fileName;
-      await this.audit.record(user, { ...entry, diff: withoutName });
+      delete withoutCallerText.fileName;
+      delete withoutCallerText.reason;
+      await this.audit.record(user, { ...entry, diff: withoutCallerText });
     }
+  }
+
+  /**
+   * The database refused a value, as opposed to failing to answer: Postgres'
+   * untranslatable-character, invalid-byte and invalid-text-representation
+   * classes, and Prisma's refusal of a malformed escape — the shapes measured
+   * against the real stack when a filename or reason carried U+0000 or half of
+   * a surrogate pair.
+   */
+  private isValueRejection(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : '';
+    return /\b(?:22P05|22021|22P02)\b|unsupported Unicode escape|invalid byte sequence|hex escape/i.test(
+      `${this.errorName(error)} ${message}`,
+    );
+  }
+
+  /** An error's class and code, for a log line that must not echo its value. */
+  private errorName(error: unknown): string {
+    const code = (error as { code?: unknown } | null)?.code;
+    const name = error instanceof Error ? error.constructor.name : typeof error;
+    return typeof code === 'string' ? `${name} ${code}` : name;
   }
 
   /**
@@ -700,32 +737,42 @@ export class BulkUploadService {
     return {
       bulk: true,
       dryRun,
-      fileName: this.auditFileName(file?.originalname),
+      fileName: this.auditText(file?.originalname, 255),
       sizeBytes: file?.size ?? 0,
       ...extra,
     };
   }
 
   /**
-   * The uploader's filename, bounded and made storable.
+   * Caller-controlled text — the filename, a refusal's reason — bounded and
+   * made storable.
    *
-   * Two shapes of name made the audit write fail: U+0000, which Postgres
-   * refuses inside `jsonb` (busboy decodes `filename*=UTF-8''probe%00.csv` into
-   * exactly that), and a name cut mid-emoji by a UTF-16 `.slice(0, 255)`, which
-   * kept half of a surrogate pair. Control characters and unpaired surrogates
-   * are dropped, and the bound — the same 255 as before — counts code points,
-   * so the cut can no longer land inside a character.
+   * Two shapes made the audit write fail: U+0000, which Postgres refuses inside
+   * `jsonb` (busboy decodes `filename*=UTF-8''probe%00.csv` into exactly that),
+   * and a string cut mid-emoji by a UTF-16 `.slice`, which kept half of a
+   * surrogate pair. So control characters and unpaired surrogates are dropped,
+   * and the bound counts code points: the cut can no longer land inside a
+   * character. Bidi controls and invisible separators go too — rendered in the
+   * audit drawer, `invoice_<U+202E>fdp.xlsx` read as a PDF, and a zero-width
+   * space made two different names indistinguishable. ZWJ and ZWNJ stay: some
+   * scripts and emoji need them.
    */
-  private auditFileName(name: string | undefined): string {
+  private auditText(value: string | undefined, max: number): string {
     const kept: string[] = [];
     // `for…of` walks code points; an unpaired surrogate arrives on its own.
-    for (const char of name ?? '') {
+    for (const char of value ?? '') {
       const code = char.codePointAt(0) ?? 0;
       const control = code <= 0x1f || (code >= 0x7f && code <= 0x9f);
       const unpaired = char.length === 1 && code >= 0xd800 && code <= 0xdfff;
-      if (control || unpaired) continue;
+      const disguise =
+        (code >= 0x202a && code <= 0x202e) ||
+        (code >= 0x2066 && code <= 0x2069) ||
+        code === 0x200b ||
+        code === 0x2060 ||
+        code === 0xfeff;
+      if (control || unpaired || disguise) continue;
       kept.push(char);
-      if (kept.length === 255) break;
+      if (kept.length === max) break;
     }
     return kept.join('');
   }

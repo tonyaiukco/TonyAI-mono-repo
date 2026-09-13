@@ -64,8 +64,16 @@ function mapHeader(header: readonly string[]): (BulkUploadColumn | null)[] {
     if (!key && trimmed !== '') unknown.push(trimmed);
   }
   if (unknown.length > 0) {
+    // Bounded, because this sentence is echoed into the response AND into the
+    // audit row's `reason`: a 2 MiB header row was stored there whole (a
+    // 1,960,160-character reason, measured) in a table with no delete path.
+    const shown = unknown.slice(0, 5).map((h) => {
+      const chars = Array.from(h);
+      return chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : h;
+    });
+    const more = unknown.length > 5 ? ` (+${unknown.length - 5} more)` : '';
     throw new BadRequestException(
-      `Unrecognised column(s): ${unknown.join(', ')}. Expected: ${BULK_UPLOAD_COLUMNS.join(', ')}.`,
+      `Unrecognised column(s): ${shown.join(', ')}${more}. Expected: ${BULK_UPLOAD_COLUMNS.join(', ')}.`,
     );
   }
   const mapped = positions.filter((c): c is BulkUploadColumn => c !== null);
