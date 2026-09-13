@@ -113,19 +113,27 @@ export class BulkUploadService {
     options: BulkUploadOptionsDto,
   ): Promise<BulkUploadReportDTO> {
     const { dryRun } = options;
+    // The DTO is what makes this a boolean over HTTP; this is what makes the
+    // service refuse rather than guess for any other caller. The loop writes
+    // records whenever `dryRun` is not truthy, so `''`, `0`, `null` or
+    // `undefined` reaching it would mean an import nobody asked for.
+    if (typeof dryRun !== 'boolean') {
+      throw new BadRequestException('dryRun must be true or false.');
+    }
     // Every refusal below this line is audited before it is thrown. The
     // batch row used to be written only after the loop, which meant the one
     // event most worth keeping — a user uploading a file naming another
     // tenant's subsidiaries, or a role that may not author records trying to
     // — left NO trace at all on an append-only compliance trail.
     const rows = await this.auditedRefusal(user, file, dryRun, async () => {
-      // The role FIRST, before the file is even read. It used to be enforced
-      // only by the record service inside the loop, so its 403 was thrown past
-      // this audited pre-flight and before the batch row: a consultant's
-      // import attempt — the second event the comment above names — still left
-      // no trace (measured: zero audit writes). And a file whose every row
-      // failed validation never reached that check, so the same caller got a
-      // 200 report back instead of a refusal.
+      // The role FIRST, before the file is parsed. It used to be enforced only
+      // by the record service inside the loop, so its 403 was thrown past this
+      // audited pre-flight and before the batch row: a consultant's import
+      // attempt — the second event the comment above names — still left no
+      // trace (measured: zero audit writes). And a file whose every row failed
+      // validation never reached that check, so the same caller got a 200
+      // report back instead of a refusal. (Multer has already buffered the
+      // upload by now; the 2 MB limit's 413 fires before this service runs.)
       this.assertMayImport(user);
       this.assertAcceptableFile(file);
       const upload = file as Express.Multer.File;
@@ -159,10 +167,14 @@ export class BulkUploadService {
         );
       } catch (error) {
         // A backstop now, not the gate: the role is refused in the audited
-        // pre-flight above. If the record service ever refuses a row for a
-        // reason of its own, a thousand identical "forbidden" entries would
-        // still be a worse answer than one 403.
-        if (error instanceof ForbiddenException) throw error;
+        // pre-flight above. One 403 beats a thousand identical "forbidden"
+        // rows — but only while nothing has been accepted. After that it would
+        // throw away the report of a partial import (no transaction spans the
+        // batch) and skip the batch audit row below, so it is reported on its
+        // own row like any other refusal.
+        if (error instanceof ForbiddenException && accepted.length === 0) {
+          throw error;
+        }
         errors.push(this.toIssue(parsed.row, error));
       }
     }
@@ -177,17 +189,14 @@ export class BulkUploadService {
     // the caller a 500 with no report — a partial import nobody can enumerate,
     // which is the exact failure this module's design exists to prevent.
     try {
-      await this.audit.record(user, {
-        action: 'create',
-        entity: 'activity_record',
-        // No single entity — the `report` rows set the precedent for this shape.
-        entityId: null,
-        diff: this.batchDiff(upload, dryRun, {
+      await this.recordBatch(
+        user,
+        this.batchDiff(upload, dryRun, {
           totalRows: rows.length,
           acceptedCount: accepted.length,
           rejectedCount: errors.length,
         }),
-      });
+      );
     } catch (error) {
       this.logger.error(
         `bulk import batch audit row failed to write (${accepted.length} records were created)`,
@@ -537,7 +546,16 @@ export class BulkUploadService {
    */
   private async loadStoredKeys(rows: ParsedRow[]): Promise<Set<string>> {
     const subsidiaryIds = [
-      ...new Set(rows.map((r) => r.cells.subsidiaryId.trim())),
+      ...new Set(
+        rows
+          .map((r) => r.cells.subsidiaryId.trim())
+          // A BLANK id is refused on its own row by the DTO. Sent to Postgres
+          // it is not a uuid, and this query runs OUTSIDE every catch — so one
+          // empty cell raised P2023 and came back as a 500 with no report and
+          // no audit row. Every non-blank id here already passed the access
+          // check in the pre-flight.
+          .filter((id) => id !== ''),
+      ),
     ];
     const years = [
       ...new Set(
@@ -615,15 +633,13 @@ export class BulkUploadService {
       return await preflight();
     } catch (error) {
       try {
-        await this.audit.record(user, {
-          action: 'create',
-          entity: 'activity_record',
-          entityId: null,
-          diff: this.batchDiff(file, dryRun, {
+        await this.recordBatch(
+          user,
+          this.batchDiff(file, dryRun, {
             refused: true,
             reason: error instanceof Error ? error.message : 'unknown',
           }),
-        });
+        );
       } catch (auditError) {
         // Never let the bookkeeping replace the user's actual error.
         this.logger.error(
@@ -636,12 +652,45 @@ export class BulkUploadService {
   }
 
   /**
+   * Write one batch row — and if it is refused, write it once more without the
+   * filename.
+   *
+   * The filename is the one caller-controlled string in the diff, and both
+   * callers swallow a failed write by design (the bookkeeping must never
+   * replace the user's answer). So a name the column would not store erased
+   * the trace of the very event the row exists to keep. `auditFileName`
+   * removes the two shapes that were found; this covers the ones that were not.
+   */
+  private async recordBatch(
+    user: RequestUser,
+    diff: Record<string, unknown>,
+  ): Promise<void> {
+    // No single entity — the `report` rows set the precedent for this shape.
+    const entry = {
+      action: 'create',
+      entity: 'activity_record',
+      entityId: null,
+    } as const;
+    try {
+      await this.audit.record(user, { ...entry, diff });
+    } catch (error) {
+      if (!('fileName' in diff)) throw error;
+      const withoutName: Record<string, unknown> = {
+        ...diff,
+        fileNameOmitted: true,
+      };
+      delete withoutName.fileName;
+      await this.audit.record(user, { ...entry, diff: withoutName });
+    }
+  }
+
+  /**
    * What goes in the audit row's `diff`.
    *
-   * The filename is truncated. It is caller-controlled (busboy allows ~16 KB
-   * in a part header), it routinely carries a person's name, and `audit_log`
-   * has no delete path — so an untruncated one is un-erasable personal data
-   * under KVKK/GDPR, sized by the uploader.
+   * The filename is bounded. It is caller-controlled (busboy allows ~16 KB in
+   * a part header), it routinely carries a person's name, and `audit_log` has
+   * no delete path — so an unbounded one is un-erasable personal data under
+   * KVKK/GDPR, sized by the uploader.
    */
   private batchDiff(
     file: Express.Multer.File | undefined,
@@ -651,10 +700,34 @@ export class BulkUploadService {
     return {
       bulk: true,
       dryRun,
-      fileName: (file?.originalname ?? '').slice(0, 255),
+      fileName: this.auditFileName(file?.originalname),
       sizeBytes: file?.size ?? 0,
       ...extra,
     };
+  }
+
+  /**
+   * The uploader's filename, bounded and made storable.
+   *
+   * Two shapes of name made the audit write fail: U+0000, which Postgres
+   * refuses inside `jsonb` (busboy decodes `filename*=UTF-8''probe%00.csv` into
+   * exactly that), and a name cut mid-emoji by a UTF-16 `.slice(0, 255)`, which
+   * kept half of a surrogate pair. Control characters and unpaired surrogates
+   * are dropped, and the bound — the same 255 as before — counts code points,
+   * so the cut can no longer land inside a character.
+   */
+  private auditFileName(name: string | undefined): string {
+    const kept: string[] = [];
+    // `for…of` walks code points; an unpaired surrogate arrives on its own.
+    for (const char of name ?? '') {
+      const code = char.codePointAt(0) ?? 0;
+      const control = code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+      const unpaired = char.length === 1 && code >= 0xd800 && code <= 0xdfff;
+      if (control || unpaired) continue;
+      kept.push(char);
+      if (kept.length === 255) break;
+    }
+    return kept.join('');
   }
 
   // -- helpers ---------------------------------------------------------------

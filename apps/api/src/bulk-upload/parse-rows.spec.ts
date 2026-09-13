@@ -182,6 +182,53 @@ describe('parseRows — CSV', () => {
     ).rejects.toThrow(/more than once/);
   });
 
+  // A blank header cell between activityUnit (8) and varianceReason (now 10).
+  const GAPPED = HEADER.replace(',varianceReason', ',,varianceReason');
+
+  it('keeps every column in place when a header cell is blank', async () => {
+    // Cells are read by position. A compacted header shifted everything after
+    // a blank cell one place left: the unlabelled column's text was stored as
+    // the variance reason and the real reason was dropped, with no error.
+    const rows = await parseRows(
+      Buffer.from(
+        [GAPPED, 'sub-1,,2024,monthly,January,Electricity,1200,kWh,,Meter replaced'].join('\n'),
+      ),
+      'x.csv',
+    );
+    expect(rows[0].cells.activityUnit).toBe('kWh');
+    expect(rows[0].cells.varianceReason).toBe('Meter replaced');
+  });
+
+  it('refuses a value under a blank header rather than dropping it', async () => {
+    await expect(
+      parseRows(
+        Buffer.from(
+          [GAPPED, 'sub-1,,2024,monthly,January,Electricity,1200,kWh,stray note,Meter replaced'].join(
+            '\n',
+          ),
+        ),
+        'x.csv',
+      ),
+    ).rejects.toThrow(
+      'Row 2 has a value in column 9, which has no header. Name the column or clear it.',
+    );
+  });
+
+  it('refuses a value past the last header, and ignores empty trailing cells', async () => {
+    await expect(parseRows(csv(`${ROW},,,`), 'x.csv')).resolves.toHaveLength(1);
+    await expect(parseRows(csv(`${ROW},stray`), 'x.csv')).rejects.toThrow(
+      'Row 2 has a value in column 10, which has no header. Name the column or clear it.',
+    );
+  });
+
+  it('returns nothing for a file of blank lines rather than refusing it as too long', async () => {
+    // Correctness only — the cost is not asserted here, because a timing test
+    // is the observable this repo has already learned not to trust. The
+    // service refuses the result as "no data rows".
+    const newlines = Buffer.from(`${HEADER}${'\n'.repeat(200_000)}`);
+    await expect(parseRows(newlines, 'blank.csv')).resolves.toEqual([]);
+  });
+
   it('refuses an unknown extension', async () => {
     await expect(parseRows(csv(ROW), 'data.txt')).rejects.toBeInstanceOf(
       BadRequestException,
@@ -211,6 +258,33 @@ describe('parseRows — XLSX', () => {
     expect(rows[0].cells.activityValue).toBe('1200');
     expect(rows[0].cells.reportingYear).toBe('2024');
     expect(rows[0].row).toBe(2);
+  });
+
+  it('keeps every column in place when a header cell is blank', async () => {
+    const buffer = await workbookBuffer([
+      [...HEADER.split(',').slice(0, 8), '', 'varianceReason'],
+      ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', 'Meter replaced'],
+    ]);
+    const rows = await parseRows(buffer, 'data.xlsx');
+    expect(rows[0].cells.activityUnit).toBe('kWh');
+    expect(rows[0].cells.varianceReason).toBe('Meter replaced');
+  });
+
+  it('refuses a value under a blank header, or past the last one', async () => {
+    const gapped = await workbookBuffer([
+      [...HEADER.split(',').slice(0, 8), '', 'varianceReason'],
+      ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', 'stray', 'Meter replaced'],
+    ]);
+    await expect(parseRows(gapped, 'data.xlsx')).rejects.toThrow(
+      'Row 2 has a value in column 9, which has no header. Name the column or clear it.',
+    );
+    const wide = await workbookBuffer([
+      HEADER.split(','),
+      ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', 'stray'],
+    ]);
+    await expect(parseRows(wide, 'data.xlsx')).rejects.toThrow(
+      'Row 2 has a value in column 10, which has no header. Name the column or clear it.',
+    );
   });
 
   it('refuses a workbook whose header is wrong', async () => {

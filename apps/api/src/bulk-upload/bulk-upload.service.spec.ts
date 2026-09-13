@@ -422,19 +422,27 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     expect(report.errors[0].message).not.toMatch(/ECONNREFUSED|SELECT|10\.0\.0\.5/);
   });
 
-  it('refuses a role that may not author records BEFORE reading the file — and audits it', async () => {
-    // It used to be refused only by the record service inside the loop, so
-    // the 403 was thrown past the audited pre-flight and before the batch row:
-    // a consultant's import attempt left no trace at all.
-    const { audit, prisma, records, service } = build();
+  it('answers the role before the file — an unreadable one still gets the 403', async () => {
+    const { service } = build();
 
     await expect(
       service.import(
         dataEntry({ role: 'consultant' }),
-        // Unreadable on purpose: the role refusal must win over a file refusal.
         csvFile([row()], { originalname: 'x.exe' }),
         DRY,
       ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses a role that may not author records before parsing its file — and audits it', async () => {
+    // It used to be refused only by the record service inside the loop, so
+    // the 403 was thrown past the audited pre-flight and before the batch row:
+    // a consultant's import attempt left no trace at all. A READABLE file on
+    // purpose: without the gate, every "not called" below would fail.
+    const { audit, prisma, records, service } = build();
+
+    await expect(
+      service.import(dataEntry({ role: 'consultant' }), csvFile([row()]), DRY),
     ).rejects.toThrow(new ForbiddenException('Your role may not create activity records'));
 
     expect(records.previewCreate).not.toHaveBeenCalled();
@@ -1089,6 +1097,159 @@ describe('BulkUploadService — the template', () => {
     // No audit row either: a download is not a mutation, and audit_log has no
     // correction path for rows written on a read.
     expect(audit.record).not.toHaveBeenCalled();
+  });
+});
+
+describe('BulkUploadService — what the UAT-prep review passes found', () => {
+  it.each(['data_entry', 'super_admin'] as const)('lets a %s through the role gate', async (role) => {
+    // The gate is the record service's own rule. Narrowing it to one role
+    // passed every test until this one.
+    const { audit, service } = build();
+
+    const report = await service.import(dataEntry({ role }), csvFile([row()]), DRY);
+
+    expect(report.accepted).toHaveLength(1);
+    expect(audit.record.mock.calls[0][1].diff).not.toHaveProperty('refused');
+  });
+
+  it('states the entity refusal as its reason alone', async () => {
+    // The panel prints "Nothing was imported." under every whole-file refusal;
+    // the sentence saying it as well put it on screen twice.
+    const { service } = build();
+
+    await expect(
+      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: 'sub-99' })]), NOTHING),
+    ).rejects.toThrow(
+      new BadRequestException(
+        'Row(s) 3 name a reporting entity that does not exist or is not yours.',
+      ),
+    );
+  });
+
+  it('neither leaks a refused row’s warning into the next row nor repeats one', async () => {
+    const { service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([
+        row(),
+        row({ periodValue: 'February', activityValue: 'abc', varianceReason: '=SUM(A1)' }),
+        row({ periodValue: 'March' }),
+      ]),
+      DRY,
+    );
+
+    expect(report.accepted.map((a) => a.row)).toEqual([2, 4]);
+    expect(report.warnings.map((w) => [w.row, w.code])).toEqual([
+      [2, 'evidence_required'],
+      [4, 'evidence_required'],
+    ]);
+  });
+
+  it.each([[''], [null], [undefined], [0]])(
+    'refuses a non-boolean dryRun (%s) instead of importing',
+    async (value) => {
+      // The DTO makes it a boolean over HTTP. Every other caller used to reach a
+      // branch that writes records whenever the flag is not truthy.
+      const { audit, records, service } = build();
+
+      await expect(
+        service.import(dataEntry(), csvFile([row()]), {
+          dryRun: value as unknown as boolean,
+        }),
+      ).rejects.toThrow(new BadRequestException('dryRun must be true or false.'));
+      expect(records.create).not.toHaveBeenCalled();
+      expect(records.previewCreate).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reports a refusal raised after a row was written on its row, not as a bare 403', async () => {
+    // No transaction spans the batch: rethrowing here would hand the caller a
+    // 403 for a file that was partly imported, with no report and no batch row.
+    const { audit, records, service } = build();
+    records.create
+      .mockImplementationOnce((_user, dto) =>
+        Promise.resolve({
+          id: 'rec-1',
+          calculation: SNAPSHOT,
+          anomalyFlag: false,
+          periodValue: dto.periodValue,
+          varianceReason: null,
+        }),
+      )
+      .mockRejectedValueOnce(new ForbiddenException('Your role may not create activity records'));
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row(), row({ periodValue: 'February' })]),
+      NOTHING,
+    );
+
+    expect(report.accepted.map((a) => a.recordId)).toEqual(['rec-1']);
+    expect(report.errors.map((e) => e.row)).toEqual([3]);
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({ acceptedCount: 1, rejectedCount: 1 });
+  });
+
+  it('stores a filename Postgres will accept — no NUL, no half of a character', async () => {
+    // Either shape made the audit write fail, and a failed write is swallowed
+    // by design — so the refusal the row exists to keep left no trace at all.
+    const { audit, service } = build();
+
+    await expect(
+      service.import(
+        dataEntry({ role: 'consultant' }),
+        csvFile([row()], { originalname: 'probe\u0000.csv' }),
+        DRY,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({ fileName: 'probe.csv' });
+
+    // 254 characters and an emoji: a UTF-16 slice to 255 kept half of it.
+    const long = `${'a'.repeat(254)}😀.csv`;
+    await service.import(dataEntry(), csvFile([row()], { originalname: long }), DRY);
+    expect(audit.record.mock.calls[1][1].diff).toMatchObject({
+      fileName: `${'a'.repeat(254)}😀`,
+    });
+  });
+
+  it('writes the refusal again without the filename if the first write fails', async () => {
+    // Belt and braces for the shapes of name nobody has found yet.
+    const { audit, service } = build();
+    audit.record.mockRejectedValueOnce(new Error('unsupported Unicode escape sequence'));
+
+    await expect(
+      service.import(dataEntry(), csvFile([row()], { originalname: 'x.exe' }), DRY),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(audit.record).toHaveBeenCalledTimes(2);
+    const retried = audit.record.mock.calls[1][1].diff as Record<string, unknown>;
+    expect(retried).not.toHaveProperty('fileName');
+    expect(retried).toMatchObject({ refused: true, fileNameOmitted: true });
+  });
+
+  it('keeps a blank reporting entity out of the stored-slot query', async () => {
+    // Postgres refuses '' as a uuid (P2023). This query runs outside every
+    // catch, so one blank cell was a 500 with no report and no audit row. The
+    // mock says no the way the database does — a mock that cannot say no is not
+    // a test.
+    const { prisma, service } = build();
+    prisma.activityRecord.findMany.mockImplementation(
+      (args: { where: { subsidiaryId: { in: string[] } } }) =>
+        args.where.subsidiaryId.in.includes('')
+          ? Promise.reject(new Error('P2023: Error creating UUID, invalid length'))
+          : Promise.resolve([]),
+    );
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row(), row({ subsidiaryId: '' })]),
+      DRY,
+    );
+
+    expect(report.accepted).toHaveLength(1);
+    expect(report.errors[0]).toMatchObject({ row: 3, code: 'invalid' });
   });
 });
 

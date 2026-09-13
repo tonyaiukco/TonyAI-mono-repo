@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { BulkUploadAcceptedRow, BulkUploadRowIssue } from '@tonyai/shared-types';
 import {
   ADMIN_EMAIL,
+  CONSULTANT_EMAIL,
   ENTRY_EMAIL,
   buildBulkCsv,
   deleteRecordsAsService,
@@ -296,4 +297,41 @@ test('the row-level refusals arrive with the codes the contract names', async ({
     6: 'no_factor',
   });
   expect(report.accepted).toHaveLength(1);
+});
+
+test('a role that may not author records is refused before its file is parsed — and audited', async ({
+  request,
+}) => {
+  // The claim the unit suite can only make against a mocked audit writer. A
+  // consultant's import used to be refused from inside the row loop, past the
+  // audited pre-flight, so it left no row on the trail — and a file whose every
+  // row was invalid came back as a 200 report. A roles guard added on the route
+  // later would bring that back with every unit test green; this would fail.
+  //
+  // Budget: the throttle is keyed per user, so the consultant spends none of
+  // the six imports the header counts.
+  const token = await getAccessToken(request, CONSULTANT_EMAIL);
+  const since = new Date().toISOString();
+
+  const res = await postBulkImport(request, token, {
+    // Every row invalid on purpose: the old code never reached its role check
+    // for a file like this one.
+    buffer: buildBulkCsv([{ ...LANE, activityValue: 'N/A' }]),
+    dryRun: 'true',
+  });
+  expect(res.status()).toBe(403);
+  expect((await res.json()).message).toBe('Your role may not create activity records');
+
+  const audit = await readAuditSince(request, {
+    entity: 'activity_record',
+    action: 'create',
+    since,
+  });
+  expect(
+    audit.some(
+      (r) =>
+        r.diff?.refused === true &&
+        r.diff?.reason === 'Your role may not create activity records',
+    ),
+  ).toBe(true);
 });
