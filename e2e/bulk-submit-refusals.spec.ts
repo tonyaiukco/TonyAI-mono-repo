@@ -176,10 +176,12 @@ test('each refusal a seeded database can reach names its own record, code and se
 });
 
 test('a draft with evidence really does move, and only once', async ({ request }) => {
-  // The (d) path: import, attach evidence per record through the ordinary
-  // single-record endpoint, then bulk-submit. This is the only shape in which
-  // a seeded database can produce a successful bulk submit for an
-  // evidence-required category.
+  // The (d) path's shape: import, attach evidence per record through the
+  // ordinary single-record endpoint, then bulk-submit. But the import is
+  // `Waste`, the fixture category, and it needs no file, so the evidence
+  // here is incidental: this test would pass without it. The
+  // evidence-required path, with the file attached through the vault, is
+  // `drafts-bulk-submit-evidence.spec.ts`.
   const entryToken = await getAccessToken(request, ENTRY_EMAIL);
   const since = new Date().toISOString();
   const created: string[] = [];
