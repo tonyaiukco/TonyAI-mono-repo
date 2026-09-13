@@ -1,4 +1,4 @@
-import { test, expect, type Request } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Request } from '@playwright/test';
 import {
   API_BASE,
   bearer,
@@ -25,24 +25,57 @@ import {
  *
  * The wiring under test: `evidenceCount` is a snapshot from when the list
  * loaded, and the row's checkbox reads it. `EvidenceVault.onCountChange` is the
- * only thing that updates it in place: the page patches the one row rather
- * than refetching the list. If that is unwired, attaching the invoice leaves the row
- * saying "Needs an evidence file." until something reloads it. So the test
- * pins both halves of "in place": the document never reloads, and the list is
- * never re-requested between opening the draft and the checkbox arriving.
- * Either assertion alone would let a refetch take the credit.
+ * only thing that updates it in place. The page writes the vault's count onto the
+ * one row being edited rather than refetching. If that is unwired, attaching the
+ * invoice leaves the row saying "Needs an evidence file." until something
+ * reloads it. The test pins each part of that sentence:
+ * - The vault's count, not a constant: the draft is still held back after the
+ *   vault's first load reports 0.
+ * - The one row: a second Fuel draft, which never gets a file, stays held back.
+ * - In place: the document never reloads, and neither the list nor the record
+ *   is re-requested between opening the draft and the checkbox arriving.
+ *   Either check alone would let a refetch take the credit.
  *
- * Lane: `SUB.energy` / quarterly `E2E_YEAR` / Q3 / `Fuel`, whole subsidiary. No
- * other spec writes that tuple or locks that period. The Energy Q3 rows other
- * specs write are in other categories, and each deletes them in its own `finally`. The
- * anomaly rule needs three committed priors in the same series, and the only
- * quarterly Energy Fuel record any spec commits is one in `review-queue`, which
- * sorts after this file, so the rule cannot hold the submit back.
+ * Lane: `SUB.energy` / quarterly `E2E_YEAR` / `Fuel`, whole subsidiary. Q3 is
+ * the draft that gets the file; Q4 is the one that does not. No other spec
+ * writes either tuple or holds a lock on either period (`rbac-tenant` tries to
+ * lock Energy Q4 as data_entry and is refused). The other Energy Q3/Q4 rows are
+ * in other categories, and the specs that write them also delete them. The anomaly
+ * rule needs three committed priors in the same series, and a draft never
+ * counts. The only quarterly Energy Fuel record any spec commits belongs to
+ * `review-queue`, which runs after this file, so the rule cannot hold the
+ * submit back.
  */
 const SUBSIDIARY = SUB.energy;
 const OPTION = 'TonyAI Energy (TR)';
-const PERIOD_VALUE = 'Q3';
 const CATEGORY = 'Fuel';
+/** The draft that gets the file, and is sent. */
+const ATTACHED = 'Q3';
+/** The draft that never gets a file. */
+const UNATTACHED = 'Q4';
+/** The list's GET, or one record's. Nothing else on this page requests either. */
+const RECORDS_PATH = /\/activity-records(\/[0-9a-f-]{36})?$/;
+
+async function createDraft(
+  request: APIRequestContext,
+  token: string,
+  periodValue: string,
+): Promise<string> {
+  const res = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: {
+      subsidiaryId: SUBSIDIARY,
+      reportingYear: E2E_YEAR,
+      reportingPeriod: E2E_PERIOD,
+      periodValue,
+      category: CATEGORY,
+      activityValue: 640,
+      activityUnit: 'litres',
+    },
+  });
+  if (!res.ok()) throw new Error(`createDraft failed: ${res.status()} ${await res.text()}`);
+  return (await res.json()).id as string;
+}
 
 test('attaching the file in the vault makes a Fuel draft sendable in place, and it sends', async ({
   page,
@@ -52,61 +85,62 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
   const created: string[] = [];
 
   try {
-    const res = await request.post(`${API_BASE}/activity-records`, {
-      headers: bearer(token),
-      data: {
-        subsidiaryId: SUBSIDIARY,
-        reportingYear: E2E_YEAR,
-        reportingPeriod: E2E_PERIOD,
-        periodValue: PERIOD_VALUE,
-        category: CATEGORY,
-        activityValue: 640,
-        activityUnit: 'litres',
-      },
-    });
-    if (!res.ok()) throw new Error(`create draft failed: ${res.status()} ${await res.text()}`);
-    const id = (await res.json()).id as string;
+    // Each id is pushed as soon as it exists, so a throw on the second create still cleans up the first.
+    const id = await createDraft(request, token, ATTACHED);
     created.push(id);
+    created.push(await createDraft(request, token, UNATTACHED));
 
     await login(page, ENTRY_EMAIL);
     await page.goto('/data-entry');
     await selectSubsidiary(page, OPTION);
 
     const list = page.locator('[data-testid="previous-submissions"]');
-    // Period AND category: other specs leave Energy rows of their own in Q3.
-    const row = list
-      .locator('button')
-      .filter({ hasText: `${PERIOD_VALUE} ${E2E_YEAR}` })
-      .filter({ hasText: CATEGORY });
-    const checkbox = list.getByRole('checkbox', {
-      name: `Select ${PERIOD_VALUE} ${E2E_YEAR} ${CATEGORY}, Whole subsidiary`,
-      exact: true,
-    });
+    // Period AND category: other specs leave Energy rows of their own in Q3 and Q4.
+    const rowFor = (periodValue: string) =>
+      list
+        .locator('button')
+        .filter({ hasText: `${periodValue} ${E2E_YEAR}` })
+        .filter({ hasText: CATEGORY });
+    const checkboxFor = (periodValue: string) =>
+      list.getByRole('checkbox', {
+        name: `Select ${periodValue} ${E2E_YEAR} ${CATEGORY}, Whole subsidiary`,
+        exact: true,
+      });
+    // Held back, with the row saying why. The reason is the positive anchor,
+    // because a zero checkbox count on its own also matches a list still loading.
+    const expectHeldBack = async (periodValue: string) => {
+      await expect(rowFor(periodValue)).toContainText('Needs an evidence file.');
+      await expect(checkboxFor(periodValue)).toHaveCount(0);
+    };
+    const row = rowFor(ATTACHED);
+    const checkbox = checkboxFor(ATTACHED);
 
-    // Before: held back, and the row says why. The reason is the positive
-    // anchor. A zero checkbox count alone also matches a list that is still loading.
-    await expect(row).toContainText('Needs an evidence file.');
-    await expect(checkbox).toHaveCount(0);
+    await expectHeldBack(ATTACHED);
+    await expectHeldBack(UNATTACHED);
 
-    // From here until the checkbox arrives: one document, and no list request.
+    // From here until the checkbox arrives: one document, and no records request.
     await page.evaluate(() => {
       Object.assign(window, { e2eSameDocument: true });
     });
-    const listRequests: string[] = [];
+    const recordRequests: string[] = [];
     const onRequest = (r: Request) => {
-      if (r.method() === 'GET' && new URL(r.url()).pathname.endsWith('/activity-records')) {
-        listRequests.push(r.url());
+      if (r.method() === 'GET' && RECORDS_PATH.test(new URL(r.url()).pathname)) {
+        recordRequests.push(r.url());
       }
     };
     page.on('request', onRequest);
 
     await row.click();
     await expect(page.getByText(/Editing draft/)).toBeVisible();
-    // When the vault's first load lands, it reports a count of 0. Wait for it.
-    // If it landed after the upload's count it would put the reason back, and
-    // that race would be this test's, not the product's. The notice only renders
-    // once that load has finished.
+    // The notice appears in the same render that applies the vault's first load:
+    // `setFiles`, `onCountChange` and `setLoading(false)` run back to back and
+    // React batches them. So by now the row carries the count that load
+    // reported (0), and a patch that wrote any other value would already show a
+    // checkbox. Waiting here also stops that load from landing after the
+    // upload's count. (`next dev` runs the first load twice under StrictMode,
+    // and both runs report 0.)
     await expect(page.getByText(/requires at least one supporting file/)).toBeVisible();
+    await expectHeldBack(ATTACHED);
 
     await page.locator('[data-testid="evidence-vault-input"]').setInputFiles(EVIDENCE_FIXTURE);
     await expect(page.getByText('sample-invoice.pdf')).toBeVisible();
@@ -116,6 +150,8 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
     await expect(checkbox).not.toBeChecked();
     await expect(row).toContainText('Draft');
     await expect(row).not.toContainText('Needs an evidence file.');
+    // Only that row changed. The other draft has no file and must still be held back.
+    await expectHeldBack(UNATTACHED);
 
     page.off('request', onRequest);
     expect(
@@ -123,8 +159,8 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
       'the page reloaded, so the checkbox proves nothing about onCountChange',
     ).toBe(true);
     expect(
-      listRequests,
-      'the list was refetched, so the checkbox may have come from that rather than onCountChange',
+      recordRequests,
+      'records were re-requested, so the checkbox may have come from that rather than onCountChange',
     ).toEqual([]);
 
     await checkbox.check();
@@ -138,8 +174,8 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
       '1 record is now in the review queue.',
     );
 
-    // Check the database, not the verdict. For Fuel, `submitted` is also the
-    // server's own confirmation that the upload landed: `submit` refuses an
+    // Check the database, not the verdict. For Fuel, `submitted` also confirms
+    // the upload landed on the server, because `submit` refuses an
     // evidence-required category with no file.
     const [stored] = await serviceReadRecords(request, `id=eq.${id}`);
     expect(stored.status).toBe('submitted');
