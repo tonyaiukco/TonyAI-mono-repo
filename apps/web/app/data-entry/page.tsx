@@ -1346,6 +1346,9 @@ function DataEntryPageInner() {
                 records={records}
                 loading={recordsLoading}
                 onOpen={loadRecord}
+                user={user}
+                locks={locks}
+                onSubmitted={() => void refreshRecords(subsidiaryId)}
               />
             </div>
           </div>
