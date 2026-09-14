@@ -71,6 +71,12 @@ in `e2e/helpers.ts`.
   only.
 - Assuming E2E is unwired from CI. It has run **nightly** since 2026-09-01 via
   `.github/workflows/e2e.yml`, plus `workflow_dispatch` — trigger it on a branch before merge with
-  `gh workflow run e2e.yml --ref <branch>` (~13 min end to end, of which Playwright itself is ~8; the "25-35 min" in the workflow header was never measured). It is deliberately NOT on `pull_request`
+  `gh workflow run e2e.yml --ref <branch>` (~15 min end to end, ~10 of it Playwright for
+  108 tests, measured 2026-09-13). It is deliberately NOT on `pull_request`
   (serial by construction, billed per push), so `pnpm e2e` still stays out of the turbo `test`
   pipeline — but `pnpm typecheck` does cover `e2e/` on every PR.
+- Dispatching E2E without looking first. `concurrency: e2e` with `cancel-in-progress` is **one group for
+  the whole repo**, not one per branch, so a dispatch cancels whatever run is in flight, including
+  another branch's verification (PR #103's first run was cancelled 53 s in this way). Wait until every
+  run in `gh run list --workflow e2e.yml` is `completed`. After dispatching, confirm the new run's
+  `headSha` is your branch tip before believing its result.
