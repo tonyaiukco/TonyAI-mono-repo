@@ -40,6 +40,12 @@ in `e2e/helpers.ts`.
 - **Assert on the toast/text the app actually renders.** Gate messages come from the API body via
   `saveErrorMessage` (e.g. `/requires at least one evidence file/`, `/is locked/`); the client anomaly
   guard is `/looks anomalous — add a variance comment/`.
+- **Locate by the shared label, never by a retyped copy of it.** When an accessible name embeds a
+  label that `@tonyai/shared-types` exports (e.g. `WHOLE_COMPANY_ENTITY_LABEL`), import it. A retyped
+  label goes stale silently. When #104 renamed "Whole subsidiary" to "Whole company", every
+  `toHaveCount(0)` on the old name kept passing, because nothing carried that name. The one positive
+  check failed as "not found", which looks exactly like the regression that spec exists to catch.
+  Pin the copy itself in one assertion (`drafts-bulk-submit` does), not in every locator that contains it.
 
 ## Recipe
 1. **Fixtures/helpers first.** Reuse `e2e/helpers.ts`; add a helper there only if ≥2 specs need it.
@@ -80,3 +86,8 @@ in `e2e/helpers.ts`.
   another branch's verification (PR #103's first run was cancelled 53 s in this way). Wait until every
   run in `gh run list --workflow e2e.yml` is `completed`. After dispatching, confirm the new run's
   `headSha` is your branch tip before believing its result.
+- Taking two green branch runs as proof of `main`. A dispatch proves only the branch it ran on.
+  #103's new spec (run 34781049391) and #104's label rename (run 34780263258) were each green, but
+  neither branch contained the other. The first run to hold both was the 2026-09-14 nightly on `main`,
+  and it failed. When two open PRs touch the same screen, merge `main` into the second one and
+  dispatch again before it merges.
