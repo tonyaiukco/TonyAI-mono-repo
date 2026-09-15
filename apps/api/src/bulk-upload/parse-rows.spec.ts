@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
 import ExcelJS from 'exceljs';
+import { BULK_UPLOAD_MAX_SIZE_BYTES } from '@tonyai/shared-types';
 import {
-  cellToString,
-  extensionOf,
-  parseRows,
-  strictNumber,
-} from './parse-rows';
+  OFFICE_RELATIONSHIPS,
+  PACKAGE_RELATIONSHIPS,
+  SPREADSHEETML,
+  row as xmlRow,
+  xlsx,
+} from '../../test/xlsx';
+import { extensionOf, parseRows, strictNumber } from './parse-rows';
+import { XLSX_MAX_UNPACKED_BYTES } from './xlsx-reader';
 
 const HEADER =
   'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
@@ -63,23 +67,50 @@ describe('extensionOf', () => {
   });
 });
 
-describe('cellToString', () => {
-  it('reads the shapes an exceljs cell actually takes', () => {
-    expect(cellToString('January')).toBe('January');
-    expect(cellToString(1200)).toBe('1200');
-    expect(cellToString(null)).toBe('');
-    expect(cellToString(undefined)).toBe('');
-    // Rich text: a cell someone bolded half of. Reading `.value` naively
-    // yields "[object Object]", which would then fail validation as a mystery.
+describe('parseRows — XLSX cell values, as a real writer saves them', () => {
+  // exceljs's WRITER, deliberately: it no longer does the reading, and its
+  // output is the shape a user's file actually arrives in.
+  const BASE: ExcelJS.CellValue[] = [
+    'sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '',
+  ];
+
+  async function cellsWith(index: number, value: ExcelJS.CellValue) {
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet('Data');
+    sheet.addRow(HEADER.split(','));
+    sheet.addRow(BASE.map((cell, i) => (i === index ? value : cell)));
+    const rows = await parseRows(Buffer.from(await wb.xlsx.writeBuffer()), 'values.xlsx');
+    return rows[0].cells;
+  }
+
+  it('reads rich text as its text — a cell someone bolded half of', async () => {
+    const cells = await cellsWith(8, {
+      richText: [{ text: 'Meter ' }, { font: { bold: true }, text: 'replaced' }],
+    });
+    expect(cells.varianceReason).toBe('Meter replaced');
+  });
+
+  it('reads a formula as its cached result, and an error result as the error', async () => {
+    // Refusing formulas would reject the most ordinary spreadsheet there is.
+    expect((await cellsWith(6, { formula: 'SUM(A1:A3)', result: 3600 })).activityValue).toBe('3600');
+    // Refused later naming what the user sees, rather than as an empty cell.
     expect(
-      cellToString({ richText: [{ text: 'Meter ' }, { text: 'replaced' }] }),
+      (await cellsWith(6, { formula: 'A1/0', result: { error: '#DIV/0!' } })).activityValue,
+    ).toBe('#DIV/0!');
+  });
+
+  it('reads a hyperlink cell as the text it shows, and a boolean as true or false', async () => {
+    expect(
+      (await cellsWith(8, { text: 'Meter replaced', hyperlink: 'https://example.com' }))
+        .varianceReason,
     ).toBe('Meter replaced');
-    // A formula resolves to its cached result — refusing formulas would
-    // reject the most ordinary spreadsheet there is, one with a SUM column.
-    expect(cellToString({ formula: 'SUM(A1:A3)', result: 3600 })).toBe('3600');
-    // A formula that evaluated to an error names what the user sees, so the
-    // row is refused for the right reason rather than as an empty cell.
-    expect(cellToString({ formula: 'A1/0', error: '#DIV/0!' })).toBe('#DIV/0!');
+    expect((await cellsWith(8, true)).varianceReason).toBe('true');
+  });
+
+  it('reads a date as a timestamp, which the numeric columns then refuse', async () => {
+    const cells = await cellsWith(6, new Date(Date.UTC(2026, 2, 4)));
+    expect(cells.activityValue).toBe('2026-03-04T00:00:00.000Z');
+    expect(strictNumber(cells.activityValue)).toBeNull();
   });
 });
 
@@ -325,6 +356,16 @@ describe('parseRows — XLSX', () => {
     );
   });
 
+  it('names the first value in a row that no header names, not the last', async () => {
+    const buffer = await workbookBuffer([
+      HEADER.split(','),
+      ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', 'first', 'second'],
+    ]);
+    expect(await refusal(buffer)).toBe(
+      'Row 2 has a value in column 10, which has no header. Name the column or clear it.',
+    );
+  });
+
   it('refuses a row whose only value has no header, rather than skipping it as blank', async () => {
     const buffer = await workbookBuffer([
       HEADER.split(','),
@@ -537,14 +578,22 @@ describe('parseRows — XLSX, the dangerous format', () => {
   });
 
   it('reads a rich-text hyperlink cell rather than dropping the text', async () => {
-    // `{ text: { richText: [...] }, hyperlink }` fell through to '' — silently
-    // losing whatever the user had written in that cell.
-    expect(
-      cellToString({
+    // A link whose text is formatted read as '' once — silently losing
+    // whatever the user had written in that cell.
+    const buffer = await workbook((sheet) => {
+      sheet.addRow(HEADER.split(','));
+      const row = sheet.addRow([
+        'sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '',
+      ]);
+      row.getCell(9).value = {
         text: { richText: [{ text: 'Meter ' }, { text: 'replaced' }] },
         hyperlink: 'https://example.com',
-      }),
-    ).toBe('Meter replaced');
+      } as never;
+    });
+
+    const rows = await parseRows(buffer, 'link.xlsx');
+
+    expect(rows[0].cells.varianceReason).toBe('Meter replaced');
   });
 });
 
@@ -566,6 +615,201 @@ describe('parseRows — only the first worksheet is data', () => {
     await expect(
       parseRows(Buffer.from(await wb.xlsx.writeBuffer()), 'two-sheets.xlsx'),
     ).rejects.toThrow(/column/i);
+  });
+});
+
+const MIB = 1024 * 1024;
+const HEADER_ROW = xmlRow(1, HEADER.split(','));
+const dataRow = (n: number, locationId: string | null = null) =>
+  xmlRow(n, ['sub-1', locationId, 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', null]);
+
+describe('parseRows — a hostile workbook costs nothing', () => {
+  /**
+   * Heap, not time, for the reason the far-row test gives: the defect is
+   * allocation. exceljs's loader died on every one of these files under a
+   * 256 MB heap (measured), so none of them can run against it here — a
+   * regression takes the test process down, which fails the suite just the
+   * same.
+   */
+  async function parsedCheaply(buffer: Buffer) {
+    const before = process.memoryUsage().heapUsed;
+    const rows = await parseRows(buffer, 'hostile.xlsx');
+    const grewMb = (process.memoryUsage().heapUsed - before) / MIB;
+    expect(grewMb).toBeLessThan(50);
+    return rows;
+  }
+
+  it.each([
+    [
+      'a data validation over the whole sheet',
+      { afterSheetData: '<dataValidations count="1"><dataValidation type="list" sqref="A1:XFD1048576"><formula1>"a,b"</formula1></dataValidation></dataValidations>' },
+    ],
+    [
+      'a dropdown on a whole column — "select the column, add a list"',
+      { afterSheetData: '<dataValidations count="1"><dataValidation type="list" sqref="D1:D1048576"><formula1>"monthly,quarterly"</formula1></dataValidation></dataValidations>' },
+    ],
+    [
+      'a merge to the end of the sheet, clear of the data',
+      { afterSheetData: '<mergeCells count="1"><mergeCell ref="K4:XFD1048576"/></mergeCells>' },
+    ],
+    [
+      'a defined name over the whole sheet',
+      { afterSheets: '<definedNames><definedName name="Everything">Records!$A$1:$XFD$1048576</definedName></definedNames>' },
+    ],
+    [
+      'a column span to the last column',
+      { beforeSheetData: '<cols><col min="1" max="16384" width="12" customWidth="1"/></cols>' },
+    ],
+  ])('reads the rows of a workbook with %s', async (_case, extra) => {
+    const rows = await parsedCheaply(
+      xlsx({ sheetData: HEADER_ROW + dataRow(2) + dataRow(3), ...extra }),
+    );
+    expect(rows.map((r) => r.row)).toEqual([2, 3]);
+    expect(rows[1].cells.activityValue).toBe('1200');
+  });
+
+  it('refuses a sheet that unpacks past the limit — a zip bomb', async () => {
+    const bomb = xlsx({ sheetData: HEADER_ROW + ' '.repeat(XLSX_MAX_UNPACKED_BYTES) });
+    expect(bomb.length).toBeLessThan(BULK_UPLOAD_MAX_SIZE_BYTES);
+    await expect(parseRows(bomb, 'bomb.xlsx')).rejects.toThrow(
+      'The workbook is larger than 16 MB once unpacked. Remove unused formatting, or split it into smaller files.',
+    );
+  });
+
+  it('counts every part it unpacks against one limit', async () => {
+    // Shared strings (10 MB) and the sheet (7 MB) each fit; together they do not.
+    const buffer = xlsx({
+      sharedStrings: [' '.repeat(10 * MIB)],
+      sheetData: HEADER_ROW + dataRow(2) + ' '.repeat(7 * MIB),
+    });
+    await expect(parseRows(buffer, 'split-bomb.xlsx')).rejects.toThrow(
+      /larger than 16 MB once unpacked/,
+    );
+  });
+
+  it('never unpacks a part the first sheet does not need', async () => {
+    const rows = await parsedCheaply(
+      xlsx({
+        sheetData: HEADER_ROW + dataRow(2),
+        extraParts: [
+          { name: 'xl/worksheets/sheet2.xml', data: Buffer.alloc(24 * MIB, 0x20) },
+          { name: 'docProps/thumbnail.jpeg', data: Buffer.alloc(24 * MIB, 0x00) },
+        ],
+      }),
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it('never unpacks a sheet the workbook lists after the first', async () => {
+    // Listed and related this time, not merely present in the archive: a
+    // reader that opened every sheet the workbook names would spend the whole
+    // budget on the second one.
+    const rows = await parsedCheaply(
+      xlsx({
+        sheetData: HEADER_ROW + dataRow(2),
+        workbookXml: `<workbook xmlns="${SPREADSHEETML}" xmlns:r="${OFFICE_RELATIONSHIPS}"><sheets><sheet name="Records" sheetId="1" r:id="rId1"/><sheet name="Big" sheetId="2" r:id="rId9"/></sheets></workbook>`,
+        workbookRelsXml: `<Relationships xmlns="${PACKAGE_RELATIONSHIPS}"><Relationship Id="rId1" Type="${OFFICE_RELATIONSHIPS}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId9" Type="${OFFICE_RELATIONSHIPS}/worksheet" Target="worksheets/sheet2.xml"/></Relationships>`,
+        extraParts: [{ name: 'xl/worksheets/sheet2.xml', data: Buffer.alloc(24 * MIB, 0x20) }],
+      }),
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it('refuses a date no calendar can hold as a 400, not a 500', async () => {
+    const buffer = xlsx({
+      styles: '<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs>',
+      sheetData: `${HEADER_ROW}<row r="2"><c r="A2" t="inlineStr"><is><t>sub-1</t></is></c><c r="G2" s="1"><v>1e12</v></c></row>`,
+    });
+    const error = await parseRows(buffer, 'date.xlsx').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as Error).message).toBe(
+      "Row 2 has a date in column 7 that is out of range. Check the cell's value and its format.",
+    );
+  });
+});
+
+describe('parseRows — merged cells', () => {
+  const merged = (...refs: string[]) =>
+    `<mergeCells count="${refs.length}">${refs.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>`;
+
+  it('refuses a merge that covers an imported cell of a kept row, naming the row and column', async () => {
+    // B2:B3: row 3 SHOWS row 2's site on screen and holds none in the file.
+    // The old loader copied "loc-1" down; a reader that ignores merges would
+    // import row 3 as whole-company.
+    const buffer = xlsx({
+      sheetData: HEADER_ROW + dataRow(2, 'loc-1') + dataRow(3),
+      afterSheetData: merged('B2:B3'),
+    });
+    const error = await parseRows(buffer, 'merged.xlsx').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as Error).message).toBe(
+      'Row 3 is inside the merged cells B2:B3, which cover its locationId cell. Unmerge the cells and fill in each row.',
+    );
+  });
+
+  it('refuses a merge across two imported columns of one row', async () => {
+    const buffer = xlsx({ sheetData: HEADER_ROW + dataRow(2), afterSheetData: merged('G2:H2') });
+    await expect(parseRows(buffer, 'merged.xlsx')).rejects.toThrow(
+      'Row 2 is inside the merged cells G2:H2, which cover its activityUnit cell.',
+    );
+  });
+
+  it('refuses a merge over the header of an imported column', async () => {
+    const buffer = xlsx({ sheetData: HEADER_ROW + dataRow(2), afterSheetData: merged('A1:B1') });
+    await expect(parseRows(buffer, 'merged.xlsx')).rejects.toThrow(
+      'Row 1 is inside the merged cells A1:B1, which cover its locationId cell.',
+    );
+  });
+
+  it('lets through merges that cover nothing the import reads', async () => {
+    const buffer = xlsx({
+      sheetData: HEADER_ROW + dataRow(2, 'loc-1') + dataRow(5, 'loc-1'),
+      // I2:K2 widens the last column into unimported ones; A3:I4 covers two
+      // blank rows; M1:N9 sits off to the side.
+      afterSheetData: merged('I2:K2', 'A3:I4', 'M1:N9'),
+    });
+    const rows = await parseRows(buffer, 'merged.xlsx');
+    expect(rows.map((r) => r.row)).toEqual([2, 5]);
+  });
+
+  it('leaves the row cap to speak first for a file over it', async () => {
+    const over = Array.from({ length: 1001 }, (_, i) => dataRow(i + 2)).join('');
+    const buffer = xlsx({ sheetData: HEADER_ROW + over, afterSheetData: merged('B2:B3') });
+    await expect(parseRows(buffer, 'big.xlsx')).rejects.toThrow(
+      'The file has 1001 rows; the limit is 1000. Split it and upload the parts.',
+    );
+  });
+
+  it('names the real count of a file over the cap, not the first row over', async () => {
+    const over = Array.from({ length: 1005 }, (_, i) => dataRow(i + 2)).join('');
+    await expect(parseRows(xlsx({ sheetData: HEADER_ROW + over }), 'big.xlsx')).rejects.toThrow(
+      'The file has 1005 rows; the limit is 1000.',
+    );
+  });
+
+  it('never walks a merged range row by row', async () => {
+    // A hundred merges down to Excel's last row, over blank rows of imported
+    // columns: walked row by row they took 3.2 s (qa-auditor, measured); found
+    // by binary search, no time at all. Time is the defect, so it is asserted.
+    const buffer = xlsx({
+      sheetData: HEADER_ROW + dataRow(2),
+      afterSheetData: merged(...Array.from({ length: 100 }, () => 'A3:I1048576')),
+    });
+    const started = performance.now();
+    await expect(parseRows(buffer, 'merged.xlsx')).resolves.toHaveLength(1);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it('leaves a sheet with merges and no rows to the header refusal', async () => {
+    await expect(
+      parseRows(xlsx({ afterSheetData: merged('A1:B2') }), 'empty.xlsx'),
+    ).rejects.toThrow(/Missing required column/);
+  });
+
+  it('does not count whitespace-only rows towards the cap', async () => {
+    const thousand = Array.from({ length: 1000 }, (_, i) => dataRow(i + 2)).join('');
+    const buffer = xlsx({ sheetData: HEADER_ROW + thousand + xmlRow(1002, [' ', ' ']) });
+    await expect(parseRows(buffer, 'spaced.xlsx')).resolves.toHaveLength(1000);
   });
 });
 

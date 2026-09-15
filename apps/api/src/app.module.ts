@@ -18,6 +18,7 @@ import { TargetsModule } from './targets/targets.module';
 import { IntensityModule } from './intensity/intensity.module';
 import { ReportsModule } from './reports/reports.module';
 import { BulkUploadModule } from './bulk-upload/bulk-upload.module';
+import { PerKeyThrottlerStorage } from './common/per-key-throttler-storage';
 import { HealthController } from './health.controller';
 import { RequestContextMiddleware } from './observability/request-context.middleware';
 
@@ -28,7 +29,16 @@ import { RequestContextMiddleware } from './observability/request-context.middle
     // an APP_GUARD: only the bulk-upload controller opts in with
     // `@UseGuards(ThrottlerGuard)`. WP9 owns global rate-limit tuning, and
     // turning it on everywhere as a side effect of WP8 would pre-empt it.
-    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 60 }]),
+    // The storage is our own until a release keeps expiry timers per key —
+    // see `PerKeyThrottlerStorage` for the defect it works around.
+    // A factory, so each app builds its own storage: one constructed here would
+    // be shared by every app built in the same process, counts included.
+    ThrottlerModule.forRootAsync({
+      useFactory: () => ({
+        throttlers: [{ name: 'default', ttl: 60_000, limit: 60 }],
+        storage: new PerKeyThrottlerStorage(),
+      }),
+    }),
     PrismaModule,
     AuditModule,
     AuthModule,

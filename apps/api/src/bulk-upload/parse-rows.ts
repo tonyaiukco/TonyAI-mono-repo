@@ -1,6 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
 import Papa from 'papaparse';
-import ExcelJS from 'exceljs';
 import {
   BULK_UPLOAD_ALLOWED_EXTENSIONS,
   BULK_UPLOAD_COLUMNS,
@@ -8,6 +7,7 @@ import {
   BULK_UPLOAD_REQUIRED_COLUMNS,
   type BulkUploadColumn,
 } from '@tonyai/shared-types';
+import { readFirstWorksheet, type MergedRange } from './xlsx-reader';
 
 /**
  * One data row as it came out of the file: every cell a string, keyed by the
@@ -115,50 +115,11 @@ function emptyCells(): Record<BulkUploadColumn, string> {
   >;
 }
 
-/**
- * An exceljs cell value as a string.
- *
- * Worth spelling out because a spreadsheet cell is not a string: it can be a
- * number, a Date, rich text (styled runs), a hyperlink object, or a formula
- * carrying its last computed result. Reading `.value` naively yields
- * `[object Object]` for three of those, which would then fail validation as a
- * mystery rather than as the value the user can see on their screen.
- *
- * A formula cell resolves to its cached RESULT. The alternative — refusing it —
- * would reject the most ordinary spreadsheet there is, one with a SUM column.
- */
-export function cellToString(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === 'object') {
-    const candidate = value as {
-      result?: unknown;
-      text?: unknown;
-      richText?: { text?: string }[];
-      error?: unknown;
-    };
-    if (Array.isArray(candidate.richText)) {
-      return candidate.richText.map((r) => r?.text ?? '').join('');
-    }
-    // A formula that evaluated to an error (#REF!, #DIV/0!) has `error` and no
-    // usable result. Return the error text so the row is refused naming what
-    // the user sees, rather than refused as an empty cell.
-    if (candidate.error !== undefined) return String(candidate.error);
-    if ('result' in candidate) return cellToString(candidate.result);
-    // `text` is a string on a plain hyperlink cell and a rich-text OBJECT on a
-    // formatted one — recursing covers both. Returning '' for the second
-    // silently dropped whatever the user had written in that cell.
-    if (candidate.text !== undefined) return cellToString(candidate.text);
-  }
-  return '';
-}
-
-function isBlankRow(cells: Record<BulkUploadColumn, string>): boolean {
-  return Object.values(cells).every((v) => v.trim() === '');
+/** The row-cap refusal, naming the POPULATED rows — a count the user can check. */
+function tooManyRows(count: number): BadRequestException {
+  return new BadRequestException(
+    `The file has ${count} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
+  );
 }
 
 function parseCsv(buffer: Buffer): ParsedRow[] {
@@ -202,11 +163,7 @@ function parseCsv(buffer: Buffer): ParsedRow[] {
   for (let i = 1; i < table.length; i += 1) {
     if (table[i]?.some((cell) => (cell ?? '').trim() !== '')) populated.push(i);
   }
-  if (populated.length > BULK_UPLOAD_MAX_ROWS) {
-    throw new BadRequestException(
-      `The file has ${populated.length} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
-    );
-  }
+  if (populated.length > BULK_UPLOAD_MAX_ROWS) throw tooManyRows(populated.length);
   return populated.map((i) => {
     const cells = emptyCells();
     (table[i] ?? []).forEach((value, index) => {
@@ -218,55 +175,140 @@ function parseCsv(buffer: Buffer): ParsedRow[] {
   });
 }
 
+/**
+ * The first worksheet — read by `readFirstWorksheet`, which says why that is no
+ * longer exceljs — as the same rows the CSV path returns.
+ *
+ * The cap counts POPULATED rows, as the CSV path does. Rows past it are counted
+ * and never kept, so the refusal names the real count while the parser holds
+ * no more than the cap. (exceljs's `sheet.rowCount` was the highest row INDEX:
+ * walking it over one row at 1,048,576 allocated 2,348 MB from a 6.6 KB file.
+ * A streamed sheet has no index to walk.)
+ *
+ * A merged range is refused when it COVERS — rather than starts at — a cell
+ * the import reads: the header, or an imported column on a kept row. On screen
+ * the corner's value fills the whole range; in the file only the corner holds
+ * it. exceljs's loader copied the corner's value into every covered cell, and a
+ * reader that ignores merges leaves them blank, so a merged `locationId` would
+ * import as "whole company". Neither can be assumed to be what the user meant.
+ * A merge that covers only blank rows or unimported columns changes nothing,
+ * and passes.
+ */
 async function parseXlsx(buffer: Buffer): Promise<ParsedRow[]> {
-  const workbook = new ExcelJS.Workbook();
-  try {
-    await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
-  } catch {
-    throw new BadRequestException('The file could not be read as a workbook.');
-  }
-  const sheet = workbook.worksheets[0];
-  if (!sheet) throw new BadRequestException('The workbook has no sheets.');
+  const progress: {
+    columns: (BulkUploadColumn | null)[] | null;
+    imported: ImportedColumn[] | null;
+    populated: number;
+  } = { columns: null, imported: null, populated: 0 };
+  // Kept as the import will read them: the imported cells, plus the column of
+  // the first value no header names. A row then costs nine strings however
+  // wide it is — keeping every cell let a 40 KB upload of blank-looking cells
+  // grow the heap by over 100 MB (qa-auditor, measured).
+  const kept: (ParsedRow & { unlabelled: number | null })[] = [];
+  // A sheet with no header row reads as an empty header, which `mapHeader`
+  // refuses by naming every required column as missing.
+  const header = () => (progress.columns ??= mapHeader([]));
 
-  const headerRow = sheet.getRow(1);
-  const header: string[] = [];
-  headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-    header[colNumber - 1] = cellToString(cell.value);
+  await readFirstWorksheet(buffer, {
+    row(rowNumber, cells) {
+      if (rowNumber === 1) {
+        const names: string[] = [];
+        for (const cell of cells) names[cell.column - 1] = cell.value;
+        progress.columns = mapHeader(Array.from(names, (name) => name ?? ''));
+        return;
+      }
+      const columns = header();
+      if (!cells.some((cell) => cell.value.trim() !== '')) return;
+      progress.populated += 1;
+      if (progress.populated > BULK_UPLOAD_MAX_ROWS) return;
+      const mapped = emptyCells();
+      let unlabelled: number | null = null;
+      for (const { column, value } of cells) {
+        const key = columns[column - 1] ?? null;
+        if (key) mapped[key] = value;
+        else if (unlabelled === null && value.trim() !== '') unlabelled = column;
+      }
+      kept.push({ row: rowNumber, cells: mapped, unlabelled });
+    },
+    merge(range) {
+      // Over the cap the whole file is refused, so its merges do not matter.
+      if (progress.columns === null || progress.populated > BULK_UPLOAD_MAX_ROWS) {
+        return;
+      }
+      progress.imported ??= importedColumns(progress.columns);
+      const covered = coveredImportCell(range, progress.imported, kept);
+      if (covered) throw mergedCells(range, covered.row, covered.column);
+    },
   });
-  const columns = mapHeader(Array.from(header, (h) => h ?? ''));
 
-  // `actualRowCount` (populated rows), never `rowCount` (the highest row
-  // INDEX). A 6.6 KB workbook whose single data row sits at Excel's maximum
-  // row, 1,048,576, has `rowCount === 1048576` — and `getRow(r)` MATERIALISES
-  // a Row, as does `getCell(i)`. Walking that range allocated ~9.4M objects
-  // and killed the process with a V8 `FATAL ERROR: heap out of memory` in 1.7
-  // seconds. That is not catchable: no exception, no filter, no audit row, no
-  // Sentry event — the replica dies, taking every other tenant's in-flight
-  // request with it, and the file sails through the 2 MiB size cap on its way
-  // in. `eachRow({ includeEmpty: false })` visits the two real rows instead.
-  if (sheet.actualRowCount - 1 > BULK_UPLOAD_MAX_ROWS) {
-    throw new BadRequestException(
-      `The file has ${sheet.actualRowCount - 1} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
-    );
+  header();
+  if (progress.populated > BULK_UPLOAD_MAX_ROWS) {
+    throw tooManyRows(progress.populated);
   }
+  // In row order, so the refusal names the first such row. A kept row with no
+  // unlabelled value holds a non-blank imported one, so none of them is blank.
+  for (const { row, unlabelled } of kept) {
+    if (unlabelled !== null) throw unlabelledValue(row, unlabelled);
+  }
+  return kept.map(({ row, cells }) => ({ row, cells }));
+}
 
-  const rows: ParsedRow[] = [];
-  sheet.eachRow({ includeEmpty: false }, (sheetRow, rowNumber) => {
-    if (rowNumber === 1) return;
-    const cells = emptyCells();
-    // The cells that exist, and only those — for the same reason as above:
-    // `getCell(n)` materialises one, and a stray value at column XFD would
-    // otherwise cost 16,384 of them for its row.
-    sheetRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-      const value = cellToString(cell.value);
-      const column = columns[colNumber - 1] ?? null;
-      if (column) cells[column] = value;
-      else if (value.trim() !== '') throw unlabelledValue(rowNumber, colNumber);
-    });
-    if (isBlankRow(cells)) return;
-    rows.push({ row: rowNumber, cells });
-  });
-  return rows;
+interface ImportedColumn {
+  column: number;
+  key: BulkUploadColumn;
+}
+
+/** Where the header's imported columns sit — nine at most. */
+function importedColumns(
+  columns: readonly (BulkUploadColumn | null)[],
+): ImportedColumn[] {
+  return columns.flatMap((key, index) => (key ? [{ column: index + 1, key }] : []));
+}
+
+/**
+ * The first cell the import reads that a merged range covers without being its
+ * corner, or null. Only the imported columns are visited and kept rows are
+ * found by binary search, so no range is ever walked cell by cell.
+ */
+function coveredImportCell(
+  range: MergedRange,
+  imported: readonly ImportedColumn[],
+  kept: readonly { row: number }[],
+): { row: number; column: BulkUploadColumn } | null {
+  for (const { column, key } of imported) {
+    if (column < range.left || column > range.right) continue;
+    // In the corner's own column the range covers the rows below the corner;
+    // in every other column, all of its rows.
+    const firstCovered = column === range.left ? range.top + 1 : range.top;
+    if (firstCovered === 1) return { row: 1, column: key };
+    const row = firstRowFrom(kept, firstCovered);
+    if (row !== undefined && row <= range.bottom) return { row, column: key };
+  }
+  return null;
+}
+
+function firstRowFrom(
+  rows: readonly { row: number }[],
+  from: number,
+): number | undefined {
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((rows[middle]?.row ?? Number.POSITIVE_INFINITY) < from) low = middle + 1;
+    else high = middle;
+  }
+  return rows[low]?.row;
+}
+
+function mergedCells(
+  range: MergedRange,
+  row: number,
+  column: BulkUploadColumn,
+): BadRequestException {
+  return new BadRequestException(
+    `Row ${row} is inside the merged cells ${range.ref}, which cover its ${column} cell. Unmerge the cells and fill in each row.`,
+  );
 }
 
 /**

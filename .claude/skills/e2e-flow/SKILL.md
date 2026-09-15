@@ -92,3 +92,8 @@ in `e2e/helpers.ts`.
   neither branch contained the other. The first run to hold both was the 2026-09-14 nightly on `main`,
   and it failed. When two open PRs touch the same screen, merge `main` into the second one, dispatch
   again, and let that run finish before the PR merges.
+- Re-budgeting a spec over a 429 without counting first. List the route's requests per user in the
+  run log (`gh run view <id> --log`, grep the path and the user id). In #108 a 429 arrived on the
+  fourth import of a minute whose limit is five: `@nestjs/throttler` 6.5.0 had stopped the user's
+  earlier hits from expiring when another user's block ended. The fix was in the API's throttler
+  storage, not in the spec's budget.
