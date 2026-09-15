@@ -246,6 +246,7 @@ The server-side rules behind this section, and the reasons for them, are in `REA
 
 #### Picking a File
 - `Choose a file`, or drop a file on the upload area: CSV or XLSX, up to 1,000 rows, max 2 MB
+- a workbook is read from its **first** sheet only. It is refused whole when merged cells cover a cell the import reads (the merged value shows in every cell on screen but is stored only in the first one — unmerge the cells and fill in each row), when a cell holds a date that is out of range, or when it unpacks to more than 16 MB
 - the browser first checks the extension, the size and that the file is not empty; a file that fails is refused with a toast and no request is sent
 - otherwise **picking or dropping the file starts the dry run** — there is no separate check step. While it runs, the upload area reads `Checking <file name>… nothing is being written.`
 - the dry run validates, prices and dedupes every row (against the rest of the file and against stored records that are not voided) and creates no records; the only row it writes is the batch's own audit entry
@@ -264,7 +265,7 @@ The server-side rules behind this section, and the reasons for them, are in `REA
 - no transaction spans the import, so a failure part-way through (e.g. a period lock landing mid-import) can leave part of the file written. The report is **not** cleared afterwards — the error list is the user's work list — and after a partial import the verdict advises uploading only the rows that failed, because re-sending the whole file would report the imported rows as duplicates
 - after every attempted import, successful or not, `Previous submissions` and the `Data collection status` panel refresh for the selected subsidiary
 - `Upload another file` resets the panel
-- limits: 1,000 rows, 2 MB and 5 imports per minute per user; a dry run and an import each count
+- limits: 1,000 rows, 2 MB (16 MB once a workbook is unpacked) and 5 imports per minute per user; a dry run and an import each count
 
 ### 9.2 Bulk Submit
 

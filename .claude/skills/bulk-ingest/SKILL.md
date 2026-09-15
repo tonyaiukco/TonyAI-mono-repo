@@ -66,9 +66,12 @@ attachment), use `supabase-storage` instead.
 - **Cap rows and bytes explicitly.** Nest's 100 KB JSON body limit does **not**
   apply to a multipart upload. Derive the row cap from the per-row query budget,
   and write the arithmetic down beside the constant.
-- **Check the extension AND the MIME type.** Windows browsers send `.csv` as
-  `application/vnd.ms-excel`; a MIME-only rule (what `evidence` does) rejects an
-  ordinary spreadsheet export. The extension picks the parser.
+- **The extension is the gate; the MIME type is advisory.** Windows browsers
+  send `.csv` as `application/vnd.ms-excel` (and sometimes
+  `application/octet-stream`), so a MIME rule (what `evidence` has) refuses an
+  ordinary spreadsheet export. The declared type is client-controlled and buys
+  no security: the extension picks the parser, and the parser refuses what is
+  not a spreadsheet.
 - **Strip the BOM** — belt and braces. This product's own CSV export writes one
   (#91), so re-importing a file TonyAI generated is the first thing a user
   tries. Measure before claiming it is the mechanism: `String.prototype.trim()`
@@ -82,8 +85,9 @@ attachment), use `supabase-storage` instead.
    `packages/shared-types/src/index.ts`; `pnpm --filter @tonyai/shared-types build`.
 2. **Seam** — if the target service has no read-only half, extract one first,
    **in its own PR**: it changes a shipped write path and needs its own review.
-3. **Parser** — `parse-rows.ts`: extension sniff → papaparse (CSV) / exceljs
-   (XLSX) → `Record<Column, string>` per row, carrying the file's own line
+3. **Parser** — `parse-rows.ts`: extension sniff → papaparse (CSV) /
+   `readFirstWorksheet` (XLSX — never exceljs's reader, see the traps) →
+   `Record<Column, string>` per row, carrying the file's own line
    number (header = 1, so it matches what Excel shows). Map headers by NAME,
    case- and space-insensitively; refuse unknown, missing and duplicated
    columns rather than dropping them.
@@ -144,6 +148,35 @@ for (const parsed of rows) {
 
 ## Traps this skill exists to record
 
+- **Never read an untrusted XLSX with exceljs.** `workbook.xlsx.load` expands
+  every range a file declares, cell by cell — a whole-column dropdown, a merge,
+  a defined name, a `<col>` span — and a ~2 KB file killed the process with a
+  V8 out-of-memory abort: no exception, no audit row, every tenant's in-flight
+  request gone. A heap-capped worker did not contain it either. The streaming
+  reader avoids those four and still inflates with no limit, caches every
+  shared string before row 1 and spools the sheet to a temp file. Use
+  `readFirstWorksheet` (`xlsx-reader.ts` over `zip-reader.ts`): ONE unpack
+  budget enforced by zlib's `maxOutputLength` (never the archive's declared
+  sizes), handler-side caps on XML nesting and attributes — saxes holds both in
+  memory, and three million attributes on one tag aborted a 256 MB process —
+  and ranges reported by their corners, never walked.
+- **Prove those defences by what they are, not by what they say.** Heap delta,
+  not elapsed time (a time budget loose enough for CI let a 2,348 MB walk
+  through); and the unpack limit by the argument zlib receives, because a
+  refusal reads the same whether inflation stopped at the limit or ran to the
+  end first.
+- **Text from the file gets linear code, run once.** A regex over it must be
+  unambiguous — `\d+\.?\d*` backtracked for 582 ms over one 32,767-digit cell,
+  and stripping `[...]` with a pattern took 1.8 s over 64 KB of `[` — and a
+  value many things point at is judged where it is read, not once per
+  reference: 65,536 cell formats sharing one number-format code held the event
+  loop for 56 s from a 7 KB file. Cap the length of anything you evaluate.
+- **Refuse a merged range that covers an imported cell.** On screen the
+  corner's value fills the range; in the file only the corner holds it.
+  Copying it down (exceljs's loader) and reading blanks (a merge-blind reader,
+  where a merged `locationId` imports as whole-company) are both guesses. Check
+  the imported columns against the kept rows by binary search; a merge that
+  covers only blank rows or unimported columns changes nothing.
 - **Join the slot key with `'\u0000'`**, which no cell can contain, so no segment can run into the next one. Check whether a collision is actually constructible in your schema before claiming it in a comment — and do not write a test for a state nothing can reach.
 - **An anomalous row with no variance reason imports fine and can then never be
   submitted** — `submit` requires the explanation and re-evaluates the verdict.
