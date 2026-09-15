@@ -7,6 +7,7 @@ import {
   BULK_UPLOAD_REQUIRED_COLUMNS,
   type BulkUploadColumn,
 } from '@tonyai/shared-types';
+import { sanitiseCallerText } from '../common/caller-text';
 import { readFirstWorksheet, type MergedRange } from './xlsx-reader';
 
 /**
@@ -67,10 +68,13 @@ function mapHeader(header: readonly string[]): (BulkUploadColumn | null)[] {
     // Bounded, because this sentence is echoed into the response AND into the
     // audit row's `reason`: a 2 MiB header row was stored there whole (a
     // 1,960,160-character reason, measured) in a table with no delete path.
-    const shown = unknown.slice(0, 5).map((h) => {
-      const chars = Array.from(h);
-      return chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : h;
-    });
+    // And cleaned, by the audit row's own rule, because the import panel
+    // renders the response too: a U+202E in a header cell reverses everything
+    // after it. Cleaning comes before the cut, so dropped characters cannot
+    // use up a fragment's 40.
+    const shown = unknown
+      .slice(0, 5)
+      .map((h) => sanitiseCallerText(h, 40, '…'));
     const more = unknown.length > 5 ? ` (+${unknown.length - 5} more)` : '';
     throw new BadRequestException(
       `Unrecognised column(s): ${shown.join(', ')}${more}. Expected: ${BULK_UPLOAD_COLUMNS.join(', ')}.`,

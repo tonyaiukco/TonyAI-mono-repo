@@ -18,6 +18,13 @@ const ROW = 'sub-1,,2024,monthly,January,Electricity,1200,kWh,';
 
 const csv = (...lines: string[]) => Buffer.from([HEADER, ...lines].join('\n'));
 
+// Built from code points so this file never holds the characters themselves:
+// a literal one is invisible in review, and a NUL can make git treat the file
+// as binary.
+const NUL = String.fromCharCode(0x0000);
+const RLO = String.fromCharCode(0x202e);
+const ZWSP = String.fromCharCode(0x200b);
+
 describe('strictNumber', () => {
   it.each([
     ['1200', 1200],
@@ -212,6 +219,46 @@ describe('parseRows — CSV', () => {
     );
   });
 
+  it('cleans the header text it echoes back', async () => {
+    // The sentence is also the 400 the import panel renders, where a U+202E
+    // reverses everything after it.
+    const header = `${HEADER},t${NUL}co${RLO}2${ZWSP}e`;
+    const error = await parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv').catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as Error).message).toBe(
+      `Unrecognised column(s): tco2e. Expected: ${HEADER.split(',').join(', ')}.`,
+    );
+  });
+
+  it('cleans before it cuts, so padding it drops cannot hide the name', async () => {
+    // Cut first, forty zero-width spaces would fill the excerpt, and the user
+    // would be shown a bare `…` in place of the column's name.
+    const header = `${HEADER},${ZWSP.repeat(40)}tco2e`;
+    const error = await parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv').catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as Error).message).toBe(
+      `Unrecognised column(s): tco2e. Expected: ${HEADER.split(',').join(', ')}.`,
+    );
+  });
+
+  it.each([
+    ['a column name with a zero-width space in it', HEADER.replace('category', `category${ZWSP}`)],
+    ['a header cell holding nothing but a zero-width space', `${HEADER},${ZWSP}`],
+  ])('still refuses %s — the sentence is cleaned, never the match', async (_case, header) => {
+    // Matched on cleaned text, the first would import as `category` and the
+    // second would count as a blank cell: files the header refuses today
+    // would quietly be accepted.
+    const error = await parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv').catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as Error).message).toMatch(/^Unrecognised column\(s\): /);
+  });
+
   it('refuses a missing required column, naming it', async () => {
     const header = HEADER.replace(',activityValue', '');
     await expect(
@@ -338,6 +385,20 @@ describe('parseRows — XLSX', () => {
     expect(error).toBeInstanceOf(BadRequestException);
     return (error as Error).message;
   };
+
+  it('cleans the header text it echoes back', async () => {
+    // The NUL is written as `_x0000_`, SpreadsheetML's escape for a character
+    // XML cannot carry, which the reader decodes. A literal one never reaches
+    // the reader: exceljs's writer drops it, and this test would still pass
+    // with NUL no longer dropped.
+    const buffer = await workbookBuffer([
+      [...HEADER.split(','), `t_x0000_co${RLO}2${ZWSP}e`],
+      ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', 'x'],
+    ]);
+    expect(await refusal(buffer)).toBe(
+      `Unrecognised column(s): tco2e. Expected: ${HEADER.split(',').join(', ')}.`,
+    );
+  });
 
   it('refuses a value under a blank header, or past the last one', async () => {
     const gapped = await workbookBuffer([
