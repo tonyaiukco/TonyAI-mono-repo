@@ -86,13 +86,13 @@ interface RangeValidations {
  * entity rows.** That is the whole design constraint, and it is not a style
  * choice: `mapHeader` refuses any unrecognised column, so a helpful
  * `subsidiaryName` beside the id would make the template itself un-uploadable;
- * and `isBlankRow` only skips rows that are blank in *every* cell, so a
+ * and the importer only skips rows that are blank in *every* cell, so a
  * skeleton row carrying just an id would be parsed, fail for a missing year,
  * and hand the user an error for a row they never filled in. A template whose
  * own unedited rows come back as errors is worse than no template.
  *
- * **Sheet 2 is invisible to the importer** — `parseXlsx` reads
- * `workbook.worksheets[0]` and nothing else — so it is where the reference
+ * **Sheet 2 is invisible to the importer** — `readFirstWorksheet` reads the
+ * workbook's first sheet and nothing else — so it is where the reference
  * data lives: which id is which entity, what geography it reports under, the
  * vocabularies, and a worked example. That asymmetry is the only reason this
  * is an XLSX and not a CSV: a CSV has one surface, so a CSV template could

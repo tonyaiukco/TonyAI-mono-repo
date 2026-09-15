@@ -90,7 +90,7 @@ describe('buildTemplateWorkbook — the importer can read what it writes', () =>
   });
 
   it('parses to ZERO rows before anyone fills it in', async () => {
-    // The trap this design exists to avoid: `isBlankRow` only skips a row that
+    // The trap this design exists to avoid: the importer only skips a row that
     // is blank in EVERY cell, so a pre-filled skeleton row carrying just an
     // entity id would be parsed, fail for a missing year, and hand the user an
     // error for a row they never touched.
@@ -102,7 +102,7 @@ describe('buildTemplateWorkbook — the importer can read what it writes', () =>
   });
 
   it('keeps the reference sheet out of the importer’s reach', async () => {
-    // `parseXlsx` reads `worksheets[0]` and nothing else — which is the only
+    // The importer reads the first sheet and nothing else — which is the only
     // reason the entity names can exist in this file at all. If the importer
     // ever read a second sheet, every name and vocabulary row would arrive as
     // a broken record.
