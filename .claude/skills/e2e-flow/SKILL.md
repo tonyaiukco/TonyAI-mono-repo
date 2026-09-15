@@ -40,6 +40,13 @@ in `e2e/helpers.ts`.
 - **Assert on the toast/text the app actually renders.** Gate messages come from the API body via
   `saveErrorMessage` (e.g. `/requires at least one evidence file/`, `/is locked/`); the client anomaly
   guard is `/looks anomalous — add a variance comment/`.
+- **Build a locator's name from the shared label, above all when you assert its absence.** When an
+  accessible name embeds a label that `@tonyai/shared-types` exports (e.g. `WHOLE_COMPANY_ENTITY_LABEL`),
+  import it. A retyped label goes stale silently. When #104 renamed "Whole subsidiary" to "Whole
+  company", the three `toHaveCount(0)` checks that ran on the old name kept passing, because nothing
+  carried that name. The one positive check failed as "not found", which looks exactly like the
+  regression that spec exists to catch. Copy is pinned by positive checks, where a rename fails loudly
+  (`drafts-bulk-submit` ticks a checkbox by its full literal name).
 
 ## Recipe
 1. **Fixtures/helpers first.** Reuse `e2e/helpers.ts`; add a helper there only if ≥2 specs need it.
@@ -72,7 +79,7 @@ in `e2e/helpers.ts`.
 - Assuming E2E is unwired from CI. It has run **nightly** since 2026-09-01 via
   `.github/workflows/e2e.yml`, plus `workflow_dispatch` — trigger it on a branch before merge with
   `gh workflow run e2e.yml --ref <branch>` (~15 min end to end, ~10 of it Playwright for
-  108 tests, measured 2026-09-13). It is deliberately NOT on `pull_request`
+  109 tests, measured 2026-09-14). It is deliberately NOT on `pull_request`
   (serial by construction, billed per push), so `pnpm e2e` still stays out of the turbo `test`
   pipeline — but `pnpm typecheck` does cover `e2e/` on every PR.
 - Dispatching E2E without looking first. `concurrency: e2e` with `cancel-in-progress` is **one group for
@@ -80,6 +87,11 @@ in `e2e/helpers.ts`.
   another branch's verification (PR #103's first run was cancelled 53 s in this way). Wait until every
   run in `gh run list --workflow e2e.yml` is `completed`. After dispatching, confirm the new run's
   `headSha` is your branch tip before believing its result.
+- Taking two green branch runs as proof of `main`. A dispatch proves only the branch it ran on.
+  #103's new spec (run 34781049391) and #104's label rename (run 34780263258) were each green, but
+  neither branch contained the other. The first run to hold both was the 2026-09-14 nightly on `main`,
+  and it failed. When two open PRs touch the same screen, merge `main` into the second one, dispatch
+  again, and let that run finish before the PR merges.
 - Re-budgeting a spec over a 429 without counting first. List the route's requests per user in the
   run log (`gh run view <id> --log`, grep the path and the user id). In #108 a 429 arrived on the
   fourth import of a minute whose limit is five: `@nestjs/throttler` 6.5.0 had stopped the user's
