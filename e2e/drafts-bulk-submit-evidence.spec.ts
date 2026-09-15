@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Request } from '@playwright/test';
+import { WHOLE_COMPANY_ENTITY_LABEL } from '@tonyai/shared-types';
 import {
   API_BASE,
   bearer,
@@ -36,7 +37,7 @@ import {
  *   is re-requested between opening the draft and the checkbox arriving.
  *   Either check alone would let a refetch take the credit.
  *
- * Lane: `SUB.energy` / quarterly `E2E_YEAR` / `Fuel`, whole subsidiary. Q3 is
+ * Lane: `SUB.energy` / quarterly `E2E_YEAR` / `Fuel`, whole company. Q3 is
  * the draft that gets the file; Q4 is the one that does not. No other spec
  * writes either tuple or holds a lock on either period (`rbac-tenant` tries to
  * lock Energy Q4 as data_entry and is refused). The other Energy Q3/Q4 rows are
@@ -101,9 +102,14 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
         .locator('button')
         .filter({ hasText: `${periodValue} ${E2E_YEAR}` })
         .filter({ hasText: CATEGORY });
+    // The entity comes from the constant the list renders. This name used to say
+    // "Whole subsidiary". When #104 renamed the label, the held-back
+    // `toHaveCount(0)` checks that ran kept passing on a name nothing carried, and
+    // the checkbox check failed as "not found", which is also how an unwired
+    // `onCountChange` fails.
     const checkboxFor = (periodValue: string) =>
       list.getByRole('checkbox', {
-        name: `Select ${periodValue} ${E2E_YEAR} ${CATEGORY}, Whole subsidiary`,
+        name: `Select ${periodValue} ${E2E_YEAR} ${CATEGORY}, ${WHOLE_COMPANY_ENTITY_LABEL}`,
         exact: true,
       });
     // Held back, with the row saying why. The reason is the positive anchor,
@@ -145,11 +151,16 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
     await page.locator('[data-testid="evidence-vault-input"]').setInputFiles(EVIDENCE_FIXTURE);
     await expect(page.getByText('sample-invoice.pdf')).toBeVisible();
 
-    // After: offered, unticked, still a draft, and the reason is gone.
+    // After: the reason is gone, and the row is offered, unticked and still a draft.
+    // The reason is checked first. One `selectableDrafts` pass decides both, and
+    // evidence is its last gate, so the reason shown above already proved the
+    // earlier gates (role, status, author, lock) pass. A failure on the reason
+    // means the vault's count never reached the row. A failure on the checkbox
+    // after it means the locator no longer names the row's checkbox.
+    await expect(row).not.toContainText('Needs an evidence file.');
     await expect(checkbox).toBeVisible();
     await expect(checkbox).not.toBeChecked();
     await expect(row).toContainText('Draft');
-    await expect(row).not.toContainText('Needs an evidence file.');
     // Only that row changed. The other draft has no file and must still be held back.
     await expectHeldBack(UNATTACHED);
 
