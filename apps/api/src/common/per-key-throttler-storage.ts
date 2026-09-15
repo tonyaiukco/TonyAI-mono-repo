@@ -23,9 +23,10 @@ const secondsUntil = (at: number) => Math.ceil((at - Date.now()) / 1000);
  * under that name, so the hits those keys had recorded never expire. In E2E run
  * 35010155226 an admin's import block ran out, the entry user's two earlier
  * imports stayed counted, and the entry user was refused on their fourth import
- * of a minute with a limit of five. In production that is one user reaching
- * the limit and, a minute later, every other user refused below it — until
- * their own counts are blocked and reset in turn.
+ * of a minute with a limit of five. In production, any one block ending freezes
+ * the hits of every key under that name — every throttled route and every
+ * user, the blocked user's own other routes included — and those requests are
+ * refused below their limit until each key is blocked and reset in turn.
  *
  * Upstream master already keys the timers this way. This is the same algorithm
  * with that change, to be deleted once a release carries it: the spec's

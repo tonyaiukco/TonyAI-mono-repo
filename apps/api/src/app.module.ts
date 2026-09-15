@@ -31,9 +31,13 @@ import { RequestContextMiddleware } from './observability/request-context.middle
     // turning it on everywhere as a side effect of WP8 would pre-empt it.
     // The storage is our own until a release keeps expiry timers per key —
     // see `PerKeyThrottlerStorage` for the defect it works around.
-    ThrottlerModule.forRoot({
-      throttlers: [{ name: 'default', ttl: 60_000, limit: 60 }],
-      storage: new PerKeyThrottlerStorage(),
+    // A factory, so each app builds its own storage: one constructed here would
+    // be shared by every app built in the same process, counts included.
+    ThrottlerModule.forRootAsync({
+      useFactory: () => ({
+        throttlers: [{ name: 'default', ttl: 60_000, limit: 60 }],
+        storage: new PerKeyThrottlerStorage(),
+      }),
     }),
     PrismaModule,
     AuditModule,
