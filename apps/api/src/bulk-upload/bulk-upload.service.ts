@@ -33,6 +33,7 @@ import {
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { sanitiseCallerText } from '../common/caller-text';
 import { isFormulaLead } from '../common/csv-cell';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
@@ -639,7 +640,7 @@ export class BulkUploadService {
             refused: true,
             // Caller-controlled too: "Unrecognised column(s): …" echoes the
             // file's own header text. Cleaned and bounded like the filename.
-            reason: this.auditText(
+            reason: sanitiseCallerText(
               error instanceof Error ? error.message : 'unknown',
               500,
             ),
@@ -664,8 +665,8 @@ export class BulkUploadService {
    * refusal's reason (which can echo the file's header). Both callers swallow
    * a failed write by design — the bookkeeping must never replace the user's
    * answer — so a value the column would not store erased the trace of the
-   * very event the row exists to keep. `auditText` removes the shapes that
-   * were found; this covers the ones that were not.
+   * very event the row exists to keep. `sanitiseCallerText` removes the
+   * shapes that were found; this covers the ones that were not.
    *
    * ONLY a value rejection is retried. Those fail before anything commits, so a
    * second write cannot duplicate the first — whereas a dropped connection or a
@@ -737,44 +738,10 @@ export class BulkUploadService {
     return {
       bulk: true,
       dryRun,
-      fileName: this.auditText(file?.originalname, 255),
+      fileName: sanitiseCallerText(file?.originalname, 255),
       sizeBytes: file?.size ?? 0,
       ...extra,
     };
-  }
-
-  /**
-   * Caller-controlled text — the filename, a refusal's reason — bounded and
-   * made storable.
-   *
-   * Two shapes made the audit write fail: U+0000, which Postgres refuses inside
-   * `jsonb` (busboy decodes `filename*=UTF-8''probe%00.csv` into exactly that),
-   * and a string cut mid-emoji by a UTF-16 `.slice`, which kept half of a
-   * surrogate pair. So control characters and unpaired surrogates are dropped,
-   * and the bound counts code points: the cut can no longer land inside a
-   * character. Bidi controls and invisible separators go too — rendered in the
-   * audit drawer, `invoice_<U+202E>fdp.xlsx` read as a PDF, and a zero-width
-   * space made two different names indistinguishable. ZWJ and ZWNJ stay: some
-   * scripts and emoji need them.
-   */
-  private auditText(value: string | undefined, max: number): string {
-    const kept: string[] = [];
-    // `for…of` walks code points; an unpaired surrogate arrives on its own.
-    for (const char of value ?? '') {
-      const code = char.codePointAt(0) ?? 0;
-      const control = code <= 0x1f || (code >= 0x7f && code <= 0x9f);
-      const unpaired = char.length === 1 && code >= 0xd800 && code <= 0xdfff;
-      const disguise =
-        (code >= 0x202a && code <= 0x202e) ||
-        (code >= 0x2066 && code <= 0x2069) ||
-        code === 0x200b ||
-        code === 0x2060 ||
-        code === 0xfeff;
-      if (control || unpaired || disguise) continue;
-      kept.push(char);
-      if (kept.length === max) break;
-    }
-    return kept.join('');
   }
 
   // -- helpers ---------------------------------------------------------------

@@ -1234,6 +1234,27 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     expect(reason).not.toContain('\u0000');
   });
 
+  it('cleans and bounds the reason itself, whatever text the refusal carries', async () => {
+    // The header refusal cleans its own fragments now, so the test above would
+    // pass with `reason` stored raw. This error carries text nothing upstream
+    // has cleaned: a NUL, a U+202E and more than the 500 code points kept.
+    const { audit, service } = build();
+    const nul = String.fromCharCode(0);
+    const rlo = String.fromCharCode(0x202e);
+    const file = csvFile([row()]);
+    // Defined after `csvFile` builds the object: its spread would call a getter.
+    Object.defineProperty(file, 'buffer', {
+      get() {
+        throw new Error(`boom${nul}${rlo}${'x'.repeat(600)}`);
+      },
+    });
+
+    await expect(service.import(dataEntry(), file, DRY)).rejects.toThrow(/^boom/);
+
+    const { reason } = audit.record.mock.calls[0][1].diff as { reason: string };
+    expect(reason).toBe(`boom${'x'.repeat(496)}`);
+  });
+
   it('drops the characters that disguise a name in the audit drawer', async () => {
     // Rendered, `invoice_<U+202E>fdp.xlsx` read as a PDF, and a zero-width
     // space made two different names look identical.
