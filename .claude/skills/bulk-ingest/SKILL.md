@@ -96,7 +96,10 @@ attachment), use `supabase-storage` instead.
    stored keys, then the loop: flag → map → validate → dedupe → preview or
    create, catching per row and continuing.
 5. **Controller** — `FileInterceptor('file', { limits, defParamCharset: 'utf8' })`
-   and a route-scoped `ThrottlerGuard`; never a second `APP_GUARD`.
+   and a route-scoped `ThrottlerGuard`; never a second `APP_GUARD`. The throttler's
+   storage is `PerKeyThrottlerStorage`: `@nestjs/throttler` 6.5.0's own storage
+   stops every other user's hits from expiring when one user's block ends. Do
+   not swap it back while its tripwire test still passes.
 6. **Specs** — DB-free, and THREE files, not one. A service spec (the dry-run
    proof, the dedupe pair, the error-code mapping, the partial-batch
    enumeration, a strict-parse table, and an assertion that the cell's number

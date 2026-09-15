@@ -80,3 +80,8 @@ in `e2e/helpers.ts`.
   another branch's verification (PR #103's first run was cancelled 53 s in this way). Wait until every
   run in `gh run list --workflow e2e.yml` is `completed`. After dispatching, confirm the new run's
   `headSha` is your branch tip before believing its result.
+- Re-budgeting a spec over a 429 without counting first. List the route's requests per user in the
+  run log (`gh run view <id> --log`, grep the path and the user id). In #108 a 429 arrived on the
+  fourth import of a minute whose limit is five: `@nestjs/throttler` 6.5.0 had stopped the user's
+  earlier hits from expiring when another user's block ended. The fix was in the API's throttler
+  storage, not in the spec's budget.
