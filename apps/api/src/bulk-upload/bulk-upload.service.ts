@@ -85,6 +85,14 @@ const COLUMN_NAMES = new Set<string>(BULK_UPLOAD_COLUMNS);
  */
 const TEMPLATE_ENTITY_LIMIT = 5000;
 
+/**
+ * How much of the caller's own text one audit row keeps. A refusal is quoted
+ * so that the longest sentence it can build still fits `AUDIT_REASON_MAX_LENGTH`
+ * (the bounds are in `parse-rows.ts`): a row cut here would store half a marker.
+ */
+const AUDIT_FILE_NAME_MAX_LENGTH = 255;
+export const AUDIT_REASON_MAX_LENGTH = 500;
+
 @Injectable()
 export class BulkUploadService {
   private readonly logger = new Logger(BulkUploadService.name);
@@ -642,7 +650,7 @@ export class BulkUploadService {
             // file's own header text. Cleaned and bounded like the filename.
             reason: sanitiseCallerText(
               error instanceof Error ? error.message : 'unknown',
-              500,
+              AUDIT_REASON_MAX_LENGTH,
             ),
           }),
         );
@@ -738,7 +746,7 @@ export class BulkUploadService {
     return {
       bulk: true,
       dryRun,
-      fileName: sanitiseCallerText(file?.originalname, 255),
+      fileName: sanitiseCallerText(file?.originalname, AUDIT_FILE_NAME_MAX_LENGTH),
       sizeBytes: file?.size ?? 0,
       ...extra,
     };

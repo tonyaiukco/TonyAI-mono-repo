@@ -7,8 +7,24 @@ import {
   BULK_UPLOAD_REQUIRED_COLUMNS,
   type BulkUploadColumn,
 } from '@tonyai/shared-types';
-import { sanitiseCallerText } from '../common/caller-text';
+import { quoteCallerText } from '../common/caller-text';
 import { readFirstWorksheet, type MergedRange } from './xlsx-reader';
+
+/**
+ * How much of a refused header the sentence quotes: five cells, each bounded
+ * both in units (a character, or a whole marker) and in code points.
+ *
+ * Both bounds exist because a marker is one unit but up to about 50 code
+ * points. Under the unit bound alone, five cells of twenty markers wrote a
+ * 1,469-code-point refusal of which the audit row kept 500, cutting a marker
+ * in half and storing a count of forty as four, in a table with no correction
+ * path. `bulk-upload.service.spec.ts` pins the arithmetic that keeps the
+ * longest possible sentence inside `AUDIT_REASON_MAX_LENGTH`; the two code
+ * points each pair of delimiters costs are part of it.
+ */
+export const QUOTED_FRAGMENTS = 5;
+export const QUOTE_MAX_UNITS = 40;
+export const QUOTE_MAX_CODE_POINTS = 58;
 
 /**
  * One data row as it came out of the file: every cell a string, keyed by the
@@ -68,14 +84,27 @@ function mapHeader(header: readonly string[]): (BulkUploadColumn | null)[] {
     // Bounded, because this sentence is echoed into the response AND into the
     // audit row's `reason`: a 2 MiB header row was stored there whole (a
     // 1,960,160-character reason, measured) in a table with no delete path.
-    // And cleaned, by the audit row's own rule, because the import panel
-    // renders the response too: a U+202E in a header cell reverses everything
-    // after it. Cleaning comes before the cut, so dropped characters cannot
-    // use up a fragment's 40.
+    // And quoted by the audit row's own rule, because the import panel renders
+    // the response too: a U+202E in a header cell reverses everything after
+    // it. The lookup above runs on the cell as written (trimmed), so the
+    // quote NAMES each character it cannot show — `category<U+200B>` —
+    // instead of reading as a column the file got right, and a run of them is
+    // one marker, so padding cannot use up a fragment's units.
+    //
+    // Each cell is DELIMITED as well as quoted, because the sentence has
+    // syntax of its own: undelimited, a header cell reading
+    // `activityValue, category` made the refusal name two columns the file had
+    // got right, and that sentence is stored as evidence in an append-only
+    // table. `quoteCallerText` names the delimiter, so a cell cannot close one.
     const shown = unknown
-      .slice(0, 5)
-      .map((h) => sanitiseCallerText(h, 40, '…'));
-    const more = unknown.length > 5 ? ` (+${unknown.length - 5} more)` : '';
+      .slice(0, QUOTED_FRAGMENTS)
+      .map(
+        (h) => `"${quoteCallerText(h, QUOTE_MAX_UNITS, QUOTE_MAX_CODE_POINTS)}"`,
+      );
+    const more =
+      unknown.length > QUOTED_FRAGMENTS
+        ? ` (+${unknown.length - QUOTED_FRAGMENTS} more)`
+        : '';
     throw new BadRequestException(
       `Unrecognised column(s): ${shown.join(', ')}${more}. Expected: ${BULK_UPLOAD_COLUMNS.join(', ')}.`,
     );
