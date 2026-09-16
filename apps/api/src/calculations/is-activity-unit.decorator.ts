@@ -3,6 +3,7 @@ import {
   type ValidationArguments,
   type ValidationOptions,
 } from 'class-validator';
+import { quoteCallerText } from '../common/caller-text';
 import { isKnownUnit } from './normalization';
 
 /**
@@ -28,8 +29,22 @@ export function IsActivityUnit(options?: ValidationOptions) {
       validator: {
         validate: (value: unknown) =>
           typeof value === 'string' && isKnownUnit(value),
+        // Quoted, never whole: this sentence reaches a 400 and a bulk import's
+        // report, where a 100,000-character cell came back as a
+        // 100,053-character message (measured).
+        //
+        // And `$` goes, which is what makes the quote a bound. class-validator
+        // replaces `$value` in the FINISHED sentence with the raw value
+        // (`ValidationUtils.replaceMessageSpecialTokens`), using it as a
+        // `String.replace` replacement string — so `$'` and `$&` expand too. A
+        // unit of seven `$value` tokens followed by `$'` padding put the whole
+        // of itself back, seven times over: a 99,994-byte body returned an
+        // 18,563,231-byte 400 in 19 ms, and a 27 KB import built a
+        // 5,656,876-character message per row and spent 5.7 s doing it
+        // (measured). `@MaxLength` does not help — every constraint on a
+        // property is evaluated, so the sentence is built anyway.
         defaultMessage: (args: ValidationArguments) =>
-          `${args.property} "${String(args.value)}" is not a unit this system understands`,
+          `${args.property} "${quoteCallerText(String(args.value)).replaceAll('$', '')}" is not a unit this system understands`,
       },
     });
   };
