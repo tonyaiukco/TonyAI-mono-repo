@@ -122,6 +122,34 @@ describe('sanitiseCallerText', () => {
   it('reads a missing value as empty', () => {
     expect(sanitiseCallerText(undefined, 10)).toBe('');
   });
+
+  it('leaves no break in the log line a cleaned value is written into', () => {
+    // WHY the separators are dropped, asserted at the reader rather than at
+    // the rule: `sanitiseCallerText` feeds the audit row's `reason` and
+    // `fileName`, the report's messages and `BatchFailureLog`, and all of
+    // those end up inside one `JSON.stringify` line. A consumer that splits
+    // on the Unicode line-break set (Python's `str.splitlines()`, some log
+    // agents, browsers) must find only the breaks the logger itself wrote.
+    const breaks = [0x85, 0x2028, 0x2029];
+    const forged = `a${char(0x2028)}${char(0x85)}{"level":"error"}${char(0x2029)}b`;
+
+    // The premise, so this cannot pass by the encoder changing underneath it:
+    // these three are the ones `JSON.stringify` does NOT escape. U+000A and
+    // U+000D are absent on purpose — the encoder turns them into two ASCII
+    // characters, so asserting them here would assert the encoder, not this.
+    const dirty = JSON.stringify({ reason: forged });
+    for (const code of breaks) expect(dirty).toContain(char(code));
+
+    // BOTH exits. 500 leaves the value whole; 5 forces the bound's early
+    // return, which is the half that a separator removed from the RESULT
+    // instead of inside `isDropped` would leave open — measured there, a
+    // `fileName` at cap 10 came back as ten raw separators and no filename.
+    for (const max of [500, 5]) {
+      const line = JSON.stringify({ reason: sanitiseCallerText(forged, max) });
+      for (const code of breaks) expect(line).not.toContain(char(code));
+    }
+    expect(sanitiseCallerText(forged, 5)).toBe('a{"le');
+  });
 });
 
 describe('quoteCallerText', () => {
