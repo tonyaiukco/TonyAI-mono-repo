@@ -159,6 +159,21 @@ describe.each(DTOS)('%s — bounded free text', (_name, Dto) => {
     );
     expect(parse(Dto, { activityValue: 0 }).errors).toHaveLength(0);
   });
+
+  it('accepts a unit the engine understands, "kW h" included', () => {
+    // The refusal a user actually hit was raised HERE, not in the engine:
+    // `@IsActivityUnit` asks `isKnownUnit`, whose alias table could not reach
+    // its own `kw h` entry, so an ordinary spelling of kWh was rejected at
+    // validation with "is not a unit this system understands" — before any
+    // calculation ran. Pinned on the DTO because this is the contract the
+    // browser and the bulk importer both meet; the engine's own specs cannot
+    // see whether the decorator is still wired to it.
+    expect(parse(Dto, { activityUnit: 'kW h' }).errors).toHaveLength(0);
+    expect(parse(Dto, { activityUnit: 'kWh' }).errors).toHaveLength(0);
+    expect(
+      constraintsOn(Dto, { activityUnit: 'furlongs' }, 'activityUnit'),
+    ).toContain('isActivityUnit');
+  });
 });
 
 describe('the two write DTOs agree, rule for rule', () => {
