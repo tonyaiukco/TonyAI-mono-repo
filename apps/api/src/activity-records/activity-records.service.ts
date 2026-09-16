@@ -29,6 +29,7 @@ import {
   type ReportingPeriod,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import { quoteCallerText } from '../common/caller-text';
 import {
   actorDisplayName,
   resolveProfiles,
@@ -196,7 +197,9 @@ export function periodOrdinal(reportingPeriod: string, periodValue: string): num
 }
 
 /**
- * The canonical spelling to STORE, or a 400 naming what was sent.
+ * The canonical spelling to STORE, or a 400 naming what was sent — quoted
+ * through `quoteCallerText`, because a bulk import repeats the sentence in its
+ * report, and a U+202E in the value reversed the rest of it on screen.
  *
  * Validating alone was never enough. The old `isValidPeriodValue` (since
  * folded into `canonicalPeriodValue`) has always been case-insensitive to
@@ -212,7 +215,7 @@ function requireCanonicalPeriodValue(
   const canonical = canonicalPeriodValue(reportingPeriod, periodValue);
   if (canonical === null) {
     throw new BadRequestException(
-      `"${periodValue}" is not a valid period for a ${reportingPeriod} record.`,
+      `"${quoteCallerText(periodValue)}" is not a valid period for a ${reportingPeriod} record.`,
     );
   }
   return canonical;

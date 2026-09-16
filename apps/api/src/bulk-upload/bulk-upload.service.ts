@@ -14,6 +14,7 @@ import {
   BULK_UPLOAD_COLUMNS,
   BULK_UPLOAD_MAX_ROWS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
+  BULK_UPLOAD_MESSAGE_MAX_LENGTH,
   canonicalPeriodValue,
   isCalculated,
   isEvidenceRequired,
@@ -33,7 +34,8 @@ import {
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
-import { sanitiseCallerText } from '../common/caller-text';
+import { BatchFailureLog } from '../common/batch-failure-log';
+import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
 import { canonicalUuid } from '../common/canonical-uuid';
 import { isFormulaLead } from '../common/csv-cell';
 import { PrismaService } from '../prisma/prisma.service';
@@ -164,26 +166,42 @@ export class BulkUploadService {
     const accepted: BulkUploadAcceptedRow[] = [];
     const errors: BulkUploadRowIssue[] = [];
     const warnings: BulkUploadRowIssue[] = [];
+    // Batch-scoped, never a field: see `BatchFailureLog`. It is what keeps the
+    // unexpected branch to one log line per import instead of one per row.
+    const unexpected = new BatchFailureLog('row');
 
-    for (const parsed of rows) {
-      try {
-        await this.processRow(
-          user,
-          parsed,
-          { dryRun, seenInFile, storedKeys },
-          { accepted, errors, warnings },
-        );
-      } catch (error) {
-        // A backstop now, not the gate: the role is refused in the audited
-        // pre-flight above. One 403 beats a thousand identical "forbidden"
-        // rows — but only while nothing has been accepted. After that it would
-        // throw away the report of a partial import (no transaction spans the
-        // batch) and skip the batch audit row below, so it is reported on its
-        // own row like any other refusal.
-        if (error instanceof ForbiddenException && accepted.length === 0) {
-          throw error;
+    // The loop is wrapped so the batch's log line is written even when it
+    // rethrows. The backstop below fires only while `accepted.length === 0`,
+    // which is exactly the state a run of unexpected failures leaves behind —
+    // so flushing on the way out rather than in a `finally` would drop the
+    // incident most worth keeping, and silently.
+    try {
+      for (const parsed of rows) {
+        try {
+          await this.processRow(
+            user,
+            parsed,
+            { dryRun, seenInFile, storedKeys },
+            { accepted, errors, warnings },
+          );
+        } catch (error) {
+          // A backstop now, not the gate: the role is refused in the audited
+          // pre-flight above. One 403 beats a thousand identical "forbidden"
+          // rows — but only while nothing has been accepted. After that it
+          // would throw away the report of a partial import (no transaction
+          // spans the batch) and skip the batch audit row below, so it is
+          // reported on its own row like any other refusal.
+          if (error instanceof ForbiddenException && accepted.length === 0) {
+            throw error;
+          }
+          errors.push(this.toIssue(parsed.row, error, unexpected));
         }
-        errors.push(this.toIssue(parsed.row, error));
+      }
+    } finally {
+      // ONE line for the whole import, and only when something was unexpected.
+      const failures = unexpected.entry();
+      if (failures) {
+        this.logger.error(`bulk import: ${failures.message}`, failures.trace);
       }
     }
 
@@ -214,12 +232,12 @@ export class BulkUploadService {
 
     return {
       dryRun,
-      fileName: upload.originalname,
+      fileName: this.shownFileName(upload),
       sizeBytes: upload.size,
       totalRows: rows.length,
       accepted,
-      errors,
-      warnings,
+      errors: errors.map((issue) => this.bounded(issue)),
+      warnings: warnings.map((issue) => this.bounded(issue)),
     };
   }
 
@@ -760,9 +778,52 @@ export class BulkUploadService {
     return {
       bulk: true,
       dryRun,
-      fileName: sanitiseCallerText(file?.originalname, 255),
+      fileName: this.shownFileName(file),
       sizeBytes: file?.size ?? 0,
       ...extra,
+    };
+  }
+
+  /**
+   * The upload's name as the API repeats it, by ONE rule for both of its
+   * readers: the report the import panel renders, and the audit row.
+   *
+   * Only the audit copy used to be cleaned. The report returned `originalname`
+   * as it arrived, so a 417-character name carrying U+202E and U+0000 came back
+   * whole (measured).
+   */
+  private shownFileName(file: Express.Multer.File | undefined): string {
+    return sanitiseCallerText(file?.originalname, 255);
+  }
+
+  /**
+   * An issue as the report carries it: its sentence cleaned and bounded by the
+   * caller-text rule, whoever wrote the sentence.
+   *
+   * A sentence that quotes a value quotes it at its source, through
+   * `quoteCallerText`, and that is what keeps it readable. This is what keeps
+   * the report bounded when a source does not: `toIssue` and the validation
+   * mapping pass other services' sentences through verbatim, and the review
+   * that listed the echoing sentences had missed the calc engine's two about
+   * units. It runs on the finished lists, after `toIssue` has classified each
+   * failure by its RAW message.
+   *
+   * The warnings go through it too, and nothing can currently reach that half:
+   * every warning is fixed text plus an `@IsIn`-validated category, and a
+   * mutant that drops the warnings map survives the suite (verified). It is
+   * kept, and deliberately has no test, for the same reason `PIPE_OPTIONS`
+   * does: a spec asserting otherwise would assert coverage that does not exist,
+   * while the line is what keeps the property true if a warning ever quotes a
+   * cell.
+   */
+  private bounded(issue: BulkUploadRowIssue): BulkUploadRowIssue {
+    return {
+      ...issue,
+      message: sanitiseCallerText(
+        issue.message,
+        BULK_UPLOAD_MESSAGE_MAX_LENGTH,
+        '…',
+      ),
     };
   }
 
@@ -872,6 +933,11 @@ export class BulkUploadService {
    * Not via `@Type(() => Number)` on the DTO: that would fix the CSV case by
    * breaking the live HTTP one, where it turns `''`, `null` and `[]` into `0`
    * — a blank consumption cell silently becoming a reported zero.
+   *
+   * Both refusals quote the cell through `quoteCallerText`, never whole. One
+   * XLSX shared string can back this cell on every row, and a blank entity id
+   * does not stop a row getting this far: a thousand rows quoting one
+   * 32,000-character string made a 32,092,008-byte report (measured).
    */
   private mapRow(
     cells: Record<BulkUploadColumn, string>,
@@ -884,7 +950,7 @@ export class BulkUploadService {
         issue: {
           column: 'reportingYear',
           code: 'invalid',
-          message: `"${cells.reportingYear}" is not a whole year.`,
+          message: `"${quoteCallerText(cells.reportingYear)}" is not a whole year.`,
         },
       };
     }
@@ -894,7 +960,7 @@ export class BulkUploadService {
         issue: {
           column: 'activityValue',
           code: 'invalid',
-          message: `"${cells.activityValue}" is not a number. Use a plain figure with no thousands separator.`,
+          message: `"${quoteCallerText(cells.activityValue)}" is not a number. Use a plain figure with no thousands separator.`,
         },
       };
     }
@@ -936,7 +1002,11 @@ export class BulkUploadService {
    * and a spec "pinned" it against a literal the spec itself owned, so
    * rewording the service left the whole suite green.
    */
-  private toIssue(row: number, error: unknown): BulkUploadRowIssue {
+  private toIssue(
+    row: number,
+    error: unknown,
+    unexpected: BatchFailureLog,
+  ): BulkUploadRowIssue {
     if (error instanceof NotFoundException) {
       // The calc engine throws NotFound for factor COVERAGE, which is the
       // archetypal bulk-import failure: importing 2019-2020 history for a
@@ -982,11 +1052,9 @@ export class BulkUploadService {
       };
     }
     // Never the raw error text — it can carry a query, a path or a column the
-    // caller has no business seeing. Logged in full, reported as a refusal.
-    this.logger.error(
-      `bulk import row ${row} failed unexpectedly: ${String(error)}`,
-      error instanceof Error ? error.stack : undefined,
-    );
+    // caller has no business seeing. Folded into the batch's one log line,
+    // reported as a refusal.
+    unexpected.add(row, error);
     return {
       row,
       column: null,

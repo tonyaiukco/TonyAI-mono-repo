@@ -183,9 +183,11 @@ export interface BulkUploadSummary {
 /** The one-glance verdict above the report. */
 export function summarise(report: BulkUploadReportDTO): BulkUploadSummary {
   const acceptedCount = report.accepted.length;
-  // One row can carry several issues, so `errors.length` is not "rows that
-  // failed" — and telling a user 1,400 rows failed out of 1,000 is the kind
-  // of arithmetic that costs trust in every other number on the screen.
+  // A refused row carries exactly one error today (the API's own rule), but a
+  // row can carry several warnings — and `errors.length` is only "rows that
+  // failed" while that rule holds, so both are counted from the ROWS. Telling
+  // a user 1,400 rows failed out of 1,000 is the kind of arithmetic that costs
+  // trust in every other number on the screen.
   const affectedRows = new Set(report.errors.map((e) => e.row)).size;
   // The same arithmetic for the warnings, which did not get it.
   const warnedRows = new Set(report.warnings.map((w) => w.row)).size;

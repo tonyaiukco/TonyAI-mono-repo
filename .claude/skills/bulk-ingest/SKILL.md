@@ -227,6 +227,27 @@ for (const parsed of rows) {
   cleaned, `category` + U+200B would import as `category`. To prove it on
   XLSX, write the NUL as `_x0000_`: exceljs's writer drops a literal one, so
   the test would pass even with NUL no longer dropped.
+- **Quote a value, never the whole cell, and bound the report as well.** One
+  XLSX shared string can back a cell on every row, so a thousand refusals that
+  each quoted their cell turned a 12,416-byte workbook into a 32,092,008-byte
+  report. Quote through `quoteCallerText`: 40 code points, cleaned before the
+  cut, marked `…`. A sentence the loop passes through from another service is
+  caller text too. The record service's period refusal, `IsActivityUnit`'s
+  message and the calc engine's unit sentences all quoted raw input, and the
+  engine's are reachable with a KNOWN unit padded out, because `canonicalUnit`
+  collapses whitespace. Fix them at the source (the single-record API gets the
+  fix too), and cap the field on its DTO — not to pre-empt the vocabulary
+  check, which runs anyway and accepts a padded spelling of any length, but
+  because the value is stored, snapshotted and exported verbatim. A custom
+  class-validator decorator has one more mouth: the framework replaces `$value`
+  in the FINISHED message with the raw value, as a `String.replace` replacement
+  string, so `$'` and `$&` expand too — a unit made of seven `$value` tokens
+  put the whole of itself back seven times, and a 99,994-byte body returned an
+  18,563,231-byte 400. Strip `$` from whatever such a message quotes. Keep
+  the report's own bound, `BULK_UPLOAD_MESSAGE_MAX_LENGTH`, as the backstop,
+  applied after `toIssue` has classified the failure by its RAW message. The
+  issue count needs no cap: each row is accepted or refused once, so the row
+  cap bounds it. Pin that with a test rather than trusting it.
 - **`dryRun` must not coerce.** `Boolean('yes')` is `true` and `Boolean('0')` is
   `true`; a permissive flag imports a file the user asked to be told about, and
   every row is an audited write. Accept only recognised spellings of true/false
@@ -250,6 +271,23 @@ for (const parsed of rows) {
 - **Count distinct ROWS in every sentence that says "rows".** One row can carry
   several errors and several warnings; `errors.length` and `warnings.length`
   are issue counts.
+- **Log the BATCH, never the row.** An unrecognised failure wants its error and
+  its stack recorded — but once per row that is a flood the caller sizes: 50
+  rows carrying a 2,001-character cell wrote 148,542 bytes of stderr (fifty
+  Prisma stacks with code frames), so the 1,000-row cap puts one request near
+  3 MB, five times a minute per user. The report stays small, so nothing in it
+  shows the cost. Fold into `BatchFailureLog` (`apps/api/src/common/`) and emit
+  one line: the count, the first ten refs plus a count of the rest, each class
+  with its count, its first ref and a sample message, and ONE stack. Three
+  things are easy to get wrong. The accumulator is a LOCAL of the batch method —
+  these services are Nest singletons, and a field would mix two tenants' rows
+  into one line. The flush belongs in a `finally`, because the loop's
+  `ForbiddenException` backstop fires only while nothing has been accepted,
+  which is exactly the state a run of failures leaves behind. And what the line
+  quotes is caller text: a Prisma parse failure names the character it choked
+  on, so the sample goes through `sanitiseCallerText` and the stack goes through
+  it LINE BY LINE — that helper drops C0 controls, U+000A among them, and would
+  otherwise fold thirty frames into one unreadable run.
 
 ## Verify
 

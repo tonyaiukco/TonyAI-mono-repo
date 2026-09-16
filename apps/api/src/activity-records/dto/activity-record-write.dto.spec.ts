@@ -4,6 +4,8 @@ import { plainToInstance, type ClassConstructor } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { describe, expect, it } from 'vitest';
 import {
+  ACTIVITY_UNITS,
+  ACTIVITY_UNIT_MAX_LENGTH,
   EXPLANATION_MAX_LENGTH,
   PERIOD_VALUE_MAX_LENGTH,
 } from '@tonyai/shared-types';
@@ -25,7 +27,11 @@ import { UpdateActivityRecordDto } from './update-activity-record.dto';
  * multi-megabyte cell actually arrives, so the bound has to exist BEFORE the
  * endpoint that would meet one.
  */
-type WriteDto = { periodValue?: string; varianceReason?: string | null };
+type WriteDto = {
+  periodValue?: string;
+  activityUnit?: string;
+  varianceReason?: string | null;
+};
 
 const DTOS: [string, ClassConstructor<WriteDto>][] = [
   ['CreateActivityRecordDto', CreateActivityRecordDto],
@@ -91,6 +97,7 @@ function constraintsOn(
 describe('the caps have the values they claim', () => {
   it('pins them', () => {
     expect(PERIOD_VALUE_MAX_LENGTH).toBe(32);
+    expect(ACTIVITY_UNIT_MAX_LENGTH).toBe(32);
     expect(EXPLANATION_MAX_LENGTH).toBe(2000);
   });
 });
@@ -120,6 +127,33 @@ describe.each(DTOS)('%s — bounded free text', (_name, Dto) => {
     expect(constraintsOn(Dto, { periodValue: '' }, 'periodValue')).toContain(
       'minLength',
     );
+  });
+
+  it('accepts every unit the vocabulary offers, and its longest spelling', () => {
+    // The cap must never refuse a unit the engine knows.
+    for (const value of [
+      ...ACTIVITY_UNITS.map((unit) => unit.value),
+      'normal_cubic_metres',
+      'standard cubic metres',
+    ]) {
+      expect(parse(Dto, { activityUnit: value }).errors).toHaveLength(0);
+    }
+  });
+
+  it('refuses an activityUnit past the cap, even one the vocabulary knows', () => {
+    // Padding keeps the unit KNOWN (`canonicalUnit` trims and collapses
+    // whitespace), so only the cap can refuse it — and only at 33.
+    const known = (length: number) => 'kWh'.padEnd(length);
+    expect(
+      parse(Dto, { activityUnit: known(ACTIVITY_UNIT_MAX_LENGTH) }).errors,
+    ).toHaveLength(0);
+    expect(
+      constraintsOn(
+        Dto,
+        { activityUnit: known(ACTIVITY_UNIT_MAX_LENGTH + 1) },
+        'activityUnit',
+      ),
+    ).toEqual(['maxLength']);
   });
 
   it('bounds varianceReason at the shared explanation length', () => {
@@ -159,6 +193,21 @@ describe.each(DTOS)('%s — bounded free text', (_name, Dto) => {
     );
     expect(parse(Dto, { activityValue: 0 }).errors).toHaveLength(0);
   });
+
+  it('accepts a unit the engine understands, "kW h" included', () => {
+    // The refusal a user actually hit was raised HERE, not in the engine:
+    // `@IsActivityUnit` asks `isKnownUnit`, whose alias table could not reach
+    // its own `kw h` entry, so an ordinary spelling of kWh was rejected at
+    // validation with "is not a unit this system understands" — before any
+    // calculation ran. Pinned on the DTO because this is the contract the
+    // browser and the bulk importer both meet; the engine's own specs cannot
+    // see whether the decorator is still wired to it.
+    expect(parse(Dto, { activityUnit: 'kW h' }).errors).toHaveLength(0);
+    expect(parse(Dto, { activityUnit: 'kWh' }).errors).toHaveLength(0);
+    expect(
+      constraintsOn(Dto, { activityUnit: 'furlongs' }, 'activityUnit'),
+    ).toContain('isActivityUnit');
+  });
 });
 
 describe('the two write DTOs agree, rule for rule', () => {
@@ -176,6 +225,7 @@ describe('the two write DTOs agree, rule for rule', () => {
    */
   it.each([
     ['periodValue', { periodValue: 'x'.repeat(PERIOD_VALUE_MAX_LENGTH + 1) }],
+    ['activityUnit', { activityUnit: 'kWh'.padEnd(ACTIVITY_UNIT_MAX_LENGTH + 1) }],
     ['varianceReason', { varianceReason: 'x'.repeat(EXPLANATION_MAX_LENGTH + 1) }],
     ['activityValue', { activityValue: -0.0001 }],
   ])('%s is refused by both classes', (field, body) => {

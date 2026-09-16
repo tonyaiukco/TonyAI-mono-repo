@@ -12,6 +12,7 @@ import {
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import {
+  ACTIVITY_UNIT_MAX_LENGTH,
   CATEGORIES,
   EXPLANATION_MAX_LENGTH,
   PERIOD_VALUE_MAX_LENGTH,
@@ -71,9 +72,14 @@ export class CreateActivityRecordDto {
   @Min(0)
   activityValue!: number;
 
+  // Bounded because the unit is STORED as sent, frozen into the immutable
+  // snapshot and printed verbatim into every export — and because the
+  // vocabulary check bounds nothing: a padded spelling of any length
+  // canonicalises to a known unit. See ACTIVITY_UNIT_MAX_LENGTH.
   @IsActivityUnit()
   @IsString()
   @MinLength(1)
+  @MaxLength(ACTIVITY_UNIT_MAX_LENGTH)
   activityUnit!: string;
 
   @IsOptional()
