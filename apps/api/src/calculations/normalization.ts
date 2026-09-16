@@ -109,8 +109,15 @@ const UNIT_RULES: Record<string, UnitRule> = {
   tonnes: { target: 'tonnes', multiplier: 1, basis: 'identity' },
 };
 
-/** Common human/alias spellings mapped onto the canonical rule keys above. */
-const UNIT_ALIASES: Record<string, string> = {
+/**
+ * Common human/alias spellings mapped onto the canonical rule keys above,
+ * written the way a user would actually type them. The lookup keys are DERIVED
+ * from these spellings below — never hand-key this table in canonical form.
+ *
+ * Exported for the reachability spec, which asserts every spelling declared
+ * here is one `isKnownUnit` accepts.
+ */
+export const UNIT_ALIAS_SPELLINGS: Readonly<Record<string, string>> = {
   kwh: 'kwh',
   'kw h': 'kwh',
   mwh: 'mwh',
@@ -151,12 +158,42 @@ const UNIT_ALIASES: Record<string, string> = {
   t: 'tonnes',
 };
 
-/** Canonicalise a raw unit string: lowercase, trim, collapse whitespace. */
+/**
+ * The canonical form of a raw unit token: trimmed, lowercased, with every run
+ * of whitespace collapsed to `_`.
+ *
+ * This is the SINGLE definition of what a lookup key looks like, and both the
+ * alias table and incoming user input go through it. That is the point of it.
+ * The alias table used to be hand-keyed, mixing canonical spellings with human
+ * ones, and `'kw h'` was one of the human ones — it could never match, because
+ * a user typing `kW h` reaches the lookup as `kw_h`. An ordinary spelling of
+ * kWh was refused as a unit the system does not understand. Deriving the keys
+ * makes that class of typo impossible rather than merely fixed once.
+ *
+ * It trades that for a narrower one, recorded here so the next reader does not
+ * have to rediscover it: two spellings that clean to the SAME key silently
+ * overwrite each other, last declaration wins, and TypeScript cannot see it
+ * (literal duplicate keys are a compile error — `'uk gallon'` shadowing
+ * `uk_gallon` is not). A spec asserts every spelling still resolves to the rule
+ * key it declares, which is what makes this safe to keep doing.
+ */
+function cleanUnitToken(unit: string): string {
+  return unit.trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+/** The alias table keyed the way the lookup actually asks for it. */
+const UNIT_ALIASES: Record<string, string> = Object.fromEntries(
+  Object.entries(UNIT_ALIAS_SPELLINGS).map(([spelling, ruleKey]) => [
+    cleanUnitToken(spelling),
+    ruleKey,
+  ]),
+);
+
 /** The alias-resolved key a raw unit string maps to. Exported so the category
  *  guard compares the same token the rules are keyed by, not the user's
  *  spelling — `m3`, `m³` and `cubic_metres` are one unit. */
 export function canonicalUnit(unit: string): string {
-  const cleaned = unit.trim().toLowerCase().replace(/\s+/g, '_');
+  const cleaned = cleanUnitToken(unit);
   return UNIT_ALIASES[cleaned] ?? cleaned;
 }
 
