@@ -248,6 +248,23 @@ for (const parsed of rows) {
 - **Count distinct ROWS in every sentence that says "rows".** One row can carry
   several errors and several warnings; `errors.length` and `warnings.length`
   are issue counts.
+- **Log the BATCH, never the row.** An unrecognised failure wants its error and
+  its stack recorded — but once per row that is a flood the caller sizes: 50
+  rows carrying a 2,001-character cell wrote 148,542 bytes of stderr (fifty
+  Prisma stacks with code frames), so the 1,000-row cap puts one request near
+  3 MB, five times a minute per user. The report stays small, so nothing in it
+  shows the cost. Fold into `BatchFailureLog` (`apps/api/src/common/`) and emit
+  one line: the count, the first ten refs plus a count of the rest, each class
+  with its count, its first ref and a sample message, and ONE stack. Three
+  things are easy to get wrong. The accumulator is a LOCAL of the batch method —
+  these services are Nest singletons, and a field would mix two tenants' rows
+  into one line. The flush belongs in a `finally`, because the loop's
+  `ForbiddenException` backstop fires only while nothing has been accepted,
+  which is exactly the state a run of failures leaves behind. And what the line
+  quotes is caller text: a Prisma parse failure names the character it choked
+  on, so the sample goes through `sanitiseCallerText` and the stack goes through
+  it LINE BY LINE — that helper drops C0 controls, U+000A among them, and would
+  otherwise fold thirty frames into one unreadable run.
 
 ## Verify
 
