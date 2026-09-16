@@ -668,7 +668,9 @@ describe('CalculationsService.compute', () => {
           value: 1,
           unit: `bananas${char(0x202e)}${'x'.repeat(100)}`,
         }),
-      ).rejects.toThrow(`Unsupported unit "bananas${'x'.repeat(33)}…"`);
+      ).rejects.toThrow(
+        `Unsupported unit "bananas<U+202E>${'x'.repeat(32)}…"`,
+      );
 
       // The caller's OWN spelling, not the canonicalised key: quoting
       // `canonicalUnit(input.unit)` would tell a user about a token they never
@@ -722,7 +724,7 @@ describe('CalculationsService.compute', () => {
           unit: `cubic${char(0xfeff)}${char(0x09)}metres`,
         }),
       ).rejects.toThrow(
-        'Unit "cubicmetres" normalises to "kWh" but the factor for "Water" expects "cubic_metres"',
+        'Unit "cubic<U+FEFF U+0009>metres" normalises to "kWh" but the factor for "Water" expects "cubic_metres"',
       );
     });
 

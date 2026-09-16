@@ -41,10 +41,11 @@ describe('IsActivityUnit', () => {
     );
   });
 
-  it('drops the characters that disguise the value it quotes', () => {
-    // On screen, a U+202E reverses everything after it.
+  it('names the characters that disguise the value it quotes', () => {
+    // On screen, a U+202E reverses everything after it — and a unit quoted
+    // with them dropped in silence read as a unit the system should know.
     expect(refusal(`k${char(0x202e)}W${char(0)}h${char(0x200b)}x`)).toBe(
-      'activityUnit "kWhx" is not a unit this system understands',
+      'activityUnit "k<U+202E>W<U+0000>h<U+200B>x" is not a unit this system understands',
     );
   });
 

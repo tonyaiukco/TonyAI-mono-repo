@@ -32,6 +32,29 @@ attachment), use `supabase-storage` instead.
   need BOTH: an in-memory `Set` for row-vs-row inside the file, and ONE up-front
   query for row-vs-stored. Mirror the index's own predicate — TonyAI's excludes
   `voided`, so a withdrawn figure does not hold its slot.
+- **Key every segment in the DATABASE's spelling, never the file's.** A typed
+  column accepts more than one spelling of one value and returns exactly one; a
+  JS `Set` compares the text. Measured here: one location written five ways —
+  lowercase, uppercase, `{…}`, `urn:uuid:…`, unhyphenated — was five free slots,
+  and the apply then lost four of them to the index. (Re-measure on a fixture
+  whose id contains hex LETTERS. Every id in the seed is decimal digits, so
+  `toUpperCase()` is a no-op there and the defect reads one row smaller than it
+  is.) The
+  stored-slot query has the same hole from the other side, because the rows it
+  keys come back canonical. So canonicalise the cell ONCE, at the boundary,
+  before anything reads it: a per-reader fix leaves the next reader to forget.
+  Two warnings. **Canonicalise before the tenant check too** — it compares ids
+  as strings, so a braced id had a user's own entity refused as another
+  tenant's. And **match the driver's grammar, not the database's**: Prisma reads
+  `urn:uuid:…` that Postgres refuses and refuses `{…}` unhyphenated and
+  four-character groups that Postgres reads (measured; see `canonicalUuid`).
+  Being narrower than the driver leaves a duplicate undetected, which is what
+  you already had; being WIDER is worse than a refused row, because
+  canonicalising at the boundary REWRITES the cell — the folded value is what
+  gets stored, so a mis-grouped id the database would have refused outright is
+  filed against a real entity nobody named. Pin the negative cases with a
+  service-level test, not only a parser one: a parser spec alone stays green
+  while the importer silently re-attributes a row.
 - **Parse strictly; never coerce.** `Number('')` is `0`, and a zero is a
   REPORTED quantity that enters the inventory. Refuse `''`, `'1,200'` (ambiguous
   across locales), `'1e3'` and `'0x10'`. A strict numeric regex also kills
@@ -193,22 +216,40 @@ for (const parsed of rows) {
   changing a shipped write path, which is its own PR.)
 - **Never echo an unexpected error's text into the report.** It can carry a
   query, a path or a column. Log it; report a refusal.
-- **Clean the file's own text before a refusal quotes it — bounding it is not
-  enough.** "Unrecognised column(s): …" quotes header cells into the 400 the
-  panel renders AND into the audit row's `reason`. Only the audit copy was
-  cleaned, so a U+202E in a header cell reached the screen, where it reverses
-  everything after it. Pass each quoted fragment through `sanitiseCallerText`
-  (`apps/api/src/common/caller-text.ts`, the rule the audit row's `fileName`
-  and `reason` already use), cleaning before cutting so dropped characters
-  cannot use up the bound. Clean the SENTENCE, never the match: looked up
-  cleaned, `category` + U+200B would import as `category`. To prove it on
-  XLSX, write the NUL as `_x0000_`: exceljs's writer drops a literal one, so
-  the test would pass even with NUL no longer dropped.
+- **Quote the file's own text with `quoteCallerText` — bounding it is not
+  enough, and neither is cleaning it.** "Unrecognised column(s): …" quotes
+  header cells into the 400 the panel renders AND into the audit row's
+  `reason`. Only the audit copy was cleaned, so a U+202E in a header cell
+  reached the screen, where it reverses everything after it. One rule in
+  `apps/api/src/common/caller-text.ts` decides what reaches neither: controls,
+  unpaired surrogates, U+2028/U+2029, every format character except ZWJ, ZWNJ
+  and the drawn prepended concatenation marks, and the code points reserved as
+  invisible but unassigned. STORE with `sanitiseCallerText` (the audit row's
+  `fileName` and `reason`). QUOTE with `quoteCallerText`, which NAMES every
+  character it cannot show — including the invisible ones the rule KEEPS (a
+  variation selector, ZWJ: quoted as they are, they reproduce the very
+  confusion this trap is about), U+2800 (the blank people paste when they want
+  an invisible character, which Unicode files as a symbol so nothing else
+  catches it), and the characters the sentence's own syntax uses — writing each
+  run as `<U+2063 x40>`. DELIMIT each quoted cell and name the delimiter: the
+  sentence joins cells with `, `, so an undelimited cell reading
+  `activityValue, category` made the refusal name two columns the file had got
+  right, into an append-only row kept as evidence. Every layer of syntax you
+  add is a layer a file can forge. Match the
+  cell as written (trimmed), never the cleaned one: looked up cleaned,
+  `category` + U+200B would import as `category`, and quoted cleaned, its
+  refusal read "Unrecognised column(s): category. Expected: …, category, …".
+  Bound a quote TWICE: in units, so padding cannot push a name out, and in code
+  points, or the sentence outgrows the column that stores it and a marker is
+  cut in half — a count of forty stored as four, in a table with no correction
+  path. Pin that arithmetic in a test. To prove the quote on XLSX, write the
+  NUL as `_x0000_`: exceljs's writer drops a literal one, so there would be no
+  NUL to name.
 - **Quote a value, never the whole cell, and bound the report as well.** One
   XLSX shared string can back a cell on every row, so a thousand refusals that
   each quoted their cell turned a 12,416-byte workbook into a 32,092,008-byte
-  report. Quote through `quoteCallerText`: 40 code points, cleaned before the
-  cut, marked `…`. A sentence the loop passes through from another service is
+  report. Quote through `quoteCallerText`, which NAMES what it cannot show rather
+  than dropping it, bounded in units and in code points and marked `…`. A sentence the loop passes through from another service is
   caller text too. The record service's period refusal, `IsActivityUnit`'s
   message and the calc engine's unit sentences all quoted raw input, and the
   engine's are reachable with a KNOWN unit padded out, because `canonicalUnit`
@@ -248,6 +289,23 @@ for (const parsed of rows) {
 - **Count distinct ROWS in every sentence that says "rows".** One row can carry
   several errors and several warnings; `errors.length` and `warnings.length`
   are issue counts.
+- **Log the BATCH, never the row.** An unrecognised failure wants its error and
+  its stack recorded — but once per row that is a flood the caller sizes: 50
+  rows carrying a 2,001-character cell wrote 148,542 bytes of stderr (fifty
+  Prisma stacks with code frames), so the 1,000-row cap puts one request near
+  3 MB, five times a minute per user. The report stays small, so nothing in it
+  shows the cost. Fold into `BatchFailureLog` (`apps/api/src/common/`) and emit
+  one line: the count, the first ten refs plus a count of the rest, each class
+  with its count, its first ref and a sample message, and ONE stack. Three
+  things are easy to get wrong. The accumulator is a LOCAL of the batch method —
+  these services are Nest singletons, and a field would mix two tenants' rows
+  into one line. The flush belongs in a `finally`, because the loop's
+  `ForbiddenException` backstop fires only while nothing has been accepted,
+  which is exactly the state a run of failures leaves behind. And what the line
+  quotes is caller text: a Prisma parse failure names the character it choked
+  on, so the sample goes through `sanitiseCallerText` and the stack goes through
+  it LINE BY LINE — that helper drops C0 controls, U+000A among them, and would
+  otherwise fold thirty frames into one unreadable run.
 
 ## Verify
 

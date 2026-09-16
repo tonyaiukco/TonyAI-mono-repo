@@ -34,7 +34,9 @@ import {
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { BatchFailureLog } from '../common/batch-failure-log';
 import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
+import { canonicalUuid } from '../common/canonical-uuid';
 import { isFormulaLead } from '../common/csv-cell';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
@@ -67,10 +69,13 @@ const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true } as const;
  * six segments come from closed vocabularies, `subsidiaryId` is checked against
  * the access set first, and every segment is required — so `locationId` is the
  * only attacker-influenced part and there is nothing for it to forge itself
- * into. There is deliberately no test for a forged key: nothing can currently
- * reach that state, and a spec asserting otherwise would assert coverage that
- * does not exist. The separator is here so the property stays true if a
- * free-text segment is ever added.
+ * into. `canonicaliseEntityCells` does not change that reach: a `locationId`
+ * naming a real row is hex and hyphens by the time it is keyed, but one that
+ * does not is still free text HERE — the record service refuses it after the
+ * key is built, not before. There is deliberately no test for a forged key:
+ * nothing can currently reach that state, and a spec asserting otherwise would
+ * assert coverage that does not exist. The separator is here so the property
+ * stays true if a free-text segment is ever added.
  */
 const KEY_SEPARATOR = '\u0000';
 
@@ -85,6 +90,14 @@ const COLUMN_NAMES = new Set<string>(BULK_UPLOAD_COLUMNS);
  * `bulk-upload.controller.ts`) cannot pin a replica with it.
  */
 const TEMPLATE_ENTITY_LIMIT = 5000;
+
+/**
+ * How much of the caller's own text one audit row keeps. A refusal is quoted
+ * so that the longest sentence it can build still fits `AUDIT_REASON_MAX_LENGTH`
+ * (the bounds are in `parse-rows.ts`): a row cut here would store half a marker.
+ */
+const AUDIT_FILE_NAME_MAX_LENGTH = 255;
+export const AUDIT_REASON_MAX_LENGTH = 500;
 
 @Injectable()
 export class BulkUploadService {
@@ -148,6 +161,9 @@ export class BulkUploadService {
           `The file has ${parsed.length} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
         );
       }
+      // BEFORE the access check, which compares ids as strings — and before
+      // anything else reads an id cell.
+      this.canonicaliseEntityCells(parsed);
       this.assertEveryEntityAccessible(user.accessibleSubsidiaryIds, parsed);
       return parsed;
     });
@@ -158,26 +174,42 @@ export class BulkUploadService {
     const accepted: BulkUploadAcceptedRow[] = [];
     const errors: BulkUploadRowIssue[] = [];
     const warnings: BulkUploadRowIssue[] = [];
+    // Batch-scoped, never a field: see `BatchFailureLog`. It is what keeps the
+    // unexpected branch to one log line per import instead of one per row.
+    const unexpected = new BatchFailureLog('row');
 
-    for (const parsed of rows) {
-      try {
-        await this.processRow(
-          user,
-          parsed,
-          { dryRun, seenInFile, storedKeys },
-          { accepted, errors, warnings },
-        );
-      } catch (error) {
-        // A backstop now, not the gate: the role is refused in the audited
-        // pre-flight above. One 403 beats a thousand identical "forbidden"
-        // rows — but only while nothing has been accepted. After that it would
-        // throw away the report of a partial import (no transaction spans the
-        // batch) and skip the batch audit row below, so it is reported on its
-        // own row like any other refusal.
-        if (error instanceof ForbiddenException && accepted.length === 0) {
-          throw error;
+    // The loop is wrapped so the batch's log line is written even when it
+    // rethrows. The backstop below fires only while `accepted.length === 0`,
+    // which is exactly the state a run of unexpected failures leaves behind —
+    // so flushing on the way out rather than in a `finally` would drop the
+    // incident most worth keeping, and silently.
+    try {
+      for (const parsed of rows) {
+        try {
+          await this.processRow(
+            user,
+            parsed,
+            { dryRun, seenInFile, storedKeys },
+            { accepted, errors, warnings },
+          );
+        } catch (error) {
+          // A backstop now, not the gate: the role is refused in the audited
+          // pre-flight above. One 403 beats a thousand identical "forbidden"
+          // rows — but only while nothing has been accepted. After that it
+          // would throw away the report of a partial import (no transaction
+          // spans the batch) and skip the batch audit row below, so it is
+          // reported on its own row like any other refusal.
+          if (error instanceof ForbiddenException && accepted.length === 0) {
+            throw error;
+          }
+          errors.push(this.toIssue(parsed.row, error, unexpected));
         }
-        errors.push(this.toIssue(parsed.row, error));
+      }
+    } finally {
+      // ONE line for the whole import, and only when something was unexpected.
+      const failures = unexpected.entry();
+      if (failures) {
+        this.logger.error(`bulk import: ${failures.message}`, failures.trace);
       }
     }
 
@@ -510,7 +542,16 @@ export class BulkUploadService {
     accessibleSubsidiaryIds: string[],
     rows: ParsedRow[],
   ): void {
-    const accessible = new Set(accessibleSubsidiaryIds);
+    // Both sides canonical, so the comparison is between two known spellings
+    // rather than one known and one assumed. The cells came through
+    // `canonicaliseEntityCells`; these come from the guard, and are already
+    // what Prisma returned — mapping them too costs nothing and means this
+    // does not silently start refusing files if that ever stops being true.
+    // It cannot widen access: `canonicalUuid` maps the spellings of one uuid
+    // onto that uuid and never onto another's.
+    const accessible = new Set(
+      accessibleSubsidiaryIds.map((id) => canonicalUuid(id) ?? id),
+    );
     const offending = rows
       // A BLANK cell is a missing value, not a foreign entity. Refusing the
       // whole file over one told the user their reporting entity "does not
@@ -545,6 +586,12 @@ export class BulkUploadService {
    * This exists because the preview CANNOT see a conflict — Postgres raises it
    * on the insert — so without it a dry run reports a thousand clean rows and
    * the apply comes back with conflicts.
+   *
+   * Both sides of the comparison are canonical: Prisma returns the stored
+   * spelling of a `uuid` column, and the cells came through
+   * `canonicaliseEntityCells`. Without that, a file naming its site
+   * `{a0ee…}` matched no stored key at all, however many records held the
+   * slot.
    */
   private async loadStoredKeys(rows: ParsedRow[]): Promise<Set<string>> {
     const subsidiaryIds = [
@@ -643,7 +690,7 @@ export class BulkUploadService {
             // file's own header text. Cleaned and bounded like the filename.
             reason: sanitiseCallerText(
               error instanceof Error ? error.message : 'unknown',
-              500,
+              AUDIT_REASON_MAX_LENGTH,
             ),
           }),
         );
@@ -754,7 +801,7 @@ export class BulkUploadService {
    * whole (measured).
    */
   private shownFileName(file: Express.Multer.File | undefined): string {
-    return sanitiseCallerText(file?.originalname, 255);
+    return sanitiseCallerText(file?.originalname, AUDIT_FILE_NAME_MAX_LENGTH);
   }
 
   /**
@@ -791,12 +838,52 @@ export class BulkUploadService {
   // -- helpers ---------------------------------------------------------------
 
   /**
+   * The two id cells rewritten to the spelling the DATABASE uses, once, before
+   * any of the four readers below sees them.
+   *
+   * `subsidiary_id` and `location_id` are `uuid` columns, and a uuid has more
+   * than one spelling: `{A0EE…}`, `urn:uuid:a0ee…` and the unhyphenated form
+   * all reach the same row (see `canonicalUuid` for the measured grammar).
+   * Every consumer here compares them AS STRINGS, so one location written five
+   * ways used to be five different things:
+   *
+   * - `slotKey` keyed all five as free slots, so a dry run reported five
+   *   clean rows the apply would then lose four of to the uniqueness index —
+   *   the one failure a batch pre-check exists to prevent.
+   * - `loadStoredKeys` keys the stored rows off Prisma, which returns the
+   *   canonical spelling, so ANY other spelling in the file missed the stored
+   *   slot as well.
+   * - `assertEveryEntityAccessible` compares against the access set, so a
+   *   braced `subsidiaryId` had the whole file refused as another tenant's.
+   * - `identityOf` echoed the file's spelling back as the accepted row's
+   *   identity, disagreeing with the record that was actually written.
+   *
+   * Rewriting the cell rather than each reader is what makes that list
+   * closed: a reader added later cannot forget to do it.
+   *
+   * A cell that is NOT a uuid is left exactly as written, untrimmed — the row
+   * then fails where it already failed, with the message it already had.
+   */
+  private canonicaliseEntityCells(rows: ParsedRow[]): void {
+    for (const { cells } of rows) {
+      cells.subsidiaryId =
+        canonicalUuid(cells.subsidiaryId.trim()) ?? cells.subsidiaryId;
+      cells.locationId =
+        canonicalUuid(cells.locationId.trim()) ?? cells.locationId;
+    }
+  }
+
+  /**
    * What the row IS, for a client that has to render a preview.
    *
    * `periodValue` is the server's canonical spelling rather than the file's, so
    * the preview shows what will actually be stored — a file writing
    * `" JANUARY "` lands as `January`, and a preview echoing the input would
    * quietly disagree with the record.
+   *
+   * The two ids are canonical for the same reason, by way of
+   * `canonicaliseEntityCells` — a file naming a site `{A0EE…}` gets back the
+   * `a0ee…` the record holds.
    */
   private identityOf(
     dto: CreateActivityRecordDto,
@@ -819,7 +906,17 @@ export class BulkUploadService {
     };
   }
 
-  /** The six columns of the `NULLS NOT DISTINCT` uniqueness index, in order. */
+  /**
+   * The six columns of the `NULLS NOT DISTINCT` uniqueness index, in order.
+   *
+   * A formatter, deliberately: every segment must arrive in the spelling the
+   * database stores, because that is what the index compares. Both feeds
+   * already do — the file's ids through `canonicaliseEntityCells` and its
+   * `periodValue` through `canonicalPeriodValue`, the stored rows straight
+   * from Prisma. Canonicalising again HERE would make the dedupe pass even
+   * if the boundary regressed, which is exactly the coverage the specs would
+   * then stop giving.
+   */
   private slotKey(
     subsidiaryId: string,
     locationId: string | null,
@@ -913,7 +1010,11 @@ export class BulkUploadService {
    * and a spec "pinned" it against a literal the spec itself owned, so
    * rewording the service left the whole suite green.
    */
-  private toIssue(row: number, error: unknown): BulkUploadRowIssue {
+  private toIssue(
+    row: number,
+    error: unknown,
+    unexpected: BatchFailureLog,
+  ): BulkUploadRowIssue {
     if (error instanceof NotFoundException) {
       // The calc engine throws NotFound for factor COVERAGE, which is the
       // archetypal bulk-import failure: importing 2019-2020 history for a
@@ -959,11 +1060,9 @@ export class BulkUploadService {
       };
     }
     // Never the raw error text — it can carry a query, a path or a column the
-    // caller has no business seeing. Logged in full, reported as a refusal.
-    this.logger.error(
-      `bulk import row ${row} failed unexpectedly: ${String(error)}`,
-      error instanceof Error ? error.stack : undefined,
-    );
+    // caller has no business seeing. Folded into the batch's one log line,
+    // reported as a refusal.
+    unexpected.add(row, error);
     return {
       row,
       column: null,
