@@ -137,6 +137,32 @@ function build() {
   return { prisma, records, audit, service };
 }
 
+/**
+ * Runs `body` with `Logger.error` captured, and restores the spy even if it
+ * throws — `vitest.config.ts` sets `clearMocks`, which clears CALLS but leaves
+ * the implementation installed, so a spy leaked by a throwing test would
+ * swallow every later test's logging in this file.
+ */
+async function captureErrors<T>(
+  body: () => Promise<T>,
+): Promise<{ result: T; logged: { message: string; trace: unknown }[] }> {
+  const logged: { message: string; trace: unknown }[] = [];
+  const spy = vi
+    .spyOn(Logger.prototype, 'error')
+    .mockImplementation((message: unknown, trace?: unknown) => {
+      logged.push({ message: String(message), trace });
+    });
+  try {
+    return { result: await body(), logged };
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+/** How many times a stack header appears in the one attached trace. */
+const stackCount = (trace: unknown, header: string) =>
+  String(trace).split(header).length - 1;
+
 const NOTHING = { dryRun: false };
 const DRY = { dryRun: true };
 
@@ -428,12 +454,6 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     // bytes of stderr — fifty Prisma stacks with code frames — which the
     // 1,000-row cap puts near 3 MB for one request, five of which a user may
     // send each minute. The row-level refusal is unchanged; the log is not.
-    const logged: { message: string; trace: unknown }[] = [];
-    const spy = vi
-      .spyOn(Logger.prototype, 'error')
-      .mockImplementation((message: unknown, trace?: unknown) => {
-        logged.push({ message: String(message), trace });
-      });
     const { records, service } = build();
     records.create.mockRejectedValue(
       Object.assign(new Error('value too long for the column locationId'), {
@@ -446,8 +466,9 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
       row({ reportingYear: String(2000 + i) }),
     );
 
-    const report = await service.import(dataEntry(), csvFile(rows), NOTHING);
-    spy.mockRestore();
+    const { result: report, logged } = await captureErrors(() =>
+      service.import(dataEntry(), csvFile(rows), NOTHING),
+    );
 
     // Every row still gets its own refusal, with the constant message.
     expect(report.errors).toHaveLength(50);
@@ -455,30 +476,124 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     expect(logged).toHaveLength(1);
     expect(logged[0].message).toContain('bulk import: 50 rows failed unexpectedly');
     expect(logged[0].message).toContain('Error P2000 ×50');
-    // ONE stack for the batch, not fifty.
-    expect(String(logged[0].trace)).toContain('Error: value too long');
+    // WHICH rows — spreadsheet numbering, so the header is row 1. Reporting
+    // every failure against one row is worse than reporting none.
+    expect(logged[0].message).toContain(
+      '(2, 3, 4, 5, 6, 7, 8, 9, 10, 11 and 40 more)',
+    );
+    // ONE stack, COUNTED. `toContain` passes just as happily on fifty.
+    expect(stackCount(logged[0].trace, 'Error: value too long')).toBe(1);
+  });
+
+  it('logs the batch line even when the Forbidden backstop aborts the import', async () => {
+    // The backstop fires only while `accepted.length === 0` — which is exactly
+    // the state a run of unexpected failures leaves behind. Without the
+    // `finally` the 3-row driver incident would vanish with the throw.
+    const { records, service } = build();
+    records.create
+      .mockRejectedValueOnce(new Error('driver said no'))
+      .mockRejectedValueOnce(new Error('driver said no'))
+      .mockRejectedValueOnce(new Error('driver said no'))
+      .mockRejectedValueOnce(new ForbiddenException('not yours'));
+    const rows = Array.from({ length: 4 }, (_, i) =>
+      row({ reportingYear: String(2000 + i) }),
+    );
+
+    const logged: { message: string; trace: unknown }[] = [];
+    const spy = vi
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation((message: unknown, trace?: unknown) => {
+        logged.push({ message: String(message), trace });
+      });
+    try {
+      await expect(
+        service.import(dataEntry(), csvFile(rows), NOTHING),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain('bulk import: 3 rows failed unexpectedly');
+  });
+
+  it('keeps one batch per import — the accumulator is not shared between calls', async () => {
+    // `BatchFailureLog` is a local because the service is a Nest singleton.
+    // Hoisted to a field it would mix two tenants' row numbers into one line.
+    const { records, service } = build();
+    records.create.mockRejectedValue(new Error('driver said no'));
+
+    const { logged } = await captureErrors(async () => {
+      await service.import(dataEntry(), csvFile([row()]), NOTHING);
+      await service.import(dataEntry(), csvFile([row()]), NOTHING);
+    });
+
+    expect(logged).toHaveLength(2);
+    expect(logged[0].message).toContain('bulk import: 1 row failed unexpectedly');
+    expect(logged[1].message).toContain('bulk import: 1 row failed unexpectedly');
+  });
+
+  it('names each class once for a batch that fails two different ways', async () => {
+    // The mixed batch: one accepted row, one refusal it understands, and two
+    // unexpected failures of different classes.
+    const { records, service } = build();
+    records.create
+      .mockRejectedValueOnce(new ConflictException('Period 2001 January is locked.'))
+      .mockRejectedValueOnce(new Error('driver said no'))
+      .mockRejectedValueOnce(new TypeError('records.create is not a function'));
+    const rows = Array.from({ length: 4 }, (_, i) =>
+      row({ reportingYear: String(2000 + i) }),
+    );
+
+    const { result: report, logged } = await captureErrors(() =>
+      service.import(dataEntry(), csvFile(rows), NOTHING),
+    );
+
+    expect(report.accepted).toHaveLength(1);
+    expect(report.errors.map((e) => e.code)).toEqual([
+      'period_locked',
+      'unexpected',
+      'unexpected',
+    ]);
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain('bulk import: 2 rows failed unexpectedly (3, 4)');
+    expect(logged[0].message).toContain('Error ×1 (first at 3): driver said no');
+    expect(logged[0].message).toContain(
+      'TypeError ×1 (first at 4): records.create is not a function',
+    );
+    // The mapped refusal is reported, never logged.
+    expect(logged[0].message).not.toContain('locked');
+  });
+
+  it('folds a dry run’s unexpected failures too — the path `create` never sees', async () => {
+    const { records, service } = build();
+    records.previewCreate.mockRejectedValue(new Error('preview said no'));
+
+    const { result: report, logged } = await captureErrors(() =>
+      service.import(dataEntry(), csvFile([row(), row({ reportingYear: '2023' })]), DRY),
+    );
+
+    expect(records.create).not.toHaveBeenCalled();
+    expect(report.errors).toHaveLength(2);
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain('bulk import: 2 rows failed unexpectedly (2, 3)');
   });
 
   it('logs nothing at all when every failure is one it understands', async () => {
     // A closed period or a taken slot is reported, never logged: they are the
     // ordinary answer to an ordinary file, and ERROR level is not for them.
-    const logged: string[] = [];
-    const spy = vi
-      .spyOn(Logger.prototype, 'error')
-      .mockImplementation((message: unknown) => {
-        logged.push(String(message));
-      });
     const { records, service } = build();
     records.create.mockRejectedValue(
       new ConflictException('Period 2024 January is locked.'),
     );
 
-    const report = await service.import(
-      dataEntry(),
-      csvFile([row(), row({ reportingYear: '2023' })]),
-      NOTHING,
+    const { result: report, logged } = await captureErrors(() =>
+      service.import(
+        dataEntry(),
+        csvFile([row(), row({ reportingYear: '2023' })]),
+        NOTHING,
+      ),
     );
-    spy.mockRestore();
 
     expect(report.errors.map((e) => e.code)).toEqual([
       'period_locked',

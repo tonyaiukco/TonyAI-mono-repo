@@ -118,6 +118,32 @@ function build(rows: Record<string, unknown>[] = [candidate()]) {
 
 const ids = (...v: string[]) => ({ recordIds: v });
 
+/**
+ * Runs `body` with `Logger.error` captured, and restores the spy even if it
+ * throws — `vitest.config.ts` sets `clearMocks`, which clears CALLS but leaves
+ * the implementation installed, so a spy leaked by a throwing test would
+ * swallow every later test's logging in this file.
+ */
+async function captureErrors<T>(
+  body: () => Promise<T>,
+): Promise<{ result: T; logged: { message: string; trace: unknown }[] }> {
+  const logged: { message: string; trace: unknown }[] = [];
+  const spy = vi
+    .spyOn(Logger.prototype, 'error')
+    .mockImplementation((message: unknown, trace?: unknown) => {
+      logged.push({ message: String(message), trace });
+    });
+  try {
+    return { result: await body(), logged };
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+/** How many times a stack header appears in the one attached trace. */
+const stackCount = (trace: unknown, header: string) =>
+  String(trace).split(header).length - 1;
+
 beforeEach(() => vi.clearAllMocks());
 
 describe('BulkSubmitService — what it hands to submit', () => {
@@ -421,12 +447,6 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     // The same shape the importer had: `unexpected` is reached from three
     // places in the mapper, and each one logged the error and its stack. A
     // full batch of the maximum ids is a megabyte of duplicated frames.
-    const logged: { message: string; trace: unknown }[] = [];
-    const spy = vi
-      .spyOn(Logger.prototype, 'error')
-      .mockImplementation((message: unknown, trace?: unknown) => {
-        logged.push({ message: String(message), trace });
-      });
     const candidates = Array.from({ length: 50 }, (_, i) =>
       candidate({ id: `rec-${i}` }),
     );
@@ -435,28 +455,107 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       Object.assign(new Error('the connection pool timed out'), { code: 'P2024' }),
     );
 
-    const report = await service.submitMany(
-      dataEntry(),
-      ids(...candidates.map((c) => c.id as string)),
+    const { result: report, logged } = await captureErrors(() =>
+      service.submitMany(
+        dataEntry(),
+        ids(...candidates.map((c) => c.id as string)),
+      ),
     );
-    spy.mockRestore();
 
     expect(report.failed).toHaveLength(50);
     expect(report.failed.every((f) => f.code === 'unexpected')).toBe(true);
     expect(logged).toHaveLength(1);
     expect(logged[0].message).toContain('bulk submit: 50 records failed unexpectedly');
-    expect(logged[0].message).toContain('Error P2024 ×50');
+    expect(logged[0].message).toContain('Error P2024 ×50 (first at rec-0)');
     expect(logged[0].message).toContain('rec-0, rec-1');
-    expect(String(logged[0].trace)).toContain('Error: the connection pool timed out');
+    // ONE stack, COUNTED. `toContain` passes just as happily on fifty.
+    expect(stackCount(logged[0].trace, 'Error: the connection pool timed out')).toBe(1);
   });
 
-  it('logs nothing at all when every failure is one it understands', async () => {
+  it('folds in every mapper branch that falls through to unexpected', async () => {
+    // Three of the four sites, one per branch: an unrecognised Forbidden, an
+    // unrecognised Conflict, and anything else. The existing tests for the
+    // first two assert only the row CODE, so a branch that stopped folding in
+    // would be invisible — and each one is a class an operator needs named.
+    const { records, service } = build([
+      candidate({ id: 'f' }),
+      candidate({ id: 'c' }),
+      candidate({ id: 'p' }),
+    ]);
+    records.submit.mockImplementation((_user, id: string) => {
+      if (id === 'f') return Promise.reject(new ForbiddenException('Something else'));
+      if (id === 'c') return Promise.reject(new ConflictException('Something else'));
+      return Promise.reject(new TypeError('records.submit is not a function'));
+    });
+
+    const { result: report, logged } = await captureErrors(() =>
+      service.submitMany(dataEntry(), ids('f', 'c', 'p')),
+    );
+
+    expect(report.failed.map((r) => r.code)).toEqual([
+      'unexpected',
+      'unexpected',
+      'unexpected',
+    ]);
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain(
+      'bulk submit: 3 records failed unexpectedly (f, c, p)',
+    );
+    expect(logged[0].message).toContain('ForbiddenException ×1 (first at f)');
+    expect(logged[0].message).toContain('ConflictException ×1 (first at c)');
+    expect(logged[0].message).toContain('TypeError ×1 (first at p)');
+  });
+
+  it('logs the batch line even when a role refusal aborts the loop', async () => {
+    // `toIssue` rethrows `SUBMIT_ROLE_REFUSAL` rather than mapping it. Without
+    // the `finally` the failures before it would leave no trace at all.
+    const { records, service } = build([
+      candidate({ id: 'a' }),
+      candidate({ id: 'b' }),
+    ]);
+    records.submit.mockImplementation((_user, id: string) =>
+      Promise.reject(
+        id === 'a'
+          ? new Error('driver said no')
+          : new ForbiddenException(SUBMIT_ROLE_REFUSAL),
+      ),
+    );
+
     const logged: string[] = [];
     const spy = vi
       .spyOn(Logger.prototype, 'error')
       .mockImplementation((message: unknown) => {
         logged.push(String(message));
       });
+    try {
+      await expect(
+        service.submitMany(dataEntry(), ids('a', 'b')),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain('bulk submit: 1 record failed unexpectedly (a)');
+  });
+
+  it('keeps one batch per call — the accumulator is not shared between calls', async () => {
+    // `BatchFailureLog` is a local because the service is a Nest singleton.
+    // Hoisted to a field it would mix two tenants' record ids into one line.
+    const { records, service } = build([candidate({ id: 'a' })]);
+    records.submit.mockRejectedValue(new Error('driver said no'));
+
+    const { logged } = await captureErrors(async () => {
+      await service.submitMany(dataEntry(), ids('a'));
+      await service.submitMany(dataEntry(), ids('a'));
+    });
+
+    expect(logged).toHaveLength(2);
+    expect(logged[0].message).toContain('bulk submit: 1 record failed unexpectedly (a)');
+    expect(logged[1].message).toContain('bulk submit: 1 record failed unexpectedly (a)');
+  });
+
+  it('logs nothing at all when every failure is one it understands', async () => {
     const { records, service } = build([
       candidate({ id: 'a' }),
       candidate({ id: 'b', periodValue: 'February' }),
@@ -465,13 +564,28 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       new ConflictException('Period 2024 January is locked.'),
     );
 
-    const report = await service.submitMany(dataEntry(), ids('a', 'b'));
-    spy.mockRestore();
+    const { result: report, logged } = await captureErrors(() =>
+      service.submitMany(dataEntry(), ids('a', 'b')),
+    );
 
     expect(report.failed.map((f) => f.code)).toEqual([
       'period_locked',
       'period_locked',
     ]);
+    expect(logged).toEqual([]);
+  });
+
+  it('never logs a pre-flight rejection — those records were never attempted', async () => {
+    // `preflight` declines an id before the loop; nothing about it is a defect
+    // in this system, so nothing about it belongs at ERROR level.
+    const { service } = build([candidate({ id: 'a' })]);
+
+    const { result: report, logged } = await captureErrors(() =>
+      service.submitMany(dataEntry(), ids('a', 'gone', 'also-gone')),
+    );
+
+    expect(report.submitted).toHaveLength(1);
+    expect(report.failed.map((f) => f.code)).toEqual(['not_found', 'not_found']);
     expect(logged).toEqual([]);
   });
 

@@ -107,19 +107,24 @@ export class BulkSubmitService {
     const { eligible, rejected } = await this.preflight(user, requestedIds);
     failed.push(...rejected);
 
-    for (const candidate of eligible) {
-      try {
-        submitted.push(
-          this.acceptedFrom(await this.records.submit(user, candidate.id)),
-        );
-      } catch (error) {
-        failed.push(this.toIssue(candidate.id, error, unexpected));
+    // In a `finally`, because `toIssue` rethrows a role refusal: without it a
+    // batch that ended on one would take every unexpected failure before it
+    // out of the log, silently.
+    try {
+      for (const candidate of eligible) {
+        try {
+          submitted.push(
+            this.acceptedFrom(await this.records.submit(user, candidate.id)),
+          );
+        } catch (error) {
+          failed.push(this.toIssue(candidate.id, error, unexpected));
+        }
       }
-    }
-
-    const failures = unexpected.entry();
-    if (failures) {
-      this.logger.error(`bulk submit: ${failures.message}`, failures.trace);
+    } finally {
+      const failures = unexpected.entry();
+      if (failures) {
+        this.logger.error(`bulk submit: ${failures.message}`, failures.trace);
+      }
     }
 
     await this.recordBatch(user, {

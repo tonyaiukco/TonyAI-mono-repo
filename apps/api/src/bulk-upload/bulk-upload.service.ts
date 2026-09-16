@@ -162,32 +162,39 @@ export class BulkUploadService {
     // unexpected branch to one log line per import instead of one per row.
     const unexpected = new BatchFailureLog('row');
 
-    for (const parsed of rows) {
-      try {
-        await this.processRow(
-          user,
-          parsed,
-          { dryRun, seenInFile, storedKeys },
-          { accepted, errors, warnings },
-        );
-      } catch (error) {
-        // A backstop now, not the gate: the role is refused in the audited
-        // pre-flight above. One 403 beats a thousand identical "forbidden"
-        // rows — but only while nothing has been accepted. After that it would
-        // throw away the report of a partial import (no transaction spans the
-        // batch) and skip the batch audit row below, so it is reported on its
-        // own row like any other refusal.
-        if (error instanceof ForbiddenException && accepted.length === 0) {
-          throw error;
+    // The loop is wrapped so the batch's log line is written even when it
+    // rethrows. The backstop below fires only while `accepted.length === 0`,
+    // which is exactly the state a run of unexpected failures leaves behind —
+    // so flushing on the way out rather than in a `finally` would drop the
+    // incident most worth keeping, and silently.
+    try {
+      for (const parsed of rows) {
+        try {
+          await this.processRow(
+            user,
+            parsed,
+            { dryRun, seenInFile, storedKeys },
+            { accepted, errors, warnings },
+          );
+        } catch (error) {
+          // A backstop now, not the gate: the role is refused in the audited
+          // pre-flight above. One 403 beats a thousand identical "forbidden"
+          // rows — but only while nothing has been accepted. After that it
+          // would throw away the report of a partial import (no transaction
+          // spans the batch) and skip the batch audit row below, so it is
+          // reported on its own row like any other refusal.
+          if (error instanceof ForbiddenException && accepted.length === 0) {
+            throw error;
+          }
+          errors.push(this.toIssue(parsed.row, error, unexpected));
         }
-        errors.push(this.toIssue(parsed.row, error, unexpected));
       }
-    }
-
-    // ONE line for the whole import, and only when something was unexpected.
-    const failures = unexpected.entry();
-    if (failures) {
-      this.logger.error(`bulk import: ${failures.message}`, failures.trace);
+    } finally {
+      // ONE line for the whole import, and only when something was unexpected.
+      const failures = unexpected.entry();
+      if (failures) {
+        this.logger.error(`bulk import: ${failures.message}`, failures.trace);
+      }
     }
 
     // Written even on a dry run, and even when every row failed: `audit_log`
