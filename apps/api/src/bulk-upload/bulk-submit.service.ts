@@ -96,10 +96,13 @@ export class BulkSubmitService {
     // keeps that list closed — a reader added later cannot forget to do it,
     // and it is where the import canonicalises its own id cells.
     //
-    // `?? id` cannot fire on a validated request: `UUID_SHAPE` admits only
-    // the hyphenated form and `canonicalUuid` folds every one of those. It is
-    // here so an id arriving by any other path is keyed as written rather
-    // than dropped, which is the behaviour this line already had.
+    // `?? id` cannot fire on a validated request, and that is measured, not
+    // assumed: `UUID_SHAPE` admits exactly `[0-9a-fA-F]` at the 32 nibbles
+    // and `-` at the four separators, and `canonicalUuid` folds every string
+    // in that language. It is here so a STRING arriving by some other path is
+    // keyed as written rather than dropped. It is not a type guard — a
+    // non-string id throws here rather than reaching Prisma, which the global
+    // pipe makes unreachable over HTTP, and this service has no other caller.
     //
     // De-duplicated at all, or `[a, a]` reports `a` as `not_submittable`
     // against its own success a moment earlier — a failure the caller caused
@@ -118,6 +121,7 @@ export class BulkSubmitService {
         refused: true,
         reason: SUBMIT_ROLE_REFUSAL,
         requested: requestedIds.length,
+        received: dto.recordIds.length,
       });
       throw new ForbiddenException(SUBMIT_ROLE_REFUSAL);
     }
@@ -152,6 +156,11 @@ export class BulkSubmitService {
 
     await this.recordBatch(user, {
       requested: requestedIds.length,
+      // What the caller actually typed, beside what it resolved to. The two
+      // differ only when ids were repeated or respelled, and `requested`
+      // alone can no longer tell one id from a thousand spellings of it —
+      // a distinction an append-only row cannot be given back later.
+      received: dto.recordIds.length,
       submittedCount: submitted.length,
       failedCount: failed.length,
       // The ids, so an auditor can tie this row to the per-record rows it

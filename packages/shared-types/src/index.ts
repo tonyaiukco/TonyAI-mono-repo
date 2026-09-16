@@ -3002,6 +3002,15 @@ export type BulkSubmitIssueCode = (typeof BULK_SUBMIT_ISSUE_CODES)[number];
  * find anywhere.
  */
 export interface BulkSubmitIssue {
+  /**
+   * The spelling the DATABASE holds, which is not always the one the caller
+   * sent: the route's id check is case-insensitive, so `A0EE…` is a valid
+   * request and is reported back as `a0ee…`. Echoing the stored id is what
+   * lets this entry be joined to the record and to its `audit_log` rows —
+   * the accepted rows above already carry it, and a report whose two halves
+   * disagreed about an id would be unjoinable. A client matching an entry
+   * back to what it sent must compare case-insensitively.
+   */
   recordId: string;
   code: BulkSubmitIssueCode;
   /** The server's own sentence, already written for the person reading it. */

@@ -17,6 +17,11 @@ function parse(body: unknown) {
 const ID = '11111111-1111-1111-1111-111111111111';
 /** The seed's own ids: valid hex, but NOT RFC 4122 — `2` in the variant slot. */
 const SEED_ID = '22222222-2222-2222-2222-222222220001';
+/**
+ * Hex LETTERS: both ids above are all digits, so `toUpperCase()` returns them
+ * unchanged and a case test written with either proves nothing at all.
+ */
+const LETTERED_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 describe('BulkSubmitActivityRecordsDto', () => {
   it('accepts a list of record ids', () => {
@@ -28,6 +33,30 @@ describe('BulkSubmitActivityRecordsDto', () => {
     // UAT walkthrough and every E2E spec uses. The pipe's own docblock records
     // the same trap.
     expect(parse({ recordIds: [SEED_ID] })).toHaveLength(0);
+  });
+
+  it('accepts an id spelled in any case, which the service then folds', () => {
+    // The premise `BulkSubmitService` rests on, and nothing else in the repo
+    // pinned it: dropping the `/i` flag from `UUID_SHAPE` left all 1,409 api
+    // tests green while turning this request into a 400 and the service's
+    // canonicalisation into dead code.
+    expect(LETTERED_ID).not.toBe(LETTERED_ID.toUpperCase());
+    expect(parse({ recordIds: [LETTERED_ID.toUpperCase()] })).toHaveLength(0);
+    expect(
+      parse({ recordIds: ['A0eeBC99-9c0B-4ef8-BB6d-6bb9BD380a11'] }),
+    ).toHaveLength(0);
+  });
+
+  it.each([
+    ['braced', `{${LETTERED_ID}}`],
+    ['urn', `urn:uuid:${LETTERED_ID}`],
+    ['unhyphenated', LETTERED_ID.replace(/-/g, '')],
+  ])('refuses the %s spelling, though it names a real row', (_, spelling) => {
+    // Deliberate, and the asymmetry with the IMPORT is the point: the import
+    // reads cells a person typed into a spreadsheet, this route reads ids the
+    // API handed to its own client. `canonicalUuid` resolves all three, so
+    // this is the DTO choosing to stay narrow, not a limit of the fold.
+    expect(parse({ recordIds: [spelling] })).toHaveLength(1);
   });
 
   it('refuses an id Prisma would choke on', () => {
