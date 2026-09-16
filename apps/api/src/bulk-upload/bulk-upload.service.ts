@@ -33,6 +33,7 @@ import {
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { BatchFailureLog } from '../common/batch-failure-log';
 import { sanitiseCallerText } from '../common/caller-text';
 import { isFormulaLead } from '../common/csv-cell';
 import { PrismaService } from '../prisma/prisma.service';
@@ -157,6 +158,9 @@ export class BulkUploadService {
     const accepted: BulkUploadAcceptedRow[] = [];
     const errors: BulkUploadRowIssue[] = [];
     const warnings: BulkUploadRowIssue[] = [];
+    // Batch-scoped, never a field: see `BatchFailureLog`. It is what keeps the
+    // unexpected branch to one log line per import instead of one per row.
+    const unexpected = new BatchFailureLog('row');
 
     for (const parsed of rows) {
       try {
@@ -176,8 +180,14 @@ export class BulkUploadService {
         if (error instanceof ForbiddenException && accepted.length === 0) {
           throw error;
         }
-        errors.push(this.toIssue(parsed.row, error));
+        errors.push(this.toIssue(parsed.row, error, unexpected));
       }
+    }
+
+    // ONE line for the whole import, and only when something was unexpected.
+    const failures = unexpected.entry();
+    if (failures) {
+      this.logger.error(`bulk import: ${failures.message}`, failures.trace);
     }
 
     // Written even on a dry run, and even when every row failed: `audit_log`
@@ -864,7 +874,11 @@ export class BulkUploadService {
    * and a spec "pinned" it against a literal the spec itself owned, so
    * rewording the service left the whole suite green.
    */
-  private toIssue(row: number, error: unknown): BulkUploadRowIssue {
+  private toIssue(
+    row: number,
+    error: unknown,
+    unexpected: BatchFailureLog,
+  ): BulkUploadRowIssue {
     if (error instanceof NotFoundException) {
       // The calc engine throws NotFound for factor COVERAGE, which is the
       // archetypal bulk-import failure: importing 2019-2020 history for a
@@ -910,11 +924,9 @@ export class BulkUploadService {
       };
     }
     // Never the raw error text — it can carry a query, a path or a column the
-    // caller has no business seeing. Logged in full, reported as a refusal.
-    this.logger.error(
-      `bulk import row ${row} failed unexpectedly: ${String(error)}`,
-      error instanceof Error ? error.stack : undefined,
-    );
+    // caller has no business seeing. Folded into the batch's one log line,
+    // reported as a refusal.
+    unexpected.add(row, error);
     return {
       row,
       column: null,

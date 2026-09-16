@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import type { CalculationResult } from '@tonyai/shared-types';
@@ -420,6 +421,70 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
 
     expect(report.errors[0].code).toBe('unexpected');
     expect(report.errors[0].message).not.toMatch(/ECONNREFUSED|SELECT|10\.0\.0\.5/);
+  });
+
+  it('logs ONE line for a batch of unexpected failures, not one per row', async () => {
+    // Measured: 50 rows carrying a 2,001-character `locationId` wrote 148,542
+    // bytes of stderr — fifty Prisma stacks with code frames — which the
+    // 1,000-row cap puts near 3 MB for one request, five of which a user may
+    // send each minute. The row-level refusal is unchanged; the log is not.
+    const logged: { message: string; trace: unknown }[] = [];
+    const spy = vi
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation((message: unknown, trace?: unknown) => {
+        logged.push({ message: String(message), trace });
+      });
+    const { records, service } = build();
+    records.create.mockRejectedValue(
+      Object.assign(new Error('value too long for the column locationId'), {
+        code: 'P2000',
+      }),
+    );
+    // Distinct years, or the in-file duplicate check would refuse rows 2-50
+    // before they ever reach `create`.
+    const rows = Array.from({ length: 50 }, (_, i) =>
+      row({ reportingYear: String(2000 + i) }),
+    );
+
+    const report = await service.import(dataEntry(), csvFile(rows), NOTHING);
+    spy.mockRestore();
+
+    // Every row still gets its own refusal, with the constant message.
+    expect(report.errors).toHaveLength(50);
+    expect(report.errors.every((e) => e.code === 'unexpected')).toBe(true);
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain('bulk import: 50 rows failed unexpectedly');
+    expect(logged[0].message).toContain('Error P2000 ×50');
+    // ONE stack for the batch, not fifty.
+    expect(String(logged[0].trace)).toContain('Error: value too long');
+  });
+
+  it('logs nothing at all when every failure is one it understands', async () => {
+    // A closed period or a taken slot is reported, never logged: they are the
+    // ordinary answer to an ordinary file, and ERROR level is not for them.
+    const logged: string[] = [];
+    const spy = vi
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation((message: unknown) => {
+        logged.push(String(message));
+      });
+    const { records, service } = build();
+    records.create.mockRejectedValue(
+      new ConflictException('Period 2024 January is locked.'),
+    );
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row(), row({ reportingYear: '2023' })]),
+      NOTHING,
+    );
+    spy.mockRestore();
+
+    expect(report.errors.map((e) => e.code)).toEqual([
+      'period_locked',
+      'period_locked',
+    ]);
+    expect(logged).toEqual([]);
   });
 
   it('answers the role before the file — an unreadable one still gets the 403', async () => {

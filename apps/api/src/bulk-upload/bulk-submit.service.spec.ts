@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -414,6 +415,64 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     expect(report.failed[0].code).toBe('unexpected');
     expect(report.failed[0].message).not.toMatch(/ECONNREFUSED|SELECT|10\.0\.0\.5/);
     expect(report.failed[0].message).toMatch(/unchanged/i);
+  });
+
+  it('logs ONE line for a batch of unexpected failures, not one per record', async () => {
+    // The same shape the importer had: `unexpected` is reached from three
+    // places in the mapper, and each one logged the error and its stack. A
+    // full batch of the maximum ids is a megabyte of duplicated frames.
+    const logged: { message: string; trace: unknown }[] = [];
+    const spy = vi
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation((message: unknown, trace?: unknown) => {
+        logged.push({ message: String(message), trace });
+      });
+    const candidates = Array.from({ length: 50 }, (_, i) =>
+      candidate({ id: `rec-${i}` }),
+    );
+    const { records, service } = build(candidates);
+    records.submit.mockRejectedValue(
+      Object.assign(new Error('the connection pool timed out'), { code: 'P2024' }),
+    );
+
+    const report = await service.submitMany(
+      dataEntry(),
+      ids(...candidates.map((c) => c.id as string)),
+    );
+    spy.mockRestore();
+
+    expect(report.failed).toHaveLength(50);
+    expect(report.failed.every((f) => f.code === 'unexpected')).toBe(true);
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain('bulk submit: 50 records failed unexpectedly');
+    expect(logged[0].message).toContain('Error P2024 ×50');
+    expect(logged[0].message).toContain('rec-0, rec-1');
+    expect(String(logged[0].trace)).toContain('Error: the connection pool timed out');
+  });
+
+  it('logs nothing at all when every failure is one it understands', async () => {
+    const logged: string[] = [];
+    const spy = vi
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation((message: unknown) => {
+        logged.push(String(message));
+      });
+    const { records, service } = build([
+      candidate({ id: 'a' }),
+      candidate({ id: 'b', periodValue: 'February' }),
+    ]);
+    records.submit.mockRejectedValue(
+      new ConflictException('Period 2024 January is locked.'),
+    );
+
+    const report = await service.submitMany(dataEntry(), ids('a', 'b'));
+    spy.mockRestore();
+
+    expect(report.failed.map((f) => f.code)).toEqual([
+      'period_locked',
+      'period_locked',
+    ]);
+    expect(logged).toEqual([]);
   });
 
   it('keeps going past a failure, and says exactly which records moved', async () => {
