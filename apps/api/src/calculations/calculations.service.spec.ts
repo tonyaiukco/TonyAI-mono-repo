@@ -9,7 +9,13 @@ import {
 } from '@tonyai/shared-types';
 import { CalculationsService } from './calculations.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { isKnownUnit, normalize } from './normalization';
+import {
+  blockedUnitReason,
+  canonicalUnit,
+  isKnownUnit,
+  normalize,
+  UNIT_ALIAS_SPELLINGS,
+} from './normalization';
 
 /**
  * Assert the snapshot carries a real figure, and narrow to it.
@@ -84,6 +90,102 @@ describe('normalize (calculation_logic.md §2)', () => {
 
   it('accepts the m³ alias for cubic_metres', () => {
     expect(normalize(100, 'm³').normalizedValue).toBeCloseTo(1136, 6);
+  });
+
+  it('accepts kWh written with a space — "kW h"', () => {
+    // Regression: the alias was declared `'kw h'`, but the lookup only ever asks
+    // for the whitespace-collapsed form (`kw_h`). The entry was unreachable, so
+    // a user typing `kW h` had an ordinary spelling of kWh refused outright as
+    // a unit the system does not understand.
+    expect(isKnownUnit('kW h')).toBe(true);
+    expect(normalize(1000, 'kW h')).toEqual({
+      normalizedValue: 1000,
+      normalizedUnit: 'kWh',
+      conversionApplied: false,
+    });
+  });
+
+  it('resolves spacing and casing variants of kWh onto one canonical unit', () => {
+    for (const spelling of ['kW h', 'KW  H', ' kWh ', 'kwh']) {
+      expect(canonicalUnit(spelling)).toBe('kwh');
+    }
+  });
+
+  it('accepts every alias spelling the table declares', () => {
+    // The table is written in human spellings while the lookup is keyed by the
+    // canonical form, so a spelling can survive declaration and still never
+    // match — failing only when a real user types it. Assert the whole table
+    // rather than the single entry that happened to be caught, which also
+    // catches an alias pointing at a rule key that does not exist.
+    const unreachable = Object.keys(UNIT_ALIAS_SPELLINGS).filter(
+      (spelling) => !isKnownUnit(spelling),
+    );
+    expect(unreachable).toEqual([]);
+  });
+
+  it('resolves every alias spelling to the rule key it declares', () => {
+    // Deriving the keys trades one silent failure for another: two spellings
+    // that clean to the SAME key now overwrite each other, last declaration
+    // wins, and TypeScript cannot see it (literal duplicate keys are an error;
+    // `'uk gallon'` shadowing `uk_gallon` is not). Both stay *known*, so the
+    // reachability check above passes. Only comparing each spelling against
+    // the rule key it declared catches the shadowed one — and the damage is a
+    // wrong figure, not a refusal: `'uk gallon': 'us_gallons'` silently prices
+    // UK gallons 20% light.
+    //
+    // Scope, precisely: this catches a spelling SHADOWED by another, and the
+    // check above catches a spelling that resolves nowhere. Neither can catch
+    // a lone MIS-declared alias (`'sm³': 'cubic_metres'`), because both read
+    // the same declaration they are checking — that needs the independent
+    // oracle in the blocked-unit case below.
+    const misresolved = Object.entries(UNIT_ALIAS_SPELLINGS).filter(
+      ([spelling, ruleKey]) => canonicalUnit(spelling) !== ruleKey,
+    );
+    expect(misresolved).toEqual([]);
+  });
+
+  it('resolves each alias spelled with spaces, as a user would type it', () => {
+    // The whole bug was a spelling written with a space never reaching the
+    // lookup, yet nearly every declared key is already underscored — so the
+    // checks above would still pass if `cleanUnitToken` DELETED whitespace
+    // instead of collapsing it to `_`, and `standard cubic metres` would break
+    // with the suite green. Retyping each key the human way exercises the
+    // cleaning step itself rather than the table.
+    const broken = Object.entries(UNIT_ALIAS_SPELLINGS).filter(
+      ([spelling, ruleKey]) =>
+        canonicalUnit(spelling.replace(/_/g, ' ')) !== ruleKey,
+    );
+    expect(broken).toEqual([]);
+  });
+
+  // An INDEPENDENT oracle: this list is written out by hand, not derived from
+  // UNIT_ALIAS_SPELLINGS, which is the entire point. The table-driven checks
+  // above compare the table against itself, so re-pointing a single blocked
+  // spelling (`'sm³': 'cubic_metres'`) satisfies both while handing Sm³ the
+  // ×11.36 natural-gas multiplier — 1000 Sm³ booked as 11,360 kWh. Sm³ and Nm³
+  // are refused BY NAME because this repo holds no sourced calorific value for
+  // them (see normalization.ts), and a fabricated figure in an emissions
+  // inventory is the failure this product cannot have. Every spelling that
+  // reaches a blocked unit is pinned, not just the one someone remembered.
+  it.each([
+    'Sm3',
+    'sm3',
+    'sm³',
+    'SM³',
+    'scm',
+    'standard_cubic_metre',
+    'standard_cubic_metres',
+    'standard cubic metres',
+    'Nm3',
+    'nm3',
+    'nm³',
+    'normal_cubic_metre',
+    'normal_cubic_metres',
+    'normal cubic metres',
+  ])('refuses %s rather than converting it', (spelling) => {
+    expect(isKnownUnit(spelling)).toBe(true);
+    expect(blockedUnitReason(spelling)).not.toBeNull();
+    expect(() => normalize(1000, spelling)).toThrow(/sourced calorific value/i);
   });
 
   it('converts liquid fuel uk_gallons -> litres (×4.546)', () => {
