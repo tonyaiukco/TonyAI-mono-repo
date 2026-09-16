@@ -35,7 +35,7 @@ import { CreateActivityRecordDto } from '../activity-records/dto/create-activity
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { BatchFailureLog } from '../common/batch-failure-log';
-import { sanitiseCallerText } from '../common/caller-text';
+import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
 import { isFormulaLead } from '../common/csv-cell';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
