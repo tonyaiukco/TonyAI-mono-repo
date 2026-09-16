@@ -55,3 +55,29 @@ function isDropped(char: string): boolean {
     code === 0xfeff;
   return control || unpaired || disguise;
 }
+
+/**
+ * How much of one caller-supplied value a sentence may quote, in kept code
+ * points.
+ *
+ * Forty is the header refusal's fragment, and it is enough to recognise a
+ * value: a year, a figure, a unit or a period is a handful of characters, so a
+ * value longer than this is wrong already and the sentence only has to say
+ * which one it is. What the bound stops is multiplication. One XLSX shared
+ * string can back a cell on every row of a file, and every row's refusal quoted
+ * it whole: a 12,416-byte workbook came back as a 32,092,008-byte report
+ * (measured).
+ */
+export const CALLER_TEXT_QUOTE_MAX_LENGTH = 40;
+
+/**
+ * One caller-supplied value as a sentence quotes it: cleaned by the rule
+ * above, cut at `CALLER_TEXT_QUOTE_MAX_LENGTH`, and marked `…` where the cut
+ * kept text.
+ *
+ * For the sentence only. Look the raw value up and quote this; looked up
+ * cleaned, `category` + U+200B would match `category`.
+ */
+export function quoteCallerText(value: string | undefined): string {
+  return sanitiseCallerText(value, CALLER_TEXT_QUOTE_MAX_LENGTH, '…');
+}

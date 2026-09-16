@@ -1608,6 +1608,28 @@ export const VOID_REASON_MAX_LENGTH = EXPLANATION_MAX_LENGTH;
 export const PERIOD_VALUE_MAX_LENGTH = 32;
 
 /**
+ * The upper bound on an `activityUnit`, on both record write DTOs.
+ *
+ * NOT a refusal that comes earlier than the vocabulary's, and not a bound the
+ * vocabulary already applies. `@IsActivityUnit` runs whatever this says —
+ * class-validator evaluates every constraint on a property — and it ACCEPTS a
+ * padded spelling of any length, because `canonicalUnit` collapses whitespace:
+ * `cubic`, 30,000 spaces and `metres` is `cubic_metres` to it.
+ *
+ * What this bounds is what gets STORED. The unit is written as sent, frozen
+ * into the record's immutable calculation snapshot as `inputUnit`, and printed
+ * verbatim into the PDF, the Excel sheet and the CSV — the argument the other
+ * caps here were added for, on a column a bulk import fills from a file nobody
+ * at this company wrote.
+ *
+ * 32 clears the longest spelling the vocabulary knows, `standard_cubic_metres`
+ * (21; the longest it can actually calculate is `passenger_kilometres`, 20),
+ * with headroom for a vocabulary that grows and for a spelling with its words
+ * spaced out (`standard cubic metres`), not for a user.
+ */
+export const ACTIVITY_UNIT_MAX_LENGTH = 32;
+
+/**
  * The upper bound on the free-text descriptors of a subsidiary — `legalName`,
  * `tradingName`, `location`, `businessArea`, `sector`, `designatedPerson`.
  *
@@ -2645,6 +2667,29 @@ export const BULK_UPLOAD_MAX_ROWS = 1000;
 export const BULK_UPLOAD_MAX_SIZE_BYTES = 2 * 1024 * 1024;
 
 /**
+ * The most TEXT a bulk-upload report's `message` carries, in code points. A
+ * message that was cut is this long plus the `…` that marks the cut.
+ *
+ * A sentence can quote the file, and the report used to repeat it whole: one
+ * 32,000-character XLSX shared string behind a thousand rows came back as a
+ * 32,092,008-byte report from a 12,416-byte workbook (measured). The sentences
+ * that quote a value now quote an excerpt of it, bounded where they are
+ * written. This is the report's own bound on top, for a sentence a service
+ * passes through without quoting.
+ *
+ * The arithmetic, and why the issue COUNT needs no cap of its own: every data
+ * row is either accepted or carries exactly one error, so a report holds at
+ * most `BULK_UPLOAD_MAX_ROWS` errors, and its warnings are fixed sentences, at
+ * most three per accepted row. A thousand errors at this bound is about half a
+ * megabyte of ASCII, and two megabytes only if every character took four bytes.
+ *
+ * 500 clears the longest sentence a row can receive today — the reason a
+ * normal-cubic-metre unit is refused with, 269 code points — with room for
+ * guidance that grows.
+ */
+export const BULK_UPLOAD_MESSAGE_MAX_LENGTH = 500;
+
+/**
  * The extension is the gate; the MIME list is advisory.
  *
  * Browsers disagree about spreadsheets — Windows sends `.csv` as
@@ -2674,6 +2719,13 @@ export const BULK_UPLOAD_ALLOWED_EXTENSIONS = ['.csv', '.xlsx'] as const;
  * `row` is the file's own line number with the header as line 1, so it matches
  * what the user sees in Excel. Machine-readable `code` plus human `message`:
  * the code is what a client groups by, the message is what a person reads.
+ *
+ * `message` can quote the file, so it arrives cleaned and bounded: at most
+ * `BULK_UPLOAD_MESSAGE_MAX_LENGTH` code points of text, plus `…` where it was
+ * cut. The API's caller-text rule has already dropped the characters that
+ * disguise text — control characters, the bidi embeddings, overrides and
+ * isolates, and the zero-width ones — and may drop more of them over time. It
+ * is not a full sanitiser, so render the message as text.
  */
 export interface BulkUploadRowIssue {
   row: number;
@@ -2771,11 +2823,22 @@ export interface BulkUploadAcceptedRow {
 
 export interface BulkUploadReportDTO {
   dryRun: boolean;
+  /**
+   * The upload's own name, cleaned by the rule `BulkUploadRowIssue.message`
+   * describes and cut at 255 code points, with nothing marking the cut.
+   */
   fileName: string;
   sizeBytes: number;
   /** Data rows found in the file, excluding the header. */
   totalRows: number;
   accepted: BulkUploadAcceptedRow[];
+  /**
+   * One per refused row, and never more: a row is accepted or it carries a
+   * single error, so `accepted.length + errors.length === totalRows` and the
+   * row cap bounds this list. Warnings are NOT one per row — a row can carry
+   * several — and they are published only for rows that are, or would be,
+   * imported.
+   */
   errors: BulkUploadRowIssue[];
   warnings: BulkUploadRowIssue[];
 }

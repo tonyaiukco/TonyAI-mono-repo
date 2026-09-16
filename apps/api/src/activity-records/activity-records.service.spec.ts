@@ -2252,6 +2252,20 @@ describe('ActivityRecordsService — periodValue is canonicalised on write', () 
       /not a valid period/i,
     );
   });
+
+  it('quotes the value it refuses, cleaned and bounded', async () => {
+    // A bulk import repeats this sentence in its report, and a U+202E in the
+    // value reversed the rest of it on screen. Built from a code point, never
+    // typed.
+    const { service } = build(2);
+    const rlo = String.fromCharCode(0x202e);
+
+    await expect(
+      service.create(dataEntry(), monthly(`Ma${rlo}r${'x'.repeat(60)}`)),
+    ).rejects.toThrow(
+      `"Mar${'x'.repeat(37)}…" is not a valid period for a monthly record.`,
+    );
+  });
 });
 
 describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
