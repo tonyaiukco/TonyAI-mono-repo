@@ -27,6 +27,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import type { RequestUser } from '../auth/auth.types';
+import { canonicalUuid } from '../common/canonical-uuid';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkSubmitActivityRecordsDto } from './dto/bulk-submit-activity-records.dto';
 
@@ -80,10 +81,32 @@ export class BulkSubmitService {
     user: RequestUser,
     dto: BulkSubmitActivityRecordsDto,
   ): Promise<BulkSubmitReportDTO> {
-    // De-duplicated first, or `[a, a]` reports `a` as `not_submittable`
+    // Canonical FIRST, then de-duplicated, because everything downstream
+    // compares ids as strings. A uuid has more than one spelling and the
+    // database returns exactly one (`canonicalUuid` carries the measured
+    // grammar), and `UUID_SHAPE` is case-insensitive — so `[id, ID]` is ONE
+    // record the DTO accepts as two. Keyed raw that cost three things: the
+    // pre-flight keys the rows Prisma returns, which are canonical, so an
+    // uppercase id matched none of them and the caller was told their OWN
+    // draft "does not exist, or it is not yours"; the `Set` kept both
+    // spellings, so that id was reported as `not_found` against its own
+    // success a moment earlier; and the inflated `requested` reached the
+    // append-only batch row, which is the one number an auditor cannot go
+    // back and correct. Rewriting the INPUT rather than each reader is what
+    // keeps that list closed — a reader added later cannot forget to do it,
+    // and it is where the import canonicalises its own id cells.
+    //
+    // `?? id` cannot fire on a validated request: `UUID_SHAPE` admits only
+    // the hyphenated form and `canonicalUuid` folds every one of those. It is
+    // here so an id arriving by any other path is keyed as written rather
+    // than dropped, which is the behaviour this line already had.
+    //
+    // De-duplicated at all, or `[a, a]` reports `a` as `not_submittable`
     // against its own success a moment earlier — a failure the caller caused
     // by sending a list, not a fact about their data.
-    const requestedIds = [...new Set(dto.recordIds)];
+    const requestedIds = [
+      ...new Set(dto.recordIds.map((id) => canonicalUuid(id) ?? id)),
+    ];
 
     // Once, before anything. A role cannot change mid-batch, so a thousand
     // identical entries would be a worse answer than one 403 — and the

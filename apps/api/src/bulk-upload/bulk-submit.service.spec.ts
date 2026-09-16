@@ -116,6 +116,13 @@ function build(rows: Record<string, unknown>[] = [candidate()]) {
   return { prisma, records, audit, service };
 }
 
+/**
+ * A real uuid, because these tests are about its SPELLING. Every other id in
+ * this file is a short label like `'a'`; `canonicalUuid` leaves those exactly
+ * as written, which is what keeps the rest of the suite passing.
+ */
+const RECORD_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+
 const ids = (...v: string[]) => ({ recordIds: v });
 
 /**
@@ -304,6 +311,50 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     expect(records.submit).toHaveBeenCalledTimes(1);
     expect(report.requested).toBe(1);
     expect(report.failed).toEqual([]);
+  });
+
+  /**
+   * A uuid has more than one spelling and the database returns exactly one.
+   * `UUID_SHAPE` carries `/i`, so an UPPERCASE id passes the DTO and is a
+   * valid request here — and it used to be answered with "this record does
+   * not exist, or it is not yours" about the caller's OWN draft, because the
+   * pre-flight keys Prisma's rows (canonical) and looked them up with the
+   * caller's raw text.
+   */
+  it('submits a record whose id the caller spelled in uppercase', async () => {
+    const { records, service } = build([candidate({ id: RECORD_ID })]);
+
+    const report = await service.submitMany(
+      dataEntry(),
+      ids(RECORD_ID.toUpperCase()),
+    );
+
+    // The canonical spelling is what reaches `submit`, and what the report
+    // echoes back — the id the database holds, not the one the caller typed.
+    expect(records.submit.mock.calls.map((c) => c[1])).toEqual([RECORD_ID]);
+    expect(report.failed).toEqual([]);
+    expect(report.submitted.map((r) => r.recordId)).toEqual([RECORD_ID]);
+  });
+
+  it('counts two spellings of one id as one request, in the report and the audit row', async () => {
+    const { records, audit, service } = build([candidate({ id: RECORD_ID })]);
+
+    const report = await service.submitMany(
+      dataEntry(),
+      ids(RECORD_ID, RECORD_ID.toUpperCase()),
+    );
+
+    // Two spellings are one record. `requested: 2` both reported the caller's
+    // own id as `not_found` against its own success a moment earlier, and put
+    // that inflated count in the append-only batch row.
+    expect(report.requested).toBe(1);
+    expect(records.submit).toHaveBeenCalledTimes(1);
+    expect(report.failed).toEqual([]);
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({
+      requested: 1,
+      submittedCount: 1,
+      failedCount: 0,
+    });
   });
 
   it('accounts for every id it was given', async () => {
