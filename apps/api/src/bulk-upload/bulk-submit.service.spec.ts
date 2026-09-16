@@ -427,13 +427,22 @@ describe('BulkSubmitService — a role refusal is one 403, and it is recorded', 
     const { audit, service } = build();
 
     await expect(
-      service.submitMany(dataEntry({ role: 'consultant' }), ids('a')),
+      service.submitMany(
+        dataEntry({ role: 'consultant' }),
+        ids(RECORD_ID, RECORD_ID.toUpperCase(), 'a'),
+      ),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(audit.record).toHaveBeenCalledTimes(1);
+    // Its counts too, and they were unasserted: this is the row that records
+    // a seat probing the write surface, so HOW MUCH it asked for is the part
+    // worth keeping. Two spellings of one id and one other, so the
+    // de-duplicated count and the typed count cannot be confused.
     expect(audit.record.mock.calls[0][1].diff).toMatchObject({
       bulk: true,
       refused: true,
+      requested: 2,
+      received: 3,
     });
   });
 
