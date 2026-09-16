@@ -787,10 +787,17 @@ describe('BulkUploadService — the slot key is the whole key', () => {
  * unhyphenated form all reach the same row. Everything here keyed the CELL, so
  * one location written five ways was five slots.
  *
- * Measured before the fix, on exactly the file the first test builds: four
- * rows accepted and one `duplicate_in_file`. The apply would then have lost
- * three of those four to the uniqueness index — a dry run disagreeing with
- * its own apply, which is worse than no dry run at all.
+ * Measured before the fix, on exactly the file the first test builds: FIVE
+ * rows accepted and no errors at all. The apply would then have lost four of
+ * the five to the uniqueness index — a dry run disagreeing with its own
+ * apply, which is worse than no dry run at all.
+ *
+ * Re-measuring against SEEDED data gives four and one instead, and the
+ * difference is the whole reason `LOC` below is spelled with hex letters:
+ * every id in the seed is decimal digits, so `toUpperCase()` returns the same
+ * string and two of the five spellings coincide by accident. A fixture built
+ * on a seed id would under-count the defect and leave the case-folding half
+ * of this function untested.
  */
 describe('BulkUploadService — one entity, however the file spells it', () => {
   const SUB = '11111111-1111-4111-8111-111111111111';
@@ -834,9 +841,10 @@ describe('BulkUploadService — one entity, however the file spells it', () => {
   });
 
   it('keeps two DIFFERENT ids in two slots', async () => {
-    // The other half of the property, and the one that would break first if
-    // the parser were ever loosened: folding is only safe while every
-    // distinct id keeps a distinct key.
+    // The other half of the property: folding is only safe while every
+    // distinct id keeps a distinct key. A control, and an insensitive one —
+    // it passes under every loosening of the parser, because both ids here
+    // are well-formed. The test below is the one that catches that.
     const { records, service } = build();
 
     const report = await service.import(
@@ -936,9 +944,143 @@ describe('BulkUploadService — one entity, however the file spells it', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('never rewrites a mis-grouped id into a real one', async () => {
+    // THE sentinel for a loosened parser, and the reason it has to live at
+    // this level rather than only in `canonical-uuid.spec.ts`. Because the
+    // cell is rewritten, a parser that accepted 36 characters with hyphens in
+    // the wrong places would not merely refuse a row as a duplicate: it would
+    // hand `create` a REAL location id and file the row against a site nobody
+    // named. Prisma refuses this value outright (P2023, measured), so the row
+    // must reach the record service exactly as written and fail there.
+    const bare = LOC.replace(/-/g, '');
+    const misgrouped = `${bare.slice(0, 9)}-${bare.slice(9, 12)}-${bare.slice(12, 16)}-${bare.slice(16, 20)}-${bare.slice(20)}`;
+    expect(misgrouped).toHaveLength(36);
+    const { records, service } = build();
+
+    await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: SUB, locationId: misgrouped })]),
+      NOTHING,
+    );
+
+    expect(records.create.mock.calls[0][1].locationId).toBe(misgrouped);
+  });
+
+  it('admits a canonical file against an access set spelled otherwise', async () => {
+    // The `assertEveryEntityAccessible` half of the change, from the side the
+    // cells cannot reach: the guard's ids are canonical today, and this is
+    // what says the file is still admitted if that ever stops being true.
+    const { records, service } = build();
+
+    const report = await service.import(
+      dataEntry({ accessibleSubsidiaryIds: [`{${SUB.toUpperCase()}}`] }),
+      csvFile([row({ subsidiaryId: SUB })]),
+      NOTHING,
+    );
+
+    expect(report.errors).toHaveLength(0);
+    expect(records.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses the whole file for ONE foreign row among canonicalised ones', async () => {
+    // Canonicalising must not turn a whole-file refusal into a per-row one,
+    // and the row number it names must still be the file's.
+    const { service } = build();
+    const foreign = '22222222-2222-4222-8222-222222222222';
+
+    await expect(
+      service.import(
+        entry(),
+        csvFile([
+          row({ subsidiaryId: `{${SUB}}` }),
+          row({ subsidiaryId: foreign, periodValue: 'February' }),
+        ]),
+        DRY,
+      ),
+    ).rejects.toThrow(/Row\(s\) 3 /);
+  });
+
+  it('persists the canonical id on the APPLY path, not just the preview', async () => {
+    // The dry run and the apply build their accepted rows from two different
+    // sources, so pinning one says nothing about the other — and this is the
+    // path that actually writes.
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: `{${SUB}}`, locationId: `urn:uuid:${LOC}` })]),
+      NOTHING,
+    );
+
+    expect(records.create.mock.calls[0][1]).toMatchObject({
+      subsidiaryId: SUB,
+      locationId: LOC,
+    });
+    expect(report.accepted[0]).toMatchObject({
+      subsidiaryId: SUB,
+      locationId: LOC,
+    });
+  });
+
+  it('catches a differently-spelled stored slot BEFORE the write', async () => {
+    const { prisma, records, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([stored(LOC)]);
+
+    const report = await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: SUB, locationId: LOC.toUpperCase() })]),
+      NOTHING,
+    );
+
+    expect(report.errors[0]).toMatchObject({ code: 'duplicate_existing' });
+    expect(records.create).not.toHaveBeenCalled();
+  });
+
+  it('asks for one entity once, however many ways the file spells it', async () => {
+    // Three spellings of one subsidiary used to send three ids to Postgres,
+    // and the stored rows then keyed against none of them.
+    const { prisma, service } = build();
+
+    await service.import(
+      entry(),
+      csvFile([
+        row({ subsidiaryId: SUB }),
+        row({ subsidiaryId: `{${SUB}}`, periodValue: 'February' }),
+        row({ subsidiaryId: SUB.toUpperCase(), periodValue: 'March' }),
+      ]),
+      DRY,
+    );
+
+    const [args] = prisma.activityRecord.findMany.mock.calls[0];
+    expect(args.where.subsidiaryId).toEqual({ in: [SUB] });
+  });
+
+  it('does not let a spelled location collide with the whole company', async () => {
+    // A blank cell means the whole company, and `canonicalUuid('')` is null —
+    // so the carve-out has to survive canonicalisation. `NULLS NOT DISTINCT`
+    // makes the company row a real slot of its own.
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([
+        row({ subsidiaryId: SUB, locationId: '' }),
+        row({ subsidiaryId: SUB, locationId: `{${LOC}}` }),
+      ]),
+      NOTHING,
+    );
+
+    expect(report.errors).toHaveLength(0);
+    expect(records.create).toHaveBeenCalledTimes(2);
+    expect(records.create.mock.calls[0][1].locationId).toBeUndefined();
+    expect(records.create.mock.calls[1][1].locationId).toBe(LOC);
+  });
+
   it('leaves a cell that is not a uuid exactly as written', async () => {
-    // Deliberate: the row then fails where it already failed, with the
-    // message it already had.
+    // Deliberate: nothing is rewritten, so the row reaches the record service
+    // as it was typed and fails there exactly as it did before. The failure
+    // itself belongs to that service and is mocked out here — what this pins
+    // is only that the value arrives untouched.
     const { records, service } = build();
 
     await service.import(

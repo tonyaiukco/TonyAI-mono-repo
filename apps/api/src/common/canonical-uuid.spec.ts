@@ -31,9 +31,14 @@ const SAME_ROW: Record<string, string> = {
 /**
  * Every one of these is refused BY PRISMA — `P2023`, before Postgres sees it —
  * so folding any of them would invent an equivalence the database does not
- * have. The last three are the dangerous shape: 36 characters with four
- * hyphens, which a `split('-')` parser would happily accept and hand a
- * neighbouring id's key to.
+ * have.
+ *
+ * Most are caught on length or alphabet before either strip branch runs. The
+ * two that carry the weight are `hyphen one place late` and `hyphen one place
+ * early`: 36 characters with four hyphens, which a `split('-')` parser accepts
+ * and hands a neighbouring id's key to. `grouped in fours` is the same shape a
+ * length apart — and is the case where Postgres and Prisma disagree, so it must
+ * be refused even though the database itself would read it.
  */
 const NOT_THE_SAME_ROW: Record<string, string> = {
   'braced unhyphenated': `{${BARE}}`,
@@ -72,6 +77,16 @@ describe('canonicalUuid', () => {
     });
   }
 
+  it('leaves trimming to the caller, which is why padding is refused here', () => {
+    // These two facts read as a contradiction and are not. Prisma refuses a
+    // padded value, so this function must too — but `canonicaliseEntityCells`
+    // trims before calling, exactly as every reader of those cells already
+    // did, so a padded id in a FILE is still folded. The refusal below is the
+    // contract for direct callers, not the importer's behaviour.
+    expect(canonicalUuid(` ${ID}`)).toBeNull();
+    expect(canonicalUuid(` ${ID}`.trim())).toBe(ID);
+  });
+
   it('leaves an already-canonical id byte for byte', () => {
     // Idempotence is what lets a caller run it over values that may already
     // have been through it — the access set is one.
@@ -80,21 +95,50 @@ describe('canonicalUuid', () => {
   });
 
   it('never folds two different ids onto one key', () => {
-    // The property that matters more than completeness: missing a spelling
-    // leaves a duplicate undetected, but merging two ids REFUSES a legitimate
-    // row. Every distinct id must keep a distinct canonical form.
-    const ids = Array.from(
-      { length: 256 },
-      (_, n) => `09ed17d3-aef5-4da2-89c1-3b001ac50${n.toString(16).padStart(3, '0')}`,
-    );
-    const canonical = new Set(ids.map((id) => canonicalUuid(id)));
-    expect(canonical.size).toBe(ids.length);
+    // The property that matters more than completeness. Missing a spelling
+    // only leaves a duplicate undetected; merging two ids is worse than a
+    // refused row, because the caller REWRITES the cell with what this
+    // returns — so a fold files the record against a site nobody named.
+    //
+    // Every one of the 32 hex positions is varied, in every accepted
+    // spelling, which is what makes this catch a parser that mislays a
+    // character. A first cut varied only the last two nibbles of an
+    // already-canonical id: it passed under every loosening mutant, because
+    // the function was the identity on all 256 of its inputs and it was
+    // really asserting that 256 distinct strings are distinct.
+    const nibble = (i: number) => (BARE[i] === '0' ? '1' : '0');
+    const variants = Array.from({ length: 32 }, (_, i) =>
+      `${BARE.slice(0, i)}${nibble(i)}${BARE.slice(i + 1)}`,
+    ).concat(BARE);
+    const canonical = new Set<string>();
+    for (const bare of variants) {
+      const hyphenated = [
+        bare.slice(0, 8), bare.slice(8, 12), bare.slice(12, 16),
+        bare.slice(16, 20), bare.slice(20),
+      ].join('-');
+      for (const spelling of [
+        hyphenated,
+        hyphenated.toUpperCase(),
+        `{${hyphenated}}`,
+        `urn:uuid:${hyphenated}`,
+        bare,
+      ]) {
+        const folded = canonicalUuid(spelling);
+        expect(folded).toBe(hyphenated);
+        canonical.add(folded as string);
+      }
+    }
+    // 33 ids, 5 spellings each: one canonical form per id, never fewer.
+    expect(canonical.size).toBe(variants.length);
   });
 
-  it('returns a form the id pipe accepts', () => {
-    // These two must not drift: this produces the one spelling that validates.
+  it('returns the lowercase form the id pipe accepts', () => {
+    // `UUID_SHAPE` carries `/i`, so matching it alone would pass on an
+    // UPPERCASE output — the exact thing this function exists to remove.
     for (const spelling of Object.values(SAME_ROW)) {
-      expect(canonicalUuid(spelling)).toMatch(UUID_SHAPE);
+      const folded = canonicalUuid(spelling) as string;
+      expect(folded).toMatch(UUID_SHAPE);
+      expect(folded).toBe(folded.toLowerCase());
     }
   });
 });

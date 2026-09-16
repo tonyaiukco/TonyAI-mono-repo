@@ -29,12 +29,19 @@
  * ONLY through Prisma (see CLAUDE.md), which is what makes that the whole
  * story — a raw-SQL path would widen this table and this function with it.
  *
- * Being NARROWER than the database is safe; being wider is not. A spelling
- * this refuses is keyed as it was written, exactly as before. A spelling it
- * wrongly folded would collapse two distinct ids into one key and refuse a
- * legitimate row as a duplicate. That asymmetry is why `urn:uuid:` is matched
- * case-sensitively: Prisma rejects `URN:UUID:`, so accepting it here would
- * invent an equivalence the database does not have.
+ * Being NARROWER than the database is safe; being wider is not, and the cost
+ * is not symmetrical. A spelling this refuses is keyed as it was written,
+ * exactly as before — a duplicate goes undetected, which is the state we were
+ * already in. A spelling it wrongly folded is worse than a refused row:
+ * `canonicaliseEntityCells` REWRITES the cell, so the folded value is what
+ * reaches `create` and what gets stored. A mis-grouped id that the database
+ * would have refused outright (`P2023`) becomes a real entity's id, and the
+ * row is filed against a site nobody named — wrong attribution, silently, in
+ * an inventory. Loosening this function is therefore never a small change.
+ *
+ * That asymmetry is why `urn:uuid:` is matched case-sensitively: Prisma
+ * rejects `URN:UUID:`, so accepting it here would invent an equivalence the
+ * database does not have.
  *
  * The output always satisfies `UUID_SHAPE` in `parse-uuid-param.pipe.ts`,
  * which validates that one canonical form.

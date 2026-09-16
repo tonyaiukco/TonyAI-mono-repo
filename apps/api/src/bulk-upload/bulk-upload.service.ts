@@ -67,12 +67,13 @@ const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true } as const;
  * six segments come from closed vocabularies, `subsidiaryId` is checked against
  * the access set first, and every segment is required — so `locationId` is the
  * only attacker-influenced part and there is nothing for it to forge itself
- * into. Narrower still since `canonicaliseEntityCells`: a `locationId` that
- * names a real row is hex and hyphens by then, and one that does not is free
- * text on a row the record service refuses anyway. There is deliberately no
- * test for a forged key: nothing can currently reach that state, and a spec
- * asserting otherwise would assert coverage that does not exist. The separator
- * is here so the property stays true if a free-text segment is ever added.
+ * into. `canonicaliseEntityCells` does not change that reach: a `locationId`
+ * naming a real row is hex and hyphens by the time it is keyed, but one that
+ * does not is still free text HERE — the record service refuses it after the
+ * key is built, not before. There is deliberately no test for a forged key:
+ * nothing can currently reach that state, and a spec asserting otherwise would
+ * assert coverage that does not exist. The separator is here so the property
+ * stays true if a free-text segment is ever added.
  */
 const KEY_SEPARATOR = '\u0000';
 
@@ -777,9 +778,9 @@ export class BulkUploadService {
    * Every consumer here compares them AS STRINGS, so one location written five
    * ways used to be five different things:
    *
-   * - `slotKey` keyed four of the five as free slots, so a dry run reported
-   *   rows the apply would then lose to the uniqueness index — the one failure
-   *   a batch pre-check exists to prevent.
+   * - `slotKey` keyed all five as free slots, so a dry run reported five
+   *   clean rows the apply would then lose four of to the uniqueness index —
+   *   the one failure a batch pre-check exists to prevent.
    * - `loadStoredKeys` keys the stored rows off Prisma, which returns the
    *   canonical spelling, so ANY other spelling in the file missed the stored
    *   slot as well.
