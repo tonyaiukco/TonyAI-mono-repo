@@ -75,23 +75,10 @@ export class CalculationsService {
    * Resolve the latest-version factor for (category, geography, year). Among
    * rows sharing that key we take the highest `version` (desc), so a newer
    * factor library supersedes an older one for the same reporting year.
+   *
+   * Returns null rather than refusing, for the one caller allowed to proceed
+   * when nothing is found (see `compute`).
    */
-  private async resolveFactor(
-    category: string,
-    geographyCode: string,
-    reportingYear: number,
-  ): Promise<EmissionFactor> {
-    const factor = await this.findFactor(category, geographyCode, reportingYear);
-    if (!factor) {
-      throw new NotFoundException(
-        `No emission factor found for category "${category}", geography "${geographyCode}", year ${reportingYear}`,
-      );
-    }
-    return factor;
-  }
-
-  /** The same lookup without the refusal — for the one caller allowed to
-   *  proceed when nothing is found (see `compute`). */
   private async findFactor(
     category: string,
     geographyCode: string,
@@ -187,7 +174,9 @@ export class CalculationsService {
         !isInvoiceTracked(input.category)
       ) {
         throw new NotFoundException(
-          `No emission factor found for category "${input.category}", geography "${input.geographyCode}", year ${input.reportingYear}`,
+          `No emission factor found for category "${quoteCallerText(input.category)}", ` +
+            `geography "${quoteCallerText(input.geographyCode)}", ` +
+            `year ${input.reportingYear}`,
         );
       }
       return {
