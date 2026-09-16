@@ -8,6 +8,7 @@ import {
   type UncalculatedSnapshot,
 } from '@tonyai/shared-types';
 import { CalculationsService } from './calculations.service';
+import { CALLER_TEXT_QUOTE_MAX_LENGTH } from '../common/caller-text';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   blockedUnitReason,
@@ -420,6 +421,72 @@ describe('CalculationsService.compute', () => {
         unit: 'kWh',
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  /**
+   * The refusal names the two values it could not find, and `compute` is a
+   * public method. `CalculationInputDto` now bounds the preview endpoint to the
+   * two vocabularies, but it is not the only caller: `ActivityRecordsService`
+   * passes a geography read from a subsidiary or location row, and
+   * `geographyOptions` in @tonyai/shared-types explicitly anticipates "a code
+   * that reached the database by some other route". The DTO bounds the door;
+   * these two bound the sentence.
+   */
+  it('quotes the category and geography it could not find, rather than echoing them', async () => {
+    prisma.emissionFactor.findFirst.mockResolvedValue(null);
+
+    const message = await service
+      .compute({
+        category: 'E'.repeat(200),
+        geographyCode: 'Z'.repeat(200),
+        reportingYear: 2024,
+        value: 1,
+        unit: 'kWh',
+      })
+      .then(
+        () => 'it resolved, which would itself be the bug',
+        (error: Error) => error.message,
+      );
+
+    expect(message).toContain(
+      `category "${'E'.repeat(CALLER_TEXT_QUOTE_MAX_LENGTH)}…"`,
+    );
+    expect(message).toContain(
+      `geography "${'Z'.repeat(CALLER_TEXT_QUOTE_MAX_LENGTH)}…"`,
+    );
+    // 400 characters in, well under 200 out: the sentence can no longer be
+    // multiplied by the length of what it is asked to name.
+    expect(message.length).toBeLessThan(200);
+  });
+
+  it('names the characters that disguise a value in that sentence', async () => {
+    prisma.emissionFactor.findFirst.mockResolvedValue(null);
+
+    // Built from code points rather than written literally: a literal would be
+    // a real invisible character sitting in this file. U+202E is the
+    // right-to-left override, U+200B the zero-width space. Neither survives
+    // into the sentence, and neither vanishes from it either — a refusal that
+    // cannot show a character says which one it was.
+    const override = String.fromCharCode(0x202e);
+    const zeroWidth = String.fromCharCode(0x200b);
+
+    const message = await service
+      .compute({
+        category: `Electricity${override}`,
+        geographyCode: `U${zeroWidth}K`,
+        reportingYear: 2024,
+        value: 1,
+        unit: 'kWh',
+      })
+      .then(
+        () => 'it resolved, which would itself be the bug',
+        (error: Error) => error.message,
+      );
+
+    expect(message).toContain('category "Electricity<U+202E>"');
+    expect(message).toContain('geography "U<U+200B>K"');
+    expect(message).not.toContain(override);
+    expect(message).not.toContain(zeroWidth);
   });
 
   describe('a category with no factor at all (WP17 — Water)', () => {

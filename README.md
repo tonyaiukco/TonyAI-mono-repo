@@ -374,7 +374,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `PATCH` | `/locations/:id` | Update (`subsidiaryId` immutable) | `super_admin` |
 | `DELETE` | `/locations/:id` | Delete — refused (409) while activity records point at it, which would leave them showing a geography their frozen snapshot was not calculated with | `super_admin` |
 | `GET` | `/kpi` | Dashboard summary (subsidiary totals + geography breakdown + operational location count) | any |
-| `POST` | `/calculations/preview` | Live emissions preview: normalises the unit, applies the matching factor, returns `tCo2e` + factor snapshot | any |
+| `POST` | `/calculations/preview` | Live emissions preview: normalises the unit, applies the matching factor, returns `tCo2e` + factor snapshot. `category` and `geographyCode` must be vocabulary values and `unit` is length‑capped, so a preview refuses what a save would | any |
 | `GET` | `/factors` | List emission factors (optional `?category=&geographyCode=&year=`) | any |
 | `GET` | `/activity-records` | List (tenant‑scoped; filters `?subsidiaryId=&year=&period=&category=&status=`). `status` takes one value or a comma‑separated set (`submitted,under_review`), which is how the review queue is fetched in a single call | any |
 | `GET` | `/activity-records/:id` | Get one (404 if outside access set) | any |
