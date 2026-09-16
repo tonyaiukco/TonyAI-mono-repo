@@ -32,6 +32,22 @@ attachment), use `supabase-storage` instead.
   need BOTH: an in-memory `Set` for row-vs-row inside the file, and ONE up-front
   query for row-vs-stored. Mirror the index's own predicate — TonyAI's excludes
   `voided`, so a withdrawn figure does not hold its slot.
+- **Key every segment in the DATABASE's spelling, never the file's.** A typed
+  column accepts more than one spelling of one value and returns exactly one; a
+  JS `Set` compares the text. Measured here: one location written five ways —
+  lowercase, uppercase, `{…}`, `urn:uuid:…`, unhyphenated — was four free slots
+  and one duplicate, and the apply then lost three of the four to the index. The
+  stored-slot query has the same hole from the other side, because the rows it
+  keys come back canonical. So canonicalise the cell ONCE, at the boundary,
+  before anything reads it: a per-reader fix leaves the next reader to forget.
+  Two warnings. **Canonicalise before the tenant check too** — it compares ids
+  as strings, so a braced id had a user's own entity refused as another
+  tenant's. And **match the driver's grammar, not the database's**: Prisma reads
+  `urn:uuid:…` that Postgres refuses and refuses `{…}` unhyphenated and
+  four-character groups that Postgres reads (measured; see `canonicalUuid`).
+  Being narrower than the driver leaves a duplicate undetected, which is what
+  you already had; being WIDER folds two distinct ids onto one key and refuses a
+  legitimate row, so prove the negative cases too.
 - **Parse strictly; never coerce.** `Number('')` is `0`, and a zero is a
   REPORTED quantity that enters the inventory. Refuse `''`, `'1,200'` (ambiguous
   across locales), `'1e3'` and `'0x10'`. A strict numeric regex also kills

@@ -782,6 +782,177 @@ describe('BulkUploadService — the slot key is the whole key', () => {
   });
 });
 
+/**
+ * A `uuid` column holds a value, not text: `{A0EE…}`, `urn:uuid:a0ee…` and the
+ * unhyphenated form all reach the same row. Everything here keyed the CELL, so
+ * one location written five ways was five slots.
+ *
+ * Measured before the fix, on exactly the file the first test builds: four
+ * rows accepted and one `duplicate_in_file`. The apply would then have lost
+ * three of those four to the uniqueness index — a dry run disagreeing with
+ * its own apply, which is worse than no dry run at all.
+ */
+describe('BulkUploadService — one entity, however the file spells it', () => {
+  const SUB = '11111111-1111-4111-8111-111111111111';
+  /** Hex LETTERS: an all-digit id makes the case tests vacuous. */
+  const LOC = '09ed17d3-aef5-4da2-89c1-3b001ac50e94';
+  const OTHER_LOC = '09ed17d3-aef5-4da2-89c1-3b001ac50e95';
+  const SPELLINGS = [
+    LOC,
+    LOC.toUpperCase(),
+    `{${LOC}}`,
+    `urn:uuid:${LOC}`,
+    LOC.replace(/-/g, ''),
+  ];
+  const entry = () => dataEntry({ accessibleSubsidiaryIds: [SUB] });
+  const stored = (locationId: string | null) => ({
+    subsidiaryId: SUB,
+    locationId,
+    reportingYear: 2024,
+    reportingPeriod: 'monthly',
+    periodValue: 'January',
+    category: 'Electricity',
+  });
+
+  it('claims ONE slot for five spellings of the same location', async () => {
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile(SPELLINGS.map((locationId) => row({ subsidiaryId: SUB, locationId }))),
+      DRY,
+    );
+
+    expect(report.accepted).toHaveLength(1);
+    expect(report.errors.map((e) => e.code)).toEqual([
+      'duplicate_in_file',
+      'duplicate_in_file',
+      'duplicate_in_file',
+      'duplicate_in_file',
+    ]);
+    expect(records.previewCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps two DIFFERENT ids in two slots', async () => {
+    // The other half of the property, and the one that would break first if
+    // the parser were ever loosened: folding is only safe while every
+    // distinct id keeps a distinct key.
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([
+        row({ subsidiaryId: SUB, locationId: `{${LOC}}` }),
+        row({ subsidiaryId: SUB, locationId: `urn:uuid:${OTHER_LOC}` }),
+      ]),
+      NOTHING,
+    );
+
+    expect(report.errors).toHaveLength(0);
+    expect(records.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('matches a stored slot the file spells differently', async () => {
+    // Prisma returns the stored spelling, so before the fix ANY other
+    // spelling in the file missed the stored slot as well — not only the
+    // rows within one file.
+    const { prisma, records, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([stored(LOC)]);
+
+    const report = await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: SUB, locationId: `{${LOC}}` })]),
+      DRY,
+    );
+
+    expect(report.errors[0]).toMatchObject({ code: 'duplicate_existing' });
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  it('reports the stored spelling back, not the file’s', async () => {
+    // Same rule as `periodValue`: a preview echoing the input would quietly
+    // disagree with the record that gets written.
+    const { service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([
+        row({
+          subsidiaryId: `{${SUB}}`,
+          locationId: `urn:uuid:${LOC.toUpperCase()}`,
+        }),
+      ]),
+      DRY,
+    );
+
+    expect(report.accepted[0]).toMatchObject({
+      subsidiaryId: SUB,
+      locationId: LOC,
+    });
+  });
+
+  it('asks the database for the canonical entity id', async () => {
+    const { prisma, service } = build();
+
+    await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: `urn:uuid:${SUB}` })]),
+      DRY,
+    );
+
+    const [args] = prisma.activityRecord.findMany.mock.calls[0];
+    expect(args.where.subsidiaryId).toEqual({ in: [SUB] });
+  });
+
+  it('does not refuse a braced entity id as another tenant’s', async () => {
+    // The access check compares strings too. Before the fix this file came
+    // back as a 400 naming every row, telling the user their OWN subsidiary
+    // "does not exist or is not yours".
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: `{${SUB}}` })]),
+      NOTHING,
+    );
+
+    expect(report.errors).toHaveLength(0);
+    expect(records.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses an entity id outside the access set, however spelled', async () => {
+    // Canonicalising runs BEFORE the tenant check, so this is the assertion
+    // that it opened nothing: the spellings of one uuid map onto that uuid
+    // and never onto another's.
+    const { service } = build();
+    const foreign = '22222222-2222-4222-8222-222222222222';
+
+    await expect(
+      service.import(
+        entry(),
+        csvFile([row({ subsidiaryId: `urn:uuid:${foreign}` })]),
+        DRY,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('leaves a cell that is not a uuid exactly as written', async () => {
+    // Deliberate: the row then fails where it already failed, with the
+    // message it already had.
+    const { records, service } = build();
+
+    await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: SUB, locationId: 'loc-a' })]),
+      NOTHING,
+    );
+
+    expect(records.create.mock.calls[0][1]).toMatchObject({
+      locationId: 'loc-a',
+    });
+  });
+});
+
 describe('BulkUploadService — the audit row tells the truth', () => {
   it('says an apply was an apply, and counts it', async () => {
     // Hardcoding `dryRun: true` in the diff survived every test: only the dry
