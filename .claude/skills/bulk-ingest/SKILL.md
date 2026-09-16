@@ -193,17 +193,35 @@ for (const parsed of rows) {
   changing a shipped write path, which is its own PR.)
 - **Never echo an unexpected error's text into the report.** It can carry a
   query, a path or a column. Log it; report a refusal.
-- **Clean the file's own text before a refusal quotes it — bounding it is not
-  enough.** "Unrecognised column(s): …" quotes header cells into the 400 the
-  panel renders AND into the audit row's `reason`. Only the audit copy was
-  cleaned, so a U+202E in a header cell reached the screen, where it reverses
-  everything after it. Pass each quoted fragment through `sanitiseCallerText`
-  (`apps/api/src/common/caller-text.ts`, the rule the audit row's `fileName`
-  and `reason` already use), cleaning before cutting so dropped characters
-  cannot use up the bound. Clean the SENTENCE, never the match: looked up
-  cleaned, `category` + U+200B would import as `category`. To prove it on
-  XLSX, write the NUL as `_x0000_`: exceljs's writer drops a literal one, so
-  the test would pass even with NUL no longer dropped.
+- **Quote the file's own text with `quoteCallerText` — bounding it is not
+  enough, and neither is cleaning it.** "Unrecognised column(s): …" quotes
+  header cells into the 400 the panel renders AND into the audit row's
+  `reason`. Only the audit copy was cleaned, so a U+202E in a header cell
+  reached the screen, where it reverses everything after it. One rule in
+  `apps/api/src/common/caller-text.ts` decides what reaches neither: controls,
+  unpaired surrogates, U+2028/U+2029, every format character except ZWJ, ZWNJ
+  and the drawn prepended concatenation marks, and the code points reserved as
+  invisible but unassigned. STORE with `sanitiseCallerText` (the audit row's
+  `fileName` and `reason`). QUOTE with `quoteCallerText`, which NAMES every
+  character it cannot show — including the invisible ones the rule KEEPS (a
+  variation selector, ZWJ: quoted as they are, they reproduce the very
+  confusion this trap is about), U+2800 (the blank people paste when they want
+  an invisible character, which Unicode files as a symbol so nothing else
+  catches it), and the characters the sentence's own syntax uses — writing each
+  run as `<U+2063 x40>`. DELIMIT each quoted cell and name the delimiter: the
+  sentence joins cells with `, `, so an undelimited cell reading
+  `activityValue, category` made the refusal name two columns the file had got
+  right, into an append-only row kept as evidence. Every layer of syntax you
+  add is a layer a file can forge. Match the
+  cell as written (trimmed), never the cleaned one: looked up cleaned,
+  `category` + U+200B would import as `category`, and quoted cleaned, its
+  refusal read "Unrecognised column(s): category. Expected: …, category, …".
+  Bound a quote TWICE: in units, so padding cannot push a name out, and in code
+  points, or the sentence outgrows the column that stores it and a marker is
+  cut in half — a count of forty stored as four, in a table with no correction
+  path. Pin that arithmetic in a test. To prove the quote on XLSX, write the
+  NUL as `_x0000_`: exceljs's writer drops a literal one, so there would be no
+  NUL to name.
 - **`dryRun` must not coerce.** `Boolean('yes')` is `true` and `Boolean('0')` is
   `true`; a permissive flag imports a file the user asked to be told about, and
   every row is an audited write. Accept only recognised spellings of true/false
