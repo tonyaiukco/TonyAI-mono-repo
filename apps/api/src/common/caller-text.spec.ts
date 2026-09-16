@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { sanitiseCallerText } from './caller-text';
+import {
+  CALLER_TEXT_QUOTE_MAX_LENGTH,
+  quoteCallerText,
+  sanitiseCallerText,
+} from './caller-text';
 
 // Built from code points, never typed: escape sequences typed into this repo
 // have arrived in files as the literal, invisible character.
@@ -69,5 +73,25 @@ describe('sanitiseCallerText', () => {
 
   it('reads a missing value as empty', () => {
     expect(sanitiseCallerText(undefined, 10)).toBe('');
+  });
+});
+
+describe('quoteCallerText', () => {
+  it('quotes at most forty kept code points, and marks the cut', () => {
+    // Pinned as a literal: a bound derived from the constant under test passes
+    // with the constant widened to 32,000.
+    expect(CALLER_TEXT_QUOTE_MAX_LENGTH).toBe(40);
+    expect(quoteCallerText('y'.repeat(41))).toBe(`${'y'.repeat(40)}…`);
+    expect(quoteCallerText('y'.repeat(40))).toBe('y'.repeat(40));
+  });
+
+  it('cleans before it cuts, so padding cannot push the value out of the quote', () => {
+    const padded = `${char(0x202e)}${char(0)}${char(0x200b).repeat(100)}2024`;
+    expect(quoteCallerText(padded)).toBe('2024');
+  });
+
+  it('cuts between characters, never inside one', () => {
+    const emoji = String.fromCodePoint(0x1f600);
+    expect(quoteCallerText(emoji.repeat(41))).toBe(`${emoji.repeat(40)}…`);
   });
 });

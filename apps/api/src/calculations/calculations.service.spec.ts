@@ -486,6 +486,107 @@ describe('CalculationsService.compute', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  describe('a refusal quotes the unit, never the whole of it', () => {
+    // Built from code points, never typed: escape sequences typed into this
+    // repo have arrived in files as the literal, invisible character.
+    const char = (code: number) => String.fromCharCode(code);
+
+    it('an unknown unit', async () => {
+      await expect(
+        service.compute({
+          category: 'Electricity',
+          geographyCode: 'TR',
+          reportingYear: 2024,
+          value: 1,
+          unit: `bananas${char(0x202e)}${'x'.repeat(100)}`,
+        }),
+      ).rejects.toThrow(`Unsupported unit "bananas${'x'.repeat(33)}…"`);
+
+      // The caller's OWN spelling, not the canonicalised key: quoting
+      // `canonicalUnit(input.unit)` would tell a user about a token they never
+      // typed, and nothing else here has a capital letter or a space in it.
+      await expect(
+        service.compute({
+          category: 'Electricity',
+          geographyCode: 'TR',
+          reportingYear: 2024,
+          value: 1,
+          unit: 'Banana Units',
+        }),
+      ).rejects.toThrow('Unsupported unit "Banana Units"');
+    });
+
+    it('a known unit padded out, which reaches the category refusal', async () => {
+      // `canonicalUnit` collapses whitespace, so this is `cubic_metres` to the
+      // vocabulary check, and a bulk import repeats the sentence it gets.
+      await expect(
+        service.compute({
+          category: 'Electricity',
+          geographyCode: 'UK',
+          reportingYear: 2026,
+          value: 1,
+          unit: `cubic${' '.repeat(30_000)}metres`,
+        }),
+      ).rejects.toThrow(
+        `Unit "cubic${' '.repeat(35)}…" is not valid for "Electricity". Accepted: kWh, MWh.`,
+      );
+    });
+
+    it('a known unit carrying characters that disguise it, in the factor refusal', async () => {
+      prisma.emissionFactor.findFirst.mockResolvedValue(
+        makeFactor({
+          category: 'Water',
+          scope: 3,
+          factorValue: 0.149,
+          factorUnit: 'kgCO2e/m3',
+          normalizedUnit: 'cubic_metres',
+          geographyCode: 'UK',
+        }),
+      );
+
+      // U+FEFF and a tab are whitespace to `canonicalUnit`: still cubic metres.
+      await expect(
+        service.compute({
+          category: 'Water',
+          geographyCode: 'UK',
+          reportingYear: 2026,
+          value: 100,
+          unit: `cubic${char(0xfeff)}${char(0x09)}metres`,
+        }),
+      ).rejects.toThrow(
+        'Unit "cubicmetres" normalises to "kWh" but the factor for "Water" expects "cubic_metres"',
+      );
+    });
+
+    it('a known unit padded out, in the factor refusal', async () => {
+      // The other half of the same sentence: cleaning it is not cutting it,
+      // and this one is reachable at any length through the preview DTO, which
+      // has no cap.
+      prisma.emissionFactor.findFirst.mockResolvedValue(
+        makeFactor({
+          category: 'Water',
+          scope: 3,
+          factorValue: 0.149,
+          factorUnit: 'kgCO2e/m3',
+          normalizedUnit: 'cubic_metres',
+          geographyCode: 'UK',
+        }),
+      );
+
+      await expect(
+        service.compute({
+          category: 'Water',
+          geographyCode: 'UK',
+          reportingYear: 2026,
+          value: 100,
+          unit: `cubic${' '.repeat(30_000)}metres`,
+        }),
+      ).rejects.toThrow(
+        `Unit "cubic${' '.repeat(35)}…" normalises to "kWh" but the factor for "Water" expects "cubic_metres"`,
+      );
+    });
+  });
 });
 
 describe('CalculationsService.listFactors', () => {

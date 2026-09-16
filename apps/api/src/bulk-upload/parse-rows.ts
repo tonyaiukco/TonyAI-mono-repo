@@ -7,7 +7,7 @@ import {
   BULK_UPLOAD_REQUIRED_COLUMNS,
   type BulkUploadColumn,
 } from '@tonyai/shared-types';
-import { sanitiseCallerText } from '../common/caller-text';
+import { quoteCallerText } from '../common/caller-text';
 import { readFirstWorksheet, type MergedRange } from './xlsx-reader';
 
 /**
@@ -71,10 +71,8 @@ function mapHeader(header: readonly string[]): (BulkUploadColumn | null)[] {
     // And cleaned, by the audit row's own rule, because the import panel
     // renders the response too: a U+202E in a header cell reverses everything
     // after it. Cleaning comes before the cut, so dropped characters cannot
-    // use up a fragment's 40.
-    const shown = unknown
-      .slice(0, 5)
-      .map((h) => sanitiseCallerText(h, 40, '…'));
+    // use up a fragment's bound. The row refusals quote cells by the same rule.
+    const shown = unknown.slice(0, 5).map((h) => quoteCallerText(h));
     const more = unknown.length > 5 ? ` (+${unknown.length - 5} more)` : '';
     throw new BadRequestException(
       `Unrecognised column(s): ${shown.join(', ')}${more}. Expected: ${BULK_UPLOAD_COLUMNS.join(', ')}.`,
