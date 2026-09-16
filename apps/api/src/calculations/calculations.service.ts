@@ -12,6 +12,7 @@ import type {
   Category,
   EmissionFactorDTO,
 } from '@tonyai/shared-types';
+import { quoteCallerText } from '../common/caller-text';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   blockedUnitReason,
@@ -119,7 +120,9 @@ export class CalculationsService {
       throw new BadRequestException('value must be a finite number');
     }
     if (!isKnownUnit(input.unit)) {
-      throw new BadRequestException(`Unsupported unit "${input.unit}"`);
+      throw new BadRequestException(
+        `Unsupported unit "${quoteCallerText(input.unit)}"`,
+      );
     }
     // Recognised but not calculable (Sm³): refuse by name, with the reason, so
     // the caller learns what is missing rather than "unsupported unit".
@@ -144,8 +147,12 @@ export class CalculationsService {
         .map((u) => canonicalInputUnit(u))
         .includes(canonicalInputUnit(input.unit))
     ) {
+      // The unit is quoted, never repeated whole. A KNOWN unit can arrive
+      // padded — `canonicalUnit` collapses whitespace, so `cubic`, 30,000
+      // spaces and `metres` passes `isKnownUnit` — and a bulk import repeats
+      // this sentence in its report.
       throw new BadRequestException(
-        `Unit "${input.unit}" is not valid for "${input.category}". ` +
+        `Unit "${quoteCallerText(input.unit)}" is not valid for "${input.category}". ` +
           `Accepted: ${allowedUnits.join(', ')}.`,
       );
     }
@@ -210,7 +217,7 @@ export class CalculationsService {
     // Guard: the normalized unit must match the unit the factor expects.
     if (normalizedUnit !== factor.normalizedUnit) {
       throw new BadRequestException(
-        `Unit "${input.unit}" normalises to "${normalizedUnit}" but the factor for ` +
+        `Unit "${quoteCallerText(input.unit)}" normalises to "${normalizedUnit}" but the factor for ` +
           `"${input.category}" expects "${factor.normalizedUnit}"`,
       );
     }

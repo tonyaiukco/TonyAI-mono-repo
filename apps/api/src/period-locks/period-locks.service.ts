@@ -14,6 +14,7 @@ import { PENDING_REVIEW_STATUSES as SHARED_PENDING_REVIEW } from '@tonyai/shared
 import { canonicalPeriodValue } from '@tonyai/shared-types';
 import type { PeriodLockDTO, ReportingPeriod } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import { quoteCallerText } from '../common/caller-text';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { CreatePeriodLockDto } from './dto/create-period-lock.dto';
@@ -106,7 +107,10 @@ export class PeriodLocksService {
     const periodValue = canonicalPeriodValue(dto.reportingPeriod, dto.periodValue);
     if (periodValue === null) {
       throw new BadRequestException(
-        `"${dto.periodValue}" is not a valid period for a ${dto.reportingPeriod} lock.`,
+        // Quoted through the one rule, like its twin on the record path: the
+        // value is capped at 32 by the DTO, but a U+202E in it still reverses
+        // the rest of the sentence in the toast that shows it.
+        `"${quoteCallerText(dto.periodValue)}" is not a valid period for a ${dto.reportingPeriod} lock.`,
       );
     }
 

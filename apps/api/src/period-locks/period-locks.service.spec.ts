@@ -129,6 +129,20 @@ describe('PeriodLocksService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('quotes the value it refuses, naming what it cannot show', async () => {
+    // The same rule as the record path's twin of this sentence: the DTO caps
+    // the value at 32, but a U+202E in it reverses the rest of the toast that
+    // shows it. Built from a code point, never typed.
+    const rlo = String.fromCharCode(0x202e);
+
+    await expect(
+      service.lock(superAdmin(), {
+        ...CREATE_DTO,
+        periodValue: `Quarter${rlo}${'x'.repeat(60)}`,
+      }),
+    ).rejects.toThrow(`"Quarter<U+202E>${'x'.repeat(32)}…" is not a valid period`);
+  });
+
   it('canonicalises the periodValue before it looks anything up', async () => {
     // Raw Postgres equality all the way down: a lock stored as `"q1"` counted
     // no `"Q1"` record as pending, flipped none to `locked`, and left the

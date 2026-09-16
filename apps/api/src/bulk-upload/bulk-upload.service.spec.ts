@@ -4,19 +4,29 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
-import type { CalculationResult } from '@tonyai/shared-types';
+import {
+  ACTIVITY_UNIT_MAX_LENGTH,
+  BULK_UPLOAD_MAX_ROWS,
+  BULK_UPLOAD_MAX_SIZE_BYTES,
+  BULK_UPLOAD_MESSAGE_MAX_LENGTH,
+  CATEGORIES,
+  type CalculationResult,
+} from '@tonyai/shared-types';
 import {
   AUDIT_REASON_MAX_LENGTH,
   BulkUploadService,
 } from './bulk-upload.service';
-import { QUOTED_FRAGMENTS, QUOTE_MAX_CODE_POINTS } from './parse-rows';
-import { BULK_UPLOAD_MAX_SIZE_BYTES } from '@tonyai/shared-types';
+import { QUOTED_FRAGMENTS } from './parse-rows';
+import { CALLER_TEXT_QUOTE_MAX_CODE_POINTS } from '../common/caller-text';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import { AuditService } from '../audit/audit.service';
+import { blockedUnitReason } from '../calculations/normalization';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { row as sheetRow, xlsx } from '../../test/xlsx';
 
 const HEADER =
   'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
@@ -140,6 +150,32 @@ function build() {
   );
   return { prisma, records, audit, service };
 }
+
+/**
+ * Runs `body` with `Logger.error` captured, and restores the spy even if it
+ * throws — `vitest.config.ts` sets `clearMocks`, which clears CALLS but leaves
+ * the implementation installed, so a spy leaked by a throwing test would
+ * swallow every later test's logging in this file.
+ */
+async function captureErrors<T>(
+  body: () => Promise<T>,
+): Promise<{ result: T; logged: { message: string; trace: unknown }[] }> {
+  const logged: { message: string; trace: unknown }[] = [];
+  const spy = vi
+    .spyOn(Logger.prototype, 'error')
+    .mockImplementation((message: unknown, trace?: unknown) => {
+      logged.push({ message: String(message), trace });
+    });
+  try {
+    return { result: await body(), logged };
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+/** How many times a stack header appears in the one attached trace. */
+const stackCount = (trace: unknown, header: string) =>
+  String(trace).split(header).length - 1;
 
 const NOTHING = { dryRun: false };
 const DRY = { dryRun: true };
@@ -425,6 +461,159 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
 
     expect(report.errors[0].code).toBe('unexpected');
     expect(report.errors[0].message).not.toMatch(/ECONNREFUSED|SELECT|10\.0\.0\.5/);
+  });
+
+  it('logs ONE line for a batch of unexpected failures, not one per row', async () => {
+    // Measured: 50 rows carrying a 2,001-character `locationId` wrote 148,542
+    // bytes of stderr — fifty Prisma stacks with code frames — which the
+    // 1,000-row cap puts near 3 MB for one request, five of which a user may
+    // send each minute. The row-level refusal is unchanged; the log is not.
+    const { records, service } = build();
+    records.create.mockRejectedValue(
+      Object.assign(new Error('value too long for the column locationId'), {
+        code: 'P2000',
+      }),
+    );
+    // Distinct years, or the in-file duplicate check would refuse rows 2-50
+    // before they ever reach `create`.
+    const rows = Array.from({ length: 50 }, (_, i) =>
+      row({ reportingYear: String(2000 + i) }),
+    );
+
+    const { result: report, logged } = await captureErrors(() =>
+      service.import(dataEntry(), csvFile(rows), NOTHING),
+    );
+
+    // Every row still gets its own refusal, with the constant message.
+    expect(report.errors).toHaveLength(50);
+    expect(report.errors.every((e) => e.code === 'unexpected')).toBe(true);
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain('bulk import: 50 rows failed unexpectedly');
+    expect(logged[0].message).toContain('Error P2000 ×50');
+    // WHICH rows — spreadsheet numbering, so the header is row 1. Reporting
+    // every failure against one row is worse than reporting none.
+    expect(logged[0].message).toContain(
+      '(2, 3, 4, 5, 6, 7, 8, 9, 10, 11 and 40 more)',
+    );
+    // ONE stack, COUNTED. `toContain` passes just as happily on fifty.
+    expect(stackCount(logged[0].trace, 'Error: value too long')).toBe(1);
+  });
+
+  it('logs the batch line even when the Forbidden backstop aborts the import', async () => {
+    // The backstop fires only while `accepted.length === 0` — which is exactly
+    // the state a run of unexpected failures leaves behind. Without the
+    // `finally` the 3-row driver incident would vanish with the throw.
+    const { records, service } = build();
+    records.create
+      .mockRejectedValueOnce(new Error('driver said no'))
+      .mockRejectedValueOnce(new Error('driver said no'))
+      .mockRejectedValueOnce(new Error('driver said no'))
+      .mockRejectedValueOnce(new ForbiddenException('not yours'));
+    const rows = Array.from({ length: 4 }, (_, i) =>
+      row({ reportingYear: String(2000 + i) }),
+    );
+
+    const logged: { message: string; trace: unknown }[] = [];
+    const spy = vi
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation((message: unknown, trace?: unknown) => {
+        logged.push({ message: String(message), trace });
+      });
+    try {
+      await expect(
+        service.import(dataEntry(), csvFile(rows), NOTHING),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain('bulk import: 3 rows failed unexpectedly');
+  });
+
+  it('keeps one batch per import — the accumulator is not shared between calls', async () => {
+    // `BatchFailureLog` is a local because the service is a Nest singleton.
+    // Hoisted to a field it would mix two tenants' row numbers into one line.
+    const { records, service } = build();
+    records.create.mockRejectedValue(new Error('driver said no'));
+
+    const { logged } = await captureErrors(async () => {
+      await service.import(dataEntry(), csvFile([row()]), NOTHING);
+      await service.import(dataEntry(), csvFile([row()]), NOTHING);
+    });
+
+    expect(logged).toHaveLength(2);
+    expect(logged[0].message).toContain('bulk import: 1 row failed unexpectedly');
+    expect(logged[1].message).toContain('bulk import: 1 row failed unexpectedly');
+  });
+
+  it('names each class once for a batch that fails two different ways', async () => {
+    // The mixed batch: one accepted row, one refusal it understands, and two
+    // unexpected failures of different classes.
+    const { records, service } = build();
+    records.create
+      .mockRejectedValueOnce(new ConflictException('Period 2001 January is locked.'))
+      .mockRejectedValueOnce(new Error('driver said no'))
+      .mockRejectedValueOnce(new TypeError('records.create is not a function'));
+    const rows = Array.from({ length: 4 }, (_, i) =>
+      row({ reportingYear: String(2000 + i) }),
+    );
+
+    const { result: report, logged } = await captureErrors(() =>
+      service.import(dataEntry(), csvFile(rows), NOTHING),
+    );
+
+    expect(report.accepted).toHaveLength(1);
+    expect(report.errors.map((e) => e.code)).toEqual([
+      'period_locked',
+      'unexpected',
+      'unexpected',
+    ]);
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain('bulk import: 2 rows failed unexpectedly (3, 4)');
+    expect(logged[0].message).toContain('Error ×1 (first at 3): driver said no');
+    expect(logged[0].message).toContain(
+      'TypeError ×1 (first at 4): records.create is not a function',
+    );
+    // The mapped refusal is reported, never logged.
+    expect(logged[0].message).not.toContain('locked');
+  });
+
+  it('folds a dry run’s unexpected failures too — the path `create` never sees', async () => {
+    const { records, service } = build();
+    records.previewCreate.mockRejectedValue(new Error('preview said no'));
+
+    const { result: report, logged } = await captureErrors(() =>
+      service.import(dataEntry(), csvFile([row(), row({ reportingYear: '2023' })]), DRY),
+    );
+
+    expect(records.create).not.toHaveBeenCalled();
+    expect(report.errors).toHaveLength(2);
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain('bulk import: 2 rows failed unexpectedly (2, 3)');
+  });
+
+  it('logs nothing at all when every failure is one it understands', async () => {
+    // A closed period or a taken slot is reported, never logged: they are the
+    // ordinary answer to an ordinary file, and ERROR level is not for them.
+    const { records, service } = build();
+    records.create.mockRejectedValue(
+      new ConflictException('Period 2024 January is locked.'),
+    );
+
+    const { result: report, logged } = await captureErrors(() =>
+      service.import(
+        dataEntry(),
+        csvFile([row(), row({ reportingYear: '2023' })]),
+        NOTHING,
+      ),
+    );
+
+    expect(report.errors.map((e) => e.code)).toEqual([
+      'period_locked',
+      'period_locked',
+    ]);
+    expect(logged).toEqual([]);
   });
 
   it('answers the role before the file — an unreadable one still gets the 403', async () => {
@@ -784,6 +973,319 @@ describe('BulkUploadService — the slot key is the whole key', () => {
 
     expect(report.errors).toHaveLength(0);
     expect(records.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * A `uuid` column holds a value, not text: `{A0EE…}`, `urn:uuid:a0ee…` and the
+ * unhyphenated form all reach the same row. Everything here keyed the CELL, so
+ * one location written five ways was five slots.
+ *
+ * Measured before the fix, on exactly the file the first test builds: FIVE
+ * rows accepted and no errors at all. The apply would then have lost four of
+ * the five to the uniqueness index — a dry run disagreeing with its own
+ * apply, which is worse than no dry run at all.
+ *
+ * Re-measuring against SEEDED data gives four and one instead, and the
+ * difference is the whole reason `LOC` below is spelled with hex letters:
+ * every id in the seed is decimal digits, so `toUpperCase()` returns the same
+ * string and two of the five spellings coincide by accident. A fixture built
+ * on a seed id would under-count the defect and leave the case-folding half
+ * of this function untested.
+ */
+describe('BulkUploadService — one entity, however the file spells it', () => {
+  const SUB = '11111111-1111-4111-8111-111111111111';
+  /** Hex LETTERS: an all-digit id makes the case tests vacuous. */
+  const LOC = '09ed17d3-aef5-4da2-89c1-3b001ac50e94';
+  const OTHER_LOC = '09ed17d3-aef5-4da2-89c1-3b001ac50e95';
+  const SPELLINGS = [
+    LOC,
+    LOC.toUpperCase(),
+    `{${LOC}}`,
+    `urn:uuid:${LOC}`,
+    LOC.replace(/-/g, ''),
+  ];
+  const entry = () => dataEntry({ accessibleSubsidiaryIds: [SUB] });
+  const stored = (locationId: string | null) => ({
+    subsidiaryId: SUB,
+    locationId,
+    reportingYear: 2024,
+    reportingPeriod: 'monthly',
+    periodValue: 'January',
+    category: 'Electricity',
+  });
+
+  it('claims ONE slot for five spellings of the same location', async () => {
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile(SPELLINGS.map((locationId) => row({ subsidiaryId: SUB, locationId }))),
+      DRY,
+    );
+
+    expect(report.accepted).toHaveLength(1);
+    expect(report.errors.map((e) => e.code)).toEqual([
+      'duplicate_in_file',
+      'duplicate_in_file',
+      'duplicate_in_file',
+      'duplicate_in_file',
+    ]);
+    expect(records.previewCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps two DIFFERENT ids in two slots', async () => {
+    // The other half of the property: folding is only safe while every
+    // distinct id keeps a distinct key. A control, and an insensitive one —
+    // it passes under every loosening of the parser, because both ids here
+    // are well-formed. The test below is the one that catches that.
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([
+        row({ subsidiaryId: SUB, locationId: `{${LOC}}` }),
+        row({ subsidiaryId: SUB, locationId: `urn:uuid:${OTHER_LOC}` }),
+      ]),
+      NOTHING,
+    );
+
+    expect(report.errors).toHaveLength(0);
+    expect(records.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('matches a stored slot the file spells differently', async () => {
+    // Prisma returns the stored spelling, so before the fix ANY other
+    // spelling in the file missed the stored slot as well — not only the
+    // rows within one file.
+    const { prisma, records, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([stored(LOC)]);
+
+    const report = await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: SUB, locationId: `{${LOC}}` })]),
+      DRY,
+    );
+
+    expect(report.errors[0]).toMatchObject({ code: 'duplicate_existing' });
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  it('reports the stored spelling back, not the file’s', async () => {
+    // Same rule as `periodValue`: a preview echoing the input would quietly
+    // disagree with the record that gets written.
+    const { service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([
+        row({
+          subsidiaryId: `{${SUB}}`,
+          locationId: `urn:uuid:${LOC.toUpperCase()}`,
+        }),
+      ]),
+      DRY,
+    );
+
+    expect(report.accepted[0]).toMatchObject({
+      subsidiaryId: SUB,
+      locationId: LOC,
+    });
+  });
+
+  it('asks the database for the canonical entity id', async () => {
+    const { prisma, service } = build();
+
+    await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: `urn:uuid:${SUB}` })]),
+      DRY,
+    );
+
+    const [args] = prisma.activityRecord.findMany.mock.calls[0];
+    expect(args.where.subsidiaryId).toEqual({ in: [SUB] });
+  });
+
+  it('does not refuse a braced entity id as another tenant’s', async () => {
+    // The access check compares strings too. Before the fix this file came
+    // back as a 400 naming every row, telling the user their OWN subsidiary
+    // "does not exist or is not yours".
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: `{${SUB}}` })]),
+      NOTHING,
+    );
+
+    expect(report.errors).toHaveLength(0);
+    expect(records.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses an entity id outside the access set, however spelled', async () => {
+    // Canonicalising runs BEFORE the tenant check, so this is the assertion
+    // that it opened nothing: the spellings of one uuid map onto that uuid
+    // and never onto another's.
+    const { service } = build();
+    const foreign = '22222222-2222-4222-8222-222222222222';
+
+    await expect(
+      service.import(
+        entry(),
+        csvFile([row({ subsidiaryId: `urn:uuid:${foreign}` })]),
+        DRY,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('never rewrites a mis-grouped id into a real one', async () => {
+    // THE sentinel for a loosened parser, and the reason it has to live at
+    // this level rather than only in `canonical-uuid.spec.ts`. Because the
+    // cell is rewritten, a parser that accepted 36 characters with hyphens in
+    // the wrong places would not merely refuse a row as a duplicate: it would
+    // hand `create` a REAL location id and file the row against a site nobody
+    // named. Prisma refuses this value outright (P2023, measured), so the row
+    // must reach the record service exactly as written and fail there.
+    const bare = LOC.replace(/-/g, '');
+    const misgrouped = `${bare.slice(0, 9)}-${bare.slice(9, 12)}-${bare.slice(12, 16)}-${bare.slice(16, 20)}-${bare.slice(20)}`;
+    expect(misgrouped).toHaveLength(36);
+    const { records, service } = build();
+
+    await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: SUB, locationId: misgrouped })]),
+      NOTHING,
+    );
+
+    expect(records.create.mock.calls[0][1].locationId).toBe(misgrouped);
+  });
+
+  it('admits a canonical file against an access set spelled otherwise', async () => {
+    // The `assertEveryEntityAccessible` half of the change, from the side the
+    // cells cannot reach: the guard's ids are canonical today, and this is
+    // what says the file is still admitted if that ever stops being true.
+    const { records, service } = build();
+
+    const report = await service.import(
+      dataEntry({ accessibleSubsidiaryIds: [`{${SUB.toUpperCase()}}`] }),
+      csvFile([row({ subsidiaryId: SUB })]),
+      NOTHING,
+    );
+
+    expect(report.errors).toHaveLength(0);
+    expect(records.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses the whole file for ONE foreign row among canonicalised ones', async () => {
+    // Canonicalising must not turn a whole-file refusal into a per-row one,
+    // and the row number it names must still be the file's.
+    const { service } = build();
+    const foreign = '22222222-2222-4222-8222-222222222222';
+
+    await expect(
+      service.import(
+        entry(),
+        csvFile([
+          row({ subsidiaryId: `{${SUB}}` }),
+          row({ subsidiaryId: foreign, periodValue: 'February' }),
+        ]),
+        DRY,
+      ),
+    ).rejects.toThrow(/Row\(s\) 3 /);
+  });
+
+  it('persists the canonical id on the APPLY path, not just the preview', async () => {
+    // The dry run and the apply build their accepted rows from two different
+    // sources, so pinning one says nothing about the other — and this is the
+    // path that actually writes.
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: `{${SUB}}`, locationId: `urn:uuid:${LOC}` })]),
+      NOTHING,
+    );
+
+    expect(records.create.mock.calls[0][1]).toMatchObject({
+      subsidiaryId: SUB,
+      locationId: LOC,
+    });
+    expect(report.accepted[0]).toMatchObject({
+      subsidiaryId: SUB,
+      locationId: LOC,
+    });
+  });
+
+  it('catches a differently-spelled stored slot BEFORE the write', async () => {
+    const { prisma, records, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([stored(LOC)]);
+
+    const report = await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: SUB, locationId: LOC.toUpperCase() })]),
+      NOTHING,
+    );
+
+    expect(report.errors[0]).toMatchObject({ code: 'duplicate_existing' });
+    expect(records.create).not.toHaveBeenCalled();
+  });
+
+  it('asks for one entity once, however many ways the file spells it', async () => {
+    // Three spellings of one subsidiary used to send three ids to Postgres,
+    // and the stored rows then keyed against none of them.
+    const { prisma, service } = build();
+
+    await service.import(
+      entry(),
+      csvFile([
+        row({ subsidiaryId: SUB }),
+        row({ subsidiaryId: `{${SUB}}`, periodValue: 'February' }),
+        row({ subsidiaryId: SUB.toUpperCase(), periodValue: 'March' }),
+      ]),
+      DRY,
+    );
+
+    const [args] = prisma.activityRecord.findMany.mock.calls[0];
+    expect(args.where.subsidiaryId).toEqual({ in: [SUB] });
+  });
+
+  it('does not let a spelled location collide with the whole company', async () => {
+    // A blank cell means the whole company, and `canonicalUuid('')` is null —
+    // so the carve-out has to survive canonicalisation. `NULLS NOT DISTINCT`
+    // makes the company row a real slot of its own.
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([
+        row({ subsidiaryId: SUB, locationId: '' }),
+        row({ subsidiaryId: SUB, locationId: `{${LOC}}` }),
+      ]),
+      NOTHING,
+    );
+
+    expect(report.errors).toHaveLength(0);
+    expect(records.create).toHaveBeenCalledTimes(2);
+    expect(records.create.mock.calls[0][1].locationId).toBeUndefined();
+    expect(records.create.mock.calls[1][1].locationId).toBe(LOC);
+  });
+
+  it('leaves a cell that is not a uuid exactly as written', async () => {
+    // Deliberate: nothing is rewritten, so the row reaches the record service
+    // as it was typed and fails there exactly as it did before. The failure
+    // itself belongs to that service and is mocked out here — what this pins
+    // is only that the value arrives untouched.
+    const { records, service } = build();
+
+    await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: SUB, locationId: 'loc-a' })]),
+      NOTHING,
+    );
+
+    expect(records.create.mock.calls[0][1]).toMatchObject({
+      locationId: 'loc-a',
+    });
   });
 });
 
@@ -1321,7 +1823,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     const message = (error as Error).message;
     const fragment = `${'aaa<U+200B>'.repeat(5)}aaa…`;
     // A worst case only if every quote is as long as its bound allows.
-    expect([...fragment].length).toBe(QUOTE_MAX_CODE_POINTS + 1);
+    expect([...fragment].length).toBe(CALLER_TEXT_QUOTE_MAX_CODE_POINTS + 1);
     expect(message).toContain(`"${fragment}", "${fragment}"`);
     const digits = String(Math.floor(BULK_UPLOAD_MAX_SIZE_BYTES / 2)).length;
     const longest = message.replace(' (+1 more)', ` (+${'9'.repeat(digits)} more)`);
@@ -1459,5 +1961,217 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       expect(report.errors[0]).toMatchObject({ row: 3, code: 'invalid' });
     },
   );
+});
+
+describe('BulkUploadService — what the report repeats back', () => {
+  // Built from code points, never typed: escape sequences typed into this repo
+  // have arrived in files as the literal, invisible character.
+  const nul = String.fromCharCode(0);
+  const rlo = String.fromCharCode(0x202e);
+  const zwsp = String.fromCharCode(0x200b);
+
+  it.each([
+    ['reportingYear', 'is not a whole year.'],
+    ['activityValue', 'is not a number. Use a plain figure with no thousands separator.'],
+  ])('quotes a refused %s cell, naming what it cannot show', async (column, tail) => {
+    // The disguises lead the cell. Named, they cost the quote one marker and
+    // the value still shows; dropped in silence, the sentence refused a value
+    // it then printed as though nothing were wrong with it.
+    const { service } = build();
+    const cell = `${rlo}${nul}${zwsp}${'9'.repeat(20)}${'x'.repeat(40_000)}`;
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ [column]: cell })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      {
+        row: 2,
+        column,
+        code: 'invalid',
+        message: `"<U+202E U+0000 U+200B>${'9'.repeat(20)}${'x'.repeat(16)}…" ${tail}`,
+      },
+    ]);
+  });
+
+  it('stays small when one shared string backs a refused cell on every row', async () => {
+    // The measured shape: one 32,000-character string in the year cell of a
+    // thousand rows, with no entity id (a blank one passes the pre-flight).
+    // A 12,416-byte workbook came back as a 32,092,008-byte report.
+    const { service } = build();
+    const dataRows = Array.from(
+      { length: BULK_UPLOAD_MAX_ROWS },
+      (_, i) => `<row r="${i + 2}"><c r="C${i + 2}" t="s"><v>0</v></c></row>`,
+    );
+    const buffer = xlsx({
+      // `_x202E_` is how a workbook writes U+202E; the reader decodes it.
+      sharedStrings: [`<t>_x202E_${'Y'.repeat(32_000)}</t>`],
+      sheetData: [sheetRow(1, HEADER.split(',')), ...dataRows].join(''),
+    });
+    const file = {
+      originalname: 'history.xlsx',
+      mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      size: buffer.length,
+      buffer,
+    } as Express.Multer.File;
+
+    const report = await service.import(dataEntry(), file, DRY);
+
+    const message = `"<U+202E>${'Y'.repeat(39)}…" is not a whole year.`;
+    expect(report.errors).toHaveLength(BULK_UPLOAD_MAX_ROWS);
+    expect(report.errors.filter((e) => e.message !== message)).toEqual([]);
+    expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(200_000);
+  });
+
+  it.each([
+    [
+      'a refusal passed through from the record service',
+      () => new BadRequestException(`${rlo}${'x'.repeat(10_000)}`),
+      'invalid',
+      `${'x'.repeat(BULK_UPLOAD_MESSAGE_MAX_LENGTH)}…`,
+    ],
+    [
+      'a missing factor, still classified by its RAW text',
+      // The words the classifier looks for sit past the bound: bounded before
+      // it read them, this row would be reported as an access problem.
+      () => new NotFoundException(`${'z'.repeat(600)} emission factor ${nul}`),
+      'no_factor',
+      `${'z'.repeat(BULK_UPLOAD_MESSAGE_MAX_LENGTH)}…`,
+    ],
+    [
+      'a closed period, still told apart from a taken slot',
+      () => new ConflictException(`${nul}${'p'.repeat(10_000)}`),
+      'period_locked',
+      `${'p'.repeat(BULK_UPLOAD_MESSAGE_MAX_LENGTH)}…`,
+    ],
+  ])('bounds and cleans %s', async (_label, error, code, message) => {
+    const { records, service } = build();
+    records.previewCreate.mockRejectedValueOnce(error());
+
+    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+
+    expect(report.errors).toEqual([{ row: 2, column: null, code, message }]);
+  });
+
+  it('answers a huge unit cell with the cap’s own sentence, which quotes nothing', async () => {
+    // `@MaxLength` is the bottom decorator, so class-validator registers it
+    // first and the report publishes ITS sentence. The vocabulary's quoted one
+    // — which used to come back 100,053 characters long — is built either way,
+    // because every constraint on a property is evaluated. Pinned as the whole
+    // issue: swapping the two decorators, or taking the last constraint
+    // instead of the first, changes what a user reads and nothing else caught
+    // it.
+    const { service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ activityUnit: `${rlo}${'k'.repeat(100_000)}` })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      {
+        row: 2,
+        column: 'activityUnit',
+        code: 'invalid',
+        message: `activityUnit must be shorter than or equal to ${ACTIVITY_UNIT_MAX_LENGTH} characters`,
+      },
+    ]);
+  });
+
+  it('keeps a KNOWN unit padded past the cap out of every service below', async () => {
+    // What the cap actually buys. The vocabulary ACCEPTS this spelling —
+    // `canonicalUnit` collapses whitespace — so without the cap the row would
+    // be priced and written, with the padding stored verbatim and frozen into
+    // an immutable snapshot.
+    const { records, service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ activityUnit: `cubic${' '.repeat(40)}metres` })]),
+      DRY,
+    );
+
+    expect(report.accepted).toEqual([]);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+    expect(report.errors[0]).toMatchObject({
+      row: 2,
+      column: 'activityUnit',
+      code: 'invalid',
+    });
+  });
+
+  it('returns the file name by the audit row’s own rule', async () => {
+    // Only the audit copy was cleaned: the report returned a 417-character name
+    // carrying U+202E and U+0000 as it arrived.
+    const { audit, service } = build();
+    // A non-ASCII letter the rule keeps, in an English word: the cut counts
+    // code points, and a cedilla must survive both the cleaning and the cut.
+    const name = `Façade_${rlo}${nul}${zwsp}${'n'.repeat(300)}.csv`;
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row()], { originalname: name }),
+      DRY,
+    );
+
+    expect(report.fileName).toBe(`Façade_${'n'.repeat(248)}`);
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({
+      fileName: report.fileName,
+    });
+  });
+
+  it('gives every data row one outcome, so the row cap bounds the error count', async () => {
+    // What BULK_UPLOAD_MESSAGE_MAX_LENGTH's arithmetic rests on: a row is
+    // accepted, or refused once, however many things are wrong with it.
+    const { records, service } = build();
+    records.previewCreate.mockRejectedValueOnce(
+      new BadRequestException('"Q5" is not a valid period for a quarterly record.'),
+    );
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([
+        row({ periodValue: 'February' }),
+        row({ reportingYear: 'soon', activityValue: '1,2', category: 'Vibes' }),
+        row({ category: 'Vibes', activityUnit: 'furlongs' }),
+        row({ periodValue: 'March' }),
+        row({ periodValue: 'March' }),
+        row({ periodValue: 'April', varianceReason: '=1+1' }),
+      ]),
+      DRY,
+    );
+
+    const refused = report.errors.map((e) => e.row);
+    expect(refused).toEqual([2, 3, 4, 6]);
+    expect(report.accepted.map((a) => a.row)).toEqual([5, 7]);
+    expect(report.accepted.length + refused.length).toBe(report.totalRows);
+  });
+
+  it('keeps whole the longest sentences a row can be refused with', async () => {
+    // Pinned as a literal, because a bound derived from the constant under test
+    // passes however far it is widened; and checked against the sentences a
+    // tighter bound would cut.
+    expect(BULK_UPLOAD_MESSAGE_MAX_LENGTH).toBe(500);
+    const { service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ category: 'Vibes' })]),
+      DRY,
+    );
+
+    // The category refusal ends with the whole vocabulary.
+    expect(report.errors[0].message).toContain(CATEGORIES.join(', '));
+    for (const unit of ['standard_cubic_metres', 'normal_cubic_metres']) {
+      const reason = blockedUnitReason(unit) ?? '';
+      expect(reason).not.toBe('');
+      expect(Array.from(reason).length).toBeLessThanOrEqual(
+        BULK_UPLOAD_MESSAGE_MAX_LENGTH,
+      );
+    }
+  });
 });
 

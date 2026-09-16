@@ -70,18 +70,46 @@ const KEPT_FORMAT = new Set([
 const NAMED_ANYWAY = new Set([0x0022, 0x003c, 0x2026, 0x2800]);
 
 /**
+ * How much of one caller-supplied value a sentence may quote: units first
+ * (a character, or a whole marker), then the code points those units may add
+ * up to.
+ *
+ * Forty is the header refusal's fragment, and it is enough to recognise a
+ * value: a year, a figure, a unit or a period is a handful of characters, so a
+ * value longer than this is wrong already and the sentence only has to say
+ * which one it is. What the bound stops is multiplication. One XLSX shared
+ * string can back a cell on every row of a file, and every row's refusal quoted
+ * it whole: a 12,416-byte workbook came back as a 32,092,008-byte report
+ * (measured).
+ */
+export const CALLER_TEXT_QUOTE_MAX_LENGTH = 40;
+
+/**
+ * The same quote in code points, because a marker is one unit but tens of
+ * characters. It is what keeps the longest header refusal — five quoted cells,
+ * delimiters included — inside the 500 code points an audit row stores whole:
+ * bounded in units alone, a crafted header wrote a 1,479-code-point sentence of
+ * which the row kept 500, cutting a marker in half and storing a count of forty
+ * as four. `bulk-upload.service.spec.ts` pins that arithmetic.
+ */
+export const CALLER_TEXT_QUOTE_MAX_CODE_POINTS = 58;
+
+/**
  * The text to STORE. The bound counts KEPT code points, so padding a cell with
- * dropped characters cannot push its visible text out of an excerpt.
+ * dropped characters cannot push its visible text out of an excerpt. `cutMark`
+ * is appended only when the bound cut kept text: a log line marks its cut with
+ * `…`, the audit row asks for no mark at all.
  */
 export function sanitiseCallerText(
   value: string | undefined,
   max: number,
+  cutMark = '',
 ): string {
   const kept: string[] = [];
   // `for…of` walks code points; an unpaired surrogate arrives on its own.
   for (const char of value ?? '') {
     if (isDropped(char)) continue;
-    if (kept.length === max) break;
+    if (kept.length === max) return `${kept.join('')}${cutMark}`;
     kept.push(char);
   }
   return kept.join('');
@@ -89,7 +117,9 @@ export function sanitiseCallerText(
 
 /**
  * The text to QUOTE in a sentence: every character this cannot show is NAMED
- * where it stood, never removed without a trace.
+ * where it stood, never removed without a trace. Every sentence that repeats
+ * the caller's own text uses it — the header refusal, the row refusals, the
+ * unit and period messages — so one rule decides what any of them can say.
  *
  * A header is matched on its cell as written (trimmed), and that match is
  * strict (user decision, 2026-09-16), so a quote that simply dropped what it
@@ -122,8 +152,8 @@ export function sanitiseCallerText(
  */
 export function quoteCallerText(
   value: string | undefined,
-  maxUnits: number,
-  maxCodePoints: number,
+  maxUnits = CALLER_TEXT_QUOTE_MAX_LENGTH,
+  maxCodePoints = CALLER_TEXT_QUOTE_MAX_CODE_POINTS,
 ): string {
   const parts: string[] = [];
   const run = new Map<number, number>();

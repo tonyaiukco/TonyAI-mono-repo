@@ -25,6 +25,7 @@ import {
   VARIANCE_REFUSAL,
 } from '../activity-records/activity-records.service';
 import { AuditService } from '../audit/audit.service';
+import { BatchFailureLog } from '../common/batch-failure-log';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkSubmitActivityRecordsDto } from './dto/bulk-submit-activity-records.dto';
@@ -100,16 +101,29 @@ export class BulkSubmitService {
 
     const submitted: BulkSubmitAcceptedRecord[] = [];
     const failed: BulkSubmitIssue[] = [];
+    // Batch-scoped, never a field: see `BatchFailureLog`. One log line for the
+    // whole call instead of one per record that fails unexpectedly.
+    const unexpected = new BatchFailureLog('record');
     const { eligible, rejected } = await this.preflight(user, requestedIds);
     failed.push(...rejected);
 
-    for (const candidate of eligible) {
-      try {
-        submitted.push(
-          this.acceptedFrom(await this.records.submit(user, candidate.id)),
-        );
-      } catch (error) {
-        failed.push(this.toIssue(candidate.id, error));
+    // In a `finally`, because `toIssue` rethrows a role refusal: without it a
+    // batch that ended on one would take every unexpected failure before it
+    // out of the log, silently.
+    try {
+      for (const candidate of eligible) {
+        try {
+          submitted.push(
+            this.acceptedFrom(await this.records.submit(user, candidate.id)),
+          );
+        } catch (error) {
+          failed.push(this.toIssue(candidate.id, error, unexpected));
+        }
+      }
+    } finally {
+      const failures = unexpected.entry();
+      if (failures) {
+        this.logger.error(`bulk submit: ${failures.message}`, failures.trace);
       }
     }
 
@@ -274,7 +288,11 @@ export class BulkSubmitService {
    * fragments the thrower builds its sentences from — because getting it wrong
    * tells a user their evidence is missing when their period is closed.
    */
-  private toIssue(recordId: string, error: unknown): BulkSubmitIssue {
+  private toIssue(
+    recordId: string,
+    error: unknown,
+    unexpected: BatchFailureLog,
+  ): BulkSubmitIssue {
     if (error instanceof NotFoundException) {
       return {
         recordId,
@@ -293,7 +311,7 @@ export class BulkSubmitService {
       if (error.message === RESUBMIT_AUTHOR_REFUSAL) {
         return { recordId, code: 'not_author', message: RESUBMIT_AUTHOR_REFUSAL };
       }
-      return this.unexpected(recordId, error);
+      return this.unexpected(recordId, error, unexpected);
     }
     if (error instanceof ConflictException) {
       // The only Conflict `submit` raises is the period lock; anything else
@@ -301,7 +319,7 @@ export class BulkSubmitService {
       if (error.message.toLowerCase().includes('is locked')) {
         return { recordId, code: 'period_locked', message: error.message };
       }
-      return this.unexpected(recordId, error);
+      return this.unexpected(recordId, error, unexpected);
     }
     if (error instanceof BadRequestException) {
       // Against the thrower's own exported constants, never a retyped
@@ -317,15 +335,16 @@ export class BulkSubmitService {
       }
       return { recordId, code: 'not_submittable', message };
     }
-    return this.unexpected(recordId, error);
+    return this.unexpected(recordId, error, unexpected);
   }
 
   /** Never the raw error text — it can carry a query, a path or a column. */
-  private unexpected(recordId: string, error: unknown): BulkSubmitIssue {
-    this.logger.error(
-      `bulk submit of ${recordId} failed unexpectedly: ${String(error)}`,
-      error instanceof Error ? error.stack : undefined,
-    );
+  private unexpected(
+    recordId: string,
+    error: unknown,
+    log: BatchFailureLog,
+  ): BulkSubmitIssue {
+    log.add(recordId, error);
     return {
       recordId,
       code: 'unexpected',
