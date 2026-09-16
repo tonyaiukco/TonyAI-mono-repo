@@ -6,12 +6,20 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import type { CalculationResult } from '@tonyai/shared-types';
+import {
+  ACTIVITY_UNIT_MAX_LENGTH,
+  BULK_UPLOAD_MAX_ROWS,
+  BULK_UPLOAD_MESSAGE_MAX_LENGTH,
+  CATEGORIES,
+  type CalculationResult,
+} from '@tonyai/shared-types';
 import { BulkUploadService } from './bulk-upload.service';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import { AuditService } from '../audit/audit.service';
+import { blockedUnitReason } from '../calculations/normalization';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
+import { row as sheetRow, xlsx } from '../../test/xlsx';
 
 const HEADER =
   'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
@@ -1689,5 +1697,216 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       expect(report.errors[0]).toMatchObject({ row: 3, code: 'invalid' });
     },
   );
+});
+
+describe('BulkUploadService — what the report repeats back', () => {
+  // Built from code points, never typed: escape sequences typed into this repo
+  // have arrived in files as the literal, invisible character.
+  const nul = String.fromCharCode(0);
+  const rlo = String.fromCharCode(0x202e);
+  const zwsp = String.fromCharCode(0x200b);
+
+  it.each([
+    ['reportingYear', 'is not a whole year.'],
+    ['activityValue', 'is not a number. Use a plain figure with no thousands separator.'],
+  ])('quotes forty code points of a refused %s cell, cleaned', async (column, tail) => {
+    // The disguises lead the cell, so a cut taken before the cleaning would
+    // spend part of the quote on them.
+    const { service } = build();
+    const cell = `${rlo}${nul}${zwsp}${'9'.repeat(20)}${'x'.repeat(40_000)}`;
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ [column]: cell })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      {
+        row: 2,
+        column,
+        code: 'invalid',
+        message: `"${'9'.repeat(20)}${'x'.repeat(20)}…" ${tail}`,
+      },
+    ]);
+  });
+
+  it('stays small when one shared string backs a refused cell on every row', async () => {
+    // The measured shape: one 32,000-character string in the year cell of a
+    // thousand rows, with no entity id (a blank one passes the pre-flight).
+    // A 12,416-byte workbook came back as a 32,092,008-byte report.
+    const { service } = build();
+    const dataRows = Array.from(
+      { length: BULK_UPLOAD_MAX_ROWS },
+      (_, i) => `<row r="${i + 2}"><c r="C${i + 2}" t="s"><v>0</v></c></row>`,
+    );
+    const buffer = xlsx({
+      // `_x202E_` is how a workbook writes U+202E; the reader decodes it.
+      sharedStrings: [`<t>_x202E_${'Y'.repeat(32_000)}</t>`],
+      sheetData: [sheetRow(1, HEADER.split(',')), ...dataRows].join(''),
+    });
+    const file = {
+      originalname: 'history.xlsx',
+      mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      size: buffer.length,
+      buffer,
+    } as Express.Multer.File;
+
+    const report = await service.import(dataEntry(), file, DRY);
+
+    const message = `"${'Y'.repeat(40)}…" is not a whole year.`;
+    expect(report.errors).toHaveLength(BULK_UPLOAD_MAX_ROWS);
+    expect(report.errors.filter((e) => e.message !== message)).toEqual([]);
+    expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(200_000);
+  });
+
+  it.each([
+    [
+      'a refusal passed through from the record service',
+      () => new BadRequestException(`${rlo}${'x'.repeat(10_000)}`),
+      'invalid',
+      `${'x'.repeat(BULK_UPLOAD_MESSAGE_MAX_LENGTH)}…`,
+    ],
+    [
+      'a missing factor, still classified by its RAW text',
+      // The words the classifier looks for sit past the bound: bounded before
+      // it read them, this row would be reported as an access problem.
+      () => new NotFoundException(`${'z'.repeat(600)} emission factor ${nul}`),
+      'no_factor',
+      `${'z'.repeat(BULK_UPLOAD_MESSAGE_MAX_LENGTH)}…`,
+    ],
+    [
+      'a closed period, still told apart from a taken slot',
+      () => new ConflictException(`${nul}${'p'.repeat(10_000)}`),
+      'period_locked',
+      `${'p'.repeat(BULK_UPLOAD_MESSAGE_MAX_LENGTH)}…`,
+    ],
+  ])('bounds and cleans %s', async (_label, error, code, message) => {
+    const { records, service } = build();
+    records.previewCreate.mockRejectedValueOnce(error());
+
+    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+
+    expect(report.errors).toEqual([{ row: 2, column: null, code, message }]);
+  });
+
+  it('answers a huge unit cell with the cap’s own sentence, which quotes nothing', async () => {
+    // `@MaxLength` is the bottom decorator, so class-validator registers it
+    // first and the report publishes ITS sentence. The vocabulary's quoted one
+    // — which used to come back 100,053 characters long — is built either way,
+    // because every constraint on a property is evaluated. Pinned as the whole
+    // issue: swapping the two decorators, or taking the last constraint
+    // instead of the first, changes what a user reads and nothing else caught
+    // it.
+    const { service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ activityUnit: `${rlo}${'k'.repeat(100_000)}` })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      {
+        row: 2,
+        column: 'activityUnit',
+        code: 'invalid',
+        message: `activityUnit must be shorter than or equal to ${ACTIVITY_UNIT_MAX_LENGTH} characters`,
+      },
+    ]);
+  });
+
+  it('keeps a KNOWN unit padded past the cap out of every service below', async () => {
+    // What the cap actually buys. The vocabulary ACCEPTS this spelling —
+    // `canonicalUnit` collapses whitespace — so without the cap the row would
+    // be priced and written, with the padding stored verbatim and frozen into
+    // an immutable snapshot.
+    const { records, service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ activityUnit: `cubic${' '.repeat(40)}metres` })]),
+      DRY,
+    );
+
+    expect(report.accepted).toEqual([]);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+    expect(report.errors[0]).toMatchObject({
+      row: 2,
+      column: 'activityUnit',
+      code: 'invalid',
+    });
+  });
+
+  it('returns the file name by the audit row’s own rule', async () => {
+    // Only the audit copy was cleaned: the report returned a 417-character name
+    // carrying U+202E and U+0000 as it arrived.
+    const { audit, service } = build();
+    // A non-ASCII letter the rule keeps, in an English word: the cut counts
+    // code points, and a cedilla must survive both the cleaning and the cut.
+    const name = `Façade_${rlo}${nul}${zwsp}${'n'.repeat(300)}.csv`;
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row()], { originalname: name }),
+      DRY,
+    );
+
+    expect(report.fileName).toBe(`Façade_${'n'.repeat(248)}`);
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({
+      fileName: report.fileName,
+    });
+  });
+
+  it('gives every data row one outcome, so the row cap bounds the error count', async () => {
+    // What BULK_UPLOAD_MESSAGE_MAX_LENGTH's arithmetic rests on: a row is
+    // accepted, or refused once, however many things are wrong with it.
+    const { records, service } = build();
+    records.previewCreate.mockRejectedValueOnce(
+      new BadRequestException('"Q5" is not a valid period for a quarterly record.'),
+    );
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([
+        row({ periodValue: 'February' }),
+        row({ reportingYear: 'soon', activityValue: '1,2', category: 'Vibes' }),
+        row({ category: 'Vibes', activityUnit: 'furlongs' }),
+        row({ periodValue: 'March' }),
+        row({ periodValue: 'March' }),
+        row({ periodValue: 'April', varianceReason: '=1+1' }),
+      ]),
+      DRY,
+    );
+
+    const refused = report.errors.map((e) => e.row);
+    expect(refused).toEqual([2, 3, 4, 6]);
+    expect(report.accepted.map((a) => a.row)).toEqual([5, 7]);
+    expect(report.accepted.length + refused.length).toBe(report.totalRows);
+  });
+
+  it('keeps whole the longest sentences a row can be refused with', async () => {
+    // Pinned as a literal, because a bound derived from the constant under test
+    // passes however far it is widened; and checked against the sentences a
+    // tighter bound would cut.
+    expect(BULK_UPLOAD_MESSAGE_MAX_LENGTH).toBe(500);
+    const { service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ category: 'Vibes' })]),
+      DRY,
+    );
+
+    // The category refusal ends with the whole vocabulary.
+    expect(report.errors[0].message).toContain(CATEGORIES.join(', '));
+    for (const unit of ['standard_cubic_metres', 'normal_cubic_metres']) {
+      const reason = blockedUnitReason(unit) ?? '';
+      expect(reason).not.toBe('');
+      expect(Array.from(reason).length).toBeLessThanOrEqual(
+        BULK_UPLOAD_MESSAGE_MAX_LENGTH,
+      );
+    }
+  });
 });
 
