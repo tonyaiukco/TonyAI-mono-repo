@@ -11,6 +11,14 @@ import { quoteCallerText } from '../common/caller-text';
 import { readFirstWorksheet, type MergedRange } from './xlsx-reader';
 
 /**
+ * How many of a refused header's cells the sentence quotes. Each one is
+ * bounded by `quoteCallerText`'s own two bounds, and delimited, which is what
+ * keeps the longest possible refusal inside the code points an audit row
+ * stores whole (`bulk-upload.service.spec.ts` pins that arithmetic).
+ */
+export const QUOTED_FRAGMENTS = 5;
+
+/**
  * One data row as it came out of the file: every cell a string, keyed by the
  * canonical column name, plus the line number the user sees in their editor.
  *
@@ -68,12 +76,26 @@ function mapHeader(header: readonly string[]): (BulkUploadColumn | null)[] {
     // Bounded, because this sentence is echoed into the response AND into the
     // audit row's `reason`: a 2 MiB header row was stored there whole (a
     // 1,960,160-character reason, measured) in a table with no delete path.
-    // And cleaned, by the audit row's own rule, because the import panel
-    // renders the response too: a U+202E in a header cell reverses everything
-    // after it. Cleaning comes before the cut, so dropped characters cannot
-    // use up a fragment's bound. The row refusals quote cells by the same rule.
-    const shown = unknown.slice(0, 5).map((h) => quoteCallerText(h));
-    const more = unknown.length > 5 ? ` (+${unknown.length - 5} more)` : '';
+    // And quoted by the audit row's own rule, because the import panel renders
+    // the response too: a U+202E in a header cell reverses everything after
+    // it. The lookup above runs on the cell as written (trimmed), so the quote
+    // NAMES each character it cannot show — `category<U+200B>` — instead of
+    // reading as a column the file got right, and a run of them is one marker,
+    // so padding cannot use up a fragment's units. The row refusals quote
+    // cells by the same rule.
+    //
+    // Each cell is DELIMITED as well as quoted, because the sentence has
+    // syntax of its own: undelimited, a header cell reading
+    // `activityValue, category` made the refusal name two columns the file had
+    // got right, and that sentence is stored as evidence in an append-only
+    // table. `quoteCallerText` names the delimiter, so a cell cannot close one.
+    const shown = unknown
+      .slice(0, QUOTED_FRAGMENTS)
+      .map((h) => `"${quoteCallerText(h)}"`);
+    const more =
+      unknown.length > QUOTED_FRAGMENTS
+        ? ` (+${unknown.length - QUOTED_FRAGMENTS} more)`
+        : '';
     throw new BadRequestException(
       `Unrecognised column(s): ${shown.join(', ')}${more}. Expected: ${BULK_UPLOAD_COLUMNS.join(', ')}.`,
     );

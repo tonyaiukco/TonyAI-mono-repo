@@ -10,11 +10,17 @@ import {
 import {
   ACTIVITY_UNIT_MAX_LENGTH,
   BULK_UPLOAD_MAX_ROWS,
+  BULK_UPLOAD_MAX_SIZE_BYTES,
   BULK_UPLOAD_MESSAGE_MAX_LENGTH,
   CATEGORIES,
   type CalculationResult,
 } from '@tonyai/shared-types';
-import { BulkUploadService } from './bulk-upload.service';
+import {
+  AUDIT_REASON_MAX_LENGTH,
+  BulkUploadService,
+} from './bulk-upload.service';
+import { QUOTED_FRAGMENTS } from './parse-rows';
+import { CALLER_TEXT_QUOTE_MAX_CODE_POINTS } from '../common/caller-text';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import { AuditService } from '../audit/audit.service';
 import { blockedUnitReason } from '../calculations/normalization';
@@ -1731,7 +1737,8 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     );
 
     const { reason } = audit.record.mock.calls[0][1].diff as { reason: string };
-    expect(reason).toContain('Unrecognised column(s): badcol.');
+    // The quote names the NUL, so the row records what the header carried.
+    expect(reason).toContain('Unrecognised column(s): "bad<U+0000>col".');
     expect(reason).not.toContain('\u0000');
   });
 
@@ -1769,6 +1776,83 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
 
     expect(audit.record.mock.calls[0][1].diff).toMatchObject({
       fileName: 'invoice_fdp.csv',
+    });
+  });
+
+  it('refuses with a sentence the audit row stores whole', async () => {
+    // A marker is one unit but many code points. Bounded in units alone, this
+    // file's six unknown cells wrote a 1,479-code-point refusal of which the
+    // row kept 500, cutting a marker in half: the stored sentence ended
+    // `a<U+20`, a label that reads as a space. The same cut stores `x40` as
+    // `x4` — a wrong count, in a table with no correction path.
+    const { audit, service } = build();
+    const cell = `a${String.fromCodePoint(0x2063).repeat(40)}`.repeat(20);
+    const header = `${HEADER},${[cell, cell, cell, cell, cell, 'x'].join(',')}`;
+    const file = {
+      ...csvFile([]),
+      buffer: Buffer.from([header, row()].join('\n')),
+    } as Express.Multer.File;
+
+    const error = await service.import(dataEntry(), file, DRY).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    const { reason } = audit.record.mock.calls[0][1].diff as { reason: string };
+    expect(reason).toBe((error as Error).message);
+  });
+
+  it('cannot build a refusal longer than the audit row keeps', async () => {
+    // Derived from the sentence `mapHeader` really throws, not from a copy of
+    // its template: every quoted cell at its code-point bound, and then the
+    // largest "(+N more)" a header row can carry — an unknown cell costs at
+    // least two bytes, so a file cannot name more cells than half its size.
+    // Widening a bound, adding a column or rewording the sentence fails here,
+    // rather than silently cutting an append-only row.
+    const { service } = build();
+    const cell = `aaa${String.fromCodePoint(0x200b)}`.repeat(6);
+    const header = `${HEADER},${[
+      ...Array.from({ length: QUOTED_FRAGMENTS }, () => cell),
+      'x',
+    ].join(',')}`;
+    const file = {
+      ...csvFile([]),
+      buffer: Buffer.from([header, row()].join('\n')),
+    } as Express.Multer.File;
+
+    const error = await service.import(dataEntry(), file, DRY).catch((e: unknown) => e);
+
+    const message = (error as Error).message;
+    const fragment = `${'aaa<U+200B>'.repeat(5)}aaa…`;
+    // A worst case only if every quote is as long as its bound allows.
+    expect([...fragment].length).toBe(CALLER_TEXT_QUOTE_MAX_CODE_POINTS + 1);
+    expect(message).toContain(`"${fragment}", "${fragment}"`);
+    const digits = String(Math.floor(BULK_UPLOAD_MAX_SIZE_BYTES / 2)).length;
+    const longest = message.replace(' (+1 more)', ` (+${'9'.repeat(digits)} more)`);
+
+    expect([...longest].length).toBeLessThanOrEqual(AUDIT_REASON_MAX_LENGTH);
+    // And with room to spare, deliberately. The ceiling is 490 at a 58
+    // code-point quote, 495 at 59 and exactly 500 at 60 — so a bound raised to
+    // 60 would pass the line above while leaving nothing for a reworded
+    // sentence or a tenth column.
+    expect(AUDIT_REASON_MAX_LENGTH - [...longest].length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('drops every format character from the file name, and names none of them', async () => {
+    // A name is stored, not quoted: markers belong to a refusal's sentence.
+    // An invisible operator, a tag character and U+2028 all passed the old
+    // rule.
+    const { audit, service } = build();
+    const hidden = [0x2063, 0xe0041, 0x2028]
+      .map((code) => String.fromCodePoint(code))
+      .join('');
+
+    await service.import(
+      dataEntry(),
+      csvFile([row()], { originalname: `invoice${hidden}.csv` }),
+      DRY,
+    );
+
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({
+      fileName: 'invoice.csv',
     });
   });
 
@@ -1889,9 +1973,10 @@ describe('BulkUploadService — what the report repeats back', () => {
   it.each([
     ['reportingYear', 'is not a whole year.'],
     ['activityValue', 'is not a number. Use a plain figure with no thousands separator.'],
-  ])('quotes forty code points of a refused %s cell, cleaned', async (column, tail) => {
-    // The disguises lead the cell, so a cut taken before the cleaning would
-    // spend part of the quote on them.
+  ])('quotes a refused %s cell, naming what it cannot show', async (column, tail) => {
+    // The disguises lead the cell. Named, they cost the quote one marker and
+    // the value still shows; dropped in silence, the sentence refused a value
+    // it then printed as though nothing were wrong with it.
     const { service } = build();
     const cell = `${rlo}${nul}${zwsp}${'9'.repeat(20)}${'x'.repeat(40_000)}`;
 
@@ -1906,7 +1991,7 @@ describe('BulkUploadService — what the report repeats back', () => {
         row: 2,
         column,
         code: 'invalid',
-        message: `"${'9'.repeat(20)}${'x'.repeat(20)}…" ${tail}`,
+        message: `"<U+202E U+0000 U+200B>${'9'.repeat(20)}${'x'.repeat(16)}…" ${tail}`,
       },
     ]);
   });
@@ -1934,7 +2019,7 @@ describe('BulkUploadService — what the report repeats back', () => {
 
     const report = await service.import(dataEntry(), file, DRY);
 
-    const message = `"${'Y'.repeat(40)}…" is not a whole year.`;
+    const message = `"<U+202E>${'Y'.repeat(39)}…" is not a whole year.`;
     expect(report.errors).toHaveLength(BULK_UPLOAD_MAX_ROWS);
     expect(report.errors.filter((e) => e.message !== message)).toEqual([]);
     expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(200_000);

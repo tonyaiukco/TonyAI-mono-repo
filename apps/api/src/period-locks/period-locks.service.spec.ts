@@ -129,7 +129,7 @@ describe('PeriodLocksService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('quotes the value it refuses, cleaned and bounded', async () => {
+  it('quotes the value it refuses, naming what it cannot show', async () => {
     // The same rule as the record path's twin of this sentence: the DTO caps
     // the value at 32, but a U+202E in it reverses the rest of the toast that
     // shows it. Built from a code point, never typed.
@@ -140,7 +140,7 @@ describe('PeriodLocksService', () => {
         ...CREATE_DTO,
         periodValue: `Quarter${rlo}${'x'.repeat(60)}`,
       }),
-    ).rejects.toThrow(`"Quarter${'x'.repeat(33)}…" is not a valid period`);
+    ).rejects.toThrow(`"Quarter<U+202E>${'x'.repeat(32)}…" is not a valid period`);
   });
 
   it('canonicalises the periodValue before it looks anything up', async () => {

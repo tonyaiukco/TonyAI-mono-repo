@@ -24,6 +24,8 @@ const csv = (...lines: string[]) => Buffer.from([HEADER, ...lines].join('\n'));
 const NUL = String.fromCharCode(0x0000);
 const RLO = String.fromCharCode(0x202e);
 const ZWSP = String.fromCharCode(0x200b);
+const INVISIBLE_SEPARATOR = String.fromCharCode(0x2063);
+const ZWJ = String.fromCharCode(0x200d);
 
 describe('strictNumber', () => {
   it.each([
@@ -215,48 +217,112 @@ describe('parseRows — CSV', () => {
     );
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): ${'x'.repeat(40)}…, b, c, d, e (+2 more). Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "${'x'.repeat(40)}…", "b", "c", "d", "e" (+2 more). Expected: ${HEADER.split(',').join(', ')}.`,
     );
   });
 
-  it('cleans the header text it echoes back', async () => {
+  it('names the characters in a header cell it will not echo', async () => {
     // The sentence is also the 400 the import panel renders, where a U+202E
-    // reverses everything after it.
+    // reverses everything after it — so each one is named, never shown.
     const header = `${HEADER},t${NUL}co${RLO}2${ZWSP}e`;
     const error = await parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv').catch(
       (e: unknown) => e,
     );
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): tco2e. Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "t<U+0000>co<U+202E>2<U+200B>e". Expected: ${HEADER.split(',').join(', ')}.`,
     );
   });
 
-  it('cleans before it cuts, so padding it drops cannot hide the name', async () => {
-    // Cut first, forty zero-width spaces would fill the excerpt, and the user
-    // would be shown a bare `…` in place of the column's name.
-    const header = `${HEADER},${ZWSP.repeat(40)}tco2e`;
+  it.each([
+    ['zero-width spaces', ZWSP, '<U+200B x40>'],
+    ['invisible separators, which the rule let through until 2026-09-16', INVISIBLE_SEPARATOR, '<U+2063 x40>'],
+    ['zero-width joiners, which are kept in storage but never shown', ZWJ, '<U+200D x40>'],
+  ])('writes forty %s as one marker, so padding cannot hide the name', async (_case, pad, marker) => {
+    // Counted one by one, forty of them fill the excerpt and leave a bare `…`;
+    // dropped without a trace, they vanish from the sentence refusing the cell.
+    const header = `${HEADER},${pad.repeat(40)}tco2e`;
     const error = await parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv').catch(
       (e: unknown) => e,
     );
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): tco2e. Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "${marker}tco2e". Expected: ${HEADER.split(',').join(', ')}.`,
     );
   });
 
   it.each([
-    ['a column name with a zero-width space in it', HEADER.replace('category', `category${ZWSP}`)],
-    ['a header cell holding nothing but a zero-width space', `${HEADER},${ZWSP}`],
-  ])('still refuses %s — the sentence is cleaned, never the match', async (_case, header) => {
-    // Matched on cleaned text, the first would import as `category` and the
-    // second would count as a blank cell: files the header refuses today
-    // would quietly be accepted.
+    [
+      'a column name with a zero-width space in it',
+      HEADER.replace('category', `category${ZWSP}`),
+      'category<U+200B>',
+    ],
+    ['a header cell holding nothing but a zero-width space', `${HEADER},${ZWSP}`, '<U+200B>'],
+  ])('still refuses %s, and names the character that sets it apart', async (_case, header, quoted) => {
+    // The match stays on the raw cell (user decision, 2026-09-16): matched on
+    // cleaned text, the first would import as `category` and the second would
+    // count as a blank cell. Quoted cleaned, the first read "Unrecognised
+    // column(s): category. Expected: …, category, …" and the second quoted
+    // nothing at all.
     const error = await parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv').catch(
       (e: unknown) => e,
     );
     expect(error).toBeInstanceOf(BadRequestException);
-    expect((error as Error).message).toMatch(/^Unrecognised column\(s\): /);
+    expect((error as Error).message).toBe(
+      `Unrecognised column(s): "${quoted}". Expected: ${HEADER.split(',').join(', ')}.`,
+    );
+  });
+
+  it('delimits every quoted cell, so a header cannot forge the sentence', async () => {
+    // Undelimited, this cell made the refusal name two columns the file had
+    // got right — and the sentence is stored as evidence in an append-only
+    // table. The delimiter itself is named when a cell contains one.
+    const header = `${HEADER},"activityValue, category","a""b"`;
+    const error = await parseRows(
+      Buffer.from([header, ROW].join('\n')),
+      'x.csv',
+    ).catch((e: unknown) => e);
+    const message = (error as Error).message;
+    expect(message).toBe(
+      `Unrecognised column(s): "activityValue, category", "a<U+0022>b". Expected: ${HEADER.split(',').join(', ')}.`,
+    );
+    expect(message).not.toContain(': activityValue, category.');
+  });
+
+  it('bounds a quote in units and in code points, and not the other way round', async () => {
+    // Most cells quote identically whichever bound is which. This one does
+    // not: 40 units with 58 code points keeps three markers, 58 units with 40
+    // code points only two.
+    const cell = `${'ab'.repeat(3)}${ZWSP.repeat(9)}`.repeat(4) + 'z'.repeat(20);
+    const error = await parseRows(
+      Buffer.from([`${HEADER},${cell}`, ROW].join('\n')),
+      'x.csv',
+    ).catch((e: unknown) => e);
+    expect((error as Error).message).toBe(
+      `Unrecognised column(s): "${'ababab<U+200B x9>'.repeat(3)}ababab…". Expected: ${HEADER.split(',').join(', ')}.`,
+    );
+  });
+
+  it('matches a column whose cell has invisible edges, and quotes the trimmed cell', async () => {
+    // `trim()` takes U+FEFF, NBSP and U+2028 off a cell's edges before the
+    // lookup, which is what lets this product's own BOM-prefixed export be
+    // re-imported. Quoted raw, an unknown cell would name characters the match
+    // never saw.
+    const edge = (text: string) =>
+      `${String.fromCharCode(0xfeff)}${String.fromCharCode(0xa0)}${text}${String.fromCharCode(0x2028)}`;
+    const rows = await parseRows(
+      Buffer.from([HEADER.replace('category', edge('category')), ROW].join('\n')),
+      'x.csv',
+    );
+    expect(rows[0].cells.category).toBe('Electricity');
+
+    const error = await parseRows(
+      Buffer.from([`${HEADER},${edge('tco2e')}`, ROW].join('\n')),
+      'x.csv',
+    ).catch((e: unknown) => e);
+    expect((error as Error).message).toBe(
+      `Unrecognised column(s): "tco2e". Expected: ${HEADER.split(',').join(', ')}.`,
+    );
   });
 
   it('refuses a missing required column, naming it', async () => {
@@ -386,17 +452,28 @@ describe('parseRows — XLSX', () => {
     return (error as Error).message;
   };
 
-  it('cleans the header text it echoes back', async () => {
+  it('names the characters in a header cell it will not echo', async () => {
     // The NUL is written as `_x0000_`, SpreadsheetML's escape for a character
     // XML cannot carry, which the reader decodes. A literal one never reaches
-    // the reader: exceljs's writer drops it, and this test would still pass
-    // with NUL no longer dropped.
+    // the reader — exceljs's writer drops it — so there would be no NUL to
+    // name.
     const buffer = await workbookBuffer([
       [...HEADER.split(','), `t_x0000_co${RLO}2${ZWSP}e`],
       ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', 'x'],
     ]);
     expect(await refusal(buffer)).toBe(
-      `Unrecognised column(s): tco2e. Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "t<U+0000>co<U+202E>2<U+200B>e". Expected: ${HEADER.split(',').join(', ')}.`,
+    );
+  });
+
+  it('reads two halves that pair as one character, and names halves that do not', async () => {
+    // `_xHHHH_` carries UTF-16 code units, so a file can write either.
+    const buffer = await workbookBuffer([
+      [...HEADER.split(','), 't_xD83D__xDE00_', 'u_xDE00__xD83D_'],
+      ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', 'x', 'y'],
+    ]);
+    expect(await refusal(buffer)).toBe(
+      `Unrecognised column(s): "t${String.fromCodePoint(0x1f600)}", "u<U+DE00 U+D83D>". Expected: ${HEADER.split(',').join(', ')}.`,
     );
   });
 
