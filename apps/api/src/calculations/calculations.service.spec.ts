@@ -459,12 +459,14 @@ describe('CalculationsService.compute', () => {
     expect(message.length).toBeLessThan(200);
   });
 
-  it('drops the characters that disguise a value in that sentence', async () => {
+  it('names the characters that disguise a value in that sentence', async () => {
     prisma.emissionFactor.findFirst.mockResolvedValue(null);
 
     // Built from code points rather than written literally: a literal would be
     // a real invisible character sitting in this file. U+202E is the
-    // right-to-left override, U+200B the zero-width space.
+    // right-to-left override, U+200B the zero-width space. Neither survives
+    // into the sentence, and neither vanishes from it either — a refusal that
+    // cannot show a character says which one it was.
     const override = String.fromCharCode(0x202e);
     const zeroWidth = String.fromCharCode(0x200b);
 
@@ -481,8 +483,8 @@ describe('CalculationsService.compute', () => {
         (error: Error) => error.message,
       );
 
-    expect(message).toContain('category "Electricity"');
-    expect(message).toContain('geography "UK"');
+    expect(message).toContain('category "Electricity<U+202E>"');
+    expect(message).toContain('geography "U<U+200B>K"');
     expect(message).not.toContain(override);
     expect(message).not.toContain(zeroWidth);
   });

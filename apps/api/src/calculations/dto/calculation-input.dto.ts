@@ -18,7 +18,11 @@ import { IsActivityUnit } from '../is-activity-unit.decorator';
 
 /**
  * Body of POST /api/v1/calculations/preview.
- * Mirrors CalculationInput in @tonyai/shared-types.
+ *
+ * Mirrors `CalculationInput` in @tonyai/shared-types and narrows it: that
+ * interface still declares `category` and `geographyCode` as `string`, because
+ * `compute`'s other caller passes values read from database rows. The
+ * vocabularies are enforced here, at the one door a request body comes through.
  *
  * Preview refuses what save refuses. Every field here is looked up against the
  * factor table, and `category` and `geographyCode` were `@IsString()` alone:
@@ -28,6 +32,14 @@ import { IsActivityUnit } from '../is-activity-unit.decorator';
  * that took those vocabularies on trust was this one — the same value could be
  * previewed and then rejected on save, which is the mismatch a preview exists
  * to prevent.
+ *
+ * ONE CASE RUNS THE OTHER WAY, worth knowing before someone "fixes" it: a save
+ * does not bind this DTO at all — `ActivityRecordsService` derives the
+ * geography from the subsidiary or location row — so a STORED code outside the
+ * vocabulary would now be refused by preview while the save still succeeded.
+ * No such row exists: every write to those columns is behind the same `@IsIn`,
+ * and neither vocabulary has ever been narrowed. The old behaviour there was a
+ * 404 in any case, since no factor is seeded for a code outside the list.
  */
 export class CalculationInputDto {
   @IsString()

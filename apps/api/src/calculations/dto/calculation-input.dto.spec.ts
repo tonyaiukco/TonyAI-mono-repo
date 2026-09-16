@@ -33,7 +33,13 @@ const VALID: Record<string, unknown> = {
   unit: 'kWh',
 };
 
-/** The options `main.ts` actually installs on the global ValidationPipe. */
+/**
+ * The two `ValidatorOptions` from the global pipe in `main.ts`. Its third
+ * option, `transform`, belongs to the pipe rather than to the validator and is
+ * installed with no `transformOptions`, so implicit conversion is off and
+ * `plainToInstance` here behaves as the pipe's own does — verified: a string
+ * `reportingYear` errors under both.
+ */
 const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true };
 
 function parse(body: Record<string, unknown>) {
@@ -63,6 +69,25 @@ describe('the cap has the value it claims', () => {
 describe('CalculationInputDto', () => {
   it('accepts the body the Data Entry page sends', () => {
     expect(parse({}).errors).toHaveLength(0);
+  });
+
+  it('requires every field, so none can arrive undefined', () => {
+    // Not a spare case. `findFactor` passes these straight into Prisma's
+    // `where`, and Prisma reads an `undefined` key as FILTER ABSENT — an
+    // undefined category would match the newest factor of ANY category and
+    // return a confident preview computed from the wrong one. Nothing today
+    // makes a field optional; this is what would notice if something did.
+    const errors = validateSync(
+      plainToInstance(CalculationInputDto, {}) as object,
+      PIPE_OPTIONS,
+    );
+    expect(errors.map((e) => e.property).sort()).toEqual([
+      'category',
+      'geographyCode',
+      'reportingYear',
+      'unit',
+      'value',
+    ]);
   });
 
   it('refuses an unknown field, as the real pipe does', () => {
@@ -155,6 +180,14 @@ describe('CalculationInputDto — unit', () => {
     ).toEqual(['maxLength']);
   });
 
+  it('refuses an unknown unit that fits the cap', () => {
+    // The complement of the case above: at exactly the cap, the vocabulary is
+    // what refuses, so neither check is standing in for the other.
+    expect(
+      constraintsOn({ unit: 'furlongs'.padEnd(ACTIVITY_UNIT_MAX_LENGTH) }, 'unit'),
+    ).toEqual(['isActivityUnit']);
+  });
+
   it('refuses an empty unit', () => {
     // The cap bounds the other end; it must not have displaced `@MinLength(1)`.
     expect(constraintsOn({ unit: '' }, 'unit')).toContain('minLength');
@@ -179,7 +212,18 @@ describe('CalculationInputDto — the fields that were already bounded', () => {
     );
   });
 
-  it('refuses a negative activity value', () => {
+  it('refuses a negative activity value, and accepts a zero one', () => {
     expect(constraintsOn({ value: -1 }, 'value')).toContain('min');
+    // Both halves, because zero is a real reading — a closed site, a month
+    // with no fuel bought — and the save DTO takes it. Asserting only the
+    // refusal let `@Min(0)` become `@Min(1)` unnoticed, which is precisely the
+    // preview/save divergence this file exists to rule out.
+    expect(parse({ value: 0 }).errors).toHaveLength(0);
+  });
+
+  it('refuses a fractional reporting year', () => {
+    expect(constraintsOn({ reportingYear: 2024.5 }, 'reportingYear')).toContain(
+      'isInt',
+    );
   });
 });

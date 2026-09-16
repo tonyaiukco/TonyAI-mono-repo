@@ -188,6 +188,12 @@ export class CalculationsService {
         inputValue: input.value,
         inputUnit: input.unit,
         reasonCode: 'no_emission_factor',
+        // Raw here, deliberately, unlike the refusal above. This is a STORED
+        // value, not a sentence shown once: the identical raw `geographyCode`
+        // is frozen into the field a few lines up, so quoting only the prose
+        // would be theatre — and would leave an immutable record whose
+        // sentence disagrees with its own machine-readable fields. A second
+        // layer, if one is ever wanted, belongs on the column.
         reason:
           `No emission factor is available for "${input.category}" (${input.geographyCode}, ${input.reportingYear}), ` +
           `so no tCO₂e figure is produced. The entry is still recorded because this category is tracked ` +
