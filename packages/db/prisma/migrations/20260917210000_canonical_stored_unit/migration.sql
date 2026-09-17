@@ -13,9 +13,15 @@
 -- snapshot, as every migration is.
 --
 -- The key is built the way the engine builds its lookup key: trim, collapse
--- whitespace to `_`, lowercase. Postgres's `\s` does not include NBSP, U+2028,
--- U+2029 or U+FEFF, which JavaScript's does, so those are mapped to spaces
--- first — a row stored before #121 could carry them.
+-- whitespace to `_`, lowercase. Postgres's `\s` (measured on 17.6, ICU) does
+-- not include U+FEFF, which JavaScript's does, so it is mapped to a space
+-- first; NBSP, U+2028 and U+2029 are mapped alongside it as belt-and-braces —
+-- a row stored before #121 could carry any of them. The other direction is a
+-- strict superset: Postgres's `\s` also matches U+0085 (NEL), which
+-- JavaScript's does not, so the SQL would fold `kw<NEL>h` onto `kWh` where the
+-- API refuses it as unknown. Harmless — no API path could ever have stored it.
+-- `apps/api/src/calculations/storable-unit.spec.ts` pins this table to
+-- `storedUnit`, pair for pair.
 --
 -- `calculation` (the immutable snapshot, incl. `inputUnit`) is untouched, and
 -- `updated_at` is left alone: this is a spelling, not an edit, and no user can

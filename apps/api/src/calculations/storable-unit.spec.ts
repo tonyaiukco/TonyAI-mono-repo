@@ -1,7 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ACTIVITY_UNITS } from '@tonyai/shared-types';
 import { storableUnit, storedUnit } from './storable-unit';
-import { canonicalUnit, isKnownUnit } from './normalization';
+import {
+  UNIT_ALIAS_SPELLINGS,
+  canonicalUnit,
+  isKnownUnit,
+} from './normalization';
 
 describe('storedUnit — the spelling the column stores', () => {
   it('resolves every alias spelling to the vocabulary value', () => {
@@ -68,6 +74,11 @@ describe('storedUnit — the spelling the column stores', () => {
     expect(storedUnit('kilowatt  hours')).toBe('kilowatt hours');
     expect(storedUnit('  furlongs ')).toBe('furlongs');
     expect(storedUnit(storedUnit('kilowatt hours'))).toBe('kilowatt hours');
+    // Case included: the message must quote what was typed, not a lowercased
+    // version of it (a review mutant that lowercased the fallback survived
+    // the lowercase-only cases above).
+    expect(storedUnit('Furlongs')).toBe('Furlongs');
+    expect(storedUnit('Kilowatt Hours')).toBe('Kilowatt Hours');
   });
 
   it('closes the KELVIN SIGN homoglyph: the stored token is the resolved one', () => {
@@ -88,5 +99,48 @@ describe('storableUnit — the DTO transform is whitespace only', () => {
   it('passes a non-string through untouched for the validators to refuse', () => {
     expect(storableUnit({ value: 42 })).toBe(42);
     expect(storableUnit({ value: undefined })).toBeUndefined();
+  });
+});
+
+describe('the data migration mirrors storedUnit', () => {
+  // `20260917210000_canonical_stored_unit` canonicalises rows stored before
+  // the rule with a hand-written VALUES table. It is a frozen snapshot, as
+  // every migration is, so this pins it to the function it mirrors: every
+  // (alias_key, stored) pair the SQL carries is what `storedUnit` says, and
+  // every spelling the engine knows is in the SQL. If the vocabulary grows,
+  // a NEW migration is the answer, not an edit to this one — but the day
+  // that happens this test says so instead of letting the two drift.
+  const sql = readFileSync(
+    resolve(
+      __dirname,
+      '../../../../packages/db/prisma/migrations/20260917210000_canonical_stored_unit/migration.sql',
+    ),
+    'utf8',
+  );
+  const pairs = [...sql.matchAll(/\('([^']+)',\s*'([^']+)'\)/g)].map(([, key, stored]) => ({
+    key,
+    stored,
+  }));
+  const cleanUnitToken = (unit: string) => unit.trim().toLowerCase().replace(/\s+/g, '_');
+
+  it('every SQL pair is what storedUnit stores for that key', () => {
+    expect(pairs.length).toBeGreaterThan(30);
+    for (const { key, stored } of pairs) {
+      expect(storedUnit(key)).toBe(stored);
+    }
+  });
+
+  it('every alias the engine knows, and every vocabulary value, is in the SQL', () => {
+    const keys = new Set(pairs.map((p) => p.key));
+    for (const spelling of Object.keys(UNIT_ALIAS_SPELLINGS)) {
+      expect(keys.has(cleanUnitToken(spelling))).toBe(true);
+    }
+    for (const { value } of ACTIVITY_UNITS) {
+      expect(keys.has(value.toLowerCase())).toBe(true);
+    }
+  });
+
+  it('has no duplicate key', () => {
+    expect(new Set(pairs.map((p) => p.key)).size).toBe(pairs.length);
   });
 });

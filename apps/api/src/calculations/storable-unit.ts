@@ -30,7 +30,8 @@ export function storableUnit({ value }: { value: unknown }): unknown {
  * `MWH` all priced correctly but were stored as three different units, so an
  * export or a GROUP BY split one unit three ways and `unitSymbol` fell back to
  * the raw text. The alias resolves at the write, once; the entered spelling is
- * kept in the immutable snapshot as `inputUnit`. Also closes the U+212A
+ * kept in the calculation snapshot as `inputUnit` until the record is next
+ * edited (an update recomputes the snapshot from the stored unit). Also closes the U+212A
  * KELVIN SIGN homoglyph the old transform documented as open: the stored
  * token is now the resolved one.
  *

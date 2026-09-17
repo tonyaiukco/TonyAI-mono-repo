@@ -78,7 +78,8 @@ export class CreateActivityRecordDto {
   // interior carriage return in `us gallons` was invisible to it and reached
   // the snapshot, the audit row and every export. Case and alias are left as
   // typed here — the service stores the vocabulary's canonical spelling
-  // (`storedUnit`) and the snapshot keeps this one as `inputUnit`.
+  // (`storedUnit`) and the snapshot keeps this one as `inputUnit` until the
+  // record is next edited.
   @IsActivityUnit()
   @IsString()
   @Transform(storableUnit)

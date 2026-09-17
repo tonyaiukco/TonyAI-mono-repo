@@ -756,7 +756,7 @@ export class ActivityRecordsService {
           anomalyBaselineTCo2e: verdict.baseline,
           activityValue: dto.activityValue,
           // The vocabulary's canonical spelling; the snapshot keeps the entered
-          // one as `inputUnit`. See `storedUnit`.
+          // one as `inputUnit` until the record is next edited. See `storedUnit`.
           activityUnit: storedUnit(dto.activityUnit),
           input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
           calculation: calculation as unknown as Prisma.InputJsonValue,
@@ -861,9 +861,14 @@ export class ActivityRecordsService {
       category,
       scope,
       activityValue,
-      // Canonical spelling, as on create — an edit that never touched the unit
-      // still brings a row stored before this rule onto it.
-      activityUnit: storedUnit(activityUnit),
+      // Canonical spelling, as on create — but only when THIS edit named the
+      // unit. An unrelated edit never rewrites a field nobody touched (the
+      // `periodValue` rule below); rows stored before the rule are the
+      // migration's job, not this write's.
+      activityUnit:
+        dto.activityUnit !== undefined
+          ? storedUnit(dto.activityUnit)
+          : existing.activityUnit,
       anomalyFlag: verdict.anomalous,
       anomalyBaselinePriorCount: verdict.priorCount,
       anomalyBaselineTCo2e: verdict.baseline,

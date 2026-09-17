@@ -2947,9 +2947,12 @@ describe('ActivityRecordsService — the stored unit is the vocabulary spelling'
     );
   });
 
-  it('update brings a row stored before this rule onto it, even when the edit never touched the unit', async () => {
-    // The migration canonicalises what is already stored; this is the path
-    // for a spelling that reaches the column afterwards by any other route.
+  it('update leaves the stored spelling alone when the edit never touched the unit', async () => {
+    // The same principle as `periodValue`: an unrelated edit never rewrites a
+    // field nobody touched, so nothing the user did not do reaches the audit
+    // diff. Rows stored before the rule are the migration's job. The row here
+    // stands for one written outside the API — after the migration none is
+    // reachable through it.
     const { prisma, calc, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({
@@ -2967,8 +2970,8 @@ describe('ActivityRecordsService — the stored unit is the vocabulary spelling'
 
     await service.update(dataEntry(), 'rec-u', { varianceReason: 'a note' } as never);
 
-    expect(prisma.activityRecord.update.mock.calls[0][0].data.activityUnit).toBe('kWh');
-    // The engine is still handed the stored spelling and told the unit was not
+    expect(prisma.activityRecord.update.mock.calls[0][0].data.activityUnit).toBe('kw h');
+    // The engine is handed the stored spelling and told the unit was not
     // chosen now, so the category/unit map is not re-policed on a mere edit.
     expect(calc.compute).toHaveBeenCalledWith(
       expect.objectContaining({ unit: 'kw h' }),
