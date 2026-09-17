@@ -189,7 +189,9 @@ describe('CalculationInputDto — unit', () => {
       expect(parse({ unit: `us${char(code)}gallons` }).dto.unit).toBe('us gallons');
       expect(parse({ unit: `${char(code)}kWh${char(code)}` }).dto.unit).toBe('kWh');
     }
-    // Case and alias are deliberately untouched: `kWh` is what a user reads back.
+    // Case and alias are left as typed: the preview prices and quotes the
+    // entered spelling; resolving to the vocabulary's value happens at the
+    // record write (`storedUnit`), which the preview has no column for.
     expect(parse({ unit: 'kWh' }).dto.unit).toBe('kWh');
   });
 

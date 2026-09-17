@@ -1616,11 +1616,12 @@ export const PERIOD_VALUE_MAX_LENGTH = 32;
  * padded spelling of any length, because `canonicalUnit` collapses whitespace:
  * `cubic`, 30,000 spaces and `metres` is `cubic_metres` to it.
  *
- * What this bounds is what gets STORED. The unit is written as sent, frozen
- * into the record's immutable calculation snapshot as `inputUnit`, and printed
- * verbatim into the PDF, the Excel sheet and the CSV — the argument the other
- * caps here were added for, on a column a bulk import fills from a file nobody
- * at this company wrote.
+ * What this bounds is what gets STORED and quoted. The column itself holds
+ * the vocabulary's canonical spelling (the API resolves the alias at the
+ * write), but the spelling AS SENT is frozen into the record's calculation
+ * snapshot as `inputUnit`, reaches the audit row and is quoted back in a
+ * refusal — the argument the other caps here were added for, on a column a
+ * bulk import fills from a file nobody at this company wrote.
  *
  * 32 clears the longest spelling the vocabulary knows, `standard_cubic_metres`
  * (21; the longest it can actually calculate is `passenger_kilometres`, 20),

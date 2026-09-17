@@ -73,13 +73,13 @@ export class CreateActivityRecordDto {
   @Min(0)
   activityValue!: number;
 
-  // Whitespace-normalised before it is bounded, so what is stored is the
-  // spelling the vocabulary approved. `canonicalUnit` trims AND collapses
-  // `\s+` to `_` before it looks a unit up, so neither a surrounding U+FEFF
-  // nor an INTERIOR carriage return is visible to it — `us`, a CR and
-  // `gallons` is a valid ten-character `us_gallons` — and the raw spelling is
-  // what reached the column, the immutable snapshot, the audit row and every
-  // export. See `storableUnit`.
+  // Whitespace-normalised before it is validated or bounded (`storableUnit`):
+  // `canonicalUnit` collapses `\s+` to `_` before it looks a unit up, so an
+  // interior carriage return in `us gallons` was invisible to it and reached
+  // the snapshot, the audit row and every export. Case and alias are left as
+  // typed here — the service stores the vocabulary's canonical spelling
+  // (`storedUnit`) and the snapshot keeps this one as `inputUnit` until the
+  // record is next edited.
   @IsActivityUnit()
   @IsString()
   @Transform(storableUnit)
