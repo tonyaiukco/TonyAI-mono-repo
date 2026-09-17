@@ -1,4 +1,5 @@
 import { Transform } from 'class-transformer';
+import { trimmed } from '../../common/trimmed';
 import { IsString, MaxLength, MinLength } from 'class-validator';
 import { EXPLANATION_MAX_LENGTH } from '@tonyai/shared-types';
 
@@ -14,7 +15,7 @@ import { EXPLANATION_MAX_LENGTH } from '@tonyai/shared-types';
  * verbatim on the submitter's screen.
  */
 export class RejectActivityRecordDto {
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(trimmed)
   @IsString()
   @MinLength(1)
   @MaxLength(EXPLANATION_MAX_LENGTH)

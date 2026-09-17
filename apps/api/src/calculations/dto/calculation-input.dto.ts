@@ -14,7 +14,9 @@ import {
   GEOGRAPHY_CODES,
 } from '@tonyai/shared-types';
 import type { Category, GeographyCode } from '@tonyai/shared-types';
+import { Transform } from 'class-transformer';
 import { IsActivityUnit } from '../is-activity-unit.decorator';
+import { storableUnit } from '../storable-unit';
 
 /**
  * Body of POST /api/v1/calculations/preview.
@@ -70,8 +72,14 @@ export class CalculationInputDto {
   // `@IsActivityUnit()` passes it. This is the one path that could still send
   // an unbounded unit into the refusals that quote it back. See
   // ACTIVITY_UNIT_MAX_LENGTH.
+  // Normalised as well as bounded, for the same reason #118 bounded it: the
+  // preview exists to agree with the save. The write DTOs collapse a
+  // whitespace run to one space before storing, so without this the two
+  // disagree about what `us`+CR+`gallons` IS — the preview would price a
+  // spelling the record then rewrites.
   @IsActivityUnit()
   @IsString()
+  @Transform(storableUnit)
   @MinLength(1)
   @MaxLength(ACTIVITY_UNIT_MAX_LENGTH)
   unit!: string;

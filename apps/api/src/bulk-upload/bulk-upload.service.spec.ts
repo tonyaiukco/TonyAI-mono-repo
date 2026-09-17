@@ -2081,11 +2081,15 @@ describe('BulkUploadService — what the report repeats back', () => {
     ]);
   });
 
-  it('keeps a KNOWN unit padded past the cap out of every service below', async () => {
-    // What the cap actually buys. The vocabulary ACCEPTS this spelling —
-    // `canonicalUnit` collapses whitespace — so without the cap the row would
-    // be priced and written, with the padding stored verbatim and frozen into
-    // an immutable snapshot.
+  it('strips a KNOWN unit’s padding rather than refusing the row', async () => {
+    // What the cap was reaching for, done by the transform instead. This case
+    // was written to stop the row being "priced and written, with the padding
+    // stored verbatim and frozen into an immutable snapshot" — and the cap
+    // bought that only above 32 characters, while a single interior carriage
+    // return sailed through at ten. `storableUnit` collapses the run at the
+    // boundary, so the padding reaches no service at ANY length, and a
+    // spreadsheet cell with a sloppy unit imports as the unit it plainly means
+    // instead of costing the user a row.
     const { records, service } = build();
 
     const report = await service.import(
@@ -2094,13 +2098,10 @@ describe('BulkUploadService — what the report repeats back', () => {
       DRY,
     );
 
-    expect(report.accepted).toEqual([]);
-    expect(records.previewCreate).not.toHaveBeenCalled();
-    expect(report.errors[0]).toMatchObject({
-      row: 2,
-      column: 'activityUnit',
-      code: 'invalid',
-    });
+    expect(report.errors).toEqual([]);
+    expect(report.accepted).toHaveLength(1);
+    expect(records.previewCreate).toHaveBeenCalledTimes(1);
+    expect(records.previewCreate.mock.calls[0][1].activityUnit).toBe('cubic metres');
   });
 
   it('returns the file name by the audit row’s own rule', async () => {

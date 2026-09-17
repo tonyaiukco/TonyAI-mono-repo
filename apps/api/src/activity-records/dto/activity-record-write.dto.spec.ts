@@ -75,6 +75,19 @@ function parse(Dto: ClassConstructor<WriteDto>, body: Record<string, unknown>) {
   return { dto, errors: validateSync(dto as object, PIPE_OPTIONS) };
 }
 
+/**
+ * Validate EXACTLY the given body — no complete-body merge.
+ *
+ * `parse` above spreads `VALID` over every case, which is what makes the
+ * boundary tests readable and also what hid `@IsOptional`: every body it has
+ * ever built is complete, so removing `@IsOptional` from any field on either
+ * class left the whole suite green (verified). A PATCH omitting that field
+ * would then have started 400-ing with nothing to say so.
+ */
+function parseExactly(Dto: ClassConstructor<WriteDto>, body: Record<string, unknown>) {
+  return validateSync(plainToInstance(Dto, body) as object, PIPE_OPTIONS);
+}
+
 function constraintsOn(
   Dto: ClassConstructor<WriteDto>,
   body: Record<string, unknown>,
@@ -140,20 +153,75 @@ describe.each(DTOS)('%s — bounded free text', (_name, Dto) => {
     }
   });
 
-  it('refuses an activityUnit past the cap, even one the vocabulary knows', () => {
-    // Padding keeps the unit KNOWN (`canonicalUnit` trims and collapses
-    // whitespace), so only the cap can refuse it — and only at 33.
-    const known = (length: number) => 'kWh'.padEnd(length);
-    expect(
-      parse(Dto, { activityUnit: known(ACTIVITY_UNIT_MAX_LENGTH) }).errors,
-    ).toHaveLength(0);
+  it('refuses an activityUnit past the cap', () => {
+    // This case used to say "even one the vocabulary knows" and reached the
+    // cap by padding. It no longer can: `storableUnit` collapses every
+    // whitespace run to one space before the cap is measured, and nothing the
+    // engine knows is near 32 once normalised — `standard_cubic_metres` is 21.
+    // So the cap now refuses only long text that is NOT a unit, which is the
+    // honest claim for it. What the cap was reaching for — padding stored
+    // verbatim and frozen into an immutable snapshot — the transform removes
+    // at any length rather than only above 32.
     expect(
       constraintsOn(
         Dto,
-        { activityUnit: known(ACTIVITY_UNIT_MAX_LENGTH + 1) },
+        { activityUnit: 'x'.repeat(ACTIVITY_UNIT_MAX_LENGTH + 1) },
         'activityUnit',
       ),
-    ).toEqual(['maxLength']);
+    ).toEqual(expect.arrayContaining(['maxLength']));
+  });
+
+  it('never refuses a spelling the vocabulary accepts, however it is spaced', () => {
+    // The other half, and the one that would catch a cap set too low.
+    for (const value of [
+      'standard_cubic_metres',
+      'standard cubic metres',
+      `kW${' '.repeat(ACTIVITY_UNIT_MAX_LENGTH * 4)}h`,
+    ]) {
+      expect(parse(Dto, { activityUnit: value }).errors).toHaveLength(0);
+    }
+  });
+
+  it('stores the unit whitespace-normalised, interior characters included', () => {
+    // Built from code points, never typed: escape sequences typed into this
+    // repo have arrived in files as the literal, invisible character.
+    const char = (code: number) => String.fromCharCode(code);
+
+    // Every one of these is `\s` to JavaScript and so invisible to
+    // `canonicalUnit`, which trims AND collapses `\s+` to `_` before it looks
+    // a unit up. A run does not have to vanish to be ignored — it maps onto
+    // the `_` of a multi-word key — so `us`, a carriage return and `gallons`
+    // was a valid TEN-character `us_gallons`, comfortably under the cap, whose
+    // raw form was written to `activity_records.activity_unit`, frozen into
+    // the immutable calculation snapshot as `inputUnit`, copied into
+    // `audit_log` and printed into the PDF, Excel and CSV exports. The cap
+    // could not see it and a trim could not reach it.
+    for (const code of [0x0d, 0x0a, 0x09, 0x0b, 0x0c, 0x2028, 0x00a0, 0xfeff]) {
+      const interior = parse(Dto, { activityUnit: `us${char(code)}gallons` });
+      expect(interior.errors).toHaveLength(0);
+      expect(interior.dto.activityUnit).toBe('us gallons');
+
+      const surrounding = parse(Dto, { activityUnit: `${char(code)}kWh${char(code)}` });
+      expect(surrounding.errors).toHaveLength(0);
+      expect(surrounding.dto.activityUnit).toBe('kWh');
+    }
+  });
+
+  it('leaves a legitimate spelling exactly as the user wrote it', () => {
+    // The normalisation must not lowercase or resolve the alias: `kWh` is what
+    // the record drawer and every export show back, and `canonicalUnit`'s
+    // `kwh` is an internal key.
+    for (const value of ['kWh', 'm³', 'Sm³', 'kW h', 'standard cubic metres']) {
+      expect(parse(Dto, { activityUnit: value }).dto.activityUnit).toBe(value);
+    }
+  });
+
+  it('still refuses an activityUnit that is only whitespace', () => {
+    // The normalisation must not have turned a blank into something
+    // `@MinLength(1)` stops seeing: it collapses to '', which fails both rules.
+    expect(constraintsOn(Dto, { activityUnit: '   ' }, 'activityUnit')).toEqual(
+      expect.arrayContaining(['minLength']),
+    );
   });
 
   it('bounds varianceReason at the shared explanation length', () => {
@@ -225,7 +293,7 @@ describe('the two write DTOs agree, rule for rule', () => {
    */
   it.each([
     ['periodValue', { periodValue: 'x'.repeat(PERIOD_VALUE_MAX_LENGTH + 1) }],
-    ['activityUnit', { activityUnit: 'kWh'.padEnd(ACTIVITY_UNIT_MAX_LENGTH + 1) }],
+    ['activityUnit', { activityUnit: 'x'.repeat(ACTIVITY_UNIT_MAX_LENGTH + 1) }],
     ['varianceReason', { varianceReason: 'x'.repeat(EXPLANATION_MAX_LENGTH + 1) }],
     ['activityValue', { activityValue: -0.0001 }],
   ])('%s is refused by both classes', (field, body) => {
@@ -233,4 +301,38 @@ describe('the two write DTOs agree, rule for rule', () => {
       expect(constraintsOn(Dto, body, field).length).toBeGreaterThan(0);
     }
   });
+});
+
+describe('what each class lets you leave out', () => {
+  it('takes an empty PATCH — every field on the update DTO is optional', () => {
+    // The update surface's contract: a PATCH changes what it names and nothing
+    // else. `{}` is the degenerate case and it must validate, or `@IsOptional`
+    // has gone missing from something.
+    expect(parseExactly(UpdateActivityRecordDto, {})).toHaveLength(0);
+  });
+
+  it.each([
+    ['locationId', 'loc-1'],
+    ['reportingYear', 2026],
+    ['reportingPeriod', 'monthly'],
+    ['periodValue', 'January'],
+    ['category', 'Electricity'],
+    ['activityValue', 1200],
+    ['activityUnit', 'kWh'],
+    ['input', { invoiceNo: 'A-1' }],
+    ['varianceReason', 'Meter replaced'],
+  ])('takes a PATCH carrying only %s', (field, value) => {
+    expect(parseExactly(UpdateActivityRecordDto, { [field]: value })).toHaveLength(0);
+  });
+
+  it.each(['locationId', 'input', 'varianceReason'])(
+    'creates a record without %s',
+    (field) => {
+      // The create DTO's three genuinely optional fields. Its required ones are
+      // asserted by every other case here, which all send them.
+      const body = { ...VALID.CreateActivityRecordDto };
+      delete body[field];
+      expect(parseExactly(CreateActivityRecordDto, body)).toHaveLength(0);
+    },
+  );
 });

@@ -21,6 +21,7 @@ import {
 import type { Category, ReportingPeriod } from '@tonyai/shared-types';
 import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
 import { blankToNull } from '../../common/blank-to-null';
+import { storableUnit } from '../../calculations/storable-unit';
 
 
 /**
@@ -69,13 +70,17 @@ export class UpdateActivityRecordDto {
   @Min(0)
   activityValue?: number;
 
-  // Bounded because the unit is STORED as sent, frozen into the immutable
-  // snapshot and printed verbatim into every export — and because the
-  // vocabulary check bounds nothing: a padded spelling of any length
-  // canonicalises to a known unit. See ACTIVITY_UNIT_MAX_LENGTH.
+  // Whitespace-normalised before it is bounded, so what is stored is the
+  // spelling the vocabulary approved. `canonicalUnit` trims AND collapses
+  // `\s+` to `_` before it looks a unit up, so neither a surrounding U+FEFF
+  // nor an INTERIOR carriage return is visible to it — `us`, a CR and
+  // `gallons` is a valid ten-character `us_gallons` — and the raw spelling is
+  // what reached the column, the immutable snapshot, the audit row and every
+  // export. See `storableUnit`.
   @IsOptional()
   @IsActivityUnit()
   @IsString()
+  @Transform(storableUnit)
   @MinLength(1)
   @MaxLength(ACTIVITY_UNIT_MAX_LENGTH)
   activityUnit?: string;
