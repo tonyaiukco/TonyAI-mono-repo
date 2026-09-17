@@ -22,6 +22,11 @@ Enforce an invariant on the activity-record lifecycle. The **canonical exemplars
   the record itself (missing evidence, missing comment, invalid period token); `ConflictException` = a
   state clash with other data (duplicate key, locked period). Message must be user-actionable — it is
   surfaced verbatim as a toast.
+- **A refusal a batch caller must tell apart gets its own class.** If the bulk import or bulk submit
+  (or any other caller that maps failures onto codes) has to distinguish this gate's refusal from another
+  of the same Nest class, throw a subclass from the thrower's `errors.ts` (`activity-records/errors.ts`
+  holds the record gates: `PeriodLockedError`, `EvidenceRequiredError`, `VarianceReasonRequiredError`, …).
+  Specs assert the class; the sentence is copy and is never matched.
 - **Gate placement:** `create` → after role + input validation, before persisting; `update`/`remove` →
   after `loadScoped` + `assertCanMutate` (check the record's current tuple, and on `update` ALSO the
   target tuple if the period fields change); `submit` → after the status guard, before `transition()`.

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { NoEmissionFactorError } from './errors';
 import type { EmissionFactor } from '@tonyai/db';
 import {
   isCalculated,
@@ -421,6 +422,17 @@ describe('CalculationsService.compute', () => {
         unit: 'kWh',
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
+    // The CLASS the bulk importer tells a coverage miss from an access
+    // problem by — never the words "emission factor".
+    await expect(
+      service.compute({
+        category: 'Electricity',
+        geographyCode: 'ZZ',
+        reportingYear: 2024,
+        value: 1,
+        unit: 'kWh',
+      }),
+    ).rejects.toBeInstanceOf(NoEmissionFactorError);
   });
 
   /**

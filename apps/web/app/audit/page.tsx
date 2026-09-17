@@ -32,7 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
-import { actorLabel } from "@/lib/audit-view";
+import { actorLabel, summariseBatch } from "@/lib/audit-view";
 import { useAuthStore } from "@/lib/store";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
@@ -70,6 +70,11 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   // already renders, since a deleted profile produces the same shape.
   rescore: "bg-slate-500/15 text-slate-700 border-slate-500/30",
   generate: "bg-violet-500/15 text-violet-700 border-violet-500/30",
+  // Violet, with `generate`: a batch act whose row summarises a file, not a
+  // figure — the figures are the per-record `create` rows beside it.
+  bulk_import: "bg-violet-500/15 text-violet-700 border-violet-500/30",
+  // Blue, with `submit`: the same consequence, for many records at once.
+  bulk_submit: "bg-blue-500/15 text-blue-700 border-blue-500/30",
 };
 
 const NEUTRAL_ACTION = "bg-slate-500/15 text-slate-700 border-slate-500/30";
@@ -104,6 +109,7 @@ function summarise(row: AuditLogDTO): string | null {
     const parts = [diff.template, diff.exportType, diff.year].filter(Boolean);
     return parts.length ? parts.join(" · ") : null;
   }
+  if (diff.bulk === true) return summariseBatch(diff);
   const after = diff.after as Record<string, unknown> | undefined;
   const before = diff.before as Record<string, unknown> | undefined;
   const name = (after?.legalName ?? after?.name ?? before?.legalName ?? before?.name) as
@@ -276,7 +282,7 @@ export default function AuditPage() {
                     <SelectItem value={ANY}>All actions</SelectItem>
                     {AUDIT_ACTIONS.map((a) => (
                       <SelectItem key={a} value={a}>
-                        {a}
+                        {humanise(a)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -363,7 +369,7 @@ export default function AuditPage() {
                                   ACTION_COLORS[row.action] ?? NEUTRAL_ACTION,
                                 )}
                               >
-                                {row.action}
+                                {humanise(row.action)}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-sm">{humanise(row.entity)}</TableCell>

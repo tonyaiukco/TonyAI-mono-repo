@@ -131,7 +131,7 @@ test('a Turkish filename survives multipart, into the report AND the audit row',
 
   const audit = await readAuditSince(request, {
     entity: 'activity_record',
-    action: 'create',
+    action: 'bulk_import',
     since,
   });
   const batch = audit.find((r) => r.entityId === null && r.diff?.bulk === true);
@@ -168,16 +168,23 @@ test('a dry run writes nothing — asserted against the database, not the report
 
   // The two proofs the report cannot give, and either alone can be faked:
   expect(await laneRows(request)).toHaveLength(before);
-  const audit = await readAuditSince(request, {
+  // Two verbs since the batch row got its own: the per-record rows a create
+  // writes are `create`; the batch row is `bulk_import`.
+  const perRecord = await readAuditSince(request, {
     entity: 'activity_record',
     action: 'create',
     since,
   });
   expect(
-    audit.filter((r) => r.entityId !== null),
+    perRecord.filter((r) => r.entityId !== null),
     'a dry run must write no PER-RECORD audit rows',
   ).toHaveLength(0);
-  expect(audit.filter((r) => r.diff?.dryRun === true)).toHaveLength(1);
+  const batch = await readAuditSince(request, {
+    entity: 'activity_record',
+    action: 'bulk_import',
+    since,
+  });
+  expect(batch.filter((r) => r.diff?.dryRun === true)).toHaveLength(1);
 });
 
 test('an apply writes one audit row per record, plus one for the batch', async ({
@@ -209,7 +216,13 @@ test('an apply writes one audit row per record, plus one for the batch', async (
       new Set(created),
     );
 
-    const batch = audit.filter((r) => r.entityId === null && r.diff?.bulk === true);
+    // The `create` verb carries no batch row any more; the batch is its own verb.
+    expect(audit.filter((r) => r.entityId === null)).toHaveLength(0);
+    const batch = await readAuditSince(request, {
+      entity: 'activity_record',
+      action: 'bulk_import',
+      since,
+    });
     expect(batch).toHaveLength(1);
     expect(batch[0].diff).toMatchObject({
       bulk: true,
@@ -234,10 +247,15 @@ test('an apply writes one audit row per record, plus one for the batch', async (
   }
 });
 
-test('a refused file still leaves a trace on the audit trail', async ({ request }) => {
-  // The one event most worth keeping is the one that accomplished nothing. The
-  // import's batch row used to be written only after the loop, so a refusal
-  // left no trace at all.
+test('a file refused for its format leaves no audit row — only a refusal about the caller does', async ({
+  request,
+}) => {
+  // A malformed file says something about the file, not about the caller, so
+  // it is refused and NOT recorded: auditing every 400 filled the append-only
+  // trail with caller-controlled text at five rows a minute per user. The two
+  // refusals that ARE recorded — a role that may not author, a file naming an
+  // entity outside the caller's tenant — are asserted below (the role) and in
+  // `bulk-upload-isolation.spec.ts` ("refused WHOLE", the tenant).
   const token = await getAccessToken(request, ENTRY_EMAIL);
   const since = new Date().toISOString();
 
@@ -250,10 +268,10 @@ test('a refused file still leaves a trace on the audit trail', async ({ request 
 
   const audit = await readAuditSince(request, {
     entity: 'activity_record',
-    action: 'create',
+    action: 'bulk_import',
     since,
   });
-  expect(audit.some((r) => r.diff?.refused === true)).toBe(true);
+  expect(audit.filter((r) => r.diff?.refused === true)).toHaveLength(0);
 });
 
 test('the row-level refusals arrive with the codes the contract names', async ({
@@ -329,7 +347,7 @@ test('a role that may not author records is refused before its file is parsed �
 
   const audit = await readAuditSince(request, {
     entity: 'activity_record',
-    action: 'create',
+    action: 'bulk_import',
     since,
   });
   expect(

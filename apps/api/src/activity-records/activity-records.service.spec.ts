@@ -8,13 +8,20 @@ import {
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
 import { isCalculated, PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
 import type { CalculationResult } from '@tonyai/shared-types';
+import { ActivityRecordsService } from './activity-records.service';
 import {
-  ActivityRecordsService,
+  CreateRoleRefusedError,
+  DuplicateActivityRecordError,
   EVIDENCE_REFUSAL_FRAGMENT,
+  EvidenceRequiredError,
+  PeriodLockedError,
   RESUBMIT_AUTHOR_REFUSAL,
+  ResubmitAuthorRefusedError,
   SUBMIT_ROLE_REFUSAL,
+  SubmitRoleRefusedError,
   VARIANCE_REFUSAL,
-} from './activity-records.service';
+  VarianceReasonRequiredError,
+} from './errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { CalculationsService } from '../calculations/calculations.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -416,6 +423,11 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
     await expect(
       service.create(dataEntry(), CREATE_DTO),
     ).rejects.toBeInstanceOf(ConflictException);
+    // And the CLASS the bulk importer branches on — the only place that
+    // contract can fail, since the bulk specs mock this service.
+    await expect(
+      service.create(dataEntry(), CREATE_DTO),
+    ).rejects.toBeInstanceOf(DuplicateActivityRecordError);
   });
 
   it('cannot create against an inaccessible subsidiary (NotFound, no compute)', async () => {
@@ -980,11 +992,23 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
       ForbiddenException,
     );
 
-    // The SENTENCE, not just the class: the bulk importer re-throws on exact
-    // equality with this constant to avoid mislabelling a role problem as an
-    // authorship one, and nothing else in the repo pinned the wording.
+    // The CLASSES the bulk paths branch on: a role refusal is one 403 for a
+    // whole batch, so both bulk services re-throw it by class.
+    await expect(service.create(consultant(), {
+      subsidiaryId: 'sub-1',
+      locationId: null,
+      reportingYear: 2024,
+      reportingPeriod: 'quarterly',
+      periodValue: 'Q1',
+      category: 'Electricity',
+      activityValue: 100,
+      activityUnit: 'kWh',
+    } as never)).rejects.toBeInstanceOf(CreateRoleRefusedError);
     await expect(service.submit(consultant(), 'rec-c')).rejects.toThrow(
       SUBMIT_ROLE_REFUSAL,
+    );
+    await expect(service.submit(consultant(), 'rec-c')).rejects.toBeInstanceOf(
+      SubmitRoleRefusedError,
     );
 
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
@@ -1143,6 +1167,9 @@ describe('ActivityRecordsService — transition rules', () => {
 
     await expect(service.submit(dataEntry(), 'rec-n')).rejects.toThrow(
       RESUBMIT_AUTHOR_REFUSAL,
+    );
+    await expect(service.submit(dataEntry(), 'rec-n')).rejects.toBeInstanceOf(
+      ResubmitAuthorRefusedError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -1503,13 +1530,13 @@ describe('ActivityRecordsService — transition rules', () => {
     );
     prisma.evidence.count.mockResolvedValue(0); // no evidence attached
 
-    // Against the EXPORTED fragment, not a retyped prefix of it. The bulk
-    // importer discriminates this refusal from the status one by that exact
-    // string, so a reworded tail ("… evidence file." losing "before
-    // submitting") would keep this regex green while every bulk evidence
-    // refusal silently became "Already moved on".
+    // The sentence is user-facing copy (the web mirrors it); the bulk submit
+    // tells this refusal from the status one by its CLASS, asserted below.
     await expect(service.submit(dataEntry(), 'rec-e')).rejects.toThrow(
       EVIDENCE_REFUSAL_FRAGMENT,
+    );
+    await expect(service.submit(dataEntry(), 'rec-e')).rejects.toBeInstanceOf(
+      EvidenceRequiredError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -2013,11 +2040,13 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(draftForSubmit());
     prisma.activityRecord.findMany.mockResolvedValue([priorMonth('December', 10, 2023), priorMonth('January', 10), priorMonth('February', 10)]);
 
-    // The whole constant, not a loose alternation: the bulk mapper compares
-    // this message for EXACT equality, so `/variance comment|deviates/i`
-    // matched a reworded sentence that the mapper then failed to recognise.
+    // The whole constant (it is what the user reads), and the CLASS — which
+    // is what the bulk submit branches on.
     await expect(service.submit(dataEntry(), 'rec-s')).rejects.toThrow(
       VARIANCE_REFUSAL,
+    );
+    await expect(service.submit(dataEntry(), 'rec-s')).rejects.toBeInstanceOf(
+      VarianceReasonRequiredError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
@@ -2291,6 +2320,9 @@ describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
     await expect(
       service.update(dataEntry(), 'rec-l', { activityValue: 1 }),
     ).rejects.toThrow(/period .* is locked/i);
+    await expect(
+      service.update(dataEntry(), 'rec-l', { activityValue: 1 }),
+    ).rejects.toBeInstanceOf(PeriodLockedError);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 

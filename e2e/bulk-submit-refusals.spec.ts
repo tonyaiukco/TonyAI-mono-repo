@@ -213,7 +213,13 @@ test('a draft with evidence really does move, and only once', async ({ request }
       since,
     });
     expect(audit.some((r) => r.entityId === id)).toBe(true);
-    expect(audit.some((r) => r.entityId === null && r.diff?.bulk === true)).toBe(true);
+    // The batch row has its own verb since the audit actions were split.
+    const batch = await readAuditSince(request, {
+      entity: 'activity_record',
+      action: 'bulk_submit',
+      since,
+    });
+    expect(batch.filter((r) => r.diff?.submittedCount === 1 && r.diff?.requested === 1)).toHaveLength(1);
 
     // A second send is the commonest real mistake — a click after a partial
     // success — and it must say so rather than moving anything.
@@ -242,7 +248,7 @@ test('a role that may not author gets one 403, and it is recorded', async ({ req
 
   const audit = await readAuditSince(request, {
     entity: 'activity_record',
-    action: 'submit',
+    action: 'bulk_submit',
     since,
   });
   expect(audit.some((r) => r.diff?.refused === true)).toBe(true);

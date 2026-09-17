@@ -2537,6 +2537,13 @@ export const AUDIT_ACTIONS = [
    *  renders, since a deleted profile produces the same shape. */
   'rescore',
   'generate',
+  // A batch act on activity records — the import of a file, the submit of
+  // many ids — beside the per-record rows the create/submit path writes. The
+  // row carries `entityId: null` and a `diff.bulk` summary (file name, counts,
+  // or `refused` with a reason). Its own verb, so the trail can be filtered by
+  // it and a refusal is never mistaken for a record that was created.
+  'bulk_import',
+  'bulk_submit',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -2566,11 +2573,63 @@ export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
  *    TEXT so historic rows can carry a verb that has since been retired.
  *    Consumers should look up with a fallback rather than assume exhaustiveness.
  */
+/**
+ * The `diff` of a `bulk_import` audit row, as the API WRITES it. One source
+ * for the keys the importer's `batchDiff` builds and the audit page's
+ * `summariseBatch` reads — spelt in three files before this, where a typo
+ * rendered as "—" silently. The read side stays `Record<string, unknown>`
+ * (`AuditLogDTO.diff`): historic rows are never migrated, so a reader checks
+ * each key defensively.
+ *
+ * `fileName` is absent only on the retry that dropped the caller's text after
+ * the database refused a value in it (`callerTextOmitted: true`).
+ */
+export type BulkImportAuditDiff = {
+  bulk: true;
+  dryRun: boolean;
+  fileName?: string;
+  sizeBytes: number;
+  callerTextOmitted?: true;
+} & (
+  | { refused: true; reason?: string }
+  | {
+      refused?: never;
+      totalRows: number;
+      acceptedCount: number;
+      rejectedCount: number;
+    }
+);
+
+/**
+ * The `diff` of a `bulk_submit` audit row, as the API writes it. `received` is
+ * the number of ids as typed and `requested` the number after canonical
+ * de-duplication, so a thousand spellings of one id cannot inflate the count.
+ */
+export type BulkSubmitAuditDiff = {
+  bulk: true;
+  requested: number;
+  received: number;
+} & (
+  | { refused: true; reason: string }
+  | {
+      refused?: never;
+      submittedCount: number;
+      failedCount: number;
+      recordIds: string[];
+    }
+);
+
 export interface AuditLogDTO {
   id: string;
   action: AuditAction;
   entity: AuditEntity;
-  /** Null for `report` rows — a generation has no persisted entity to point at. */
+  /**
+   * Null for `report` rows — a generation has no persisted entity to point at
+   * — and for the `bulk_import` / `bulk_submit` batch rows, whose subject is a
+   * file or a request rather than one record (their per-record rows carry the
+   * ids). An import-batch entity would give the former an id; see the WP8
+   * retrospective plan.
+   */
   entityId: string | null;
   /** Actor identity, resolved from `profiles` at read time. Null when the
    * profile has since been deleted — the row itself is never rewritten. */

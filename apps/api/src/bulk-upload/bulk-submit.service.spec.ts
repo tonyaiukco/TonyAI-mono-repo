@@ -12,13 +12,17 @@ import {
   type CalculationResult,
 } from '@tonyai/shared-types';
 import { BulkSubmitService } from './bulk-submit.service';
+import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import {
-  ActivityRecordsService,
   EVIDENCE_REFUSAL_FRAGMENT,
-  RESUBMIT_AUTHOR_REFUSAL,
+  EvidenceRequiredError,
+  PeriodLockedError,
+  ResubmitAuthorRefusedError,
   SUBMIT_ROLE_REFUSAL,
+  SubmitRoleRefusedError,
   VARIANCE_REFUSAL,
-} from '../activity-records/activity-records.service';
+  VarianceReasonRequiredError,
+} from '../activity-records/errors';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -457,20 +461,16 @@ describe('BulkSubmitService — a role refusal is one 403, and it is recorded', 
 
 describe('BulkSubmitService — every refusal maps to its own code and sentence', () => {
   it.each([
+    [new EvidenceRequiredError('Electricity'), 'evidence_required', /evidence file/i],
+    [new VarianceReasonRequiredError(), 'variance_reason_required', /variance/i],
     [
-      new BadRequestException(`Category "Electricity" ${EVIDENCE_REFUSAL_FRAGMENT}.`),
-      'evidence_required',
-      /evidence file/i,
-    ],
-    [new BadRequestException(VARIANCE_REFUSAL), 'variance_reason_required', /variance/i],
-    [
-      new ConflictException(
+      new PeriodLockedError(
         'Reporting period January 2024 is locked — a super_admin must unlock it.',
       ),
       'period_locked',
       /locked/i,
     ],
-    [new ForbiddenException(RESUBMIT_AUTHOR_REFUSAL), 'not_author', /resubmit/i],
+    [new ResubmitAuthorRefusedError(), 'not_author', /resubmit/i],
     [new NotFoundException('Activity record not found'), 'not_found', /does not exist/i],
   ])('%s', async (error, code, messagePattern) => {
     // The MESSAGE is asserted as well as the code: the panel renders it
@@ -508,18 +508,19 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
 
   it('re-throws a role refusal rather than calling it an authorship problem', async () => {
     const { records, service } = build();
-    records.submit.mockRejectedValue(new ForbiddenException(SUBMIT_ROLE_REFUSAL));
+    records.submit.mockRejectedValue(new SubmitRoleRefusedError());
 
     await expect(service.submitMany(dataEntry(), ids('a'))).rejects.toThrow(
       SUBMIT_ROLE_REFUSAL,
     );
   });
 
-  it('reads a validation message that arrives as an array', async () => {
+  it('reads a validation message that arrives as an array, and does not mistake it for a typed refusal', async () => {
     // `BadRequestException` carries `message` as a string[] when it comes from
     // the validation pipe, and `error.message` is then the useless
-    // "Bad Request Exception" — which would send an evidence refusal to
-    // `not_submittable`.
+    // "Bad Request Exception". The sentence is read whole — but a plain
+    // BadRequestException carrying the evidence SENTENCE is not an
+    // `EvidenceRequiredError`, so its code is `not_submittable`.
     const { records, service } = build();
     records.submit.mockRejectedValue(
       new BadRequestException([`Category "Fuel" ${EVIDENCE_REFUSAL_FRAGMENT}.`]),
@@ -527,7 +528,34 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
 
     const report = await service.submitMany(dataEntry(), ids('a'));
 
-    expect(report.failed[0].code).toBe('evidence_required');
+    expect(report.failed[0]).toMatchObject({
+      code: 'not_submittable',
+      message: `Category "Fuel" ${EVIDENCE_REFUSAL_FRAGMENT}.`,
+    });
+  });
+
+  it('classifies by class, not by sentence', async () => {
+    // Reverting the mapper to message matching fails every line here: a plain
+    // ForbiddenException carrying the role SENTENCE is not re-thrown, a plain
+    // ConflictException that says "is locked" is not a lock, and a plain
+    // BadRequestException carrying the variance sentence is not that refusal.
+    const { records, service } = build([
+      candidate({ id: 'a' }),
+      candidate({ id: 'b', periodValue: 'February' }),
+      candidate({ id: 'c', periodValue: 'March' }),
+    ]);
+    records.submit
+      .mockRejectedValueOnce(new ForbiddenException(SUBMIT_ROLE_REFUSAL))
+      .mockRejectedValueOnce(new ConflictException('Reporting period is locked'))
+      .mockRejectedValueOnce(new BadRequestException(VARIANCE_REFUSAL));
+
+    const report = await service.submitMany(dataEntry(), ids('a', 'b', 'c'));
+
+    expect(report.failed.map((f) => f.code)).toEqual([
+      'unexpected',
+      'unexpected',
+      'not_submittable',
+    ]);
   });
 
   it('refuses an unexpected failure without echoing it back', async () => {
@@ -617,7 +645,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       Promise.reject(
         id === 'a'
           ? new Error('driver said no')
-          : new ForbiddenException(SUBMIT_ROLE_REFUSAL),
+          : new SubmitRoleRefusedError(),
       ),
     );
 
@@ -661,7 +689,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       candidate({ id: 'b', periodValue: 'February' }),
     ]);
     records.submit.mockRejectedValue(
-      new ConflictException('Period 2024 January is locked.'),
+      new PeriodLockedError('Period 2024 January is locked.'),
     );
 
     const { result: report, logged } = await captureErrors(() =>
@@ -727,7 +755,7 @@ describe('BulkSubmitService — the audit row', () => {
     expect(audit.record).toHaveBeenCalledWith(
       user,
       expect.objectContaining({
-        action: 'submit',
+        action: 'bulk_submit',
         entity: 'activity_record',
         entityId: null,
       }),

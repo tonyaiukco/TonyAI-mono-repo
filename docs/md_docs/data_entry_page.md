@@ -249,7 +249,7 @@ The server-side rules behind this section, and the reasons for them, are in `REA
 - a workbook is read from its **first** sheet only. It is refused whole when merged cells cover a cell the import reads (the merged value shows in every cell on screen but is stored only in the first one — unmerge the cells and fill in each row), when a cell holds a date that is out of range, or when it unpacks to more than 16 MB
 - the browser first checks the extension, the size and that the file is not empty; a file that fails is refused with a toast and no request is sent
 - otherwise **picking or dropping the file starts the dry run** — there is no separate check step. While it runs, the upload area reads `Checking <file name>… nothing is being written.`
-- the dry run validates, prices and dedupes every row (against the rest of the file and against stored records that are not voided) and creates no records; the only row it writes is the batch's own audit entry
+- the dry run validates, prices and dedupes every row (against the rest of the file and against stored records that are not voided) and creates no records; the only row it writes is the batch's own audit entry (`action: bulk_import`, `dryRun: true`)
 - a refusal of the whole file is shown inside the panel, followed by `Nothing was imported.`
 
 #### Dry-Run Report
@@ -261,7 +261,7 @@ The server-side rules behind this section, and the reasons for them, are in `REA
 #### Confirm and Import
 - `Import N rows` opens an `Import these rows?` confirmation; no record is created until it is confirmed
 - the confirmation names the row count and the tonnage, says each row becomes its own record and the import cannot be undone in bulk, and says the rows **arrive as drafts**
-- rows are created one at a time through the ordinary create path, never a bulk upsert, so each gets its own immutable factor snapshot, the same lifecycle gates as a typed record and its own audit row
+- rows are created one at a time through the ordinary create path, never a bulk upsert, so each gets its own immutable factor snapshot, the same lifecycle gates as a typed record and its own `create` audit row, beside one `bulk_import` row for the batch. A file refused before any row is read is recorded only when the refusal is about the caller — a role that may not author, or a row naming an entity outside the caller's tenant — not when the file itself is malformed
 - imported rows land as `draft`: they count towards no total and appear in no review queue, so the `Data collection status` panel on the same screen does not move until they are submitted. The verdict repeats this, and the toast reads `N records imported as drafts. Send them for review below to count them towards your inventory.`
 - no transaction spans the import, so a failure part-way through (e.g. a period lock landing mid-import) can leave part of the file written. The report is **not** cleared afterwards — the error list is the user's work list — and after a partial import the verdict advises uploading only the rows that failed, because re-sending the whole file would report the imported rows as duplicates
 - after every attempted import, successful or not, `Previous submissions` and the `Data collection status` panel refresh for the selected subsidiary

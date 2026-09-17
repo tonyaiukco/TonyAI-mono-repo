@@ -1,7 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -12,18 +10,23 @@ import {
   isCalculated,
   type ActivityRecordDTO,
   type BulkSubmitAcceptedRecord,
+  type BulkSubmitAuditDiff,
   type BulkSubmitIssue,
   type BulkSubmitReportDTO,
 } from '@tonyai/shared-types';
 import {
   ActivityRecordsService,
-  EVIDENCE_REFUSAL_FRAGMENT,
   mayWriteActivityRecords,
   periodOrdinal,
-  RESUBMIT_AUTHOR_REFUSAL,
-  SUBMIT_ROLE_REFUSAL,
-  VARIANCE_REFUSAL,
 } from '../activity-records/activity-records.service';
+import {
+  EvidenceRequiredError,
+  PeriodLockedError,
+  ResubmitAuthorRefusedError,
+  SUBMIT_ROLE_REFUSAL,
+  SubmitRoleRefusedError,
+  VarianceReasonRequiredError,
+} from '../activity-records/errors';
 import { AuditService } from '../audit/audit.service';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import type { RequestUser } from '../auth/auth.types';
@@ -118,12 +121,13 @@ export class BulkSubmitService {
     // seat probing the write surface is the interaction most worth keeping.
     if (!mayWriteActivityRecords(user)) {
       await this.recordBatch(user, {
+        bulk: true,
         refused: true,
         reason: SUBMIT_ROLE_REFUSAL,
         requested: requestedIds.length,
         received: dto.recordIds.length,
       });
-      throw new ForbiddenException(SUBMIT_ROLE_REFUSAL);
+      throw new SubmitRoleRefusedError();
     }
 
     const submitted: BulkSubmitAcceptedRecord[] = [];
@@ -155,6 +159,7 @@ export class BulkSubmitService {
     }
 
     await this.recordBatch(user, {
+      bulk: true,
       requested: requestedIds.length,
       // What the caller actually typed, beside what it resolved to. The two
       // differ only when ids were repeated or respelled, and `requested`
@@ -272,15 +277,15 @@ export class BulkSubmitService {
    */
   private async recordBatch(
     user: RequestUser,
-    diff: Record<string, unknown>,
+    diff: BulkSubmitAuditDiff,
   ): Promise<void> {
     try {
       await this.audit.record(user, {
-        action: 'submit',
+        action: 'bulk_submit',
         entity: 'activity_record',
         // No single entity — the report rows set this precedent.
         entityId: null,
-        diff: { bulk: true, ...diff },
+        diff,
       });
     } catch (error) {
       this.logger.error(
@@ -308,23 +313,45 @@ export class BulkSubmitService {
   }
 
   /**
-   * Map what `submit` threw onto a per-record code.
+   * One issue per record, classified by the exception's CLASS.
    *
-   * The two `ForbiddenException`s are told apart by comparing against the
-   * thrower's own exported constants, never a retyped substring — a role
-   * refusal is one 403 for the request and an author refusal is one record, so
-   * conflating them would either abort a batch on someone else's rejected row
-   * or report a role problem a thousand times.
-   *
-   * The `BadRequestException`s are discriminated the same way — against the
-   * fragments the thrower builds its sentences from — because getting it wrong
-   * tells a user their evidence is missing when their period is closed.
+   * A role refusal is one 403 for the whole request — a role cannot change
+   * mid-batch — so it is re-thrown; an author refusal is per record. Both used
+   * to arrive as `ForbiddenException` and were told apart by comparing against
+   * the thrower's exported sentence; now each is its own class and no sentence
+   * is read here.
    */
   private toIssue(
     recordId: string,
     error: unknown,
     unexpected: BatchFailureLog,
   ): BulkSubmitIssue {
+    // By CLASS, never by sentence (see `activity-records/errors.ts`). The
+    // typed refusals first; then the plain Nest classes `submit` still raises
+    // for a status it cannot move or an id it cannot see; everything else —
+    // including a `ForbiddenException` or `ConflictException` nobody typed —
+    // is unexpected and is logged as such.
+    if (error instanceof SubmitRoleRefusedError) throw error;
+    if (error instanceof ResubmitAuthorRefusedError) {
+      return { recordId, code: 'not_author', message: error.message };
+    }
+    if (error instanceof PeriodLockedError) {
+      return { recordId, code: 'period_locked', message: error.message };
+    }
+    if (error instanceof EvidenceRequiredError) {
+      return {
+        recordId,
+        code: 'evidence_required',
+        message: this.messageOf(error),
+      };
+    }
+    if (error instanceof VarianceReasonRequiredError) {
+      return {
+        recordId,
+        code: 'variance_reason_required',
+        message: this.messageOf(error),
+      };
+    }
     if (error instanceof NotFoundException) {
       return {
         recordId,
@@ -332,45 +359,16 @@ export class BulkSubmitService {
         message: 'This record does not exist, or it is not yours.',
       };
     }
-    if (error instanceof ForbiddenException) {
-      // The role refusal cannot reach here — it is checked before the loop —
-      // but if a future change lets it through, reporting it as an authorship
-      // problem would send the user looking for the wrong thing.
-      if (error.message === SUBMIT_ROLE_REFUSAL) throw error;
-      // Matched, not assumed. "Anything that is not X is Y" is the shape that
-      // goes wrong silently: a Forbidden from somewhere else in the graph
-      // would tell a user they do not own a record they wrote.
-      if (error.message === RESUBMIT_AUTHOR_REFUSAL) {
-        return { recordId, code: 'not_author', message: RESUBMIT_AUTHOR_REFUSAL };
-      }
-      return this.unexpected(recordId, error, unexpected);
-    }
-    if (error instanceof ConflictException) {
-      // The only Conflict `submit` raises is the period lock; anything else
-      // reaching here is something this mapper has not been taught.
-      if (error.message.toLowerCase().includes('is locked')) {
-        return { recordId, code: 'period_locked', message: error.message };
-      }
-      return this.unexpected(recordId, error, unexpected);
-    }
     if (error instanceof BadRequestException) {
-      // Against the thrower's own exported constants, never a retyped
-      // substring. The evidence sentence interpolates the category, so the
-      // stable fragment is what both sides share; the anomaly one interpolates
-      // nothing and is compared whole.
-      const message = this.messageOf(error);
-      if (message.includes(EVIDENCE_REFUSAL_FRAGMENT)) {
-        return { recordId, code: 'evidence_required', message };
-      }
-      if (message === VARIANCE_REFUSAL) {
-        return { recordId, code: 'variance_reason_required', message };
-      }
-      return { recordId, code: 'not_submittable', message };
+      return {
+        recordId,
+        code: 'not_submittable',
+        message: this.messageOf(error),
+      };
     }
     return this.unexpected(recordId, error, unexpected);
   }
 
-  /** Never the raw error text — it can carry a query, a path or a column. */
   private unexpected(
     recordId: string,
     error: unknown,

@@ -22,6 +22,14 @@ import {
 import { QUOTED_FRAGMENTS } from './parse-rows';
 import { CALLER_TEXT_QUOTE_MAX_CODE_POINTS } from '../common/caller-text';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
+import {
+  CreateRoleRefusedError,
+  DUPLICATE_RECORD_MESSAGE,
+  DuplicateActivityRecordError,
+  PeriodLockedError,
+} from '../activity-records/errors';
+import { NoEmissionFactorError } from '../calculations/errors';
+import { InaccessibleEntityError } from './errors';
 import { AuditService } from '../audit/audit.service';
 import { blockedUnitReason } from '../calculations/normalization';
 import { PrismaService } from '../prisma/prisma.service';
@@ -210,7 +218,7 @@ describe('BulkUploadService — the dry run writes nothing', () => {
     expect(audit.record).toHaveBeenCalledTimes(1);
     const [, entry] = audit.record.mock.calls[0];
     expect(entry).toMatchObject({
-      action: 'create',
+      action: 'bulk_import',
       entity: 'activity_record',
       entityId: null,
     });
@@ -409,7 +417,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     const { records, service } = build();
     records.create
       .mockResolvedValueOnce({ id: 'rec-1', calculation: SNAPSHOT, anomalyFlag: false, varianceReason: null })
-      .mockRejectedValueOnce(new ConflictException('Reporting period February 2024 is locked'))
+      .mockRejectedValueOnce(new PeriodLockedError('Reporting period February 2024 is locked'))
       .mockResolvedValueOnce({ id: 'rec-3', calculation: SNAPSHOT, anomalyFlag: false, varianceReason: null });
 
     const report = await service.import(
@@ -430,18 +438,14 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
 
   it.each([
     [new NotFoundException('Subsidiary not found'), 'not_found'],
-    [new ConflictException('Reporting period January 2024 is locked'), 'period_locked'],
-    [
-      new ConflictException(
-        'An activity record already exists for this reporting entity, period and category.',
-      ),
-      'duplicate_existing',
-    ],
+    [new PeriodLockedError('Reporting period January 2024 is locked'), 'period_locked'],
+    [new DuplicateActivityRecordError(), 'duplicate_existing'],
     [new BadRequestException('"Michaelmas" is not a period'), 'invalid'],
   ])('maps %s onto a row code', async (error, code) => {
-    // The two conflicts are told apart by their MESSAGE. That coupling is
-    // real, so it is pinned here: reword either sentence in the record
-    // service and a duplicate starts reporting as a locked period.
+    // By CLASS: the record service throws typed refusals, and rewording any
+    // of their sentences changes nothing here. (The two conflicts used to be
+    // told apart by their message, and a duplicate once reported as a locked
+    // period for a whole release.)
     const { records, service } = build();
     records.create.mockRejectedValueOnce(error);
 
@@ -508,7 +512,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
       .mockRejectedValueOnce(new Error('driver said no'))
       .mockRejectedValueOnce(new Error('driver said no'))
       .mockRejectedValueOnce(new Error('driver said no'))
-      .mockRejectedValueOnce(new ForbiddenException('not yours'));
+      .mockRejectedValueOnce(new CreateRoleRefusedError());
     const rows = Array.from({ length: 4 }, (_, i) =>
       row({ reportingYear: String(2000 + i) }),
     );
@@ -552,7 +556,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     // unexpected failures of different classes.
     const { records, service } = build();
     records.create
-      .mockRejectedValueOnce(new ConflictException('Period 2001 January is locked.'))
+      .mockRejectedValueOnce(new PeriodLockedError('Period 2001 January is locked.'))
       .mockRejectedValueOnce(new Error('driver said no'))
       .mockRejectedValueOnce(new TypeError('records.create is not a function'));
     const rows = Array.from({ length: 4 }, (_, i) =>
@@ -598,7 +602,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     // ordinary answer to an ordinary file, and ERROR level is not for them.
     const { records, service } = build();
     records.create.mockRejectedValue(
-      new ConflictException('Period 2024 January is locked.'),
+      new PeriodLockedError('Period 2024 January is locked.'),
     );
 
     const { result: report, logged } = await captureErrors(() =>
@@ -664,17 +668,41 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     },
   );
 
-  it('still rethrows a refusal the record service raises mid-file as one 403', async () => {
+  it('still rethrows a role refusal the record service raises mid-file as one 403', async () => {
     // A backstop, not the gate — but a thousand identical "forbidden" row
     // errors would still be a worse answer than one 403.
     const { records, service } = build();
-    records.previewCreate.mockRejectedValue(
-      new ForbiddenException('Your role may not create activity records'),
-    );
+    records.previewCreate.mockRejectedValue(new CreateRoleRefusedError());
 
     await expect(
       service.import(dataEntry(), csvFile([row(), row({ periodValue: 'February' })]), DRY),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('does not abort on a Forbidden nobody typed — that row is unexpected, the batch goes on', async () => {
+    // The backstop fires on the CLASS. A `ForbiddenException` from elsewhere
+    // in the graph is not a role refusal, and re-throwing it would discard the
+    // report for every row after it.
+    const { records, service } = build();
+    records.previewCreate
+      .mockRejectedValueOnce(new ForbiddenException('not yours'))
+      .mockResolvedValueOnce({
+        subsidiaryId: 'sub-1',
+        locationId: null,
+        periodValue: 'February',
+        calculation: SNAPSHOT,
+        scope: 2,
+        verdict: { anomalous: false, priorCount: 0, baseline: null },
+      });
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row(), row({ periodValue: 'February' })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([expect.objectContaining({ row: 2, code: 'unexpected' })]);
+    expect(report.accepted.map((a) => a.row)).toEqual([3]);
   });
 });
 
@@ -788,7 +816,7 @@ describe('BulkUploadService — warnings', () => {
   it('drops a row’s warnings when the write itself refuses it', async () => {
     const { records, service } = build();
     records.create.mockRejectedValueOnce(
-      new NotFoundException(
+      new NoEmissionFactorError(
         'No emission factor found for category "Electricity", geography "TR", year 2019',
       ),
     );
@@ -1360,7 +1388,7 @@ describe('BulkUploadService — the remaining refusals', () => {
     // the user they had a permissions problem.
     const { records, service } = build();
     records.create.mockRejectedValueOnce(
-      new NotFoundException(
+      new NoEmissionFactorError(
         'No emission factor found for category "Electricity", geography "TR", year 2019',
       ),
     );
@@ -1687,7 +1715,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
           varianceReason: null,
         }),
       )
-      .mockRejectedValueOnce(new ForbiddenException('Your role may not create activity records'));
+      .mockRejectedValueOnce(new CreateRoleRefusedError());
 
     const report = await service.import(
       dataEntry(),
@@ -1723,9 +1751,9 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     });
   });
 
-  it('cleans the refusal reason too — it can echo the file’s own header', async () => {
-    // The second caller-controlled string in the diff, and the retry used to
-    // leave it in place: a NUL in a header cell failed both writes.
+  it('does not audit a header refusal — a malformed file is a 400, not an event about the caller', async () => {
+    // These used to be audited, and the reason then carried the file's own
+    // header text into an append-only table at five rows a minute per user.
     const { audit, service } = build();
     const file = {
       ...csvFile([]),
@@ -1736,31 +1764,24 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       BadRequestException,
     );
 
-    const { reason } = audit.record.mock.calls[0][1].diff as { reason: string };
-    // The quote names the NUL, so the row records what the header carried.
-    expect(reason).toContain('Unrecognised column(s): "bad<U+0000>col".');
-    expect(reason).not.toContain('\u0000');
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('cleans and bounds the reason itself, whatever text the refusal carries', async () => {
-    // The header refusal cleans its own fragments now, so the test above would
-    // pass with `reason` stored raw. This error carries text nothing upstream
-    // has cleaned: a NUL, a U+202E and more than the 500 code points kept.
+  it('rethrows an unexpected pre-flight failure without auditing it', async () => {
+    // Only the two refusals that are ABOUT the caller are recorded. A failure
+    // nobody typed — here the multer buffer itself throwing — is not one.
     const { audit, service } = build();
-    const nul = String.fromCharCode(0);
-    const rlo = String.fromCharCode(0x202e);
     const file = csvFile([row()]);
     // Defined after `csvFile` builds the object: its spread would call a getter.
     Object.defineProperty(file, 'buffer', {
       get() {
-        throw new Error(`boom${nul}${rlo}${'x'.repeat(600)}`);
+        throw new Error('boom');
       },
     });
 
     await expect(service.import(dataEntry(), file, DRY)).rejects.toThrow(/^boom/);
 
-    const { reason } = audit.record.mock.calls[0][1].diff as { reason: string };
-    expect(reason).toBe(`boom${'x'.repeat(496)}`);
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('drops the characters that disguise a name in the audit drawer', async () => {
@@ -1779,12 +1800,12 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     });
   });
 
-  it('refuses with a sentence the audit row stores whole', async () => {
-    // A marker is one unit but many code points. Bounded in units alone, this
-    // file's six unknown cells wrote a 1,479-code-point refusal of which the
-    // row kept 500, cutting a marker in half: the stored sentence ended
-    // `a<U+20`, a label that reads as a space. The same cut stores `x40` as
-    // `x4` — a wrong count, in a table with no correction path.
+  it('refuses a header of disguised cells with a sentence that keeps every marker whole — and writes no audit row', async () => {
+    // A marker is one unit but many code points; a sentence cut in units can
+    // end `a<U+20`, a label that reads as a space. Header refusals used to be
+    // audited and this pinned the STORED sentence; they are not audited any
+    // more (a malformed file says nothing about the caller), so what is
+    // pinned is the sentence the caller gets back.
     const { audit, service } = build();
     const cell = `a${String.fromCodePoint(0x2063).repeat(40)}`.repeat(20);
     const header = `${HEADER},${[cell, cell, cell, cell, cell, 'x'].join(',')}`;
@@ -1796,17 +1817,19 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     const error = await service.import(dataEntry(), file, DRY).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(BadRequestException);
-    const { reason } = audit.record.mock.calls[0][1].diff as { reason: string };
-    expect(reason).toBe((error as Error).message);
+    expect((error as Error).message).toContain('Unrecognised column(s)');
+    expect((error as Error).message).not.toMatch(/<U\+[0-9A-F]*$/);
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('cannot build a refusal longer than the audit row keeps', async () => {
+  it('cannot build a header refusal longer than the audit reason bound', async () => {
     // Derived from the sentence `mapHeader` really throws, not from a copy of
     // its template: every quoted cell at its code-point bound, and then the
     // largest "(+N more)" a header row can carry — an unknown cell costs at
     // least two bytes, so a file cannot name more cells than half its size.
-    // Widening a bound, adding a column or rewording the sentence fails here,
-    // rather than silently cutting an append-only row.
+    // Header refusals are no longer audited, so the bound is now a ceiling on
+    // the sentence the caller gets back; it is kept so that widening a quote
+    // bound or adding a column is a deliberate act.
     const { service } = build();
     const cell = `aaa${String.fromCodePoint(0x200b)}`.repeat(6);
     const header = `${HEADER},${[
@@ -1864,9 +1887,12 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
       Object.assign(new Error('unsupported Unicode escape sequence'), { code: '22P05' }),
     );
 
+    // A role refusal: the one audited refusal whose diff carries caller text
+    // (the filename). A wrong extension used to serve here; it is no longer
+    // audited at all.
     await expect(
-      service.import(dataEntry(), csvFile([row()], { originalname: 'x.exe' }), DRY),
-    ).rejects.toBeInstanceOf(BadRequestException);
+      service.import(dataEntry({ role: 'consultant' }), csvFile([row()]), DRY),
+    ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(audit.record).toHaveBeenCalledTimes(2);
     // Everything else the first write carried survives; only the two caller
@@ -1929,8 +1955,8 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     audit.record.mockRejectedValueOnce(new Error('Connection terminated unexpectedly'));
 
     await expect(
-      service.import(dataEntry(), csvFile([row()], { originalname: 'x.exe' }), DRY),
-    ).rejects.toBeInstanceOf(BadRequestException);
+      service.import(dataEntry({ role: 'consultant' }), csvFile([row()]), DRY),
+    ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(audit.record).toHaveBeenCalledTimes(1);
   });
@@ -2033,16 +2059,14 @@ describe('BulkUploadService — what the report repeats back', () => {
       `${'x'.repeat(BULK_UPLOAD_MESSAGE_MAX_LENGTH)}…`,
     ],
     [
-      'a missing factor, still classified by its RAW text',
-      // The words the classifier looks for sit past the bound: bounded before
-      // it read them, this row would be reported as an access problem.
-      () => new NotFoundException(`${'z'.repeat(600)} emission factor ${nul}`),
+      'a missing factor, classified by its class whatever its text',
+      () => new NoEmissionFactorError(`${'z'.repeat(600)}${nul}`),
       'no_factor',
       `${'z'.repeat(BULK_UPLOAD_MESSAGE_MAX_LENGTH)}…`,
     ],
     [
-      'a closed period, still told apart from a taken slot',
-      () => new ConflictException(`${nul}${'p'.repeat(10_000)}`),
+      'a closed period, told apart from a taken slot by its class',
+      () => new PeriodLockedError(`${nul}${'p'.repeat(10_000)}`),
       'period_locked',
       `${'p'.repeat(BULK_UPLOAD_MESSAGE_MAX_LENGTH)}…`,
     ],
@@ -2176,3 +2200,91 @@ describe('BulkUploadService — what the report repeats back', () => {
   });
 });
 
+describe('BulkUploadService — what is audited, and under which verb', () => {
+  // Measured 2026-09-17 before this rule: five live imports left 37 audit
+  // rows for 5 records, every refusal written as `action: 'create'` with a
+  // null id — indistinguishable from a record that was created, and carrying
+  // the file's own header text into an append-only table.
+
+  it.each([
+    ['an empty file', () => csvFile([])],
+    ['a wrong extension', () => csvFile([row()], { originalname: 'x.exe' })],
+    [
+      'an unrecognised header',
+      () =>
+        ({
+          ...csvFile([]),
+          buffer: Buffer.from(`${HEADER},extra\n${row()}`),
+        }) as Express.Multer.File,
+    ],
+    [
+      'too many rows',
+      () => csvFile(Array.from({ length: BULK_UPLOAD_MAX_ROWS + 1 }, () => row())),
+    ],
+  ])('does not audit %s — it says something about the file, not the caller', async (_label, file) => {
+    const { audit, records, service } = build();
+
+    await expect(service.import(dataEntry(), file(), DRY)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    expect(records.previewCreate).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a role that may not author',
+      () => dataEntry({ role: 'consultant' }),
+      () => csvFile([row()]),
+      CreateRoleRefusedError,
+      'Your role may not create activity records',
+    ],
+    [
+      'a file naming an entity outside the tenant',
+      () => dataEntry(),
+      () => csvFile([row({ subsidiaryId: 'sub-99' })]),
+      InaccessibleEntityError,
+      // Row numbers only: no caller text reaches the row.
+      'Row(s) 2 name a reporting entity that does not exist or is not yours.',
+    ],
+  ] as const)('audits %s under bulk_import, with a reason that carries no caller text', async (_label, user, file, cls, reason) => {
+    const { audit, service } = build();
+
+    await expect(service.import(user(), file(), DRY)).rejects.toBeInstanceOf(cls);
+
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record.mock.calls[0][1]).toMatchObject({
+      action: 'bulk_import',
+      entity: 'activity_record',
+      entityId: null,
+      diff: { bulk: true, dryRun: true, refused: true, reason },
+    });
+  });
+
+  it('classifies a row failure by class, not by sentence', async () => {
+    // A `ConflictException` carrying the duplicate SENTENCE but not the class
+    // is an unexpected failure; a `PeriodLockedError` is a lock whatever it
+    // says; a `NotFoundException` that merely mentions a factor is an access
+    // problem. Reverting the mapper to message matching fails all three.
+    const { records, service } = build();
+    records.create
+      .mockRejectedValueOnce(new ConflictException(DUPLICATE_RECORD_MESSAGE))
+      .mockRejectedValueOnce(new PeriodLockedError('closed'))
+      .mockRejectedValueOnce(
+        new NotFoundException('No emission factor found for anything at all'),
+      );
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row(), row({ periodValue: 'February' }), row({ periodValue: 'March' })]),
+      NOTHING,
+    );
+
+    expect(report.errors.map((e) => e.code)).toEqual([
+      'unexpected',
+      'period_locked',
+      'not_found',
+    ]);
+  });
+});
