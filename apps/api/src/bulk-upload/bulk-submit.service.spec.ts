@@ -116,6 +116,20 @@ function build(rows: Record<string, unknown>[] = [candidate()]) {
   return { prisma, records, audit, service };
 }
 
+/**
+ * A real uuid, because these tests are about its SPELLING. Every other id in
+ * this file is a short label like `'a'`; `canonicalUuid` leaves those exactly
+ * as written, which is what keeps the rest of the suite passing.
+ *
+ * Hex LETTERS, and the guard below is not decoration: swapped for a seed-style
+ * all-digit id (`2222…0001`), `toUpperCase()` returns the same string and BOTH
+ * case tests pass against the unfixed service — measured, not feared. The
+ * import's spec and the isolation E2E carry the same warning.
+ */
+const RECORD_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+/** Mixed case, the spelling a hand-edited request most plausibly carries. */
+const MIXED_CASE_ID = 'A0eeBC99-9c0B-4ef8-BB6d-6bb9BD380a11';
+
 const ids = (...v: string[]) => ({ recordIds: v });
 
 /**
@@ -306,6 +320,83 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     expect(report.failed).toEqual([]);
   });
 
+  /**
+   * A uuid has more than one spelling and the database returns exactly one.
+   * The route's id check is case-insensitive, so an UPPERCASE id passes the
+   * DTO and is a valid request — and it used to be answered with "this record
+   * does not exist, or it is not yours" about the caller's OWN draft, because
+   * the pre-flight keys Prisma's rows (canonical) and looked them up with the
+   * caller's raw text.
+   *
+   * The fixture guard belongs to every test below it.
+   */
+  it('has a fixture that can tell the two cases apart', () => {
+    expect(RECORD_ID).not.toBe(RECORD_ID.toUpperCase());
+    expect(MIXED_CASE_ID).not.toBe(RECORD_ID);
+    expect(MIXED_CASE_ID.toLowerCase()).toBe(RECORD_ID);
+  });
+
+  it.each([
+    ['uppercase', RECORD_ID.toUpperCase()],
+    ['mixed case', MIXED_CASE_ID],
+  ])('submits a record whose id the caller spelled in %s', async (_, spelt) => {
+    const { prisma, records, service } = build([candidate({ id: RECORD_ID })]);
+
+    const report = await service.submitMany(dataEntry(), ids(spelt));
+
+    // The QUERY, not only the map: the two agreeing on one spelling is the
+    // whole point, and asserting the lookup alone left `where.id` free —
+    // deleting the clause entirely, or sending `['nope']`, passed the suite.
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toMatchObject(
+      { id: { in: [RECORD_ID] }, subsidiaryId: { in: ['sub-1'] } },
+    );
+    expect(records.submit.mock.calls.map((c) => c[1])).toEqual([RECORD_ID]);
+    expect(report.failed).toEqual([]);
+  });
+
+  it('counts two spellings of one id as one request, in the report and the audit row', async () => {
+    const { records, audit, service } = build([candidate({ id: RECORD_ID })]);
+
+    const report = await service.submitMany(
+      dataEntry(),
+      ids(RECORD_ID, RECORD_ID.toUpperCase()),
+    );
+
+    // Two spellings are one record. `requested: 2` both reported the caller's
+    // own id as `not_found` against its own success a moment earlier, and put
+    // that inflated count in the append-only batch row. `received` keeps what
+    // was typed, which `requested` alone can no longer show.
+    expect(report.requested).toBe(1);
+    expect(records.submit).toHaveBeenCalledTimes(1);
+    expect(report.failed).toEqual([]);
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({
+      requested: 1,
+      received: 2,
+      submittedCount: 1,
+      failedCount: 0,
+    });
+  });
+
+  it.each([
+    ['not_found', candidate({ id: 'something-else' })],
+    ['not_submittable', candidate({ id: RECORD_ID, status: 'approved' })],
+    ['not_author', candidate({ id: RECORD_ID, createdBy: 'someone-else' })],
+  ])('reports %s against the stored spelling, not the typed one', async (code, row) => {
+    const { service } = build([row]);
+
+    const report = await service.submitMany(
+      dataEntry(),
+      ids(RECORD_ID.toUpperCase()),
+    );
+
+    // An issue echoing `A0EE…` could not be joined to the record or to its
+    // audit rows, which is the whole reason the accepted half echoes stored
+    // ids as well.
+    expect(report.failed).toEqual([
+      { recordId: RECORD_ID, code, message: expect.any(String) },
+    ]);
+  });
+
   it('accounts for every id it was given', async () => {
     const { service } = build([candidate({ id: 'a' })]);
 
@@ -336,13 +427,22 @@ describe('BulkSubmitService — a role refusal is one 403, and it is recorded', 
     const { audit, service } = build();
 
     await expect(
-      service.submitMany(dataEntry({ role: 'consultant' }), ids('a')),
+      service.submitMany(
+        dataEntry({ role: 'consultant' }),
+        ids(RECORD_ID, RECORD_ID.toUpperCase(), 'a'),
+      ),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(audit.record).toHaveBeenCalledTimes(1);
+    // Its counts too, and they were unasserted: this is the row that records
+    // a seat probing the write surface, so HOW MUCH it asked for is the part
+    // worth keeping. Two spellings of one id and one other, so the
+    // de-duplicated count and the typed count cannot be confused.
     expect(audit.record.mock.calls[0][1].diff).toMatchObject({
       bulk: true,
       refused: true,
+      requested: 2,
+      received: 3,
     });
   });
 
