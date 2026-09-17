@@ -1,7 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -28,9 +26,14 @@ import {
 } from '@tonyai/shared-types';
 import {
   ActivityRecordsService,
-  DUPLICATE_RECORD_MESSAGE,
   mayWriteActivityRecords,
 } from '../activity-records/activity-records.service';
+import {
+  CreateRoleRefusedError,
+  DuplicateActivityRecordError,
+  PeriodLockedError,
+} from '../activity-records/errors';
+import { NoEmissionFactorError } from '../calculations/errors';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -40,6 +43,7 @@ import { canonicalUuid } from '../common/canonical-uuid';
 import { isFormulaLead } from '../common/csv-cell';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
+import { InaccessibleEntityError } from './errors';
 import {
   extensionOf,
   parseRows,
@@ -199,7 +203,7 @@ export class BulkUploadService {
           // would throw away the report of a partial import (no transaction
           // spans the batch) and skip the batch audit row below, so it is
           // reported on its own row like any other refusal.
-          if (error instanceof ForbiddenException && accepted.length === 0) {
+          if (error instanceof CreateRoleRefusedError && accepted.length === 0) {
             throw error;
           }
           errors.push(this.toIssue(parsed.row, error, unexpected));
@@ -485,13 +489,14 @@ export class BulkUploadService {
   // -- batch pre-flight ------------------------------------------------------
 
   /**
-   * The rule, and the sentence, the record service applies to every write —
-   * checked here as well so that the refusal happens inside `auditedRefusal`,
-   * before the file is read, rather than from inside the loop.
+   * The rule the record service applies to every write, thrown as the class
+   * it throws — checked here as well so that the refusal happens inside
+   * `auditedRefusal`, before the file is read, rather than from inside the
+   * loop.
    */
   private assertMayImport(user: RequestUser): void {
     if (!mayWriteActivityRecords(user)) {
-      throw new ForbiddenException('Your role may not create activity records');
+      throw new CreateRoleRefusedError();
     }
   }
 
@@ -569,7 +574,7 @@ export class BulkUploadService {
     // The reason only. The consequence is the client's to state: the panel
     // prints "Nothing was imported." under EVERY whole-file refusal, and this
     // sentence saying it as well put it on screen twice.
-    throw new BadRequestException(
+    throw new InaccessibleEntityError(
       `Row(s) ${shown}${suffix} name a reporting entity that does not exist or is not yours.`,
     );
   }
@@ -663,14 +668,18 @@ export class BulkUploadService {
   // -- audit -----------------------------------------------------------------
 
   /**
-   * Run the pre-flight, and if it refuses, write the refusal down before the
-   * exception leaves.
+   * Run the pre-flight, and if it refuses for a reason that says something
+   * about the CALLER, write the refusal down before the exception leaves.
    *
    * `audit_log` is append-only and has no correction path, which is exactly why
    * the events worth keeping are the ones nobody chose to record: a file naming
-   * another tenant's subsidiaries, a role that may not author records, a
-   * 50,000-row file. None of those reached the batch audit row, because that
-   * row was written after the loop the refusal prevented.
+   * another tenant's subsidiaries, a role that may not author records. Those
+   * are written under `bulk_import` with `refused: true`. A malformed file — an
+   * unrecognised header, a wrong extension, an empty or oversized one, too
+   * many rows — is a 400 that touched nothing and says nothing about the
+   * caller; auditing every one of them filled the trail with caller-controlled
+   * text at five rows a minute per user (measured 2026-09-17: 37 audit rows
+   * for 5 records), so those are refused and not recorded.
    */
   private async auditedRefusal<T>(
     user: RequestUser,
@@ -681,6 +690,7 @@ export class BulkUploadService {
     try {
       return await preflight();
     } catch (error) {
+      if (!this.isAuditedRefusal(error)) throw error;
       try {
         await this.recordBatch(
           user,
@@ -705,6 +715,14 @@ export class BulkUploadService {
     }
   }
 
+  /** The two refusals that are about the caller rather than about the file. */
+  private isAuditedRefusal(error: unknown): boolean {
+    return (
+      error instanceof CreateRoleRefusedError ||
+      error instanceof InaccessibleEntityError
+    );
+  }
+
   /**
    * Write one batch row — and if the database refuses a VALUE in it, write it
    * once more without the caller's text.
@@ -727,7 +745,7 @@ export class BulkUploadService {
   ): Promise<void> {
     // No single entity — the `report` rows set the precedent for this shape.
     const entry = {
-      action: 'create',
+      action: 'bulk_import',
       entity: 'activity_record',
       entityId: null,
     } as const;
@@ -1002,28 +1020,27 @@ export class BulkUploadService {
   }
 
   /**
-   * Map what the record service threw onto a row issue.
+   * One row issue per failure, classified by the exception's CLASS.
    *
-   * The two `ConflictException`s are told apart by their message — a real
-   * coupling, made safe by importing the thrower's own constant rather than
-   * retyping it. An earlier version matched the substring "already exists"
-   * and a spec "pinned" it against a literal the spec itself owned, so
-   * rewording the service left the whole suite green.
+   * The record service throws typed refusals (`activity-records/errors.ts`,
+   * `calculations/errors.ts`); this reads none of their sentences. It used to
+   * tell a duplicate from a lock by comparing `message` against an exported
+   * constant, and before that against a retyped substring — rewording the
+   * sentence kept every test green while every real duplicate was reported as
+   * a locked period.
    */
   private toIssue(
     row: number,
     error: unknown,
     unexpected: BatchFailureLog,
   ): BulkUploadRowIssue {
+    // By CLASS, never by sentence. A `ConflictException` that is neither a
+    // duplicate nor a lock, like a `NotFoundException` the record service did
+    // not type, falls through to `unexpected` and is logged as one.
+    if (error instanceof NoEmissionFactorError) {
+      return { row, column: null, code: 'no_factor', message: error.message };
+    }
     if (error instanceof NotFoundException) {
-      // The calc engine throws NotFound for factor COVERAGE, which is the
-      // archetypal bulk-import failure: importing 2019-2020 history for a
-      // category whose factor library starts in 2021. Reporting that as an
-      // access problem sent the user hunting for a permissions bug that does
-      // not exist. Its own message is precise and echoes only their input.
-      if (error.message.toLowerCase().includes('emission factor')) {
-        return { row, column: null, code: 'no_factor', message: error.message };
-      }
       return {
         row,
         column: null,
@@ -1032,18 +1049,16 @@ export class BulkUploadService {
           'The reporting entity on this row does not exist or is not yours.',
       };
     }
-    if (error instanceof ConflictException) {
-      // Compared against the thrower's OWN constant, not a retyped substring.
-      // The two conflicts (a taken slot, a closed period) are otherwise
-      // indistinguishable, and a reworded message would silently start
-      // telling users to unlock a period that was never locked.
-      const duplicate = error.message === DUPLICATE_RECORD_MESSAGE;
+    if (error instanceof DuplicateActivityRecordError) {
       return {
         row,
         column: null,
-        code: duplicate ? 'duplicate_existing' : 'period_locked',
+        code: 'duplicate_existing',
         message: error.message,
       };
+    }
+    if (error instanceof PeriodLockedError) {
+      return { row, column: null, code: 'period_locked', message: error.message };
     }
     if (error instanceof BadRequestException) {
       const response = error.getResponse();

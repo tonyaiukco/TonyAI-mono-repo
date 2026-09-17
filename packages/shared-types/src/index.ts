@@ -2537,6 +2537,13 @@ export const AUDIT_ACTIONS = [
    *  renders, since a deleted profile produces the same shape. */
   'rescore',
   'generate',
+  // A batch act on activity records — the import of a file, the submit of
+  // many ids — beside the per-record rows the create/submit path writes. The
+  // row carries `entityId: null` and a `diff.bulk` summary (file name, counts,
+  // or `refused` with a reason). Its own verb, so the trail can be filtered by
+  // it and a refusal is never mistaken for a record that was created.
+  'bulk_import',
+  'bulk_submit',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

@@ -80,12 +80,19 @@ attachment), use `supabase-storage` instead.
   lock landing mid-file leaves rows 1..N written. The report lists accepted rows
   individually — a report that says only "failed" turns that into a
   data-integrity incident.
-- **One audit row for the batch, plus the per-row rows the create path already
-  writes.** Write the batch row even on a dry run and even when every row
-  failed: `audit_log` is the only record that a file was pointed at this tenant.
-  Reuse an existing `AuditAction`/`AuditEntity` with `entityId: null` (the
-  `report` rows set that precedent) — adding a union member is a compile error
-  in `apps/web`, whose action-colour map is exhaustive.
+- **One audit row for the batch under its OWN verb, plus the per-row rows the
+  create path already writes.** `bulk_import` / `bulk_submit` with
+  `entityId: null` and a `diff.bulk` summary — never an existing verb with a
+  null id, which made a refusal indistinguishable from a record that was
+  created. Adding the verb is one member in `AUDIT_ACTIONS` (shared-types)
+  plus one entry in the web audit page's exhaustive colour map; that compile
+  error is the point of the map. Write the batch row on a dry run and on an
+  apply, even when every row failed. Of the pre-flight refusals, audit only
+  the ones that say something about the CALLER — a role that may not write, a
+  file naming another tenant's entity — not a malformed file (bad header,
+  wrong extension, empty, oversized, too many rows): that is a 400 that
+  touched nothing, and auditing it fills an append-only table with
+  caller-controlled text at the throttle's rate.
 - **Cap rows and bytes explicitly.** Nest's 100 KB JSON body limit does **not**
   apply to a multipart upload. Derive the row cap from the per-row query budget,
   and write the arithmetic down beside the constant.
@@ -134,10 +141,14 @@ attachment), use `supabase-storage` instead.
    flag that decides whether a thousand writes happen is one boolean. The
    multipart FIELD NAME is reachable from neither; it needs e2e.
 
-7. **Bind, never retype, any message you branch on.** If two failures arrive as
-   the same exception class and you tell them apart by text, import the
-   thrower's own constant. A spec that retypes the literal tests your matcher
-   against a string the spec owns, and the real rewording sails through green.
+7. **Throw a class, branch on `instanceof`, never on a sentence.** If two
+   failures would arrive as the same Nest exception, give each its own subclass
+   in the resource service's `errors.ts` (`activity-records/errors.ts`,
+   `calculations/errors.ts`) and let the mapper check the class. Keep the
+   sentence as the class's default message — the web mirrors some of them —
+   but never read it. Binding an exported message constant was the previous
+   rule and it still left the coupling in the text; a spec that retypes the
+   literal tests the matcher against a string the spec owns.
 
 ## The loop
 

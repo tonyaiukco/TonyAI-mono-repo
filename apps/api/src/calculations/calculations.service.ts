@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { NoEmissionFactorError } from './errors';
 import type { EmissionFactor } from '@tonyai/db';
 import {
   CATEGORY_SCOPE_MAP,
@@ -173,7 +174,7 @@ export class CalculationsService {
         !isRecordableWithoutFactor(input.category) ||
         !isInvoiceTracked(input.category)
       ) {
-        throw new NotFoundException(
+        throw new NoEmissionFactorError(
           `No emission factor found for category "${quoteCallerText(input.category)}", ` +
             `geography "${quoteCallerText(input.geographyCode)}", ` +
             `year ${input.reportingYear}`,

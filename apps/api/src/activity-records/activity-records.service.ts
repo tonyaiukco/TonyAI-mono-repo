@@ -11,6 +11,15 @@ import {
   type ActivityRecord,
 } from '@tonyai/db';
 import {
+  CreateRoleRefusedError,
+  DuplicateActivityRecordError,
+  EvidenceRequiredError,
+  PeriodLockedError,
+  ResubmitAuthorRefusedError,
+  SubmitRoleRefusedError,
+  VarianceReasonRequiredError,
+} from './errors';
+import {
   canonicalPeriodValue,
   CATEGORY_SCOPE_MAP,
   anomalyNotEvaluated,
@@ -76,50 +85,15 @@ export function mayWriteActivityRecords(user: RequestUser): boolean {
   return WRITE_ROLES.has(user.role);
 }
 
-/**
- * The sentence a uniqueness conflict comes back with, in ONE place.
- *
- * Exported because the bulk importer has to tell a duplicate apart from a
- * locked period, and both arrive as `ConflictException`. Matching on a
- * retyped substring made that coupling invisible: rewording this string left
- * the entire suite green while every real conflict started reporting as
- * "the period is locked — ask a super_admin to unlock it", about a period
- * that was never locked.
- */
-export const DUPLICATE_RECORD_MESSAGE =
-  'An activity record already exists for this reporting entity, period and category.';
-
-/**
- * The two things `submit` refuses with a `ForbiddenException`, in ONE place.
- *
- * Exported for the same reason as the message above, and the stakes are higher
- * here: a bulk submit has to tell them apart, because they are not the same
- * kind of failure. A ROLE refusal is one 403 for the whole request — a role
- * cannot change mid-batch. An AUTHOR refusal is per record, and a batch that
- * aborted on the first rejected row someone else wrote would discard the
- * report for every id after it.
- */
-export const SUBMIT_ROLE_REFUSAL = 'Your role may not submit activity records';
-export const RESUBMIT_AUTHOR_REFUSAL =
-  'You may only resubmit activity records you created';
-
-/**
- * The two `BadRequestException`s `submit` raises that a caller must tell apart.
- *
- * Both sentences interpolate a value, so what is exported is the STABLE
- * FRAGMENT each is built from — and the templates below are built from these,
- * so a reworded sentence cannot leave a matcher reading for text nobody
- * produces any more. The anomaly refusal interpolates nothing and is exported
- * whole.
- *
- * This is the `DUPLICATE_RECORD_MESSAGE` lesson applied a second time, on a
- * path where getting it wrong tells a user their evidence is missing when
- * their period is closed.
- */
-export const EVIDENCE_REFUSAL_FRAGMENT =
-  'requires at least one evidence file before submitting';
-export const VARIANCE_REFUSAL =
-  'This value deviates significantly from the historical average — add a variance comment before submitting.';
+// The refusal classes and their sentences live in `./errors`; the sentences
+// are re-exported so the web-facing constants keep their import path.
+export {
+  DUPLICATE_RECORD_MESSAGE,
+  EVIDENCE_REFUSAL_FRAGMENT,
+  RESUBMIT_AUTHOR_REFUSAL,
+  SUBMIT_ROLE_REFUSAL,
+  VARIANCE_REFUSAL,
+} from './errors';
 // Roles allowed to take a record into review and to reject it ("flag for
 // revision" in permissions_and_roles.md §3).
 const REVIEW_ROLES = new Set(['consultant', 'super_admin']);
@@ -483,7 +457,7 @@ export class ActivityRecordsService {
       where: { subsidiaryId, reportingYear, reportingPeriod, periodValue },
     });
     if (lock) {
-      throw new ConflictException(
+      throw new PeriodLockedError(
         `Reporting period ${periodValue} ${reportingYear} is locked — a super_admin must unlock it before records can change.`,
       );
     }
@@ -665,9 +639,7 @@ export class ActivityRecordsService {
     verdict: AnomalyVerdict;
   }> {
     if (!WRITE_ROLES.has(user.role)) {
-      throw new ForbiddenException(
-        'Your role may not create activity records',
-      );
+      throw new CreateRoleRefusedError();
     }
     // Tenant gate FIRST, before any query — `computeSnapshot` keeps its own
     // copy as the mechanism, but by the time it runs the period-lock lookup
@@ -771,7 +743,7 @@ export class ActivityRecordsService {
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === 'P2002'
       ) {
-        throw new ConflictException(DUPLICATE_RECORD_MESSAGE);
+        throw new DuplicateActivityRecordError();
       }
       throw e;
     }
@@ -908,7 +880,7 @@ export class ActivityRecordsService {
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === 'P2002'
       ) {
-        throw new ConflictException(DUPLICATE_RECORD_MESSAGE);
+        throw new DuplicateActivityRecordError();
       }
       throw e;
     }
@@ -955,7 +927,7 @@ export class ActivityRecordsService {
   async submit(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
     if (!WRITE_ROLES.has(user.role)) {
-      throw new ForbiddenException(SUBMIT_ROLE_REFUSAL);
+      throw new SubmitRoleRefusedError();
     }
     if (!SUBMITTABLE_STATUSES.has(record.status)) {
       throw new BadRequestException(
@@ -973,7 +945,7 @@ export class ActivityRecordsService {
       user.role !== 'super_admin' &&
       record.createdBy !== user.id
     ) {
-      throw new ForbiddenException(RESUBMIT_AUTHOR_REFUSAL);
+      throw new ResubmitAuthorRefusedError();
     }
     // Period-lock gate (FR §4.2): no submissions into a closed period.
     await this.assertPeriodNotLocked(
@@ -992,9 +964,7 @@ export class ActivityRecordsService {
       ? await this.prisma.evidence.count({ where: { activityRecordId: id } })
       : 0;
     if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
-      throw new BadRequestException(
-        `Category "${record.category}" ${EVIDENCE_REFUSAL_FRAGMENT}.`,
-      );
+      throw new EvidenceRequiredError(record.category);
     }
     // Anomaly gate (VAR §2.2 / §4.3 / §8): re-evaluate against the baseline as of
     // submit time — a comparable period may have been committed since the draft
@@ -1017,7 +987,7 @@ export class ActivityRecordsService {
       excludeId: record.id,
     });
     if (verdict.anomalous && !record.varianceReason?.trim()) {
-      throw new BadRequestException(VARIANCE_REFUSAL);
+      throw new VarianceReasonRequiredError();
     }
     // The note is deliberately KEPT. Clearing it on resubmit was the first cut,
     // and it was wrong twice over: `reviewedBy`/`reviewedAt` survived anyway, so
