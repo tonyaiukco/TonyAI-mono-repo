@@ -32,7 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
-import { actorLabel } from "@/lib/audit-view";
+import { actorLabel, summariseBatch } from "@/lib/audit-view";
 import { useAuthStore } from "@/lib/store";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
@@ -109,46 +109,13 @@ function summarise(row: AuditLogDTO): string | null {
     const parts = [diff.template, diff.exportType, diff.year].filter(Boolean);
     return parts.length ? parts.join(" · ") : null;
   }
-  if (diff.bulk === true) return summariseBatch(row.action, diff);
+  if (diff.bulk === true) return summariseBatch(diff);
   const after = diff.after as Record<string, unknown> | undefined;
   const before = diff.before as Record<string, unknown> | undefined;
   const name = (after?.legalName ?? after?.name ?? before?.legalName ?? before?.name) as
     | string
     | undefined;
   return name ?? null;
-}
-
-/**
- * The batch rows `bulk_import` and `bulk_submit` write: a file or a request,
- * not a figure. Every field is optional on purpose — the diff is what the API
- * of the day recorded, and a missing count is left out rather than shown as 0.
- */
-function summariseBatch(action: string, diff: Record<string, unknown>): string | null {
-  const text = (v: unknown) => (typeof v === "string" && v ? v : null);
-  const count = (v: unknown) => (typeof v === "number" ? v : null);
-  if (diff.refused === true) {
-    return [text(diff.fileName), "refused", text(diff.reason)].filter(Boolean).join(" · ");
-  }
-  if (action === "bulk_import") {
-    const accepted = count(diff.acceptedCount);
-    const rejected = count(diff.rejectedCount);
-    const dryRun = diff.dryRun === true;
-    const parts = [
-      text(diff.fileName),
-      dryRun ? "dry run" : null,
-      accepted !== null ? `${accepted} ${dryRun ? "would import" : "imported"}` : null,
-      rejected ? `${rejected} refused` : null,
-    ].filter(Boolean);
-    return parts.length ? parts.join(" · ") : null;
-  }
-  if (action === "bulk_submit") {
-    const submitted = count(diff.submittedCount);
-    const requested = count(diff.requested);
-    return submitted !== null && requested !== null
-      ? `${submitted} of ${requested} submitted`
-      : null;
-  }
-  return null;
 }
 
 export default function AuditPage() {
@@ -315,7 +282,7 @@ export default function AuditPage() {
                     <SelectItem value={ANY}>All actions</SelectItem>
                     {AUDIT_ACTIONS.map((a) => (
                       <SelectItem key={a} value={a}>
-                        {a}
+                        {humanise(a)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -402,7 +369,7 @@ export default function AuditPage() {
                                   ACTION_COLORS[row.action] ?? NEUTRAL_ACTION,
                                 )}
                               >
-                                {row.action}
+                                {humanise(row.action)}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-sm">{humanise(row.entity)}</TableCell>

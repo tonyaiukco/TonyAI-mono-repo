@@ -10,6 +10,7 @@ import {
   isCalculated,
   type ActivityRecordDTO,
   type BulkSubmitAcceptedRecord,
+  type BulkSubmitAuditDiff,
   type BulkSubmitIssue,
   type BulkSubmitReportDTO,
 } from '@tonyai/shared-types';
@@ -120,6 +121,7 @@ export class BulkSubmitService {
     // seat probing the write surface is the interaction most worth keeping.
     if (!mayWriteActivityRecords(user)) {
       await this.recordBatch(user, {
+        bulk: true,
         refused: true,
         reason: SUBMIT_ROLE_REFUSAL,
         requested: requestedIds.length,
@@ -157,6 +159,7 @@ export class BulkSubmitService {
     }
 
     await this.recordBatch(user, {
+      bulk: true,
       requested: requestedIds.length,
       // What the caller actually typed, beside what it resolved to. The two
       // differ only when ids were repeated or respelled, and `requested`
@@ -274,7 +277,7 @@ export class BulkSubmitService {
    */
   private async recordBatch(
     user: RequestUser,
-    diff: Record<string, unknown>,
+    diff: BulkSubmitAuditDiff,
   ): Promise<void> {
     try {
       await this.audit.record(user, {
@@ -282,7 +285,7 @@ export class BulkSubmitService {
         entity: 'activity_record',
         // No single entity — the report rows set this precedent.
         entityId: null,
-        diff: { bulk: true, ...diff },
+        diff,
       });
     } catch (error) {
       this.logger.error(

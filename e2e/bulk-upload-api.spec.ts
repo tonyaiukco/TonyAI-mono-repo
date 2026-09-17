@@ -254,8 +254,8 @@ test('a file refused for its format leaves no audit row — only a refusal about
   // it is refused and NOT recorded: auditing every 400 filled the append-only
   // trail with caller-controlled text at five rows a minute per user. The two
   // refusals that ARE recorded — a role that may not author, a file naming an
-  // entity outside the caller's tenant — are asserted below and in
-  // `bulk-upload-isolation.spec.ts`.
+  // entity outside the caller's tenant — are asserted below (the role) and in
+  // `bulk-upload-isolation.spec.ts` ("refused WHOLE", the tenant).
   const token = await getAccessToken(request, ENTRY_EMAIL);
   const since = new Date().toISOString();
 

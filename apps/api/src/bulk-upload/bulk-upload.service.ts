@@ -17,6 +17,7 @@ import {
   isCalculated,
   isEvidenceRequired,
   type ActivityCalculationSnapshot,
+  type BulkImportAuditDiff,
   type BulkUploadAcceptedRow,
   type BulkUploadColumn,
   type Category,
@@ -675,8 +676,9 @@ export class BulkUploadService {
    * the events worth keeping are the ones nobody chose to record: a file naming
    * another tenant's subsidiaries, a role that may not author records. Those
    * are written under `bulk_import` with `refused: true`. A malformed file — an
-   * unrecognised header, a wrong extension, an empty or oversized one, too
-   * many rows — is a 400 that touched nothing and says nothing about the
+   * unrecognised header, a wrong extension, an empty one, too many rows (the
+   * byte cap is multer's, before any of this runs) — is a 400 that touched
+   * nothing and says nothing about the
    * caller; auditing every one of them filled the trail with caller-controlled
    * text at five rows a minute per user (measured 2026-09-17: 37 audit rows
    * for 5 records), so those are refused and not recorded.
@@ -696,8 +698,10 @@ export class BulkUploadService {
           user,
           this.batchDiff(file, dryRun, {
             refused: true,
-            // Caller-controlled too: "Unrecognised column(s): …" echoes the
-            // file's own header text. Cleaned and bounded like the filename.
+            // The two audited reasons are a constant and "Row(s) N, M …" —
+            // no caller text today. Cleaned and bounded anyway, like the
+            // filename, so a future refusal that quotes a cell cannot reach
+            // the row raw.
             reason: sanitiseCallerText(
               error instanceof Error ? error.message : 'unknown',
               AUDIT_REASON_MAX_LENGTH,
@@ -715,7 +719,16 @@ export class BulkUploadService {
     }
   }
 
-  /** The two refusals that are about the caller rather than about the file. */
+  /**
+   * The two refusals that are about the caller rather than about the file.
+   *
+   * Known gap, accepted for now: the whole-file check covers `subsidiaryId`
+   * only. A row naming an accessible subsidiary with ANOTHER tenant's
+   * `locationId` is refused per row as `not_found` by the record service —
+   * same oracle-free sentence, no leak — and counted in `rejectedCount`, but
+   * it leaves no `refused` row. Extending the pre-flight to locations is the
+   * fix; it belongs with the import-batch work, not here.
+   */
   private isAuditedRefusal(error: unknown): boolean {
     return (
       error instanceof CreateRoleRefusedError ||
@@ -727,21 +740,16 @@ export class BulkUploadService {
    * Write one batch row — and if the database refuses a VALUE in it, write it
    * once more without the caller's text.
    *
-   * Two strings in the diff come from the caller: the filename, and the
-   * refusal's reason (which can echo the file's header). Both callers swallow
-   * a failed write by design — the bookkeeping must never replace the user's
-   * answer — so a value the column would not store erased the trace of the
-   * very event the row exists to keep. `sanitiseCallerText` removes the
-   * shapes that were found; this covers the ones that were not.
-   *
-   * ONLY a value rejection is retried. Those fail before anything commits, so a
-   * second write cannot duplicate the first — whereas a dropped connection or a
-   * timeout can fail after the insert committed, and retrying that would write
-   * the row twice into a table with no delete path.
+   * One string in the diff comes from the caller: the filename (the audited
+   * refusal reasons carry none, see `isAuditedRefusal`). It is sanitised
+   * before it gets here, but Postgres has refused shapes nobody had listed,
+   * and a refused write erased the whole row — the event the row exists to
+   * keep. Only a VALUE rejection is retried: a dropped connection can fail
+   * after the insert committed, and `audit_log` has no delete path.
    */
   private async recordBatch(
     user: RequestUser,
-    diff: Record<string, unknown>,
+    diff: BulkImportAuditDiff,
   ): Promise<void> {
     // No single entity — the `report` rows set the precedent for this shape.
     const entry = {
@@ -757,6 +765,8 @@ export class BulkUploadService {
       this.logger.warn(
         `bulk import audit row refused a value (${this.errorName(error)}); writing it again without the caller's text`,
       );
+      // A projection of the typed diff minus its two caller strings; typed
+      // loosely because the union does not survive the deletes.
       const withoutCallerText: Record<string, unknown> = {
         ...diff,
         callerTextOmitted: true,
@@ -799,14 +809,16 @@ export class BulkUploadService {
   private batchDiff(
     file: Express.Multer.File | undefined,
     dryRun: boolean,
-    extra: Record<string, unknown>,
-  ): Record<string, unknown> {
+    outcome:
+      | { refused: true; reason: string }
+      | { totalRows: number; acceptedCount: number; rejectedCount: number },
+  ): BulkImportAuditDiff {
     return {
       bulk: true,
       dryRun,
       fileName: this.shownFileName(file),
       sizeBytes: file?.size ?? 0,
-      ...extra,
+      ...outcome,
     };
   }
 
@@ -1035,8 +1047,9 @@ export class BulkUploadService {
     unexpected: BatchFailureLog,
   ): BulkUploadRowIssue {
     // By CLASS, never by sentence. A `ConflictException` that is neither a
-    // duplicate nor a lock, like a `NotFoundException` the record service did
-    // not type, falls through to `unexpected` and is logged as one.
+    // duplicate nor a lock falls through to `unexpected` and is logged as
+    // one; any other `NotFoundException` is the record service saying the
+    // row's entity is not this caller's to name.
     if (error instanceof NoEmissionFactorError) {
       return { row, column: null, code: 'no_factor', message: error.message };
     }

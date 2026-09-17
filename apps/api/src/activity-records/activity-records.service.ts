@@ -85,15 +85,7 @@ export function mayWriteActivityRecords(user: RequestUser): boolean {
   return WRITE_ROLES.has(user.role);
 }
 
-// The refusal classes and their sentences live in `./errors`; the sentences
-// are re-exported so the web-facing constants keep their import path.
-export {
-  DUPLICATE_RECORD_MESSAGE,
-  EVIDENCE_REFUSAL_FRAGMENT,
-  RESUBMIT_AUTHOR_REFUSAL,
-  SUBMIT_ROLE_REFUSAL,
-  VARIANCE_REFUSAL,
-} from './errors';
+// The refusal classes and their sentences live in `./errors`.
 // Roles allowed to take a record into review and to reject it ("flag for
 // revision" in permissions_and_roles.md §3).
 const REVIEW_ROLES = new Set(['consultant', 'super_admin']);

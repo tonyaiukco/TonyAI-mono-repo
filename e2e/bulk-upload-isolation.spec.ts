@@ -18,6 +18,7 @@ import {
   serviceReadRecords,
   waitOutImportThrottle,
   SUB,
+  readAuditSince,
 } from './helpers';
 
 /**
@@ -147,6 +148,7 @@ test('a file naming an entity you cannot reach is refused WHOLE', async ({ reque
     await serviceReadRecords(request, `subsidiary_id=eq.${OUT_OF_SCOPE_SUB}&reporting_period=eq.${E2E_PERIOD}`)
   ).length;
 
+  const since = new Date().toISOString();
   const res = await postBulkImport(request, entryToken, {
     buffer: buildBulkCsv([
       { subsidiaryId: SUB.energy, periodValue: 'Q3', activityValue: 5 },
@@ -158,6 +160,17 @@ test('a file naming an entity you cannot reach is refused WHOLE', async ({ reque
   expect(res.status()).toBe(400);
   const { message } = await res.json();
   expect(message).toMatch(/Row\(s\) 3\b/);
+  // And it is one of the two refusals the trail keeps — a file naming an
+  // entity outside the caller's tenant says something about the caller — under
+  // the batch verb, with the same oracle-free sentence as its reason.
+  const audit = await readAuditSince(request, {
+    entity: 'activity_record',
+    action: 'bulk_import',
+    since,
+  });
+  expect(
+    audit.filter((r) => r.diff?.refused === true && /Row\(s\) 3\b/.test(String(r.diff?.reason))),
+  ).toHaveLength(1);
   // The consequence is the panel's to state: it prints "Nothing was imported."
   // under every whole-file refusal, and the server repeating it showed it twice.
   expect(message).not.toMatch(/Nothing was imported/);

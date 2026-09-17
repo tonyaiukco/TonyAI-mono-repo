@@ -219,7 +219,7 @@ test('a draft with evidence really does move, and only once', async ({ request }
       action: 'bulk_submit',
       since,
     });
-    expect(batch.some((r) => r.entityId === null && r.diff?.bulk === true)).toBe(true);
+    expect(batch.filter((r) => r.diff?.submittedCount === 1 && r.diff?.requested === 1)).toHaveLength(1);
 
     // A second send is the commonest real mistake — a click after a partial
     // success — and it must say so rather than moving anything.

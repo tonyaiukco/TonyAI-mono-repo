@@ -8,20 +8,18 @@ import {
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
 import { isCalculated, PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
 import type { CalculationResult } from '@tonyai/shared-types';
-import {
-  ActivityRecordsService,
-  EVIDENCE_REFUSAL_FRAGMENT,
-  RESUBMIT_AUTHOR_REFUSAL,
-  SUBMIT_ROLE_REFUSAL,
-  VARIANCE_REFUSAL,
-} from './activity-records.service';
+import { ActivityRecordsService } from './activity-records.service';
 import {
   CreateRoleRefusedError,
   DuplicateActivityRecordError,
+  EVIDENCE_REFUSAL_FRAGMENT,
   EvidenceRequiredError,
   PeriodLockedError,
+  RESUBMIT_AUTHOR_REFUSAL,
   ResubmitAuthorRefusedError,
+  SUBMIT_ROLE_REFUSAL,
   SubmitRoleRefusedError,
+  VARIANCE_REFUSAL,
   VarianceReasonRequiredError,
 } from './errors';
 import { PrismaService } from '../prisma/prisma.service';

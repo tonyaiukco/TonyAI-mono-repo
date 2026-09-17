@@ -143,8 +143,9 @@ attachment), use `supabase-storage` instead.
 
 7. **Throw a class, branch on `instanceof`, never on a sentence.** If two
    failures would arrive as the same Nest exception, give each its own subclass
-   in the resource service's `errors.ts` (`activity-records/errors.ts`,
-   `calculations/errors.ts`) and let the mapper check the class. Keep the
+   in the THROWER's module (`activity-records/errors.ts`,
+   `calculations/errors.ts`, `bulk-upload/errors.ts`) and let the mapper check
+   the class. Keep the
    sentence as the class's default message — the web mirrors some of them —
    but never read it. Binding an exported message constant was the previous
    rule and it still left the coupling in the text; a spec that retypes the

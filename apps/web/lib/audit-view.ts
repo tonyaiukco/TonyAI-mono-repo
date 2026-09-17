@@ -31,3 +31,39 @@ export function actorLabel(
     ? { text: 'deleted user', muted: true }
     : { text: named, muted: false };
 }
+
+/**
+ * The batch rows `bulk_import` and `bulk_submit` write: a file or a request,
+ * not a figure. Keyed on the diff's SHAPE, not the verb, because rows written
+ * before the verbs existed sit under `create`/`submit` with the same diff.
+ * Every field is optional on purpose — the diff is what the API of the day
+ * recorded (`BulkImportAuditDiff` / `BulkSubmitAuditDiff` today), and a
+ * missing count is left out rather than shown as 0.
+ */
+export function summariseBatch(diff: Record<string, unknown>): string | null {
+  const text = (v: unknown) => (typeof v === 'string' && v ? v : null);
+  const count = (v: unknown) => (typeof v === 'number' ? v : null);
+  if (diff.refused === true) {
+    return [text(diff.fileName), 'refused', text(diff.reason)].filter(Boolean).join(' · ');
+  }
+  if ('fileName' in diff || 'acceptedCount' in diff) {
+    const accepted = count(diff.acceptedCount);
+    const rejected = count(diff.rejectedCount);
+    const dryRun = diff.dryRun === true;
+    const parts = [
+      text(diff.fileName),
+      dryRun ? 'dry run' : null,
+      accepted !== null ? `${accepted} ${dryRun ? 'would import' : 'imported'}` : null,
+      rejected ? `${rejected} refused` : null,
+    ].filter(Boolean);
+    return parts.length ? parts.join(' · ') : null;
+  }
+  if ('requested' in diff) {
+    const submitted = count(diff.submittedCount);
+    const requested = count(diff.requested);
+    return submitted !== null && requested !== null
+      ? `${submitted} of ${requested} submitted`
+      : null;
+  }
+  return null;
+}

@@ -2232,28 +2232,33 @@ describe('BulkUploadService — what is audited, and under which verb', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('audits the two refusals that are about the caller, under bulk_import', async () => {
-    const role = build();
-    await expect(
-      role.service.import(dataEntry({ role: 'consultant' }), csvFile([row()]), DRY),
-    ).rejects.toBeInstanceOf(CreateRoleRefusedError);
-    expect(role.audit.record).toHaveBeenCalledTimes(1);
-    expect(role.audit.record.mock.calls[0][1]).toMatchObject({
+  it.each([
+    [
+      'a role that may not author',
+      () => dataEntry({ role: 'consultant' }),
+      () => csvFile([row()]),
+      CreateRoleRefusedError,
+      'Your role may not create activity records',
+    ],
+    [
+      'a file naming an entity outside the tenant',
+      () => dataEntry(),
+      () => csvFile([row({ subsidiaryId: 'sub-99' })]),
+      InaccessibleEntityError,
+      // Row numbers only: no caller text reaches the row.
+      'Row(s) 2 name a reporting entity that does not exist or is not yours.',
+    ],
+  ] as const)('audits %s under bulk_import, with a reason that carries no caller text', async (_label, user, file, cls, reason) => {
+    const { audit, service } = build();
+
+    await expect(service.import(user(), file(), DRY)).rejects.toBeInstanceOf(cls);
+
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record.mock.calls[0][1]).toMatchObject({
       action: 'bulk_import',
       entity: 'activity_record',
       entityId: null,
-      diff: { bulk: true, refused: true, reason: 'Your role may not create activity records' },
-    });
-
-    const tenant = build();
-    await expect(
-      tenant.service.import(dataEntry(), csvFile([row({ subsidiaryId: 'sub-99' })]), DRY),
-    ).rejects.toBeInstanceOf(InaccessibleEntityError);
-    expect(tenant.audit.record).toHaveBeenCalledTimes(1);
-    expect(tenant.audit.record.mock.calls[0][1]).toMatchObject({
-      action: 'bulk_import',
-      entityId: null,
-      diff: { bulk: true, refused: true },
+      diff: { bulk: true, dryRun: true, refused: true, reason },
     });
   });
 

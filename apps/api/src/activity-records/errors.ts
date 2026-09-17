@@ -24,7 +24,7 @@ import {
  */
 export const DUPLICATE_RECORD_MESSAGE =
   'An activity record already exists for this reporting entity, period and category.';
-export const CREATE_ROLE_REFUSAL = 'Your role may not create activity records';
+const CREATE_ROLE_REFUSAL = 'Your role may not create activity records';
 export const SUBMIT_ROLE_REFUSAL = 'Your role may not submit activity records';
 export const RESUBMIT_AUTHOR_REFUSAL =
   'You may only resubmit activity records you created';
