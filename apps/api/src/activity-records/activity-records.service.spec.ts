@@ -2878,3 +2878,101 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
   });
 });
 
+describe('ActivityRecordsService — the stored unit is the vocabulary spelling', () => {
+  // Measured live before this rule (2026-09-17): a bulk row spelt `kw h`
+  // priced correctly (the snapshot said `normalizedUnit: kWh`) and was stored
+  // as `activity_unit = 'kw h'` — the table then held `kWh`, `litres` and
+  // `kw h` as three units. Every consumer that keys on the column
+  // (`unitSymbol`, `appliesUnitConversion`, the exports' unit cell) saw the
+  // raw text. The service now stores `ACTIVITY_UNITS`' value and hands the
+  // engine the spelling that was entered, so `inputUnit` keeps it.
+
+  it('create stores the canonical spelling and prices the entered one', async () => {
+    const { prisma, calc, service } = build();
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-unit', ...data }),
+    );
+
+    await service.create(dataEntry(), { ...CREATE_DTO, activityUnit: 'kw h' } as never);
+
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.activityUnit).toBe('kWh');
+    expect(calc.compute).toHaveBeenCalledWith(
+      expect.objectContaining({ unit: 'kw h' }),
+      { enforceCategoryUnit: true },
+    );
+  });
+
+  it('create stores every alias of every vocabulary value as that value', async () => {
+    for (const [entered, stored] of [
+      ['KWH', 'kWh'],
+      ['MWH', 'MWh'],
+      ['m3', 'cubic_metres'],
+      ['liters', 'litres'],
+    ]) {
+      const { prisma, service } = build();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+      prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+        makeRecord({ id: 'rec-unit', ...data }),
+      );
+
+      await service.create(dataEntry(), { ...CREATE_DTO, activityUnit: entered } as never);
+
+      expect(prisma.activityRecord.create.mock.calls[0][0].data.activityUnit).toBe(stored);
+    }
+  });
+
+  it('update stores the canonical spelling of a unit the edit changed', async () => {
+    const { prisma, calc, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-u',
+        subsidiaryId: 'sub-1',
+        createdBy: 'user-entry',
+        status: ActivityRecordStatus.draft,
+        activityUnit: 'kWh',
+      }),
+    );
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-u', ...data }),
+    );
+
+    await service.update(dataEntry(), 'rec-u', { activityUnit: 'MWH' } as never);
+
+    expect(prisma.activityRecord.update.mock.calls[0][0].data.activityUnit).toBe('MWh');
+    expect(calc.compute).toHaveBeenCalledWith(
+      expect.objectContaining({ unit: 'MWH' }),
+      { enforceCategoryUnit: true },
+    );
+  });
+
+  it('update brings a row stored before this rule onto it, even when the edit never touched the unit', async () => {
+    // The migration canonicalises what is already stored; this is the path
+    // for a spelling that reaches the column afterwards by any other route.
+    const { prisma, calc, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({
+        id: 'rec-u',
+        subsidiaryId: 'sub-1',
+        createdBy: 'user-entry',
+        status: ActivityRecordStatus.draft,
+        activityUnit: 'kw h',
+      }),
+    );
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-u', ...data }),
+    );
+
+    await service.update(dataEntry(), 'rec-u', { varianceReason: 'a note' } as never);
+
+    expect(prisma.activityRecord.update.mock.calls[0][0].data.activityUnit).toBe('kWh');
+    // The engine is still handed the stored spelling and told the unit was not
+    // chosen now, so the category/unit map is not re-policed on a mere edit.
+    expect(calc.compute).toHaveBeenCalledWith(
+      expect.objectContaining({ unit: 'kw h' }),
+      { enforceCategoryUnit: false },
+    );
+  });
+});

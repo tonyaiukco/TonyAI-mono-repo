@@ -36,6 +36,7 @@ import {
   type ResolvedProfile,
 } from '../common/resolve-profiles';
 import { CalculationsService } from '../calculations/calculations.service';
+import { storedUnit } from '../calculations/storable-unit';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { EvidenceService } from '../evidence/evidence.service';
@@ -754,7 +755,9 @@ export class ActivityRecordsService {
           anomalyBaselinePriorCount: verdict.priorCount,
           anomalyBaselineTCo2e: verdict.baseline,
           activityValue: dto.activityValue,
-          activityUnit: dto.activityUnit,
+          // The vocabulary's canonical spelling; the snapshot keeps the entered
+          // one as `inputUnit`. See `storedUnit`.
+          activityUnit: storedUnit(dto.activityUnit),
           input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
           calculation: calculation as unknown as Prisma.InputJsonValue,
           createdBy: user.id,
@@ -858,7 +861,9 @@ export class ActivityRecordsService {
       category,
       scope,
       activityValue,
-      activityUnit,
+      // Canonical spelling, as on create — an edit that never touched the unit
+      // still brings a row stored before this rule onto it.
+      activityUnit: storedUnit(activityUnit),
       anomalyFlag: verdict.anomalous,
       anomalyBaselinePriorCount: verdict.priorCount,
       anomalyBaselineTCo2e: verdict.baseline,

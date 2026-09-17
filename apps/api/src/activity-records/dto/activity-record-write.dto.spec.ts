@@ -182,7 +182,7 @@ describe.each(DTOS)('%s — bounded free text', (_name, Dto) => {
     }
   });
 
-  it('stores the unit whitespace-normalised, interior characters included', () => {
+  it('normalises the unit’s whitespace, interior characters included', () => {
     // Built from code points, never typed: escape sequences typed into this
     // repo have arrived in files as the literal, invisible character.
     const char = (code: number) => String.fromCharCode(code);
@@ -207,10 +207,11 @@ describe.each(DTOS)('%s — bounded free text', (_name, Dto) => {
     }
   });
 
-  it('leaves a legitimate spelling exactly as the user wrote it', () => {
-    // The normalisation must not lowercase or resolve the alias: `kWh` is what
-    // the record drawer and every export show back, and `canonicalUnit`'s
-    // `kwh` is an internal key.
+  it('leaves case and alias exactly as the user wrote them', () => {
+    // The DTO must not lowercase or resolve the alias: the service prices the
+    // spelling that was entered and the snapshot keeps it as `inputUnit`.
+    // Resolving to the vocabulary's value happens once, at the write —
+    // `storedUnit`, covered in `calculations/stored-unit.spec.ts`.
     for (const value of ['kWh', 'm³', 'Sm³', 'kW h', 'standard cubic metres']) {
       expect(parse(Dto, { activityUnit: value }).dto.activityUnit).toBe(value);
     }

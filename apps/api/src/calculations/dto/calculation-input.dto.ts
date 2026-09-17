@@ -74,9 +74,10 @@ export class CalculationInputDto {
   // ACTIVITY_UNIT_MAX_LENGTH.
   // Normalised as well as bounded, for the same reason #118 bounded it: the
   // preview exists to agree with the save. The write DTOs collapse a
-  // whitespace run to one space before storing, so without this the two
-  // disagree about what `us`+CR+`gallons` IS — the preview would price a
-  // spelling the record then rewrites.
+  // whitespace run to one space before the service prices it, so without this
+  // the two disagree about what `us`+CR+`gallons` IS. (The record then STORES
+  // the vocabulary's canonical spelling — `storedUnit` — which the preview has
+  // no column for.)
   @IsActivityUnit()
   @IsString()
   @Transform(storableUnit)
