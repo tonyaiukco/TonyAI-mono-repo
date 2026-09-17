@@ -166,18 +166,31 @@ describe('CalculationInputDto — unit', () => {
     }
   });
 
-  it('refuses a unit past the cap, even one the vocabulary knows', () => {
-    // Padding keeps the unit KNOWN (`canonicalUnit` trims and collapses
-    // whitespace), so only the cap can refuse it — and only at 33. Without it
-    // this DTO was the one path that could still send an unbounded unit into
-    // the refusals that quote it back.
-    const known = (length: number) => 'kWh'.padEnd(length);
-    expect(parse({ unit: known(ACTIVITY_UNIT_MAX_LENGTH) }).errors).toHaveLength(
-      0,
-    );
+  it('refuses a unit past the cap', () => {
+    // This case used to reach the cap by padding and say "even one the
+    // vocabulary knows". `storableUnit` collapses every whitespace run before
+    // the cap is measured, so no known spelling can exceed it any more
+    // (`standard_cubic_metres` is 21) and the cap refuses only long text that
+    // is not a unit. #118's bound is unchanged; what can reach it is not.
     expect(
-      constraintsOn({ unit: known(ACTIVITY_UNIT_MAX_LENGTH + 1) }, 'unit'),
-    ).toEqual(['maxLength']);
+      constraintsOn({ unit: 'x'.repeat(ACTIVITY_UNIT_MAX_LENGTH + 1) }, 'unit'),
+    ).toEqual(expect.arrayContaining(['maxLength']));
+    expect(parse({ unit: `kW${' '.repeat(50_000)}h` }).errors).toHaveLength(0);
+  });
+
+  it('normalises the unit exactly as the write DTOs do', () => {
+    // The preview exists to agree with the save, so the two must not disagree
+    // about what a spelling IS. `canonicalUnit` collapses `\s+` to `_` before
+    // it looks a unit up, which made an interior carriage return invisible to
+    // it — and the record DTOs now store the collapsed form.
+    const char = (code: number) => String.fromCharCode(code);
+
+    for (const code of [0x0d, 0x0a, 0x09, 0x2028, 0x00a0, 0xfeff]) {
+      expect(parse({ unit: `us${char(code)}gallons` }).dto.unit).toBe('us gallons');
+      expect(parse({ unit: `${char(code)}kWh${char(code)}` }).dto.unit).toBe('kWh');
+    }
+    // Case and alias are deliberately untouched: `kWh` is what a user reads back.
+    expect(parse({ unit: 'kWh' }).dto.unit).toBe('kWh');
   });
 
   it('refuses an unknown unit that fits the cap', () => {

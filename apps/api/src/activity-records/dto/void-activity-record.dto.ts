@@ -1,4 +1,5 @@
 import { Transform } from 'class-transformer';
+import { trimmed } from '../../common/trimmed';
 import { IsString, MaxLength, MinLength } from 'class-validator';
 import {
   VOID_REASON_MAX_LENGTH,
@@ -28,7 +29,7 @@ import {
  * that proved two independent literals were not enough.
  */
 export class VoidActivityRecordDto {
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(trimmed)
   @IsString()
   @MinLength(VOID_REASON_MIN_LENGTH, {
     message:
