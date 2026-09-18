@@ -503,7 +503,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     expect(report.errors.every((e) => e.code === 'unexpected')).toBe(true);
     expect(logged).toHaveLength(1);
     expect(logged[0].message).toContain('bulk import: 50 rows failed unexpectedly');
-    expect(logged[0].message).toContain('Error P2000 ×50');
+    expect(logged[0].message).toContain('first: Error P2000: value too long');
     // WHICH rows — spreadsheet numbering, so the header is row 1. Reporting
     // every failure against one row is worse than reporting none.
     expect(logged[0].message).toContain(
@@ -561,7 +561,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     expect(logged[1].message).toContain('bulk import: 1 row failed unexpectedly');
   });
 
-  it('names each class once for a batch that fails two different ways', async () => {
+  it('counts a batch that fails two different ways, and describes the first', async () => {
     // The mixed batch: one accepted row, one refusal it understands, and two
     // unexpected failures of different classes.
     const { records, service } = build();
@@ -585,10 +585,8 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     ]);
     expect(logged).toHaveLength(1);
     expect(logged[0].message).toContain('bulk import: 2 rows failed unexpectedly (3, 4)');
-    expect(logged[0].message).toContain('Error ×1 (first at 3): driver said no');
-    expect(logged[0].message).toContain(
-      'TypeError ×1 (first at 4): records.create is not a function',
-    );
+    // Both are counted and named by row; the line describes the FIRST.
+    expect(logged[0].message).toContain('first: Error: driver said no');
     // The mapped refusal is reported, never logged.
     expect(logged[0].message).not.toContain('locked');
   });

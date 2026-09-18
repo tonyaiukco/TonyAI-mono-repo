@@ -32,116 +32,42 @@ describe('BatchFailureLog — nothing to say', () => {
 });
 
 describe('BatchFailureLog — one line for a whole batch', () => {
-  it('names the count, the refs and the class of a single failure', () => {
+  it('names the count, the ref and the first failure', () => {
     const log = new BatchFailureLog('row');
-    log.add(7, driverError('P2000', 'The provided value for locationId is too long'));
+    log.add(7, driverError('P2000', 'value too long'));
 
-    const entry = log.entry();
-
-    expect(entry?.message).toBe(
-      '1 row failed unexpectedly (7); Error P2000 ×1 (first at 7): The provided value for locationId is too long',
+    expect(log.entry()?.message).toBe(
+      '1 row failed unexpectedly (7); first: Error P2000: value too long',
     );
   });
 
-  it('counts a repeated class once, with a multiplier', () => {
-    // The measured case: fifty rows, one driver error, fifty identical stacks.
-    const log = new BatchFailureLog('row');
-    for (let row = 1; row <= 50; row += 1) {
-      log.add(row, driverError('P2000', 'value too long for column locationId'));
-    }
+  it('pluralises the subject and keeps the FIRST failure, not the last', () => {
+    const log = new BatchFailureLog('record');
+    log.add('a', new TypeError('first'));
+    log.add('b', driverError('P2024', 'last'));
 
-    const entry = log.entry();
-
-    expect(entry?.message).toContain('50 rows failed unexpectedly');
-    expect(entry?.message).toContain(
-      'Error P2000 ×50 (first at 1): value too long for column locationId',
+    expect(log.entry()?.message).toBe(
+      '2 records failed unexpectedly (a, b); first: TypeError: first',
     );
   });
 
   it('names the first ten refs and counts the rest', () => {
-    // Which rows, not every row: ten is enough to find the file's bad region.
     const log = new BatchFailureLog('row');
-    for (let row = 1; row <= 14; row += 1) log.add(row, new Error('boom'));
+    for (let row = 2; row <= 51; row += 1) log.add(row, new Error('no'));
 
     expect(log.entry()?.message).toContain(
-      '(1, 2, 3, 4, 5, 6, 7, 8, 9, 10 and 4 more)',
+      '50 rows failed unexpectedly (2, 3, 4, 5, 6, 7, 8, 9, 10, 11 and 40 more); ',
     );
   });
 
-  it('keeps a sample message per class, and says how many classes it dropped', () => {
-    // Five distinct classes are kept WITH their messages, because the message
-    // is where Prisma names the column. A sixth class is counted, not named.
-    const log = new BatchFailureLog('record');
-    for (let i = 0; i < 7; i += 1) {
-      log.add(`rec-${i}`, driverError(`P200${i}`, `failure number ${i}`));
-    }
+  it('reads a failure that is not an Error, and one that carries no message', () => {
+    const thrown = new BatchFailureLog('row');
+    thrown.add(1, 'a string was thrown');
+    expect(thrown.entry()?.message).toContain('first: string: a string was thrown');
 
-    const message = log.entry()?.message ?? '';
-
-    for (let i = 0; i < 5; i += 1) {
-      expect(message).toContain(
-        `Error P200${i} ×1 (first at rec-${i}): failure number ${i}`,
-      );
-    }
-    expect(message).not.toContain('failure number 5');
-    expect(message).toContain('2 more in classes past the first 5');
-  });
-
-  it('names the row a class was FIRST seen at, not the rows that failed first', () => {
-    // Ten transient timeouts fill the named refs, then fifty rows carry bad
-    // data. Without the per-class ref the rows worth looking at are invisible
-    // behind "and 50 more" — and reading the ref back off the refs array would
-    // be wrong here, because it stopped accepting them at the tenth.
-    const log = new BatchFailureLog('row');
-    for (let row = 1; row <= 10; row += 1) {
-      log.add(row, driverError('P2024', 'pool timeout'));
-    }
-    for (let row = 400; row <= 450; row += 1) {
-      log.add(row, driverError('P2000', 'value too long for locationId'));
-    }
-
-    const message = log.entry()?.message ?? '';
-
-    expect(message).toContain('(1, 2, 3, 4, 5, 6, 7, 8, 9, 10 and 51 more)');
-    expect(message).toContain('Error P2024 ×10 (first at 1): pool timeout');
-    expect(message).toContain(
-      'Error P2000 ×51 (first at 400): value too long for locationId',
-    );
-  });
-
-  it('keeps the FIRST message of a class, not the last', () => {
-    // The first names the column that broke. The last is whichever row the
-    // file happened to end on.
-    const log = new BatchFailureLog('row');
-    log.add(1, driverError('P2000', 'column locationId is too long'));
-    log.add(2, driverError('P2000', 'column varianceReason is too long'));
-
-    const message = log.entry()?.message ?? '';
-
-    expect(message).toContain(
-      'Error P2000 ×2 (first at 1): column locationId is too long',
-    );
-    expect(message).not.toContain('varianceReason');
-  });
-
-  it('reads a class without a code, and a failure that is not an Error', () => {
-    const log = new BatchFailureLog('row');
-    log.add(1, new TypeError('records.create is not a function'));
-    log.add(2, 'a thrown string');
-
-    const message = log.entry()?.message ?? '';
-
-    expect(message).toContain(
-      'TypeError ×1 (first at 1): records.create is not a function',
-    );
-    expect(message).toContain('string ×1 (first at 2): a thrown string');
-  });
-
-  it('says so rather than trailing off when a failure carries no message', () => {
-    const log = new BatchFailureLog('row');
-    log.add(1, new Error(char(0x200b)));
-
-    expect(log.entry()?.message).toContain('Error ×1 (first at 1): (no message)');
+    const silent = new BatchFailureLog('row');
+    silent.add(1, new Error(''));
+    expect(silent.entry()?.message).toContain('first: Error: (no message)');
   });
 });
 
@@ -362,7 +288,7 @@ describe('BatchFailureLog — bounded whatever the batch does', () => {
     // `id ` plus 237 of the z's, then the cut mark.
     expect(message).toContain(`id ${'z'.repeat(237)}…`);
     expect([...message]).toHaveLength(
-      '1 row failed unexpectedly (1); Error ×1 (first at 1): '.length + 241,
+      '1 row failed unexpectedly (1); first: Error: '.length + 241,
     );
   });
 });

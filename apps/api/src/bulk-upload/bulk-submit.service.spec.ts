@@ -596,7 +596,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     expect(report.failed.every((f) => f.code === 'unexpected')).toBe(true);
     expect(logged).toHaveLength(1);
     expect(logged[0].message).toContain('bulk submit: 50 records failed unexpectedly');
-    expect(logged[0].message).toContain('Error P2024 ×50 (first at rec-0)');
+    expect(logged[0].message).toContain('first: Error P2024: the connection pool timed out');
     expect(logged[0].message).toContain('rec-0, rec-1');
     // ONE stack, COUNTED. `toContain` passes just as happily on fifty.
     expect(stackCount(logged[0].trace, 'Error: the connection pool timed out')).toBe(1);
@@ -631,9 +631,8 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     expect(logged[0].message).toContain(
       'bulk submit: 3 records failed unexpectedly (f, c, p)',
     );
-    expect(logged[0].message).toContain('ForbiddenException ×1 (first at f)');
-    expect(logged[0].message).toContain('ConflictException ×1 (first at c)');
-    expect(logged[0].message).toContain('TypeError ×1 (first at p)');
+    // All three are COUNTED and named by ref; the line describes the first.
+    expect(logged[0].message).toContain('first: ForbiddenException: Something else');
   });
 
   it('logs the batch line even when a role refusal aborts the loop', async () => {
