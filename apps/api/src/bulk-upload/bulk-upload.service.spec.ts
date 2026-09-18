@@ -1738,56 +1738,24 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     });
   });
 
-  it('writes a refused row again without the caller’s text when the database rejects a value', async () => {
-    // Belt and braces for the shapes nobody has found yet — and only for a
-    // value rejection, which fails before anything commits.
+  it('does not retry an audit write the database refused a value in — it logs it and still answers', async () => {
+    // A retry that re-wrote the row without the caller's text once lived here.
+    // The filename is sanitised before it reaches the row and the audited
+    // reasons carry no caller text, so a refusal that still happens is a bug
+    // to see in the log, not to write around.
     const { audit, service } = build();
     audit.record.mockRejectedValueOnce(
       Object.assign(new Error('unsupported Unicode escape sequence'), { code: '22P05' }),
     );
 
-    // A role refusal: the one audited refusal whose diff carries caller text
-    // (the filename). A wrong extension used to serve here; it is no longer
-    // audited at all.
-    await expect(
-      service.import(dataEntry({ role: 'consultant' }), csvFile([row()]), DRY),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-
-    expect(audit.record).toHaveBeenCalledTimes(2);
-    // Everything else the first write carried survives; only the two caller
-    // strings go. A retry that kept `{ refused }` alone passed a looser check.
-    const first = { ...(audit.record.mock.calls[0][1].diff as Record<string, unknown>) };
-    delete first.fileName;
-    delete first.reason;
-    expect(audit.record.mock.calls[1][1].diff).toEqual({ ...first, callerTextOmitted: true });
-  });
-
-  it('retries the post-import summary row too, keeping its counts', async () => {
-    // The row that summarises an apply is the one the per-record rows cannot
-    // replace; a direct write there lost it to the same filename, silently.
-    const { audit, service } = build();
-    audit.record.mockRejectedValueOnce(
-      Object.assign(new Error('unsupported Unicode escape sequence'), { code: '22P05' }),
-    );
-
-    const report = await service.import(
-      dataEntry(),
-      csvFile([row(), row({ periodValue: 'February' })]),
-      NOTHING,
+    const { result: report, logged } = await captureErrors(() =>
+      service.import(dataEntry(), csvFile([row(), row({ periodValue: 'February' })]), NOTHING),
     );
 
     expect(report.accepted).toHaveLength(2);
-    expect(audit.record).toHaveBeenCalledTimes(2);
-    const retried = audit.record.mock.calls[1][1].diff as Record<string, unknown>;
-    expect(retried).toMatchObject({
-      bulk: true,
-      dryRun: false,
-      totalRows: 2,
-      acceptedCount: 2,
-      rejectedCount: 0,
-      callerTextOmitted: true,
-    });
-    expect(retried).not.toHaveProperty('fileName');
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveLength(1);
+    expect(logged[0].message).toContain('batch audit row failed to write');
   });
 
   it.each([0x01, 0x0a, 0x1f, 0x7f, 0x80, 0x9f, 0xd800])(
@@ -1807,7 +1775,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     },
   );
 
-  it('does not retry a failure that could have committed — that would write the row twice', async () => {
+  it('does not retry a refusal’s audit write either — a failure that could have committed would write the row twice', async () => {
     // A dropped connection or a timeout can fail AFTER the insert committed,
     // and `audit_log` has no delete path for the duplicate.
     const { audit, service } = build();

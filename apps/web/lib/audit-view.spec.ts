@@ -113,7 +113,7 @@ describe('summariseBatch', () => {
   });
 
   it('leaves out what a historic row does not carry rather than inventing a 0', () => {
-    // The retry that dropped the caller text has no file name.
+    // A row written while the retry-without-caller-text path existed has no file name.
     expect(summariseBatch({ bulk: true, dryRun: false, sizeBytes: 1, totalRows: 1, acceptedCount: 1, rejectedCount: 0, callerTextOmitted: true })).toBe('1 imported');
     expect(summariseBatch({ bulk: true })).toBeNull();
   });

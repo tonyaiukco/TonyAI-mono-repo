@@ -2581,15 +2581,14 @@ export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
  * (`AuditLogDTO.diff`): historic rows are never migrated, so a reader checks
  * each key defensively.
  *
- * `fileName` is absent only on the retry that dropped the caller's text after
- * the database refused a value in it (`callerTextOmitted: true`).
+ * Rows written before the retry-without-caller-text path was removed may lack
+ * `fileName` and carry `callerTextOmitted: true`; a reader tolerates both.
  */
 export type BulkImportAuditDiff = {
   bulk: true;
   dryRun: boolean;
-  fileName?: string;
+  fileName: string;
   sizeBytes: number;
-  callerTextOmitted?: true;
 } & (
   | { refused: true; reason?: string }
   | {

@@ -726,65 +726,24 @@ export class BulkUploadService {
   }
 
   /**
-   * Write one batch row — and if the database refuses a VALUE in it, write it
-   * once more without the caller's text.
-   *
-   * One string in the diff comes from the caller: the filename (the audited
-   * refusal reasons carry none, see `isAuditedRefusal`). It is sanitised
-   * before it gets here, but Postgres has refused shapes nobody had listed,
-   * and a refused write erased the whole row — the event the row exists to
-   * keep. Only a VALUE rejection is retried: a dropped connection can fail
-   * after the insert committed, and `audit_log` has no delete path.
+   * Write one batch row. No retry: both callers swallow a failed write by
+   * design — the bookkeeping must never replace the user's answer — and log
+   * it. (A retry that re-wrote the row without the caller's text once lived
+   * here for values Postgres refuses; the filename is sanitised before it
+   * gets here, the audited reasons carry no caller text, and a failure that
+   * still happens is a bug to see in the log, not to write around.)
    */
   private async recordBatch(
     user: RequestUser,
     diff: BulkImportAuditDiff,
   ): Promise<void> {
-    // No single entity — the `report` rows set the precedent for this shape.
-    const entry = {
+    await this.audit.record(user, {
       action: 'bulk_import',
       entity: 'activity_record',
+      // No single entity — the `report` rows set the precedent for this shape.
       entityId: null,
-    } as const;
-    try {
-      await this.audit.record(user, { ...entry, diff });
-    } catch (error) {
-      if (!this.isValueRejection(error)) throw error;
-      // Named, never quoted: the message can carry the rejected value itself.
-      this.logger.warn(
-        `bulk import audit row refused a value (${this.errorName(error)}); writing it again without the caller's text`,
-      );
-      // A projection of the typed diff minus its two caller strings; typed
-      // loosely because the union does not survive the deletes.
-      const withoutCallerText: Record<string, unknown> = {
-        ...diff,
-        callerTextOmitted: true,
-      };
-      delete withoutCallerText.fileName;
-      delete withoutCallerText.reason;
-      await this.audit.record(user, { ...entry, diff: withoutCallerText });
-    }
-  }
-
-  /**
-   * The database refused a value, as opposed to failing to answer: Postgres'
-   * untranslatable-character, invalid-byte and invalid-text-representation
-   * classes, and Prisma's refusal of a malformed escape — the shapes measured
-   * against the real stack when a filename or reason carried U+0000 or half of
-   * a surrogate pair.
-   */
-  private isValueRejection(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : '';
-    return /\b(?:22P05|22021|22P02)\b|unsupported Unicode escape|invalid byte sequence|hex escape/i.test(
-      `${this.errorName(error)} ${message}`,
-    );
-  }
-
-  /** An error's class and code, for a log line that must not echo its value. */
-  private errorName(error: unknown): string {
-    const code = (error as { code?: unknown } | null)?.code;
-    const name = error instanceof Error ? error.constructor.name : typeof error;
-    return typeof code === 'string' ? `${name} ${code}` : name;
+      diff,
+    });
   }
 
   /**

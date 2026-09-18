@@ -299,8 +299,9 @@ for (const parsed of rows) {
   Prisma stacks with code frames), so the 1,000-row cap puts one request near
   3 MB, five times a minute per user. The report stays small, so nothing in it
   shows the cost. Fold into `BatchFailureLog` (`apps/api/src/common/`) and emit
-  one line: the count, the first ten refs plus a count of the rest, each class
-  with its count, its first ref and a sample message, and ONE stack. Three
+  one line: the count, the first ten refs plus a count of the rest, the FIRST
+  failure (class, code, a cleaned sample) and ONE stack — no per-class table;
+  which rows failed is already in the response. Three
   things are easy to get wrong. The accumulator is a LOCAL of the batch method —
   these services are Nest singletons, and a field would mix two tenants' rows
   into one line. The flush belongs in a `finally`, because the loop's
