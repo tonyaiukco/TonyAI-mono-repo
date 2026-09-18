@@ -37,8 +37,9 @@ attachment), use `supabase-storage` instead.
   of one value and returns exactly one; a JS `Set` compares the text. For a
   `uuid` the boundary takes the hyphenated shape in either case and lowercases
   it (`canonicalUuid` beside `UUID_SHAPE`, applied by the resource DTO's
-  `@Transform` + `@Matches` and to the file's id cells before the tenant check,
-  the stored-slot query and the in-file key read them); `{…}`, `urn:uuid:…` and
+  `@Transform` + `@Matches`, and called directly by the two readers of a RAW
+  cell — the tenant check and the stored-slot query; key everything else off
+  the validated DTO); `{…}`, `urn:uuid:…` and
   the unhyphenated form are refused as `invalid` on their own row. Do NOT fold
   them: that was tried (#113) and needed a hand-measured table of the driver's
   grammar, a probe to keep it honest and a rewrite of the caller's cells, for

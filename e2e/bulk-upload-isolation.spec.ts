@@ -195,11 +195,12 @@ test('a file naming an entity you cannot reach is refused WHOLE', async ({ reque
  * the hyphenated shape, in either case, and refuses every other spelling on
  * its own row — so nothing about such an id is looked up, and a typo in the
  * caller's OWN entity is a findable row error rather than a whole-file "does
- * not exist or is not yours". Only the real stack proves the two halves
- * together: the DTO's refusal, and that the uppercase spelling reaches the
- * database as the stored one.
+ * not exist or is not yours". What the real stack proves here is the refusal
+ * half, through the live ValidationPipe. The CASE half is pinned in the unit
+ * specs, not here: every seeded id is decimal digits, so `toUpperCase()` on
+ * one is the same string and an "uppercase" row proves nothing about folding.
  */
-test('an id is accepted hyphenated in either case and lands under the stored id; any other spelling is a row error', async ({
+test('an id in a spelling the system never shows is a row error, and the well-spelt row still lands', async ({
   request,
 }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
@@ -213,7 +214,7 @@ test('an id is accepted hyphenated in either case and lands under the stored id;
   try {
     const res = await postBulkImport(request, token, {
       buffer: buildBulkCsv([
-        { subsidiaryId: SUB.gas.toUpperCase(), periodValue: 'Q3', activityValue: 12 },
+        { subsidiaryId: SUB.gas, periodValue: 'Q3', activityValue: 12 },
         { subsidiaryId: `{${SUB.gas}}`, periodValue: 'Q4', activityValue: 14 },
         { subsidiaryId: `urn:uuid:${SUB.gas}`, periodValue: 'Q4', activityValue: 14 },
       ]),

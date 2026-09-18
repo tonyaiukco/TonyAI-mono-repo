@@ -203,15 +203,11 @@ describe('boundedTrace — cleaned without being flattened', () => {
 
 describe('BatchFailureLog — bounded whatever the batch does', () => {
   // The adversarial shape: 1,000 rows, every message 3,000 characters, every
-  // stack 80 frames 400 wide, every ref and every class key over its bound, and
-  // FIVE classes that stay distinguishable inside the 60-code-point key bound —
-  // which is what fills the line, and what a key long enough to collapse them
-  // into one would hide.
+  // stack 80 frames 400 wide, every ref and every class key over its bound.
   const worstCase = (pad: string) => {
     const log = new BatchFailureLog('row');
     for (let row = 1; row <= 1000; row += 1) {
       const error = withStack(pad.repeat(3000), 80, 400);
-      // The distinguishing digit FIRST, or the key bound cuts it off.
       Object.assign(error, { code: `${row % 7}${pad.repeat(100)}` });
       log.add(`${row}${pad.repeat(60)}`, error);
     }
@@ -226,7 +222,7 @@ describe('BatchFailureLog — bounded whatever the batch does', () => {
     };
   };
 
-  it('holds ~8,400 code points for a thousand rows, whatever they carry', () => {
+  it('holds under 7,000 code points for a thousand rows, whatever they carry', () => {
     // The point of the class. Measured before this change: fifty rows carrying
     // a 2,001-character id wrote 148,542 bytes of stderr — one Prisma stack
     // with a code frame per row — which the 1,000-row cap puts near 3 MB per
@@ -240,18 +236,20 @@ describe('BatchFailureLog — bounded whatever the batch does', () => {
     const astral = worstCase(String.fromCodePoint(0x1f600));
 
     expect(ascii.message).toContain('1000 rows failed unexpectedly');
-    expect(ascii.codePoints).toBeLessThan(8_500);
+    // Measured 6,863. Tight on purpose: a constant-size regression — a
+    // per-class table coming back — must fail here, not only per-row growth.
+    expect(ascii.codePoints).toBeLessThan(7_000);
     expect(turkish.codePoints).toBe(ascii.codePoints);
     expect(astral.codePoints).toBe(ascii.codePoints);
   });
 
-  it('costs 8.5 KB of ASCII and 32 KB of astral characters, not 3 MB', () => {
+  it('costs about 7 KB of ASCII and under 10 KB of astral characters, not 3 MB', () => {
     // The BYTES, stated separately and pinned, because a bound in code points
     // is four times looser in bytes than it reads — and a log budget is sized
-    // in bytes. Turkish text reaches these messages through the cells: 16 KB.
-    expect(worstCase('x').bytes).toBeLessThan(9_000);
-    expect(worstCase('ö').bytes).toBeLessThan(17_000);
-    expect(worstCase(String.fromCodePoint(0x1f600)).bytes).toBeLessThan(33_000);
+    // in bytes. Measured: 6,949 / 7,824 / 9,574.
+    expect(worstCase('x').bytes).toBeLessThan(7_100);
+    expect(worstCase('ö').bytes).toBeLessThan(8_000);
+    expect(worstCase(String.fromCodePoint(0x1f600)).bytes).toBeLessThan(9_800);
   });
 
   it('bounds a class key, because `code` is not ours', () => {

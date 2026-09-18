@@ -1160,6 +1160,25 @@ describe('BulkUploadService — an id is accepted in one spelling, in either cas
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
   });
 
+  it('takes a padded id cell, and asks the database for one entity once however it is cased', async () => {
+    const { prisma, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([
+        row({ subsidiaryId: ` ${SUB} ` }),
+        row({ subsidiaryId: SUB.toUpperCase(), periodValue: 'February' }),
+      ]),
+      DRY,
+    );
+
+    expect(report.errors).toHaveLength(0);
+    expect(report.accepted.map((a) => a.subsidiaryId)).toEqual([SUB, SUB]);
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where.subsidiaryId).toEqual({
+      in: [SUB],
+    });
+  });
+
   it('does not let a blank location collide with a named one, or be refused as misspelt', async () => {
     // A blank `locationId` means the whole company. It is not an id, and the
     // shape rule must not turn every company-level row into an error.

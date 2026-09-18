@@ -150,9 +150,6 @@ export class BulkUploadService {
       }
       // The row cap is `parseRows`'s: it counts populated rows and throws
       // before this line, so a second check here could never fire.
-      // BEFORE the access check, which compares ids as strings — and before
-      // anything else reads an id cell.
-      this.lowercaseEntityCells(parsed);
       this.assertEveryEntityAccessible(user.accessibleSubsidiaryIds, parsed);
       return parsed;
     });
@@ -531,8 +528,8 @@ export class BulkUploadService {
     accessibleSubsidiaryIds: string[],
     rows: ParsedRow[],
   ): void {
-    // The guard's ids are what Prisma returned — lowercase — and the cells
-    // came through `lowercaseEntityCells`, so this compares like with like.
+    // The guard's ids are what Prisma returned — lowercase — and
+    // `canonicalUuid` lowercases the cell, so this compares like with like.
     const accessible = new Set(accessibleSubsidiaryIds);
     const offending = rows
       // Only a cell that IS an id can name a foreign entity. A blank one is a
@@ -572,8 +569,9 @@ export class BulkUploadService {
    * the apply comes back with conflicts.
    *
    * Both sides of the comparison are lowercase: Prisma returns the stored
-   * spelling of a `uuid` column, and the cells came through
-   * `lowercaseEntityCells`.
+   * spelling of a `uuid` column, the query below asks by `canonicalUuid` of
+   * the cell, and the in-file key is built from the DTO, whose transform
+   * lowercases the id.
    */
   private async loadStoredKeys(rows: ParsedRow[]): Promise<Set<string>> {
     const subsidiaryIds = [
@@ -785,22 +783,6 @@ export class BulkUploadService {
   // -- helpers ---------------------------------------------------------------
 
   /**
-   * The two id cells lowercased, once, before any reader sees them — the
-   * access check, the stored-slot query, the in-file slot key and the identity
-   * the report echoes all compare ids as strings, and the database spells a
-   * uuid lowercase. Only the hyphenated shape is touched; any other spelling
-   * is left exactly as written for the row's DTO to refuse as `invalid`.
-   */
-  private lowercaseEntityCells(rows: ParsedRow[]): void {
-    for (const { cells } of rows) {
-      cells.subsidiaryId =
-        canonicalUuid(cells.subsidiaryId.trim()) ?? cells.subsidiaryId;
-      cells.locationId =
-        canonicalUuid(cells.locationId.trim()) ?? cells.locationId;
-    }
-  }
-
-  /**
    * What the row IS, for a client that has to render a preview.
    *
    * `periodValue` is the server's canonical spelling rather than the file's, so
@@ -837,7 +819,7 @@ export class BulkUploadService {
    *
    * A formatter, deliberately: every segment must arrive in the spelling the
    * database stores, because that is what the index compares. Both feeds
-   * already do — the file's ids through `lowercaseEntityCells` and its
+   * already do — the file's ids through the DTO's `lowercaseUuid` and its
    * `periodValue` through `canonicalPeriodValue`, the stored rows straight
    * from Prisma. Canonicalising again HERE would make the dedupe pass even
    * if the boundary regressed, which is exactly the coverage the specs would
