@@ -40,8 +40,8 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
-import { canonicalUuid } from '../common/canonical-uuid';
 import { isFormulaLead } from '../common/csv-cell';
+import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
 import { InaccessibleEntityError } from './errors';
@@ -74,10 +74,9 @@ const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true } as const;
  * six segments come from closed vocabularies, `subsidiaryId` is checked against
  * the access set first, and every segment is required — so `locationId` is the
  * only attacker-influenced part and there is nothing for it to forge itself
- * into. `canonicaliseEntityCells` does not change that reach: a `locationId`
- * naming a real row is hex and hyphens by the time it is keyed, but one that
- * does not is still free text HERE — the record service refuses it after the
- * key is built, not before. There is deliberately no test for a forged key:
+ * into. A `locationId` that is an id is hex and hyphens by the time it is
+ * keyed; one that is not is still free text HERE — its row's DTO refuses it
+ * after the key is built, not before. There is deliberately no test for a forged key:
  * nothing can currently reach that state, and a spec asserting otherwise would
  * assert coverage that does not exist. The separator is here so the property
  * stays true if a free-text segment is ever added.
@@ -165,7 +164,7 @@ export class BulkUploadService {
       // before this line, so a second check here could never fire.
       // BEFORE the access check, which compares ids as strings — and before
       // anything else reads an id cell.
-      this.canonicaliseEntityCells(parsed);
+      this.lowercaseEntityCells(parsed);
       this.assertEveryEntityAccessible(user.accessibleSubsidiaryIds, parsed);
       return parsed;
     });
@@ -545,24 +544,19 @@ export class BulkUploadService {
     accessibleSubsidiaryIds: string[],
     rows: ParsedRow[],
   ): void {
-    // Both sides canonical, so the comparison is between two known spellings
-    // rather than one known and one assumed. The cells came through
-    // `canonicaliseEntityCells`; these come from the guard, and are already
-    // what Prisma returned — mapping them too costs nothing and means this
-    // does not silently start refusing files if that ever stops being true.
-    // It cannot widen access: `canonicalUuid` maps the spellings of one uuid
-    // onto that uuid and never onto another's.
-    const accessible = new Set(
-      accessibleSubsidiaryIds.map((id) => canonicalUuid(id) ?? id),
-    );
+    // The guard's ids are what Prisma returned — lowercase — and the cells
+    // came through `lowercaseEntityCells`, so this compares like with like.
+    const accessible = new Set(accessibleSubsidiaryIds);
     const offending = rows
-      // A BLANK cell is a missing value, not a foreign entity. Refusing the
-      // whole file over one told the user their reporting entity "does not
-      // exist or is not yours", which is both wrong and unfindable; the DTO's
-      // `@MinLength(1)` reports it as `invalid` on its own row instead.
+      // Only a cell that IS an id can name a foreign entity. A blank one is a
+      // missing value, and one in any other spelling (`{…}`, `urn:uuid:…`,
+      // unhyphenated) is never resolved at all: both are refused as `invalid`
+      // on their own row by the DTO, which is the findable answer — refusing
+      // the whole file told the user their entity "does not exist or is not
+      // yours" about a typo.
       .filter((r) => {
-        const id = r.cells.subsidiaryId.trim();
-        return id !== '' && !accessible.has(id);
+        const id = canonicalUuid(r.cells.subsidiaryId.trim());
+        return id !== null && !accessible.has(id);
       })
       .map((r) => r.row);
     if (offending.length === 0) return;
@@ -590,23 +584,21 @@ export class BulkUploadService {
    * on the insert — so without it a dry run reports a thousand clean rows and
    * the apply comes back with conflicts.
    *
-   * Both sides of the comparison are canonical: Prisma returns the stored
+   * Both sides of the comparison are lowercase: Prisma returns the stored
    * spelling of a `uuid` column, and the cells came through
-   * `canonicaliseEntityCells`. Without that, a file naming its site
-   * `{a0ee…}` matched no stored key at all, however many records held the
-   * slot.
+   * `lowercaseEntityCells`.
    */
   private async loadStoredKeys(rows: ParsedRow[]): Promise<Set<string>> {
     const subsidiaryIds = [
       ...new Set(
         rows
-          .map((r) => r.cells.subsidiaryId.trim())
-          // A BLANK id is refused on its own row by the DTO. Sent to Postgres
-          // it is not a uuid, and this query runs OUTSIDE every catch — so one
-          // empty cell raised P2023 and came back as a 500 with no report and
-          // no audit row. Every non-blank id here already passed the access
+          .map((r) => canonicalUuid(r.cells.subsidiaryId.trim()))
+          // Only ids. A blank or misspelt cell is refused on its own row by
+          // the DTO; sent to Postgres it is not a uuid, and this query runs
+          // OUTSIDE every catch — one such cell raised P2023 and came back as
+          // a 500 with no report. Every id here already passed the access
           // check in the pre-flight.
-          .filter((id) => id !== ''),
+          .filter((id): id is string => id !== null),
       ),
     ];
     const years = [
@@ -865,33 +857,13 @@ export class BulkUploadService {
   // -- helpers ---------------------------------------------------------------
 
   /**
-   * The two id cells rewritten to the spelling the DATABASE uses, once, before
-   * any of the four readers below sees them.
-   *
-   * `subsidiary_id` and `location_id` are `uuid` columns, and a uuid has more
-   * than one spelling: `{A0EE…}`, `urn:uuid:a0ee…` and the unhyphenated form
-   * all reach the same row (see `canonicalUuid` for the measured grammar).
-   * Every consumer here compares them AS STRINGS, so one location written five
-   * ways used to be five different things:
-   *
-   * - `slotKey` keyed all five as free slots, so a dry run reported five
-   *   clean rows the apply would then lose four of to the uniqueness index —
-   *   the one failure a batch pre-check exists to prevent.
-   * - `loadStoredKeys` keys the stored rows off Prisma, which returns the
-   *   canonical spelling, so ANY other spelling in the file missed the stored
-   *   slot as well.
-   * - `assertEveryEntityAccessible` compares against the access set, so a
-   *   braced `subsidiaryId` had the whole file refused as another tenant's.
-   * - `identityOf` echoed the file's spelling back as the accepted row's
-   *   identity, disagreeing with the record that was actually written.
-   *
-   * Rewriting the cell rather than each reader is what makes that list
-   * closed: a reader added later cannot forget to do it.
-   *
-   * A cell that is NOT a uuid is left exactly as written, untrimmed — the row
-   * then fails where it already failed, with the message it already had.
+   * The two id cells lowercased, once, before any reader sees them — the
+   * access check, the stored-slot query, the in-file slot key and the identity
+   * the report echoes all compare ids as strings, and the database spells a
+   * uuid lowercase. Only the hyphenated shape is touched; any other spelling
+   * is left exactly as written for the row's DTO to refuse as `invalid`.
    */
-  private canonicaliseEntityCells(rows: ParsedRow[]): void {
+  private lowercaseEntityCells(rows: ParsedRow[]): void {
     for (const { cells } of rows) {
       cells.subsidiaryId =
         canonicalUuid(cells.subsidiaryId.trim()) ?? cells.subsidiaryId;
@@ -908,9 +880,8 @@ export class BulkUploadService {
    * `" JANUARY "` lands as `January`, and a preview echoing the input would
    * quietly disagree with the record.
    *
-   * The two ids are canonical for the same reason, by way of
-   * `canonicaliseEntityCells` — a file naming a site `{A0EE…}` gets back the
-   * `a0ee…` the record holds.
+   * The two ids are lowercase for the same reason — a file naming a site
+   * `A0EE…` gets back the `a0ee…` the record holds.
    */
   private identityOf(
     dto: CreateActivityRecordDto,
@@ -938,7 +909,7 @@ export class BulkUploadService {
    *
    * A formatter, deliberately: every segment must arrive in the spelling the
    * database stores, because that is what the index compares. Both feeds
-   * already do — the file's ids through `canonicaliseEntityCells` and its
+   * already do — the file's ids through `lowercaseEntityCells` and its
    * `periodValue` through `canonicalPeriodValue`, the stored rows straight
    * from Prisma. Canonicalising again HERE would make the dedupe pass even
    * if the boundary regressed, which is exactly the coverage the specs would

@@ -47,3 +47,30 @@ export class ParseUuidParamPipe implements PipeTransform<string, string> {
     return value;
   }
 }
+
+/** What a DTO says about an id field that is not the accepted shape. `$property` is class-validator's. */
+export const ID_SHAPE_MESSAGE =
+  '$property is not an id — copy it exactly as the system shows it (8-4-4-4-12 hexadecimal, with hyphens)';
+
+/**
+ * The one spelling of an id this API accepts from a caller, or `null`.
+ *
+ * Postgres and Prisma resolve several spellings of a uuid (`{…}`,
+ * `urn:uuid:…`, unhyphenated), and the bulk importer once folded all of them.
+ * That needed a hand-measured grammar table, a probe to keep it honest and a
+ * rewrite of the caller's cells — for spellings nobody types: every id this
+ * system shows (the API, the template's Reference sheet) is hyphenated. So
+ * the boundary accepts the hyphenated shape, in either case, and lowercases
+ * it — which is how the database spells it, so string comparisons against
+ * stored ids and the access set are sound — and refuses everything else.
+ */
+export function canonicalUuid(value: unknown): string | null {
+  return typeof value === 'string' && UUID_SHAPE.test(value)
+    ? value.toLowerCase()
+    : null;
+}
+
+/** `@Transform` for an id field: the accepted spelling lowercased, anything else left for `@Matches(UUID_SHAPE)` to refuse. */
+export function lowercaseUuid({ value }: { value: unknown }): unknown {
+  return canonicalUuid(value) ?? value;
+}

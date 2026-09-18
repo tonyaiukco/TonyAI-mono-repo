@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
 import { isUUID } from 'class-validator';
-import { ParseUuidParamPipe } from './parse-uuid-param.pipe';
+import {
+  canonicalUuid,
+  lowercaseUuid,
+  ParseUuidParamPipe,
+  UUID_SHAPE,
+} from './parse-uuid-param.pipe';
 
 const pipe = new ParseUuidParamPipe();
 
@@ -53,5 +58,49 @@ describe('ParseUuidParamPipe', () => {
     expect(() => pipe.transform(undefined as unknown as string)).toThrow(
       BadRequestException,
     );
+  });
+});
+
+describe('canonicalUuid — the one spelling a caller may use', () => {
+  /** Hex LETTERS: an all-digit id makes a case test vacuous. */
+  const ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+
+  it('accepts the hyphenated shape in either case and returns it lowercase', () => {
+    expect(canonicalUuid(ID)).toBe(ID);
+    expect(canonicalUuid(ID.toUpperCase())).toBe(ID);
+    // The seed's ids fail RFC 4122's variant check and must still pass.
+    expect(canonicalUuid('22222222-2222-2222-2222-222222220001')).toBe(
+      '22222222-2222-2222-2222-222222220001',
+    );
+  });
+
+  it.each([
+    ['braced', `{${ID}}`],
+    ['urn', `urn:uuid:${ID}`],
+    ['unhyphenated', ID.replace(/-/g, '')],
+    ['mis-grouped', 'a0eebc999-c0b-4ef8-bb6d-6bb9bd380a11'],
+    ['padded', ` ${ID} `],
+    ['blank', ''],
+    ['a non-hex character', ID.replace('a', 'g')],
+  ])('refuses the %s spelling, though Postgres would resolve some of them', (_label, value) => {
+    expect(canonicalUuid(value)).toBeNull();
+  });
+
+  it('refuses a non-string without throwing', () => {
+    for (const value of [undefined, null, 42, {}, [ID]]) {
+      expect(canonicalUuid(value)).toBeNull();
+    }
+  });
+
+  it('is what the route pipe accepts — one shape, two callers', () => {
+    expect(UUID_SHAPE.test(canonicalUuid(ID.toUpperCase()) as string)).toBe(true);
+    expect(pipe.transform(ID.toUpperCase())).toBe(ID.toUpperCase());
+  });
+
+  it('as a transform, lowercases an id and leaves everything else for the validator', () => {
+    expect(lowercaseUuid({ value: ID.toUpperCase() })).toBe(ID);
+    expect(lowercaseUuid({ value: `{${ID}}` })).toBe(`{${ID}}`);
+    expect(lowercaseUuid({ value: null })).toBeNull();
+    expect(lowercaseUuid({ value: undefined })).toBeUndefined();
   });
 });

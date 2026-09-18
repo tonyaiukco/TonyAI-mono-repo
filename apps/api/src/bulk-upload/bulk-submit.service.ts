@@ -30,7 +30,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { BatchFailureLog } from '../common/batch-failure-log';
 import type { RequestUser } from '../auth/auth.types';
-import { canonicalUuid } from '../common/canonical-uuid';
+import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkSubmitActivityRecordsDto } from './dto/bulk-submit-activity-records.dto';
 

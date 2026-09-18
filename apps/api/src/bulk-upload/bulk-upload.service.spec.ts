@@ -36,12 +36,22 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { row as sheetRow, xlsx } from '../../test/xlsx';
 
+// Reporting-entity ids in the one spelling the boundary accepts (hyphenated;
+// the DTO lowercases). Hex LETTERS in each, so a case test is never vacuous.
+const SUB_1 = 'a1111111-1111-4111-8111-11111111111a';
+const SUB_9 = 'a9999999-9999-4999-8999-99999999999a';
+const SUB_99 = 'a9999999-9999-4999-8999-9999999999ff';
+const LOC_1 = 'b1111111-1111-4111-8111-11111111111b';
+const LOC_9 = 'b9999999-9999-4999-8999-99999999999b';
+const LOC_A = 'baaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab';
+const LOC_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
 const HEADER =
   'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
 
 const row = (over: Partial<Record<string, string>> = {}) => {
   const cells = {
-    subsidiaryId: 'sub-1',
+    subsidiaryId: SUB_1,
     locationId: '',
     reportingYear: '2024',
     reportingPeriod: 'monthly',
@@ -106,7 +116,7 @@ function dataEntry(over: Partial<RequestUser> = {}): RequestUser {
     fullName: 'Entry User',
     role: 'data_entry',
     organisationId: 'org-1',
-    accessibleSubsidiaryIds: ['sub-1'],
+    accessibleSubsidiaryIds: [SUB_1],
     ...over,
   };
 }
@@ -127,7 +137,7 @@ function build() {
   };
   const records = {
     previewCreate: vi.fn().mockResolvedValue({
-      subsidiaryId: 'sub-1',
+      subsidiaryId: SUB_1,
       locationId: null,
       periodValue: 'January',
       calculation: SNAPSHOT,
@@ -261,9 +271,9 @@ describe('BulkUploadService — applying', () => {
   it('passes a location through when the row names one', async () => {
     const { records, service } = build();
 
-    await service.import(dataEntry(), csvFile([row({ locationId: 'loc-9' })]), NOTHING);
+    await service.import(dataEntry(), csvFile([row({ locationId: LOC_9 })]), NOTHING);
 
-    expect(records.create.mock.calls[0][1].locationId).toBe('loc-9');
+    expect(records.create.mock.calls[0][1].locationId).toBe(LOC_9);
   });
 });
 
@@ -285,7 +295,7 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
     const { prisma, records, service } = build();
     prisma.activityRecord.findMany.mockResolvedValue([
       {
-        subsidiaryId: 'sub-1',
+        subsidiaryId: SUB_1,
         locationId: null,
         reportingYear: 2024,
         reportingPeriod: 'monthly',
@@ -307,7 +317,7 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
     const { prisma, service } = build();
     prisma.activityRecord.findMany.mockResolvedValue([
       {
-        subsidiaryId: 'sub-1',
+        subsidiaryId: SUB_1,
         locationId: null,
         reportingYear: 2024,
         reportingPeriod: 'monthly',
@@ -348,7 +358,7 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
 
     expect(prisma.activityRecord.findMany).toHaveBeenCalledTimes(1);
     const [args] = prisma.activityRecord.findMany.mock.calls[0];
-    expect(args.where.subsidiaryId).toEqual({ in: ['sub-1'] });
+    expect(args.where.subsidiaryId).toEqual({ in: [SUB_1] });
     expect(args.where.reportingYear).toEqual({ in: [2024] });
   });
 });
@@ -358,7 +368,7 @@ describe('BulkUploadService — the batch pre-flight', () => {
     const { records, prisma, service } = build();
 
     await expect(
-      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: 'sub-99' })]), NOTHING),
+      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: SUB_99 })]), NOTHING),
     ).rejects.toBeInstanceOf(BadRequestException);
 
     // Nothing at all happened — not even the row that would have been fine.
@@ -371,7 +381,7 @@ describe('BulkUploadService — the batch pre-flight', () => {
     const { service } = build();
 
     await expect(
-      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: 'sub-99' })]), NOTHING),
+      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: SUB_99 })]), NOTHING),
     ).rejects.toThrow(/Row\(s\) 3\b/);
   });
 
@@ -687,7 +697,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     records.previewCreate
       .mockRejectedValueOnce(new ForbiddenException('not yours'))
       .mockResolvedValueOnce({
-        subsidiaryId: 'sub-1',
+        subsidiaryId: SUB_1,
         locationId: null,
         periodValue: 'February',
         calculation: SNAPSHOT,
@@ -712,7 +722,7 @@ describe('BulkUploadService — warnings', () => {
     // user imports a thousand rows and discovers half are stuck later.
     const { records, service } = build();
     records.previewCreate.mockResolvedValue({
-      subsidiaryId: 'sub-1',
+      subsidiaryId: SUB_1,
       locationId: null,
       periodValue: 'January',
       calculation: SNAPSHOT,
@@ -734,7 +744,7 @@ describe('BulkUploadService — warnings', () => {
   it('stays quiet when the anomalous row explains itself', async () => {
     const { records, service } = build();
     records.previewCreate.mockResolvedValue({
-      subsidiaryId: 'sub-1',
+      subsidiaryId: SUB_1,
       locationId: null,
       periodValue: 'January',
       calculation: SNAPSHOT,
@@ -885,7 +895,7 @@ describe('BulkUploadService — the figures that reach the write', () => {
       dataEntry(),
       csvFile([
         row({
-          locationId: 'loc-9',
+          locationId: LOC_9,
           reportingYear: '2023',
           reportingPeriod: 'quarterly',
           periodValue: 'Q3',
@@ -899,8 +909,8 @@ describe('BulkUploadService — the figures that reach the write', () => {
     );
 
     expect(records.create.mock.calls[0][1]).toMatchObject({
-      subsidiaryId: 'sub-1',
-      locationId: 'loc-9',
+      subsidiaryId: SUB_1,
+      locationId: LOC_9,
       reportingYear: 2023,
       reportingPeriod: 'quarterly',
       periodValue: 'Q3',
@@ -926,7 +936,7 @@ describe('BulkUploadService — the figures that reach the write', () => {
     expect(report.accepted[0]).toEqual({
       row: 2,
       recordId: null,
-      subsidiaryId: 'sub-1',
+      subsidiaryId: SUB_1,
       locationId: null,
       reportingYear: 2024,
       reportingPeriod: 'monthly',
@@ -976,7 +986,7 @@ describe('BulkUploadService — the slot key is the whole key', () => {
 
     const report = await service.import(
       dataEntry(),
-      csvFile([row({ locationId: 'loc-a' }), row({ locationId: 'loc-b' })]),
+      csvFile([row({ locationId: LOC_A }), row({ locationId: LOC_B })]),
       NOTHING,
     );
 
@@ -988,8 +998,8 @@ describe('BulkUploadService — the slot key is the whole key', () => {
     const { prisma, records, service } = build();
     prisma.activityRecord.findMany.mockResolvedValue([
       {
-        subsidiaryId: 'sub-1',
-        locationId: 'loc-a',
+        subsidiaryId: SUB_1,
+        locationId: LOC_A,
         reportingYear: 2024,
         reportingPeriod: 'monthly',
         periodValue: 'January',
@@ -1004,35 +1014,24 @@ describe('BulkUploadService — the slot key is the whole key', () => {
   });
 });
 
-/**
- * A `uuid` column holds a value, not text: `{A0EE…}`, `urn:uuid:a0ee…` and the
- * unhyphenated form all reach the same row. Everything here keyed the CELL, so
- * one location written five ways was five slots.
- *
- * Measured before the fix, on exactly the file the first test builds: FIVE
- * rows accepted and no errors at all. The apply would then have lost four of
- * the five to the uniqueness index — a dry run disagreeing with its own
- * apply, which is worse than no dry run at all.
- *
- * Re-measuring against SEEDED data gives four and one instead, and the
- * difference is the whole reason `LOC` below is spelled with hex letters:
- * every id in the seed is decimal digits, so `toUpperCase()` returns the same
- * string and two of the five spellings coincide by accident. A fixture built
- * on a seed id would under-count the defect and leave the case-folding half
- * of this function untested.
- */
-describe('BulkUploadService — one entity, however the file spells it', () => {
-  const SUB = '11111111-1111-4111-8111-111111111111';
+describe('BulkUploadService — an id is accepted in one spelling, in either case', () => {
+  // Postgres and Prisma resolve `{…}`, `urn:uuid:…` and the unhyphenated form
+  // of a uuid, and the importer once folded all of them onto the stored
+  // spelling (#113) — a hand-measured grammar table, a probe to keep it honest
+  // and a rewrite of the caller's cells, for spellings nobody types: every id
+  // the system shows is hyphenated. The boundary now accepts the hyphenated
+  // shape, lowercases it, and refuses the rest on the row.
+  const SUB = 'a1111111-1111-4111-8111-1111111111aa';
   /** Hex LETTERS: an all-digit id makes the case tests vacuous. */
   const LOC = '09ed17d3-aef5-4da2-89c1-3b001ac50e94';
   const OTHER_LOC = '09ed17d3-aef5-4da2-89c1-3b001ac50e95';
-  const SPELLINGS = [
-    LOC,
-    LOC.toUpperCase(),
-    `{${LOC}}`,
-    `urn:uuid:${LOC}`,
-    LOC.replace(/-/g, ''),
-  ];
+  const FOREIGN = 'f0000000-0000-4000-8000-00000000000f';
+  const MISSPELT = [
+    ['braced', `{${LOC}}`],
+    ['urn', `urn:uuid:${LOC}`],
+    ['unhyphenated', LOC.replace(/-/g, '')],
+    ['mis-grouped', '09ed17d3a-ef5-4da2-89c1-3b001ac50e94'],
+  ] as const;
   const entry = () => dataEntry({ accessibleSubsidiaryIds: [SUB] });
   const stored = (locationId: string | null) => ({
     subsidiaryId: SUB,
@@ -1043,37 +1042,28 @@ describe('BulkUploadService — one entity, however the file spells it', () => {
     category: 'Electricity',
   });
 
-  it('claims ONE slot for five spellings of the same location', async () => {
+  it('claims ONE slot for the two cases of the same location', async () => {
     const { records, service } = build();
 
     const report = await service.import(
       entry(),
-      csvFile(SPELLINGS.map((locationId) => row({ subsidiaryId: SUB, locationId }))),
+      csvFile([LOC, LOC.toUpperCase()].map((locationId) => row({ subsidiaryId: SUB, locationId }))),
       DRY,
     );
 
     expect(report.accepted).toHaveLength(1);
-    expect(report.errors.map((e) => e.code)).toEqual([
-      'duplicate_in_file',
-      'duplicate_in_file',
-      'duplicate_in_file',
-      'duplicate_in_file',
-    ]);
+    expect(report.errors.map((e) => e.code)).toEqual(['duplicate_in_file']);
     expect(records.previewCreate).toHaveBeenCalledTimes(1);
   });
 
   it('keeps two DIFFERENT ids in two slots', async () => {
-    // The other half of the property: folding is only safe while every
-    // distinct id keeps a distinct key. A control, and an insensitive one —
-    // it passes under every loosening of the parser, because both ids here
-    // are well-formed. The test below is the one that catches that.
     const { records, service } = build();
 
     const report = await service.import(
       entry(),
       csvFile([
-        row({ subsidiaryId: SUB, locationId: `{${LOC}}` }),
-        row({ subsidiaryId: SUB, locationId: `urn:uuid:${OTHER_LOC}` }),
+        row({ subsidiaryId: SUB, locationId: LOC.toUpperCase() }),
+        row({ subsidiaryId: SUB, locationId: OTHER_LOC }),
       ]),
       NOTHING,
     );
@@ -1082,238 +1072,109 @@ describe('BulkUploadService — one entity, however the file spells it', () => {
     expect(records.create).toHaveBeenCalledTimes(2);
   });
 
-  it('matches a stored slot the file spells differently', async () => {
-    // Prisma returns the stored spelling, so before the fix ANY other
-    // spelling in the file missed the stored slot as well — not only the
-    // rows within one file.
+  it.each(MISSPELT)('refuses a %s locationId on its own row, naming the column', async (_label, locationId) => {
+    const { records, service } = build();
+
+    const report = await service.import(
+      entry(),
+      csvFile([row({ subsidiaryId: SUB, locationId }), row({ subsidiaryId: SUB, periodValue: 'February' })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      expect.objectContaining({ row: 2, column: 'locationId', code: 'invalid' }),
+    ]);
+    // The good row is unaffected, and the bad id never reached the service.
+    expect(report.accepted.map((a) => a.row)).toEqual([3]);
+    expect(records.previewCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(MISSPELT)('refuses a %s subsidiaryId on its own row — a typo is not a foreign entity', async (_label, spelt) => {
+    // The spelling of the caller's OWN subsidiary. Refusing the whole file
+    // with "does not exist or is not yours" would be wrong and unfindable.
+    const subsidiaryId = spelt.replace(LOC, SUB).replace(LOC.replace(/-/g, ''), SUB.replace(/-/g, ''));
+    const { audit, prisma, records, service } = build();
+
+    const report = await service.import(entry(), csvFile([row({ subsidiaryId })]), DRY);
+
+    expect(report.errors).toEqual([
+      expect.objectContaining({ row: 2, column: 'subsidiaryId', code: 'invalid' }),
+    ]);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+    // Never sent to Postgres: a non-uuid in an `IN` list is a P2023, and that
+    // query runs outside every catch.
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+    // A dry run that ran to completion: one batch row, not a refusal.
+    expect(audit.record.mock.calls[0][1].diff).not.toHaveProperty('refused');
+  });
+
+  it('matches a stored slot the file spells in the other case', async () => {
     const { prisma, records, service } = build();
     prisma.activityRecord.findMany.mockResolvedValue([stored(LOC)]);
 
     const report = await service.import(
       entry(),
-      csvFile([row({ subsidiaryId: SUB, locationId: `{${LOC}}` })]),
+      csvFile([row({ subsidiaryId: SUB.toUpperCase(), locationId: LOC.toUpperCase() })]),
       DRY,
     );
 
-    expect(report.errors[0]).toMatchObject({ code: 'duplicate_existing' });
+    expect(report.errors.map((e) => e.code)).toEqual(['duplicate_existing']);
     expect(records.previewCreate).not.toHaveBeenCalled();
   });
 
-  it('reports the stored spelling back, not the file’s', async () => {
-    // Same rule as `periodValue`: a preview echoing the input would quietly
-    // disagree with the record that gets written.
-    const { service } = build();
-
-    const report = await service.import(
-      entry(),
-      csvFile([
-        row({
-          subsidiaryId: `{${SUB}}`,
-          locationId: `urn:uuid:${LOC.toUpperCase()}`,
-        }),
-      ]),
-      DRY,
-    );
-
-    expect(report.accepted[0]).toMatchObject({
-      subsidiaryId: SUB,
-      locationId: LOC,
-    });
-  });
-
-  it('asks the database for the canonical entity id', async () => {
-    const { prisma, service } = build();
-
-    await service.import(
-      entry(),
-      csvFile([row({ subsidiaryId: `urn:uuid:${SUB}` })]),
-      DRY,
-    );
-
-    const [args] = prisma.activityRecord.findMany.mock.calls[0];
-    expect(args.where.subsidiaryId).toEqual({ in: [SUB] });
-  });
-
-  it('does not refuse a braced entity id as another tenant’s', async () => {
-    // The access check compares strings too. Before the fix this file came
-    // back as a 400 naming every row, telling the user their OWN subsidiary
-    // "does not exist or is not yours".
-    const { records, service } = build();
-
-    const report = await service.import(
-      entry(),
-      csvFile([row({ subsidiaryId: `{${SUB}}` })]),
-      NOTHING,
-    );
-
-    expect(report.errors).toHaveLength(0);
-    expect(records.create).toHaveBeenCalledTimes(1);
-  });
-
-  it('still refuses an entity id outside the access set, however spelled', async () => {
-    // Canonicalising runs BEFORE the tenant check, so this is the assertion
-    // that it opened nothing: the spellings of one uuid map onto that uuid
-    // and never onto another's.
-    const { service } = build();
-    const foreign = '22222222-2222-4222-8222-222222222222';
-
-    await expect(
-      service.import(
-        entry(),
-        csvFile([row({ subsidiaryId: `urn:uuid:${foreign}` })]),
-        DRY,
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it('never rewrites a mis-grouped id into a real one', async () => {
-    // THE sentinel for a loosened parser, and the reason it has to live at
-    // this level rather than only in `canonical-uuid.spec.ts`. Because the
-    // cell is rewritten, a parser that accepted 36 characters with hyphens in
-    // the wrong places would not merely refuse a row as a duplicate: it would
-    // hand `create` a REAL location id and file the row against a site nobody
-    // named. Prisma refuses this value outright (P2023, measured), so the row
-    // must reach the record service exactly as written and fail there.
-    const bare = LOC.replace(/-/g, '');
-    const misgrouped = `${bare.slice(0, 9)}-${bare.slice(9, 12)}-${bare.slice(12, 16)}-${bare.slice(16, 20)}-${bare.slice(20)}`;
-    expect(misgrouped).toHaveLength(36);
-    const { records, service } = build();
-
-    await service.import(
-      entry(),
-      csvFile([row({ subsidiaryId: SUB, locationId: misgrouped })]),
-      NOTHING,
-    );
-
-    expect(records.create.mock.calls[0][1].locationId).toBe(misgrouped);
-  });
-
-  it('admits a canonical file against an access set spelled otherwise', async () => {
-    // The `assertEveryEntityAccessible` half of the change, from the side the
-    // cells cannot reach: the guard's ids are canonical today, and this is
-    // what says the file is still admitted if that ever stops being true.
-    const { records, service } = build();
-
-    const report = await service.import(
-      dataEntry({ accessibleSubsidiaryIds: [`{${SUB.toUpperCase()}}`] }),
-      csvFile([row({ subsidiaryId: SUB })]),
-      NOTHING,
-    );
-
-    expect(report.errors).toHaveLength(0);
-    expect(records.create).toHaveBeenCalledTimes(1);
-  });
-
-  it('refuses the whole file for ONE foreign row among canonicalised ones', async () => {
-    // Canonicalising must not turn a whole-file refusal into a per-row one,
-    // and the row number it names must still be the file's.
-    const { service } = build();
-    const foreign = '22222222-2222-4222-8222-222222222222';
-
-    await expect(
-      service.import(
-        entry(),
-        csvFile([
-          row({ subsidiaryId: `{${SUB}}` }),
-          row({ subsidiaryId: foreign, periodValue: 'February' }),
-        ]),
-        DRY,
-      ),
-    ).rejects.toThrow(/Row\(s\) 3 /);
-  });
-
-  it('persists the canonical id on the APPLY path, not just the preview', async () => {
-    // The dry run and the apply build their accepted rows from two different
-    // sources, so pinning one says nothing about the other — and this is the
-    // path that actually writes.
-    const { records, service } = build();
-
-    const report = await service.import(
-      entry(),
-      csvFile([row({ subsidiaryId: `{${SUB}}`, locationId: `urn:uuid:${LOC}` })]),
-      NOTHING,
-    );
-
-    expect(records.create.mock.calls[0][1]).toMatchObject({
-      subsidiaryId: SUB,
-      locationId: LOC,
-    });
-    expect(report.accepted[0]).toMatchObject({
-      subsidiaryId: SUB,
-      locationId: LOC,
-    });
-  });
-
-  it('catches a differently-spelled stored slot BEFORE the write', async () => {
+  it('reports the stored spelling back, asks the database for it, and persists it', async () => {
     const { prisma, records, service } = build();
-    prisma.activityRecord.findMany.mockResolvedValue([stored(LOC)]);
 
     const report = await service.import(
       entry(),
-      csvFile([row({ subsidiaryId: SUB, locationId: LOC.toUpperCase() })]),
+      csvFile([row({ subsidiaryId: SUB.toUpperCase(), locationId: LOC.toUpperCase() })]),
       NOTHING,
     );
 
-    expect(report.errors[0]).toMatchObject({ code: 'duplicate_existing' });
-    expect(records.create).not.toHaveBeenCalled();
+    expect(report.accepted[0]).toMatchObject({ subsidiaryId: SUB, locationId: LOC });
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where.subsidiaryId).toEqual({
+      in: [SUB],
+    });
+    expect(records.create.mock.calls[0][1]).toMatchObject({ subsidiaryId: SUB, locationId: LOC });
   });
 
-  it('asks for one entity once, however many ways the file spells it', async () => {
-    // Three spellings of one subsidiary used to send three ids to Postgres,
-    // and the stored rows then keyed against none of them.
-    const { prisma, service } = build();
+  it('refuses the WHOLE file for a foreign entity id, in either case — and only for an id', async () => {
+    for (const foreign of [FOREIGN, FOREIGN.toUpperCase()]) {
+      const { records, service } = build();
+      await expect(
+        service.import(
+          entry(),
+          csvFile([row({ subsidiaryId: SUB }), row({ subsidiaryId: foreign, periodValue: 'February' })]),
+          DRY,
+        ),
+      ).rejects.toBeInstanceOf(InaccessibleEntityError);
+      expect(records.previewCreate).not.toHaveBeenCalled();
+    }
 
-    await service.import(
+    // A foreign id in a spelling the boundary does not accept is never
+    // resolved at all: it is a row error like any other typo, and nothing
+    // about it is looked up.
+    const { prisma, service } = build();
+    const report = await service.import(entry(), csvFile([row({ subsidiaryId: `{${FOREIGN}}` })]), DRY);
+    expect(report.errors).toEqual([
+      expect.objectContaining({ row: 2, column: 'subsidiaryId', code: 'invalid' }),
+    ]);
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+  });
+
+  it('does not let a blank location collide with a named one, or be refused as misspelt', async () => {
+    // A blank `locationId` means the whole company. It is not an id, and the
+    // shape rule must not turn every company-level row into an error.
+    const { records, service } = build();
+
+    const report = await service.import(
       entry(),
-      csvFile([
-        row({ subsidiaryId: SUB }),
-        row({ subsidiaryId: `{${SUB}}`, periodValue: 'February' }),
-        row({ subsidiaryId: SUB.toUpperCase(), periodValue: 'March' }),
-      ]),
+      csvFile([row({ subsidiaryId: SUB }), row({ subsidiaryId: SUB, locationId: LOC })]),
       DRY,
     );
 
-    const [args] = prisma.activityRecord.findMany.mock.calls[0];
-    expect(args.where.subsidiaryId).toEqual({ in: [SUB] });
-  });
-
-  it('does not let a spelled location collide with the whole company', async () => {
-    // A blank cell means the whole company, and `canonicalUuid('')` is null —
-    // so the carve-out has to survive canonicalisation. `NULLS NOT DISTINCT`
-    // makes the company row a real slot of its own.
-    const { records, service } = build();
-
-    const report = await service.import(
-      entry(),
-      csvFile([
-        row({ subsidiaryId: SUB, locationId: '' }),
-        row({ subsidiaryId: SUB, locationId: `{${LOC}}` }),
-      ]),
-      NOTHING,
-    );
-
     expect(report.errors).toHaveLength(0);
-    expect(records.create).toHaveBeenCalledTimes(2);
-    expect(records.create.mock.calls[0][1].locationId).toBeUndefined();
-    expect(records.create.mock.calls[1][1].locationId).toBe(LOC);
-  });
-
-  it('leaves a cell that is not a uuid exactly as written', async () => {
-    // Deliberate: nothing is rewritten, so the row reaches the record service
-    // as it was typed and fails there exactly as it did before. The failure
-    // itself belongs to that service and is mocked out here — what this pins
-    // is only that the value arrives untouched.
-    const { records, service } = build();
-
-    await service.import(
-      entry(),
-      csvFile([row({ subsidiaryId: SUB, locationId: 'loc-a' })]),
-      NOTHING,
-    );
-
-    expect(records.create.mock.calls[0][1]).toMatchObject({
-      locationId: 'loc-a',
-    });
+    expect(records.previewCreate).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -1346,7 +1207,7 @@ describe('BulkUploadService — the audit row tells the truth', () => {
     const { audit, records, service } = build();
 
     await expect(
-      service.import(dataEntry(), csvFile([row({ subsidiaryId: 'sub-99' })]), NOTHING),
+      service.import(dataEntry(), csvFile([row({ subsidiaryId: SUB_99 })]), NOTHING),
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(records.create).not.toHaveBeenCalled();
@@ -1486,12 +1347,12 @@ describe('BulkUploadService — the remaining refusals', () => {
 
     const report = await service.import(
       dataEntry(),
-      csvFile([row({ subsidiaryId: ' sub-1 ' })]),
+      csvFile([row({ subsidiaryId: ` ${SUB_1} ` })]),
       NOTHING,
     );
 
     expect(report.errors).toHaveLength(0);
-    expect(records.create.mock.calls[0][1].subsidiaryId).toBe('sub-1');
+    expect(records.create.mock.calls[0][1].subsidiaryId).toBe(SUB_1);
   });
 });
 
@@ -1511,12 +1372,12 @@ describe('BulkUploadService — a dry run touches no write API at all', () => {
 
 /** Two tenants in one database, so an unscoped query has something to leak. */
 const ALL_SUBSIDIARIES = [
-  { id: 'sub-1', legalName: 'Mine Ltd.', tradingName: null, geographyCode: 'TR' },
-  { id: 'sub-9', legalName: 'Other Tenant Ltd.', tradingName: null, geographyCode: 'UK' },
+  { id: SUB_1, legalName: 'Mine Ltd.', tradingName: null, geographyCode: 'TR' },
+  { id: SUB_9, legalName: 'Other Tenant Ltd.', tradingName: null, geographyCode: 'UK' },
 ];
 const ALL_LOCATIONS = [
-  { id: 'loc-1', subsidiaryId: 'sub-1', name: 'My Site', geographyCode: 'TR' },
-  { id: 'loc-9', subsidiaryId: 'sub-9', name: 'Their Site', geographyCode: 'UK' },
+  { id: LOC_1, subsidiaryId: SUB_1, name: 'My Site', geographyCode: 'TR' },
+  { id: LOC_9, subsidiaryId: SUB_9, name: 'Their Site', geographyCode: 'UK' },
 ];
 
 /** Everything the reference sheet of a generated template says. */
@@ -1565,13 +1426,13 @@ describe('BulkUploadService — the template', () => {
     twoTenants(prisma);
 
     const text = await referenceTextOf(
-      await service.template(dataEntry({ accessibleSubsidiaryIds: ['sub-1'] })),
+      await service.template(dataEntry({ accessibleSubsidiaryIds: [SUB_1] })),
     );
 
-    expect(text).toContain('sub-1');
+    expect(text).toContain(SUB_1);
     expect(text).toContain('Mine Ltd.');
     expect(text).toContain('My Site');
-    expect(text).not.toContain('sub-9');
+    expect(text).not.toContain(SUB_9);
     expect(text).not.toContain('Other Tenant Ltd.');
     expect(text).not.toContain('Their Site');
   });
@@ -1593,13 +1454,13 @@ describe('BulkUploadService — the template', () => {
   it('scopes both queries to the accessible set', async () => {
     const { prisma, service } = build();
 
-    await service.template(dataEntry({ accessibleSubsidiaryIds: ['sub-1'] }));
+    await service.template(dataEntry({ accessibleSubsidiaryIds: [SUB_1] }));
 
     expect(prisma.subsidiary.findMany.mock.calls[0][0].where).toEqual({
-      id: { in: ['sub-1'] },
+      id: { in: [SUB_1] },
     });
     expect(prisma.location.findMany.mock.calls[0][0].where).toEqual({
-      subsidiaryId: { in: ['sub-1'] },
+      subsidiaryId: { in: [SUB_1] },
     });
   });
 
@@ -1607,7 +1468,7 @@ describe('BulkUploadService — the template', () => {
     const { prisma, service } = build();
     prisma.subsidiary.findMany.mockResolvedValue([
       {
-        id: 'sub-1',
+        id: SUB_1,
         legalName: 'Sub One',
         tradingName: null,
         geographyCode: 'TR',
@@ -1653,7 +1514,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     const { service } = build();
 
     await expect(
-      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: 'sub-99' })]), NOTHING),
+      service.import(dataEntry(), csvFile([row(), row({ subsidiaryId: SUB_99 })]), NOTHING),
     ).rejects.toThrow(
       new BadRequestException(
         'Row(s) 3 name a reporting entity that does not exist or is not yours.',
@@ -2243,7 +2104,7 @@ describe('BulkUploadService — what is audited, and under which verb', () => {
     [
       'a file naming an entity outside the tenant',
       () => dataEntry(),
-      () => csvFile([row({ subsidiaryId: 'sub-99' })]),
+      () => csvFile([row({ subsidiaryId: SUB_99 })]),
       InaccessibleEntityError,
       // Row numbers only: no caller text reaches the row.
       'Row(s) 2 name a reporting entity that does not exist or is not yours.',

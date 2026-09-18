@@ -638,10 +638,11 @@ export class ActivityRecordsService {
     // has already asked the database about a subsidiary this caller may not be
     // able to see. That cost two things: a 409-vs-404 split that answers
     // "does this subsidiary exist and is that period closed" for another
-    // tenant, and — because `subsidiaryId` is deliberately not `@IsUUID` and
-    // the column is `uuid` — a malformed id reaching Prisma as a P2023, which
-    // the exception filter turns into a 500. One bad cell per row would have
-    // done that once per row. Every other service that takes a body
+    // tenant, and a malformed id reaching Prisma as a P2023, which the
+    // exception filter turns into a 500. (The DTO now refuses a malformed id
+    // and lowercases a well-formed one, so this compare is between two
+    // lowercase spellings; the ordering still matters for a caller that
+    // bypasses the pipe.) Every other service that takes a body
     // `subsidiaryId` already checks the set as its first statement.
     if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
       throw new NotFoundException('Subsidiary not found');
