@@ -57,12 +57,10 @@ import { buildTemplateWorkbook } from './template-workbook';
  * The options `main.ts` installs on the global ValidationPipe. Reproduced
  * because that pipe does not run inside a loop.
  *
- * Defence in depth rather than the live control: `mapRow` builds the object
- * from a fixed key list, and the header check refuses an unrecognised column
- * before that — so no unknown field is reachable here today. These options are
- * what keeps that true if `mapRow` ever learns to pass cells through. (There
- * is deliberately no test for it: nothing can currently reach the branch, and
- * a spec asserting otherwise would be asserting coverage that does not exist.)
+ * Defence in depth: `mapRow` builds the object from a fixed key list and the
+ * header check refuses an unrecognised column, so no unknown field reaches
+ * here today — these options keep that true if `mapRow` ever passes cells
+ * through. Untested on purpose; nothing can reach the branch.
  */
 const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true } as const;
 
@@ -70,16 +68,10 @@ const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true } as const;
  * NUL rather than a printable separator, so that no value can contain the
  * separator and make one row's key collide with another's.
  *
- * Honest about its reach: a collision is not constructible today. Four of the
- * six segments come from closed vocabularies, `subsidiaryId` is checked against
- * the access set first, and every segment is required — so `locationId` is the
- * only attacker-influenced part and there is nothing for it to forge itself
- * into. A `locationId` that is an id is hex and hyphens by the time it is
- * keyed; one that is not is still free text HERE — its row's DTO refuses it
- * after the key is built, not before. There is deliberately no test for a forged key:
- * nothing can currently reach that state, and a spec asserting otherwise would
- * assert coverage that does not exist. The separator is here so the property
- * stays true if a free-text segment is ever added.
+ * A collision is not constructible today — four segments are closed
+ * vocabularies, `subsidiaryId` passed the access check, and a `locationId`
+ * that is not an id is refused by its row's DTO — so this is untested on
+ * purpose. It keeps the property true if a free-text segment is ever added.
  */
 const KEY_SEPARATOR = '\u0000';
 
@@ -145,14 +137,10 @@ export class BulkUploadService {
     // tenant's subsidiaries, or a role that may not author records trying to
     // — left NO trace at all on an append-only compliance trail.
     const rows = await this.auditedRefusal(user, file, dryRun, async () => {
-      // The role FIRST, before the file is parsed. It used to be enforced only
-      // by the record service inside the loop, so its 403 was thrown past this
-      // audited pre-flight and before the batch row: a consultant's import
-      // attempt — the second event the comment above names — still left no
-      // trace (measured: zero audit writes). And a file whose every row failed
-      // validation never reached that check, so the same caller got a 200
-      // report back instead of a refusal. (Multer has already buffered the
-      // upload by now; the 2 MB limit's 413 fires before this service runs.)
+      // The role FIRST, before the file is parsed: enforced only inside the
+      // loop, its 403 escaped the audited pre-flight, and a file whose every
+      // row failed validation never reached it and got a 200 report back.
+      // (Multer has already buffered the upload; its 413 fires before this.)
       this.assertMayImport(user);
       this.assertAcceptableFile(file);
       const upload = file as Express.Multer.File;
@@ -520,8 +508,7 @@ export class BulkUploadService {
     // and sometimes `application/octet-stream` — so requiring an exact match
     // refuses an ordinary "Save as CSV". A renamed file gets as far as the
     // parser, which is what actually refuses something that is not a
-    // spreadsheet. (An earlier version required BOTH, while the contract's own
-    // comment promised EITHER.)
+    // spreadsheet.
     if (!extensionOk) {
       throw new BadRequestException(
         `Upload a ${BULK_UPLOAD_ALLOWED_EXTENSIONS.join(' or ')} file.`,
@@ -667,10 +654,9 @@ export class BulkUploadService {
    * are written under `bulk_import` with `refused: true`. A malformed file — an
    * unrecognised header, a wrong extension, an empty one, too many rows (the
    * byte cap is multer's, before any of this runs) — is a 400 that touched
-   * nothing and says nothing about the
-   * caller; auditing every one of them filled the trail with caller-controlled
-   * text at five rows a minute per user (measured 2026-09-17: 37 audit rows
-   * for 5 records), so those are refused and not recorded.
+   * nothing and says nothing about the caller. Auditing those filled the
+   * trail with caller-controlled text at the throttle's rate (measured: 37
+   * audit rows for 5 records), so they are refused and not recorded.
    */
   private async auditedRefusal<T>(
     user: RequestUser,
@@ -728,10 +714,7 @@ export class BulkUploadService {
   /**
    * Write one batch row. No retry: both callers swallow a failed write by
    * design — the bookkeeping must never replace the user's answer — and log
-   * it. (A retry that re-wrote the row without the caller's text once lived
-   * here for values Postgres refuses; the filename is sanitised before it
-   * gets here, the audited reasons carry no caller text, and a failure that
-   * still happens is a bug to see in the log, not to write around.)
+   * it, so a write that fails is a bug to see there, not to write around.
    */
   private async recordBatch(
     user: RequestUser,
@@ -773,10 +756,6 @@ export class BulkUploadService {
   /**
    * The upload's name as the API repeats it, by ONE rule for both of its
    * readers: the report the import panel renders, and the audit row.
-   *
-   * Only the audit copy used to be cleaned. The report returned `originalname`
-   * as it arrived, so a 417-character name carrying U+202E and U+0000 came back
-   * whole (measured).
    */
   private shownFileName(file: Express.Multer.File | undefined): string {
     return sanitiseCallerText(file?.originalname, AUDIT_FILE_NAME_MAX_LENGTH);
@@ -784,23 +763,13 @@ export class BulkUploadService {
 
   /**
    * An issue as the report carries it: its sentence cleaned and bounded by the
-   * caller-text rule, whoever wrote the sentence.
-   *
-   * A sentence that quotes a value quotes it at its source, through
-   * `quoteCallerText`, and that is what keeps it readable. This is what keeps
-   * the report bounded when a source does not: `toIssue` and the validation
-   * mapping pass other services' sentences through verbatim, and the review
-   * that listed the echoing sentences had missed the calc engine's two about
-   * units. It runs on the finished lists, after `toIssue` has classified each
-   * failure by its RAW message.
-   *
-   * The warnings go through it too, and nothing can currently reach that half:
-   * every warning is fixed text plus an `@IsIn`-validated category, and a
-   * mutant that drops the warnings map survives the suite (verified). It is
-   * kept, and deliberately has no test, for the same reason `PIPE_OPTIONS`
-   * does: a spec asserting otherwise would assert coverage that does not exist,
-   * while the line is what keeps the property true if a warning ever quotes a
-   * cell.
+   * caller-text rule, whoever wrote the sentence. A sentence that quotes a
+   * value quotes it at its source (`quoteCallerText`); this bounds the ones
+   * other services wrote and `toIssue` passes through verbatim — the calc
+   * engine's unit sentences among them. It runs on the finished lists, after
+   * each failure has been classified. Warnings go through it too, though all
+   * of them are fixed text today: untested on purpose, it keeps the property
+   * true if a warning ever quotes a cell.
    */
   private bounded(issue: BulkUploadRowIssue): BulkUploadRowIssue {
     return {
@@ -962,11 +931,8 @@ export class BulkUploadService {
    * One row issue per failure, classified by the exception's CLASS.
    *
    * The record service throws typed refusals (`activity-records/errors.ts`,
-   * `calculations/errors.ts`); this reads none of their sentences. It used to
-   * tell a duplicate from a lock by comparing `message` against an exported
-   * constant, and before that against a retyped substring — rewording the
-   * sentence kept every test green while every real duplicate was reported as
-   * a locked period.
+   * `calculations/errors.ts`); this reads none of their sentences, so a
+   * reworded one cannot turn a duplicate into a locked period.
    */
   private toIssue(
     row: number,
