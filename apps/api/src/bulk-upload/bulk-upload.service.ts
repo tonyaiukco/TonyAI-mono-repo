@@ -161,11 +161,8 @@ export class BulkUploadService {
       if (parsed.length === 0) {
         throw new BadRequestException('The file has no data rows.');
       }
-      if (parsed.length > BULK_UPLOAD_MAX_ROWS) {
-        throw new BadRequestException(
-          `The file has ${parsed.length} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
-        );
-      }
+      // The row cap is `parseRows`'s: it counts populated rows and throws
+      // before this line, so a second check here could never fire.
       // BEFORE the access check, which compares ids as strings — and before
       // anything else reads an id cell.
       this.canonicaliseEntityCells(parsed);

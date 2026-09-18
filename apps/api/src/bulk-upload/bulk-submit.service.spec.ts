@@ -7,7 +7,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  bulkSubmitReportIsComplete,
   type ActivityRecordDTO,
   type CalculationResult,
 } from '@tonyai/shared-types';
@@ -406,7 +405,10 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
 
     const report = await service.submitMany(dataEntry(), ids('a', 'gone'));
 
-    expect(bulkSubmitReportIsComplete(report)).toBe(true);
+    // Every requested id lands in exactly one list — a loop that `break`s
+    // instead of `continue`s would violate it while each count looked fine.
+    expect(report.submitted.length + report.failed.length).toBe(report.requested);
+    expect(report.requested).toBe(2);
   });
 });
 
