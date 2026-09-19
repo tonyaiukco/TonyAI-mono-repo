@@ -1,14 +1,18 @@
 import 'reflect-metadata';
 import { describe, expect, it } from 'vitest';
 import { Test } from '@nestjs/testing';
-import { ThrottlerModule, getStorageToken } from '@nestjs/throttler';
+import {
+  ThrottlerModule,
+  ThrottlerStorageService,
+  getStorageToken,
+} from '@nestjs/throttler';
 import { AppModule } from './app.module';
-import { PerKeyThrottlerStorage } from './common/per-key-throttler-storage';
 
 /**
- * The storage that works around the throttler's defect is only a fix if the app
- * actually uses it. Each test compiles AppModule's own ThrottlerModule import and
- * nothing else, so no database, Supabase client or config is constructed.
+ * The app once installed its own storage over a defect in `@nestjs/throttler`;
+ * 6.7.0 fixed it and the workaround is gone. Each test compiles AppModule's own
+ * ThrottlerModule import and nothing else, so no database, Supabase client or
+ * config is constructed.
  */
 describe('AppModule — rate limiting', () => {
   function throttlerImport(): never {
@@ -18,10 +22,10 @@ describe('AppModule — rate limiting', () => {
     return found as never;
   }
 
-  it('installs PerKeyThrottlerStorage as the throttler storage', async () => {
+  it('uses the library’s own storage — no workaround installed over it', async () => {
     const moduleRef = await Test.createTestingModule({ imports: [throttlerImport()] }).compile();
     try {
-      expect(moduleRef.get(getStorageToken())).toBeInstanceOf(PerKeyThrottlerStorage);
+      expect(moduleRef.get(getStorageToken())).toBeInstanceOf(ThrottlerStorageService);
     } finally {
       await moduleRef.close();
     }
