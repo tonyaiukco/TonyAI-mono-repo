@@ -238,6 +238,22 @@ export function appliesUnitConversion(unit: string, category: string): boolean {
 // Canonical 4-role enum (aligned with docs/tech_docs technical_analysis.md §4 and Prisma user_role)
 export type UserRole = 'super_admin' | 'consultant' | 'data_entry' | 'executive_viewer';
 
+/**
+ * May this user author activity records — create, edit, delete, submit, and
+ * attach or remove their evidence? One rule, used by the API's record and
+ * evidence services and by every screen that offers those controls.
+ *
+ * A consultant is NOT a writer (decision 2026-07-30): the seat is advisory —
+ * review, anomaly flagging, guidance — and is typically held by someone outside
+ * the holding company. A function rather than an exported set, so the rule
+ * cannot be widened at runtime by a caller.
+ */
+export function mayAuthorRecords(
+  user: { role: string } | null | undefined,
+): boolean {
+  return !!user && (user.role === 'data_entry' || user.role === 'super_admin');
+}
+
 export type SubmissionStatus = 'draft' | 'submitted' | 'in_review' | 'approved' | 'revision_requested';
 
 /**

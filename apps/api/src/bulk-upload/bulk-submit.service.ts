@@ -13,10 +13,10 @@ import {
   type BulkSubmitAuditDiff,
   type BulkSubmitIssue,
   type BulkSubmitReportDTO,
+  mayAuthorRecords,
 } from '@tonyai/shared-types';
 import {
   ActivityRecordsService,
-  mayWriteActivityRecords,
   periodOrdinal,
 } from '../activity-records/activity-records.service';
 import {
@@ -119,7 +119,7 @@ export class BulkSubmitService {
     // per-record check inside `submit` still runs, so this is the loop's
     // reading of the rule, not the rule. Audited on the way out, because a
     // seat probing the write surface is the interaction most worth keeping.
-    if (!mayWriteActivityRecords(user)) {
+    if (!mayAuthorRecords(user)) {
       await this.recordBatch(user, {
         bulk: true,
         refused: true,

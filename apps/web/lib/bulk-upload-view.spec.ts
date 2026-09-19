@@ -9,12 +9,11 @@ import type {
   BulkUploadReportDTO,
   BulkUploadRowIssue,
 } from '@/lib/types';
-import { ApiError } from '@/lib/api';
+import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import {
   applyConfirmation,
   applySuccessMessage,
   applyToast,
-  canBulkUpload,
   COLUMN_LABEL,
   fileAcceptAttribute,
   groupIssues,
@@ -362,6 +361,12 @@ describe('applyToast', () => {
 });
 
 describe('uploadErrorMessage', () => {
+  it('says the session ended on a 401, never the raw "Unauthorized"', () => {
+    // It fell through to `error.message` before, and the panel printed
+    // "Unauthorized. Nothing was imported." Every other page names the cause.
+    expect(uploadErrorMessage(new ApiError('Unauthorized', 401))).toBe(SESSION_EXPIRED_MESSAGE);
+  });
+
   it('explains the throttle instead of repeating the status', () => {
     const text = uploadErrorMessage(new ApiError('Too Many Requests', 429));
     expect(text).toMatch(/wait a minute/i);
@@ -393,6 +398,10 @@ describe('uploadErrorMessage', () => {
 });
 
 describe('templateErrorMessage', () => {
+  it('says the session ended on a 401, never the raw "Unauthorized"', () => {
+    expect(templateErrorMessage(new ApiError('Unauthorized', 401))).toBe(SESSION_EXPIRED_MESSAGE);
+  });
+
   it('does not blame an import budget the download never spent', () => {
     const text = templateErrorMessage(new ApiError('Too Many Requests', 429));
     expect(text).toMatch(/template/i);
@@ -401,26 +410,11 @@ describe('templateErrorMessage', () => {
   });
 
   it('keeps the server’s sentence otherwise, and survives a non-ApiError', () => {
-    expect(templateErrorMessage(new ApiError('Session expired', 401))).toBe('Session expired');
+    expect(templateErrorMessage(new ApiError('Reporting entities could not be read', 500))).toBe(
+      'Reporting entities could not be read',
+    );
     expect(templateErrorMessage(new Error('offline'))).toBe('offline');
     expect(templateErrorMessage('nonsense')).toMatch(/could not be downloaded/i);
-  });
-});
-
-describe('canBulkUpload', () => {
-  it.each([
-    ['data_entry', true],
-    ['super_admin', true],
-    ['consultant', false],
-    ['executive_viewer', false],
-  ])('%s', (role, allowed) => {
-    // Mirrors the server's WRITE_ROLES. The UI hides what a role cannot do;
-    // it does not decide it.
-    expect(canBulkUpload({ role })).toBe(allowed);
-  });
-
-  it('hides the panel from a signed-out shell', () => {
-    expect(canBulkUpload(null)).toBe(false);
   });
 });
 

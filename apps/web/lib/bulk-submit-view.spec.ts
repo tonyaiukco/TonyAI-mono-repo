@@ -5,7 +5,7 @@ import type {
   BulkSubmitReportDTO,
   BulkUploadAcceptedRow,
 } from '@/lib/types';
-import { ApiError } from '@/lib/api';
+import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import {
   allEligibleSelected,
   authoredBy,
@@ -249,6 +249,10 @@ describe('summariseSubmit', () => {
 });
 
 describe('submitErrorMessage', () => {
+  it('says the session ended on a 401, never the raw "Unauthorized"', () => {
+    expect(submitErrorMessage(new ApiError('Unauthorized', 401))).toBe(SESSION_EXPIRED_MESSAGE);
+  });
+
   it('explains the throttle', () => {
     expect(submitErrorMessage(new ApiError('Too Many Requests', 429))).toMatch(
       /wait a minute/i,

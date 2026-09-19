@@ -37,7 +37,7 @@ import {
   matrixToAlerts,
   matrixToSubsidiaries,
 } from '@/lib/dashboard-view';
-import { DEFAULT_REPORTING_YEAR } from '@/lib/types';
+import { DEFAULT_REPORTING_YEAR, mayAuthorRecords } from '@/lib/types';
 import type {
   DashboardKpi,
   EmissionsSummary,
@@ -457,7 +457,7 @@ export default function CarbonDashboard() {
         reportingYear={matrix?.reportingYear ?? null}
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
-        canEnter={user?.role === 'super_admin' || user?.role === 'data_entry'}
+        canEnter={mayAuthorRecords(user)}
         onSlotClick={handleSlotClick}
       />
     </div>

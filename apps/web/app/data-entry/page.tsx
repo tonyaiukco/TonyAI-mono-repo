@@ -53,7 +53,6 @@ import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import { CoveragePanel } from "@/components/data-entry/coverage-panel";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
 import { PreviousSubmissions } from "@/components/data-entry/previous-submissions";
-import { canBulkUpload } from "@/lib/bulk-upload-view";
 import {
   ACTIVITY_UNITS,
   appliesUnitConversion,
@@ -63,12 +62,14 @@ import {
   isCalculated,
   canonicalPeriodValue,
   isInvoiceTracked,
+  mayAuthorRecords,
   PERIOD_VALUES,
   REPORTING_YEARS,
   unitSymbol,
   unitsForCategory,
   WHOLE_COMPANY_ENTITY_LABEL,
 } from "@/lib/types";
+import { isPeriodLockedFor } from "@/lib/bulk-submit-view";
 import {
   NOT_CALCULATED_LABEL,
   NO_FACTOR_LABEL,
@@ -610,14 +611,7 @@ function DataEntryPageInner() {
     // A period lock only flips `approved → locked`, so a draft inside a locked
     // period keeps its status and would sail past the check above. Every write
     // to it is refused with a 409.
-    if (
-      locks.some(
-        (l) =>
-          l.reportingYear === rec.reportingYear &&
-          l.reportingPeriod === rec.reportingPeriod &&
-          l.periodValue === rec.periodValue,
-      )
-    ) {
+    if (isPeriodLockedFor(rec, locks)) {
       toast.info(
         `${rec.periodValue} ${rec.reportingYear} is locked — a super_admin must unlock it before this record can change.`,
       );
@@ -1066,7 +1060,7 @@ function DataEntryPageInner() {
                   an importer has no open record, and this is the only thing on
                   the page a user reaches before having one. */}
               <BulkUploadPanel
-                canManage={canBulkUpload(user)}
+                canManage={mayAuthorRecords(user)}
                 onImported={() => {
                   // Both the previous-submissions list and CoveragePanel are
                   // looking at pre-import numbers at the exact moment the user
@@ -1250,9 +1244,7 @@ function DataEntryPageInner() {
                   // A consultant is review-only (decision 2026-07-30) and the
                   // evidence API 403s them, so offering upload/delete controls
                   // here only produced a button that always failed.
-                  canManage={
-                    !!user && ["data_entry", "super_admin"].includes(user.role)
-                  }
+                  canManage={mayAuthorRecords(user)}
                 />
               )}
 

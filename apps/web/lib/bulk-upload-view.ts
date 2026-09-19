@@ -9,7 +9,7 @@ import type {
   BulkUploadReportDTO,
   BulkUploadRowIssue,
 } from '@/lib/types';
-import { ApiError } from '@/lib/api';
+import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import { formatNumber } from '@/lib/utils';
 
 /**
@@ -400,6 +400,7 @@ export function applyToast(report: BulkUploadReportDTO): {
  */
 export function uploadErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.status === 401) return SESSION_EXPIRED_MESSAGE;
     if (error.status === 429) {
       return 'Too many import attempts. Wait a minute and try again — a dry run and an import each count towards the limit.';
     }
@@ -425,6 +426,7 @@ export function uploadErrorMessage(error: unknown): string {
  */
 export function templateErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.status === 401) return SESSION_EXPIRED_MESSAGE;
     if (error.status === 429) {
       return 'Too many template downloads. Wait a minute and try again.';
     }
@@ -433,7 +435,3 @@ export function templateErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'The template could not be downloaded.';
 }
 
-/** Only the two roles the server lets author records see the panel at all. */
-export function canBulkUpload(user: { role: string } | null): boolean {
-  return !!user && ['data_entry', 'super_admin'].includes(user.role);
-}

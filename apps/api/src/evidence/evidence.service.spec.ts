@@ -191,6 +191,29 @@ describe('EvidenceService', () => {
     expect(storage.upload).not.toHaveBeenCalled();
   });
 
+  it.each(['consultant', 'executive_viewer'] as const)(
+    'refuses a %s even on a record they authored — upload and remove',
+    async (role) => {
+      // The role gate on its own: the record is theirs and editable, so only
+      // `mayAuthorRecords` stands between this seat and the evidence vault.
+      const author = dataEntry({ role, id: 'user-seat' });
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        makeRecord({ id: 'rec-1', createdBy: 'user-seat' }),
+      );
+      prisma.evidence.findUnique.mockResolvedValue({
+        id: 'ev-1', activityRecordId: 'rec-1', storagePath: 'rec-1/a.pdf', fileName: 'a.pdf', mimeType: 'application/pdf', sizeBytes: 10, uploadedBy: 'user-seat', createdAt: new Date(),
+      });
+
+      await expect(service.upload(author, 'rec-1', makeFile())).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      await expect(service.remove(author, 'ev-1')).rejects.toBeInstanceOf(ForbiddenException);
+      expect(storage.upload).not.toHaveBeenCalled();
+      expect(storage.remove).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    },
+  );
+
   it('forbids uploading to a record the caller did not create', async () => {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-1', createdBy: 'someone-else' }),
