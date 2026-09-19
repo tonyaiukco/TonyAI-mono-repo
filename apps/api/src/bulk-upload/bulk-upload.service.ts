@@ -24,10 +24,10 @@ import {
   type ReportingPeriod,
   type BulkUploadReportDTO,
   type BulkUploadRowIssue,
+  mayAuthorRecords,
 } from '@tonyai/shared-types';
 import {
   ActivityRecordsService,
-  mayWriteActivityRecords,
 } from '../activity-records/activity-records.service';
 import {
   CreateRoleRefusedError,
@@ -477,7 +477,7 @@ export class BulkUploadService {
    * loop.
    */
   private assertMayImport(user: RequestUser): void {
-    if (!mayWriteActivityRecords(user)) {
+    if (!mayAuthorRecords(user)) {
       throw new CreateRoleRefusedError();
     }
   }

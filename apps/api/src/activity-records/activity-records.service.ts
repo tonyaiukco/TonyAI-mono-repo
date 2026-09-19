@@ -66,14 +66,6 @@ interface AnomalyParams {
   excludeId?: string;
 }
 
-/**
- * May this user author activity records at all? The rule is the contract's
- * `mayAuthorRecords`, so the screens that hide a control and the API that
- * refuses it read one definition.
- */
-export function mayWriteActivityRecords(user: RequestUser): boolean {
-  return mayAuthorRecords(user);
-}
 
 // The refusal classes and their sentences live in `./errors`.
 // Roles allowed to take a record into review and to reject it ("flag for
