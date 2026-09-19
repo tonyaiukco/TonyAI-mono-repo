@@ -96,6 +96,7 @@ model Organisation {
   reportingCurrency String       @default("EUR") @map("reporting_currency")
   subsidiaries      Subsidiary[]
   profiles          Profile[]
+  importBatches     ImportBatch[]
   createdAt         DateTime     @default(now()) @map("created_at")
   updatedAt         DateTime     @updatedAt @map("updated_at")
 
@@ -239,6 +240,13 @@ model ActivityRecord {
   voidReason     String?              @map("void_reason")
   voidedBy       String?              @map("voided_by") @db.Uuid
   voidedAt       DateTime?            @map("voided_at")
+  // The bulk import that created this record, or null for one typed on Data
+  // Entry. Written once at create, never by an update. NoAction, not Restrict:
+  // a batch cannot be deleted while records point at it, but an organisation
+  // delete (which cascades to both) still works, because NO ACTION is checked
+  // at the end of the statement.
+  importBatchId  String?              @map("import_batch_id") @db.Uuid
+  importBatch    ImportBatch?         @relation(fields: [importBatchId], references: [id], onDelete: NoAction)
   evidence       Evidence[]
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
@@ -250,7 +258,51 @@ model ActivityRecord {
   // DISTINCT, so it lives in raw SQL like the RLS policies.
   @@index([subsidiaryId])
   @@index([locationId])
+  @@index([importBatchId])
   @@map("activity_records")
+}
+
+enum ImportBatchStatus {
+  processing
+  completed
+  failed
+}
+
+// One APPLIED bulk import: the file, who sent it, what it named and what came
+// of it. A dry run writes no row — it must provably write nothing. The
+// organisation owns the batch (an import can span several of its
+// subsidiaries); `uploadedBy` is recorded, with no FK, like `createdBy`.
+// `subsidiaryIds` is every entity the FILE names — each subsidiary cell and
+// each location's owning subsidiary, all proven accessible at upload — and is
+// what the RLS policy and the API scope a data_entry reader by: the source file
+// holds every row, refused ones included, so reading it requires reaching all
+// of them. Written once at creation; only `status`, the counts and
+// `completedAt` change, once, when processing ends. `processing` with null
+// counts is an interrupted import — the FK, not the counts, says which records
+// it produced. `storagePath` null means the source file is not retained.
+model ImportBatch {
+  id             String            @id @default(uuid()) @db.Uuid
+  organisationId String            @map("organisation_id") @db.Uuid
+  organisation   Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  uploadedBy     String            @map("uploaded_by") @db.Uuid
+  subsidiaryIds  String[]          @map("subsidiary_ids") @db.Uuid
+  fileName       String            @map("file_name")
+  fileFormat     String            @map("file_format")
+  sizeBytes      Int               @map("size_bytes")
+  sha256         String            @db.Char(64)
+  storagePath    String?           @map("storage_path")
+  status         ImportBatchStatus @default(processing)
+  totalRows      Int               @map("total_rows")
+  acceptedCount  Int?              @map("accepted_count")
+  rejectedCount  Int?              @map("rejected_count")
+  completedAt    DateTime?         @map("completed_at")
+  records        ActivityRecord[]
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  @@index([organisationId, createdAt])
+  @@index([uploadedBy, createdAt])
+  @@map("import_batches")
 }
 
 // A supporting file (invoice, meter record, fuel log, …) linked to an activity

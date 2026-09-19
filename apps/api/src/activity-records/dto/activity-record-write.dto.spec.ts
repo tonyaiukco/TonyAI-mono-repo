@@ -379,3 +379,11 @@ describe('reporting-entity ids — one spelling, lowercased at the boundary', ()
     expect(message).not.toContain('nope');
   });
 });
+
+describe('import provenance is not a caller field', () => {
+  it.each(DTOS)('%s refuses an importBatchId key in the body', (_name, Dto) => {
+    // Set only by the importer, server-side (`create(user, dto, provenance)`).
+    const { errors } = parse(Dto, { importBatchId: 'a1111111-1111-4111-8111-11111111111a' });
+    expect(errors.map((e) => e.property)).toContain('importBatchId');
+  });
+});

@@ -6,9 +6,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
-import { isCalculated, PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
+import { isCalculated, PENDING_REVIEW_STATUSES,
+  CATEGORIES,
+  needsEvidenceBeforeSubmit,
+} from '@tonyai/shared-types';
 import type { CalculationResult } from '@tonyai/shared-types';
-import { ActivityRecordsService } from './activity-records.service';
+import { ActivityRecordsService, evidenceReadyWhere } from './activity-records.service';
 import {
   CreateRoleRefusedError,
   DuplicateActivityRecordError,
@@ -121,7 +124,7 @@ const PERSISTED_KEYS = [
   'activityUnit', 'input', 'calculation', 'createdBy', 'anomalyFlag',
   'anomalyBaselinePriorCount', 'anomalyBaselineTCo2e', 'varianceReason',
   'reviewedBy', 'reviewedAt', 'reviewNote', 'submittedAt', 'voidReason', 'voidedBy',
-  'voidedAt', 'evidenceCount', 'createdAt', 'updatedAt',
+  'voidedAt', 'importBatchId', 'evidenceCount', 'createdAt', 'updatedAt',
 ].sort();
 
 
@@ -3032,4 +3035,59 @@ describe('ActivityRecordsService — the stored unit is the vocabulary spelling'
       { enforceCategoryUnit: false },
     );
   });
+});
+
+describe('ActivityRecordsService — import provenance', () => {
+  it('stores the batch a record came from when the importer passes one, and null otherwise', async () => {
+    const { prisma, service } = build();
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-p', ...data }),
+    );
+
+    const imported = await service.create(dataEntry(), CREATE_DTO as never, {
+      importBatchId: 'batch-1',
+    });
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.importBatchId).toBe('batch-1');
+    expect(imported.importBatchId).toBe('batch-1');
+
+    await service.create(dataEntry(), { ...CREATE_DTO, periodValue: 'Annual' } as never);
+    expect(prisma.activityRecord.create.mock.calls[1][0].data.importBatchId).toBeNull();
+  });
+
+  it('never writes the batch id on an update, whatever the body says', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-u', createdBy: 'user-entry', status: ActivityRecordStatus.draft }),
+    );
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-u', ...data }),
+    );
+
+    await service.update(dataEntry(), 'rec-u', { varianceReason: 'x', importBatchId: 'forged' } as never);
+
+    expect(prisma.activityRecord.update.mock.calls[0][0].data).not.toHaveProperty('importBatchId');
+  });
+});
+
+describe('evidenceReadyWhere — the submit gate as a query', () => {
+  // Evaluates the Prisma filter the way Postgres would, for every category and
+  // both evidence states, and demands the same answer as the gate. A category
+  // added to the evidence list, or a changed rule, fails here instead of
+  // silently mislabelling the import batch's "Send N drafts".
+  function matches(where: ReturnType<typeof evidenceReadyWhere>, row: { category: string; evidenceCount: number }) {
+    return where.OR.some((clause) =>
+      clause.category
+        ? !clause.category.notIn.includes(row.category)
+        : row.evidenceCount > 0,
+    );
+  }
+
+  it.each(CATEGORIES.flatMap((category) => [0, 1].map((evidenceCount) => ({ category, evidenceCount }))))(
+    '$category with $evidenceCount file(s) agrees with needsEvidenceBeforeSubmit',
+    (row) => {
+      expect(matches(evidenceReadyWhere(), row)).toBe(!needsEvidenceBeforeSubmit(row));
+    },
+  );
 });

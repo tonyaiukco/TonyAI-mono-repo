@@ -441,7 +441,7 @@ export function PreviousSubmissions({
       {/* Mounted only while open. Not for the reason first written here — a
           closed Radix dialog has no `forceMount` and is absent from the DOM
           either way, so there was never a duplicate-text hazard. The real
-          difference is that this skips the `submitConfirmation(live)` CALL,
+          difference is that this skips the `submitConfirmation(…)` CALL,
           where the panel's JSX children are evaluated on every render. */}
       {confirming && (
         <Dialog open onOpenChange={setConfirming}>
@@ -449,7 +449,7 @@ export function PreviousSubmissions({
             <DialogHeader>
               <DialogTitle>Send these for review?</DialogTitle>
               <DialogDescription>
-                {submitConfirmation(live)}
+                {submitConfirmation(live.length)}
                 {/* The sentence the shared one cannot carry: on the import
                     surface every row is the importer's own by construction, so
                     this case only exists here. */}

@@ -136,8 +136,7 @@ export function failuresToShow(failed: BulkSubmitIssue[]): {
 }
 
 /** What the confirm step says. */
-export function submitConfirmation(recordIds: string[]): string {
-  const n = recordIds.length;
+export function submitConfirmation(n: number): string {
   const them = n === 1 ? 'it' : 'them';
   return (
     `Send ${formatNumber(n)} ${n === 1 ? 'record' : 'records'} for review. ` +

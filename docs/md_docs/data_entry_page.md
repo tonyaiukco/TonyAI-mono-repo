@@ -266,6 +266,8 @@ The server-side rules behind this section, and the reasons for them, are in `REA
 - no transaction spans the import, so a failure part-way through (e.g. a period lock landing mid-import) can leave part of the file written. The report is **not** cleared afterwards — the error list is the user's work list — and after a partial import the verdict advises uploading only the rows that failed, because re-sending the whole file would report the imported rows as duplicates
 - after every attempted import, successful or not, `Previous submissions` and the `Data collection status` panel refresh for the selected subsidiary
 - `Upload another file` resets the panel
+- every applied import is kept as an **import batch**: its file, its outcome and the drafts it created. The panel's `Recent imports` card lists the last ten imports the user can see, newest first, and survives a page refresh — the panel's own report does not
+- a whole file is refused when a row names a reporting entity the user cannot reach — a subsidiary, or a location belonging to one — with `Row(s) N name a reporting entity that does not exist or is not yours.`
 - limits: 1,000 rows, 2 MB (16 MB once a workbook is unpacked) and 5 imports per minute per user; a dry run and an import each count
 
 ### 9.2 Bulk Submit
@@ -282,6 +284,13 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 - rows in an evidence-required category are held back, because an import cannot attach an evidence file; when that holds back every row, the panel says so instead of offering the button
 - after a submission, `Previous submissions` and the `Data collection status` panel refresh, even when the request fails
 - **on the seeded demo data this path submits nothing, by construction**: every category that can be imported there requires evidence — Electricity, Natural Gas and Fuel, the only categories the seeded factor library covers, and Water, which is recorded without a calculated figure
+
+#### From Recent Imports
+- each applied import shows its file name, date and time, who imported it, and its outcome (`2 imported · 1 refused`); a batch whose outcome was never recorded (the import was interrupted) says so rather than showing zero
+- `Download file` opens the original file the rows came from, through a short-lived link
+- `Send N drafts for review` sends the drafts of that import the user entered (all of them, for a `super_admin`) that are not waiting for an evidence file; drafts that are waiting are counted in a note under the batch — `2 drafts need an evidence file first — open each under Previous submissions to attach one.` — and the button is absent when none can go
+- the same confirmation as the other entry points; the toast gives the verdict and, when records were not moved, the reasons (`Needs an evidence file · 2`)
+- a `data_entry` user sees only the imports they made, and only while they can still reach every subsidiary the file names (the original file holds every row); `consultant`, `executive_viewer` and `super_admin` see every import in their organisation
 
 #### From Previous Submissions
 - a row gets a checkbox only when every gate the client can check passes. The list applies the server's gates in the server's order — role, status, authorship, period lock — plus the evidence rule: an evidence-required category with no file attached, so a draft whose invoice is attached qualifies. The anomaly verdict is left to the server, so a ticked draft can still come back refused, e.g. for a missing variance reason

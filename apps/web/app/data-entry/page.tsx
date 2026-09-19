@@ -52,6 +52,7 @@ import { useAuthStore } from "@/lib/store";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import { CoveragePanel } from "@/components/data-entry/coverage-panel";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
+import { RecentImports } from "@/components/data-entry/recent-imports";
 import { PreviousSubmissions } from "@/components/data-entry/previous-submissions";
 import {
   ACTIVITY_UNITS,
@@ -218,6 +219,8 @@ function DataEntryPageInner() {
   /** Bumped whenever records are refetched, so `CoveragePanel` re-reads the
    *  completeness endpoint after a save, a submit or a subsidiary switch. */
   const [coverageKey, setCoverageKey] = useState(0);
+  // Bumped after an import, so Recent imports shows the new batch.
+  const [importsKey, setImportsKey] = useState(0);
   const [locks, setLocks] = useState<PeriodLockDTO[]>([]);
   // The reporting entity the loaded record belongs to. Kept so that moving the
   // form off that tuple can stop targeting it — see the effect below.
@@ -1073,6 +1076,15 @@ function DataEntryPageInner() {
                   // nothing on screen. The panel's own verdict is what reports
                   // the outcome; widening this would mean refetching every
                   // accessible subsidiary on every import.
+                  if (subsidiaryId) void refreshRecords(subsidiaryId);
+                  setImportsKey((k) => k + 1);
+                }}
+              />
+
+              <RecentImports
+                canSubmit={mayAuthorRecords(user)}
+                refreshKey={importsKey}
+                onSubmitted={() => {
                   if (subsidiaryId) void refreshRecords(subsidiaryId);
                 }}
               />

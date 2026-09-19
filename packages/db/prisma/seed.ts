@@ -268,6 +268,25 @@ async function ensureEvidenceBucket(): Promise<void> {
   if (error && !/exist/i.test(error.message)) throw error;
 }
 
+/**
+ * Create the private `import-sources` bucket if it does not already exist:
+ * where an applied bulk import keeps its source file. Declared in
+ * `supabase/config.toml` too; this covers a stack started before it was.
+ */
+async function ensureImportSourcesBucket(): Promise<void> {
+  const { error } = await admin.storage.createBucket('import-sources', {
+    public: false,
+    // Bytes, not a unit string: the Storage API refuses "2MiB" ("use 20MB")
+    // — this is the 2 MiB of `BULK_UPLOAD_MAX_SIZE_BYTES` and config.toml.
+    fileSizeLimit: 2 * 1024 * 1024,
+    allowedMimeTypes: [
+      'text/csv',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ],
+  });
+  if (error && !/exist/i.test(error.message)) throw error;
+}
+
 /** Attach one placeholder evidence file to a record, idempotently. */
 async function ensureSeedEvidence(
   recordId: string,
@@ -533,6 +552,7 @@ async function main() {
 
   console.log('Seeding demo activity records (prototype data, Scope 1 & 2)...');
   await ensureEvidenceBucket();
+  await ensureImportSourcesBucket();
   let activityCount = 0;
   let evidenceCount = 0;
 

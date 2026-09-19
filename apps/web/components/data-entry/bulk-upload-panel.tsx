@@ -474,7 +474,7 @@ export function BulkUploadPanel({
           <DialogHeader>
             <DialogTitle>Send these for review?</DialogTitle>
             <DialogDescription>
-              {submitConfirmation(eligible.recordIds)}
+              {submitConfirmation(eligible.recordIds.length)}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -331,6 +331,67 @@ function reportCleanup(errors: (string | null)[]): void {
 }
 
 /**
+ * The import batches the records matching a PostgREST filter on
+ * `activity_records` came from. Read BEFORE the records go, like evidence
+ * paths: afterwards nothing links the batch to the run that made it.
+ */
+async function importBatchIdsFor(request: APIRequestContext, filter: string): Promise<string[]> {
+  const { url } = supabaseEnv();
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY as string;
+  const res = await request.get(
+    `${url}/rest/v1/activity_records?select=import_batch_id&import_batch_id=not.is.null&${filter}`,
+    { headers: { apikey: service, Authorization: `Bearer ${service}` } },
+  );
+  if (!res.ok()) {
+    throw new Error(`E2E cleanup could not list import batches: ${res.status()} ${await res.text()}`);
+  }
+  return [...new Set(((await res.json()) as { import_batch_id: string }[]).map((r) => r.import_batch_id))];
+}
+
+/**
+ * Delete the given batches that NO record points at any more, with their
+ * source files. Only batches this run's records came from are candidates, and
+ * one still holding a record — a real one, say — is left alone.
+ */
+async function removeEmptiedImportBatches(
+  request: APIRequestContext,
+  batchIds: string[],
+): Promise<(string | null)[]> {
+  if (batchIds.length === 0) return [];
+  const { url } = supabaseEnv();
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY as string;
+  const headers = { apikey: service, Authorization: `Bearer ${service}` };
+  const list = batchIds.map((id) => `"${id}"`).join(',');
+  const res = await request.get(
+    `${url}/rest/v1/import_batches?select=id,storage_path,activity_records(id)&id=in.(${list})`,
+    { headers },
+  );
+  if (!res.ok()) return [`${res.status()} listing import batches — ${await res.text()}`];
+  const emptied = ((await res.json()) as {
+    id: string;
+    storage_path: string | null;
+    activity_records: unknown[];
+  }[]).filter((b) => b.activity_records.length === 0);
+  if (emptied.length === 0) return [];
+  const paths = emptied.map((b) => b.storage_path).filter((p): p is string => !!p);
+  const files =
+    paths.length === 0
+      ? null
+      : await (async () => {
+          const r = await request.delete(`${url}/storage/v1/object/import-sources`, {
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            data: { prefixes: paths },
+          });
+          return r.ok() ? null : `${r.status()} removing import source files — ${await r.text()}`;
+        })();
+  const ids = emptied.map((b) => `"${b.id}"`).join(',');
+  return [
+    files,
+    await del(request, `${url}/rest/v1/import_batches?id=in.(${ids})`, { ...headers, Prefer: 'return=minimal' }),
+  ];
+}
+
+/**
  * Storage paths of the evidence attached to records matching a PostgREST filter
  * on `activity_records` (or, through it, on `subsidiaries`).
  *
@@ -402,10 +463,12 @@ export async function cleanupQuarterly(request: APIRequestContext): Promise<void
       `&activity_records.reporting_period=eq.${E2E_PERIOD}` +
       `&activity_records.reporting_year=eq.${E2E_YEAR}`,
   );
+  const batches = await importBatchIdsFor(request, scope);
   reportCleanup([
     await removeEvidenceObjects(request, paths),
     await del(request, `${url}/rest/v1/period_locks?${scope}`, headers),
     await del(request, `${url}/rest/v1/activity_records?${scope}`, headers),
+    ...(await removeEmptiedImportBatches(request, batches)),
   ]);
 }
 
@@ -817,10 +880,12 @@ export async function deleteRecordsAsService(
     request,
     `select=storage_path&activity_record_id=in.(${list})`,
   );
+  const batches = await importBatchIdsFor(request, `id=in.(${list})`);
   reportCleanup([
     await removeEvidenceObjects(request, paths),
     await del(request, `${url}/rest/v1/evidence?activity_record_id=in.(${list})`, headers),
     await del(request, `${url}/rest/v1/activity_records?id=in.(${list})`, headers),
+    ...(await removeEmptiedImportBatches(request, batches)),
   ]);
 }
 
