@@ -69,6 +69,7 @@ import {
   unitsForCategory,
   WHOLE_COMPANY_ENTITY_LABEL,
 } from "@/lib/types";
+import { isPeriodLockedFor } from "@/lib/bulk-submit-view";
 import {
   NOT_CALCULATED_LABEL,
   NO_FACTOR_LABEL,
@@ -611,12 +612,7 @@ function DataEntryPageInner() {
     // period keeps its status and would sail past the check above. Every write
     // to it is refused with a 409.
     if (
-      locks.some(
-        (l) =>
-          l.reportingYear === rec.reportingYear &&
-          l.reportingPeriod === rec.reportingPeriod &&
-          l.periodValue === rec.periodValue,
-      )
+      isPeriodLockedFor(rec, locks)
     ) {
       toast.info(
         `${rec.periodValue} ${rec.reportingYear} is locked — a super_admin must unlock it before this record can change.`,

@@ -82,16 +82,6 @@ export function BulkUploadPanel({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const verdictRef = useRef<HTMLDivElement>(null);
-  /**
-   * Which dry run the screen is allowed to believe.
-   *
-   * Two can be in flight — pick a file, then pick another — and the responses
-   * can land in either order. Without this the older response overwrites the
-   * newer report while `file` holds the newer file, and Import then posts a
-   * file the user never previewed, which is the one outcome dry-run-first
-   * exists to prevent.
-   */
-  const requestSeq = useRef(0);
   const [dragOver, setDragOver] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState<Busy>("none");
@@ -108,7 +98,6 @@ export function BulkUploadPanel({
   const working = busy !== "none";
 
   function reset() {
-    requestSeq.current += 1;
     setFile(null);
     setReport(null);
     setRefusal(null);
@@ -130,6 +119,11 @@ export function BulkUploadPanel({
   }
 
   async function dryRun(picked: File) {
+    // One dry run at a time: while one is in flight the picker is replaced by
+    // a spinner and "Choose a different file" is not rendered, and a drop
+    // lands here and stops. So the report on screen is always the file's.
+    // (A request-sequence ref once guarded overlapping runs; with this guard
+    // no path could produce one — `bulk-upload-panel.spec.ts` asserts one POST.)
     if (working) return;
     const problem = preflightFile(picked);
     if (problem) {
@@ -139,24 +133,21 @@ export function BulkUploadPanel({
       if (inputRef.current) inputRef.current.value = "";
       return;
     }
-    const seq = ++requestSeq.current;
     setFile(picked);
     setReport(null);
     setRefusal(null);
     setBusy("checking");
     try {
       const checked = await api.bulkUploadActivityRecords(picked, true);
-      if (seq !== requestSeq.current) return;
       setSubmitReport(null);
       setReport(checked);
     } catch (e) {
-      if (seq !== requestSeq.current) return;
       // Rendered in the card, not only as a toast: a whole-file refusal names
       // the column or up to ten offending rows, which is not something anyone
       // reads in four seconds.
       setRefusal(uploadErrorMessage(e) || "The import failed.");
     } finally {
-      if (seq === requestSeq.current) setBusy("none");
+      setBusy("none");
     }
   }
 
@@ -318,7 +309,7 @@ export function BulkUploadPanel({
         {refusal && (
           <div
             role="status"
-            className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-900"
+            className="flex items-start gap-2 rounded-lg border border-status-missing-text/30 bg-status-missing-bg px-3 py-2.5 text-sm text-status-missing-text"
           >
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
