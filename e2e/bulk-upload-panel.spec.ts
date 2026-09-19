@@ -198,10 +198,11 @@ test('a second pick during a dry run is refused, and the verdict names the file 
   //
   // Two guards shipped for it, and this test asserts the one that is actually
   // reachable. `dryRun()` refuses to start while another is in flight, so a
-  // second pick makes NO request at all. (The request-sequence ref behind it is
-  // belt-and-braces for a path that no longer exists: `busy` used to be cleared
-  // out from under a running dry run by the template download's `finally`, and
-  // the template now has its own flag.) The first version of this test asserted
+  // second pick makes NO request at all. (A request-sequence ref once sat behind
+  // it for a path that no longer exists — `busy` used to be cleared out from
+  // under a running dry run by the template download's `finally` — and was
+  // deleted once this guard was the only one that could fire; this test is now
+  // what keeps it honest.) The first version of this test asserted
   // the superseding behaviour instead, and failed — correctly — because the
   // shipped code prevents it.
   await login(page, ENTRY_EMAIL);

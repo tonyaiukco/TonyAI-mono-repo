@@ -962,6 +962,28 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     );
   });
 
+  it.each(['consultant', 'executive_viewer'] as const)(
+    'refuses a %s edit and delete even on a record they authored — the role gate alone',
+    async (role) => {
+      // A seat that authored drafts as data_entry and was then moved: the
+      // record is theirs and still editable, so only the role gate in
+      // `assertCanMutate` refuses. The test above cannot see that gate — its
+      // record belongs to someone else, and the author check answers first.
+      const { prisma, service } = build();
+      const seat = consultant({ role, id: 'user-seat' });
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        makeRecord({ id: 'rec-own', status: ActivityRecordStatus.draft, createdBy: 'user-seat' }),
+      );
+
+      await expect(
+        service.update(seat, 'rec-own', { activityValue: 200 } as never),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.remove(seat, 'rec-own')).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    },
+  );
+
   it('consultant is review-only: may NOT create, update, delete or submit', async () => {
     // Decision 2026-07-30 — the consultant seat is advisory (review, anomaly
     // flagging, guidance) and typically sits outside the holding company; data

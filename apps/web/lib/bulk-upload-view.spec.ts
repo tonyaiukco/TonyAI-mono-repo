@@ -365,7 +365,6 @@ describe('uploadErrorMessage', () => {
     // It fell through to `error.message` before, and the panel printed
     // "Unauthorized. Nothing was imported." Every other page names the cause.
     expect(uploadErrorMessage(new ApiError('Unauthorized', 401))).toBe(SESSION_EXPIRED_MESSAGE);
-    expect(templateErrorMessage(new ApiError('Unauthorized', 401))).toBe(SESSION_EXPIRED_MESSAGE);
   });
 
   it('explains the throttle instead of repeating the status', () => {
@@ -399,6 +398,10 @@ describe('uploadErrorMessage', () => {
 });
 
 describe('templateErrorMessage', () => {
+  it('says the session ended on a 401, never the raw "Unauthorized"', () => {
+    expect(templateErrorMessage(new ApiError('Unauthorized', 401))).toBe(SESSION_EXPIRED_MESSAGE);
+  });
+
   it('does not blame an import budget the download never spent', () => {
     const text = templateErrorMessage(new ApiError('Too Many Requests', 429));
     expect(text).toMatch(/template/i);

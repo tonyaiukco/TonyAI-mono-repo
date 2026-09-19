@@ -611,9 +611,7 @@ function DataEntryPageInner() {
     // A period lock only flips `approved → locked`, so a draft inside a locked
     // period keeps its status and would sail past the check above. Every write
     // to it is refused with a 409.
-    if (
-      isPeriodLockedFor(rec, locks)
-    ) {
+    if (isPeriodLockedFor(rec, locks)) {
       toast.info(
         `${rec.periodValue} ${rec.reportingYear} is locked — a super_admin must unlock it before this record can change.`,
       );
