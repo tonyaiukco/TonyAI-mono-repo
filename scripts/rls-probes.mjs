@@ -68,6 +68,10 @@ const TENANT_TABLES = [
   'period_locks',
   'targets',
   'subsidiary_denominators',
+  // A batch's subject is the SOURCE FILE, which holds every row — so a
+  // data_entry reader sees only a batch they uploaded, and only while they can
+  // reach every subsidiary it names. Seeded below; see `seedImportBatches`.
+  'import_batches',
 ];
 
 // The two subsidiaries entry@tonyai.local has access to (Energy + Logistics).
@@ -101,6 +105,10 @@ const ACCESSIBLE_QUERY = {
   // so if this assignment is ever re-sequenced below the loop the probe fails
   // loudly instead of quietly fetching `?null` and passing by luck.
   profiles: undefined,
+  // Filled in below from the token, like `profiles`: entry's OWN batches whose
+  // named subsidiaries are all among entry's two (`cd` = contained by). A null
+  // `subsidiary_ids` never matches `cd`, which is the policy's fail-closed rule.
+  import_batches: undefined,
 };
 
 // --- PostgREST helpers -------------------------------------------------------
@@ -164,6 +172,42 @@ async function seedPeriodLocks() {
 }
 async function cleanupPeriodLocks() {
   await svc('DELETE', 'period_locks?period_value=eq.ZZ');
+}
+
+// import_batches is empty in the seed. Four rows in the seeded organisation,
+// found again by a sentinel file name: entry's own batch over entry's two
+// subsidiaries (the only one entry may read), a colleague's batch over the same
+// subsidiary, entry's own batch that ALSO names a subsidiary entry cannot reach,
+// and entry's own batch with no `subsidiary_ids` at all (fail-closed).
+const IMPORT_PROBE_FILE = 'rls-probe-import.csv';
+const MANUFACTURING = '22222222-2222-2222-2222-222222220003';
+async function seedImportBatches(entryId) {
+  const r = await fetch(`${URL_}/rest/v1/profiles?role=eq.super_admin&select=id,organisation_id&limit=1`, {
+    headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+  });
+  const admin = (await r.json())[0];
+  if (!admin?.id) throw new Error('could not resolve a super_admin profile for the import_batches seed');
+  const now = new Date().toISOString();
+  const base = {
+    organisation_id: admin.organisation_id,
+    file_name: IMPORT_PROBE_FILE,
+    file_format: 'csv',
+    size_bytes: 1,
+    sha256: '0'.repeat(64),
+    status: 'completed',
+    total_rows: 1,
+    updated_at: now,
+  };
+  const res = await svc('POST', 'import_batches', [
+    { id: randomUUID(), ...base, uploaded_by: entryId, subsidiary_ids: [ENERGY, LOGISTICS] },
+    { id: randomUUID(), ...base, uploaded_by: admin.id, subsidiary_ids: [ENERGY] },
+    { id: randomUUID(), ...base, uploaded_by: entryId, subsidiary_ids: [ENERGY, MANUFACTURING] },
+    { id: randomUUID(), ...base, uploaded_by: entryId, subsidiary_ids: null },
+  ]);
+  if (!res.ok) throw new Error(`import_batches seed failed: ${res.status} ${await res.text()}`);
+}
+async function cleanupImportBatches() {
+  await svc('DELETE', `import_batches?file_name=eq.${IMPORT_PROBE_FILE}`);
 }
 
 // The seed writes no audit rows, so a fresh `db:reset` would leave the audit
@@ -241,6 +285,7 @@ async function main() {
   console.log(`RLS containment probes → ${URL_}\n`);
   const token = await getEntryToken();
   await cleanupPeriodLocks(); // in case a previous run aborted
+  await cleanupImportBatches(); // in case a previous run aborted
 
   await cleanupForeignSubsidiary(); // in case a previous run aborted
   try {
@@ -251,7 +296,10 @@ async function main() {
     // period locks show up as closed periods on real subsidiaries.
     await seedPeriodLocks();
     await seedForeignSubsidiary();
+    await seedImportBatches(subjectOf(token));
     ACCESSIBLE_QUERY.profiles = `select=id&id=eq.${subjectOf(token)}`;
+    ACCESSIBLE_QUERY.import_batches =
+      `select=id&uploaded_by=eq.${subjectOf(token)}&subsidiary_ids=cd.{${ENERGY},${LOGISTICS}}`;
     for (const table of TENANT_TABLES) {
       console.log(`▸ ${table}`);
       const anon = await count(table);
@@ -275,6 +323,25 @@ async function main() {
         );
       }
     }
+    // import_batches, named row by row — the loop above proves "exactly the
+    // accessible set", this proves WHICH rows that set excludes and why.
+    const probeBatches = `select=id,uploaded_by,subsidiary_ids&file_name=eq.${IMPORT_PROBE_FILE}`;
+    const entryBatches = await count('import_batches', { token, query: probeBatches });
+    check(
+      "import_batches: entry reads only its own batch over its own subsidiaries — not a colleague's, not one naming a subsidiary it cannot reach, not one with no subsidiaries",
+      entryBatches.total === 1,
+      `entry sees ${entryBatches.total} of 4 seeded`,
+    );
+    const consultantBatches = await count('import_batches', {
+      token: await getToken(CONSULTANT_EMAIL),
+      query: probeBatches,
+    });
+    check(
+      'import_batches: a consultant reads every batch of its organisation',
+      consultantBatches.total === 4,
+      `consultant sees ${consultantBatches.total} of 4`,
+    );
+
     // The contact columns specifically, not just `id`: they are the reason
     // `subsidiaries` joined this list, and a column-level grant slip would be
     // invisible to a `select=id` probe.
@@ -309,6 +376,7 @@ async function main() {
     );
   } finally {
     await cleanupPeriodLocks();
+    await cleanupImportBatches();
     await cleanupForeignSubsidiary();
   }
 
