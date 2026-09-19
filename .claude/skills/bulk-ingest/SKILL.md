@@ -86,6 +86,18 @@ attachment), use `supabase-storage` instead.
   wrong extension, empty, oversized, too many rows): that is a 400 that
   touched nothing, and auditing it fills an append-only table with
   caller-controlled text at the throttle's rate.
+- **An applied import is a batch entity, not an audit row.** If users must come
+  back to "the records from that file" after a refresh, give the import a table
+  (`import_batches`: owner organisation, uploader, the subsidiaries the file
+  names, file name/format/size/sha256, storage key, status and counts), a
+  nullable FK on the created records, and RLS by the `rls-for-table` skill.
+  Create the batch row BEFORE the loop so each record carries its id — through
+  a server-side argument to the resource's `create`, never a DTO field — and
+  close it after (`completed`, or `failed` when the loop aborts; `processing`
+  left behind is an honest "interrupted"). Store the source file first and
+  remove it if the row cannot be written. A dry run creates nothing. Scope a
+  batch's readers by the subsidiaries the FILE names, not the rows accepted:
+  the file holds refused rows too.
 - **Cap rows and bytes explicitly.** Nest's 100 KB JSON body limit does **not**
   apply to a multipart upload. Derive the row cap from the per-row query budget,
   and write the arithmetic down beside the constant.
