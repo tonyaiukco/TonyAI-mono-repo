@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import type { BulkUploadAcceptedRow, BulkUploadRowIssue } from '@tonyai/shared-types';
 import {
   ADMIN_EMAIL,
+  API_BASE,
+  bearer,
   CONSULTANT_EMAIL,
   ENTRY_EMAIL,
   buildBulkCsv,
@@ -218,15 +220,19 @@ test('an apply writes one audit row per record, plus one for the batch', async (
 
     // The `create` verb carries no batch row any more; the batch is its own verb.
     expect(audit.filter((r) => r.entityId === null)).toHaveLength(0);
+    // An apply's batch row points at the import batch it created.
     const batch = await readAuditSince(request, {
-      entity: 'activity_record',
+      entity: 'import_batch',
       action: 'bulk_import',
       since,
     });
     expect(batch).toHaveLength(1);
+    expect(report.batchId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(batch[0].entityId).toBe(report.batchId);
     expect(batch[0].diff).toMatchObject({
       bulk: true,
       dryRun: false,
+      batchId: report.batchId,
       totalRows: 3,
       acceptedCount: 3,
       rejectedCount: 0,
@@ -242,6 +248,12 @@ test('an apply writes one audit row per record, plus one for the batch', async (
     expect(stored.every((r) => r.status === 'draft')).toBe(true);
     expect(stored.every((r) => r.category === E2E_BULK_CATEGORY)).toBe(true);
     expect(stored.every((r) => r.activity_unit === E2E_BULK_UNIT)).toBe(true);
+    // …each linked to that batch, which survives a refresh the id list does not.
+    expect(stored.every((r) => r.import_batch_id === report.batchId)).toBe(true);
+    const listed = await (
+      await request.get(`${API_BASE}/import-batches`, { headers: bearer(token) })
+    ).json();
+    expect(listed.map((b: { id: string }) => b.id)).toContain(report.batchId);
   } finally {
     await deleteRecordsAsService(request, created);
   }
