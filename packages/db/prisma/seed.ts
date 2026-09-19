@@ -276,7 +276,9 @@ async function ensureEvidenceBucket(): Promise<void> {
 async function ensureImportSourcesBucket(): Promise<void> {
   const { error } = await admin.storage.createBucket('import-sources', {
     public: false,
-    fileSizeLimit: '2MiB',
+    // Bytes, not a unit string: the Storage API refuses "2MiB" ("use 20MB")
+    // — this is the 2 MiB of `BULK_UPLOAD_MAX_SIZE_BYTES` and config.toml.
+    fileSizeLimit: 2 * 1024 * 1024,
     allowedMimeTypes: [
       'text/csv',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
