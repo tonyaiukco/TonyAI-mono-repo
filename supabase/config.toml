@@ -125,6 +125,18 @@ allowed_mime_types = [
   "text/csv",
 ]
 
+# Private bucket for the source file of every APPLIED bulk import (one object
+# per `import_batches` row). Never public — downloads go through the API's
+# short-lived signed URL, readable by whoever may read the batch. Kept as long
+# as the batch exists (decision 2026-09-19); the 2 MiB matches the import cap.
+[storage.buckets.import-sources]
+public = false
+file_size_limit = "2MiB"
+allowed_mime_types = [
+  "text/csv",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]
+
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true

@@ -9,6 +9,8 @@ import {
 import {
   type ActivityRecordDTO,
   type CalculationResult,
+  BULK_SUBMIT_MAX_IDS,
+  BULK_UPLOAD_MAX_ROWS,
 } from '@tonyai/shared-types';
 import { BulkSubmitService } from './bulk-submit.service';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
@@ -794,5 +796,37 @@ describe('BulkSubmitService — the audit row', () => {
     const report = await service.submitMany(dataEntry(), ids('a'));
 
     expect(report.submitted).toHaveLength(1);
+  });
+});
+
+describe('BulkSubmitService — ids named by an import batch', () => {
+  it('records the batch on the audit row, and runs the same gates as a body of ids', async () => {
+    const { records, audit, service } = build([candidate({ id: 'a' })]);
+    records.submit.mockResolvedValueOnce(record({ id: 'a' }));
+
+    const report = await service.submitIds(dataEntry(), ['a'], { batchId: 'batch-1' });
+
+    expect(report.submitted.map((r) => r.recordId)).toEqual(['a']);
+    expect(audit.record.mock.calls[0][1]).toMatchObject({
+      action: 'bulk_submit',
+      diff: { batchId: 'batch-1', submittedCount: 1 },
+    });
+  });
+
+  it('refuses a role that may not submit, and records which batch it tried', async () => {
+    const { audit, service } = build();
+
+    await expect(
+      service.submitIds(dataEntry({ role: 'consultant' }), [], { batchId: 'batch-1' }),
+    ).rejects.toThrow('Your role may not submit activity records');
+
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({ refused: true });
+  });
+
+  it('can carry a whole batch in one request: the two caps stay equal', () => {
+    // A batch holds at most BULK_UPLOAD_MAX_ROWS records and its submit is one
+    // bulk submit; widening the import cap alone would leave the tail of a
+    // large batch unsubmittable from its own button.
+    expect(BULK_SUBMIT_MAX_IDS).toBe(BULK_UPLOAD_MAX_ROWS);
   });
 });

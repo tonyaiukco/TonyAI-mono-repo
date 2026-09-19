@@ -5,10 +5,14 @@ import { BulkSubmitController } from './bulk-submit.controller';
 import { BulkSubmitService } from './bulk-submit.service';
 import { BulkUploadController } from './bulk-upload.controller';
 import { BulkUploadService } from './bulk-upload.service';
+import { ImportBatchesController } from './import-batches.controller';
+import { ImportBatchesService } from './import-batches.service';
 
 /**
- * Bulk upload owns no table. Every row it accepts becomes an ordinary activity
- * record, written one at a time through `ActivityRecordsService` so each gets
+ * Bulk upload owns one table, `import_batches`: the record of each APPLIED
+ * import (the file, who sent it, what came of it), read and submitted through
+ * `ImportBatchesController`. Every row it accepts still becomes an ordinary
+ * activity record, written one at a time through `ActivityRecordsService` so each gets
  * its own factor snapshot, lifecycle gates and audit row — which is why this
  * module imports that one rather than reaching for Prisma's `createMany`.
  *
@@ -30,7 +34,7 @@ import { BulkUploadService } from './bulk-upload.service';
  */
 @Module({
   imports: [ActivityRecordsModule, AuditModule],
-  controllers: [BulkUploadController, BulkSubmitController],
-  providers: [BulkUploadService, BulkSubmitService],
+  controllers: [BulkUploadController, BulkSubmitController, ImportBatchesController],
+  providers: [BulkUploadService, BulkSubmitService, ImportBatchesService],
 })
 export class BulkUploadModule {}

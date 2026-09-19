@@ -84,6 +84,20 @@ export class BulkSubmitService {
     user: RequestUser,
     dto: BulkSubmitActivityRecordsDto,
   ): Promise<BulkSubmitReportDTO> {
+    return this.submitIds(user, dto.recordIds);
+  }
+
+  /**
+   * The bulk submit itself, for ids from a request body or from an import
+   * batch (`batchId`, recorded on the audit row). The pre-flight re-checks
+   * author, status and tenant for every id whichever route supplied them, so a
+   * batch is only a way of naming ids — never a way round a gate.
+   */
+  async submitIds(
+    user: RequestUser,
+    recordIds: string[],
+    options: { batchId?: string } = {},
+  ): Promise<BulkSubmitReportDTO> {
     // Canonical FIRST, then de-duplicated, because everything downstream
     // compares ids as strings. A uuid has more than one spelling and the
     // database returns exactly one (`canonicalUuid` carries the measured
@@ -111,7 +125,7 @@ export class BulkSubmitService {
     // against its own success a moment earlier — a failure the caller caused
     // by sending a list, not a fact about their data.
     const requestedIds = [
-      ...new Set(dto.recordIds.map((id) => canonicalUuid(id) ?? id)),
+      ...new Set(recordIds.map((id) => canonicalUuid(id) ?? id)),
     ];
 
     // Once, before anything. A role cannot change mid-batch, so a thousand
@@ -125,7 +139,7 @@ export class BulkSubmitService {
         refused: true,
         reason: SUBMIT_ROLE_REFUSAL,
         requested: requestedIds.length,
-        received: dto.recordIds.length,
+        received: recordIds.length,
       });
       throw new SubmitRoleRefusedError();
     }
@@ -165,12 +179,13 @@ export class BulkSubmitService {
       // differ only when ids were repeated or respelled, and `requested`
       // alone can no longer tell one id from a thousand spellings of it —
       // a distinction an append-only row cannot be given back later.
-      received: dto.recordIds.length,
+      received: recordIds.length,
       submittedCount: submitted.length,
       failedCount: failed.length,
       // The ids, so an auditor can tie this row to the per-record rows it
       // summarises. They are the caller's own record ids — no personal data.
       recordIds: submitted.map((r) => r.recordId),
+      ...(options.batchId ? { batchId: options.batchId } : {}),
     });
 
     return { requested: requestedIds.length, submitted, failed };
