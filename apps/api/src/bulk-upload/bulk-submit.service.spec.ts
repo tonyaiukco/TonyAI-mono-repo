@@ -820,7 +820,7 @@ describe('BulkSubmitService — ids named by an import batch', () => {
       service.submitIds(dataEntry({ role: 'consultant' }), [], { batchId: 'batch-1' }),
     ).rejects.toThrow('Your role may not submit activity records');
 
-    expect(audit.record.mock.calls[0][1].diff).toMatchObject({ refused: true });
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({ refused: true, batchId: 'batch-1' });
   });
 
   it('can carry a whole batch in one request: the two caps stay equal', () => {

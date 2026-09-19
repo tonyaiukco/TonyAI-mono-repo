@@ -140,6 +140,7 @@ export class BulkSubmitService {
         reason: SUBMIT_ROLE_REFUSAL,
         requested: requestedIds.length,
         received: recordIds.length,
+        ...(options.batchId ? { batchId: options.batchId } : {}),
       });
       throw new SubmitRoleRefusedError();
     }

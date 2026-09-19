@@ -83,15 +83,18 @@ describe('ImportBatchesService — who may see a batch (the RLS rule, applied by
       user({ id: 'u-a', role: 'super_admin', organisationId: 'd4444444-4444-4444-8444-44444444444d' }),
       false,
     ],
-  ] as const)('%s → %s', async (_label, caller, visible, over = {}) => {
+  ] as [string, RequestUser, boolean, Record<string, unknown>?][])(
+    '%s → %s',
+    async (_label, caller, visible, over) => {
     const { prisma, service } = build();
-    prisma.importBatch.findUnique.mockResolvedValue(batch(over));
+    prisma.importBatch.findUnique.mockResolvedValue(batch(over ?? {}));
 
-    const read = service.detail(caller as RequestUser, BATCH);
+    const read = service.detail(caller, BATCH);
 
     if (visible) await expect(read).resolves.toMatchObject({ id: BATCH });
     else await expect(read).rejects.toBeInstanceOf(NotFoundException);
-  });
+    },
+  );
 
   it('answers a missing batch exactly like an invisible one — no existence oracle', async () => {
     const { prisma, service } = build();

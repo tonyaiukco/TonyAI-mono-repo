@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ActivityRecordsModule } from '../activity-records/activity-records.module';
 import { AuditModule } from '../audit/audit.module';
+import { StorageModule } from '../storage/storage.module';
 import { BulkSubmitController } from './bulk-submit.controller';
 import { BulkSubmitService } from './bulk-submit.service';
 import { BulkUploadController } from './bulk-upload.controller';
@@ -33,7 +34,7 @@ import { ImportBatchesService } from './import-batches.service';
  * lifecycle rules live.
  */
 @Module({
-  imports: [ActivityRecordsModule, AuditModule],
+  imports: [ActivityRecordsModule, AuditModule, StorageModule],
   controllers: [BulkUploadController, BulkSubmitController, ImportBatchesController],
   providers: [BulkUploadService, BulkSubmitService, ImportBatchesService],
 })

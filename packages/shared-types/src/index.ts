@@ -2632,6 +2632,8 @@ export type BulkSubmitAuditDiff = {
   bulk: true;
   requested: number;
   received: number;
+  /** Set when the ids came from an import batch (`POST /import-batches/:id/submit`), refused or not. */
+  batchId?: string;
 } & (
   | { refused: true; reason: string }
   | {
@@ -2639,8 +2641,6 @@ export type BulkSubmitAuditDiff = {
       submittedCount: number;
       failedCount: number;
       recordIds: string[];
-      /** Set when the ids came from an import batch (`POST /import-batches/:id/submit`). */
-      batchId?: string;
     }
 );
 
