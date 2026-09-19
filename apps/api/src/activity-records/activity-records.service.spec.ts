@@ -51,7 +51,8 @@ function createPrismaMock() {
   // transaction, after the lock" is an assertion that can fail, and every
   // "was not deleted" below asserts against the spy a delete would really hit.
   const tx = {
-    $queryRaw: vi.fn().mockResolvedValue([]),
+    // One row: the record was there to lock.
+    $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1 }]),
     activityRecord: { delete: vi.fn() },
   };
   return {
@@ -878,6 +879,18 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     expect(row.action).toBe('delete');
     expect(row.diff.before.evidenceCount).toBe(2);
     expect(row.diff.evidence).toEqual({ fileIds: ['ev-1', 'ev-2'], deletedFileIds: ['ev-2'] });
+  });
+
+  it('is a 404 with no audit row when a concurrent delete removed the record while it waited for the lock', async () => {
+    const { prisma, evidence, service } = build();
+    deletableRecord(prisma);
+    prisma.tx.$queryRaw.mockResolvedValue([]); // woke to no row
+
+    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toBeInstanceOf(NotFoundException);
+    expect(evidence.fileIdsFor).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
+    expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('touches no file when reading them fails — the record is not deleted either', async () => {

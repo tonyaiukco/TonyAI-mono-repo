@@ -925,7 +925,10 @@ export class ActivityRecordsService {
     // between the read and the delete left a file no record held — measured,
     // 7 of 24 racing pairs.
     const fileIds = await this.prisma.$transaction(async (tx) => {
-      await lockActivityRecordRow(tx, existing.id);
+      // Deleted meanwhile by a concurrent request, which audited it.
+      if (!(await lockActivityRecordRow(tx, existing.id))) {
+        throw new NotFoundException('Activity record not found');
+      }
       const held = await this.evidence.fileIdsFor(existing.id, tx);
       await tx.activityRecord.delete({ where: { id: existing.id } });
       return held;
