@@ -14,7 +14,7 @@ import type {
   BulkUploadAcceptedRow,
   PeriodLockDTO,
 } from '@/lib/types';
-import { ApiError } from '@/lib/api';
+import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import { formatNumber } from '@/lib/utils';
 
 /**
@@ -195,6 +195,7 @@ export function summariseSubmit(report: BulkSubmitReportDTO): SubmitSummary {
 /** The sentence for a failure that refused the whole request. */
 export function submitErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.status === 401) return SESSION_EXPIRED_MESSAGE;
     if (error.status === 429) {
       return 'Too many submissions in a short time. Wait a minute and try again.';
     }

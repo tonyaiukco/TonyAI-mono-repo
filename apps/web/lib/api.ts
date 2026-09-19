@@ -63,6 +63,13 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 /** Error thrown by the API client; carries the HTTP status for callers that
  * need to branch on it (e.g. a 404 "no emission factor" preview). */
+/**
+ * What a screen says when the API answers 401: the session ended. The pages
+ * that already handled it all used this sentence; it lives here so a new
+ * error mapper cannot fall through to the raw "Unauthorized".
+ */
+export const SESSION_EXPIRED_MESSAGE = 'Your session has expired — please sign in again.';
+
 export class ApiError extends Error {
   constructor(
     message: string,
