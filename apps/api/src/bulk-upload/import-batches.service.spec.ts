@@ -130,6 +130,45 @@ describe('ImportBatchesService — who may see a batch (the RLS rule, applied by
   });
 });
 
+describe('ImportBatchesService — what a read returns', () => {
+  it("lists a batch's records only in the caller's subsidiaries", async () => {
+    const { prisma, service } = build();
+    prisma.importBatch.findUnique.mockResolvedValue(batch());
+
+    await service.detail(user(), BATCH);
+
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toEqual({
+      importBatchId: BATCH,
+      subsidiaryId: { in: [SUB_A] },
+    });
+  });
+
+  it('reads a margin past the limit for data_entry, whose rows are filtered after', async () => {
+    const { prisma, service } = build();
+    await service.list(user());
+    await service.list(user({ id: 'u-c', role: 'consultant' }));
+
+    expect(prisma.importBatch.findMany.mock.calls[0][0].take).toBe(80);
+    expect(prisma.importBatch.findMany.mock.calls[1][0].take).toBe(20);
+  });
+
+  it('returns no more than the limit, and says whether a file is kept', async () => {
+    const { prisma, service } = build();
+    prisma.importBatch.findMany.mockResolvedValue([
+      batch({ id: 'b1' }),
+      batch({ id: 'b2', storagePath: null }),
+      batch({ id: 'b3' }),
+    ]);
+
+    const list = await service.list(user(), 2);
+
+    expect(list.map((b) => [b.id, b.hasSourceFile])).toEqual([
+      ['b1', true],
+      ['b2', false],
+    ]);
+  });
+});
+
 describe('ImportBatchesService — the source file', () => {
   it('signs a short-lived download under the file name the caller uploaded', async () => {
     const { prisma, storage, service } = build();

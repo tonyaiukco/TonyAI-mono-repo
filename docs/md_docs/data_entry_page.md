@@ -266,7 +266,7 @@ The server-side rules behind this section, and the reasons for them, are in `REA
 - no transaction spans the import, so a failure part-way through (e.g. a period lock landing mid-import) can leave part of the file written. The report is **not** cleared afterwards — the error list is the user's work list — and after a partial import the verdict advises uploading only the rows that failed, because re-sending the whole file would report the imported rows as duplicates
 - after every attempted import, successful or not, `Previous submissions` and the `Data collection status` panel refresh for the selected subsidiary
 - `Upload another file` resets the panel
-- every applied import is kept as an **import batch**: its file, its outcome and the drafts it created. The panel's `Recent imports` card lists the user's last ten, newest first, and survives a page refresh — the panel's own report does not
+- every applied import is kept as an **import batch**: its file, its outcome and the drafts it created. The panel's `Recent imports` card lists the last ten imports the user can see, newest first, and survives a page refresh — the panel's own report does not
 - a whole file is refused when a row names a reporting entity the user cannot reach — a subsidiary, or a location belonging to one — with `Row(s) N name a reporting entity that does not exist or is not yours.`
 - limits: 1,000 rows, 2 MB (16 MB once a workbook is unpacked) and 5 imports per minute per user; a dry run and an import each count
 

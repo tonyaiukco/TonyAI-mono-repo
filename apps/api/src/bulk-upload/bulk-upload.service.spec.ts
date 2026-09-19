@@ -2259,6 +2259,28 @@ describe('BulkUploadService — import batches', () => {
     );
   });
 
+  it('names a location\'s owner even when no row names that subsidiary itself', async () => {
+    // The row says SUB_1 and a location of SUB_9. Whatever the row's fate, the
+    // FILE holds SUB_9's location id and values, so SUB_9 decides who may read
+    // it: without it, an uploader who later loses SUB_9 could still download
+    // the file. (The other test cannot see this: there SUB_9 is named by a
+    // subsidiary cell too.)
+    const { prisma, service } = build();
+    prisma.location.findMany.mockImplementation(({ where }: any) =>
+      Promise.resolve(where?.id?.in ? [{ id: LOC_1, subsidiaryId: SUB_9 }] : []),
+    );
+
+    await service.import(
+      dataEntry({ accessibleSubsidiaryIds: [SUB_1, SUB_9] }),
+      csvFile([row({ subsidiaryId: SUB_1, locationId: LOC_1 })]),
+      NOTHING,
+    );
+
+    expect(prisma.importBatch.create.mock.calls[0][0].data.subsidiaryIds).toEqual(
+      [SUB_1, SUB_9].sort(),
+    );
+  });
+
   it('refuses a caller with no organisation before reading the file, and audits it', async () => {
     const { audit, storage, service } = build();
 
