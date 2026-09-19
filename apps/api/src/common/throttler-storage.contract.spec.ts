@@ -62,11 +62,46 @@ describe("@nestjs/throttler's storage — the contract the import throttle relie
       expect(await request(storage, 'entry')).toMatchObject({ totalHits: hit, isBlocked: false });
     }
     expect(await request(storage, 'entry')).toMatchObject({ isBlocked: true });
+    // …and the block lasts its whole duration: a storage that forgot it after
+    // a second passed every other test here.
+    vi.advanceTimersByTime(59_000);
+    expect(await request(storage, 'entry')).toMatchObject({ isBlocked: true });
     // Another user's budget is their own.
     expect(await request(storage, 'admin')).toMatchObject({ totalHits: 1, isBlocked: false });
   });
 
-  it('clears every pending timer on shutdown, so nothing keeps the process alive', async () => {
+  it('counts a hit for the whole window, not half of it', async () => {
+    const storage = new ThrottlerStorageService();
+    await request(storage, 'entry');
+    vi.advanceTimersByTime(MINUTE - 1);
+    expect((await request(storage, 'entry')).totalHits).toBe(2);
+  });
+
+  it('resets a block shorter than the window cleanly — later hits do not go negative', async () => {
+    // The reset clears the ENDING key's pending expiries; had the six
+    // pre-block ones survived, they would fire later and take the count below
+    // zero, handing the user extra budget.
+    const storage = new ThrottlerStorageService();
+    const shortBlock = () => storage.increment('import-entry', MINUTE, LIMIT, 10_000, 'default');
+    for (let i = 0; i <= LIMIT; i += 1) await shortBlock();
+    vi.advanceTimersByTime(11_000);
+    expect(await shortBlock()).toMatchObject({ isBlocked: false, totalHits: 1 });
+    vi.advanceTimersByTime(50_000);
+    expect(await shortBlock()).toMatchObject({ isBlocked: false, totalHits: 2 });
+  });
+
+  it('does not let the idle sweep hand a blocked user their budget back', async () => {
+    // 6.7.0 evicts idle records on an interval — the one new path that drops
+    // state. A block longer than the window must outlive the window.
+    const storage = new ThrottlerStorageService();
+    const longBlock = () => storage.increment('import-entry', MINUTE, LIMIT, 5 * MINUTE, 'default');
+    for (let i = 0; i <= LIMIT; i += 1) await longBlock();
+    // Past the window and through several sweeps, still inside the block.
+    vi.advanceTimersByTime(3 * MINUTE);
+    expect(await longBlock()).toMatchObject({ isBlocked: true });
+  });
+
+  it('clears every pending timer on shutdown (hit timers are not unref()ed, so an app must be closed)', async () => {
     const storage = new ThrottlerStorageService();
     await request(storage, 'entry');
     storage.onApplicationShutdown();
