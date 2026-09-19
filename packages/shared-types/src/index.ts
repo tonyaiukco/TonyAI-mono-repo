@@ -1526,6 +1526,8 @@ export interface ActivityRecordDTO {
    */
   voidedByName: string | null;
   voidedAt: string | null;
+  /** The bulk import that created this record, or null for one entered by hand. */
+  importBatchId: string | null;
   /** Number of evidence files linked to this record (FR §4.1). */
   evidenceCount: number;
   createdAt: string;
@@ -2573,6 +2575,10 @@ export const AUDIT_ENTITIES = [
   'target',
   'denominator',
   'report',
+  // The `bulk_import` row of an APPLIED import points at its batch. Dry runs
+  // and refusals, which create no batch, keep `activity_record` and a null id;
+  // rows written before batches existed keep `activity_record` too.
+  'import_batch',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
@@ -2612,6 +2618,8 @@ export type BulkImportAuditDiff = {
       totalRows: number;
       acceptedCount: number;
       rejectedCount: number;
+      /** The batch an apply created; absent on a dry run, which creates none. */
+      batchId?: string;
     }
 );
 
@@ -2631,6 +2639,8 @@ export type BulkSubmitAuditDiff = {
       submittedCount: number;
       failedCount: number;
       recordIds: string[];
+      /** Set when the ids came from an import batch (`POST /import-batches/:id/submit`). */
+      batchId?: string;
     }
 );
 
@@ -2902,6 +2912,73 @@ export interface BulkUploadReportDTO {
    */
   errors: BulkUploadRowIssue[];
   warnings: BulkUploadRowIssue[];
+  /**
+   * The batch an apply created — the handle that survives a page refresh
+   * (`GET /import-batches/:id`, `POST /import-batches/:id/submit`). Null on a
+   * dry run, which creates none.
+   */
+  batchId: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Import batches (WP8 retrospective, PR6)
+// ---------------------------------------------------------------------------
+
+export const IMPORT_BATCH_STATUSES = ['processing', 'completed', 'failed'] as const;
+/**
+ * `processing` with null counts after its request is long gone is an
+ * INTERRUPTED import: the process died mid-loop. The records it did create are
+ * still linked to it — the foreign key, not the counts, is what says which.
+ */
+export type ImportBatchStatus = (typeof IMPORT_BATCH_STATUSES)[number];
+
+/** How many batches `GET /import-batches` returns at most. */
+export const IMPORT_BATCH_LIST_MAX = 50;
+
+/**
+ * One applied bulk import, as a reader may see it. Visible to super_admin,
+ * consultant and executive_viewer across their organisation, and to a
+ * data_entry user only for a batch they uploaded while they can still reach
+ * every subsidiary it names (the source file holds every row). The storage
+ * key is never exposed; `hasSourceFile` says whether a download exists.
+ */
+export interface ImportBatchDTO {
+  id: string;
+  fileName: string;
+  fileFormat: 'csv' | 'xlsx';
+  sizeBytes: number;
+  /** Hex SHA-256 of the file as received — proves which bytes were imported. */
+  sha256: string;
+  status: ImportBatchStatus;
+  totalRows: number;
+  /** Null while processing, and on an interrupted import. */
+  acceptedCount: number | null;
+  rejectedCount: number | null;
+  subsidiaryIds: string[];
+  uploadedBy: string;
+  uploadedByName: string | null;
+  hasSourceFile: boolean;
+  /** Drafts of this batch the CALLER could send for review now (their own, or any for a super_admin). */
+  submittableDraftCount: number;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+/** A record a batch produced, as its detail lists it (tenant-filtered for the caller). */
+export interface ImportBatchRecordRef {
+  id: string;
+  status: ActivityRecordStatus;
+  subsidiaryId: string;
+  locationId: string | null;
+  reportingYear: number;
+  reportingPeriod: ReportingPeriod;
+  periodValue: string;
+  category: Category;
+  createdBy: string;
+}
+
+export interface ImportBatchDetailDTO extends ImportBatchDTO {
+  records: ImportBatchRecordRef[];
 }
 
 // ---------------------------------------------------------------------------

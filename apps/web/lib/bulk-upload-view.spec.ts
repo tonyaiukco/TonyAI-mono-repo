@@ -73,6 +73,7 @@ function report(over: Partial<BulkUploadReportDTO> = {}): BulkUploadReportDTO {
     accepted: [accepted()],
     errors: [],
     warnings: [],
+    batchId: null,
     ...over,
   };
 }

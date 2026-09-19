@@ -33,6 +33,7 @@ import { InaccessibleEntityError } from './errors';
 import { AuditService } from '../audit/audit.service';
 import { blockedUnitReason } from '../calculations/normalization';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import type { RequestUser } from '../auth/auth.types';
 import { row as sheetRow, xlsx } from '../../test/xlsx';
 
@@ -126,7 +127,23 @@ let seq = 0;
 function build() {
   const prisma = {
     subsidiary: { findMany: vi.fn().mockResolvedValue([]) },
-    location: { findMany: vi.fn().mockResolvedValue([]) },
+    // The pre-flight's location query is scoped by the access set; by default
+    // every location a file names belongs to the first accessible subsidiary,
+    // as a template-shaped file's would. The template's own query (no
+    // `where.id`) gets none. A test that needs a foreign location overrides it.
+    location: {
+      findMany: vi.fn().mockImplementation(({ where }: { where?: any }) =>
+        Promise.resolve(
+          where?.id?.in
+            ? where.id.in.map((id: string) => ({ id, subsidiaryId: where.subsidiaryId.in[0] }))
+            : [],
+        ),
+      ),
+    },
+    importBatch: {
+      create: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({}),
+    },
     // `create` is spied even though this service never calls it: asserting
     // "the dry run wrote nothing" against a mock that lacks the method only
     // works by accident (the call throws a TypeError, which becomes an
@@ -161,12 +178,17 @@ function build() {
     }),
   };
   const audit = { record: vi.fn() };
+  const storage = {
+    upload: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined),
+  };
   const service = new BulkUploadService(
     prisma as unknown as PrismaService,
     records as unknown as ActivityRecordsService,
     audit as unknown as AuditService,
+    storage as unknown as StorageService,
   );
-  return { prisma, records, audit, service };
+  return { prisma, records, audit, storage, service };
 }
 
 /**
@@ -2132,5 +2154,162 @@ describe('BulkUploadService — what is audited, and under which verb', () => {
       'period_locked',
       'not_found',
     ]);
+  });
+});
+
+describe('BulkUploadService — import batches', () => {
+  it('a dry run creates no batch, stores no file and passes no provenance', async () => {
+    const { prisma, storage, records, audit, service } = build();
+
+    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+
+    expect(report.batchId).toBeNull();
+    expect(prisma.importBatch.create).not.toHaveBeenCalled();
+    expect(prisma.importBatch.update).not.toHaveBeenCalled();
+    expect(storage.upload).not.toHaveBeenCalled();
+    expect(records.create).not.toHaveBeenCalled();
+    expect(audit.record.mock.calls[0][1]).toMatchObject({
+      entity: 'activity_record',
+      entityId: null,
+    });
+  });
+
+  it('an apply stores the file, opens the batch, links every record to it, then closes it', async () => {
+    const { prisma, storage, records, audit, service } = build();
+    const order: string[] = [];
+    storage.upload.mockImplementation(async () => void order.push('upload'));
+    prisma.importBatch.create.mockImplementation(async () => void order.push('batch'));
+    records.create.mockImplementation(async (_u: unknown, dto: any, provenance: any) => {
+      order.push(`create:${provenance?.importBatchId ? 'linked' : 'unlinked'}`);
+      return { id: `rec-${order.length}`, calculation: SNAPSHOT, anomalyFlag: false, periodValue: dto.periodValue, varianceReason: null };
+    });
+    prisma.importBatch.update.mockImplementation(async () => void order.push('close'));
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row(), row({ periodValue: 'February' }), row({ activityValue: 'x' })]),
+      NOTHING,
+    );
+
+    expect(order).toEqual(['upload', 'batch', 'create:linked', 'create:linked', 'close']);
+    const created = prisma.importBatch.create.mock.calls[0][0].data;
+    expect(report.batchId).toBe(created.id);
+    expect(created).toMatchObject({
+      organisationId: 'org-1',
+      uploadedBy: 'user-entry',
+      subsidiaryIds: [SUB_1],
+      fileName: 'data.csv',
+      fileFormat: 'csv',
+      totalRows: 3,
+    });
+    expect(created.sha256).toMatch(/^[0-9a-f]{64}$/);
+    // The key holds no part of the caller's file name.
+    expect(created.storagePath).toBe(`org-1/${created.id}/source.csv`);
+    expect(storage.upload.mock.calls[0][0]).toBe('import-sources');
+    expect(prisma.importBatch.update.mock.calls[0][0]).toMatchObject({
+      where: { id: created.id },
+      data: { status: 'completed', acceptedCount: 2, rejectedCount: 1 },
+    });
+    expect(audit.record.mock.calls[0][1]).toMatchObject({
+      action: 'bulk_import',
+      entity: 'import_batch',
+      entityId: created.id,
+      diff: { batchId: created.id, acceptedCount: 2 },
+    });
+  });
+
+  it('removes the stored file and writes no record when the batch row cannot be written', async () => {
+    const { prisma, storage, records, service } = build();
+    prisma.importBatch.create.mockRejectedValue(new Error('db down'));
+
+    await expect(service.import(dataEntry(), csvFile([row()]), NOTHING)).rejects.toThrow('db down');
+
+    expect(storage.remove).toHaveBeenCalledWith('import-sources', [
+      storage.upload.mock.calls[0][1],
+    ]);
+    expect(records.create).not.toHaveBeenCalled();
+  });
+
+  it('marks the batch failed when the loop aborts on the role backstop', async () => {
+    const { prisma, records, service } = build();
+    records.create.mockRejectedValue(new CreateRoleRefusedError());
+
+    await expect(service.import(dataEntry(), csvFile([row()]), NOTHING)).rejects.toBeInstanceOf(
+      CreateRoleRefusedError,
+    );
+
+    expect(prisma.importBatch.update.mock.calls[0][0].data).toMatchObject({ status: 'failed' });
+  });
+
+  it('records every subsidiary the file names, a location counted by its owner', async () => {
+    const { prisma, service } = build();
+    const user = dataEntry({ accessibleSubsidiaryIds: [SUB_1, SUB_9] });
+    prisma.location.findMany.mockImplementation(({ where }: any) =>
+      Promise.resolve(where?.id?.in ? [{ id: LOC_1, subsidiaryId: SUB_9 }] : []),
+    );
+
+    await service.import(
+      user,
+      csvFile([row({ subsidiaryId: SUB_1 }), row({ subsidiaryId: SUB_9, locationId: LOC_1 })]),
+      NOTHING,
+    );
+
+    expect(prisma.importBatch.create.mock.calls[0][0].data.subsidiaryIds).toEqual(
+      [SUB_1, SUB_9].sort(),
+    );
+  });
+
+  it('refuses a caller with no organisation before reading the file, and audits it', async () => {
+    const { audit, storage, service } = build();
+
+    await expect(
+      service.import(dataEntry({ organisationId: null }), csvFile([row()]), NOTHING),
+    ).rejects.toBeInstanceOf(CreateRoleRefusedError);
+
+    expect(storage.upload).not.toHaveBeenCalled();
+    expect(audit.record.mock.calls[0][1].diff).toMatchObject({ refused: true });
+  });
+});
+
+describe('BulkUploadService — a location outside the tenant refuses the whole file', () => {
+  it.each([
+    ["another tenant's location", 'absent from the access-scoped query'],
+    ['a location that does not exist', 'absent all the same'],
+  ])('%s — %s, with one sentence and an audit row', async () => {
+    // Both are simply absent from a query scoped by the access set, so the two
+    // cannot be told apart: no existence oracle.
+    const { prisma, records, audit, storage, service } = build();
+    prisma.location.findMany.mockResolvedValue([]);
+
+    await expect(
+      service.import(
+        dataEntry(),
+        csvFile([row(), row({ periodValue: 'February', locationId: LOC_9 })]),
+        NOTHING,
+      ),
+    ).rejects.toThrow(
+      'Row(s) 3 name a reporting entity that does not exist or is not yours.',
+    );
+
+    expect(prisma.location.findMany.mock.calls[0][0].where).toEqual({
+      id: { in: [LOC_9] },
+      subsidiaryId: { in: [SUB_1] },
+    });
+    expect(records.previewCreate).not.toHaveBeenCalled();
+    expect(records.create).not.toHaveBeenCalled();
+    expect(storage.upload).not.toHaveBeenCalled();
+    expect(audit.record.mock.calls[0][1]).toMatchObject({
+      action: 'bulk_import',
+      entityId: null,
+      diff: { refused: true },
+    });
+  });
+
+  it('asks nothing when no row names a location', async () => {
+    const { prisma, service } = build();
+
+    await service.import(dataEntry(), csvFile([row()]), DRY);
+
+    expect(prisma.location.findMany).not.toHaveBeenCalled();
   });
 });

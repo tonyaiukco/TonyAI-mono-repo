@@ -57,6 +57,7 @@ const uncalculated: ActivityCalculationSnapshot = {
 
 const record = (over: Partial<ActivityRecordDTO> = {}): ActivityRecordDTO => ({
   id: 'rec-1',
+  importBatchId: null,
   subsidiaryId: 'sub-1',
   locationId: null,
   reportingYear: 2026,

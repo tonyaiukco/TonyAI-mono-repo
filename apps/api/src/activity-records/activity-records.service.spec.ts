@@ -121,7 +121,7 @@ const PERSISTED_KEYS = [
   'activityUnit', 'input', 'calculation', 'createdBy', 'anomalyFlag',
   'anomalyBaselinePriorCount', 'anomalyBaselineTCo2e', 'varianceReason',
   'reviewedBy', 'reviewedAt', 'reviewNote', 'submittedAt', 'voidReason', 'voidedBy',
-  'voidedAt', 'evidenceCount', 'createdAt', 'updatedAt',
+  'voidedAt', 'importBatchId', 'evidenceCount', 'createdAt', 'updatedAt',
 ].sort();
 
 
@@ -3031,5 +3031,39 @@ describe('ActivityRecordsService — the stored unit is the vocabulary spelling'
       expect.objectContaining({ unit: 'kw h' }),
       { enforceCategoryUnit: false },
     );
+  });
+});
+
+describe('ActivityRecordsService — import provenance', () => {
+  it('stores the batch a record came from when the importer passes one, and null otherwise', async () => {
+    const { prisma, service } = build();
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.create.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-p', ...data }),
+    );
+
+    const imported = await service.create(dataEntry(), CREATE_DTO as never, {
+      importBatchId: 'batch-1',
+    });
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.importBatchId).toBe('batch-1');
+    expect(imported.importBatchId).toBe('batch-1');
+
+    await service.create(dataEntry(), { ...CREATE_DTO, periodValue: 'Annual' } as never);
+    expect(prisma.activityRecord.create.mock.calls[1][0].data.importBatchId).toBeNull();
+  });
+
+  it('never writes the batch id on an update, whatever the body says', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-u', createdBy: 'user-entry', status: ActivityRecordStatus.draft }),
+    );
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-u', ...data }),
+    );
+
+    await service.update(dataEntry(), 'rec-u', { varianceReason: 'x', importBatchId: 'forged' } as never);
+
+    expect(prisma.activityRecord.update.mock.calls[0][0].data).not.toHaveProperty('importBatchId');
   });
 });

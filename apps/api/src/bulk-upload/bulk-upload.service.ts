@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { ActivityRecordStatus } from '@tonyai/db';
@@ -43,6 +44,7 @@ import { quoteCallerText, sanitiseCallerText } from '../common/caller-text';
 import { isFormulaLead } from '../common/csv-cell';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
 import { InaccessibleEntityError } from './errors';
 import {
@@ -87,6 +89,9 @@ const COLUMN_NAMES = new Set<string>(BULK_UPLOAD_COLUMNS);
  */
 const TEMPLATE_ENTITY_LIMIT = 5000;
 
+/** The private bucket an applied import's source file is kept in. */
+export const IMPORT_SOURCES_BUCKET = 'import-sources';
+
 /**
  * How much of the caller's own text one audit row keeps. A refusal is quoted
  * so that the longest sentence it can build still fits `AUDIT_REASON_MAX_LENGTH`
@@ -103,6 +108,7 @@ export class BulkUploadService {
     private readonly prisma: PrismaService,
     private readonly records: ActivityRecordsService,
     private readonly audit: AuditService,
+    private readonly storage: StorageService,
   ) {}
 
   /**
@@ -136,13 +142,14 @@ export class BulkUploadService {
     // event most worth keeping — a user uploading a file naming another
     // tenant's subsidiaries, or a role that may not author records trying to
     // — left NO trace at all on an append-only compliance trail.
-    const rows = await this.auditedRefusal(user, file, dryRun, async () => {
+    const { rows, namedSubsidiaryIds } = await this.auditedRefusal(user, file, dryRun, async () => {
       // The role FIRST, before the file is parsed: enforced only inside the
       // loop, its 403 escaped the audited pre-flight, and a file whose every
       // row failed validation never reached it and got a 200 report back.
       // (Multer has already buffered the upload; its 413 fires before this.)
       this.assertMayImport(user);
       this.assertAcceptableFile(file);
+      this.assertHasOrganisation(user);
       const upload = file as Express.Multer.File;
       const parsed = await parseRows(upload.buffer, upload.originalname);
       if (parsed.length === 0) {
@@ -150,12 +157,20 @@ export class BulkUploadService {
       }
       // The row cap is `parseRows`'s: it counts populated rows and throws
       // before this line, so a second check here could never fire.
-      this.assertEveryEntityAccessible(user.accessibleSubsidiaryIds, parsed);
-      return parsed;
+      const named = await this.assertEveryEntityAccessible(
+        user.accessibleSubsidiaryIds,
+        parsed,
+      );
+      return { rows: parsed, namedSubsidiaryIds: named };
     });
     const upload = file as Express.Multer.File;
 
     const storedKeys = await this.loadStoredKeys(rows);
+    // An APPLY gets a batch, created BEFORE the loop so every record can carry
+    // its id. A dry run gets none: it must provably write nothing.
+    const batchId = dryRun
+      ? null
+      : await this.openBatch(user, upload, rows.length, namedSubsidiaryIds);
     const seenInFile = new Set<string>();
     const accepted: BulkUploadAcceptedRow[] = [];
     const errors: BulkUploadRowIssue[] = [];
@@ -175,7 +190,7 @@ export class BulkUploadService {
           await this.processRow(
             user,
             parsed,
-            { dryRun, seenInFile, storedKeys },
+            { dryRun, seenInFile, storedKeys, batchId },
             { accepted, errors, warnings },
           );
         } catch (error) {
@@ -191,12 +206,22 @@ export class BulkUploadService {
           errors.push(this.toIssue(parsed.row, error, unexpected));
         }
       }
+    } catch (error) {
+      // The loop aborted (the role backstop): the batch says so rather than
+      // staying `processing`. Records it did create are still linked to it.
+      if (batchId) {
+        await this.closeBatch(batchId, 'failed', accepted.length, errors.length);
+      }
+      throw error;
     } finally {
       // ONE line for the whole import, and only when something was unexpected.
       const failures = unexpected.entry();
       if (failures) {
         this.logger.error(`bulk import: ${failures.message}`, failures.trace);
       }
+    }
+    if (batchId) {
+      await this.closeBatch(batchId, 'completed', accepted.length, errors.length);
     }
 
     // Written even on a dry run, and even when every row failed: `audit_log`
@@ -215,7 +240,9 @@ export class BulkUploadService {
           totalRows: rows.length,
           acceptedCount: accepted.length,
           rejectedCount: errors.length,
+          ...(batchId ? { batchId } : {}),
         }),
+        batchId,
       );
     } catch (error) {
       this.logger.error(
@@ -232,6 +259,7 @@ export class BulkUploadService {
       accepted,
       errors: errors.map((issue) => this.bounded(issue)),
       warnings: warnings.map((issue) => this.bounded(issue)),
+      batchId,
     };
   }
 
@@ -306,6 +334,7 @@ export class BulkUploadService {
       dryRun: boolean;
       seenInFile: Set<string>;
       storedKeys: Set<string>;
+      batchId: string | null;
     },
     out: {
       accepted: BulkUploadAcceptedRow[];
@@ -426,7 +455,11 @@ export class BulkUploadService {
       return;
     }
 
-    const created = await this.records.create(user, dto);
+    const created = await this.records.create(
+      user,
+      dto,
+      context.batchId ? { importBatchId: context.batchId } : undefined,
+    );
     this.warnIfUnsubmittable(
       row,
       created.anomalyFlag,
@@ -482,6 +515,15 @@ export class BulkUploadService {
     }
   }
 
+  /**
+   * A batch belongs to an organisation. A caller with none cannot author
+   * records in the first place; refused here, as a role refusal, so the batch
+   * never has to hold a null owner.
+   */
+  private assertHasOrganisation(user: RequestUser): void {
+    if (!user.organisationId) throw new CreateRoleRefusedError();
+  }
+
   private assertAcceptableFile(file: Express.Multer.File | undefined): void {
     if (!file) throw new BadRequestException('No file was uploaded.');
     // Defence in depth, and unreachable over HTTP: multer's own
@@ -514,7 +556,8 @@ export class BulkUploadService {
   }
 
   /**
-   * A file naming an entity this user cannot reach is refused WHOLE.
+   * A file naming an entity this user cannot reach — a subsidiary, or a
+   * location of a subsidiary they cannot reach — is refused WHOLE.
    *
    * Not a row error, deliberately: ids come from a generated template, so a
    * foreign id means the wrong file — the wrong tenant's export, or the wrong
@@ -524,32 +567,55 @@ export class BulkUploadService {
    * not, since an inaccessible id and a non-existent one are indistinguishable
    * here exactly as they are there.
    */
-  private assertEveryEntityAccessible(
+  private async assertEveryEntityAccessible(
     accessibleSubsidiaryIds: string[],
     rows: ParsedRow[],
-  ): void {
+  ): Promise<string[]> {
     // The guard's ids are what Prisma returned — lowercase — and
     // `canonicalUuid` lowercases the cell, so this compares like with like.
+    // Only a cell that IS an id can name a foreign entity. A blank one is a
+    // missing value, and one in any other spelling is refused as `invalid` on
+    // its own row by the DTO — refusing the whole file for a typo told the
+    // user their entity "does not exist or is not yours".
     const accessible = new Set(accessibleSubsidiaryIds);
-    const offending = rows
-      // Only a cell that IS an id can name a foreign entity. A blank one is a
-      // missing value, and one in any other spelling (`{…}`, `urn:uuid:…`,
-      // unhyphenated) is never resolved at all: both are refused as `invalid`
-      // on their own row by the DTO, which is the findable answer — refusing
-      // the whole file told the user their entity "does not exist or is not
-      // yours" about a typo.
-      .filter((r) => {
-        const id = canonicalUuid(r.cells.subsidiaryId.trim());
-        return id !== null && !accessible.has(id);
-      })
-      .map((r) => r.row);
-    if (offending.length === 0) return;
+    const locationIds = [
+      ...new Set(
+        rows
+          .map((r) => canonicalUuid(r.cells.locationId.trim()))
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    // Scoped by the access set, so a location of another tenant and one that
+    // does not exist are both simply absent — the same refusal, no oracle.
+    const reachable =
+      locationIds.length === 0
+        ? []
+        : await this.prisma.location.findMany({
+            where: { id: { in: locationIds }, subsidiaryId: { in: accessibleSubsidiaryIds } },
+            select: { id: true, subsidiaryId: true },
+          });
+    const locationOwner = new Map(reachable.map((l) => [l.id, l.subsidiaryId]));
+
+    const offending: number[] = [];
+    const named = new Set<string>();
+    for (const r of rows) {
+      const subsidiaryId = canonicalUuid(r.cells.subsidiaryId.trim());
+      const locationId = canonicalUuid(r.cells.locationId.trim());
+      const foreignSubsidiary = subsidiaryId !== null && !accessible.has(subsidiaryId);
+      const foreignLocation = locationId !== null && !locationOwner.has(locationId);
+      if (foreignSubsidiary || foreignLocation) {
+        offending.push(r.row);
+        continue;
+      }
+      if (subsidiaryId !== null) named.add(subsidiaryId);
+      if (locationId !== null) named.add(locationOwner.get(locationId) as string);
+    }
+    if (offending.length === 0) return [...named].sort();
     const shown = offending.slice(0, 10).join(', ');
     const suffix =
       offending.length > 10 ? ` (+${offending.length - 10} more)` : '';
     // The reason only. The consequence is the client's to state: the panel
-    // prints "Nothing was imported." under EVERY whole-file refusal, and this
-    // sentence saying it as well put it on screen twice.
+    // prints "Nothing was imported." under EVERY whole-file refusal.
     throw new InaccessibleEntityError(
       `Row(s) ${shown}${suffix} name a reporting entity that does not exist or is not yours.`,
     );
@@ -694,13 +760,6 @@ export class BulkUploadService {
 
   /**
    * The two refusals that are about the caller rather than about the file.
-   *
-   * Known gap, accepted for now: the whole-file check covers `subsidiaryId`
-   * only. A row naming an accessible subsidiary with ANOTHER tenant's
-   * `locationId` is refused per row as `not_found` by the record service —
-   * same oracle-free sentence, no leak — and counted in `rejectedCount`, but
-   * it leaves no `refused` row. Extending the pre-flight to locations is the
-   * fix; it belongs with the import-batch work, not here.
    */
   private isAuditedRefusal(error: unknown): boolean {
     return (
@@ -717,14 +776,90 @@ export class BulkUploadService {
   private async recordBatch(
     user: RequestUser,
     diff: BulkImportAuditDiff,
+    batchId: string | null = null,
   ): Promise<void> {
     await this.audit.record(user, {
       action: 'bulk_import',
-      entity: 'activity_record',
-      // No single entity — the `report` rows set the precedent for this shape.
-      entityId: null,
+      // An apply points at the batch it created; a dry run or a refusal has
+      // no batch and no single entity (the `report` rows' precedent).
+      ...(batchId
+        ? { entity: 'import_batch', entityId: batchId }
+        : { entity: 'activity_record', entityId: null }),
       diff,
     });
+  }
+
+  // -- batch -------------------------------------------------------------------
+
+  /**
+   * Keep the source file, then create the batch row — before any record, so
+   * each can carry the id. The file goes first: if the row cannot be written
+   * the object is removed and the request fails before a single record exists;
+   * the other order could leave a batch claiming a file that is not there.
+   * The key holds no part of the caller's file name (it can carry personal
+   * data); the name lives on the row and rides on the download URL.
+   */
+  private async openBatch(
+    user: RequestUser,
+    upload: Express.Multer.File,
+    totalRows: number,
+    subsidiaryIds: string[],
+  ): Promise<string> {
+    const id = randomUUID();
+    const format = extensionOf(upload.originalname ?? '') === '.xlsx' ? 'xlsx' : 'csv';
+    const storagePath = `${user.organisationId}/${id}/source.${format}`;
+    await this.storage.upload(
+      IMPORT_SOURCES_BUCKET,
+      storagePath,
+      upload.buffer,
+      format === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'text/csv',
+    );
+    try {
+      await this.prisma.importBatch.create({
+        data: {
+          id,
+          organisationId: user.organisationId as string,
+          uploadedBy: user.id,
+          subsidiaryIds,
+          fileName: this.shownFileName(upload),
+          fileFormat: format,
+          sizeBytes: upload.size,
+          sha256: createHash('sha256').update(upload.buffer).digest('hex'),
+          storagePath,
+          totalRows,
+        },
+      });
+    } catch (error) {
+      await this.storage.remove(IMPORT_SOURCES_BUCKET, [storagePath]).catch(() => undefined);
+      throw error;
+    }
+    return id;
+  }
+
+  /**
+   * Record how the batch ended. A failure here is logged, never thrown: the
+   * records are written, and the batch staying `processing` is the honest
+   * "interrupted" state its readers already handle.
+   */
+  private async closeBatch(
+    id: string,
+    status: 'completed' | 'failed',
+    acceptedCount: number,
+    rejectedCount: number,
+  ): Promise<void> {
+    try {
+      await this.prisma.importBatch.update({
+        where: { id },
+        data: { status, acceptedCount, rejectedCount, completedAt: new Date() },
+      });
+    } catch (error) {
+      this.logger.error(
+        `import batch ${id} could not be closed as ${status}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   /**
@@ -740,7 +875,12 @@ export class BulkUploadService {
     dryRun: boolean,
     outcome:
       | { refused: true; reason: string }
-      | { totalRows: number; acceptedCount: number; rejectedCount: number },
+      | {
+          totalRows: number;
+          acceptedCount: number;
+          rejectedCount: number;
+          batchId?: string;
+        },
   ): BulkImportAuditDiff {
     return {
       bulk: true,

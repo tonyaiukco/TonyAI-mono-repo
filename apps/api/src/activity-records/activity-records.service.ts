@@ -264,6 +264,7 @@ export class ActivityRecordsService {
       voidReason: r.voidReason,
       voidedBy: r.voidedBy,
       voidedAt: r.voidedAt ? r.voidedAt.toISOString() : null,
+      importBatchId: r.importBatchId,
       evidenceCount,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
@@ -675,9 +676,16 @@ export class ActivityRecordsService {
     };
   }
 
+  /**
+   * `provenance` is a server-side argument only: the bulk importer passes the
+   * batch a record came from. It is NOT on `CreateActivityRecordDto`, so no
+   * request body can set it — `forbidNonWhitelisted` refuses an
+   * `importBatchId` key with a 400 — and no update path ever writes it.
+   */
   async create(
     user: RequestUser,
     dto: CreateActivityRecordDto,
+    provenance?: { importBatchId: string },
   ): Promise<ActivityRecordDTO> {
     const { subsidiaryId, locationId, periodValue, calculation, scope, verdict } =
       await this.previewCreate(user, dto);
@@ -709,6 +717,7 @@ export class ActivityRecordsService {
           calculation: calculation as unknown as Prisma.InputJsonValue,
           createdBy: user.id,
           varianceReason: dto.varianceReason ?? null,
+          importBatchId: provenance?.importBatchId ?? null,
         },
       });
     } catch (e) {
