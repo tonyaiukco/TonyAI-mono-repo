@@ -18,6 +18,8 @@ import type {
   DenominatorDTO,
   EvidenceDTO,
   EvidenceUrlDTO,
+  ImportBatchDetailDTO,
+  ImportBatchDTO,
   IntensityResponseDTO,
   LocationDTO,
   PeriodLockDTO,
@@ -412,6 +414,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ recordIds }),
     }),
+
+  // --- Import batches (one per applied bulk import) ---
+  listImportBatches: (limit = 10) =>
+    apiFetch<ImportBatchDTO[]>(`/import-batches?limit=${limit}`),
+  getImportBatch: (id: string) => apiFetch<ImportBatchDetailDTO>(`/import-batches/${id}`),
+  /** A short-lived signed URL for the file the batch was imported from. */
+  getImportBatchSourceUrl: (id: string) =>
+    apiFetch<EvidenceUrlDTO>(`/import-batches/${id}/source-url`),
+  /** Send for review every draft of the batch the caller may send. */
+  submitImportBatch: (id: string) =>
+    apiFetch<BulkSubmitReportDTO>(`/import-batches/${id}/submit`, { method: "POST" }),
 
   /** Download the import template (XLSX), pre-filled with reachable entities. */
   downloadBulkUploadTemplate: async (): Promise<void> => {

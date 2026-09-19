@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ImportBatch } from '@tonyai/db';
 import {
+  EVIDENCE_REQUIRED_CATEGORIES,
   mayAuthorRecords,
   type BulkSubmitReportDTO,
   type EvidenceUrlDTO,
@@ -18,6 +19,17 @@ import { IMPORT_SOURCES_BUCKET } from './bulk-upload.service';
 const DEFAULT_LIST_LIMIT = 20;
 /** Seconds a source-file download link stays valid — the evidence module's. */
 const SIGNED_URL_TTL_SECONDS = 60;
+/**
+ * A draft that is not waiting for an evidence file: its category needs none,
+ * or one is attached — the rule `needsEvidenceBeforeSubmit` states, as a query.
+ */
+const READY_FOR_SUBMIT = {
+  OR: [
+    { category: { notIn: EVIDENCE_REQUIRED_CATEGORIES as string[] } },
+    { evidence: { some: {} } },
+  ],
+};
+
 /** Roles that read every batch of their organisation, as they read its records. */
 const ORGANISATION_READERS = new Set(['super_admin', 'consultant', 'executive_viewer']);
 
@@ -109,8 +121,10 @@ export class ImportBatchesService {
       return this.bulkSubmit.submitIds(user, [], { batchId: id });
     }
     await this.visibleBatch(user, id);
+    // Only drafts that are not waiting for an evidence file: the button said
+    // how many would go, and sending the others would only report them back.
     const drafts = await this.prisma.activityRecord.findMany({
-      where: this.submittableWhere(user, [id]),
+      where: { ...this.submittableWhere(user, [id]), ...READY_FOR_SUBMIT },
       select: { id: true },
     });
     return this.bulkSubmit.submitIds(
@@ -156,14 +170,25 @@ export class ImportBatchesService {
     const ids = batches.map((b) => b.id);
     const actors = await resolveProfiles(this.prisma, batches.map((b) => b.uploadedBy));
     const draftCount = new Map<string, number>();
+    const readyCount = new Map<string, number>();
     if (mayAuthorRecords(user)) {
-      const drafts = await this.prisma.activityRecord.groupBy({
-        by: ['importBatchId'],
-        where: this.submittableWhere(user, ids),
-        _count: { _all: true },
-      });
+      const [drafts, ready] = await Promise.all([
+        this.prisma.activityRecord.groupBy({
+          by: ['importBatchId'],
+          where: this.submittableWhere(user, ids),
+          _count: { _all: true },
+        }),
+        this.prisma.activityRecord.groupBy({
+          by: ['importBatchId'],
+          where: { ...this.submittableWhere(user, ids), ...READY_FOR_SUBMIT },
+          _count: { _all: true },
+        }),
+      ]);
       for (const d of drafts) {
         if (d.importBatchId) draftCount.set(d.importBatchId, d._count._all);
+      }
+      for (const d of ready) {
+        if (d.importBatchId) readyCount.set(d.importBatchId, d._count._all);
       }
     }
     return batches.map((b) => ({
@@ -180,7 +205,8 @@ export class ImportBatchesService {
       uploadedBy: b.uploadedBy,
       uploadedByName: actorDisplayName(b.uploadedBy, actors),
       hasSourceFile: b.storagePath !== null,
-      submittableDraftCount: draftCount.get(b.id) ?? 0,
+      draftCount: draftCount.get(b.id) ?? 0,
+      submittableDraftCount: readyCount.get(b.id) ?? 0,
       createdAt: b.createdAt.toISOString(),
       completedAt: b.completedAt ? b.completedAt.toISOString() : null,
     }));

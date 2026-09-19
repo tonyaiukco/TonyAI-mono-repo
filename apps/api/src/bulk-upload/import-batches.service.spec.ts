@@ -170,6 +170,11 @@ describe('ImportBatchesService — submitting a batch', () => {
       status: 'draft',
       subsidiaryId: { in: [SUB_A] },
       createdBy: 'user-entry',
+      // Only drafts not waiting for an evidence file — what the button counted.
+      OR: [
+        { category: { notIn: ['Electricity', 'Natural Gas', 'Fuel', 'Water'] } },
+        { evidence: { some: {} } },
+      ],
     });
     expect(bulkSubmit.submitIds).toHaveBeenCalledWith(user(), ['r1', 'r2'], { batchId: BATCH });
   });
@@ -202,19 +207,31 @@ describe('ImportBatchesService — submitting a batch', () => {
     expect(bulkSubmit.submitIds).not.toHaveBeenCalled();
   });
 
-  it('counts the drafts the caller could send, per batch', async () => {
+  it('counts the caller\'s drafts, and separately the ones that can go now', async () => {
     const { prisma, service } = build();
     prisma.importBatch.findMany.mockResolvedValue([batch()]);
-    prisma.activityRecord.groupBy.mockResolvedValue([
-      { importBatchId: BATCH, _count: { _all: 2 } },
-    ]);
+    prisma.activityRecord.groupBy
+      .mockResolvedValueOnce([{ importBatchId: BATCH, _count: { _all: 2 } }])
+      .mockResolvedValueOnce([{ importBatchId: BATCH, _count: { _all: 1 } }]);
 
     const [dto] = await service.list(user());
 
-    expect(dto.submittableDraftCount).toBe(2);
+    expect(dto).toMatchObject({ draftCount: 2, submittableDraftCount: 1 });
     expect(prisma.activityRecord.groupBy.mock.calls[0][0].where).toMatchObject({
       createdBy: 'user-entry',
       status: 'draft',
     });
+    expect(prisma.activityRecord.groupBy.mock.calls[0][0].where).not.toHaveProperty('OR');
+    expect(prisma.activityRecord.groupBy.mock.calls[1][0].where).toHaveProperty('OR');
+  });
+
+  it('counts nothing for a role that may not submit', async () => {
+    const { prisma, service } = build();
+    prisma.importBatch.findMany.mockResolvedValue([batch()]);
+
+    const [dto] = await service.list(user({ id: 'u-c', role: 'consultant' }));
+
+    expect(dto).toMatchObject({ draftCount: 0, submittableDraftCount: 0 });
+    expect(prisma.activityRecord.groupBy).not.toHaveBeenCalled();
   });
 });

@@ -2958,7 +2958,13 @@ export interface ImportBatchDTO {
   uploadedBy: string;
   uploadedByName: string | null;
   hasSourceFile: boolean;
-  /** Drafts of this batch the CALLER could send for review now (their own, or any for a super_admin). */
+  /** Drafts of this batch the caller may send (their own, or any for a super_admin). */
+  draftCount: number;
+  /**
+   * Of those, the ones that can go NOW: no evidence file missing. The batch
+   * submit sends exactly these; the rest wait for a file (`draftCount -
+   * submittableDraftCount`). Every other gate is still the server's, per record.
+   */
   submittableDraftCount: number;
   createdAt: string;
   completedAt: string | null;

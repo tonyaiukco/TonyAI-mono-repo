@@ -179,7 +179,7 @@ describe('submitConfirmation', () => {
     // There is no author-side unsubmit anywhere in the API — only a reviewer
     // can send a record back. That is the fact a confirm dialog exists to put
     // in front of someone about to move four hundred records.
-    const text = submitConfirmation(['a', 'b']);
+    const text = submitConfirmation(2);
     expect(text).toContain('2 records');
     expect(text).toMatch(/only a reviewer can send them back/i);
     expect(text).toMatch(/un-submit them yourself/i);
@@ -188,7 +188,7 @@ describe('submitConfirmation', () => {
   it('uses the singular for one — including the pronoun', () => {
     // "Send 1 record for review. Only a reviewer can send them back" read as
     // though more than one record were leaving.
-    const text = submitConfirmation(['a']);
+    const text = submitConfirmation(1);
     expect(text).toContain('1 record ');
     expect(text).toContain('Only a reviewer can send it back');
     expect(text).toContain('un-submit it yourself');
@@ -305,7 +305,7 @@ describe('failuresToShow', () => {
 describe('submitConfirmation — the zero case', () => {
   it('does not claim a record when there are none', () => {
     // The dialog is always mounted, so this is evaluated on every render.
-    expect(submitConfirmation([])).toContain('0 records');
+    expect(submitConfirmation(0)).toContain('0 records');
   });
 });
 
