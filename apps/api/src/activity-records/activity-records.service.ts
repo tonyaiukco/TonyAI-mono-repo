@@ -20,6 +20,7 @@ import {
   VarianceReasonRequiredError,
 } from './errors';
 import {
+  EVIDENCE_REQUIRED_CATEGORIES,
   canonicalPeriodValue,
   CATEGORY_SCOPE_MAP,
   anomalyNotEvaluated,
@@ -68,6 +69,23 @@ interface AnomalyParams {
 
 
 // The refusal classes and their sentences live in `./errors`.
+
+/**
+ * `needsEvidenceBeforeSubmit` (the submit gate below) as a Prisma `where`:
+ * a record that is NOT waiting for an evidence file — its category needs
+ * none, or one is attached. For callers that must count or select such
+ * records in one query (the import batch's "Send N drafts"); the gate itself
+ * still decides, per record, at submit. Kept here, beside that gate, so the
+ * two cannot drift; `activity-records.service.spec.ts` pins them together.
+ */
+export function evidenceReadyWhere() {
+  return {
+    OR: [
+      { category: { notIn: [...EVIDENCE_REQUIRED_CATEGORIES] as string[] } },
+      { evidence: { some: {} } },
+    ],
+  };
+}
 // Roles allowed to take a record into review and to reject it ("flag for
 // revision" in permissions_and_roles.md §3).
 const REVIEW_ROLES = new Set(['consultant', 'super_admin']);

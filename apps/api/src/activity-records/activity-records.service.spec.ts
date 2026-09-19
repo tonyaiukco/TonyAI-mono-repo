@@ -6,9 +6,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
-import { isCalculated, PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
+import { isCalculated, PENDING_REVIEW_STATUSES,
+  CATEGORIES,
+  needsEvidenceBeforeSubmit,
+} from '@tonyai/shared-types';
 import type { CalculationResult } from '@tonyai/shared-types';
-import { ActivityRecordsService } from './activity-records.service';
+import { ActivityRecordsService, evidenceReadyWhere } from './activity-records.service';
 import {
   CreateRoleRefusedError,
   DuplicateActivityRecordError,
@@ -3066,4 +3069,25 @@ describe('ActivityRecordsService — import provenance', () => {
 
     expect(prisma.activityRecord.update.mock.calls[0][0].data).not.toHaveProperty('importBatchId');
   });
+});
+
+describe('evidenceReadyWhere — the submit gate as a query', () => {
+  // Evaluates the Prisma filter the way Postgres would, for every category and
+  // both evidence states, and demands the same answer as the gate. A category
+  // added to the evidence list, or a changed rule, fails here instead of
+  // silently mislabelling the import batch's "Send N drafts".
+  function matches(where: ReturnType<typeof evidenceReadyWhere>, row: { category: string; evidenceCount: number }) {
+    return where.OR.some((clause) =>
+      clause.category
+        ? !clause.category.notIn.includes(row.category)
+        : row.evidenceCount > 0,
+    );
+  }
+
+  it.each(CATEGORIES.flatMap((category) => [0, 1].map((evidenceCount) => ({ category, evidenceCount }))))(
+    '$category with $evidenceCount file(s) agrees with needsEvidenceBeforeSubmit',
+    (row) => {
+      expect(matches(evidenceReadyWhere(), row)).toBe(!needsEvidenceBeforeSubmit(row));
+    },
+  );
 });

@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { ImportBatch } from '@tonyai/db';
 import {
-  EVIDENCE_REQUIRED_CATEGORIES,
   mayAuthorRecords,
   type BulkSubmitReportDTO,
   type EvidenceUrlDTO,
@@ -11,6 +10,7 @@ import {
 } from '@tonyai/shared-types';
 import type { RequestUser } from '../auth/auth.types';
 import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
+import { evidenceReadyWhere } from '../activity-records/activity-records.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { BulkSubmitService } from './bulk-submit.service';
@@ -19,17 +19,6 @@ import { IMPORT_SOURCES_BUCKET } from './bulk-upload.service';
 const DEFAULT_LIST_LIMIT = 20;
 /** Seconds a source-file download link stays valid — the evidence module's. */
 const SIGNED_URL_TTL_SECONDS = 60;
-/**
- * A draft that is not waiting for an evidence file: its category needs none,
- * or one is attached — the rule `needsEvidenceBeforeSubmit` states, as a query.
- */
-const READY_FOR_SUBMIT = {
-  OR: [
-    { category: { notIn: EVIDENCE_REQUIRED_CATEGORIES as string[] } },
-    { evidence: { some: {} } },
-  ],
-};
-
 /** Roles that read every batch of their organisation, as they read its records. */
 const ORGANISATION_READERS = new Set(['super_admin', 'consultant', 'executive_viewer']);
 
@@ -118,13 +107,16 @@ export class ImportBatchesService {
    */
   async submit(user: RequestUser, id: string): Promise<BulkSubmitReportDTO> {
     if (!mayAuthorRecords(user)) {
+      // Refused before the batch is looked up, so the refusal says nothing
+      // about whether it exists. The id on the audit row is therefore the
+      // caller's (uuid-shaped, by the route pipe), not a verified batch.
       return this.bulkSubmit.submitIds(user, [], { batchId: id });
     }
     await this.visibleBatch(user, id);
     // Only drafts that are not waiting for an evidence file: the button said
     // how many would go, and sending the others would only report them back.
     const drafts = await this.prisma.activityRecord.findMany({
-      where: { ...this.submittableWhere(user, [id]), ...READY_FOR_SUBMIT },
+      where: { ...this.submittableWhere(user, [id]), ...evidenceReadyWhere() },
       select: { id: true },
     });
     return this.bulkSubmit.submitIds(
@@ -150,8 +142,11 @@ export class ImportBatchesService {
     const accessible = new Set(user.accessibleSubsidiaryIds);
     return (
       batch.uploadedBy === user.id &&
-      batch.subsidiaryIds.length > 0 &&
-      batch.subsidiaryIds.every((sid) => accessible.has(sid))
+      // `subsidiary_ids` is a nullable column (Prisma cannot mark a list NOT
+      // NULL); the API always writes it, and a null reads as "names nothing",
+      // which no data_entry reader may see — the RLS policy's rule.
+      (batch.subsidiaryIds ?? []).length > 0 &&
+      (batch.subsidiaryIds ?? []).every((sid) => accessible.has(sid))
     );
   }
 
@@ -180,7 +175,7 @@ export class ImportBatchesService {
         }),
         this.prisma.activityRecord.groupBy({
           by: ['importBatchId'],
-          where: { ...this.submittableWhere(user, ids), ...READY_FOR_SUBMIT },
+          where: { ...this.submittableWhere(user, ids), ...evidenceReadyWhere() },
           _count: { _all: true },
         }),
       ]);
@@ -201,7 +196,7 @@ export class ImportBatchesService {
       totalRows: b.totalRows,
       acceptedCount: b.acceptedCount,
       rejectedCount: b.rejectedCount,
-      subsidiaryIds: b.subsidiaryIds,
+      subsidiaryIds: b.subsidiaryIds ?? [],
       uploadedBy: b.uploadedBy,
       uploadedByName: actorDisplayName(b.uploadedBy, actors),
       hasSourceFile: b.storagePath !== null,

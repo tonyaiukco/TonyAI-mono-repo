@@ -75,3 +75,11 @@ export function submitFailureDetail(report: BulkSubmitReportDTO): string | null 
   }
   return [...counts].map(([label, n]) => `${label} · ${formatNumber(n)}`).join('\n');
 }
+
+/**
+ * Said whenever the original file is opened: it is kept byte for byte, refused
+ * rows included, and a spreadsheet cell can carry a formula (`=HYPERLINK(…)`)
+ * a colleague typed — CSV injection reaches whoever opens it in Excel.
+ */
+export const SOURCE_FILE_CAUTION =
+  'Original file, exactly as uploaded. Spreadsheet cells can contain formulas — open it only if you trust its contents.';

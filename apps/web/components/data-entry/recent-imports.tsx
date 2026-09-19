@@ -30,6 +30,7 @@ import {
   batchState,
   batchSubmitLabel,
   importBatchesErrorMessage,
+  SOURCE_FILE_CAUTION,
   submitFailureDetail,
   type BatchState,
 } from "@/lib/import-batches-view";
@@ -81,6 +82,9 @@ export function RecentImports({
     try {
       const { url } = await api.getImportBatchSourceUrl(batch.id);
       window.open(url, "_blank", "noopener,noreferrer");
+      // The file is kept exactly as it was uploaded, refused rows included, so
+      // a cell can hold a spreadsheet formula someone else typed.
+      toast.message(SOURCE_FILE_CAUTION);
     } catch (e) {
       toast.error(importBatchesErrorMessage(e));
     }
@@ -162,7 +166,12 @@ export function RecentImports({
               )}
               <div className="mt-2 flex flex-wrap gap-2">
                 {batch.hasSourceFile && (
-                  <Button size="sm" variant="outline" onClick={() => void download(batch)}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    title={SOURCE_FILE_CAUTION}
+                    onClick={() => void download(batch)}
+                  >
                     <Download className="mr-1.5 h-3.5 w-3.5" />
                     Download file
                   </Button>
