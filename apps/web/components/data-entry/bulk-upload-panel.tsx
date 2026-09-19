@@ -18,6 +18,7 @@ import type {
   BulkUploadRowIssue,
 } from "@/lib/types";
 import {
+  draftsSubmitLabel,
   eligibleForSubmit,
   failuresToShow,
   submitConfirmation,
@@ -53,7 +54,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import { cn } from "@/lib/utils";
+import { cn, formatNumber } from "@/lib/utils";
 
 /**
  * Import a file of historical records.
@@ -433,13 +434,12 @@ export function BulkUploadPanel({
                   {busy === "submitting" ? (
                     <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                   ) : null}
-                  {/* "records", not "rows" — imported spreadsheet rows are
-                      records by the time they can be submitted, and the
-                      confirm dialog one click later already said so. */}
-                  Send {eligible.recordIds.length.toLocaleString("en-GB")}{" "}
-                  {eligible.recordIds.length === 1 ? "record" : "records"} for
-                  review
-                  {eligible.overCap > 0 ? ` (${eligible.overCap} more after this)` : ""}
+                  {/* The same label as the Previous submissions bar: "records",
+                      not "rows" — imported rows are records by now. */}
+                  {draftsSubmitLabel(eligible.recordIds.length)}
+                  {eligible.overCap > 0
+                    ? ` (${formatNumber(eligible.overCap)} more after this)`
+                    : ""}
                 </Button>
               )}
               {report.dryRun && summary.acceptedCount > 0 && (
