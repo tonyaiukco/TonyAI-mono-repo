@@ -438,24 +438,35 @@ async function removeUnlinkedEvidence(
   if (files.length === 0) return [];
   const { url } = supabaseEnv();
   const service = process.env.E2E_SUPABASE_SERVICE_KEY as string;
-  const ids = files.map((f) => `"${f.id}"`).join(',');
-  const res = await request.get(
-    `${url}/rest/v1/evidence?select=id,storage_path,activity_record_evidence(evidence_id)` +
-      `&id=in.(${ids})&activity_record_evidence=is.null`,
-    { headers: { apikey: service, Authorization: `Bearer ${service}` } },
-  );
-  if (!res.ok()) return [`${res.status()} listing unlinked evidence — ${await res.text()}`];
-  const unlinked = (await res.json()) as EvidenceFile[];
-  if (unlinked.length === 0) return [];
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
-  return [
-    await removeEvidenceObjects(request, unlinked.map((f) => f.storage_path)),
-    await del(
-      request,
-      `${url}/rest/v1/evidence?id=in.(${unlinked.map((f) => `"${f.id}"`).join(',')})`,
-      headers,
-    ),
-  ];
+  const failures: (string | null)[] = [];
+  // In chunks: every id rides in the URL (~43 bytes each once encoded), and a
+  // quarterly sweep can hold a few hundred files — past an 8 KB URL limit the
+  // teardown itself would throw.
+  const CHUNK = 100;
+  for (let i = 0; i < files.length; i += CHUNK) {
+    const ids = files.slice(i, i + CHUNK).map((f) => `"${f.id}"`).join(',');
+    const res = await request.get(
+      `${url}/rest/v1/evidence?select=id,storage_path,activity_record_evidence(evidence_id)` +
+        `&id=in.(${ids})&activity_record_evidence=is.null`,
+      { headers: { apikey: service, Authorization: `Bearer ${service}` } },
+    );
+    if (!res.ok()) {
+      failures.push(`${res.status()} listing unlinked evidence — ${await res.text()}`);
+      continue;
+    }
+    const unlinked = (await res.json()) as EvidenceFile[];
+    if (unlinked.length === 0) continue;
+    failures.push(
+      await removeEvidenceObjects(request, unlinked.map((f) => f.storage_path)),
+      await del(
+        request,
+        `${url}/rest/v1/evidence?id=in.(${unlinked.map((f) => `"${f.id}"`).join(',')})`,
+        headers,
+      ),
+    );
+  }
+  return failures;
 }
 
 /**

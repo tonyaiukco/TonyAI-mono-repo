@@ -114,13 +114,18 @@ test('deleting one evidence file leaves the record and its other files alone', a
 test('a file shared by two records survives the first record and goes with its last link', async ({ request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const subs = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
-  const create = async (periodValue: string) =>
-    (await (await request.post(`${API_BASE}/activity-records`, {
+  const create = async (periodValue: string) => {
+    const res = await request.post(`${API_BASE}/activity-records`, {
       headers: bearer(token),
       data: { subsidiaryId: subs[0].id, locationId: null, reportingYear: E2E_YEAR,
         reportingPeriod: E2E_PERIOD, periodValue, category: 'Electricity',
         activityValue: 66, activityUnit: 'kWh', varianceReason: null, input: null },
-    })).json()) as { id: string };
+    });
+    // A leftover record in this slot would otherwise surface later as a
+    // confusing upload refusal instead of the real conflict.
+    expect(res.status(), await res.text()).toBe(201);
+    return (await res.json()) as { id: string };
+  };
   const first = await create('Q1');
   const second = await create('Q2');
 

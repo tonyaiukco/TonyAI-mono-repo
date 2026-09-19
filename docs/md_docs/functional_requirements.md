@@ -146,7 +146,7 @@ One file can evidence several records of the same subsidiary — a quarterly inv
 - a file belongs to one subsidiary and can only back that subsidiary's records (the database refuses anything else);
 - attaching or removing a file follows the record's own rules: its author or a super_admin, while the record is a draft or rejected, and while its period is open;
 - the upload names every record it backs and is all or nothing;
-- wherever the file is shown — the evidence vault, the review panel, the PDF's evidence summary — it says which other records it also backs, so the reviewer can judge whether one document honestly covers all of them;
+- wherever the file is shown it says that it backs other records: the evidence vault and the review panel name them, so the reviewer can judge whether one document honestly covers all of them, and the PDF's evidence summary marks the file with how many other records it backs and how many of those are in the report;
 - removing a file from one record leaves it on the others; a file is deleted only when its last record lets go of it, and deleting it outright requires every record it backs to be editable.
 
 ### 4.2 Period Locking
