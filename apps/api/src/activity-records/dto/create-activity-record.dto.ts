@@ -1,4 +1,5 @@
 import {
+  Matches,
   IsIn,
   IsInt,
   IsNumber,
@@ -10,6 +11,11 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import {
+  ID_SHAPE_MESSAGE,
+  lowercaseUuid,
+  UUID_SHAPE,
+} from '../../common/parse-uuid-param.pipe';
 import { Transform } from 'class-transformer';
 import {
   ACTIVITY_UNIT_MAX_LENGTH,
@@ -33,18 +39,24 @@ import { storableUnit } from '../../calculations/storable-unit';
  * calculation snapshot are derived server-side, never accepted from the client.
  */
 export class CreateActivityRecordDto {
-  // NB: a plain string, not @IsUUID — the tenant-access check + the FK
-  // constraint enforce a valid, accessible subsidiary. (Seed ids are not
-  // RFC-4122-conformant, so strict UUID validation would reject them.)
+  // The hyphenated id shape, lowercased — not `@IsUUID`, whose RFC-4122
+  // variant check the seed's own ids fail. Without the shape check a braced or
+  // unhyphenated id reached Prisma as a P2023 (a 500), and an UPPERCASE one
+  // missed the access set, which is compared as strings (a 404 for the
+  // caller's own subsidiary). See `canonicalUuid`.
+  @Transform(lowercaseUuid)
   @IsString()
   @MinLength(1)
+  @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE })
   subsidiaryId!: string;
 
   // Optional operational location within the subsidiary; drives factor geography
   // when set. The service verifies it belongs to `subsidiaryId`.
   @IsOptional()
+  @Transform(lowercaseUuid)
   @IsString()
   @MinLength(1)
+  @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE })
   locationId?: string | null;
 
   @IsInt()

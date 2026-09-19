@@ -188,45 +188,19 @@ test('a file naming an entity you cannot reach is refused WHOLE', async ({ reque
 
 /**
  * The other direction of the same gate: an id that IS yours, spelled a way the
- * app never spells it.
+ * system never spells it.
  *
- * `canonicalUuid` folds the spellings of one uuid onto the one Postgres stores,
- * and the importer rewrites both id cells with it BEFORE the access check —
- * which compares ids as STRINGS. Its accepted grammar is a table transcribed by
- * hand, measured once against Prisma 6.19 / Postgres 17, and the unit suite
- * cannot reach past it: those specs pin the function against the table, never
- * the table against a database.
- *
- * `urn:uuid:` is the spelling worth an import. Postgres itself refuses it
- * (`invalid input syntax for type uuid`, re-measured against the running
- * Postgres 17), so nothing that passes here can be explained by the database's
- * more liberal reader — and before the fold existed, a file naming its
- * reporting entity that way was refused WHOLE as another tenant's, by the test
- * above. The braced row rides along in the same file, so the second spelling
- * costs no second import.
- *
- * What it can and cannot see, stated rather than implied. It fails if the fold
- * is removed, moved after the access check, applied to the report alone, or
- * ever folds onto a DIFFERENT id — the last being the expensive one, because
- * the row then lands against an entity nobody named. It does NOT detect Prisma
- * changing its own grammar: the cell is canonical by the time Prisma sees it,
- * which is the whole point of the fold, and this repo deliberately offers no
- * path that hands Prisma a raw spelling.
- *
- * Not asserted, deliberately: hex CASE. Every seeded id is decimal digits, so
- * `toUpperCase()` is a no-op on them and the assertion would be vacuous here.
- * `canonical-uuid.spec.ts` owns that one.
- *
- * Lane: `SUB.gas` / quarterly `E2E_YEAR` / Q3 and Q4, category `Waste` — a
- * subsidiary no bulk spec writes and a category no spec pairs with it. It is
- * outside `entry@`'s access set, so the import is admin@'s, whose set is the
- * organisation's five ids — real strings, compared the same way.
- *
- * Budget: one import, and the first this file spends as admin@. The throttle
- * test below is the one that deliberately empties that bucket, so this stays
- * above it; it loops up to eight times to find its 429 and still does.
+ * Postgres and Prisma resolve `{…}` and `urn:uuid:…`, and the importer once
+ * folded them onto the stored id (#113). It no longer does: the boundary takes
+ * the hyphenated shape, in either case, and refuses every other spelling on
+ * its own row — so nothing about such an id is looked up, and a typo in the
+ * caller's OWN entity is a findable row error rather than a whole-file "does
+ * not exist or is not yours". What the real stack proves here is the refusal
+ * half, through the live ValidationPipe. The CASE half is pinned in the unit
+ * specs, not here: every seeded id is decimal digits, so `toUpperCase()` on
+ * one is the same string and an "uppercase" row proves nothing about folding.
  */
-test('an id spelled the way only Prisma resolves is still YOURS, and the row lands under the canonical id', async ({
+test('an id in a spelling the system never shows is a row error, and the well-spelt row still lands', async ({
   request,
 }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
@@ -240,37 +214,34 @@ test('an id spelled the way only Prisma resolves is still YOURS, and the row lan
   try {
     const res = await postBulkImport(request, token, {
       buffer: buildBulkCsv([
-        { subsidiaryId: `urn:uuid:${SUB.gas}`, periodValue: 'Q3', activityValue: 12 },
+        { subsidiaryId: SUB.gas, periodValue: 'Q3', activityValue: 12 },
         { subsidiaryId: `{${SUB.gas}}`, periodValue: 'Q4', activityValue: 14 },
+        { subsidiaryId: `urn:uuid:${SUB.gas}`, periodValue: 'Q4', activityValue: 14 },
       ]),
       dryRun: 'false',
     });
 
-    // The body as TEXT first, and the refusal quoted in the failure message. A
-    // whole-file refusal is a 400 carrying no `accepted`, and reaching into one
-    // fails as `TypeError: … reading 'map'` — the refusal blaming the wrong
-    // code, which is the confusion this whole group is written to avoid.
+    // The body as TEXT first, and the refusal quoted in the failure message: a
+    // whole-file refusal is a 400 carrying no `accepted`.
     const raw = await res.text();
     expect(res.ok(), `the import was refused: ${raw}`).toBe(true);
     const report = JSON.parse(raw) as BulkUploadReportDTO;
-    expect(report.errors).toEqual([]);
 
-    // The report's own echo: the canonical spelling, not the file's. It is what
-    // a preview shows the user and what the panel keys its rows on, so a fold
-    // that reached the database but not the report would still mislead.
+    // The two misspelt rows, each on its own row and naming the column.
+    expect(report.errors.map((e) => [e.row, e.column, e.code])).toEqual([
+      [3, 'subsidiaryId', 'invalid'],
+      [4, 'subsidiaryId', 'invalid'],
+    ]);
+    // The report's own echo is the stored spelling, not the file's.
     expect(report.accepted.map((a) => [a.periodValue, a.subsidiaryId])).toEqual([
       ['Q3', SUB.gas],
-      ['Q4', SUB.gas],
     ]);
 
-    // …and what the DATABASE holds, asked for BY the canonical id and read past
-    // the API with the service role. Both rows, and exactly the two the report
-    // named: a lane that matched nothing, or rows filed against some other
-    // entity, fails here instead of agreeing with the report that produced it.
+    // …and what the DATABASE holds, read past the API with the service role:
+    // exactly the one row the report named, under the stored id.
     const stored = await serviceReadRecords(request, lane);
-    expect(stored).toHaveLength(2);
-    expect(new Set(stored.map((r) => String(r.id)))).toEqual(
-      new Set(report.accepted.map((a) => a.recordId)),
+    expect(stored.map((r) => String(r.id))).toEqual(
+      report.accepted.map((a) => a.recordId),
     );
   } finally {
     // The LANE, not the report's ids: if an assertion above threw, the rows are

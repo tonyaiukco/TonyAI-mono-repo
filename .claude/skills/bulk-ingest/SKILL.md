@@ -32,29 +32,22 @@ attachment), use `supabase-storage` instead.
   need BOTH: an in-memory `Set` for row-vs-row inside the file, and ONE up-front
   query for row-vs-stored. Mirror the index's own predicate — TonyAI's excludes
   `voided`, so a withdrawn figure does not hold its slot.
-- **Key every segment in the DATABASE's spelling, never the file's.** A typed
-  column accepts more than one spelling of one value and returns exactly one; a
-  JS `Set` compares the text. Measured here: one location written five ways —
-  lowercase, uppercase, `{…}`, `urn:uuid:…`, unhyphenated — was five free slots,
-  and the apply then lost four of them to the index. (Re-measure on a fixture
-  whose id contains hex LETTERS. Every id in the seed is decimal digits, so
-  `toUpperCase()` is a no-op there and the defect reads one row smaller than it
-  is.) The
-  stored-slot query has the same hole from the other side, because the rows it
-  keys come back canonical. So canonicalise the cell ONCE, at the boundary,
-  before anything reads it: a per-reader fix leaves the next reader to forget.
-  Two warnings. **Canonicalise before the tenant check too** — it compares ids
-  as strings, so a braced id had a user's own entity refused as another
-  tenant's. And **match the driver's grammar, not the database's**: Prisma reads
-  `urn:uuid:…` that Postgres refuses and refuses `{…}` unhyphenated and
-  four-character groups that Postgres reads (measured; see `canonicalUuid`).
-  Being narrower than the driver leaves a duplicate undetected, which is what
-  you already had; being WIDER is worse than a refused row, because
-  canonicalising at the boundary REWRITES the cell — the folded value is what
-  gets stored, so a mis-grouped id the database would have refused outright is
-  filed against a real entity nobody named. Pin the negative cases with a
-  service-level test, not only a parser one: a parser spec alone stays green
-  while the importer silently re-attributes a row.
+- **Key every segment in the DATABASE's spelling, never the file's — and
+  accept ONE spelling of an id.** A typed column accepts more than one spelling
+  of one value and returns exactly one; a JS `Set` compares the text. For a
+  `uuid` the boundary takes the hyphenated shape in either case and lowercases
+  it (`canonicalUuid` beside `UUID_SHAPE`, applied by the resource DTO's
+  `@Transform` + `@Matches`, and called directly by the two readers of a RAW
+  cell — the tenant check and the stored-slot query; key everything else off
+  the validated DTO); `{…}`, `urn:uuid:…` and
+  the unhyphenated form are refused as `invalid` on their own row. Do NOT fold
+  them: that was tried (#113) and needed a hand-measured table of the driver's
+  grammar, a probe to keep it honest and a rewrite of the caller's cells, for
+  spellings nobody types — every id the system shows is hyphenated. Two
+  consequences to keep: only a cell that IS an id goes into a tenant check or a
+  Prisma `IN` list (a non-uuid there is a P2023, outside every catch), and a
+  blank optional id stays blank. (Test with ids that contain hex LETTERS: every
+  seeded id is decimal digits, so `toUpperCase()` is a no-op on them.)
 - **Parse strictly; never coerce.** `Number('')` is `0`, and a zero is a
   REPORTED quantity that enters the inventory. Refuse `''`, `'1,200'` (ambiguous
   across locales), `'1e3'` and `'0x10'`. A strict numeric regex also kills
@@ -307,8 +300,9 @@ for (const parsed of rows) {
   Prisma stacks with code frames), so the 1,000-row cap puts one request near
   3 MB, five times a minute per user. The report stays small, so nothing in it
   shows the cost. Fold into `BatchFailureLog` (`apps/api/src/common/`) and emit
-  one line: the count, the first ten refs plus a count of the rest, each class
-  with its count, its first ref and a sample message, and ONE stack. Three
+  one line: the count, the first ten refs plus a count of the rest, the FIRST
+  failure (class, code, a cleaned sample) and ONE stack — no per-class table;
+  which rows failed is already in the response. Three
   things are easy to get wrong. The accumulator is a LOCAL of the batch method —
   these services are Nest singletons, and a field would mix two tenants' rows
   into one line. The flush belongs in a `finally`, because the loop's

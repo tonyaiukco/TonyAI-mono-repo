@@ -313,7 +313,7 @@ describe('what each class lets you leave out', () => {
   });
 
   it.each([
-    ['locationId', 'loc-1'],
+    ['locationId', '33333333-3333-3333-3333-333333330001'],
     ['reportingYear', 2026],
     ['reportingPeriod', 'monthly'],
     ['periodValue', 'January'],
@@ -336,4 +336,46 @@ describe('what each class lets you leave out', () => {
       expect(parseExactly(CreateActivityRecordDto, body)).toHaveLength(0);
     },
   );
+});
+
+describe('reporting-entity ids — one spelling, lowercased at the boundary', () => {
+  const SUB = 'a2222222-2222-4222-8222-22222222000a';
+  const LOC = 'b3333333-3333-4333-8333-33333333000b';
+
+  it('lowercases an UPPERCASE subsidiaryId, which used to miss the access set as a 404', () => {
+    const { dto, errors } = parse(CreateActivityRecordDto, { subsidiaryId: SUB.toUpperCase() });
+    expect(errors).toHaveLength(0);
+    expect((dto as CreateActivityRecordDto).subsidiaryId).toBe(SUB);
+  });
+
+  it.each([
+    ['braced', `{${SUB}}`],
+    ['urn', `urn:uuid:${SUB}`],
+    ['unhyphenated', SUB.replace(/-/g, '')],
+    ['free text', 'sub-1'],
+  ])('refuses a %s subsidiaryId as a 400 — it used to reach Prisma as a P2023, a 500', (_label, subsidiaryId) => {
+    expect(constraintsOn(CreateActivityRecordDto, { subsidiaryId }, 'subsidiaryId')).toEqual(
+      expect.arrayContaining(['matches']),
+    );
+  });
+
+  it.each(DTOS)('%s lowercases a locationId, refuses a misspelt one, and still takes none', (_name, Dto) => {
+    const upper = parse(Dto, { locationId: LOC.toUpperCase() });
+    expect(upper.errors).toHaveLength(0);
+    expect((upper.dto as { locationId?: string | null }).locationId).toBe(LOC);
+
+    expect(constraintsOn(Dto, { locationId: `{${LOC}}` }, 'locationId')).toEqual(
+      expect.arrayContaining(['matches']),
+    );
+    // Null / absent means the whole company, and `@IsOptional` must still win.
+    expect(parse(Dto, { locationId: null }).errors).toHaveLength(0);
+    expect(parse(Dto, {}).errors).toHaveLength(0);
+  });
+
+  it('names the field in the sentence, and quotes nothing back', () => {
+    const { errors } = parse(CreateActivityRecordDto, { subsidiaryId: '{nope}' });
+    const message = Object.values(errors[0].constraints ?? {}).join(' ');
+    expect(message).toContain('subsidiaryId is not an id');
+    expect(message).not.toContain('nope');
+  });
 });

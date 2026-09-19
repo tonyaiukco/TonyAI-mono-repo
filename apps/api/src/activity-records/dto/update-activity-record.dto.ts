@@ -1,4 +1,5 @@
 import {
+  Matches,
   IsIn,
   IsInt,
   IsNumber,
@@ -10,6 +11,11 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import {
+  ID_SHAPE_MESSAGE,
+  lowercaseUuid,
+  UUID_SHAPE,
+} from '../../common/parse-uuid-param.pipe';
 import { Transform } from 'class-transformer';
 import {
   ACTIVITY_UNIT_MAX_LENGTH,
@@ -35,8 +41,10 @@ export class UpdateActivityRecordDto {
   // it back to subsidiary-level; omitted leaves it unchanged. (The service
   // checks the location belongs to the record's subsidiary.)
   @IsOptional()
+  @Transform(lowercaseUuid)
   @IsString()
   @MinLength(1)
+  @Matches(UUID_SHAPE, { message: ID_SHAPE_MESSAGE })
   locationId?: string | null;
 
   @IsOptional()

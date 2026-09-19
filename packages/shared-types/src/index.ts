@@ -2581,15 +2581,14 @@ export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
  * (`AuditLogDTO.diff`): historic rows are never migrated, so a reader checks
  * each key defensively.
  *
- * `fileName` is absent only on the retry that dropped the caller's text after
- * the database refused a value in it (`callerTextOmitted: true`).
+ * Rows written before the retry-without-caller-text path was removed may lack
+ * `fileName` and carry `callerTextOmitted: true`; a reader tolerates both.
  */
 export type BulkImportAuditDiff = {
   bulk: true;
   dryRun: boolean;
-  fileName?: string;
+  fileName: string;
   sizeBytes: number;
-  callerTextOmitted?: true;
 } & (
   | { refused: true; reason?: string }
   | {
@@ -2750,27 +2749,13 @@ export const BULK_UPLOAD_MAX_SIZE_BYTES = 2 * 1024 * 1024;
 export const BULK_UPLOAD_MESSAGE_MAX_LENGTH = 500;
 
 /**
- * The extension is the gate; the MIME list is advisory.
- *
- * Browsers disagree about spreadsheets — Windows sends `.csv` as
+ * The extension is the gate, and there is deliberately no MIME list. Browsers
+ * disagree about spreadsheets — Windows sends `.csv` as
  * `application/vnd.ms-excel` and sometimes `application/octet-stream` — so an
- * exact MIME match (which is what the evidence module does) refuses a
- * perfectly ordinary "Save as CSV". The declared type is client-controlled and
- * buys no security; the extension picks the parser, and the parser itself is
- * what actually refuses a file that is not a spreadsheet.
- *
- * The list is still exported because the browser's file picker needs it for
- * its `accept=` attribute.
+ * exact MIME match refuses a perfectly ordinary "Save as CSV". The declared
+ * type is client-controlled and buys no security; the extension picks the
+ * parser, and the parser refuses a file that is not a spreadsheet.
  */
-export const BULK_UPLOAD_ALLOWED_MIME_TYPES = [
-  'text/csv',
-  'application/csv',
-  'text/plain',
-  'application/vnd.ms-excel',
-  'application/octet-stream',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-] as const;
-
 export const BULK_UPLOAD_ALLOWED_EXTENSIONS = ['.csv', '.xlsx'] as const;
 
 /**
@@ -3118,19 +3103,5 @@ export interface BulkSubmitReportDTO {
   requested: number;
   submitted: BulkSubmitAcceptedRecord[];
   failed: BulkSubmitIssue[];
-}
-
-/**
- * Every requested id lands in exactly one of the two lists.
- *
- * Stated because a client summarising the outcome depends on it — "N of M
- * submitted, the rest are still drafts" is only true if nothing fell through —
- * and because a loop that `break`s instead of `continue`s would quietly
- * violate it while every count still looked plausible.
- */
-export function bulkSubmitReportIsComplete(
-  report: BulkSubmitReportDTO,
-): boolean {
-  return report.submitted.length + report.failed.length === report.requested;
 }
 
