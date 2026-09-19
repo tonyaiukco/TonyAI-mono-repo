@@ -15,7 +15,7 @@
     "@nestjs/config": "^4.0.0",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
-    "@nestjs/throttler": "^6.5.0",
+    "@nestjs/throttler": "^6.7.0",
     "@sentry/nestjs": "10.40.0",
     "@supabase/supabase-js": "^2.108.2",
     "@tonyai/db": "workspace:*",
