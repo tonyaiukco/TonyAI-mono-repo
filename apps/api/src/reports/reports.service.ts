@@ -61,6 +61,11 @@ export type {
  */
 export type ReportMeta = ReportMetaDTO;
 
+/** A record's link to an evidence file, as the ledger query loads it. */
+type ReportEvidenceLink = {
+  evidence: { id: string; fileName: string; _count: { links: number } };
+};
+
 @Injectable()
 export class ReportsService implements OnModuleDestroy {
   // Memoized launch promise: two concurrent first requests must share ONE
@@ -217,7 +222,11 @@ export class ReportsService implements OnModuleDestroy {
     // rather than a second way of resolving the same name.
     const include = {
       evidenceLinks: {
-        select: { evidence: { select: { id: true, fileName: true } } },
+        select: {
+          evidence: {
+            select: { id: true, fileName: true, _count: { select: { links: true } } },
+          },
+        },
         orderBy: [{ linkedAt: 'asc' }, { evidenceId: 'asc' }],
       },
       location: { select: { name: true } },
@@ -276,7 +285,7 @@ export class ReportsService implements OnModuleDestroy {
     const toRowBase = (r: LoadedRecord): Omit<ReportLedgerRow, 'status'> => {
       const calc = (r.calculation ?? {}) as Snapshot;
       const withRelations = r as typeof r & {
-        evidenceLinks?: { evidence: { id: string; fileName: string } }[];
+        evidenceLinks?: ReportEvidenceLink[];
         location?: { name: string } | null;
       };
       return {
@@ -356,12 +365,14 @@ export class ReportsService implements OnModuleDestroy {
     }
 
     // One file can back several records (WP8 PR7), so the appendix says, per
-    // file, how many OTHER records in this report it also backs — the reader
-    // judging whether one invoice honestly covers them needs to see it — and
-    // the section counts distinct files once.
+    // file, how many OTHER records it backs — in all, and how many of them are
+    // in this report, since a Dec–Feb invoice can back records of two years —
+    // because the reader judging whether one invoice honestly covers them
+    // needs to see it. The section counts distinct files once.
     const filesOf = (r: LoadedRecord) =>
-      ((r as typeof r & { evidenceLinks?: { evidence: { id: string; fileName: string } }[] })
-        .evidenceLinks ?? []).map((l) => l.evidence);
+      ((r as typeof r & { evidenceLinks?: ReportEvidenceLink[] }).evidenceLinks ?? []).map(
+        (l) => l.evidence,
+      );
     const recordsPerFile = new Map<string, number>();
     for (const r of records) {
       for (const f of filesOf(r)) {
@@ -378,7 +389,8 @@ export class ReportsService implements OnModuleDestroy {
               periodValue: r.periodValue,
               fileCount: files.length,
               fileNames: files.map((f) => f.fileName),
-              alsoBacks: files.map((f) => (recordsPerFile.get(f.id) ?? 1) - 1),
+              alsoBacks: files.map((f) => f._count.links - 1),
+              alsoBacksHere: files.map((f) => (recordsPerFile.get(f.id) ?? 1) - 1),
             };
           })
           .filter((e) => e.fileCount > 0)

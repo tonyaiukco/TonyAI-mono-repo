@@ -39,6 +39,10 @@ describe('UploadEvidenceForRecordsDto', () => {
     expect(parse({ recordIds: value }).errors).toHaveLength(1);
   });
 
+  it('refuses the field sent twice — multer’s array — instead of accepting a second shape', () => {
+    expect(parse({ recordIds: [A, B] }).errors).toHaveLength(1);
+  });
+
   it('refuses a missing field and an unknown one', () => {
     expect(parse({}).errors).toHaveLength(1);
     expect(parse({ recordIds: JSON.stringify([A]), dryRun: 'true' }).errors).toHaveLength(1);

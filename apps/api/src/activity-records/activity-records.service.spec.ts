@@ -46,7 +46,17 @@ beforeEach(() => audit.record.mockClear());
 // --- Local, DB-free mocks --------------------------------------------------
 
 function createPrismaMock() {
+  // `remove` deletes inside a transaction (a row lock against a racing upload).
+  // Its client has its OWN spies — the #50 rule — so "deleted inside the
+  // transaction, after the lock" is an assertion that can fail, and every
+  // "was not deleted" below asserts against the spy a delete would really hit.
+  const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    activityRecord: { delete: vi.fn() },
+  };
   return {
+    tx,
+    $transaction: vi.fn(async (fn: (client: typeof tx) => unknown) => fn(tx)),
     activityRecord: {
       // Default [] so the anomaly baseline query finds no priors (no anomaly)
       // unless a test overrides it.
@@ -322,8 +332,13 @@ describe('ActivityRecordsService — tenant scoping', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-in', subsidiaryId: 'sub-1' }),
     );
+    prisma.activityRecordEvidence.count.mockResolvedValue(2);
     const dto = await service.get(dataEntry(), 'rec-in');
     expect(dto.id).toBe('rec-in');
+    expect(dto.evidenceCount).toBe(2);
+    expect(prisma.activityRecordEvidence.count).toHaveBeenCalledWith({
+      where: { activityRecordId: 'rec-in' },
+    });
   });
 });
 
@@ -824,22 +839,45 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     );
   }
 
-  it('reads the record’s files before the delete and sweeps the unlinked ones after it', async () => {
+  it('locks the record, reads its files and deletes it in one transaction, then sweeps the unlinked files', async () => {
     const { prisma, evidence, service } = build();
     deletableRecord(prisma);
     evidence.fileIdsFor.mockResolvedValue(['ev-1', 'ev-2']);
 
     await service.remove(dataEntry(), 'rec-del');
 
-    expect(evidence.fileIdsFor).toHaveBeenCalledWith('rec-del');
+    // The files are read through the TRANSACTION's client, under the lock.
+    expect(evidence.fileIdsFor).toHaveBeenCalledWith('rec-del', prisma.tx);
+    expect(prisma.tx.activityRecord.delete).toHaveBeenCalledWith({ where: { id: 'rec-del' } });
+    expect(prisma.tx.$queryRaw.mock.calls[0][0].join('?')).toMatch(/FOR UPDATE/);
+    expect(prisma.tx.$queryRaw.mock.calls[0].slice(1)).toEqual(['rec-del']);
     expect(evidence.deleteUnlinked).toHaveBeenCalledWith(['ev-1', 'ev-2']);
-    // Order is the whole point: which files the record held is only knowable
-    // while its links exist, and whether a file is now unlinked only after
-    // they are gone.
+    // Order is the whole point: the lock before the read (an upload's link
+    // either committed first and is read, or waits and then fails), the read
+    // while the links still exist, the sweep only once they are gone.
     const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
       fn.mock.invocationCallOrder[0];
-    expect(order(evidence.fileIdsFor)).toBeLessThan(order(prisma.activityRecord.delete));
-    expect(order(prisma.activityRecord.delete)).toBeLessThan(order(evidence.deleteUnlinked));
+    expect(order(prisma.tx.$queryRaw)).toBeLessThan(order(evidence.fileIdsFor));
+    expect(order(evidence.fileIdsFor)).toBeLessThan(order(prisma.tx.activityRecord.delete));
+    expect(order(prisma.tx.activityRecord.delete)).toBeLessThan(order(evidence.deleteUnlinked));
+  });
+
+  it('audits the files the record held and the ones deleted with it, with the real count', async () => {
+    // One audit row per record delete, so it is the only trace of the files.
+    const { prisma, evidence, service } = build();
+    deletableRecord(prisma);
+    evidence.fileIdsFor.mockResolvedValue(['ev-1', 'ev-2']);
+    evidence.deleteUnlinked.mockResolvedValue(['ev-2']);
+
+    await service.remove(dataEntry(), 'rec-del');
+
+    const row = audit.record.mock.calls.at(-1)![1] as {
+      action: string;
+      diff: { before: { evidenceCount: number }; evidence: unknown };
+    };
+    expect(row.action).toBe('delete');
+    expect(row.diff.before.evidenceCount).toBe(2);
+    expect(row.diff.evidence).toEqual({ fileIds: ['ev-1', 'ev-2'], deletedFileIds: ['ev-2'] });
   });
 
   it('touches no file when reading them fails — the record is not deleted either', async () => {
@@ -848,7 +886,8 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     evidence.fileIdsFor.mockRejectedValue(new Error('db down'));
 
     await expect(service.remove(dataEntry(), 'rec-del')).rejects.toThrow(/db down/);
-    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
     expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
   });
 
@@ -863,7 +902,7 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     );
     expect(evidence.fileIdsFor).not.toHaveBeenCalled();
     expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
-    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
   });
 });
 
@@ -986,7 +1025,7 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
       await expect(service.remove(seat, 'rec-own')).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
-      expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+      expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
     },
   );
 
@@ -1041,7 +1080,7 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
 
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
-    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
   });
 
@@ -1261,7 +1300,7 @@ describe('ActivityRecordsService — transition rules', () => {
       // The whole point: an UPDATE, never a delete. The row, its evidence and
       // its immutable calculation snapshot all survive — what changes is that
       // it stops counting.
-      expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+      expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
       const data = prisma.activityRecord.update.mock.calls[0][0].data;
       expect(data.status).toBe(ActivityRecordStatus.voided);
       expect(data.calculation).toBeUndefined();
@@ -1567,6 +1606,11 @@ describe('ActivityRecordsService — transition rules', () => {
       EvidenceRequiredError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    // THIS record's files: an unscoped count would let one link anywhere
+    // clear the gate for every evidence-required record.
+    expect(prisma.activityRecordEvidence.count).toHaveBeenCalledWith({
+      where: { activityRecordId: 'rec-e' },
+    });
   });
 
   it('reject moves submitted -> rejected and stores the reviewer note (not varianceReason)', async () => {
@@ -2380,7 +2424,7 @@ describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
     await expect(service.remove(dataEntry(), 'rec-d')).rejects.toThrow(
       /period .* is locked/i,
     );
-    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
   });
 
   it('blocks submitting a draft in a locked period', async () => {
@@ -2731,7 +2775,7 @@ describe('ActivityRecordsService — submittedAt', () => {
  * `previewCreate` is everything `create` DECIDES, with nothing it WRITES.
  *
  * It exists so the bulk importer (WP8) can offer a dry-run that provably
- * persists nothing. The mechanism matters: this service opens no transaction,
+ * persists nothing. The mechanism matters: `create` opens no transaction,
  * so there is no rollback to hide behind — the claim "the dry-run wrote
  * nothing" is only as good as an assertion against the write spies, which is
  * what this block is. If a future change moves any write into the prepare half,
@@ -2756,7 +2800,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
   function expectNothingWritten() {
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
-    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
   }

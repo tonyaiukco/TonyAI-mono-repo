@@ -10,6 +10,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import {
+  type Category,
   EVIDENCE_ALLOWED_MIME_TYPES,
   EVIDENCE_MAX_SIZE_BYTES,
   type EvidenceDTO,
@@ -113,7 +114,9 @@ export class EvidenceService {
       createdAt: e.createdAt.toISOString(),
       linkedRecords: e.links.map(({ activityRecord: r }) => ({
         id: r.id,
-        category: r.category,
+        // The column is TEXT; the vocabulary is enforced on write, as
+        // `ActivityRecordsService.toAuditSnapshot` relies on too.
+        category: r.category as Category,
         reportingYear: r.reportingYear,
         periodValue: r.periodValue,
         locationName: r.location?.name ?? null,
@@ -164,9 +167,12 @@ export class EvidenceService {
   /** The ids of `records` whose reporting period is closed — one query for all of them. */
   private async lockedRecordIds(records: ActivityRecord[]): Promise<Set<string>> {
     if (records.length === 0) return new Set();
+    // One condition per distinct period, not per record: a thousand drafts of
+    // one import share a handful of periods.
+    const periods = [...new Map(records.map((r) => [lockKey(r), r])).values()];
     const locks = await this.prisma.periodLock.findMany({
       where: {
-        OR: records.map((r) => ({
+        OR: periods.map((r) => ({
           subsidiaryId: r.subsidiaryId,
           reportingYear: r.reportingYear,
           reportingPeriod: r.reportingPeriod,
@@ -371,6 +377,12 @@ export class EvidenceService {
       });
     } catch (error) {
       await this.removeBlobs([storagePath]);
+      // A record deleted between the checks and the link: the link's foreign
+      // key refuses it (P2003). That is the same answer as a record that was
+      // never there, not a server error.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+        throw new NotFoundException(RECORD_NOT_FOUND);
+      }
       throw error;
     }
 
@@ -411,24 +423,30 @@ export class EvidenceService {
     const record = await this.loadRecordScoped(user, recordId);
     await this.assertCanMutate(user, record);
     const evidence = await this.prisma.evidence.findFirst({
-      where: { id: evidenceId, links: { some: { activityRecordId: recordId } } },
+      where: { id: evidenceId, links: { some: { activityRecordId: record.id } } },
       include: WITH_LINKED_RECORDS,
     });
     if (!evidence) throw new NotFoundException(EVIDENCE_NOT_FOUND);
 
-    await this.prisma.activityRecordEvidence.deleteMany({
-      where: { activityRecordId: recordId, evidenceId },
+    // From here on the DATABASE's ids, never the path's: the route accepts
+    // either case, and an uppercase id once made a deleted file answer
+    // `fileDeleted: false` and audit as a `detach` under an id no lookup finds.
+    const { count } = await this.prisma.activityRecordEvidence.deleteMany({
+      where: { activityRecordId: record.id, evidenceId: evidence.id },
     });
-    const deleted = await this.deleteUnlinked([evidenceId]);
-    const fileDeleted = deleted.includes(evidenceId);
+    // A concurrent detach of the same link got there first: it answers and
+    // audits the change; this request changed nothing.
+    if (count === 0) throw new NotFoundException(EVIDENCE_NOT_FOUND);
+    const deleted = await this.deleteUnlinked([evidence.id]);
+    const fileDeleted = deleted.includes(evidence.id);
 
     await this.audit.record(user, {
       action: fileDeleted ? 'delete' : 'detach',
       entity: 'evidence',
-      entityId: evidenceId,
-      diff: { before: { ...this.auditSnapshot(evidence), recordId } },
+      entityId: evidence.id,
+      diff: { before: { ...this.auditSnapshot(evidence), recordId: record.id } },
     });
-    return { evidenceId, recordId, fileDeleted };
+    return { evidenceId: evidence.id, recordId: record.id, fileDeleted };
   }
 
   /**
@@ -447,7 +465,7 @@ export class EvidenceService {
     const evidence = await this.loadEvidenceScoped(user, id);
     this.assertRole(user);
     const records = await this.prisma.activityRecord.findMany({
-      where: { evidenceLinks: { some: { evidenceId: id } } },
+      where: { evidenceLinks: { some: { evidenceId: evidence.id } } },
     });
     const locked = await this.lockedRecordIds(records);
     const refusals = records
@@ -465,19 +483,28 @@ export class EvidenceService {
     // Blob BEFORE the row, as before: here nothing has changed yet, so a
     // storage failure aborts with the file and every link intact.
     await this.storage.remove(EVIDENCE_BUCKET, [evidence.storagePath]);
-    await this.prisma.evidence.delete({ where: { id } });
+    const { count } = await this.prisma.evidence.deleteMany({ where: { id: evidence.id } });
+    // Deleted meanwhile by another request, which audited it.
+    if (count === 0) throw new NotFoundException(EVIDENCE_NOT_FOUND);
     await this.audit.record(user, {
       action: 'delete',
       entity: 'evidence',
-      entityId: id,
+      entityId: evidence.id,
       diff: { before: this.auditSnapshot(evidence) },
     });
-    return { id, deleted: true };
+    return { id: evidence.id, deleted: true };
   }
 
-  /** The files linked to a record — read BEFORE the record is deleted, for `deleteUnlinked` after. */
-  async fileIdsFor(activityRecordId: string): Promise<string[]> {
-    const links = await this.prisma.activityRecordEvidence.findMany({
+  /**
+   * The files linked to a record — read BEFORE the record is deleted, for
+   * `deleteUnlinked` after. Takes the caller's transaction: the record delete
+   * reads these under its row lock, so an upload cannot link a file in between.
+   */
+  async fileIdsFor(
+    activityRecordId: string,
+    client: Pick<Prisma.TransactionClient, 'activityRecordEvidence'> = this.prisma,
+  ): Promise<string[]> {
+    const links = await client.activityRecordEvidence.findMany({
       where: { activityRecordId },
       select: { evidenceId: true },
     });
@@ -499,19 +526,32 @@ export class EvidenceService {
    * therefore leaves an object with no row — logged, and found by
    * `pnpm evidence:reclaim`, which removes exactly such objects — rather than
    * a row nothing can reach.
+   *
+   * Never throws. Its callers run it AFTER their own change has committed (a
+   * record deleted, a link removed) and audit afterwards; a failure here that
+   * propagated would leave that change with no audit row. A database failure
+   * is logged instead, and the files it left unlinked are reclaimed by
+   * `pnpm evidence:reclaim`, which deletes unlinked rows past its grace window.
    */
   async deleteUnlinked(evidenceIds: string[]): Promise<string[]> {
     if (evidenceIds.length === 0) return [];
-    const candidates = await this.prisma.evidence.findMany({
-      where: { id: { in: evidenceIds }, links: { none: {} } },
-      select: { id: true, storagePath: true },
-    });
     const deleted: { id: string; storagePath: string }[] = [];
-    for (const c of candidates) {
-      const { count } = await this.prisma.evidence.deleteMany({
-        where: { id: c.id, links: { none: {} } },
+    try {
+      const candidates = await this.prisma.evidence.findMany({
+        where: { id: { in: evidenceIds }, links: { none: {} } },
+        select: { id: true, storagePath: true },
       });
-      if (count === 1) deleted.push(c);
+      for (const c of candidates) {
+        const { count } = await this.prisma.evidence.deleteMany({
+          where: { id: c.id, links: { none: {} } },
+        });
+        if (count === 1) deleted.push(c);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Could not delete unlinked evidence — run pnpm evidence:reclaim: ${evidenceIds.join(', ')}`,
+        error instanceof Error ? error.stack : String(error),
+      );
     }
     await this.removeBlobs(deleted.map((d) => d.storagePath));
     return deleted.map((d) => d.id);

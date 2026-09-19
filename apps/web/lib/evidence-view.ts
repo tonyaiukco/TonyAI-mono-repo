@@ -31,9 +31,10 @@ const EVIDENCE_EDITABLE = new Set<string>(['draft', 'rejected']);
  * Why this record cannot take a file in the "attach one file" selection, or
  * `null` when it can.
  *
- * The server's order — role, status, authorship, period lock — so the sentence
- * matches the refusal the upload would return. Unlike the submit selection,
- * a missing file is not a reason: it is the point.
+ * The evidence API's order — role, authorship, status, period lock — so the
+ * sentence matches the refusal the upload would return. (The submit selection
+ * checks status before authorship because the submit route does.) Unlike the
+ * submit selection, a missing file is not a reason: it is the point.
  */
 export function attachBlockReason(
   row: SubmittableRow,
@@ -41,8 +42,8 @@ export function attachBlockReason(
   locks: LockedPeriod[],
 ): string | null {
   if (!mayAuthorRecords(user)) return 'Your role cannot attach evidence.';
-  if (!EVIDENCE_EDITABLE.has(row.status)) return `Already ${row.status.replace(/_/g, ' ')}.`;
   if (!authoredBy(row, user)) return 'Entered by someone else.';
+  if (!EVIDENCE_EDITABLE.has(row.status)) return `Already ${row.status.replace(/_/g, ' ')}.`;
   if (isPeriodLockedFor(row, locks)) return `${row.periodValue} ${row.reportingYear} is locked.`;
   return null;
 }

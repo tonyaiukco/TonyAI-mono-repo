@@ -2081,14 +2081,13 @@ export const EVIDENCE_MAX_LINKED_RECORDS = 1000;
  * site?). Every linked record is in the file's subsidiary, so whoever can read
  * the file can read each of these.
  */
-export interface EvidenceLinkedRecordDTO {
-  id: string;
-  category: string;
-  reportingYear: number;
-  periodValue: string;
+export type EvidenceLinkedRecordDTO = Pick<
+  ActivityRecordDTO,
+  'id' | 'category' | 'reportingYear' | 'periodValue' | 'status'
+> & {
+  /** The record's site, or null for a whole-company record. */
   locationName: string | null;
-  status: ActivityRecordStatus;
-}
+};
 
 /**
  * An evidence file's metadata as returned by the API (never the binary).
@@ -2118,6 +2117,11 @@ export interface EvidenceLinkRefusal {
 /**
  * The 400 body of `POST /evidence` when any named record cannot take the file:
  * nothing is uploaded and nothing is linked, and every refused record is named.
+ *
+ * Not the only 400 that route returns. A request-level refusal — records of
+ * more than one subsidiary, or a missing or refused file — is the ordinary
+ * `{ message }` body, and malformed `recordIds` get the validation body
+ * (`message: string[]`). Only this one carries `refused`.
  */
 export interface EvidenceLinkRefusedDTO {
   message: string;

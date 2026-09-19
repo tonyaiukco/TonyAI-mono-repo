@@ -138,9 +138,12 @@ export interface ReportEvidenceRow {
   periodValue: string;
   fileCount: number;
   fileNames: string[];
-  /** Index-aligned with `fileNames`: how many OTHER records in this report the
-   *  same file also backs (0 = this record alone). */
+  /** Index-aligned with `fileNames`: how many OTHER records the same file
+   *  backs in all (0 = this record alone) — including records outside this
+   *  report's year or scope. */
   alsoBacks: number[];
+  /** Index-aligned with `fileNames`: how many of those are in this report. */
+  alsoBacksHere: number[];
 }
 
 /**

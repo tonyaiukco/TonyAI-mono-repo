@@ -46,6 +46,12 @@ CREATE TABLE "activity_record_evidence" (
     CONSTRAINT "activity_record_evidence_pkey" PRIMARY KEY ("activity_record_id","evidence_id")
 );
 
+-- RLS on from the moment the table exists, not only from the next migration:
+-- `migrate deploy` commits each file separately, and the rows inserted below
+-- would otherwise sit behind no policy in between. Enabled with no policy it
+-- shows client roles nothing; the next migration adds the policy and grants.
+ALTER TABLE "activity_record_evidence" ENABLE ROW LEVEL SECURITY;
+
 CREATE INDEX "activity_record_evidence_evidence_id_idx" ON "activity_record_evidence"("evidence_id");
 
 ALTER TABLE "activity_record_evidence" ADD CONSTRAINT "activity_record_evidence_activity_record_id_subsidiary_id_fkey" FOREIGN KEY ("activity_record_id", "subsidiary_id") REFERENCES "activity_records"("id", "subsidiary_id") ON DELETE CASCADE ON UPDATE NO ACTION;

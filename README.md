@@ -342,7 +342,7 @@ Run from the repo root (Turborepo fans out to each package):
 | `pnpm e2e` | Playwright E2E: demo flow, gates, RBAC, smoke (requires Supabase running) |
 | `pnpm e2e:ui` | The same suite in Playwright's UI mode, for debugging one spec |
 | `pnpm rls:probe` | Live RLS containment probes via PostgREST (requires Supabase running) |
-| `pnpm evidence:reclaim` | Report evidence blobs no `evidence` row points at (dry run; add `-- --apply` to delete, `-- --older-than=<hours>` to widen the grace window) |
+| `pnpm evidence:reclaim` | Report evidence blobs no `evidence` row points at, and `evidence` rows no record links to (dry run; add `-- --apply` to delete both — the rows first, so their objects go in the same run — and `-- --older-than=<hours>` to widen the grace window) |
 | `pnpm anomaly:probe` | Recompute the anomaly baseline (VAR §4) in SQL over every committed record: how many priors each was scored against, and whether the stored `anomalyFlag` still matches the pool beneath it (read-only; exits 1 on drift) |
 | `pnpm anomaly:recompute` | Repair verdicts that have gone stale as the pool moved beneath them (dry run; add `-- --apply`, and `-- --allow-remote=<host>` off loopback). Re-scores `draft`/`rejected`/`submitted`/`under_review` through the same shared rule the API uses, one `rescore` audit row each. **Two refusals:** a record that is itself `approved`/`locked`, and any record inside a **closed period** — both reported, neither touched. Exits 1 while drift remains |
 | `pnpm docker:up` / `docker:down` | Containerized web+api against the host's local Supabase (keys sourced from your real env files) |
@@ -396,7 +396,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `POST` | `/evidence` | Upload **one file for several records** of one subsidiary (multipart `file` + `recordIds`, a JSON array, ≤1,000). All or nothing: one record that cannot take it refuses the upload, naming every refused record; a record out of reach reads as not found | `data_entry` / `super_admin` |
 | `DELETE` | `/activity-records/:id/evidence/:evidenceId` | Take a file off one record (that record must be editable). The file stays on its other records; taking its **last** link deletes it | `data_entry` / `super_admin` |
 | `GET` | `/evidence/:id/url` | Short‑lived signed download URL for a private file (scoped by the file's subsidiary) | any |
-| `DELETE` | `/evidence/:id` | Delete a file from every record it backs — only while **each** of them is editable; a shared file backing a record that can no longer change is a 409 | `data_entry` / `super_admin` |
+| `DELETE` | `/evidence/:id` | Delete a file from every record it backs — only while **each** of them is editable; a shared file backing a record that can no longer change is a 409. API-only: the web removes a file from one record with the detach route above | `data_entry` / `super_admin` |
 | `GET` | `/period-locks` | List locked periods (tenant‑scoped; filters `?subsidiaryId=&year=`) | any |
 | `POST` | `/period-locks` | Close a reporting period (blocked while records await review) | `super_admin` |
 | `DELETE` | `/period-locks/:id` | Reopen a period (locked records revert to `approved`) | `super_admin` |

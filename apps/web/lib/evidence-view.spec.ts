@@ -54,7 +54,7 @@ function linked(over: Partial<EvidenceLinkedRecordDTO> = {}): EvidenceLinkedReco
   };
 }
 
-describe('attachBlockReason — the upload’s refusals, in the server’s order', () => {
+describe('attachBlockReason — the upload’s refusals, in the evidence API’s order', () => {
   it('lets an own draft or rejected record in an open period take a file', () => {
     expect(attachBlockReason(draft(), ME, [])).toBeNull();
     expect(attachBlockReason(draft({ status: 'rejected' }), ME, [])).toBeNull();
@@ -75,6 +75,8 @@ describe('attachBlockReason — the upload’s refusals, in the server’s order
     const theirs = draft({ createdBy: 'user-them' });
     expect(attachBlockReason(theirs, ME, [])).toBe('Entered by someone else.');
     expect(attachBlockReason(theirs, ADMIN, [])).toBeNull();
+    // Authorship before status, as the API checks it.
+    expect(attachBlockReason({ ...theirs, status: 'submitted' }, ME, [])).toBe('Entered by someone else.');
   });
 
   it('refuses a record in a locked period — its own period only', () => {
@@ -146,6 +148,16 @@ describe('the words around one file for several records', () => {
     expect(attachConfirmation('jan.pdf', rows.slice(0, 1)).lead).toBe(
       '“jan.pdf” will be attached to this record:',
     );
+  });
+
+  it('names EVERY record in the confirmation, however many', () => {
+    const many = Array.from({ length: 7 }, (_, i) => ({
+      category: 'Electricity' as const,
+      periodValue: `M${i + 1}`,
+      reportingYear: 2026,
+      locationName: null,
+    }));
+    expect(attachConfirmation('year.pdf', many).records).toHaveLength(7);
   });
 
   it('reports the outcome by how many records the file now backs', () => {

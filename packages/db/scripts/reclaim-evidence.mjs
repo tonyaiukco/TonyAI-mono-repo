@@ -44,6 +44,10 @@
  *    service-role key bypasses RLS, so a wrong query here reaches every
  *    tenant's invoices at once.
  *
+ * Since WP8 PR7 it also deletes evidence ROWS that no record links to (older
+ * than the same grace window), which the API leaves behind only on a crash or
+ * a race; their objects are then reclaimed in the same run.
+ *
  * It also reports the INVERSE orphan (a row whose object is missing), which
  * nothing else detects: those rows hand out signed URLs that 404 at download.
  * It never deletes them — a missing file is a fact worth investigating, not
@@ -112,6 +116,39 @@ async function main() {
   `;
   console.log(`Bucket holds ${objects} object(s); the evidence table has ${rows} row(s).`);
 
+  // A file no record links to. The API deletes a file when its last link goes,
+  // so one survives only when a process died between the two steps, or an
+  // upload raced a record delete. Nothing can link an existing file again and
+  // it answers no record's evidence gate — but its row still hands the file to
+  // everyone in the subsidiary, so it is a retention problem like an orphaned
+  // object. With --apply, rows older than the grace window are deleted HERE,
+  // first, so their objects are orphans the step below reclaims in this run.
+  const unlinked = await prisma.$queryRaw`
+    SELECT e.id, e.storage_path AS "storagePath"
+    FROM public.evidence e
+    WHERE e.created_at < now() - make_interval(hours => ${olderThanHours}::int)
+      AND NOT EXISTS (
+        SELECT 1 FROM public.activity_record_evidence l WHERE l.evidence_id = e.id
+      )
+    ORDER BY e.created_at
+  `;
+  if (unlinked.length > 0) {
+    console.log(`\n${unlinked.length} evidence row(s) back no activity record:`);
+    for (const u of unlinked.slice(0, 10)) console.log(`   ${u.id}  ${u.storagePath}`);
+    if (unlinked.length > 10) console.log(`   … and ${unlinked.length - 10} more`);
+    if (apply) {
+      // Re-checked in the statement itself: only a row that is STILL unlinked goes.
+      const gone = await prisma.$executeRaw`
+        DELETE FROM public.evidence e
+        WHERE e.id = ANY(${unlinked.map((u) => u.id)}::uuid[])
+          AND NOT EXISTS (
+            SELECT 1 FROM public.activity_record_evidence l WHERE l.evidence_id = e.id
+          )
+      `;
+      console.log(`   deleted ${gone} row(s); their objects are reclaimed below.`);
+    }
+  }
+
   // Exact-equality anti-join, not a key-pattern match — see the header.
   const orphans = await prisma.$queryRaw`
     SELECT o.name, o.created_at
@@ -133,28 +170,6 @@ async function main() {
       WHERE o.bucket_id = ${BUCKET} AND o.name = e.storage_path
     )
   `;
-
-  // A file no record links to: the API deletes it when its last link goes, so
-  // one survives only if the process died between the two steps. Nothing can
-  // link it again, and it answers no record's evidence gate. Reported, never
-  // deleted here — its object still exists and is not an orphan above.
-  const unlinked = await prisma.$queryRaw`
-    SELECT e.id, e.storage_path AS "storagePath"
-    FROM public.evidence e
-    WHERE NOT EXISTS (
-      SELECT 1 FROM public.activity_record_evidence l WHERE l.evidence_id = e.id
-    )
-  `;
-
-  if (unlinked.length > 0) {
-    console.log(
-      `\n!! ${unlinked.length} evidence row(s) back no activity record.\n` +
-        '   NOT deleted — check that no record should hold it, then delete the\n' +
-        '   row; its object then becomes an orphan this script reclaims:',
-    );
-    for (const u of unlinked.slice(0, 10)) console.log(`   ${u.id}  ${u.storagePath}`);
-    if (unlinked.length > 10) console.log(`   … and ${unlinked.length - 10} more`);
-  }
 
   if (missing.length > 0) {
     console.log(

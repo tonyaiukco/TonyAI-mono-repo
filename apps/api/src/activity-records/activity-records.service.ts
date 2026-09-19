@@ -51,6 +51,7 @@ import { storedUnit } from '../calculations/storable-unit';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { EvidenceService } from '../evidence/evidence.service';
+import { lockActivityRecordRow } from './row-lock';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
@@ -587,9 +588,10 @@ export class ActivityRecordsService {
    *
    * Extracted so the bulk importer (WP8) can offer a dry-run that PROVABLY
    * persists nothing. The obvious alternative, running the batch inside a
-   * rolled-back transaction, is not available here: this service opens no
-   * transaction at all (`create` writes through the default client and audits
-   * afterwards), and Prisma's interactive-transaction timeout would not survive
+   * rolled-back transaction, is not available here: `create` opens no
+   * transaction (it writes through the default client and audits afterwards;
+   * the only transaction in this service is `remove`'s row lock), and Prisma's
+   * interactive-transaction timeout would not survive
    * a thousand-row loop even if it did. A read-only seam is the mechanism the
    * code actually supports, and "no write happened" is then a claim a spec can
    * assert against the write spies rather than a claim about a rollback.
@@ -914,15 +916,26 @@ export class ActivityRecordsService {
     // file can back other records too (WP8 PR7), so only the files this record
     // was the last to hold are deleted, rows and blobs, once the links are
     // gone. Skip that and the invoices outlive every pointer to them, which is
-    // a retention problem, not wasted disk. Read the file ids first: after the
-    // delete, nothing records which files this record held.
-    const fileIds = await this.evidence.fileIdsFor(id);
-    await this.prisma.activityRecord.delete({ where: { id } });
-    await this.evidence.deleteUnlinked(fileIds);
-    await this.auditCreateUpdateDelete(user, 'delete', id, {
-      before: this.toAuditSnapshot(existing),
+    // a retention problem, not wasted disk.
+    //
+    // The file ids are read under a row lock on the record. An upload linking a
+    // file to it checks the link's foreign key with FOR KEY SHARE on this row,
+    // which FOR UPDATE blocks: the link either committed first and is read
+    // here, or fails after the delete. Without the lock an upload landing
+    // between the read and the delete left a file no record held — measured,
+    // 7 of 24 racing pairs.
+    const fileIds = await this.prisma.$transaction(async (tx) => {
+      await lockActivityRecordRow(tx, existing.id);
+      const held = await this.evidence.fileIdsFor(existing.id, tx);
+      await tx.activityRecord.delete({ where: { id: existing.id } });
+      return held;
     });
-    return { id, deleted: true };
+    const deletedFileIds = await this.evidence.deleteUnlinked(fileIds);
+    await this.auditCreateUpdateDelete(user, 'delete', existing.id, {
+      before: this.toAuditSnapshot(existing, fileIds.length),
+      evidence: { fileIds, deletedFileIds },
+    });
+    return { id: existing.id, deleted: true };
   }
 
   // --- Workflow transitions --------------------------------------------------
@@ -1187,6 +1200,10 @@ export class ActivityRecordsService {
     diff: {
       before?: ActivityRecordAuditSnapshot;
       after?: ActivityRecordAuditSnapshot;
+      /** A delete's evidence: every file the record held, and those it was the
+       *  last to hold, deleted with it. The record's row is the only audit row
+       *  a record delete writes, so this is the only trace of those files. */
+      evidence?: { fileIds: string[]; deletedFileIds: string[] };
     },
   ): Promise<void> {
     await this.audit.record(user, { action, entity: 'activity_record', entityId, diff });

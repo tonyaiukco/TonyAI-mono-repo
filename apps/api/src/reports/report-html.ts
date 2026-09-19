@@ -66,8 +66,11 @@ export function buildReportHtml(data: ReportData): string {
       <td class="num">${e.fileCount}</td><td>${e.fileNames
         .map((name, i) => {
           const others = e.alsoBacks[i] ?? 0;
+          const here = e.alsoBacksHere[i] ?? 0;
           return others > 0
-            ? `${esc(name)} <span class="note">(also backs ${others} other record${others === 1 ? '' : 's'})</span>`
+            ? `${esc(name)} <span class="note">(also backs ${others} other record${others === 1 ? '' : 's'}; ${
+                here === others ? 'all' : here
+              } in this report)</span>`
             : esc(name);
         })
         .join(', ')}</td></tr>`,
