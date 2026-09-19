@@ -138,6 +138,9 @@ export interface ReportEvidenceRow {
   periodValue: string;
   fileCount: number;
   fileNames: string[];
+  /** Index-aligned with `fileNames`: how many OTHER records in this report the
+   *  same file also backs (0 = this record alone). */
+  alsoBacks: number[];
 }
 
 /**
@@ -187,4 +190,7 @@ export interface ReportData {
   withdrawnTotals: ReportWithdrawnTotals;
   factors: ReportFactorRow[];
   evidenceSummary: ReportEvidenceRow[];
+  /** Distinct evidence files behind the ledger's records — a file shared by
+   *  several records counts once here, and once per record in `evidenceCount`. */
+  evidenceFileTotal: number;
 }

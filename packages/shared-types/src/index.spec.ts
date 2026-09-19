@@ -44,6 +44,7 @@ import {
   BULK_SUBMIT_ISSUE_CODES,
   BULK_SUBMIT_MAX_IDS,
   BULK_UPLOAD_MAX_ROWS,
+  EVIDENCE_MAX_LINKED_RECORDS,
 } from './index';
 
 /**
@@ -668,6 +669,12 @@ describe('bulk submit — the code list', () => {
     // cannot silently raise the other.
     expect(BULK_SUBMIT_MAX_IDS).toBe(1000);
     expect(BULK_UPLOAD_MAX_ROWS).toBe(1000);
+  });
+
+  it('lets one evidence file back as many records as the selection it is picked from', () => {
+    // The multi-record upload is made from the bulk-submit selection list; a
+    // lower cap would refuse a selection the list itself allowed.
+    expect(EVIDENCE_MAX_LINKED_RECORDS).toBe(BULK_SUBMIT_MAX_IDS);
   });
 });
 

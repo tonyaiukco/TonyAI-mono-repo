@@ -17,6 +17,11 @@ import { Button } from "@/components/ui/button";
 import { api, ApiError } from "@/lib/api";
 import { EVIDENCE_ALLOWED_MIME_TYPES, isEvidenceRequired } from "@/lib/types";
 import type { EvidenceDTO } from "@/lib/types";
+import {
+  detachSuccessMessage,
+  removeFileLabel,
+  sharedWithNote,
+} from "@/lib/evidence-view";
 import { cn } from "@/lib/utils";
 
 const ACCEPT = ".pdf,.jpg,.jpeg,.png,.xlsx,.csv";
@@ -94,10 +99,13 @@ export function EvidenceVault({
     }
   }
 
-  async function handleDelete(id: string) {
+  // Takes the file off THIS record. A file can back several records (WP8
+  // PR7); the API deletes it only when this was its last one, so a draft's
+  // vault can never pull an invoice out from under an approved record.
+  async function handleRemove(file: EvidenceDTO) {
     try {
-      await api.deleteEvidence(id);
-      toast.success("Evidence removed");
+      const result = await api.detachEvidence(recordId, file.id);
+      toast.success(detachSuccessMessage(result, file));
       await refresh();
     } catch (e) {
       toast.error((e as Error).message);
@@ -213,6 +221,8 @@ export function EvidenceVault({
           <ul className="space-y-2">
             {files.map((f) => {
               const Icon = iconFor(f.mimeType);
+              const shared = sharedWithNote(f, recordId);
+              const removeLabel = removeFileLabel(f);
               return (
                 <li
                   key={f.id}
@@ -222,6 +232,11 @@ export function EvidenceVault({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-foreground">{f.fileName}</p>
                     <p className="text-xs text-muted-foreground">{formatSize(f.sizeBytes)}</p>
+                    {shared && (
+                      <p className="text-xs text-muted-foreground" data-testid="evidence-shared-note">
+                        {shared}
+                      </p>
+                    )}
                   </div>
                   <Button
                     variant="ghost"
@@ -237,8 +252,9 @@ export function EvidenceVault({
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-red-600 hover:text-red-700"
-                      onClick={() => void handleDelete(f.id)}
-                      title="Remove"
+                      onClick={() => void handleRemove(f)}
+                      title={removeLabel}
+                      aria-label={`${removeLabel}: ${f.fileName}`}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>

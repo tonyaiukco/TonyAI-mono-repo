@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Ban,
   CheckCircle2,
   Clock,
   Loader2,
+  Paperclip,
   Send,
   XCircle,
 } from "lucide-react";
@@ -44,7 +45,20 @@ import {
   summariseSubmit,
   toggleSelected,
 } from "@/lib/bulk-submit-view";
-import { isSubmittable, WHOLE_COMPANY_ENTITY_LABEL } from "@/lib/types";
+import {
+  attachableRecords,
+  attachButtonLabel,
+  attachConfirmation,
+  attachErrorMessage,
+  attachSuccessMessage,
+  toggleAttach,
+} from "@/lib/evidence-view";
+import {
+  EVIDENCE_ALLOWED_MIME_TYPES,
+  EVIDENCE_MAX_SIZE_BYTES,
+  isSubmittable,
+  WHOLE_COMPANY_ENTITY_LABEL,
+} from "@/lib/types";
 import type {
   ActivityRecordDTO,
   ActivityRecordStatus,
@@ -132,6 +146,9 @@ export interface PreviousSubmissionsProps {
   locks: PeriodLockDTO[];
   /** Refetch after a submit: statuses on screen have changed. */
   onSubmitted: () => void;
+  /** Refetch after one file was attached to several records: their evidence
+   *  counts, and the open record's vault, have changed. */
+  onEvidenceAttached: () => void;
 }
 
 export function PreviousSubmissions({
@@ -141,11 +158,20 @@ export function PreviousSubmissions({
   user,
   locks,
   onSubmitted,
+  onEvidenceAttached,
 }: PreviousSubmissionsProps) {
   const [selected, setSelected] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [report, setReport] = useState<BulkSubmitReportDTO | null>(null);
+  // "Attach one file" mode (WP8 PR7): its own selection, because the records
+  // it is for — drafts waiting for their invoice — are exactly the ones the
+  // submit selection has to leave out.
+  const [attachMode, setAttachMode] = useState(false);
+  const [attachSelected, setAttachSelected] = useState<string[]>([]);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [attaching, setAttaching] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { selectableIds, ownSelectableIds, reasonById } = useMemo(
     () => selectableDrafts(records, user, locks),
@@ -165,6 +191,68 @@ export function PreviousSubmissions({
   const fromOthers = selectedFromOthers(records, live, user);
   const warning = othersWarning(fromOthers);
   const summary = report ? summariseSubmit(report) : null;
+
+  const attach = useMemo(
+    () => attachableRecords(records, user, locks),
+    [records, user, locks],
+  );
+  const liveAttach = attachSelected.filter((id) => attach.attachableIds.includes(id));
+  const attachRows = records.filter((r) => liveAttach.includes(r.id));
+
+  function startAttach() {
+    setSelected([]);
+    setReport(null);
+    setAttachSelected([]);
+    setAttachMode(true);
+  }
+
+  function stopAttach() {
+    setAttachMode(false);
+    setAttachSelected([]);
+    setPendingFile(null);
+  }
+
+  function toggleAttachRow(id: string) {
+    const next = toggleAttach(liveAttach, id);
+    if (next.refusedByCap) {
+      toast.info(capRefusedNotice());
+      return;
+    }
+    setAttachSelected(next.selected);
+  }
+
+  function chooseFile(file: File | undefined) {
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (!file) return;
+    // The API's checks, mirrored so a wrong file is refused before it uploads.
+    if (!(EVIDENCE_ALLOWED_MIME_TYPES as readonly string[]).includes(file.type)) {
+      toast.error(`${file.name}: unsupported type (PDF, JPG, PNG, XLSX, CSV only)`);
+      return;
+    }
+    if (file.size > EVIDENCE_MAX_SIZE_BYTES) {
+      toast.error(`${file.name}: exceeds the 10 MB limit`);
+      return;
+    }
+    setPendingFile(file);
+  }
+
+  async function attachFile() {
+    if (!pendingFile || attaching || liveAttach.length === 0) return;
+    setAttaching(true);
+    try {
+      const file = await api.uploadEvidenceForRecords(pendingFile, liveAttach);
+      toast.success(attachSuccessMessage(file));
+      stopAttach();
+      onEvidenceAttached();
+    } catch (e) {
+      // All or nothing: nothing was attached, and the sentence names each
+      // record that refused. The selection stays, so the user can untick them.
+      toast.error(attachErrorMessage(e));
+      setPendingFile(null);
+    } finally {
+      setAttaching(false);
+    }
+  }
 
   function toggle(id: string) {
     const next = toggleSelected(live, id);
@@ -217,7 +305,21 @@ export function PreviousSubmissions({
           <Clock className="h-4 w-4 text-muted-foreground" />
           Previous submissions
         </CardTitle>
-        {ownSelectableIds.length > 0 && (
+        {!attachMode && attach.attachableIds.length > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            // Wraps rather than overflowing: this column is narrow beside the
+            // form, and a one-line label pushed the page into sideways scroll.
+            className="h-auto min-h-7 w-fit max-w-full gap-1.5 whitespace-normal py-1 text-left text-xs"
+            data-testid="evidence-attach-start"
+            onClick={startAttach}
+          >
+            <Paperclip className="h-3.5 w-3.5" />
+            Attach one file to several records
+          </Button>
+        )}
+        {!attachMode && ownSelectableIds.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <Checkbox
               data-testid="drafts-select-all"
@@ -233,7 +335,49 @@ export function PreviousSubmissions({
         )}
       </CardHeader>
       <CardContent className="space-y-2">
-        {live.length > 0 && (
+        {attachMode && (
+          <div
+            // Stacked, not side by side: the column is narrow beside the form
+            // and the button names how many records it will cover.
+            className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2"
+            data-testid="evidence-attach-bar"
+          >
+            <span className="text-xs text-muted-foreground">
+              {liveAttach.length === 0
+                ? "Tick the records this one document evidences."
+                : `${liveAttach.length.toLocaleString("en-GB")} selected`}
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="ghost" onClick={stopAttach}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-auto min-h-8 max-w-full whitespace-normal py-1 text-left"
+                data-testid="evidence-attach-choose"
+                disabled={liveAttach.length === 0 || attaching}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {attaching ? (
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Paperclip className="mr-2 h-3.5 w-3.5" />
+                )}
+                {attachButtonLabel(liveAttach.length)}
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                data-testid="evidence-attach-input"
+                accept=".pdf,.jpg,.jpeg,.png,.xlsx,.csv"
+                className="hidden"
+                onChange={(e) => chooseFile(e.target.files?.[0])}
+              />
+            </div>
+          </div>
+        )}
+
+        {!attachMode && live.length > 0 && (
           <div
             className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2"
             data-testid="drafts-submit-bar"
@@ -321,8 +465,12 @@ export function PreviousSubmissions({
             {records.map((r) => {
               const badge = statusBadge[r.status];
               const Icon = badge.icon;
-              const selectable = selectableIds.includes(r.id);
-              const reason = reasonById[r.id];
+              const selectable = attachMode
+                ? attach.attachableIds.includes(r.id)
+                : selectableIds.includes(r.id);
+              const checked = attachMode ? liveAttach.includes(r.id) : live.includes(r.id);
+              const onToggle = attachMode ? toggleAttachRow : toggle;
+              const reason = attachMode ? attach.reasonById[r.id] : reasonById[r.id];
               return (
                 <div key={r.id} className="flex items-start gap-2">
                   {/* A SIBLING of the row button, never a child. Radix renders
@@ -330,12 +478,12 @@ export function PreviousSubmissions({
                       is invalid markup that would also fold this control's
                       label into the row's accessible name — which two shipped
                       specs locate the row by. */}
-                  {showSelection ? (
+                  {showSelection || attachMode ? (
                     selectable ? (
                       <Checkbox
                         className="mt-3.5 shrink-0"
-                        checked={live.includes(r.id)}
-                        onCheckedChange={() => toggle(r.id)}
+                        checked={checked}
+                        onCheckedChange={() => onToggle(r.id)}
                         // The reporting ENTITY too, for the reason spelled out
                         // forty lines below: uniqueness includes `location_id`,
                         // so a whole-subsidiary row and a site row for the same
@@ -343,7 +491,7 @@ export function PreviousSubmissions({
                         // it their checkboxes carry byte-identical accessible
                         // names — indistinguishable to a screen reader, and a
                         // strict-mode collision for anything locating them.
-                        aria-label={`Select ${r.periodValue} ${r.reportingYear} ${r.category}, ${
+                        aria-label={`${attachMode ? "Attach the file to" : "Select"} ${r.periodValue} ${r.reportingYear} ${r.category}, ${
                           r.locationId ? (r.locationName ?? "A site") : WHOLE_COMPANY_ENTITY_LABEL
                         }`}
                       />
@@ -443,6 +591,52 @@ export function PreviousSubmissions({
           either way, so there was never a duplicate-text hazard. The real
           difference is that this skips the `submitConfirmation(…)` CALL,
           where the panel's JSX children are evaluated on every render. */}
+      {pendingFile && (
+        <Dialog open onOpenChange={(open) => !open && setPendingFile(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Attach this file?</DialogTitle>
+              <DialogDescription asChild>
+                <div className="space-y-2 text-sm text-muted-foreground">
+                  {(() => {
+                    const { lead, records: named } = attachConfirmation(
+                      pendingFile.name,
+                      attachRows,
+                    );
+                    return (
+                      <>
+                        <p>{lead}</p>
+                        <ul
+                          className="max-h-48 list-disc space-y-0.5 overflow-y-auto pl-5"
+                          data-testid="evidence-attach-records"
+                        >
+                          {named.map((label, i) => (
+                            <li key={attachRows[i].id}>{label}</li>
+                          ))}
+                        </ul>
+                      </>
+                    );
+                  })()}
+                </div>
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setPendingFile(null)}>
+                Cancel
+              </Button>
+              <Button
+                data-testid="evidence-attach-confirm"
+                onClick={() => void attachFile()}
+                disabled={attaching}
+              >
+                {attaching && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                Attach
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
       {confirming && (
         <Dialog open onOpenChange={setConfirming}>
           <DialogContent>

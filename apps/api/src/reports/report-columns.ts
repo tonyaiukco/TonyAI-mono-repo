@@ -407,9 +407,11 @@ export const DISCLOSURE_COLUMNS = [
  * Aggregatable body columns that are MARKED on a withdrawn row but not restated
  * anywhere.
  *
- * `evidence_files` and `anomaly_flag` are summable — "how many invoices back
- * this inventory", "how many anomalies are in this file" — so leaving their
- * real values in place would inflate both answers, and they carry the marker.
+ * `evidence_files` and `anomaly_flag` are summable — "how many file links
+ * back this inventory" (a file shared by several records counts once per
+ * record; the PDF's evidence summary gives the distinct count), "how many
+ * anomalies are in this file" — so leaving their real values in place would
+ * inflate both answers, and they carry the marker.
  * But no `voided_*` column receives them, so the values are simply not
  * disclosed. That asymmetry is the CONTRACT AS SHIPPED, not an oversight of
  * this refactor: adding the two missing disclosures would change a filed

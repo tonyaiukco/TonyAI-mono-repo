@@ -59,7 +59,7 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     varianceReason: null,
     // Prisma `_count` from the matrix query's evidence include. Default 1
     // ("has evidence") so committed records satisfy the FR §2.2 evidence rule.
-    _count: { evidence: 1 },
+    _count: { evidenceLinks: 1 },
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -145,7 +145,7 @@ describe('EmissionsService.completeness (drill-down)', () => {
       periodValue,
       locationId,
       status: ActivityRecordStatus.approved,
-      _count: { evidence: 1 },
+      _count: { evidenceLinks: 1 },
       ...over,
     } as Partial<ActivityRecord>);
 
@@ -886,11 +886,11 @@ describe('EmissionsService.trackingMatrix', () => {
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary({ id: 'sub-1' })]);
     prisma.activityRecord.findMany.mockResolvedValue([
       // Approved Electricity (evidence-required) with NO evidence -> incomplete.
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', status: ActivityRecordStatus.approved, calculation: { tCo2e: 12, factorId: 'f-1' }, _count: { evidence: 0 } } as Partial<ActivityRecord>),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Electricity', status: ActivityRecordStatus.approved, calculation: { tCo2e: 12, factorId: 'f-1' }, _count: { evidenceLinks: 0 } } as Partial<ActivityRecord>),
       // Approved Purchased Goods (NOT evidence-required) with no evidence ->
       // still complete. Water used to play this role and no longer can: it is
       // evidence-required as of WP17, and it can no longer carry a tCO₂e at all.
-      makeRecord({ subsidiaryId: 'sub-1', category: 'Purchased Goods', scope: 3, status: ActivityRecordStatus.approved, calculation: { tCo2e: 4, factorId: 'f-1' }, _count: { evidence: 0 } } as Partial<ActivityRecord>),
+      makeRecord({ subsidiaryId: 'sub-1', category: 'Purchased Goods', scope: 3, status: ActivityRecordStatus.approved, calculation: { tCo2e: 4, factorId: 'f-1' }, _count: { evidenceLinks: 0 } } as Partial<ActivityRecord>),
     ]);
 
     const m = await service.trackingMatrix(user, {});
@@ -920,7 +920,7 @@ describe('EmissionsService.trackingMatrix', () => {
           reasonCode: 'no_emission_factor',
           reason: 'No emission factor is available for "Water"',
         },
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
       } as Partial<ActivityRecord>),
     ]);
 
@@ -962,7 +962,7 @@ describe('EmissionsService.trackingMatrix', () => {
         reportingPeriod: 'monthly',
         periodValue,
         locationId,
-        _count: { evidence: 1 },
+        _count: { evidenceLinks: 1 },
         ...over,
       } as Partial<ActivityRecord>);
 
@@ -1120,7 +1120,7 @@ describe('EmissionsService.trackingMatrix', () => {
           // it, a cell could report "0 covered, 1 awaiting review".
           invoice('loc-1', 'January', {
             status: ActivityRecordStatus.submitted,
-            _count: { evidence: 0 },
+            _count: { evidenceLinks: 0 },
           } as Partial<ActivityRecord>),
           // Submitted at company level: closes no site slot either.
           invoice(null as unknown as string, 'February', {
@@ -1207,7 +1207,7 @@ describe('EmissionsService.trackingMatrix', () => {
           status: ActivityRecordStatus.approved,
           reportingPeriod: 'monthly',
           periodValue: 'January',
-          _count: { evidence: 0 },
+          _count: { evidenceLinks: 0 },
           ...over,
         } as Partial<ActivityRecord>);
 
@@ -1389,7 +1389,7 @@ describe('EmissionsService.trackingMatrix', () => {
               category: 'Electricity',
               scope: 2,
               status: ActivityRecordStatus.submitted,
-              _count: { evidence: 1 },
+              _count: { evidenceLinks: 1 },
             } as Partial<ActivityRecord>),
           ],
           'Electricity',
@@ -1420,7 +1420,7 @@ describe('EmissionsService.trackingMatrix', () => {
       const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([
-        invoice('loc-1', 'January', { _count: { evidence: 0 } } as Partial<ActivityRecord>),
+        invoice('loc-1', 'January', { _count: { evidenceLinks: 0 } } as Partial<ActivityRecord>),
       ]);
 
       const m = await service.trackingMatrix(user, { year: 2024 });
@@ -1543,7 +1543,7 @@ describe('EmissionsService.trackingMatrix', () => {
       const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
       prisma.subsidiary.findMany.mockResolvedValue([LOCATION_SUB()]);
       prisma.activityRecord.findMany.mockResolvedValue([
-        invoice('loc-1', 'January', { _count: { evidence: 0 } } as Partial<ActivityRecord>),
+        invoice('loc-1', 'January', { _count: { evidenceLinks: 0 } } as Partial<ActivityRecord>),
       ]);
 
       const cov = (await service.trackingMatrix(user, { year: 2024 })).rows[0].cells.find(

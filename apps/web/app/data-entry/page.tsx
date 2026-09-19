@@ -317,6 +317,11 @@ function DataEntryPageInner() {
    * identity every render would refetch the vault forever. Patching the one row
    * rather than refetching the list keeps it to no requests at all.
    */
+  // Bumped when one file was attached to several records from the list, so the
+  // open record's vault — keyed on it — refetches the file it may just have
+  // gained.
+  const [evidenceVersion, setEvidenceVersion] = useState(0);
+
   const handleEvidenceCountChange = useCallback(
     (count: number) => {
       setRecords((rows) =>
@@ -1249,7 +1254,7 @@ function DataEntryPageInner() {
                   before the record can be submitted (FR §4.1). */}
               {editingId && (
                 <EvidenceVault
-                  key={editingId}
+                  key={`${editingId}:${evidenceVersion}`}
                   recordId={editingId}
                   category={category}
                   onCountChange={handleEvidenceCountChange}
@@ -1389,6 +1394,10 @@ function DataEntryPageInner() {
                 user={user}
                 locks={locks}
                 onSubmitted={() => void refreshRecords(subsidiaryId)}
+                onEvidenceAttached={() => {
+                  void refreshRecords(subsidiaryId);
+                  setEvidenceVersion((v) => v + 1);
+                }}
               />
             </div>
           </div>

@@ -66,7 +66,7 @@ describe('awaitingEvidenceNote', () => {
   });
   it('names how many wait for a file, and where to attach it', () => {
     expect(awaitingEvidenceNote({ draftCount: 3, submittableDraftCount: 1 })).toBe(
-      '2 drafts need an evidence file first — open each under Previous submissions to attach one.',
+      '2 drafts need an evidence file first — under Previous submissions, attach each invoice to the drafts it evidences; one file can cover several.',
     );
     expect(awaitingEvidenceNote({ draftCount: 1, submittableDraftCount: 0 })).toMatch(/^1 draft needs/);
   });

@@ -4,21 +4,26 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * `Evidence.activityRecord` is `onDelete: Cascade` (schema.prisma), so whenever
- * an activity record goes, Postgres removes the evidence ROWS on its own —
- * below the application, where no code can see it and therefore no code can
- * delete the corresponding objects. Storage is a different system; nothing ever
- * reconciled the two. Measured on a local stack: 1501 objects in the `evidence`
- * bucket against 102 rows.
+ * Before WP8 PR7 an evidence row hung off one activity record with
+ * `onDelete: Cascade` (schema.prisma), so whenever a record went, Postgres
+ * removed the evidence ROWS on its own — below the application, where no code
+ * could see it and therefore no code deleted the corresponding objects.
+ * Storage is a different system; nothing ever reconciled the two. Measured on
+ * a local stack: 1501 objects in the `evidence` bucket against 102 rows. Since
+ * PR7 a file belongs to a subsidiary and reaches records through
+ * `activity_record_evidence`; the cascade takes LINKS, and the API deletes a
+ * file left with no link — rows first, then the object, so a storage failure
+ * there leaves exactly the kind of object this script removes.
  *
  * These files are utility invoices. Commercial and personal data outliving
  * every pointer to it is a retention problem (KVKK/GDPR), not wasted disk —
  * the whole set weighed 188 kB.
  *
- * The API now deletes blobs on both paths it can see (`DELETE /evidence/:id`
- * and `DELETE /activity-records/:id`). This script is for the paths it cannot:
- * the FK cascade, `pnpm db:reset` (which drops the schema and leaves the bucket
- * untouched), and any future direct-SQL surgery.
+ * The API deletes blobs on every path it can see (`DELETE /evidence/:id`, a
+ * detach that takes a file's last link, `DELETE /activity-records/:id`). This
+ * script is for the paths it cannot: a subsidiary cascade, a storage failure
+ * after the row went, `pnpm db:reset` (which drops the schema and leaves the
+ * bucket untouched), and any future direct-SQL surgery.
  *
  * SAFETY
  * ------
@@ -31,10 +36,10 @@
  *    legitimately has no row for a moment; without this window a run against a
  *    live API would delete it;
  *  - orphan-hood is decided by exact `storage_path` equality with the table,
- *    never by parsing the key. There are two key schemes under the same
- *    `<recordId>/` prefix — the API writes `<uuid>-<name>`, the seed writes
- *    `seed-evidence.csv` — and a pattern-matching filter would treat them
- *    inconsistently;
+ *    never by parsing the key. There are three key schemes — the API writes
+ *    `<subsidiaryId>/<uuid>-<name>` (before PR7 `<recordId>/<uuid>-<name>`),
+ *    the seed writes `<recordId>/seed-evidence.csv` — and a pattern-matching
+ *    filter would treat them inconsistently;
  *  - non-local targets are refused unless `--allow-remote` is passed. The
  *    service-role key bypasses RLS, so a wrong query here reaches every
  *    tenant's invoices at once.
@@ -128,6 +133,28 @@ async function main() {
       WHERE o.bucket_id = ${BUCKET} AND o.name = e.storage_path
     )
   `;
+
+  // A file no record links to: the API deletes it when its last link goes, so
+  // one survives only if the process died between the two steps. Nothing can
+  // link it again, and it answers no record's evidence gate. Reported, never
+  // deleted here — its object still exists and is not an orphan above.
+  const unlinked = await prisma.$queryRaw`
+    SELECT e.id, e.storage_path AS "storagePath"
+    FROM public.evidence e
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.activity_record_evidence l WHERE l.evidence_id = e.id
+    )
+  `;
+
+  if (unlinked.length > 0) {
+    console.log(
+      `\n!! ${unlinked.length} evidence row(s) back no activity record.\n` +
+        '   NOT deleted — check that no record should hold it, then delete the\n' +
+        '   row; its object then becomes an orphan this script reclaims:',
+    );
+    for (const u of unlinked.slice(0, 10)) console.log(`   ${u.id}  ${u.storagePath}`);
+    if (unlinked.length > 10) console.log(`   … and ${unlinked.length - 10} more`);
+  }
 
   if (missing.length > 0) {
     console.log(

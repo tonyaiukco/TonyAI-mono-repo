@@ -216,7 +216,10 @@ export class ReportsService implements OnModuleDestroy {
     // the one every other read path already uses (`ActivityRecordsService.toDTO`)
     // rather than a second way of resolving the same name.
     const include = {
-      evidence: { select: { fileName: true } },
+      evidenceLinks: {
+        select: { evidence: { select: { id: true, fileName: true } } },
+        orderBy: [{ linkedAt: 'asc' }, { evidenceId: 'asc' }],
+      },
       location: { select: { name: true } },
     } satisfies Prisma.ActivityRecordInclude;
     const orderBy: Prisma.ActivityRecordOrderByWithRelationInput[] = [
@@ -273,7 +276,7 @@ export class ReportsService implements OnModuleDestroy {
     const toRowBase = (r: LoadedRecord): Omit<ReportLedgerRow, 'status'> => {
       const calc = (r.calculation ?? {}) as Snapshot;
       const withRelations = r as typeof r & {
-        evidence?: { fileName: string }[];
+        evidenceLinks?: { evidence: { id: string; fileName: string } }[];
         location?: { name: string } | null;
       };
       return {
@@ -292,7 +295,10 @@ export class ReportsService implements OnModuleDestroy {
         // type now prevents: a record with no factor has no figure, and a
         // report that prints 0 for it asserts a measurement nobody made.
         tCo2e: Number.isFinite(calc.tCo2e) ? (calc.tCo2e as number) : null,
-        evidenceCount: withRelations.evidence?.length ?? 0,
+        // Files backing THIS record. A file shared by several records counts
+        // under each of them — per row that is the truth; the distinct total
+        // is `evidenceFileTotal`, below.
+        evidenceCount: withRelations.evidenceLinks?.length ?? 0,
         anomalyFlag: r.anomalyFlag,
         anomalyEvaluated: isAnomalyEvaluated(r),
         anomalyBaselinePriorCount: r.anomalyBaselinePriorCount,
@@ -349,16 +355,30 @@ export class ReportsService implements OnModuleDestroy {
       }
     }
 
+    // One file can back several records (WP8 PR7), so the appendix says, per
+    // file, how many OTHER records in this report it also backs — the reader
+    // judging whether one invoice honestly covers them needs to see it — and
+    // the section counts distinct files once.
+    const filesOf = (r: LoadedRecord) =>
+      ((r as typeof r & { evidenceLinks?: { evidence: { id: string; fileName: string } }[] })
+        .evidenceLinks ?? []).map((l) => l.evidence);
+    const recordsPerFile = new Map<string, number>();
+    for (const r of records) {
+      for (const f of filesOf(r)) {
+        recordsPerFile.set(f.id, (recordsPerFile.get(f.id) ?? 0) + 1);
+      }
+    }
     const evidenceSummary: ReportEvidenceRow[] = q.includeEvidenceSummary
       ? records
           .map((r) => {
-            const withEvidence = r as typeof r & { evidence?: { fileName: string }[] };
+            const files = filesOf(r);
             return {
               subsidiaryName: nameById.get(r.subsidiaryId) ?? r.subsidiaryId,
               category: r.category,
               periodValue: r.periodValue,
-              fileCount: withEvidence.evidence?.length ?? 0,
-              fileNames: (withEvidence.evidence ?? []).map((e) => e.fileName),
+              fileCount: files.length,
+              fileNames: files.map((f) => f.fileName),
+              alsoBacks: files.map((f) => (recordsPerFile.get(f.id) ?? 1) - 1),
             };
           })
           .filter((e) => e.fileCount > 0)
@@ -383,6 +403,7 @@ export class ReportsService implements OnModuleDestroy {
       withdrawnTotals,
       factors: [...factorById.values()],
       evidenceSummary,
+      evidenceFileTotal: recordsPerFile.size,
     };
   }
 

@@ -82,7 +82,7 @@ export function evidenceReadyWhere() {
   return {
     OR: [
       { category: { notIn: [...EVIDENCE_REQUIRED_CATEGORIES] as string[] } },
-      { evidence: { some: {} } },
+      { evidenceLinks: { some: {} } },
     ],
   };
 }
@@ -559,7 +559,7 @@ export class ActivityRecordsService {
       },
       orderBy: { createdAt: 'desc' },
       include: {
-        _count: { select: { evidence: true } },
+        _count: { select: { evidenceLinks: true } },
         location: { select: { name: true } },
       },
     });
@@ -567,13 +567,13 @@ export class ActivityRecordsService {
     // one per row: `created_by`, `reviewed_by` and `voided_by` have no FK to
     // `profiles`, so there is no `include` that could do this.
     const actors = await this.actorsFor(user, rows);
-    return rows.map((r) => this.toDTO(r, r._count.evidence, actors));
+    return rows.map((r) => this.toDTO(r, r._count.evidenceLinks, actors));
   }
 
   async get(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
     const [evidenceCount, actors] = await Promise.all([
-      this.prisma.evidence.count({ where: { activityRecordId: id } }),
+      this.prisma.activityRecordEvidence.count({ where: { activityRecordId: id } }),
       this.actorsFor(user, [record]),
     ]);
     return this.toDTO(record, evidenceCount, actors);
@@ -864,7 +864,7 @@ export class ActivityRecordsService {
     if (dto.varianceReason !== undefined) data.varianceReason = dto.varianceReason;
 
     let updated: ActivityRecord & {
-      _count: { evidence: number };
+      _count: { evidenceLinks: number };
       location: { name: string } | null;
     };
     try {
@@ -872,7 +872,7 @@ export class ActivityRecordsService {
         where: { id },
         data,
         include: {
-          _count: { select: { evidence: true } },
+          _count: { select: { evidenceLinks: true } },
           location: { select: { name: true } },
         },
       });
@@ -888,11 +888,11 @@ export class ActivityRecordsService {
     }
     await this.auditCreateUpdateDelete(user, 'update', id, {
       before: this.toAuditSnapshot(existing),
-      after: this.toAuditSnapshot(updated, updated._count.evidence),
+      after: this.toAuditSnapshot(updated, updated._count.evidenceLinks),
     });
     return this.toDTO(
       updated,
-      updated._count.evidence,
+      updated._count.evidenceLinks,
       await this.actorsFor(user, [updated]),
     );
   }
@@ -910,14 +910,15 @@ export class ActivityRecordsService {
       existing.reportingPeriod,
       existing.periodValue,
     );
-    // Reclaim the evidence FILES first. The rows go by themselves — the FK is
-    // ON DELETE CASCADE — but that happens inside Postgres, so this is the last
-    // moment any code can still see what the blobs are. Skip it and the
-    // invoices outlive every pointer to them, which is a retention problem, not
-    // wasted disk. Before the row delete on purpose: if storage fails, nothing
-    // has been destroyed yet.
-    await this.evidence.removeAllForRecord(id);
+    // The record's evidence LINKS go by themselves — ON DELETE CASCADE — but a
+    // file can back other records too (WP8 PR7), so only the files this record
+    // was the last to hold are deleted, rows and blobs, once the links are
+    // gone. Skip that and the invoices outlive every pointer to them, which is
+    // a retention problem, not wasted disk. Read the file ids first: after the
+    // delete, nothing records which files this record held.
+    const fileIds = await this.evidence.fileIdsFor(id);
     await this.prisma.activityRecord.delete({ where: { id } });
+    await this.evidence.deleteUnlinked(fileIds);
     await this.auditCreateUpdateDelete(user, 'delete', id, {
       before: this.toAuditSnapshot(existing),
     });
@@ -963,7 +964,7 @@ export class ActivityRecordsService {
     // shared with the checkbox the client offers, because it has already been
     // copied wrongly once.
     const evidenceCount = isEvidenceRequired(record.category)
-      ? await this.prisma.evidence.count({ where: { activityRecordId: id } })
+      ? await this.prisma.activityRecordEvidence.count({ where: { activityRecordId: id } })
       : 0;
     if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
       throw new EvidenceRequiredError(record.category);
@@ -1262,7 +1263,7 @@ export class ActivityRecordsService {
           : {}),
       },
       include: {
-        _count: { select: { evidence: true } },
+        _count: { select: { evidenceLinks: true } },
         location: { select: { name: true } },
       },
     });
@@ -1288,7 +1289,7 @@ export class ActivityRecordsService {
     });
     return this.toDTO(
       updated,
-      updated._count.evidence,
+      updated._count.evidenceLinks,
       await this.actorsFor(user, [updated]),
     );
   }

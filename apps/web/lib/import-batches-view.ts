@@ -55,14 +55,17 @@ export function importBatchesErrorMessage(error: unknown): string {
 
 /**
  * Drafts the batch submit will not send because they wait for an evidence
- * file, or `null` when none do. The remedy is the vault on each record.
+ * file, or `null` when none do. The remedy is on Previous submissions: one
+ * record's vault, or one file attached to several of them (WP8 PR7).
  */
 export function awaitingEvidenceNote(
   batch: Pick<ImportBatchDTO, 'draftCount' | 'submittableDraftCount'>,
 ): string | null {
   const waiting = batch.draftCount - batch.submittableDraftCount;
   if (waiting <= 0) return null;
-  return `${formatNumber(waiting)} ${waiting === 1 ? 'draft needs' : 'drafts need'} an evidence file first — open ${waiting === 1 ? 'it' : 'each'} under Previous submissions to attach one.`;
+  return waiting === 1
+    ? '1 draft needs an evidence file first — open it under Previous submissions to attach one.'
+    : `${formatNumber(waiting)} drafts need an evidence file first — under Previous submissions, attach each invoice to the drafts it evidences; one file can cover several.`;
 }
 
 /** Why records a batch submit sent were not moved: `Needs an evidence file · 2`, one line per reason. */

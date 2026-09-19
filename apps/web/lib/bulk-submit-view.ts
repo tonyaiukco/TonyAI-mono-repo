@@ -107,7 +107,7 @@ export function eligibleForSubmit(
     blockedReason =
       needingEvidence === 1
         ? 'The imported record needs an evidence file before it can be submitted, and an import cannot attach one. Open it below to add its invoice.'
-        : `All ${formatNumber(needingEvidence)} imported records need an evidence file before they can be submitted, and an import cannot attach one. Open each record below to add its invoice.`;
+        : `All ${formatNumber(needingEvidence)} imported records need an evidence file before they can be submitted, and an import cannot attach one. Under Previous submissions, attach each invoice to the records it evidences — one file can cover several.`;
   }
 
   return { recordIds, needingEvidence, overCap, blockedReason };

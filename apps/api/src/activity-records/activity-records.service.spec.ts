@@ -62,7 +62,7 @@ function createPrismaMock() {
     location: {
       findUnique: vi.fn(),
     },
-    evidence: {
+    activityRecordEvidence: {
       // Default: records have evidence, so evidence-required submits pass.
       count: vi.fn().mockResolvedValue(1),
     },
@@ -160,7 +160,7 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     varianceReason: null,
     submittedAt: null,
     // Prisma `_count` shape returned when the service includes evidence counts.
-    _count: { evidence: 0 },
+    _count: { evidenceLinks: 0 },
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -224,12 +224,15 @@ function consultant(overrides: Partial<RequestUser> = {}): RequestUser {
 }
 
 /**
- * Evidence FILES are reclaimed by the evidence service on the way out; the rows
- * go by themselves through the FK cascade. Only `removeAllForRecord` is used
- * from here.
+ * A record's evidence LINKS go by themselves through the FK cascade; the files
+ * it was the last to hold are deleted by the evidence service afterwards. Only
+ * `fileIdsFor` and `deleteUnlinked` are used from here.
  */
 function createEvidenceMock() {
-  return { removeAllForRecord: vi.fn().mockResolvedValue(0) };
+  return {
+    fileIdsFor: vi.fn().mockResolvedValue([]),
+    deleteUnlinked: vi.fn().mockResolvedValue([]),
+  };
 }
 
 function build(scope = 2) {
@@ -512,7 +515,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
     });
     prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
       ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
-      _count: { evidence: 0 },
+      _count: { evidenceLinks: 0 },
       location: { name: 'Ankara Plant' },
     }));
 
@@ -556,7 +559,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
       prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
         ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
         location: { name: 'Ankara Plant' },
       }));
 
@@ -581,7 +584,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt('loc-1'));
       prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
         ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: null, ...data }),
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
         location: null,
       }));
 
@@ -605,7 +608,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt('loc-1'));
       prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
         ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
         location: { name: 'Ankara Plant' },
       }));
 
@@ -692,7 +695,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
       prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
         ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
         location: { name: 'Ankara Plant' },
       }));
 
@@ -748,7 +751,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
       prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
         ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
         location: { name: 'Ankara Plant' },
       }));
 
@@ -799,17 +802,17 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
 });
 
 /**
- * Deleting a record cascades its `evidence` ROWS away inside Postgres, where no
- * application code sees them go — so nothing ever deleted the FILES. Storage is
- * a separate system; nothing reconciled the two. Measured on the local stack:
- * 1501 objects in the bucket against 102 rows. They are utility invoices, so
- * files outliving every pointer to them is a retention problem (KVKK/GDPR).
+ * Deleting a record cascades its evidence LINKS away inside Postgres, where no
+ * application code sees them go. Before links existed that stranded the FILES:
+ * storage is a separate system, and the local stack once held 1501 objects
+ * against 102 rows. They are utility invoices, so files outliving every
+ * pointer to them is a retention problem (KVKK/GDPR).
  *
- * Note what was NOT covered before this: every existing `remove` spec asserts a
- * refusal, so the successful delete path had no unit test at all — which is why
- * adding a whole new constructor dependency left the suite green.
+ * Since WP8 PR7 a file can back several records, so a record delete must not
+ * take a file another record still holds: the files are read before the
+ * delete and only those left with no link are deleted after it.
  */
-describe('ActivityRecordsService — deleting a record reclaims its evidence files', () => {
+describe('ActivityRecordsService — deleting a record reclaims the files only it held', () => {
   function deletableRecord(prisma: PrismaMock) {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({
@@ -821,33 +824,32 @@ describe('ActivityRecordsService — deleting a record reclaims its evidence fil
     );
   }
 
-  it('reclaims the blobs, and does it BEFORE the row is gone', async () => {
+  it('reads the record’s files before the delete and sweeps the unlinked ones after it', async () => {
     const { prisma, evidence, service } = build();
     deletableRecord(prisma);
-    evidence.removeAllForRecord.mockResolvedValue(2);
+    evidence.fileIdsFor.mockResolvedValue(['ev-1', 'ev-2']);
 
     await service.remove(dataEntry(), 'rec-del');
 
-    expect(evidence.removeAllForRecord).toHaveBeenCalledWith('rec-del');
-    // Order is the whole point: the storage paths are only knowable while the
-    // rows still exist, and a storage failure must abort before anything is
-    // destroyed rather than after.
+    expect(evidence.fileIdsFor).toHaveBeenCalledWith('rec-del');
+    expect(evidence.deleteUnlinked).toHaveBeenCalledWith(['ev-1', 'ev-2']);
+    // Order is the whole point: which files the record held is only knowable
+    // while its links exist, and whether a file is now unlinked only after
+    // they are gone.
     const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
       fn.mock.invocationCallOrder[0];
-    expect(order(evidence.removeAllForRecord)).toBeLessThan(
-      order(prisma.activityRecord.delete),
-    );
+    expect(order(evidence.fileIdsFor)).toBeLessThan(order(prisma.activityRecord.delete));
+    expect(order(prisma.activityRecord.delete)).toBeLessThan(order(evidence.deleteUnlinked));
   });
 
-  it('does not delete the record when storage refuses', async () => {
-    // Otherwise the failure mode is the exact one being fixed: row gone, file
-    // stranded, and now nothing left that even knows the file exists.
+  it('touches no file when reading them fails — the record is not deleted either', async () => {
     const { prisma, evidence, service } = build();
     deletableRecord(prisma);
-    evidence.removeAllForRecord.mockRejectedValue(new Error('storage down'));
+    evidence.fileIdsFor.mockRejectedValue(new Error('db down'));
 
-    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toThrow(/storage down/);
+    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toThrow(/db down/);
     expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
   });
 
   it('is not attempted for a record that is refused (gate runs first)', async () => {
@@ -859,7 +861,8 @@ describe('ActivityRecordsService — deleting a record reclaims its evidence fil
     await expect(service.remove(dataEntry(), 'rec-a')).rejects.toBeInstanceOf(
       BadRequestException,
     );
-    expect(evidence.removeAllForRecord).not.toHaveBeenCalled();
+    expect(evidence.fileIdsFor).not.toHaveBeenCalled();
+    expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
     expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
   });
 });
@@ -1553,7 +1556,7 @@ describe('ActivityRecordsService — transition rules', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-e', category: 'Electricity', status: ActivityRecordStatus.draft }),
     );
-    prisma.evidence.count.mockResolvedValue(0); // no evidence attached
+    prisma.activityRecordEvidence.count.mockResolvedValue(0); // no evidence attached
 
     // The sentence is user-facing copy (the web mirrors it); the bulk submit
     // tells this refusal from the status one by its CLASS, asserted below.
@@ -2441,8 +2444,8 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     const { prisma, service } = build();
     prisma.profile.findMany.mockResolvedValue(PROFILES);
     prisma.activityRecord.findMany.mockResolvedValue([
-      { ...makeRecord({ id: 'r1', reviewedBy: 'user-admin' }), _count: { evidence: 1 } },
-      { ...makeRecord({ id: 'r2', reviewedBy: 'user-admin' }), _count: { evidence: 0 } },
+      { ...makeRecord({ id: 'r1', reviewedBy: 'user-admin' }), _count: { evidenceLinks: 1 } },
+      { ...makeRecord({ id: 'r2', reviewedBy: 'user-admin' }), _count: { evidenceLinks: 0 } },
     ]);
 
     // A consultant, so neither actor is the caller and both need looking up.
@@ -2503,11 +2506,11 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     );
     prisma.activityRecord.findUnique.mockResolvedValue({
       ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1' }),
-      _count: { evidence: 0 },
+      _count: { evidenceLinks: 0 },
     });
     prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
       ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1', ...data }),
-      _count: { evidence: 0 },
+      _count: { evidenceLinks: 0 },
     }));
 
     // Both screens splice a write response straight into state built from a
@@ -2519,7 +2522,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
 
     prisma.activityRecord.findUnique.mockResolvedValue({
       ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1', status: ActivityRecordStatus.submitted }),
-      _count: { evidence: 1 },
+      _count: { evidenceLinks: 1 },
     });
     const reviewed = await service.approve(superAdmin(), 'rec-u');
     expect(reviewed.createdByName).toBe('Entry User');
@@ -2629,7 +2632,7 @@ describe('ActivityRecordsService — submittedAt', () => {
       status: ActivityRecordStatus.draft,
       ...over,
     }),
-    _count: { evidence: 1 },
+    _count: { evidenceLinks: 1 },
   });
 
   const arrange = () => {
@@ -2639,7 +2642,7 @@ describe('ActivityRecordsService — submittedAt', () => {
     );
     prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
       ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', ...data }),
-      _count: { evidence: 1 },
+      _count: { evidenceLinks: 1 },
     }));
     return { prisma, service };
   };

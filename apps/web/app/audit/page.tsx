@@ -75,6 +75,9 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   bulk_import: "bg-violet-500/15 text-violet-700 border-violet-500/30",
   // Blue, with `submit`: the same consequence, for many records at once.
   bulk_submit: "bg-blue-500/15 text-blue-700 border-blue-500/30",
+  // Amber: an evidence file taken off one record while it still backs others.
+  // Less than a `delete` (the file survives), more than an `update`.
+  detach: "bg-amber-500/15 text-amber-700 border-amber-500/30",
 };
 
 const NEUTRAL_ACTION = "bg-slate-500/15 text-slate-700 border-slate-500/30";

@@ -2068,15 +2068,68 @@ export const EVIDENCE_ALLOWED_MIME_TYPES = [
 /** Max evidence file size in bytes (mirrors the bucket's 10 MiB limit). */
 export const EVIDENCE_MAX_SIZE_BYTES = 10 * 1024 * 1024;
 
-/** An evidence file's metadata as returned by the API (never the binary). */
+/**
+ * The most records one uploaded file may back. The upload is made from the
+ * Data Entry selection list, whose own ceiling is the bulk submit's
+ * (`BULK_SUBMIT_MAX_IDS`, the same number); a spec pins the two together.
+ */
+export const EVIDENCE_MAX_LINKED_RECORDS = 1000;
+
+/**
+ * One record an evidence file backs — what a reviewer needs to judge whether
+ * one invoice can honestly evidence all of them (the same month? the same
+ * site?). Every linked record is in the file's subsidiary, so whoever can read
+ * the file can read each of these.
+ */
+export interface EvidenceLinkedRecordDTO {
+  id: string;
+  category: string;
+  reportingYear: number;
+  periodValue: string;
+  locationName: string | null;
+  status: ActivityRecordStatus;
+}
+
+/**
+ * An evidence file's metadata as returned by the API (never the binary).
+ *
+ * A file belongs to a SUBSIDIARY and backs one or more of its records (WP8
+ * decision 3a); `linkedRecords` lists all of them, the record it was fetched
+ * through included, so "also backs N other records" is visible wherever the
+ * file is.
+ */
 export interface EvidenceDTO {
   id: string;
-  activityRecordId: string;
+  subsidiaryId: string;
   fileName: string;
   mimeType: string;
   sizeBytes: number;
   uploadedBy: string;
   createdAt: string;
+  linkedRecords: EvidenceLinkedRecordDTO[];
+}
+
+/** Why one record refused a file in `POST /evidence` — the upload is all or nothing. */
+export interface EvidenceLinkRefusal {
+  recordId: string;
+  reason: string;
+}
+
+/**
+ * The 400 body of `POST /evidence` when any named record cannot take the file:
+ * nothing is uploaded and nothing is linked, and every refused record is named.
+ */
+export interface EvidenceLinkRefusedDTO {
+  message: string;
+  refused: EvidenceLinkRefusal[];
+}
+
+/** Response of `DELETE /activity-records/:recordId/evidence/:evidenceId`. */
+export interface EvidenceDetachDTO {
+  evidenceId: string;
+  recordId: string;
+  /** True when that was the file's last link, so the file itself was deleted. */
+  fileDeleted: boolean;
 }
 
 /** Response of GET /evidence/:id/url — a short-lived signed download link. */
@@ -2562,6 +2615,10 @@ export const AUDIT_ACTIONS = [
   // it and a refusal is never mistaken for a record that was created.
   'bulk_import',
   'bulk_submit',
+  /** An evidence file taken off ONE record while it still backs others
+   *  (`entity: 'evidence'`, `diff.before.recordId`). Taking off the LAST link
+   *  deletes the file, and that row is a `delete`. */
+  'detach',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -2846,10 +2903,12 @@ export const BULK_UPLOAD_WARNING_CODES = [
    */
   'would_block_submit',
   /**
-   * This category cannot be submitted without an evidence file, and bulk
-   * upload cannot attach one. Derived from the category alone, no query — and
-   * worth saying, because a user importing 500 electricity rows would
-   * otherwise see no warnings at all and meet the wall later.
+   * This category cannot be submitted without an evidence file, and the
+   * import itself attaches none — the file is added afterwards, one upload
+   * for as many of the drafts as it really evidences. Derived from the
+   * category alone, no query — and worth saying, because a user importing 500
+   * electricity rows would otherwise see no warnings at all and meet the wall
+   * later.
    */
   'evidence_required',
 ] as const;
@@ -3119,11 +3178,12 @@ export const BULK_SUBMIT_ISSUE_CODES = [
    * The category requires an evidence file and this record has none.
    *
    * The import reports `evidence_required` as a WARNING on these same rows;
-   * here it is the refusal that warning was about. Nothing in the bulk path can
-   * clear it — a bulk import cannot attach a file, and `Evidence` belongs to
-   * exactly one record, so one invoice cannot cover twelve months. These are
-   * cleared one record at a time, on purpose: it is an ISO 14064-1 evidence
-   * control, not a convenience.
+   * here it is the refusal that warning was about. The bulk submit cannot
+   * clear it: a file is attached by a person who picks the records it
+   * evidences. One file may back several records of one subsidiary (WP8
+   * decision 3a, which replaced "one file, one record"); the ISO 14064-1
+   * control is now that every file shows each record it backs, so the
+   * reviewer judges whether one invoice can honestly cover all of them.
    */
   'evidence_required',
   /**

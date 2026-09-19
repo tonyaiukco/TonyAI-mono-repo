@@ -14,7 +14,8 @@ in `e2e/helpers.ts`.
 - **Never touch the seed's space.** The seed is **monthly-only**, so every E2E write goes in the
   otherwise-empty **`quarterly`** space of `E2E_YEAR` — read the constants, never retype the year: this
   line said 2024 for a release after the seed moved to 2026. `globalSetup` + `globalTeardown` wipe all
-  quarterly rows (service-role, evidence cascades) — so runs are idempotent and the seed is preserved.
+  quarterly rows (service-role; the records' evidence LINKS cascade and `removeUnlinkedEvidence` then
+  deletes the files no record holds) — so runs are idempotent and the seed is preserved.
   If you need a new write space, keep it inside quarterly.
 - **Clean up in the test's own `finally`, not by leaning on the global wipe.** That wipe runs once per
   RUN; the specs in between never see it. A record left `submitted` makes `lockPeriod` 409 in a spec
@@ -60,7 +61,8 @@ in `e2e/helpers.ts`.
    (exact containment — a mere `entry < service` "strict subset" would miss a partial leak). The `entry > 0`
    leg also proves the SELECT GRANT exists (a missing grant would look like false containment). PostgREST
    derives the role from the `Authorization` bearer, not `apikey`; rows need an explicit `id` (Prisma
-   generates uuids client-side); tables without a `subsidiary_id` (evidence) are scoped via an inner join.
+   generates uuids client-side); a table without an `id` (the `activity_record_evidence` link table) needs
+   its own count column (`COUNT_SELECT` in `rls-probes.mjs`).
 5. **Run** `pnpm exec playwright test` (starts/reuses web+api via `webServer`) and `node scripts/rls-probes.mjs`.
    Both need the local stack up (Docker + Supabase).
 

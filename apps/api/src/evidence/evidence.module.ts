@@ -7,9 +7,9 @@ import { StorageModule } from '../storage/storage.module';
   imports: [StorageModule],
   controllers: [EvidenceController],
   providers: [EvidenceService],
-  // Exported for activity-records: deleting a record cascades its evidence rows
-  // away inside Postgres, so the blobs have to be reclaimed by the one service
-  // that knows the bucket, before the row goes.
+  // Exported for activity-records: deleting a record cascades its evidence
+  // LINKS away inside Postgres, and a file left with no links has to be
+  // deleted — row and blob — by the one service that knows the bucket.
   exports: [EvidenceService],
 })
 export class EvidenceModule {}
