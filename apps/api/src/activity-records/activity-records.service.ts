@@ -36,6 +36,7 @@ import {
   type AuditAction,
   type Category,
   type ReportingPeriod,
+  mayAuthorRecords,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { quoteCallerText } from '../common/caller-text';
@@ -65,24 +66,13 @@ interface AnomalyParams {
   excludeId?: string;
 }
 
-// Roles allowed to create/update/delete/submit their own records.
-// A consultant is NOT among them (decision 2026-07-30): the permissions matrix
-// defines the seat as advisory — review, anomaly flagging, guidance — and it is
-// typically filled by someone outside the holding company. Data preparation
-// belongs to the tenant's own data_entry staff.
-const WRITE_ROLES = new Set(['data_entry', 'super_admin']);
-
 /**
- * May this user author activity records at all?
- *
- * A predicate rather than the `Set`, which was briefly exported and should not
- * have been: it is the authorization rule for every record write, and an
- * exported mutable `Set` is one `WRITE_ROLES.add('executive_viewer')` away
- * from widening three gates process-wide with nothing failing and no audit
- * trail. Callers get the answer; the rule stays here.
+ * May this user author activity records at all? The rule is the contract's
+ * `mayAuthorRecords`, so the screens that hide a control and the API that
+ * refuses it read one definition.
  */
 export function mayWriteActivityRecords(user: RequestUser): boolean {
-  return WRITE_ROLES.has(user.role);
+  return mayAuthorRecords(user);
 }
 
 // The refusal classes and their sentences live in `./errors`.
@@ -364,7 +354,7 @@ export class ActivityRecordsService {
 
   /** Author-or-super_admin gate for edit/delete on a mutable record. */
   private assertCanMutate(user: RequestUser, record: ActivityRecord): void {
-    if (!WRITE_ROLES.has(user.role)) {
+    if (!mayAuthorRecords(user)) {
       throw new ForbiddenException(
         'Your role may not modify activity records',
       );
@@ -630,7 +620,7 @@ export class ActivityRecordsService {
     scope: number;
     verdict: AnomalyVerdict;
   }> {
-    if (!WRITE_ROLES.has(user.role)) {
+    if (!mayAuthorRecords(user)) {
       throw new CreateRoleRefusedError();
     }
     // Tenant gate FIRST, before any query — `computeSnapshot` keeps its own
@@ -919,7 +909,7 @@ export class ActivityRecordsService {
 
   async submit(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
-    if (!WRITE_ROLES.has(user.role)) {
+    if (!mayAuthorRecords(user)) {
       throw new SubmitRoleRefusedError();
     }
     if (!SUBMITTABLE_STATUSES.has(record.status)) {

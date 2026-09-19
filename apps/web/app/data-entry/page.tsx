@@ -53,7 +53,6 @@ import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import { CoveragePanel } from "@/components/data-entry/coverage-panel";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
 import { PreviousSubmissions } from "@/components/data-entry/previous-submissions";
-import { canBulkUpload } from "@/lib/bulk-upload-view";
 import {
   ACTIVITY_UNITS,
   appliesUnitConversion,
@@ -63,6 +62,7 @@ import {
   isCalculated,
   canonicalPeriodValue,
   isInvoiceTracked,
+  mayAuthorRecords,
   PERIOD_VALUES,
   REPORTING_YEARS,
   unitSymbol,
@@ -1066,7 +1066,7 @@ function DataEntryPageInner() {
                   an importer has no open record, and this is the only thing on
                   the page a user reaches before having one. */}
               <BulkUploadPanel
-                canManage={canBulkUpload(user)}
+                canManage={mayAuthorRecords(user)}
                 onImported={() => {
                   // Both the previous-submissions list and CoveragePanel are
                   // looking at pre-import numbers at the exact moment the user
@@ -1250,9 +1250,7 @@ function DataEntryPageInner() {
                   // A consultant is review-only (decision 2026-07-30) and the
                   // evidence API 403s them, so offering upload/delete controls
                   // here only produced a button that always failed.
-                  canManage={
-                    !!user && ["data_entry", "super_admin"].includes(user.role)
-                  }
+                  canManage={mayAuthorRecords(user)}
                 />
               )}
 

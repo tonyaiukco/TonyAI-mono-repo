@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  mayAuthorRecords,
   acceptsBulkSubmit,
   BULK_SUBMITTABLE_STATUSES,
   isSubmittable,
@@ -715,5 +716,23 @@ describe('needsEvidenceBeforeSubmit', () => {
     for (const category of CATEGORIES.filter((c) => !EVIDENCE_REQUIRED_CATEGORIES.includes(c))) {
       expect(needsEvidenceBeforeSubmit({ category, evidenceCount: 0 })).toBe(false);
     }
+  });
+});
+
+describe('mayAuthorRecords — the one record-write rule', () => {
+  it.each([
+    ['data_entry', true],
+    ['super_admin', true],
+    ['consultant', false],
+    ['executive_viewer', false],
+    ['DATA_ENTRY', false],
+    ['', false],
+  ])('%s → %s', (role, allowed) => {
+    expect(mayAuthorRecords({ role })).toBe(allowed);
+  });
+
+  it('refuses a signed-out shell', () => {
+    expect(mayAuthorRecords(null)).toBe(false);
+    expect(mayAuthorRecords(undefined)).toBe(false);
   });
 });

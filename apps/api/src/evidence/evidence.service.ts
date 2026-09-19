@@ -14,6 +14,7 @@ import {
   EVIDENCE_ALLOWED_MIME_TYPES,
   EVIDENCE_MAX_SIZE_BYTES,
   type EvidenceDTO,
+  mayAuthorRecords,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -26,7 +27,6 @@ const SIGNED_URL_TTL_SECONDS = 60;
 // Mirrors activity-records: who may attach/remove evidence, and while the parent
 // record is still editable (evidence is frozen once a record is committed).
 // Mirrors activity-records: a consultant is review-only (decision 2026-07-30).
-const WRITE_ROLES = new Set(['data_entry', 'super_admin']);
 const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
   ActivityRecordStatus.draft,
   ActivityRecordStatus.rejected,
@@ -68,7 +68,7 @@ export class EvidenceService {
 
   /** Author-or-super_admin gate on a still-editable record (mirrors activity-records). */
   private assertCanMutate(user: RequestUser, record: ActivityRecord): void {
-    if (!WRITE_ROLES.has(user.role)) {
+    if (!mayAuthorRecords(user)) {
       throw new ForbiddenException('Your role may not modify evidence');
     }
     if (user.role !== 'super_admin' && record.createdBy !== user.id) {

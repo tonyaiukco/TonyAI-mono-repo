@@ -14,7 +14,6 @@ import {
   applyConfirmation,
   applySuccessMessage,
   applyToast,
-  canBulkUpload,
   COLUMN_LABEL,
   fileAcceptAttribute,
   groupIssues,
@@ -404,23 +403,6 @@ describe('templateErrorMessage', () => {
     expect(templateErrorMessage(new ApiError('Session expired', 401))).toBe('Session expired');
     expect(templateErrorMessage(new Error('offline'))).toBe('offline');
     expect(templateErrorMessage('nonsense')).toMatch(/could not be downloaded/i);
-  });
-});
-
-describe('canBulkUpload', () => {
-  it.each([
-    ['data_entry', true],
-    ['super_admin', true],
-    ['consultant', false],
-    ['executive_viewer', false],
-  ])('%s', (role, allowed) => {
-    // Mirrors the server's WRITE_ROLES. The UI hides what a role cannot do;
-    // it does not decide it.
-    expect(canBulkUpload({ role })).toBe(allowed);
-  });
-
-  it('hides the panel from a signed-out shell', () => {
-    expect(canBulkUpload(null)).toBe(false);
   });
 });
 

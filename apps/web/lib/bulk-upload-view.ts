@@ -433,7 +433,3 @@ export function templateErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'The template could not be downloaded.';
 }
 
-/** Only the two roles the server lets author records see the panel at all. */
-export function canBulkUpload(user: { role: string } | null): boolean {
-  return !!user && ['data_entry', 'super_admin'].includes(user.role);
-}

@@ -3,6 +3,7 @@ import {
   BULK_SUBMIT_MAX_IDS,
   isSubmittable,
   needsEvidenceBeforeSubmit,
+  mayAuthorRecords,
 } from '@/lib/types';
 import type {
   ActivityRecordDTO,
@@ -13,12 +14,6 @@ import type {
   BulkUploadAcceptedRow,
   PeriodLockDTO,
 } from '@/lib/types';
-// The role gate, reused rather than written a fourth time. Its name is about
-// the import panel because that is where it started; the set it encodes is
-// `WRITE_ROLES`, which is what gates every record write including this one.
-// (Follow-up recorded in the status log: promote the server's
-// `mayWriteActivityRecords` into the contract and collapse the web copies.)
-import { canBulkUpload } from '@/lib/bulk-upload-view';
 import { ApiError } from '@/lib/api';
 import { formatNumber } from '@/lib/utils';
 
@@ -314,7 +309,7 @@ export function submitBlockReason(
   // First, as the server does — and it refuses the WHOLE request, not the
   // record, so without this a demoted seat gets a live button and one 403 for
   // everything they ticked. `/data-entry` carries no role filter of its own.
-  if (!canBulkUpload(user)) return 'Your role cannot submit records.';
+  if (!mayAuthorRecords(user)) return 'Your role cannot submit records.';
   if (!acceptsBulkSubmit(row.status)) {
     // `rejected` is the one worth a sentence rather than a status echo: the
     // list presents it as editable, so a missing checkbox looks like a bug
