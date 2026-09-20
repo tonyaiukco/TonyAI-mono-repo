@@ -716,8 +716,9 @@ export class BulkUploadService {
    * the events worth keeping are the ones nobody chose to record: a file naming
    * another tenant's subsidiaries, a role that may not author records. Those
    * are written under `bulk_import` with `refused: true`. A malformed file — an
-   * unrecognised header, a wrong extension, an empty one, too many rows (the
-   * byte cap is multer's, before any of this runs) — is a 400 that touched
+   * unrecognised header, a wrong extension, an empty one, too many rows, one
+   * whose bytes are not UTF-8 (the byte cap is multer's, before any of this
+   * runs) — is a 400 that touched
    * nothing and says nothing about the caller. Auditing those filled the
    * trail with caller-controlled text at the throttle's rate (measured: 37
    * audit rows for 5 records), so they are refused and not recorded.

@@ -232,8 +232,18 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     const report = await service.submitMany(dataEntry(), ids('mine', 'theirs'));
 
     expect(report.submitted.map((r) => r.recordId)).toEqual(['mine']);
+    // The MESSAGE as well as the code, and deliberately: the panel renders it
+    // verbatim under the row, and until this line the sentence was pinned
+    // nowhere but `e2e/bulk-submit-refusals.spec.ts` — one spec away from
+    // being unowned, at the slowest layer in the suite. The sibling table
+    // further down pins the mapped EXCEPTIONS the same way; this is the
+    // branch that builds the refusal itself.
     expect(report.failed).toEqual([
-      expect.objectContaining({ recordId: 'theirs', code: 'not_author' }),
+      expect.objectContaining({
+        recordId: 'theirs',
+        code: 'not_author',
+        message: 'Someone else created this record.',
+      }),
     ]);
     expect(records.submit).toHaveBeenCalledTimes(1);
   });

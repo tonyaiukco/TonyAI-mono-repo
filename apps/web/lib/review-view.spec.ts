@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { byLongestWait, daysSince, waitingLabel } from './review-view';
 
 /**
@@ -47,9 +47,18 @@ describe('daysSince', () => {
   });
 
   it('defaults to the current instant when none is given', () => {
-    // The call site passes no `now`; that default has to work.
-    const iso = new Date(Date.now() - 3 * 86_400_000).toISOString();
-    expect(daysSince(iso)).toBe(3);
+    // The call site passes no `now`, so the default has to work — but the
+    // clock is FROZEN here rather than read. Reading it made this the only
+    // spec under `lib/` whose result depended on when it ran: the floor kept
+    // it stable in practice rather than by construction, and a test that
+    // passes by accident says nothing on the day it stops.
+    vi.useFakeTimers({ now: NOW });
+    try {
+      const iso = new Date(NOW - 3 * 86_400_000).toISOString();
+      expect(daysSince(iso)).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

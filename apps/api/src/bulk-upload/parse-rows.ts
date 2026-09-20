@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer';
 import { BadRequestException } from '@nestjs/common';
 import Papa from 'papaparse';
 import {
@@ -146,6 +147,38 @@ function tooManyRows(count: number): BadRequestException {
   );
 }
 
+/**
+ * Refusal sentence for a CSV whose bytes are not UTF-8 text.
+ *
+ * Exported so the specs pin the refusal by the thing it refuses rather than by
+ * its wording.
+ */
+export const FILE_NOT_UTF8 =
+  'The file is not UTF-8 text. In Excel, save it as "CSV UTF-8 (Comma delimited)" and upload it again.';
+
+/**
+ * A CSV that is not UTF-8 is REFUSED, not decoded as best it can be.
+ *
+ * `Buffer#toString('utf8')` is lossy and never throws: an invalid byte becomes
+ * U+FFFD. On a Turkish Windows, Excel's plain "CSV" export writes cp1254, so
+ * this is the likely file rather than the exotic one — and `varianceReason` is
+ * free text that no vocabulary check can catch, so the mojibake would be
+ * stored on a record that can never be edited. Detecting the encoding and
+ * transcoding would be worse: once the row is written a wrong guess is
+ * indistinguishable from a right one, and this is a compliance product.
+ *
+ * Whole file, not per row. An encoding is a property of the file, and a
+ * half-imported batch is the one outcome worse than a refused one.
+ *
+ * A NUL byte is refused alongside, because `isUtf8` accepts one (U+0000 is
+ * valid UTF-8) and UTF-16LE ASCII is mostly NULs — which is what Excel's
+ * "Unicode Text" export writes. No CSV a spreadsheet saves contains a NUL, and
+ * the remedy is the same sentence, so it is the same refusal.
+ */
+function requireUtf8(buffer: Buffer): void {
+  if (!isUtf8(buffer) || buffer.includes(0)) throw new BadRequestException(FILE_NOT_UTF8);
+}
+
 function parseCsv(buffer: Buffer): ParsedRow[] {
   // `header: false` on purpose: papaparse's header mode silently merges
   // duplicate headers and loses the physical line number, and both of those
@@ -160,6 +193,7 @@ function parseCsv(buffer: Buffer): ParsedRow[] {
   // changes no observable behaviour today. It is here so the header matcher
   // and the BOM are not silently coupled: a future matcher that stops trimming
   // would otherwise refuse a file for a column it visibly contains.
+  requireUtf8(buffer);
   const text = buffer.toString('utf8').replace(/^\uFEFF/, '');
   const parsed = Papa.parse<string[]>(text, {
     header: false,

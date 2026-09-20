@@ -11,6 +11,7 @@ import {
 import {
   FIRST_SHEET_NOT_A_WORKSHEET,
   WORKBOOK_HAS_NO_SHEETS,
+  isDateFormatCode,
   readFirstWorksheet,
   type MergedRange,
 } from './xlsx-reader';
@@ -464,11 +465,34 @@ describe('readFirstWorksheet — what no well-behaved writer emits', () => {
 });
 
 describe('readFirstWorksheet — work that could hold the event loop', () => {
-  // Time is the observable here because time is the defect: each of these ran
-  // for seconds in one synchronous stretch before its fix (measured, beside
-  // each) and runs in milliseconds after it. The bounds sit far from both.
+  // Each of these ran for seconds in one synchronous stretch before its fix
+  // (measured, beside each) and runs in milliseconds after it.
+  //
+  // Every budget here was rebuilt as a mutant and re-measured rather than
+  // argued about, and one of them moved as a result.
+  //
+  //   - The workbook below no longer carries one. Judging per cell format —
+  //     the "56 s" defect its comment describes — costs **196 ms against a
+  //     healthy 187 ms** now that `MAX_FORMAT_CODE_LENGTH` (1,024) and
+  //     `MAX_NUMBER_FORMATS` (4,096) exist, so a budget there could not tell
+  //     the two apart. What the fixture is really worth is that it sits at
+  //     BOTH caps, which is what kills an off-by-one in them.
+  //   - The 1,024-bracket code that fixture carries was never about judging
+  //     once, though: it is the worst case for the REGEX the scan replaced,
+  //     which is a separate defect from the same commit (1.8 s, measured
+  //     then). That budget is now taken directly on `isDateFormatCode`, below
+  //     — **0.2 ms healthy against 1,633 ms** for a behaviour-preserving
+  //     regex rewrite, instead of 1.6x through 180 ms of XML parsing.
+  //   - The backtracking refusal keeps its budget: the ambiguous quantifier
+  //     pair that pattern replaced costs **1,135 ms against a healthy
+  //     1.2 ms**, and 300 ms leaves 250x of headroom above healthy.
+  //
+  // Vitest's own timeout is NOT a substitute for any of them. These defects
+  // hold the event loop, and a timeout is a timer on the loop being held:
+  // measured on the sibling case in `parse-rows.spec.ts`, a 31 s mutant
+  // PASSED.
 
-  it('judges each number format once, however many cell formats share it', async () => {
+  it('reads a workbook at BOTH format caps, however many share one code', async () => {
     // Before: 65,536 cell formats sharing one 1 MB code held the event loop for
     // 56 s (security-rls). Codes are capped at 1,024 characters now, and an
     // unclosed bracket is the worst case for the regex that used to strip
@@ -484,10 +508,8 @@ describe('readFirstWorksheet — work that could hold the event loop', () => {
         cellFormats(Array.from({ length: 65_536 }, (_, i) => 164 + (i % 4_096))),
       sheetData: oneRow('<c r="A1" s="1"><v>5</v></c>'),
     });
-    const started = performance.now();
     const { values } = await read(buffer);
     expect(values).toEqual({ A1: '5' });
-    expect(performance.now() - started).toBeLessThan(1_500);
   });
 
   it('refuses a long run of digits without backtracking over it', async () => {
@@ -496,5 +518,26 @@ describe('readFirstWorksheet — work that could hold the event loop', () => {
     const started = performance.now();
     expect(await refusal(buffer)).toBe(WORKBOOK_UNREADABLE);
     expect(performance.now() - started).toBeLessThan(300);
+  });
+
+  it('judges a format code by scanning it, not by a regex that can backtrack', async () => {
+    // The defect this guards is a REWRITE, not a caller: `isDateFormatCode`
+    // reads as four `.replace()` calls waiting to happen, and a
+    // behaviour-preserving version of exactly that —
+    //
+    //   code.replace(/\\./g, '').replace(/[_*]./g, '')
+    //       .replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, '')
+    //
+    // — passes every other test in this file and costs **1,633 ms** for the
+    // 4,096 capped codes below, against **0.2 ms** for the scan (qa-auditor,
+    // measured; it is the quadratic backtrack an unclosed bracket forces).
+    // Taken here rather than through `readFirstWorksheet` because the reader
+    // spends ~180 ms parsing the XML around it, which left the old budget
+    // 1.6x from the defect. Directly, the margin is four orders of magnitude.
+    const codes = Array.from({ length: 4_096 }, () => '['.repeat(1_024));
+
+    const started = performance.now();
+    for (const code of codes) expect(isDateFormatCode(code)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(100);
   });
 });

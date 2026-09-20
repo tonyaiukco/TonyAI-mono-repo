@@ -104,7 +104,9 @@ describe('eligibleForSubmit', () => {
 
   it('uses the singular for one imported record', () => {
     // It read "All 1 imported record needs an evidence file … Open each record
-    // below to add its invoice." — pinned verbatim by the E2E suite.
+    // below to add its invoice." This spec is now the ONLY verbatim pin: the
+    // e2e that used to repeat the sentence through a browser asserts the gate
+    // it names instead, so singular-versus-plural is owned here.
     const { blockedReason } = eligibleForSubmit([
       imported({ recordId: 'a', category: 'Water' }),
     ]);

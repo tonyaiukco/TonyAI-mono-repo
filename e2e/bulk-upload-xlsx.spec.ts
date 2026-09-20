@@ -145,15 +145,16 @@ test('a merged cell over an imported column, and an archive that unpacks too far
     'merged.xlsx',
   );
   expect(merged.status()).toBe(400);
-  expect((await merged.json()).message).toBe(
-    'Row 3 is inside the merged cells B2:B3, which cover its locationId cell. Unmerge the cells and fill in each row.',
-  );
+  // Keyed on WHICH cells and WHICH column, not on the prose around them:
+  // naming the wrong range is the defect a user would be sent hunting by, and
+  // `parse-rows.spec.ts` pins the sentence itself where the parser lives.
+  expect((await merged.json()).message).toMatch(/merged cells B2:B3.*locationId/);
 
   // 64 MiB of sheet in a few kilobytes: the bomb shape.
   const bomb = xlsx({ sheetData: row(1, HEADER) + ' '.repeat(64 * 1024 * 1024) });
   const tooLarge = await dryRun(request, token, bomb, 'bomb.xlsx');
   expect(tooLarge.status()).toBe(400);
-  expect((await tooLarge.json()).message).toBe(
-    'The workbook is larger than 16 MB once unpacked. Remove unused formatting, or split it into smaller files.',
-  );
+  // Likewise: that the refusal is about the UNPACKED size is the property —
+  // a bomb refused for its packed size would be a different, broken cap.
+  expect((await tooLarge.json()).message).toMatch(/unpacked/i);
 });

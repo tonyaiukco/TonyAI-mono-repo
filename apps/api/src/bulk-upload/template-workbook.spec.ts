@@ -108,7 +108,17 @@ describe('buildTemplateWorkbook — the importer can read what it writes', () =>
     // a broken record.
     const workbook = await load(await buildTemplateWorkbook(ENTITIES));
     expect(workbook.worksheets).toHaveLength(2);
-    expect(workbook.worksheets[1].name).toBe('Reference');
+    // Both names in order, which says the contract outright: the importer
+    // reads sheet ONE whatever it is called, so "Records is first" is the
+    // load-bearing half.
+    //
+    // Clearer, NOT new coverage — measured, because the first version of this
+    // comment claimed otherwise. With `toHaveLength(2)` two lines up, pinning
+    // index 1 already pinned index 0: swapping the two `addWorksheet` calls
+    // fails twenty tests in this file with or without this line. The genuinely
+    // untested half was the DOWNLOADED artefact, where `bulk-upload-panel`
+    // only ever looked both sheets up by name; that one now pins index 0 too.
+    expect(workbook.worksheets.map((w) => w.name)).toEqual(['Records', 'Reference']);
     expect(workbook.worksheets[1].actualRowCount).toBeGreaterThan(10);
 
     const rows = await parseRows(

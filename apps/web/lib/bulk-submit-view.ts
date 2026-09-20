@@ -102,8 +102,10 @@ export function eligibleForSubmit(
   if (withIds.length === 0) {
     blockedReason = null;
   } else if (recordIds.length === 0) {
-    // Never "All 1 imported record needs … Open each record below" — the
-    // wording the E2E suite had pinned verbatim for a one-row import.
+    // Never "All 1 imported record needs … Open each record below", which is
+    // what a one-row import used to read. Both sentences are pinned verbatim
+    // in this module's spec, which is now the only place they are: the e2e
+    // that repeated them through a browser asserts the gate they name.
     blockedReason =
       needingEvidence === 1
         ? 'The imported record needs an evidence file before it can be submitted, and an import cannot attach one. Open it below to add its invoice.'

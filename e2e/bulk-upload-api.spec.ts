@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test';
-import type { BulkUploadAcceptedRow, BulkUploadRowIssue } from '@tonyai/shared-types';
+import {
+  BULK_UPLOAD_MAX_SIZE_BYTES,
+  type BulkUploadAcceptedRow,
+  type BulkUploadRowIssue,
+} from '@tonyai/shared-types';
 import {
   ADMIN_EMAIL,
   API_BASE,
@@ -35,8 +39,12 @@ import {
  * part of the uniqueness key.
  *
  * Budget: the import route allows five requests per minute per user. This file
- * makes SIX imports — one per test — so the last three run as `entry@`, which
- * the lane allows because `SUB.energy` is inside that user's access set. The
+ * makes SEVEN imports — one per test — split `admin@` x4, `entry@` x3 and
+ * `consultant@` x1, which the lane allows because `SUB.energy` is inside the
+ * entry user's access set. The extra one is the 413 at the END of this file;
+ * it joins `admin@`, whose three were the smallest group, because a refused
+ * request still spends a unit (the throttle is a GUARD, so it runs before the
+ * interceptor that raises the 413) — 4 of 5, one unit of slack. The
  * header used to claim "four as admin@"; it was six from the first commit, and
  * the sixth came back 429 in the first run where the five before it all
  * reached the server. It failed as `TypeError: … reading 'map'` in a test
@@ -370,4 +378,39 @@ test('a role that may not author records is refused before its file is parsed �
         r.diff?.reason === 'Your role may not create activity records',
     ),
   ).toBe(true);
+});
+
+
+// LAST on purpose. This file is `mode: serial`, so a failing test skips every
+// one after it — and this is the only test here that cannot be run from a
+// development session, because it needs the real multipart path through
+// multer. If it is wrong, it should cost its own result and nothing else's.
+
+test('a file over the size cap is refused by the server, not just the browser', async ({
+  request,
+}) => {
+  // The cap is enforced TWICE and only one of them is reachable over HTTP.
+  // `bulk-upload.service.ts` checks `file.size` and raises a 400; multer's
+  // `limits.fileSize` fires first and Nest turns it into a 413, so the service
+  // branch is dead on this path and says so in a comment. The unit suite can
+  // only see the dead one — plus `bulk-upload.controller.spec.ts`, which reads
+  // the interceptor's metadata and asserts the NUMBER is wired, never that a
+  // request carrying more than it is refused.
+  //
+  // Nor can the browser reach it: `preflightFile` in `bulk-upload-view.ts`
+  // refuses >2 MiB before anything is sent, and `bulk-upload-view.spec.ts`
+  // pins that. So the server's own cap — the one that matters, because a
+  // script is not a browser — had no test at any layer.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+
+  const tooBig = await postBulkImport(request, token, {
+    buffer: Buffer.alloc(BULK_UPLOAD_MAX_SIZE_BYTES + 1, 'a'),
+    dryRun: 'true',
+  });
+
+  // 413, not the 400 the service would have raised: WHICH layer refuses is the
+  // property. A 400 here would mean multer's limit had stopped working and the
+  // whole file had been buffered before anything checked its size.
+  expect(tooBig.status()).toBe(413);
+  expect((await tooBig.json()).message).toBe('File too large');
 });
