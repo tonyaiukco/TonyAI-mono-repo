@@ -114,10 +114,22 @@ test('deleting one evidence file leaves the record and its other files alone', a
 test('a file shared by two records survives the first record and goes with its last link', async ({ request }) => {
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const subs = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
+  // At a LOCATION, unlike the two tests above. Uniqueness includes
+  // `location_id` (NULLS NOT DISTINCT), so a site record is a different slot
+  // from the whole-company one — and the whole-company quarters of this
+  // subsidiary are spoken for: `data-entry-happy` takes Q1 and
+  // `bulk-upload-panel` takes Q3. The first nightly on `main` failed here
+  // with a 409 for exactly that reason.
+  const locs = await (await request.get(
+    `${API_BASE}/locations?subsidiaryId=${subs[0].id}`,
+    { headers: bearer(token) },
+  )).json();
+  expect(locs.length, 'the seed gives this subsidiary at least one location').toBeGreaterThan(0);
+  const locationId = (locs[0] as { id: string }).id;
   const create = async (periodValue: string) => {
     const res = await request.post(`${API_BASE}/activity-records`, {
       headers: bearer(token),
-      data: { subsidiaryId: subs[0].id, locationId: null, reportingYear: E2E_YEAR,
+      data: { subsidiaryId: subs[0].id, locationId, reportingYear: E2E_YEAR,
         reportingPeriod: E2E_PERIOD, periodValue, category: 'Electricity',
         activityValue: 66, activityUnit: 'kWh', varianceReason: null, input: null },
     });
