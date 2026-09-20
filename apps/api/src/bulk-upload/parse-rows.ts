@@ -8,7 +8,7 @@ import {
   BULK_UPLOAD_REQUIRED_COLUMNS,
   type BulkUploadColumn,
 } from '@tonyai/shared-types';
-import { quoteCallerText } from '../common/caller-text';
+import { label, quoteCallerText } from '../common/caller-text';
 import { readFirstWorksheet, type MergedRange } from './xlsx-reader';
 
 /**
@@ -127,6 +127,82 @@ function mapHeader(header: readonly string[]): (BulkUploadColumn | null)[] {
  * imported — and dropping it would lose something the user typed without
  * saying so. The same stance as an unrecognised header, one row lower.
  */
+/**
+ * The first code unit in `text` that Postgres cannot store, or null.
+ *
+ * There are exactly two, and both arrive the same way: SpreadsheetML's
+ * `_xHHHH_` escape, which `decodeEscapes` turns into a code UNIT. Neither
+ * needs an invalid byte, so the UTF-8 guards — on the CSV buffer and on each
+ * XML part — cannot see them; a well-formed workbook can spell one. (That
+ * those guards hold is what makes the refusal's "written as an escape"
+ * sentence true: relax them and a raw byte becomes another way in.)
+ *
+ *   - **U+0000.** Measured against this repo's Postgres: a text value carrying
+ *     one is refused (`invalid Unicode escape value` as a literal, SQLSTATE
+ *     22021 as a bound parameter). NOT, to be clear, what keeps
+ *     `bulk-upload.service.ts`'s NUL-joined slot key safe — none of that key's
+ *     six segments is free text, which is what keeps it safe, and this guard
+ *     never runs on the key.
+ *   - **An UNPAIRED surrogate.** Refused the same way. A PAIR is a different
+ *     thing and must keep working: `_xD83D__xDE00_` is how a workbook spells
+ *     an emoji, it stores fine (measured, three code points), and refusing it
+ *     would refuse ordinary text.
+ *
+ * Nothing else. Measured: U+FFFE and the other C0 controls store without
+ * complaint, so this refuses exactly what Postgres refuses.
+ *
+ * Only DATA cells are checked. A header cell carrying one is already refused
+ * by `mapHeader`, in a sentence that NAMES the character — better than a
+ * generic refusal, and `caller-text.ts` owns that naming.
+ */
+function unstorableUnit(text: string): number | null {
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    if (unit === 0) return unit;
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const low = text.charCodeAt(i + 1);
+      // NaN past the end, which fails this test and refuses the high half.
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        i += 1;
+        continue;
+      }
+      return unit;
+    }
+    if (unit >= 0xdc00 && unit <= 0xdfff) return unit;
+  }
+  return null;
+}
+
+/**
+ * Whole file, and NOT by the reason its neighbours give.
+ *
+ * `requireUtf8`, `unlabelledValue`, `mergedCells` and `tooManyRows` all refuse
+ * the file for its SHAPE or its encoding; a content fault is row-level here by
+ * design, and qa-auditor was right that the consistency argument does not
+ * transfer. The reason that does: no editor produces `_x0000_` from typing —
+ * Excel strips control characters on paste — so a file carrying one was
+ * GENERATED, and a generated file with an unstorable character in it is not
+ * the file the user thinks they are uploading. Importing its other 999 rows
+ * and mentioning the odd one is the wrong default for a compliance product.
+ *
+ * The cost, measured and accepted: `_x0000_` in `activityValue` used to be a
+ * row-level "is not a number" with the rest of the file imported. It is now a
+ * refusal. If that trade ever looks wrong, `BulkUploadRowIssue.column` already
+ * allows a row issue to name its column — the change is a channel on
+ * `ParsedRow`, not a redesign.
+ */
+function unstorableCell(
+  row: number,
+  column: BulkUploadColumn,
+  unit: number,
+): BadRequestException {
+  const named = label(unit);
+  return new BadRequestException(
+    `Row ${row} has a character in its ${column} cell that cannot be stored (${named}). ` +
+      'A spreadsheet writes it as an escape rather than a typed character — clear the cell and enter the value again.',
+  );
+}
+
 function unlabelledValue(row: number, column: number): BadRequestException {
   return new BadRequestException(
     `Row ${row} has a value in column ${column}, which has no header. Name the column or clear it.`,
@@ -262,7 +338,10 @@ async function parseXlsx(buffer: Buffer): Promise<ParsedRow[]> {
   // the first value no header names. A row then costs nine strings however
   // wide it is — keeping every cell let a 40 KB upload of blank-looking cells
   // grow the heap by over 100 MB (qa-auditor, measured).
-  const kept: (ParsedRow & { unlabelled: number | null })[] = [];
+  const kept: (ParsedRow & {
+    unlabelled: number | null;
+    unstorable: { column: BulkUploadColumn; unit: number } | null;
+  })[] = [];
   // A sheet with no header row reads as an empty header, which `mapHeader`
   // refuses by naming every required column as missing.
   const header = () => (progress.columns ??= mapHeader([]));
@@ -281,12 +360,23 @@ async function parseXlsx(buffer: Buffer): Promise<ParsedRow[]> {
       if (progress.populated > BULK_UPLOAD_MAX_ROWS) return;
       const mapped = emptyCells();
       let unlabelled: number | null = null;
+      let unstorable: { column: BulkUploadColumn; unit: number } | null = null;
       for (const { column, value } of cells) {
         const key = columns[column - 1] ?? null;
-        if (key) mapped[key] = value;
-        else if (unlabelled === null && value.trim() !== '') unlabelled = column;
+        if (key) {
+          // RECORDED, not thrown. Throwing from inside the stream jumped the
+          // row cap and the unlabelled-value ordering below — a 5,000-row file
+          // with one bad cell reported the character and left the user to
+          // discover the cap on the next upload (qa-auditor, measured). The
+          // refusals are ordered once, after the stream, like the others.
+          if (unstorable === null) {
+            const unit = unstorableUnit(value);
+            if (unit !== null) unstorable = { column: key, unit };
+          }
+          mapped[key] = value;
+        } else if (unlabelled === null && value.trim() !== '') unlabelled = column;
       }
-      kept.push({ row: rowNumber, cells: mapped, unlabelled });
+      kept.push({ row: rowNumber, cells: mapped, unlabelled, unstorable });
     },
     merge(range) {
       // Over the cap the whole file is refused, so its merges do not matter.
@@ -305,8 +395,12 @@ async function parseXlsx(buffer: Buffer): Promise<ParsedRow[]> {
   }
   // In row order, so the refusal names the first such row. A kept row with no
   // unlabelled value holds a non-blank imported one, so none of them is blank.
-  for (const { row, unlabelled } of kept) {
+  // Shape before content, and each family in row order: a value no header
+  // names says the file is not the shape the import reads, which is worth
+  // knowing before a character in one of its cells.
+  for (const { row, unlabelled, unstorable } of kept) {
     if (unlabelled !== null) throw unlabelledValue(row, unlabelled);
+    if (unstorable) throw unstorableCell(row, unstorable.column, unstorable.unit);
   }
   return kept.map(({ row, cells }) => ({ row, cells }));
 }

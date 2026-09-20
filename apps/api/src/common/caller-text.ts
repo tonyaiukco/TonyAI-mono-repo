@@ -151,7 +151,12 @@ function marker(run: ReadonlyMap<number, number>): string {
   return `<${named.join(' ')}${run.size > 3 ? ' …' : ''}>`;
 }
 
-function label(code: number): string {
+/**
+ * The one spelling of a named code point. Exported because `parse-rows.ts`
+ * names characters in its own refusals, and two spellings of `U+0000` in an
+ * append-only table is a defect nobody would notice until it mattered.
+ */
+export function label(code: number): string {
   return `U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
 }
 
