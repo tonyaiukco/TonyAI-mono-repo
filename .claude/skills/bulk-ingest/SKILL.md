@@ -34,8 +34,10 @@ attachment), use `supabase-storage` instead.
 - **Key every segment in the DATABASE's spelling, and accept ONE spelling of an
   id.** A typed column accepts several spellings of one value and returns one;
   a JS `Set` compares text. Take the hyphenated shape in either case and
-  lowercase it at the boundary, applied by the DTO and by the two readers of a
-  RAW cell (the tenant check and the stored-slot query); refuse `{…}`,
+  lowercase it at the boundary — `canonicalUuid` beside `UUID_SHAPE`, applied
+  by the DTO's `@Transform` + `@Matches` and called directly by the two readers
+  of a RAW cell (the tenant check and the stored-slot query); key everything
+  else off the validated DTO. Refuse `{…}`,
   `urn:uuid:…` and the unhyphenated form as `invalid` on their own row. Do NOT
   fold them — that was tried (#113) and needed a hand-measured grammar table
   and a probe to keep it honest, for spellings nobody types. Two consequences:
@@ -53,7 +55,10 @@ attachment), use `supabase-storage` instead.
   never reject it, and never prefix on the way in: a stored apostrophe is
   re-neutralised on the next export and corrupts the value permanently, and a
   leading `-` is an ordinary variance reason. Neutralise on the way OUT. Both
-  helpers live in `common/csv-cell.ts`; an ESLint rule names this case.
+  helpers — `isFormulaLead` in, `csvField` out — live in
+  `apps/api/src/common/csv-cell.ts`. Import from there, **never from
+  `reports/`**, which has a lookalike `csvField`; an ESLint rule forbids that,
+  naming this case.
 - **Validate through the resource's real DTO**, with `main.ts`'s pipe options
   (`whitelist`, `forbidNonWhitelisted`) reproduced by hand — the global
   `ValidationPipe` does not run inside a loop.
@@ -69,12 +74,14 @@ attachment), use `supabase-storage` instead.
   create path already writes: `bulk_import` / `bulk_submit` with
   `entityId: null` and a `diff.bulk` summary, never an existing verb with a
   null id, which made a refusal indistinguishable from a created record. The
-  new verb is one member in `AUDIT_ACTIONS` plus one entry in the web audit
+  new verb is one member in `AUDIT_ACTIONS` (shared-types) plus one entry in
+  the web audit
   page's exhaustive colour map — that compile error is the point of the map.
   Write the batch row on a dry run and on an apply, even when every row failed.
   Of the pre-flight refusals, audit only the ones that say something about the
   CALLER (a role that may not write, a file naming another tenant's entity),
-  never a malformed file: that is a 400 that touched nothing, and auditing it
+  never a malformed file (bad header, wrong extension, empty, oversized, too
+  many rows, bytes that are not UTF-8): that is a 400 that touched nothing, and auditing it
   fills an append-only table with caller-controlled text at the throttle's rate.
 - **An applied import is a batch entity, not an audit row**, if users must come
   back to "the records from that file" after a refresh: a table
@@ -92,8 +99,9 @@ attachment), use `supabase-storage` instead.
   apply to a multipart upload. Derive the row cap from the per-row query budget
   and write the arithmetic down beside the constant.
 - **The extension is the gate; the MIME type is advisory.** Windows browsers
-  send `.csv` as `application/vnd.ms-excel`, so a MIME rule refuses an ordinary
-  spreadsheet export. The declared type is client-controlled and buys no
+  send `.csv` as `application/vnd.ms-excel` (and sometimes
+  `application/octet-stream`), so a MIME rule — which is what `evidence` has —
+  refuses an ordinary spreadsheet export. The declared type is client-controlled and buys no
   security: the extension picks the parser, and the parser refuses what is not
   a spreadsheet.
 - **The file's bytes must be UTF-8, or the file is refused whole.** The decode
@@ -188,7 +196,7 @@ measured incident: the lossy UTF-8 decode, exceljs's out-of-memory abort, how to
 prove a defence (and the two ways of proving one that do not work), quoting the
 file's own text, `dryRun` coercion, role-first, and batch logging.
 
-Read it before writing the parser or any refusal sentence. It is a separate file
+Read it before writing the parser, the service loop, or any refusal sentence. It is a separate file
 so that this one stays the recipe: the rules and the loop are what you follow
 every time, the traps are what you check yourself against once.
 
