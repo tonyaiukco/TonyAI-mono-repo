@@ -32,6 +32,12 @@ Any file attachment tied to a tenant-scoped entity (evidence, capacity reports, 
    `createSignedUrl`, `remove`). It's a global module — just import `StorageModule`.
 3. **Schema + RLS** — add the Prisma metadata model (FK to parent, `onDelete: Cascade`), migrate, then
    `rls-for-table` for the new table (policy joins through the parent to `subsidiaries`).
+   **If one file may back several parents** (evidence since WP8 PR7), the file is owned by the TENANT
+   (`subsidiary_id`) and a link table joins it to the parents, both foreign keys composite over
+   `subsidiary_id` (`@@unique([id, subsidiaryId])` on each end) so the database refuses a cross-tenant
+   link; both tables then take the plain subsidiary policy. The cascade takes LINKS, so the service must
+   delete a file left with no link — rows by a conditional delete (`links: { none: {} }`) whose winner
+   removes the blob — and deleting the file outright must check every parent it backs, not one.
 4. **Types** — `XxxDTO` (no `storagePath`) + a signed-url DTO in `@tonyai/shared-types`; rebuild it.
 5. **API** — a service (load parent scoped → assert write → validate mime/size → `storage.upload` → create row →
    audit) + controller (`@UseInterceptors(FileInterceptor('file', { limits: { fileSize } }))`, `@UploadedFile()`).

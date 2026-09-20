@@ -46,7 +46,18 @@ beforeEach(() => audit.record.mockClear());
 // --- Local, DB-free mocks --------------------------------------------------
 
 function createPrismaMock() {
+  // `remove` deletes inside a transaction (a row lock against a racing upload).
+  // Its client has its OWN spies — the #50 rule — so "deleted inside the
+  // transaction, after the lock" is an assertion that can fail, and every
+  // "was not deleted" below asserts against the spy a delete would really hit.
+  const tx = {
+    // One row: the record was there to lock.
+    $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1 }]),
+    activityRecord: { delete: vi.fn() },
+  };
   return {
+    tx,
+    $transaction: vi.fn(async (fn: (client: typeof tx) => unknown) => fn(tx)),
     activityRecord: {
       // Default [] so the anomaly baseline query finds no priors (no anomaly)
       // unless a test overrides it.
@@ -62,7 +73,7 @@ function createPrismaMock() {
     location: {
       findUnique: vi.fn(),
     },
-    evidence: {
+    activityRecordEvidence: {
       // Default: records have evidence, so evidence-required submits pass.
       count: vi.fn().mockResolvedValue(1),
     },
@@ -160,7 +171,7 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     varianceReason: null,
     submittedAt: null,
     // Prisma `_count` shape returned when the service includes evidence counts.
-    _count: { evidence: 0 },
+    _count: { evidenceLinks: 0 },
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -224,12 +235,15 @@ function consultant(overrides: Partial<RequestUser> = {}): RequestUser {
 }
 
 /**
- * Evidence FILES are reclaimed by the evidence service on the way out; the rows
- * go by themselves through the FK cascade. Only `removeAllForRecord` is used
- * from here.
+ * A record's evidence LINKS go by themselves through the FK cascade; the files
+ * it was the last to hold are deleted by the evidence service afterwards. Only
+ * `fileIdsFor` and `deleteUnlinked` are used from here.
  */
 function createEvidenceMock() {
-  return { removeAllForRecord: vi.fn().mockResolvedValue(0) };
+  return {
+    fileIdsFor: vi.fn().mockResolvedValue([]),
+    deleteUnlinked: vi.fn().mockResolvedValue([]),
+  };
 }
 
 function build(scope = 2) {
@@ -319,8 +333,13 @@ describe('ActivityRecordsService — tenant scoping', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-in', subsidiaryId: 'sub-1' }),
     );
+    prisma.activityRecordEvidence.count.mockResolvedValue(2);
     const dto = await service.get(dataEntry(), 'rec-in');
     expect(dto.id).toBe('rec-in');
+    expect(dto.evidenceCount).toBe(2);
+    expect(prisma.activityRecordEvidence.count).toHaveBeenCalledWith({
+      where: { activityRecordId: 'rec-in' },
+    });
   });
 });
 
@@ -512,7 +531,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
     });
     prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
       ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
-      _count: { evidence: 0 },
+      _count: { evidenceLinks: 0 },
       location: { name: 'Ankara Plant' },
     }));
 
@@ -556,7 +575,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
       prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
         ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
         location: { name: 'Ankara Plant' },
       }));
 
@@ -581,7 +600,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt('loc-1'));
       prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
         ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: null, ...data }),
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
         location: null,
       }));
 
@@ -605,7 +624,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt('loc-1'));
       prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
         ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
         location: { name: 'Ankara Plant' },
       }));
 
@@ -692,7 +711,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
       prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
         ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
         location: { name: 'Ankara Plant' },
       }));
 
@@ -748,7 +767,7 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
       prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
         ...makeRecord({ id: 'rec-move', subsidiaryId: 'sub-1', locationId: 'loc-1', ...data }),
-        _count: { evidence: 0 },
+        _count: { evidenceLinks: 0 },
         location: { name: 'Ankara Plant' },
       }));
 
@@ -799,17 +818,17 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
 });
 
 /**
- * Deleting a record cascades its `evidence` ROWS away inside Postgres, where no
- * application code sees them go — so nothing ever deleted the FILES. Storage is
- * a separate system; nothing reconciled the two. Measured on the local stack:
- * 1501 objects in the bucket against 102 rows. They are utility invoices, so
- * files outliving every pointer to them is a retention problem (KVKK/GDPR).
+ * Deleting a record cascades its evidence LINKS away inside Postgres, where no
+ * application code sees them go. Before links existed that stranded the FILES:
+ * storage is a separate system, and the local stack once held 1501 objects
+ * against 102 rows. They are utility invoices, so files outliving every
+ * pointer to them is a retention problem (KVKK/GDPR).
  *
- * Note what was NOT covered before this: every existing `remove` spec asserts a
- * refusal, so the successful delete path had no unit test at all — which is why
- * adding a whole new constructor dependency left the suite green.
+ * Since WP8 PR7 a file can back several records, so a record delete must not
+ * take a file another record still holds: the files are read before the
+ * delete and only those left with no link are deleted after it.
  */
-describe('ActivityRecordsService — deleting a record reclaims its evidence files', () => {
+describe('ActivityRecordsService — deleting a record reclaims the files only it held', () => {
   function deletableRecord(prisma: PrismaMock) {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({
@@ -821,33 +840,68 @@ describe('ActivityRecordsService — deleting a record reclaims its evidence fil
     );
   }
 
-  it('reclaims the blobs, and does it BEFORE the row is gone', async () => {
+  it('locks the record, reads its files and deletes it in one transaction, then sweeps the unlinked files', async () => {
     const { prisma, evidence, service } = build();
     deletableRecord(prisma);
-    evidence.removeAllForRecord.mockResolvedValue(2);
+    evidence.fileIdsFor.mockResolvedValue(['ev-1', 'ev-2']);
 
     await service.remove(dataEntry(), 'rec-del');
 
-    expect(evidence.removeAllForRecord).toHaveBeenCalledWith('rec-del');
-    // Order is the whole point: the storage paths are only knowable while the
-    // rows still exist, and a storage failure must abort before anything is
-    // destroyed rather than after.
+    // The files are read through the TRANSACTION's client, under the lock.
+    expect(evidence.fileIdsFor).toHaveBeenCalledWith('rec-del', prisma.tx);
+    expect(prisma.tx.activityRecord.delete).toHaveBeenCalledWith({ where: { id: 'rec-del' } });
+    expect(prisma.tx.$queryRaw.mock.calls[0][0].join('?')).toMatch(/FOR UPDATE/);
+    expect(prisma.tx.$queryRaw.mock.calls[0].slice(1)).toEqual(['rec-del']);
+    expect(evidence.deleteUnlinked).toHaveBeenCalledWith(['ev-1', 'ev-2']);
+    // Order is the whole point: the lock before the read (an upload's link
+    // either committed first and is read, or waits and then fails), the read
+    // while the links still exist, the sweep only once they are gone.
     const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
       fn.mock.invocationCallOrder[0];
-    expect(order(evidence.removeAllForRecord)).toBeLessThan(
-      order(prisma.activityRecord.delete),
-    );
+    expect(order(prisma.tx.$queryRaw)).toBeLessThan(order(evidence.fileIdsFor));
+    expect(order(evidence.fileIdsFor)).toBeLessThan(order(prisma.tx.activityRecord.delete));
+    expect(order(prisma.tx.activityRecord.delete)).toBeLessThan(order(evidence.deleteUnlinked));
   });
 
-  it('does not delete the record when storage refuses', async () => {
-    // Otherwise the failure mode is the exact one being fixed: row gone, file
-    // stranded, and now nothing left that even knows the file exists.
+  it('audits the files the record held and the ones deleted with it, with the real count', async () => {
+    // One audit row per record delete, so it is the only trace of the files.
     const { prisma, evidence, service } = build();
     deletableRecord(prisma);
-    evidence.removeAllForRecord.mockRejectedValue(new Error('storage down'));
+    evidence.fileIdsFor.mockResolvedValue(['ev-1', 'ev-2']);
+    evidence.deleteUnlinked.mockResolvedValue(['ev-2']);
 
-    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toThrow(/storage down/);
-    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    await service.remove(dataEntry(), 'rec-del');
+
+    const row = audit.record.mock.calls.at(-1)![1] as {
+      action: string;
+      diff: { before: { evidenceCount: number }; evidence: unknown };
+    };
+    expect(row.action).toBe('delete');
+    expect(row.diff.before.evidenceCount).toBe(2);
+    expect(row.diff.evidence).toEqual({ fileIds: ['ev-1', 'ev-2'], deletedFileIds: ['ev-2'] });
+  });
+
+  it('is a 404 with no audit row when a concurrent delete removed the record while it waited for the lock', async () => {
+    const { prisma, evidence, service } = build();
+    deletableRecord(prisma);
+    prisma.tx.$queryRaw.mockResolvedValue([]); // woke to no row
+
+    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toBeInstanceOf(NotFoundException);
+    expect(evidence.fileIdsFor).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
+    expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('touches no file when reading them fails — the record is not deleted either', async () => {
+    const { prisma, evidence, service } = build();
+    deletableRecord(prisma);
+    evidence.fileIdsFor.mockRejectedValue(new Error('db down'));
+
+    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toThrow(/db down/);
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
   });
 
   it('is not attempted for a record that is refused (gate runs first)', async () => {
@@ -859,8 +913,9 @@ describe('ActivityRecordsService — deleting a record reclaims its evidence fil
     await expect(service.remove(dataEntry(), 'rec-a')).rejects.toBeInstanceOf(
       BadRequestException,
     );
-    expect(evidence.removeAllForRecord).not.toHaveBeenCalled();
-    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(evidence.fileIdsFor).not.toHaveBeenCalled();
+    expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
   });
 });
 
@@ -983,7 +1038,7 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
       await expect(service.remove(seat, 'rec-own')).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.activityRecord.update).not.toHaveBeenCalled();
-      expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+      expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
     },
   );
 
@@ -1038,7 +1093,7 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
 
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
-    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
   });
 
@@ -1258,7 +1313,7 @@ describe('ActivityRecordsService — transition rules', () => {
       // The whole point: an UPDATE, never a delete. The row, its evidence and
       // its immutable calculation snapshot all survive — what changes is that
       // it stops counting.
-      expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+      expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
       const data = prisma.activityRecord.update.mock.calls[0][0].data;
       expect(data.status).toBe(ActivityRecordStatus.voided);
       expect(data.calculation).toBeUndefined();
@@ -1553,7 +1608,7 @@ describe('ActivityRecordsService — transition rules', () => {
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-e', category: 'Electricity', status: ActivityRecordStatus.draft }),
     );
-    prisma.evidence.count.mockResolvedValue(0); // no evidence attached
+    prisma.activityRecordEvidence.count.mockResolvedValue(0); // no evidence attached
 
     // The sentence is user-facing copy (the web mirrors it); the bulk submit
     // tells this refusal from the status one by its CLASS, asserted below.
@@ -1564,6 +1619,11 @@ describe('ActivityRecordsService — transition rules', () => {
       EvidenceRequiredError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    // THIS record's files: an unscoped count would let one link anywhere
+    // clear the gate for every evidence-required record.
+    expect(prisma.activityRecordEvidence.count).toHaveBeenCalledWith({
+      where: { activityRecordId: 'rec-e' },
+    });
   });
 
   it('reject moves submitted -> rejected and stores the reviewer note (not varianceReason)', async () => {
@@ -2377,7 +2437,7 @@ describe('ActivityRecordsService — period-lock gate (FR §4.2)', () => {
     await expect(service.remove(dataEntry(), 'rec-d')).rejects.toThrow(
       /period .* is locked/i,
     );
-    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
   });
 
   it('blocks submitting a draft in a locked period', async () => {
@@ -2441,8 +2501,8 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     const { prisma, service } = build();
     prisma.profile.findMany.mockResolvedValue(PROFILES);
     prisma.activityRecord.findMany.mockResolvedValue([
-      { ...makeRecord({ id: 'r1', reviewedBy: 'user-admin' }), _count: { evidence: 1 } },
-      { ...makeRecord({ id: 'r2', reviewedBy: 'user-admin' }), _count: { evidence: 0 } },
+      { ...makeRecord({ id: 'r1', reviewedBy: 'user-admin' }), _count: { evidenceLinks: 1 } },
+      { ...makeRecord({ id: 'r2', reviewedBy: 'user-admin' }), _count: { evidenceLinks: 0 } },
     ]);
 
     // A consultant, so neither actor is the caller and both need looking up.
@@ -2503,11 +2563,11 @@ describe('ActivityRecordsService — actor names are resolved', () => {
     );
     prisma.activityRecord.findUnique.mockResolvedValue({
       ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1' }),
-      _count: { evidence: 0 },
+      _count: { evidenceLinks: 0 },
     });
     prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
       ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1', ...data }),
-      _count: { evidence: 0 },
+      _count: { evidenceLinks: 0 },
     }));
 
     // Both screens splice a write response straight into state built from a
@@ -2519,7 +2579,7 @@ describe('ActivityRecordsService — actor names are resolved', () => {
 
     prisma.activityRecord.findUnique.mockResolvedValue({
       ...makeRecord({ id: 'rec-u', subsidiaryId: 'sub-1', status: ActivityRecordStatus.submitted }),
-      _count: { evidence: 1 },
+      _count: { evidenceLinks: 1 },
     });
     const reviewed = await service.approve(superAdmin(), 'rec-u');
     expect(reviewed.createdByName).toBe('Entry User');
@@ -2629,7 +2689,7 @@ describe('ActivityRecordsService — submittedAt', () => {
       status: ActivityRecordStatus.draft,
       ...over,
     }),
-    _count: { evidence: 1 },
+    _count: { evidenceLinks: 1 },
   });
 
   const arrange = () => {
@@ -2639,7 +2699,7 @@ describe('ActivityRecordsService — submittedAt', () => {
     );
     prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
       ...makeRecord({ id: 'rec-s', subsidiaryId: 'sub-1', ...data }),
-      _count: { evidence: 1 },
+      _count: { evidenceLinks: 1 },
     }));
     return { prisma, service };
   };
@@ -2728,7 +2788,7 @@ describe('ActivityRecordsService — submittedAt', () => {
  * `previewCreate` is everything `create` DECIDES, with nothing it WRITES.
  *
  * It exists so the bulk importer (WP8) can offer a dry-run that provably
- * persists nothing. The mechanism matters: this service opens no transaction,
+ * persists nothing. The mechanism matters: `create` opens no transaction,
  * so there is no rollback to hide behind — the claim "the dry-run wrote
  * nothing" is only as good as an assertion against the write spies, which is
  * what this block is. If a future change moves any write into the prepare half,
@@ -2753,7 +2813,7 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
   function expectNothingWritten() {
     expect(prisma.activityRecord.create).not.toHaveBeenCalled();
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
-    expect(prisma.activityRecord.delete).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
   }

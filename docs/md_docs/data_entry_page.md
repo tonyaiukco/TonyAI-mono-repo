@@ -154,10 +154,14 @@ Drag and drop uploader with click to browse fallback
 ### Display
 - file list with thumbnails or icons
 - file name
-- remove or delete action where permitted
+- a file that also backs other records says so under its name — `Also backs 2 other records: Electricity · February 2026; Electricity · March 2026` (three named at most, then `+N more`)
+- remove action where permitted. On a shared file it reads `Remove from this record` and takes the file off this record only; the toast says whether the file is gone (`Evidence removed`) or still backs others (`Removed from this record — q1.pdf still backs 2 other records.`)
 
 ### Validation Rule
 If the selected category is configured as evidence required, completion status cannot become complete unless at least one evidence file is attached.
+
+### One File for Several Records
+One document can evidence several records of the same subsidiary (WP8 decision 3a) — e.g. a quarterly invoice behind three monthly records, or the invoice behind the drafts of an import. It is attached from **Previous submissions** (§9.2), not from the vault, and the vault of each record then lists it. Attaching and removing follow the record's own rules: its author or a `super_admin`, while it is a `draft` or `rejected`, and while its period is open.
 
 ---
 
@@ -281,14 +285,14 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 
 #### From the Bulk Upload Panel
 - after a real import (not a dry run), `Send N records for review` sends the rows just imported
-- rows in an evidence-required category are held back, because an import cannot attach an evidence file; when that holds back every row, the panel says so instead of offering the button
+- rows in an evidence-required category are held back, because an import cannot attach an evidence file; when that holds back every row, the panel says so instead of offering the button, and points to Previous submissions, where one file can be attached to several of the drafts
 - after a submission, `Previous submissions` and the `Data collection status` panel refresh, even when the request fails
 - **on the seeded demo data this path submits nothing, by construction**: every category that can be imported there requires evidence — Electricity, Natural Gas and Fuel, the only categories the seeded factor library covers, and Water, which is recorded without a calculated figure
 
 #### From Recent Imports
 - each applied import shows its file name, date and time, who imported it, and its outcome (`2 imported · 1 refused`); a batch whose outcome was never recorded (the import was interrupted) says so rather than showing zero
 - `Download file` opens the original file the rows came from, through a short-lived link
-- `Send N drafts for review` sends the drafts of that import the user entered (all of them, for a `super_admin`) that are not waiting for an evidence file; drafts that are waiting are counted in a note under the batch — `2 drafts need an evidence file first — open each under Previous submissions to attach one.` — and the button is absent when none can go
+- `Send N drafts for review` sends the drafts of that import the user entered (all of them, for a `super_admin`) that are not waiting for an evidence file; drafts that are waiting are counted in a note under the batch — `2 drafts need an evidence file first — under Previous submissions, attach each invoice to the drafts it evidences; one file can cover several.` — and the button is absent when none can go
 - the same confirmation as the other entry points; the toast gives the verdict and, when records were not moved, the reasons (`Needs an evidence file · 2`)
 - a `data_entry` user sees only the imports they made, and only while they can still reach every subsidiary the file names (the original file holds every row); `consultant`, `executive_viewer` and `super_admin` see every import in their organisation
 
@@ -298,6 +302,14 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 - no checkboxes appear until the current user has loaded
 - `Select all N` takes only the records the current user entered, up to 1,000. A `super_admin` can still tick someone else's draft one at a time; the confirmation then says how many were entered by someone else, who will no longer be able to edit them
 - a selection shows a bar with `N selected`, `Clear` and `Send N records for review`; a tick beyond 1,000 is refused with a notice
+
+#### Attaching One File to Several Records (Previous Submissions)
+- `Attach one file to several records` switches the list into its own selection. It is separate from the submit selection because the records it is for — drafts waiting for their invoice — are exactly the ones the submit selection leaves out
+- a row gets a checkbox when it can take a file: `draft` or `rejected`, entered by the current user (any, for a `super_admin`), period open. A draft or rejected row that cannot shows the reason (`Entered by someone else.`, `Q1 2026 is locked.`); there is no `Select all` — the user ticks the records this one document evidences
+- the bar reads `Tick the records this one document evidences.` until something is ticked, then `N selected`, `Cancel` and `Attach one file to N records`, which opens the file chooser (PDF, JPG, PNG, XLSX, CSV, ≤10 MB, checked before upload)
+- `Attach this file?` names every record the file will back and says reviewers see every record it backs; `Attach` uploads once and links all of them
+- all or nothing: if any record can no longer take the file, nothing is uploaded and the toast names each refused record and why; the selection stays so the user can untick them
+- on success the toast says `q1.pdf now backs 3 records.`, the list refreshes (the drafts that were waiting for this file get their submit checkbox) and the open record's vault reloads
 - when the request succeeds, the selection clears and the verdict and any per-record failures appear above the list; when the request itself fails, a toast explains why and the selection stays. The list refreshes either way, since a failed request may still have moved records
 
 ---

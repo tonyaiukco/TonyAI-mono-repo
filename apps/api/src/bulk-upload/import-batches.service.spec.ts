@@ -212,7 +212,7 @@ describe('ImportBatchesService — submitting a batch', () => {
       // Only drafts not waiting for an evidence file — what the button counted.
       OR: [
         { category: { notIn: ['Electricity', 'Natural Gas', 'Fuel', 'Water'] } },
-        { evidence: { some: {} } },
+        { evidenceLinks: { some: {} } },
       ],
     });
     expect(bulkSubmit.submitIds).toHaveBeenCalledWith(user(), ['r1', 'r2'], { batchId: BATCH });

@@ -573,7 +573,7 @@ export class EmissionsService {
           subsidiaryId: subsidiaryFilter,
           reportingYear: query.year,
         },
-        include: { _count: { select: { evidence: true } } },
+        include: { _count: { select: { evidenceLinks: true } } },
       }),
       this.prisma.subsidiary.findMany({
         where: { id: subsidiaryFilter },
@@ -608,7 +608,7 @@ export class EmissionsService {
     ]);
 
     // Group records by subsidiary + category.
-    type RecordWithEvidence = ActivityRecord & { _count: { evidence: number } };
+    type RecordWithEvidence = ActivityRecord & { _count: { evidenceLinks: number } };
     const byCell = new Map<string, RecordWithEvidence[]>();
     for (const r of records) {
       const key = `${r.subsidiaryId}\u0000${r.category}`;
@@ -694,7 +694,7 @@ export class EmissionsService {
                 // stop the two reconciling against the cell's record count.
                 if (!isAnomalyEvaluated(r)) notEvaluatedRecordCount += 1;
               } else uncalculatedRecordCount += 1;
-              if (evidenceRequired && r._count.evidence === 0) {
+              if (evidenceRequired && r._count.evidenceLinks === 0) {
                 evidenceMissing = true;
               }
               // The complement of REVIEWED_STATUSES within the counted set,
@@ -706,7 +706,7 @@ export class EmissionsService {
                 locationId: r.locationId,
                 reportingPeriod: r.reportingPeriod,
                 periodValue: r.periodValue,
-                evidenceCount: r._count.evidence,
+                evidenceCount: r._count.evidenceLinks,
                 status: r.status,
               });
             }
@@ -831,7 +831,7 @@ export class EmissionsService {
           // `trackingMatrix` does it, so both reach the verdict from the same
           // records rather than from two different queries.
         },
-        include: { _count: { select: { evidence: true } } },
+        include: { _count: { select: { evidenceLinks: true } } },
       }),
     ]);
 
@@ -891,12 +891,12 @@ export class EmissionsService {
           ) {
             notEvaluatedRecordCount += 1;
           }
-          if (evidenceRequired && r._count.evidence === 0) evidenceMissing = true;
+          if (evidenceRequired && r._count.evidenceLinks === 0) evidenceMissing = true;
           committed.push({
             locationId: r.locationId,
             reportingPeriod: r.reportingPeriod,
             periodValue: r.periodValue,
-            evidenceCount: r._count.evidence,
+            evidenceCount: r._count.evidenceLinks,
             status: r.status,
           });
         }

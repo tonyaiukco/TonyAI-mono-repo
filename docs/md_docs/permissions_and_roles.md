@@ -36,6 +36,7 @@ This matrix defines action permissions for UI rendering and backend enforcement.
 | View dashboard and analytics | ✅ | ✅ | ✅ | ✅ |
 | Enter or edit activity data | ✅ | ❌ | ✅ | ❌ |
 | Upload evidence files | ✅ | ❌ | ✅ | ❌ |
+| Attach one evidence file to several records (own editable records of one subsidiary; any author's for `super_admin`) | ✅ | ❌ | ✅ | ❌ |
 | Save draft records | ✅ | ❌ | ✅ | ❌ |
 | Submit records for review | ✅ | ❌ | ✅ | ❌ |
 | Approve records | ✅ | ❌ | ❌ | ❌ |

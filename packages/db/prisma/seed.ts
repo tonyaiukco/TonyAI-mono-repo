@@ -287,15 +287,24 @@ async function ensureImportSourcesBucket(): Promise<void> {
   if (error && !/exist/i.test(error.message)) throw error;
 }
 
-/** Attach one placeholder evidence file to a record, idempotently. */
+/**
+ * Attach one placeholder evidence file to a record, idempotently. A file
+ * belongs to the record's subsidiary and reaches the record through a link
+ * (WP8 PR7); the seed gives each record its own file. The object key keeps
+ * the record id so a re-run finds the same object.
+ */
 async function ensureSeedEvidence(
   recordId: string,
   uploadedBy: string,
 ): Promise<boolean> {
-  const existing = await prisma.evidence.count({
+  const existing = await prisma.activityRecordEvidence.count({
     where: { activityRecordId: recordId },
   });
   if (existing > 0) return false;
+  const { subsidiaryId } = await prisma.activityRecord.findUniqueOrThrow({
+    where: { id: recordId },
+    select: { subsidiaryId: true },
+  });
 
   const storagePath = `${recordId}/seed-evidence.csv`;
   const { error } = await admin.storage
@@ -306,15 +315,25 @@ async function ensureSeedEvidence(
     });
   if (error) throw error;
 
-  await prisma.evidence.create({
-    data: {
-      activityRecordId: recordId,
-      storagePath,
-      fileName: 'demo-evidence.csv',
-      mimeType: 'text/csv',
-      sizeBytes: Buffer.byteLength(DEMO_EVIDENCE_CSV),
-      uploadedBy,
-    },
+  await prisma.$transaction(async (tx) => {
+    const file = await tx.evidence.create({
+      data: {
+        subsidiaryId,
+        storagePath,
+        fileName: 'demo-evidence.csv',
+        mimeType: 'text/csv',
+        sizeBytes: Buffer.byteLength(DEMO_EVIDENCE_CSV),
+        uploadedBy,
+      },
+    });
+    await tx.activityRecordEvidence.create({
+      data: {
+        activityRecordId: recordId,
+        evidenceId: file.id,
+        subsidiaryId,
+        linkedBy: uploadedBy,
+      },
+    });
   });
   return true;
 }

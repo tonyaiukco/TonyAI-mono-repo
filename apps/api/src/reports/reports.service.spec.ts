@@ -130,7 +130,7 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
     voidReason: null,
     voidedAt: null,
     voidedBy: null,
-    evidence: [{ fileName: 'invoice-jan.pdf' }],
+    evidenceLinks: [{ evidence: { id: 'ev-jan', fileName: 'invoice-jan.pdf', _count: { links: 1 } } }],
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -171,7 +171,7 @@ function stubRecords(prisma: PrismaMock, records: Record<string, unknown>[]): vo
   prisma.activityRecord.findMany.mockImplementation((args: unknown) => {
     const q = args as {
       where?: { status?: { in?: string[] } };
-      include?: { evidence?: unknown; location?: unknown };
+      include?: { evidenceLinks?: unknown; location?: unknown };
     };
     const wanted = q?.where?.status?.in ?? [];
     const include = q?.include ?? {};
@@ -184,9 +184,9 @@ function stubRecords(prisma: PrismaMock, records: Record<string, unknown>[]): vo
           // Returning it regardless made both includes untestable: deleting
           // `location: { select: { name: true } }` from the query — which turns
           // every row in every export into "Whole company" — killed nothing in
-          // 657 tests, and the same held for `evidence`, under a spec named
-          // "truthful evidence counts".
-          evidence: include.evidence ? r.evidence : undefined,
+          // 657 tests, and the same held for the evidence relation, under a
+          // spec named "truthful evidence counts".
+          evidenceLinks: include.evidenceLinks ? r.evidenceLinks : undefined,
           location: include.location ? r.location : undefined,
         })),
     );
@@ -334,7 +334,7 @@ describe('ReportsService', () => {
   it('assemble deduplicates factor snapshots by factorId and reports truthful evidence counts', async () => {
     stubRecords(prisma, [
       makeRecord(),
-      makeRecord({ id: 'rec-2', periodValue: 'February', evidence: [] }),
+      makeRecord({ id: 'rec-2', periodValue: 'February', evidenceLinks: [] }),
       makeRecord({
         id: 'rec-3',
         category: 'Natural Gas',
@@ -353,8 +353,70 @@ describe('ReportsService', () => {
     expect(withOut.evidenceSummary).toEqual([]);
     const withIn = await service.assemble(admin, { ...q, includeEvidenceSummary: true } as ReportQueryDto);
     expect(withIn.evidenceSummary).toEqual([
-      expect.objectContaining({ fileCount: 1, fileNames: ['invoice-jan.pdf'] }),
+      expect.objectContaining({ fileCount: 1, fileNames: ['invoice-jan.pdf'], alsoBacks: [0], alsoBacksHere: [0] }),
     ]);
+    expect(withIn.evidenceFileTotal).toBe(1);
+  });
+
+  it('tells files apart by id, not by name, and counts no withdrawn record as in the report', async () => {
+    // Two different invoices both called invoice.pdf are not one shared file;
+    // a file also linked to a VOIDED record backs one other record, none of
+    // them in this ledger — the withdrawn figure counts towards nothing here.
+    stubRecords(prisma, [
+      makeRecord({ id: 'rec-1', periodValue: 'January', evidenceLinks: [{ evidence: { id: 'ev-a', fileName: 'invoice.pdf', _count: { links: 1 } } }] }),
+      makeRecord({
+        id: 'rec-2',
+        periodValue: 'February',
+        evidenceLinks: [
+          { evidence: { id: 'ev-b', fileName: 'invoice.pdf', _count: { links: 1 } } },
+          { evidence: { id: 'ev-c', fileName: 'c.pdf', _count: { links: 2 } } },
+        ],
+      }),
+      makeRecord({
+        id: 'rec-v',
+        periodValue: 'March',
+        status: 'voided',
+        evidenceLinks: [{ evidence: { id: 'ev-c', fileName: 'c.pdf', _count: { links: 2 } } }],
+      }),
+    ]);
+
+    const data = await service.assemble(admin, { ...q, includeEvidenceSummary: true } as ReportQueryDto);
+
+    expect(data.evidenceFileTotal).toBe(3);
+    expect(data.evidenceSummary.map((e) => e.alsoBacks)).toEqual([[0], [0, 1]]);
+    expect(data.evidenceSummary.map((e) => e.alsoBacksHere)).toEqual([[0], [0, 0]]);
+  });
+
+  it('a file backing several records is listed under each, marked, and counted once', async () => {
+    // WP8 PR7: one quarterly invoice evidencing three months. Per record the
+    // ledger still says "1 file" — that is true of each — while the appendix
+    // marks the sharing for the reader and the total counts the file once.
+    const shared = { evidence: { id: 'ev-q1', fileName: 'q1-invoice.pdf', _count: { links: 3 } } };
+    // A Dec–Feb invoice: it backs three records, only one of them this year's.
+    const acrossYears = { evidence: { id: 'ev-winter', fileName: 'winter.pdf', _count: { links: 3 } } };
+    stubRecords(prisma, [
+      makeRecord({ id: 'rec-1', periodValue: 'January', evidenceLinks: [shared] }),
+      makeRecord({ id: 'rec-2', periodValue: 'February', evidenceLinks: [shared] }),
+      makeRecord({
+        id: 'rec-3',
+        periodValue: 'March',
+        evidenceLinks: [shared, { evidence: { id: 'ev-meter', fileName: 'meter.jpg', _count: { links: 1 } } }],
+      }),
+      makeRecord({ id: 'rec-4', periodValue: 'December', evidenceLinks: [acrossYears] }),
+    ]);
+
+    const data = await service.assemble(admin, { ...q, includeEvidenceSummary: true } as ReportQueryDto);
+
+    expect(data.records.map((r) => r.evidenceCount)).toEqual([1, 1, 2, 1]);
+    expect(data.evidenceFileTotal).toBe(3);
+    expect(data.evidenceSummary.map((e) => e.alsoBacks)).toEqual([[2], [2], [2, 0], [2]]);
+    expect(data.evidenceSummary.map((e) => e.alsoBacksHere)).toEqual([[2], [2], [2, 0], [0]]);
+    const html = buildReportHtml(data);
+    expect(html).toContain('q1-invoice.pdf <span class="note">(also backs 2 other records; all in this report)</span>');
+    // Shared outside this report is still shared — the marker does not vanish.
+    expect(html).toContain('winter.pdf <span class="note">(also backs 2 other records; 0 in this report)</span>');
+    expect(html).toContain('meter.jpg</td>');
+    expect(html).toContain('3 distinct files back these records');
   });
 
   // --- CSV + audit ----------------------------------------------------------
@@ -506,7 +568,7 @@ describe('ReportsService', () => {
         scope: 3,
         activityValue: 250,
         activityUnit: 'cubic_metres',
-        evidence: [{ fileName: 'water-jan.pdf' }],
+        evidenceLinks: [{ evidence: { id: 'ev-water', fileName: 'water-jan.pdf', _count: { links: 1 } } }],
         calculation: {
           category: 'Water',
           geographyCode: 'TR',
@@ -750,7 +812,14 @@ describe('ReportsService', () => {
           // ledger's file counts are all zero. `objectContaining` on `where`
           // alone constrains neither.
           include: {
-            evidence: { select: { fileName: true } },
+            evidenceLinks: {
+              select: {
+                evidence: {
+                  select: { id: true, fileName: true, _count: { select: { links: true } } },
+                },
+              },
+              orderBy: [{ linkedAt: 'asc' }, { evidenceId: 'asc' }],
+            },
             location: { select: { name: true } },
           },
         }),

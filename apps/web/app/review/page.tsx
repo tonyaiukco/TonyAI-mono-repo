@@ -52,6 +52,7 @@ import {
   type SubsidiaryDTO,
 } from "@/lib/types";
 import { entityLabel } from "@/lib/void-view";
+import { sharedWithNote } from "@/lib/evidence-view";
 import { byLongestWait, waitingLabel } from "@/lib/review-view";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
@@ -687,18 +688,33 @@ export default function ReviewPage() {
                   </p>
                 ) : (
                   <ul className="space-y-1">
-                    {evidence.map((f) => (
-                      <li key={f.id}>
-                        <button
-                          type="button"
-                          onClick={() => openEvidence(f.id)}
-                          className="flex items-center gap-2 text-xs text-primary hover:underline"
-                        >
-                          <FileText className="h-3.5 w-3.5" />
-                          {f.fileName}
-                        </button>
-                      </li>
-                    ))}
+                    {evidence.map((f) => {
+                      // One file can back several records (WP8 PR7). The
+                      // reviewer is the control on that: whether one
+                      // invoice can honestly evidence every record it is
+                      // attached to is theirs to judge, so it is said here.
+                      const shared = sharedWithNote(f, selected.id);
+                      return (
+                        <li key={f.id}>
+                          <button
+                            type="button"
+                            onClick={() => openEvidence(f.id)}
+                            className="flex items-center gap-2 text-xs text-primary hover:underline"
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                            {f.fileName}
+                          </button>
+                          {shared && (
+                            <p
+                              className="ml-5 text-xs text-status-incomplete-text"
+                              data-testid="review-evidence-shared"
+                            >
+                              {shared}
+                            </p>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>

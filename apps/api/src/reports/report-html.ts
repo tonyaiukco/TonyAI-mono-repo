@@ -63,7 +63,17 @@ export function buildReportHtml(data: ReportData): string {
   const evidenceRows = data.evidenceSummary
     .map(
       (e) => `<tr><td>${esc(e.subsidiaryName)}</td><td>${esc(e.category)} · ${esc(e.periodValue)}</td>
-      <td class="num">${e.fileCount}</td><td>${esc(e.fileNames.join(', '))}</td></tr>`,
+      <td class="num">${e.fileCount}</td><td>${e.fileNames
+        .map((name, i) => {
+          const others = e.alsoBacks[i] ?? 0;
+          const here = e.alsoBacksHere[i] ?? 0;
+          return others > 0
+            ? `${esc(name)} <span class="note">(also backs ${others} other record${others === 1 ? '' : 's'}; ${
+                here === others ? 'all' : here
+              } in this report)</span>`
+            : esc(name);
+        })
+        .join(', ')}</td></tr>`,
     )
     .join('');
 
@@ -192,7 +202,7 @@ export function buildReportHtml(data: ReportData): string {
   ${
     data.includeEvidenceSummary && evidenceRows
       ? `<h2>Evidence summary</h2>
-  <p class="note">File names and counts of the supporting evidence attached to committed records (files live in secure storage; links are intentionally not embedded because they expire).</p>
+  <p class="note">File names and counts of the supporting evidence attached to committed records (files live in secure storage; links are intentionally not embedded because they expire). One file can back several records; it is listed under each and marked, and ${data.evidenceFileTotal} distinct file${data.evidenceFileTotal === 1 ? '' : 's'} back these records.</p>
   <table><thead><tr><th>Subsidiary</th><th>Record</th><th class="num">Files</th><th>File names</th></tr></thead>
   <tbody>${evidenceRows}</tbody></table>`
       : ''

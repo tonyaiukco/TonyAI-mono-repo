@@ -134,6 +134,7 @@ model Subsidiary {
   periodLocks      PeriodLock[]
   targets          Target[]
   denominators     SubsidiaryDenominator[]
+  evidence         Evidence[]
   createdAt        DateTime               @default(now()) @map("created_at")
   updatedAt        DateTime               @updatedAt @map("updated_at")
 
@@ -247,7 +248,7 @@ model ActivityRecord {
   // at the end of the statement.
   importBatchId  String?              @map("import_batch_id") @db.Uuid
   importBatch    ImportBatch?         @relation(fields: [importBatchId], references: [id], onDelete: NoAction)
-  evidence       Evidence[]
+  evidenceLinks  ActivityRecordEvidence[]
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
 
@@ -258,6 +259,10 @@ model ActivityRecord {
   // DISTINCT, so it lives in raw SQL like the RLS policies.
   @@index([subsidiaryId])
   @@index([locationId])
+  // The target of `activity_record_evidence`'s composite foreign key — `id`
+  // alone is already unique; the pair is what lets the database refuse a link
+  // between a record and a file of different subsidiaries.
+  @@unique([id, subsidiaryId])
   @@index([importBatchId])
   @@map("activity_records")
 }
@@ -305,24 +310,50 @@ model ImportBatch {
   @@map("import_batches")
 }
 
-// A supporting file (invoice, meter record, fuel log, …) linked to an activity
-// record (FR §4.1). The binary lives in the private Supabase Storage `evidence`
-// bucket; this row is the metadata + pointer (`storagePath`). Tenant-scoped
-// through its parent activity record's subsidiary. Uploaded/removed only via the
-// owner/service-role backend, which also enforces access + type/size validation.
+// A supporting file (invoice, meter record, fuel log, …) that evidences one or
+// more activity records of ONE subsidiary (FR §4.1). The binary lives in the
+// private Supabase Storage `evidence` bucket; this row is the metadata +
+// pointer (`storagePath`). Owned by a subsidiary rather than by a record, so
+// one invoice uploaded once can back several records (WP8 decision 3a) — the
+// links live in `activity_record_evidence`. A file never outlives its last
+// link: the API deletes the blob and the row when the last one goes. Written
+// only via the owner/service-role backend, which enforces access and
+// type/size validation.
 model Evidence {
-  id               String         @id @default(uuid()) @db.Uuid
-  activityRecordId String         @map("activity_record_id") @db.Uuid
-  activityRecord   ActivityRecord @relation(fields: [activityRecordId], references: [id], onDelete: Cascade)
-  storagePath      String         @map("storage_path") // object key in the `evidence` bucket
-  fileName         String         @map("file_name")
-  mimeType         String         @map("mime_type")
-  sizeBytes        Int            @map("size_bytes")
-  uploadedBy       String         @map("uploaded_by") @db.Uuid
-  createdAt        DateTime       @default(now()) @map("created_at")
+  id           String                   @id @default(uuid()) @db.Uuid
+  subsidiaryId String                   @map("subsidiary_id") @db.Uuid
+  subsidiary   Subsidiary               @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  storagePath  String                   @map("storage_path") // object key in the `evidence` bucket
+  fileName     String                   @map("file_name")
+  mimeType     String                   @map("mime_type")
+  sizeBytes    Int                      @map("size_bytes")
+  uploadedBy   String                   @map("uploaded_by") @db.Uuid
+  links        ActivityRecordEvidence[]
+  createdAt    DateTime                 @default(now()) @map("created_at")
 
-  @@index([activityRecordId])
+  @@unique([id, subsidiaryId])
+  @@index([subsidiaryId])
   @@map("evidence")
+}
+
+// One evidence file backing one activity record. Both foreign keys are
+// composite over `subsidiary_id`, so a link can only join a record and a file
+// of the SAME subsidiary — enforced by the database, not only by the API.
+// Deleting either side removes the link; the API then deletes a file left with
+// no links. Created only together with its file (an upload names the records
+// it backs), so a file with no links never gains one again.
+model ActivityRecordEvidence {
+  activityRecordId String         @map("activity_record_id") @db.Uuid
+  evidenceId       String         @map("evidence_id") @db.Uuid
+  subsidiaryId     String         @map("subsidiary_id") @db.Uuid
+  activityRecord   ActivityRecord @relation(fields: [activityRecordId, subsidiaryId], references: [id, subsidiaryId], onDelete: Cascade, onUpdate: NoAction)
+  evidence         Evidence       @relation(fields: [evidenceId, subsidiaryId], references: [id, subsidiaryId], onDelete: Cascade, onUpdate: NoAction)
+  linkedBy         String         @map("linked_by") @db.Uuid
+  linkedAt         DateTime       @default(now()) @map("linked_at")
+
+  @@id([activityRecordId, evidenceId])
+  @@index([evidenceId])
+  @@map("activity_record_evidence")
 }
 
 // A closed reporting period for one subsidiary (FR §4.2): while a row exists,

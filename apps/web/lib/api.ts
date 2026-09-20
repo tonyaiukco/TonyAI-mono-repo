@@ -17,6 +17,7 @@ import type {
   DashboardKpi,
   DenominatorDTO,
   EvidenceDTO,
+  EvidenceDetachDTO,
   EvidenceUrlDTO,
   ImportBatchDetailDTO,
   ImportBatchDTO,
@@ -238,7 +239,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // --- Evidence (files linked to an activity record) ---
+  // --- Evidence (a file backs one or more records of one subsidiary) ---
   listEvidence: (recordId: string) =>
     apiFetch<EvidenceDTO[]>(`/activity-records/${recordId}/evidence`),
   uploadEvidence: async (recordId: string, file: File) => {
@@ -253,12 +254,30 @@ export const api = {
     if (!res.ok) throw await apiError(res);
     return (await res.json()) as EvidenceDTO;
   },
+  /**
+   * One file for several records of one subsidiary. All or nothing: a refusal
+   * is a 400 whose sentence names every record that could not take it.
+   */
+  uploadEvidenceForRecords: async (file: File, recordIds: string[]) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("recordIds", JSON.stringify(recordIds));
+    const res = await fetch(`${BASE_URL}/evidence`, {
+      method: "POST",
+      headers: await authHeaders(),
+      body: form,
+    });
+    if (!res.ok) throw await apiError(res);
+    return (await res.json()) as EvidenceDTO;
+  },
   getEvidenceUrl: (id: string) =>
     apiFetch<EvidenceUrlDTO>(`/evidence/${id}/url`),
-  deleteEvidence: (id: string) =>
-    apiFetch<{ id: string; deleted: true }>(`/evidence/${id}`, {
-      method: "DELETE",
-    }),
+  /** Take a file off one record; the API deletes it when that was its last. */
+  detachEvidence: (recordId: string, evidenceId: string) =>
+    apiFetch<EvidenceDetachDTO>(
+      `/activity-records/${recordId}/evidence/${evidenceId}`,
+      { method: "DELETE" },
+    ),
 
   // --- Period locks (FR §4.2) ---
   /**

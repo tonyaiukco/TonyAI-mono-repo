@@ -10,10 +10,12 @@ import {
  * that outlives every pointer to it is a retention problem (KVKK/GDPR), not
  * wasted disk.
  *
- * `Evidence.activityRecord` is ON DELETE CASCADE, so deleting a record removes
- * the evidence ROWS inside Postgres, below the application, where nothing could
- * see them go and therefore nothing deleted the objects. Measured on the local
- * stack before this: 1501 objects in the bucket against 102 rows.
+ * Evidence rows once hung off one record with ON DELETE CASCADE, so deleting a
+ * record removed them inside Postgres, below the application, where nothing
+ * could see them go and therefore nothing deleted the objects. Measured on the
+ * local stack before this: 1501 objects in the bucket against 102 rows. Since
+ * WP8 PR7 one file can back several records: deleting a record takes its
+ * LINKS, and the file goes only with its last one.
  *
  * These specs assert against STORAGE, not against the API's own view of itself.
  * Asking the API whether the evidence is gone only proves the rows cascaded,
@@ -26,13 +28,14 @@ function serviceKey(): string {
   return key;
 }
 
-/** The object key behind a record's evidence — never exposed by the API (the
- *  DTO deliberately strips `storagePath`), so read it straight from the table. */
+/** The object keys behind a record's evidence — never exposed by the API (the
+ *  DTO deliberately strips `storagePath`), so read them straight from the tables. */
 async function storagePathsOf(request: APIRequestContext, recordId: string): Promise<string[]> {
   const { url } = supabaseEnv();
   const key = serviceKey();
   const res = await request.get(
-    `${url}/rest/v1/evidence?activity_record_id=eq.${recordId}&select=storage_path`,
+    `${url}/rest/v1/evidence?select=storage_path,activity_record_evidence!inner(activity_record_id)` +
+      `&activity_record_evidence.activity_record_id=eq.${recordId}`,
     { headers: { apikey: key, Authorization: `Bearer ${key}` } },
   );
   expect(res.ok()).toBe(true);
@@ -106,4 +109,56 @@ test('deleting one evidence file leaves the record and its other files alone', a
   expect(await objectExists(request, after[0])).toBe(true);
 
   await request.delete(`${API_BASE}/activity-records/${rec.id}`, { headers: bearer(token) });
+});
+
+test('a file shared by two records survives the first record and goes with its last link', async ({ request }) => {
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const subs = await (await request.get(`${API_BASE}/subsidiaries`, { headers: bearer(token) })).json();
+  const create = async (periodValue: string) => {
+    const res = await request.post(`${API_BASE}/activity-records`, {
+      headers: bearer(token),
+      data: { subsidiaryId: subs[0].id, locationId: null, reportingYear: E2E_YEAR,
+        reportingPeriod: E2E_PERIOD, periodValue, category: 'Electricity',
+        activityValue: 66, activityUnit: 'kWh', varianceReason: null, input: null },
+    });
+    // A leftover record in this slot would otherwise surface later as a
+    // confusing upload refusal instead of the real conflict.
+    expect(res.status(), await res.text()).toBe(201);
+    return (await res.json()) as { id: string };
+  };
+  const first = await create('Q1');
+  const second = await create('Q2');
+
+  // One upload for both records (`POST /evidence`, WP8 PR7).
+  const upload = await request.post(`${API_BASE}/evidence`, {
+    headers: bearer(token),
+    multipart: {
+      file: { name: 'shared.pdf', mimeType: 'application/pdf', buffer: readFileSync(EVIDENCE_FIXTURE) },
+      recordIds: JSON.stringify([first.id, second.id]),
+    },
+  });
+  expect(upload.status(), await upload.text()).toBe(201);
+  const file = (await upload.json()) as { id: string; linkedRecords: { id: string }[] };
+  expect(file.linkedRecords.map((r) => r.id).sort()).toEqual([first.id, second.id].sort());
+
+  const [path] = await storagePathsOf(request, first.id);
+  expect(await storagePathsOf(request, second.id)).toEqual([path]);
+  expect(await objectExists(request, path)).toBe(true);
+
+  // Deleting one record keeps the file the other still holds.
+  expect((await request.delete(`${API_BASE}/activity-records/${first.id}`, { headers: bearer(token) })).status()).toBe(200);
+  expect(await objectExists(request, path), 'the other record still holds this file').toBe(true);
+  const left = await (await request.get(`${API_BASE}/activity-records/${second.id}/evidence`, { headers: bearer(token) })).json();
+  expect(left.map((e: { id: string }) => e.id)).toEqual([file.id]);
+
+  // Taking it off its last record deletes it — in storage, not just in the table.
+  const detach = await request.delete(
+    `${API_BASE}/activity-records/${second.id}/evidence/${file.id}`,
+    { headers: bearer(token) },
+  );
+  expect(detach.status()).toBe(200);
+  expect(await detach.json()).toEqual({ evidenceId: file.id, recordId: second.id, fileDeleted: true });
+  expect(await objectExists(request, path)).toBe(false);
+
+  await request.delete(`${API_BASE}/activity-records/${second.id}`, { headers: bearer(token) });
 });

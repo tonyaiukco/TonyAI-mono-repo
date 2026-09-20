@@ -677,10 +677,14 @@ Use these field names consistently across all models:
   }
 ]
 11. Evidence File Model
+
+A file belongs to a subsidiary and backs one or more of its records (WP8 decision 3a) — one quarterly invoice can evidence three monthly records. The canonical API shape is `EvidenceDTO` in `@tonyai/shared-types`, which lists each linked record (`linkedRecords`) rather than ids alone.
+
 11.1 Shape
 {
   "id": "file_001",
-  "recordId": "record_001",
+  "subsidiaryId": "sub_001",
+  "linkedRecordIds": ["record_001"],
   "fileName": "january_electricity_invoice.pdf",
   "fileType": "application/pdf",
   "fileSizeKb": 842,
@@ -692,7 +696,8 @@ Use these field names consistently across all models:
 [
   {
     "id": "file_001",
-    "recordId": "record_001",
+    "subsidiaryId": "sub_001",
+    "linkedRecordIds": ["record_001", "record_002", "record_003"],
     "fileName": "january_electricity_invoice.pdf",
     "fileType": "application/pdf",
     "fileSizeKb": 842,
@@ -702,7 +707,8 @@ Use these field names consistently across all models:
   },
   {
     "id": "file_002",
-    "recordId": "record_001",
+    "subsidiaryId": "sub_001",
+    "linkedRecordIds": ["record_001"],
     "fileName": "meter_reading_photo.jpg",
     "fileType": "image/jpeg",
     "fileSizeKb": 512,

@@ -65,6 +65,9 @@ const TENANT_TABLES = [
   'activity_records',
   'locations',
   'evidence',
+  // WP8 PR7: a file backs records through this link table. Both carry the
+  // subsidiary themselves now, so both scope on `subsidiary_id` directly.
+  'activity_record_evidence',
   'period_locks',
   'targets',
   'subsidiary_denominators',
@@ -80,14 +83,14 @@ const LOGISTICS = '22222222-2222-2222-2222-222222220004';
 const ACC = `(${ENERGY},${LOGISTICS})`;
 
 // Service-role query that counts ONLY the rows belonging to entry's accessible
-// tenants — the exact set entry must see. evidence has no subsidiary_id, so it is
-// scoped through an inner-joined parent record.
+// tenants — the exact set entry must see.
 const ACCESSIBLE_QUERY = {
   // `subsidiaries` IS the tenant, so it scopes on `id`, not `subsidiary_id`.
   subsidiaries: `select=id&id=in.${ACC}`,
   activity_records: `select=id&subsidiary_id=in.${ACC}`,
   locations: `select=id&subsidiary_id=in.${ACC}`,
-  evidence: `select=id,activity_records!inner(subsidiary_id)&activity_records.subsidiary_id=in.${ACC}`,
+  evidence: `select=id&subsidiary_id=in.${ACC}`,
+  activity_record_evidence: `select=evidence_id&subsidiary_id=in.${ACC}`,
   period_locks: `select=id&subsidiary_id=in.${ACC}`,
   targets: `select=id&subsidiary_id=in.${ACC}`,
   subsidiary_denominators: `select=id&subsidiary_id=in.${ACC}`,
@@ -110,6 +113,10 @@ const ACCESSIBLE_QUERY = {
   // `subsidiary_ids` never matches `cd`, which is the policy's fail-closed rule.
   import_batches: undefined,
 };
+
+// The column a plain count selects. Every table has `id` except the link
+// table, whose key is the (record, file) pair.
+const COUNT_SELECT = { activity_record_evidence: 'select=evidence_id' };
 
 // --- PostgREST helpers -------------------------------------------------------
 async function count(table, { token, key = ANON, query = 'select=id' } = {}) {
@@ -302,8 +309,8 @@ async function main() {
       `select=id&uploaded_by=eq.${subjectOf(token)}&subsidiary_ids=cd.{${ENERGY},${LOGISTICS}}`;
     for (const table of TENANT_TABLES) {
       console.log(`▸ ${table}`);
-      const anon = await count(table);
-      const entry = await count(table, { token });
+      const anon = await count(table, { query: COUNT_SELECT[table] });
+      const entry = await count(table, { token, query: COUNT_SELECT[table] });
       // service_role must be presented as the Bearer JWT too — PostgREST derives
       // the DB role from Authorization, not from apikey (which only opens the gate).
       // Count exactly the rows of entry's accessible tenants.

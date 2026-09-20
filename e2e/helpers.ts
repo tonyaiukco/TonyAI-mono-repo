@@ -391,33 +391,82 @@ async function removeEmptiedImportBatches(
   ];
 }
 
+interface EvidenceFile {
+  id: string;
+  storage_path: string;
+}
+
 /**
- * Storage paths of the evidence attached to records matching a PostgREST filter
- * on `activity_records` (or, through it, on `subsidiaries`).
+ * The evidence files matching a PostgREST query on `evidence` — linked to
+ * records through `activity_record_evidence`, or owned by a subsidiary.
  *
- * Collected BEFORE the rows are deleted, because that is the only moment they
- * are knowable: `Evidence.activityRecord` is ON DELETE CASCADE, so the rows go
- * inside Postgres and the object keys go with them. Teardown then used to leave
- * the files behind forever — every run uploads at least one invoice per
- * committed record, and the local bucket had grown to 1501 objects against 102
- * rows before anyone counted.
+ * Collected BEFORE the records or subsidiaries are deleted, because after that
+ * nothing says which files they held. Teardown once left the files behind
+ * forever — every run uploads at least one invoice per committed record, and
+ * the local bucket had grown to 1501 objects against 102 rows before anyone
+ * counted.
  */
-async function evidencePathsFor(
+async function evidenceFilesFor(
   request: APIRequestContext,
   /** Full PostgREST query string: the `select` embed AND the filters on it. One
    *  argument rather than two, because the embed and the filter that walks it
-   *  have to agree — `activity_records.x=` only works if the select joined it. */
+   *  have to agree — `activity_record_evidence.x=` only works if the select
+   *  joined it. */
   query: string,
-): Promise<string[]> {
+): Promise<EvidenceFile[]> {
   const { url } = supabaseEnv();
   const service = process.env.E2E_SUPABASE_SERVICE_KEY as string;
   const res = await request.get(`${url}/rest/v1/evidence?${query}`, {
     headers: { apikey: service, Authorization: `Bearer ${service}` },
   });
   if (!res.ok()) {
-    throw new Error(`E2E cleanup could not list evidence paths: ${res.status()} ${await res.text()}`);
+    throw new Error(`E2E cleanup could not list evidence files: ${res.status()} ${await res.text()}`);
   }
-  return ((await res.json()) as { storage_path: string }[]).map((r) => r.storage_path);
+  return ((await res.json()) as EvidenceFile[]).map(({ id, storage_path }) => ({ id, storage_path }));
+}
+
+/**
+ * Delete those of `files` that no record links to any more — objects, then
+ * rows. Called AFTER the records went: since WP8 PR7 a file belongs to a
+ * subsidiary and a record delete takes only its LINKS, so the rows would
+ * outlive the records, while a file another record still holds must stay.
+ */
+async function removeUnlinkedEvidence(
+  request: APIRequestContext,
+  files: EvidenceFile[],
+): Promise<(string | null)[]> {
+  if (files.length === 0) return [];
+  const { url } = supabaseEnv();
+  const service = process.env.E2E_SUPABASE_SERVICE_KEY as string;
+  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  const failures: (string | null)[] = [];
+  // In chunks: every id rides in the URL (~43 bytes each once encoded), and a
+  // quarterly sweep can hold a few hundred files — past an 8 KB URL limit the
+  // teardown itself would throw.
+  const CHUNK = 100;
+  for (let i = 0; i < files.length; i += CHUNK) {
+    const ids = files.slice(i, i + CHUNK).map((f) => `"${f.id}"`).join(',');
+    const res = await request.get(
+      `${url}/rest/v1/evidence?select=id,storage_path,activity_record_evidence(evidence_id)` +
+        `&id=in.(${ids})&activity_record_evidence=is.null`,
+      { headers: { apikey: service, Authorization: `Bearer ${service}` } },
+    );
+    if (!res.ok()) {
+      failures.push(`${res.status()} listing unlinked evidence — ${await res.text()}`);
+      continue;
+    }
+    const unlinked = (await res.json()) as EvidenceFile[];
+    if (unlinked.length === 0) continue;
+    failures.push(
+      await removeEvidenceObjects(request, unlinked.map((f) => f.storage_path)),
+      await del(
+        request,
+        `${url}/rest/v1/evidence?id=in.(${unlinked.map((f) => `"${f.id}"`).join(',')})`,
+        headers,
+      ),
+    );
+  }
+  return failures;
 }
 
 /**
@@ -449,25 +498,26 @@ export async function cleanupQuarterly(request: APIRequestContext): Promise<void
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
-  // Locks first (independent), then records (evidence cascades in the DB).
+  // Locks first (independent), then records (their evidence LINKS cascade in
+  // the DB), then the files no record holds any more.
   // Scoped by YEAR as well as period. Filtering on period alone was survivable
   // while the UI offered two years; DE-9 opened it to twelve, so an unscoped
   // wipe would destroy a UAT tester's quarterly data in any of them — with the
   // service-role key, which bypasses RLS and therefore every tenant boundary.
   const scope = `reporting_period=eq.${E2E_PERIOD}&reporting_year=eq.${E2E_YEAR}`;
-  // Files BEFORE rows: the evidence rows cascade away with the records, taking
-  // the object keys with them, so this is the last moment they can be read.
-  const paths = await evidencePathsFor(
+  // The files are read BEFORE the records go: afterwards nothing says which
+  // files they held.
+  const files = await evidenceFilesFor(
     request,
-    'select=storage_path,activity_records!inner(id)' +
-      `&activity_records.reporting_period=eq.${E2E_PERIOD}` +
-      `&activity_records.reporting_year=eq.${E2E_YEAR}`,
+    'select=id,storage_path,activity_record_evidence!inner(activity_records!inner(id))' +
+      `&activity_record_evidence.activity_records.reporting_period=eq.${E2E_PERIOD}` +
+      `&activity_record_evidence.activity_records.reporting_year=eq.${E2E_YEAR}`,
   );
   const batches = await importBatchIdsFor(request, scope);
   reportCleanup([
-    await removeEvidenceObjects(request, paths),
     await del(request, `${url}/rest/v1/period_locks?${scope}`, headers),
     await del(request, `${url}/rest/v1/activity_records?${scope}`, headers),
+    ...(await removeUnlinkedEvidence(request, files)),
     ...(await removeEmptiedImportBatches(request, batches)),
   ]);
 }
@@ -489,17 +539,17 @@ export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promis
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
-  // Same rule as cleanupQuarterly: the subsidiary delete cascades all the way
-  // down to evidence rows, so the files have to be reclaimed while their keys
-  // are still readable. Not covered by the quarterly sweep — a spec is free to
-  // put an E2E subsidiary's record in any period.
-  const paths = await evidencePathsFor(
+  // Files BEFORE rows: the subsidiary delete cascades to the evidence rows it
+  // owns, taking the object keys with them, so this is the last moment they
+  // can be read. Not covered by the quarterly sweep — a spec is free to put an
+  // E2E subsidiary's record in any period.
+  const files = await evidenceFilesFor(
     request,
-    'select=storage_path,activity_records!inner(subsidiaries!inner(id))' +
-      '&activity_records.subsidiaries.legal_name=like.E2E%20Test%20Co*',
+    'select=id,storage_path,subsidiaries!inner(legal_name)' +
+      '&subsidiaries.legal_name=like.E2E%20Test%20Co*',
   );
   reportCleanup([
-    await removeEvidenceObjects(request, paths),
+    await removeEvidenceObjects(request, files.map((f) => f.storage_path)),
     await del(request, `${url}/rest/v1/subsidiaries?legal_name=like.E2E%20Test%20Co*`, headers),
   ]);
 }
@@ -870,21 +920,20 @@ export async function deleteRecordsAsService(
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
   const list = ids.map((id) => `"${id}"`).join(',');
-  // Files BEFORE rows, for the same reason `cleanupQuarterly` does it: the
-  // `Evidence.activityRecord` FK is ON DELETE CASCADE, so the moment the rows
-  // go the object keys are unknowable and the files are orphaned forever. This
-  // helper deleted the evidence ROWS and left the objects — one leaked file per
-  // run, on a bucket that had already grown to 1501 objects against 102 rows
-  // once before anyone counted.
-  const paths = await evidencePathsFor(
+  // The files are read BEFORE the records go, as in `cleanupQuarterly`: the
+  // records' LINKS cascade, and afterwards nothing says which files they held.
+  // This helper once deleted the evidence ROWS and left the objects — one
+  // leaked file per run, on a bucket that had already grown to 1501 objects
+  // against 102 rows once before anyone counted.
+  const files = await evidenceFilesFor(
     request,
-    `select=storage_path&activity_record_id=in.(${list})`,
+    'select=id,storage_path,activity_record_evidence!inner(activity_record_id)' +
+      `&activity_record_evidence.activity_record_id=in.(${list})`,
   );
   const batches = await importBatchIdsFor(request, `id=in.(${list})`);
   reportCleanup([
-    await removeEvidenceObjects(request, paths),
-    await del(request, `${url}/rest/v1/evidence?activity_record_id=in.(${list})`, headers),
     await del(request, `${url}/rest/v1/activity_records?id=in.(${list})`, headers),
+    ...(await removeUnlinkedEvidence(request, files)),
     ...(await removeEmptiedImportBatches(request, batches)),
   ]);
 }

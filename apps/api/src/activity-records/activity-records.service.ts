@@ -51,6 +51,7 @@ import { storedUnit } from '../calculations/storable-unit';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { EvidenceService } from '../evidence/evidence.service';
+import { lockActivityRecordRow } from './row-lock';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
@@ -82,7 +83,7 @@ export function evidenceReadyWhere() {
   return {
     OR: [
       { category: { notIn: [...EVIDENCE_REQUIRED_CATEGORIES] as string[] } },
-      { evidence: { some: {} } },
+      { evidenceLinks: { some: {} } },
     ],
   };
 }
@@ -559,7 +560,7 @@ export class ActivityRecordsService {
       },
       orderBy: { createdAt: 'desc' },
       include: {
-        _count: { select: { evidence: true } },
+        _count: { select: { evidenceLinks: true } },
         location: { select: { name: true } },
       },
     });
@@ -567,13 +568,13 @@ export class ActivityRecordsService {
     // one per row: `created_by`, `reviewed_by` and `voided_by` have no FK to
     // `profiles`, so there is no `include` that could do this.
     const actors = await this.actorsFor(user, rows);
-    return rows.map((r) => this.toDTO(r, r._count.evidence, actors));
+    return rows.map((r) => this.toDTO(r, r._count.evidenceLinks, actors));
   }
 
   async get(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const record = await this.loadScoped(user, id);
     const [evidenceCount, actors] = await Promise.all([
-      this.prisma.evidence.count({ where: { activityRecordId: id } }),
+      this.prisma.activityRecordEvidence.count({ where: { activityRecordId: id } }),
       this.actorsFor(user, [record]),
     ]);
     return this.toDTO(record, evidenceCount, actors);
@@ -587,9 +588,10 @@ export class ActivityRecordsService {
    *
    * Extracted so the bulk importer (WP8) can offer a dry-run that PROVABLY
    * persists nothing. The obvious alternative, running the batch inside a
-   * rolled-back transaction, is not available here: this service opens no
-   * transaction at all (`create` writes through the default client and audits
-   * afterwards), and Prisma's interactive-transaction timeout would not survive
+   * rolled-back transaction, is not available here: `create` opens no
+   * transaction (it writes through the default client and audits afterwards;
+   * the only transaction in this service is `remove`'s row lock), and Prisma's
+   * interactive-transaction timeout would not survive
    * a thousand-row loop even if it did. A read-only seam is the mechanism the
    * code actually supports, and "no write happened" is then a claim a spec can
    * assert against the write spies rather than a claim about a rollback.
@@ -864,7 +866,7 @@ export class ActivityRecordsService {
     if (dto.varianceReason !== undefined) data.varianceReason = dto.varianceReason;
 
     let updated: ActivityRecord & {
-      _count: { evidence: number };
+      _count: { evidenceLinks: number };
       location: { name: string } | null;
     };
     try {
@@ -872,7 +874,7 @@ export class ActivityRecordsService {
         where: { id },
         data,
         include: {
-          _count: { select: { evidence: true } },
+          _count: { select: { evidenceLinks: true } },
           location: { select: { name: true } },
         },
       });
@@ -888,11 +890,11 @@ export class ActivityRecordsService {
     }
     await this.auditCreateUpdateDelete(user, 'update', id, {
       before: this.toAuditSnapshot(existing),
-      after: this.toAuditSnapshot(updated, updated._count.evidence),
+      after: this.toAuditSnapshot(updated, updated._count.evidenceLinks),
     });
     return this.toDTO(
       updated,
-      updated._count.evidence,
+      updated._count.evidenceLinks,
       await this.actorsFor(user, [updated]),
     );
   }
@@ -910,18 +912,33 @@ export class ActivityRecordsService {
       existing.reportingPeriod,
       existing.periodValue,
     );
-    // Reclaim the evidence FILES first. The rows go by themselves — the FK is
-    // ON DELETE CASCADE — but that happens inside Postgres, so this is the last
-    // moment any code can still see what the blobs are. Skip it and the
-    // invoices outlive every pointer to them, which is a retention problem, not
-    // wasted disk. Before the row delete on purpose: if storage fails, nothing
-    // has been destroyed yet.
-    await this.evidence.removeAllForRecord(id);
-    await this.prisma.activityRecord.delete({ where: { id } });
-    await this.auditCreateUpdateDelete(user, 'delete', id, {
-      before: this.toAuditSnapshot(existing),
+    // The record's evidence LINKS go by themselves — ON DELETE CASCADE — but a
+    // file can back other records too (WP8 PR7), so only the files this record
+    // was the last to hold are deleted, rows and blobs, once the links are
+    // gone. Skip that and the invoices outlive every pointer to them, which is
+    // a retention problem, not wasted disk.
+    //
+    // The file ids are read under a row lock on the record. An upload linking a
+    // file to it checks the link's foreign key with FOR KEY SHARE on this row,
+    // which FOR UPDATE blocks: the link either committed first and is read
+    // here, or fails after the delete. Without the lock an upload landing
+    // between the read and the delete left a file no record held — measured,
+    // 7 of 24 racing pairs.
+    const fileIds = await this.prisma.$transaction(async (tx) => {
+      // Deleted meanwhile by a concurrent request, which audited it.
+      if (!(await lockActivityRecordRow(tx, existing.id))) {
+        throw new NotFoundException('Activity record not found');
+      }
+      const held = await this.evidence.fileIdsFor(existing.id, tx);
+      await tx.activityRecord.delete({ where: { id: existing.id } });
+      return held;
     });
-    return { id, deleted: true };
+    const deletedFileIds = await this.evidence.deleteUnlinked(fileIds);
+    await this.auditCreateUpdateDelete(user, 'delete', existing.id, {
+      before: this.toAuditSnapshot(existing, fileIds.length),
+      evidence: { fileIds, deletedFileIds },
+    });
+    return { id: existing.id, deleted: true };
   }
 
   // --- Workflow transitions --------------------------------------------------
@@ -963,7 +980,7 @@ export class ActivityRecordsService {
     // shared with the checkbox the client offers, because it has already been
     // copied wrongly once.
     const evidenceCount = isEvidenceRequired(record.category)
-      ? await this.prisma.evidence.count({ where: { activityRecordId: id } })
+      ? await this.prisma.activityRecordEvidence.count({ where: { activityRecordId: id } })
       : 0;
     if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
       throw new EvidenceRequiredError(record.category);
@@ -1186,6 +1203,10 @@ export class ActivityRecordsService {
     diff: {
       before?: ActivityRecordAuditSnapshot;
       after?: ActivityRecordAuditSnapshot;
+      /** A delete's evidence: every file the record held, and those it was the
+       *  last to hold, deleted with it. The record's row is the only audit row
+       *  a record delete writes, so this is the only trace of those files. */
+      evidence?: { fileIds: string[]; deletedFileIds: string[] };
     },
   ): Promise<void> {
     await this.audit.record(user, { action, entity: 'activity_record', entityId, diff });
@@ -1262,7 +1283,7 @@ export class ActivityRecordsService {
           : {}),
       },
       include: {
-        _count: { select: { evidence: true } },
+        _count: { select: { evidenceLinks: true } },
         location: { select: { name: true } },
       },
     });
@@ -1288,7 +1309,7 @@ export class ActivityRecordsService {
     });
     return this.toDTO(
       updated,
-      updated._count.evidence,
+      updated._count.evidenceLinks,
       await this.actorsFor(user, [updated]),
     );
   }
