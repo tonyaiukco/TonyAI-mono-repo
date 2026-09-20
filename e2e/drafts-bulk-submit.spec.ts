@@ -207,8 +207,12 @@ test('a draft you cannot send has no checkbox, and the row says why', async ({
         .filter({ hasText: `${periodValue} ${E2E_YEAR}` })
         .filter({ hasText: category });
 
-    await expect(row('Q3', E2E_BULK_CATEGORY)).toContainText('Entered by someone else.');
-    await expect(row('Q4', 'Electricity')).toContainText('Needs an evidence file.');
+    // Each row is keyed on the gate that held it, not on the sentence that
+    // says so: the property is that these two rows are blocked for DIFFERENT
+    // reasons and each is told which. `bulk-submit-view.spec.ts` owns the
+    // wording, including the author and evidence cases separately.
+    await expect(row('Q3', E2E_BULK_CATEGORY)).toContainText(/entered by someone else/i);
+    await expect(row('Q4', 'Electricity')).toContainText(/needs an evidence/i);
     // Not offered, not merely disabled: a disabled checkbox is unfocusable, so
     // the sentence above would never reach anyone who cannot see it.
     await expect(

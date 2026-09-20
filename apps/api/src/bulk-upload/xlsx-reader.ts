@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer';
 import { StringDecoder } from 'node:string_decoder';
 import { BadRequestException } from '@nestjs/common';
 import { SaxesParser, type SaxesTagNS } from 'saxes';
@@ -65,6 +66,8 @@ const MAX_ATTRIBUTES = 256;
 const SLICE_BYTES = 256 * 1024;
 
 export const WORKBOOK_HAS_NO_SHEETS = 'The workbook has no sheets.';
+export const WORKBOOK_NOT_UTF8 =
+  "The workbook's XML is not UTF-8 text. Open it in Excel and save it again.";
 export const FIRST_SHEET_NOT_A_WORKSHEET =
   "The workbook's first sheet is not a worksheet. Move the sheet with the records to the front.";
 
@@ -209,6 +212,38 @@ const yieldToEventLoop = () =>
   });
 
 async function parseXml(part: Buffer, handlers: XmlHandlers): Promise<void> {
+  // The same rule the CSV path applies to a whole file, applied to each XML
+  // part — because `StringDecoder('utf8')` below is lossy in exactly the way
+  // `Buffer#toString('utf8')` is, and saxes does not close the gap: it
+  // syntax-checks the NAME in an `encoding="…"` declaration and then ignores
+  // it, so a part declaring `windows-1254` is still read as UTF-8 and its
+  // Turkish letters still become U+FFFD. Measured: a single `0xFC` in a
+  // `varianceReason` cell reached the stored record as U+FFFD, and that
+  // column is free text no vocabulary can catch on an immutable row.
+  //
+  // What it refuses, stated so it is provable rather than reassuring: every
+  // byte failing this check is one the decoder below would have replaced with
+  // U+FFFD, so no workbook whose imported VALUES were intact is refused —
+  // EXCEPT one whose bad bytes sit entirely in elements this reader never
+  // opens (`<headerFooter>`, `<definedName>`). That case was importable
+  // before and is refused now. It needs a writer that encodes one element
+  // differently from the rest, which no mainstream one does (Excel,
+  // LibreOffice, Sheets, exceljs and this product's own template all
+  // serialise the package through a single UTF-8 encoder), so the guard is
+  // left part-level rather than narrowed to the elements that are read.
+  //
+  // A NUL joins it, for parity with the CSV rule and not because it is
+  // reachable: saxes refuses a raw NUL everywhere today. That is a property
+  // of this version of a dependency, not a rule of this reader — the same
+  // ground the doctype refusal below is written on. XML 1.0 cannot carry
+  // U+0000 at all, escaped or not, so it cannot false-positive.
+  //
+  // Cost: measured 0.7 ms for 9.9 MiB of Turkish text, and the unpack budget
+  // is charged BEFORE a part is returned, so the total scanned over one read
+  // can never exceed `XLSX_MAX_UNPACKED_BYTES`.
+  if (!isUtf8(part) || part.includes(0)) {
+    throw new BadRequestException(WORKBOOK_NOT_UTF8);
+  }
   const parser = new SaxesParser<{ xmlns: true; position: false }>({
     xmlns: true,
     position: false,
@@ -430,8 +465,14 @@ const DATE_LETTERS = new Set([121, 109, 100, 104, 115, 98]);
  * A scan, not the patterns it replaced: stripping `[...]` with a regex
  * backtracked quadratically on an unclosed bracket (64 KB of `[` took 1.8 s,
  * measured), and a format code comes from the file like everything else.
+ *
+ * Exported for that last reason alone. The budget that guards it used to sit
+ * on a whole workbook read, where 180 ms of XML parsing left it 1.6x from the
+ * defect; measured directly it is 0.2 ms against 1,633 ms for a
+ * behaviour-preserving regex rewrite, which is a margin no CI runner can
+ * close. `xlsx-reader.spec.ts` holds it.
  */
-function isDateFormatCode(code: string): boolean {
+export function isDateFormatCode(code: string): boolean {
   for (let i = 0; i < code.length; i += 1) {
     const char = code.charCodeAt(i);
     if (char === BACKSLASH || char === UNDERSCORE || char === ASTERISK) {

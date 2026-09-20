@@ -113,9 +113,15 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
         exact: true,
       });
     // Held back, with the row saying why. The reason is the positive anchor,
-    // because a zero checkbox count on its own also matches a list still loading.
+    // because a zero checkbox count on its own also matches a list still
+    // loading — and keyed on the GATE, because which one held the row is the
+    // property here. Not a bare /evidence/i: the row may well grow a neutral
+    // mention of the word (an attached-file chip, an attach control), and the
+    // positive has the same false-pass mode as the negative below. The
+    // sentence is `submitBlockReason`'s, and `bulk-submit-view.spec.ts` pins
+    // it there.
     const expectHeldBack = async (periodValue: string) => {
-      await expect(rowFor(periodValue)).toContainText('Needs an evidence file.');
+      await expect(rowFor(periodValue)).toContainText(/needs an evidence/i);
       await expect(checkboxFor(periodValue)).toHaveCount(0);
     };
     const row = rowFor(ATTACHED);
@@ -157,7 +163,12 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
     // earlier gates (role, status, author, lock) pass. A failure on the reason
     // means the vault's count never reached the row. A failure on the checkbox
     // after it means the locator no longer names the row's checkbox.
-    await expect(row).not.toContainText('Needs an evidence file.');
+    // The NEGATIVE is keyed more narrowly than the positive above, and
+    // deliberately: a bare /evidence/i here would also match any neutral
+    // mention the row grows later (an attached-file chip, an attach control),
+    // and a negative assertion that can be satisfied by the wrong absence is
+    // worse than a pinned sentence. This one names the GATE and nothing else.
+    await expect(row).not.toContainText(/needs an evidence/i);
     await expect(checkbox).toBeVisible();
     await expect(checkbox).not.toBeChecked();
     await expect(row).toContainText('Draft');

@@ -8,6 +8,7 @@ import {
   approveRecord,
   bearer,
   createCommittedRecord,
+  deleteRecordsAsService,
   findRecordId,
   getAccessToken,
   lockPeriod,
@@ -34,6 +35,11 @@ import {
  * unclaimed on this subsidiary: Q3 is review-queue's, Q4 is analytics'. The
  * second test also takes a period LOCK on Logistics·Q1 and reopens it in a
  * `finally`, so it cannot outlive the test even on failure.
+ *
+ * The third test is the same shape for a different write — the stored UNIT —
+ * and takes Logistics·Q1·Water, which nothing else in `e2e/` creates. It
+ * deletes its own row in a `finally` rather than holding the tuple for the
+ * rest of the run, because unlike the two above it needs no state afterwards.
  */
 
 const PERIOD = 'Q1';
@@ -170,4 +176,89 @@ test('a closed period is closed whatever spelling closed it', async ({ request }
     periodValue: PERIOD,
   });
   expect(reopened).toBe(id);
+});
+
+test('the stored unit is the vocabulary spelling, the snapshot keeps the entered one', async ({
+  request,
+}) => {
+  // #123, through HTTP. Its unit tests mock Prisma, so they pin what the
+  // service PASSES to `update`/`create` — not what a later reader gets back.
+  // Between those two lies everything this cannot otherwise see: the DTO
+  // (`IsActivityUnit` admits aliases, which is why a non-canonical spelling
+  // reaches the service at all), the column, and `toDTO`.
+  //
+  // Water, because it is the one category recordable with no factor: the
+  // record is uncalculated, and `inputUnit` is on that arm of the snapshot
+  // too, so both halves are readable without seeding a factor.
+  const token = await getAccessToken(request, ADMIN_EMAIL);
+  const body = {
+    subsidiaryId: SUB.logistics,
+    locationId: null,
+    reportingYear: E2E_YEAR,
+    reportingPeriod: E2E_PERIOD,
+    periodValue: PERIOD,
+    category: 'Water',
+    activityValue: 640,
+    // An ALIAS, not a case variant: `m3` is a different string from the
+    // vocabulary's `cubic_metres`, so a column that kept the caller's text
+    // cannot accidentally agree with the assertion below.
+    activityUnit: 'm3',
+    varianceReason: null,
+    input: null,
+  };
+
+  const created = await request.post(`${API_BASE}/activity-records`, {
+    headers: bearer(token),
+    data: body,
+  });
+  expect(created.status()).toBe(201);
+  const record = await created.json();
+  const id = record.id as string;
+
+  try {
+    // The two halves, on the way out of the write.
+    expect(record.activityUnit).toBe('cubic_metres');
+    expect(record.calculation.inputUnit).toBe('m3');
+
+    // …and on a FRESH read, which is the half a service-level test cannot
+    // reach: what came back above could have been the DTO echoing its input.
+    const read = await request.get(`${API_BASE}/activity-records/${id}`, {
+      headers: bearer(token),
+    });
+    expect(read.ok()).toBe(true);
+    const stored = await read.json();
+    expect(stored.activityUnit).toBe('cubic_metres');
+    expect(stored.calculation.inputUnit).toBe('m3');
+
+    // An edit that never names the unit leaves the stored spelling alone.
+    // This is the gate #123 added in a second commit, and it is the branch a
+    // careless `storedUnit(dto.activityUnit)` on every update would break —
+    // silently, because `storedUnit(undefined)` has no reason to throw.
+    const valueOnly = await request.patch(`${API_BASE}/activity-records/${id}`, {
+      headers: bearer(token),
+      data: { activityValue: 700 },
+    });
+    expect(valueOnly.ok()).toBe(true);
+    const afterValue = await valueOnly.json();
+    expect(afterValue.activityValue).toBe(700);
+    expect(afterValue.activityUnit).toBe('cubic_metres');
+    // Deliberately NOT asserting `calculation.inputUnit` here. The snapshot is
+    // recomputed on any edit and `storedUnit`'s docstring is explicit that the
+    // entered spelling survives "until the record is next edited", so pinning
+    // it either way would pin an implementation detail this test is not about.
+    // Left as a note so nobody completes the pattern by filling it in.
+
+    // An edit that DOES name one canonicalises it, and the snapshot follows
+    // the newly entered spelling rather than the first one.
+    const unitEdit = await request.patch(`${API_BASE}/activity-records/${id}`, {
+      headers: bearer(token),
+      data: { activityUnit: 'm³' },
+    });
+    expect(unitEdit.ok()).toBe(true);
+    const afterUnit = await unitEdit.json();
+    expect(afterUnit.activityUnit).toBe('cubic_metres');
+    expect(afterUnit.calculation.inputUnit).toBe('m³');
+  } finally {
+    await deleteRecordsAsService(request, [id]);
+  }
 });

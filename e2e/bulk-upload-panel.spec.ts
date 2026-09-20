@@ -95,6 +95,14 @@ test('the template downloads, and names only the entities this user can reach', 
 
   // Sheet 1 is the importer's contract: exactly the nine columns, and nothing
   // for anyone to fill in yet.
+  //
+  // POSITION first, then the lookup by name. The importer reads sheet ONE
+  // whatever it is called (`xlsx-reader` takes the workbook's own tab order),
+  // so `getWorksheet('Records')` alone would have passed on a template whose
+  // reference sheet had drifted to the front and whose every row therefore
+  // arrives as the entity register. `template-workbook.spec.ts` pins the same
+  // order where the file is built; this is the downloaded artefact.
+  expect(workbook.worksheets[0].name).toBe('Records');
   const records = workbook.getWorksheet('Records');
   expect(records).toBeTruthy();
   expect(
@@ -272,13 +280,15 @@ test('an all-evidence import explains itself instead of offering a dead button',
     await page.locator('[data-testid="bulk-import-confirm"]').click();
     await expect(page.getByText(/1 record imported as a draft\./)).toBeVisible();
 
-    // The whole sentence, in the singular because one row was imported:
-    // `blockedReason` picks its wording from that count, so a looser matcher
-    // would pass on copy that says "1 records need" — or "All 1 imported
-    // record", which is what this line used to pin.
+    // The block reaches the browser, keyed on what it is about — not on its
+    // wording. `bulk-submit-view.spec.ts` pins both sentences verbatim, the
+    // singular and the plural, which is the concern this line used to carry
+    // at the slowest layer in the suite: a browser round trip re-asserting a
+    // string a millisecond-long unit test already owns. What only an e2e can
+    // show is that the panel renders the block for THIS import at all, and
+    // offers no way past it — the two lines below.
     await expect(page.locator('[data-testid="bulk-submit-blocked"]')).toContainText(
-      'The imported record needs an evidence file before it can be submitted, ' +
-        'and an import cannot attach one.',
+      /evidence/i,
     );
     await expect(page.locator('[data-testid="bulk-submit-button"]')).toHaveCount(0);
   } finally {

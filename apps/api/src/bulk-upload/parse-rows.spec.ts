@@ -9,8 +9,9 @@ import {
   row as xmlRow,
   xlsx,
 } from '../../test/xlsx';
-import { extensionOf, parseRows, strictNumber } from './parse-rows';
-import { XLSX_MAX_UNPACKED_BYTES } from './xlsx-reader';
+import { isUtf8 } from 'node:buffer';
+import { extensionOf, FILE_NOT_UTF8, parseRows, strictNumber } from './parse-rows';
+import { WORKBOOK_NOT_UTF8, XLSX_MAX_UNPACKED_BYTES } from './xlsx-reader';
 
 const HEADER =
   'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
@@ -158,6 +159,59 @@ describe('parseRows — CSV', () => {
     expect(rows[0].cells.subsidiaryId).toBe('sub-1');
   });
 
+  // cp1254 (Windows-1254) is what Excel's plain "CSV" export writes on a
+  // Turkish Windows, so this is the likely file rather than the exotic one.
+  // BYTE literals, because the encoding is the whole point: a source string
+  // would already be UTF-8 by the time it reached the parser.
+  const CP1254 = Buffer.from([0xd6, 0x6c, 0xe7, 0xfc, 0x6d]); // "Olcum" in cp1254
+
+  it('refuses a CSV whose bytes are not UTF-8', async () => {
+    const file = Buffer.concat([csv(ROW), CP1254]);
+    await expect(parseRows(file, 'rapor.csv')).rejects.toThrow(BadRequestException);
+    await expect(parseRows(file, 'rapor.csv')).rejects.toThrow(FILE_NOT_UTF8);
+  });
+
+  it('refuses the file the offending byte is in, not the row', async () => {
+    // An encoding is a property of the FILE. Importing 499 good rows and
+    // refusing one would leave the user to reconcile a half-written batch,
+    // which is the one outcome worse than a refusal.
+    const good = Array.from({ length: 499 }, () => ROW);
+    const file = Buffer.concat([csv(...good, ROW), CP1254]);
+    await expect(parseRows(file, 'rapor.csv')).rejects.toThrow(FILE_NOT_UTF8);
+  });
+
+  it('characterises the Node behaviour the guard exists for: a lossy decode', () => {
+    // Not product coverage — no change to this repo can fail it, and it is
+    // not counted as a test of the guard. It pins the DEPENDENCY assumption
+    // the guard is built on: `Buffer#toString('utf8')` never throws. It
+    // substitutes U+FFFD and returns, so without a guard the import succeeds
+    // and writes the mojibake to a record that can never be edited. If a
+    // future Node made that throw, the guard's shape would be the wrong one.
+    expect(CP1254.toString('utf8')).toContain('\uFFFD');
+  });
+
+  it("refuses the NUL bytes of Excel's UTF-16 export", () => {
+    // `isUtf8` alone would pass this file: U+0000 is valid UTF-8. The NUL
+    // check is the half that refuses it, and this pins that division.
+    const utf16 = Buffer.from(`${HEADER}\n${ROW}\n`, 'utf16le');
+    expect(isUtf8(utf16)).toBe(true);
+    expect(utf16.includes(0)).toBe(true);
+    return expect(parseRows(utf16, 'rapor.csv')).rejects.toThrow(FILE_NOT_UTF8);
+  });
+
+  it('accepts the same text saved as UTF-8, byte for byte', async () => {
+    // The positive control: the guard must refuse the ENCODING, not the
+    // letters. Byte for byte, not "looks Turkish" — mojibake still contains
+    // letters, so a loose assertion would pass on the bug this refuses.
+    const reason = 'Ölçüm düzeltildi';
+    const rows = await parseRows(
+      Buffer.from(`${HEADER}\nsub-1,,2024,monthly,January,Electricity,1200,kWh,${reason}\n`, 'utf8'),
+      'rapor.csv',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cells.varianceReason).toBe(reason);
+  });
+
   it('survives CRLF line endings', async () => {
     const buffer = Buffer.from([HEADER, ROW].join('\r\n'));
     const rows = await parseRows(buffer, 'windows.csv');
@@ -224,14 +278,51 @@ describe('parseRows — CSV', () => {
   it('names the characters in a header cell it will not echo', async () => {
     // The sentence is also the 400 the import panel renders, where a U+202E
     // reverses everything after it — so each one is named, never shown.
-    const header = `${HEADER},t${NUL}co${RLO}2${ZWSP}e`;
+    //
+    // This fixture held a NUL until the UTF-8 guard landed; a NUL now fails
+    // the file at the door (the test below), so it can no longer reach the
+    // quoter through a CSV. `quoteCallerText` still names it, and
+    // `caller-text.spec.ts` pins that — at the layer that owns it.
+    const header = `${HEADER},tco${RLO}2${ZWSP}e`;
     const error = await parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv').catch(
       (e: unknown) => e,
     );
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): "t<U+0000>co<U+202E>2<U+200B>e". Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "tco<U+202E>2<U+200B>e". Expected: ${HEADER.split(',').join(', ')}.`,
     );
+  });
+
+  it('refuses a NUL anywhere in the file, header included', async () => {
+    // What this is and is not, checked rather than assumed (security-rls
+    // corrected an earlier version of this comment that claimed both):
+    //
+    //   - It is NOT what keeps `bulk-upload.service.ts`'s duplicate-detection
+    //     key safe. That key joins six segments with a NUL, and none of them
+    //     can hold one: five are closed vocabularies or an id shape validated
+    //     before `slotKey` is reached, and the stored side comes from Postgres
+    //     columns, which cannot contain 0x00 at all. The invariant was already
+    //     kept on both sides; this guard neither adds to it nor relies on it.
+    //   - It is NOT the difference between a 500 and a row error either. The
+    //     import wraps every row, so a Prisma refusal over a NUL comes back as
+    //     `code: 'unexpected'`, "This row could not be imported."
+    //
+    // What it IS: a NUL cannot be stored in a text column, so without this the
+    // file half-imports and the rows carrying one are refused individually,
+    // under a sentence that says nothing about the real cause. An encoding
+    // fault is a property of the FILE, and it should be answered as one. The
+    // check also earns its place against `isUtf8` alone, which accepts a NUL
+    // (U+0000 is valid UTF-8) and so would pass a BOM-less UTF-16 export.
+    //
+    // Scope, stated because it is easy to over-read: this is the CSV path.
+    // The XLSX path can still reach a NUL through a `_xHHHH_` escape, which
+    // needs no bad byte and so no byte check catches — filed as its own task,
+    // because refusing it naively breaks valid surrogate PAIRS and the header
+    // refusal that names what it cannot echo.
+    const header = `${HEADER},t${NUL}e`;
+    await expect(
+      parseRows(Buffer.from([header, ROW].join('\n')), 'x.csv'),
+    ).rejects.toThrow(FILE_NOT_UTF8);
   });
 
   it.each([
@@ -475,6 +566,85 @@ describe('parseRows — XLSX', () => {
     expect(await refusal(buffer)).toBe(
       `Unrecognised column(s): "t${String.fromCodePoint(0x1f600)}", "u<U+DE00 U+D83D>". Expected: ${HEADER.split(',').join(', ')}.`,
     );
+  });
+
+  it('refuses a workbook part whose BYTES are not UTF-8', async () => {
+    // The CSV rule, on the other format — and it had to be written at the
+    // part, not the upload, because a .xlsx is a zip and `isUtf8` would refuse
+    // every one of them.
+    //
+    // `StringDecoder('utf8')` in `parseXml` is lossy exactly as
+    // `Buffer#toString` is, and the XML declaration does not save it: saxes
+    // syntax-checks the encoding NAME and then ignores it, so a part that says
+    // `windows-1254` is still read as UTF-8. Measured before this guard: a
+    // single 0xFC byte in this cell reached the STORED `varianceReason` as
+    // U+FFFD — free text no vocabulary check can catch, on an immutable row.
+    //
+    // The byte has to be laid in by hand: every JavaScript string is valid
+    // UTF-8 once encoded, so no fixture built from source text can express it.
+    const sheetXml = Buffer.concat([
+      Buffer.from(
+        `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="${SPREADSHEETML}">` +
+          `<sheetData>${HEADER_ROW}<row r="2">` +
+          `<c r="A2" t="inlineStr"><is><t>sub-1</t></is></c>` +
+          `<c r="I2" t="inlineStr"><is><t>d`,
+      ),
+      Buffer.from([0xfc]), // "ü" in cp1254; on its own, not valid UTF-8
+      Buffer.from('zeltme</t></is></c></row></sheetData></worksheet>'),
+    ]);
+
+    // Its own sentence, not the generic "could not be read as a workbook":
+    // by the guard's own reasoning the likeliest file to hit this is one that
+    // opens perfectly in Excel, and nothing server-side would otherwise tell
+    // an encoding refusal apart from a corrupt archive.
+    expect(await refusal(xlsx({ sheetXml }))).toBe(WORKBOOK_NOT_UTF8);
+  });
+
+  it('refuses a raw NUL in a part, for parity with the CSV rule', async () => {
+    // Belt and braces, and labelled as such: saxes refuses a raw NUL
+    // everywhere today, so this is unreachable through that dependency. It is
+    // here on the same ground the doctype refusal is — that is a property of
+    // a dependency version, not a rule of this reader — and so that the two
+    // import paths are ONE rule rather than two that happen to agree.
+    //
+    // It does NOT cover `_x0000_`, which is plain ASCII decoded after the
+    // parse and needs no bad byte. That one is filed as its own task.
+    const sheetXml = Buffer.concat([
+      Buffer.from(
+        `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="${SPREADSHEETML}">` +
+          `<sheetData>${HEADER_ROW}<row r="2">` +
+          `<c r="A2" t="inlineStr"><is><t>sub`,
+      ),
+      Buffer.from([0x00]),
+      Buffer.from('-1</t></is></c></row></sheetData></worksheet>'),
+    ]);
+
+    expect(await refusal(xlsx({ sheetXml }))).toBe(WORKBOOK_NOT_UTF8);
+  });
+
+  it('still reads a part carrying the same letters as UTF-8', async () => {
+    // The positive control, and the one that matters most here: OOXML parts
+    // are full of non-ASCII text legitimately, so a guard that refused any of
+    // it would be worse than the defect.
+    const sheetXml = Buffer.from(
+      `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="${SPREADSHEETML}">` +
+        `<sheetData>${HEADER_ROW}<row r="2">` +
+        `<c r="A2" t="inlineStr"><is><t>sub-1</t></is></c>` +
+        `<c r="C2"><v>2024</v></c>` +
+        `<c r="D2" t="inlineStr"><is><t>monthly</t></is></c>` +
+        `<c r="E2" t="inlineStr"><is><t>January</t></is></c>` +
+        `<c r="F2" t="inlineStr"><is><t>Electricity</t></is></c>` +
+        `<c r="G2"><v>1200</v></c>` +
+        `<c r="H2" t="inlineStr"><is><t>kWh</t></is></c>` +
+        `<c r="I2" t="inlineStr"><is><t>Ölçüm düzeltildi</t></is></c>` +
+        `</row></sheetData></worksheet>`,
+      'utf8',
+    );
+
+    const rows = await parseRows(xlsx({ sheetXml }), 'utf8.xlsx');
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cells.varianceReason).toBe('Ölçüm düzeltildi');
   });
 
   it('refuses a value under a blank header, or past the last one', async () => {
@@ -754,6 +924,49 @@ describe('parseRows — only the first worksheet is data', () => {
       parseRows(Buffer.from(await wb.xlsx.writeBuffer()), 'two-sheets.xlsx'),
     ).rejects.toThrow(/column/i);
   });
+
+  it.each([['Data'], ['Sheet1'], ['Sayfa1']])(
+    'reads a single sheet called %s: the rule is POSITION, not the name',
+    async (name) => {
+      // `Records` is what the template CALLS sheet one; it is not a name the
+      // reader looks for, and a user's own file is named by their Excel (the
+      // last of these is what a Turkish install creates). A reader that
+      // started matching on the name would refuse every file but the
+      // template's, and no fixture here would have noticed.
+      const wb = new ExcelJS.Workbook();
+      const sheet = wb.addWorksheet(name);
+      sheet.addRow(HEADER.split(','));
+      sheet.addRow([
+        'sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '',
+      ]);
+
+      const rows = await parseRows(Buffer.from(await wb.xlsx.writeBuffer()), 'own.xlsx');
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].cells.activityValue).toBe('1200');
+    },
+  );
+
+  it('counts a HIDDEN sheet as the first one', async () => {
+    // `xlsx-reader` takes the first sheet in the workbook's own tab order,
+    // "hidden sheets included" — its words, and until now its only statement
+    // of the fact. It is the surprising half of the rule: the user sees
+    // `Records` at the front and the importer does not, so the refusal has to
+    // happen rather than the hidden sheet being skipped into a silent read of
+    // the wrong one.
+    const wb = new ExcelJS.Workbook();
+    const hidden = wb.addWorksheet('Scratch', { state: 'hidden' });
+    hidden.addRow(['not the columns']);
+    const data = wb.addWorksheet('Records');
+    data.addRow(HEADER.split(','));
+    data.addRow([
+      'sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '',
+    ]);
+
+    await expect(
+      parseRows(Buffer.from(await wb.xlsx.writeBuffer()), 'hidden-first.xlsx'),
+    ).rejects.toThrow(/column/i);
+  });
 });
 
 const MIB = 1024 * 1024;
@@ -926,12 +1139,29 @@ describe('parseRows — merged cells', () => {
   });
 
   it('never walks a merged range row by row', async () => {
-    // A hundred merges down to Excel's last row, over blank rows of imported
-    // columns: walked row by row they took 3.2 s (qa-auditor, measured); found
-    // by binary search, no time at all. Time is the defect, so it is asserted.
+    // Merges down to Excel's last row, over blank rows of imported columns.
+    // Walked row by row a hundred of them took 3.2 s (qa-auditor, measured);
+    // found by binary search, no time at all.
+    //
+    // A THOUSAND of them, and the budget stays. Both alternatives were tried
+    // against the row-by-row mutant and both FAILED to catch it:
+    //
+    //   - Heap, the pattern its sibling above uses: a walk is a loop, not an
+    //     allocation, so the two implementations grow the heap alike.
+    //   - Vitest's own 5 s timeout, with no assertion at all: the mutant ran
+    //     for **31 s and the test PASSED**. The defect is a synchronous
+    //     stretch, and a timeout is a timer on the loop it is holding, so it
+    //     cannot fire. That is the whole point of the defect.
+    //
+    // Time is the only observable, so what is fixed instead is the MARGIN.
+    // At a hundred merges the budget was 1,000 ms against a 3,200 ms defect
+    // — 3x, close enough that a CI runner a few times slower than the laptop
+    // it was measured on would pass the regression. Ten times the merges puts
+    // the walk at ~31 s (measured) and leaves the binary search at 2.7 ms, so
+    // the same 1,000 ms now sits 370x above healthy and 31x below the defect.
     const buffer = xlsx({
       sheetData: HEADER_ROW + dataRow(2),
-      afterSheetData: merged(...Array.from({ length: 100 }, () => 'A3:I1048576')),
+      afterSheetData: merged(...Array.from({ length: 1_000 }, () => 'A3:I1048576')),
     });
     const started = performance.now();
     await expect(parseRows(buffer, 'merged.xlsx')).resolves.toHaveLength(1);

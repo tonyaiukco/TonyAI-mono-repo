@@ -90,6 +90,20 @@ function csvFile(
   } as Express.Multer.File;
 }
 
+/** `csvFile`, with cp1254 bytes in the free-text cell no vocabulary guards. */
+function nonUtf8File(): Express.Multer.File {
+  const buffer = Buffer.concat([
+    Buffer.from([HEADER, row()].join('\n')),
+    Buffer.from([0xd6, 0x6c, 0xe7, 0xfc, 0x6d]),
+  ]);
+  return {
+    originalname: 'data.csv',
+    mimetype: 'text/csv',
+    size: buffer.length,
+    buffer,
+  } as Express.Multer.File;
+}
+
 const SNAPSHOT: CalculationResult = {
   category: 'Electricity',
   geographyCode: 'TR',
@@ -411,6 +425,14 @@ describe('BulkUploadService — the batch pre-flight', () => {
     ['no file', undefined, /No file/],
     ['a renamed executable', csvFile([row()], { originalname: 'x.exe' }), /csv or \.xlsx/],
     ['an oversized file', csvFile([row()], { size: 99_000_000 }), /larger than/],
+    // cp1254 bytes, which is Excel's plain "CSV" export on a Turkish Windows.
+    // A whole-file refusal like the others: an encoding is a property of the
+    // file, so there is no such thing as one bad row to report.
+    [
+      'a file that is not UTF-8',
+      nonUtf8File(),
+      /not UTF-8 text/,
+    ],
   ])('refuses %s', async (_label, file, pattern) => {
     const { service } = build();
     await expect(
@@ -1860,6 +1882,17 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
 describe('BulkUploadService — what the report repeats back', () => {
   // Built from code points, never typed: escape sequences typed into this repo
   // have arrived in files as the literal, invisible character.
+  // `nul` is still here, but no longer in a CSV CELL: `requireUtf8` fails a
+  // file whose bytes carry one. Stated precisely, because an earlier version
+  // of this comment was not — on the XLSX side a raw NUL was already refused
+  // by saxes before this repo guarded anything, and `_x0000_` still decodes
+  // to one after the parse (filed as its own task). What the guard changed is
+  // the CSV path.
+  //
+  // A NUL still reaches the quoter through an exception message and through a
+  // filename, neither of which either guard reads, and that is what the
+  // fixtures below use it for. `caller-text.spec.ts` pins `<U+0000>` itself,
+  // at the layer that owns the naming.
   const nul = String.fromCharCode(0);
   const rlo = String.fromCharCode(0x202e);
   const zwsp = String.fromCharCode(0x200b);
@@ -1872,7 +1905,7 @@ describe('BulkUploadService — what the report repeats back', () => {
     // the value still shows; dropped in silence, the sentence refused a value
     // it then printed as though nothing were wrong with it.
     const { service } = build();
-    const cell = `${rlo}${nul}${zwsp}${'9'.repeat(20)}${'x'.repeat(40_000)}`;
+    const cell = `${rlo}${zwsp}${'9'.repeat(20)}${'x'.repeat(40_000)}`;
 
     const report = await service.import(
       dataEntry(),
@@ -1885,7 +1918,7 @@ describe('BulkUploadService — what the report repeats back', () => {
         row: 2,
         column,
         code: 'invalid',
-        message: `"<U+202E U+0000 U+200B>${'9'.repeat(20)}${'x'.repeat(16)}…" ${tail}`,
+        message: `"<U+202E U+200B>${'9'.repeat(20)}${'x'.repeat(19)}…" ${tail}`,
       },
     ]);
   });
