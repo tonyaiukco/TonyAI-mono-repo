@@ -9,7 +9,7 @@ Headless architecture: **Next.js** web + **NestJS** api + **Supabase** (Postgres
 in a **Turborepo** monorepo with shared types. Full picture in `README.md`; specs in `docs/`.
 
 ## Language (strict)
-**Everything created inside this project MUST be in English** — code, identifiers, variable/function/file names, comments, documentation, commit messages, UI copy, seed data, and any generated artifact. **Never produce Turkish content in the repo.** Chatting with the user happens in Turkish, but that never leaks into the project.
+**Everything created inside this project MUST be in English** — code, identifiers, variable/function/file names, comments, documentation, commit messages, UI copy, seed data, and any generated artifact. **Never produce Turkish content in the repo.** Chatting with the user happens in Turkish, but that never leaks into the project. **One exception (user decision, 2026-09-21 — a Turkish UI is a launch requirement):** the `tr` i18n message catalogue holds Turkish UI copy, and tests may carry Turkish strings as fixtures. Message keys, code, comments, docs and commits stay English.
 
 ## Where things live
 - `apps/web` — Next.js 16 frontend (App Router, Tailwind v4, shadcn/ui, Zustand)
@@ -63,6 +63,6 @@ Keep the main thread's context small; the biggest cost is accumulated context (w
 ## Status & roadmap
 - **Session memory lives in `docs/roadmap_docs/project-status.md`** — read it at session start to see where work left off; update it (status, decisions, next steps) in the same change whenever a PR merges or the roadmap shifts. It must never go stale.
 - Done: Phases 0–1 complete (calc engine, records + review workflow, evidence, period locking, anomaly detection, targets/intensity, reports, E2E + RLS probes); UAT running; Phase-2 prep shipped (containerization #26, observability + dual-scheme JWT #27).
-- Next: **Phase 3 (WP7+ — UAT backlog & review UX)**. **Phase 2 = staging on Azure** (Container Apps + ACR + Key Vault + Log Analytics, Germany West Central, GitHub OIDC) once the credit lands — GCP was dropped 2026-07-29; the old "PR 3 cloud env & seed strategy" folded into the future cloud-wiring PR. Full phased plan (0–4 + post-launch) in the status log above.
+- Next: **the dated Launch plan in the status log (decided 2026-09-21)** — pilot = Scope 1 & 2 on authoritative UK + Türkiye factors, Turkish + English UI; Scope 3, suppliers, report sharing, analytics and dark mode are post-launch (Phase 5). Order: **Phase 2 staging on Azure** (credit approved; Container Apps + ACR + Key Vault + Log Analytics, Germany West Central, GitHub OIDC, Supabase Frankfurt) → WP13 i18n foundation → WP9 email + user lifecycle + org onboarding + hardening → factor-model groundwork + authoritative factors → WP13 full pass → Phase 4 launch gates. Targets: staging 2026-10-11 · pilot 2027-01-08 · GA 2027-03-31. **Until the pilot ships, a review finding that is not a correctness/security/data-integrity defect is filed under Open questions, not fixed.**
 
 <!-- Add your own recurring rules/preferences below this line -->
