@@ -49,7 +49,7 @@ Enforce an invariant on the activity-record lifecycle. The **canonical exemplars
 4. **Client mirror** — Data Entry already surfaces API errors via `toast.error(saveErrorMessage(e))`;
    add a proactive UI state only when the user can fix it in place (e.g. the anomaly banner + mandatory
    variance field). Status badges live in the `statusBadge`/STATUS maps.
-5. **Docs** — README behaviour note + `project-status.md` entry (decision + verification evidence).
+5. **Docs** — README behaviour note + `project_status_roadmap_phases.md` entry (decision + verification evidence).
 
 ## Verify
 `pnpm --filter @tonyai/api test && pnpm typecheck`, then live: trigger the gate through the real API

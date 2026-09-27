@@ -173,7 +173,7 @@ Stated as factual relationships between items (not a build order — prioritisat
 ## 7. Points to Confirm With Product Owner
 
 > **All four answered 2026-07-31** (rationale in the decisions log of
-> [`../roadmap_docs/project-status.md`](../roadmap_docs/project-status.md)):
+> [`../roadmap_docs/project_status_roadmap_phases.md`](../roadmap_docs/project_status_roadmap_phases.md)):
 > **SUB-3** — Google Places is out of scope for now; multi-location ships without it (WP16).
 > **DE-5** — no reference spreadsheet available, so mobile combustion defers to the Phase-4 factor package (DE-4 with it).
 > **DE-7** — Germany/EU grid options are **hidden, not removed**; deleting EU would break the seeded Munich subsidiary's factor resolution (WP15).

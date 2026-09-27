@@ -3,7 +3,7 @@
 Companion to [SKILL.md](SKILL.md). Every entry is a measured incident from the
 WP8 bulk-import work. The RULE is the payload; the number is there only so you
 can tell a real trap from a preference. The forensics live in the PR history
-(`docs/roadmap_docs/project-status.md`, #94-#131) — do not re-import them here.
+(`docs/roadmap_docs/project_status_roadmap_phases.md`, #94-#131) — do not re-import them here.
 
 - **Take the file's bytes as UTF-8 or refuse them.** `Buffer#toString('utf8')`
   and `StringDecoder('utf8')` never throw — an invalid byte becomes U+FFFD and
