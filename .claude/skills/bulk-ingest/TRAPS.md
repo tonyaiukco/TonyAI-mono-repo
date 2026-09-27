@@ -14,7 +14,13 @@ can tell a real trap from a preference. The forensics live in the PR history
   exactly like a right one. For XLSX the check goes on each XML PART, not the
   upload, which is a zip — saxes syntax-checks the declared encoding's NAME and
   then ignores it. `_xHHHH_` escapes are a separate door needing no bad byte,
-  and closing that one naively breaks valid surrogate PAIRS.
+  and closing it naively breaks valid surrogate PAIRS. Close it where a cell
+  becomes a STORED value, never at the decoder: refuse U+0000 and an UNPAIRED
+  surrogate (measure your database first — Postgres refuses exactly those two
+  and stores the pair), leave the header path to the refusal that already
+  NAMES what it cannot echo, and record the fault rather than throwing from
+  inside the stream, or it jumps the row cap and every refusal ordered after
+  it. A legitimately escaped literal (`_x005F_x0000_`) must still import.
 - **Never read an untrusted XLSX with exceljs.** `workbook.xlsx.load` expands
   every range a file declares, and a ~2 KB file killed the process with a V8
   out-of-memory abort — no exception, no audit row, every tenant's in-flight

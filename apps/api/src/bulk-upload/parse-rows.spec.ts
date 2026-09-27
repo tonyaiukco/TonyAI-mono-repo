@@ -600,6 +600,135 @@ describe('parseRows — XLSX', () => {
     expect(await refusal(xlsx({ sheetXml }))).toBe(WORKBOOK_NOT_UTF8);
   });
 
+  describe('characters a spreadsheet can write but Postgres cannot store', () => {
+    // `_xHHHH_` is SpreadsheetML's escape for what XML cannot carry, and
+    // `decodeEscapes` turns it into a code UNIT. It needs no invalid byte, so
+    // neither UTF-8 guard sees it — a perfectly well-formed workbook can spell
+    // a NUL or half a character straight into a cell.
+    //
+    // Both were measured against this repo's Postgres before any of this was
+    // written: `E'a\u0000b'` is `invalid Unicode escape value` and
+    // `E'a\uD800b'` is `invalid Unicode surrogate pair`, while the astral PAIR
+    // `E'a\U0001F600b'` stores and reads back as three code points. Without
+    // the guard the row reaches Prisma and comes back as the report's generic
+    // "could not be imported", which tells the user nothing about the cause.
+    const row = (variance: string) => [
+      'sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', variance,
+    ];
+
+    it.each([
+      ['a NUL', '_x0000_', 'U+0000'],
+      ['half a character, high', '_xD800_', 'U+D800'],
+      ['half a character, low', '_xDE00_', 'U+DE00'],
+      // The pair REVERSED: two surrogates, neither pairing with the other.
+      ['two halves in the wrong order', '_xDE00__xD83D_', 'U+DE00'],
+    ])('refuses %s in a data cell, naming the row, the column and the character', async (
+      _label,
+      escape,
+      named,
+    ) => {
+      const buffer = await workbookBuffer([HEADER.split(','), row(`before${escape}after`)]);
+
+      expect(await refusal(buffer)).toBe(
+        `Row 2 has a character in its varianceReason cell that cannot be stored (${named}). ` +
+          'A spreadsheet writes it as an escape rather than a typed character — clear the cell and enter the value again.',
+      );
+    });
+
+    it('still reads a valid surrogate PAIR, which is how a workbook spells an emoji', async () => {
+      // The control that kills the obvious fix. A first attempt refused every
+      // surrogate inside `decodeEscapes` and broke this — the pair is ordinary
+      // text, it stores fine, and refusing it would refuse what users type.
+      const buffer = await workbookBuffer([
+        HEADER.split(','),
+        row('meter swapped _xD83D__xDE00_'),
+      ]);
+
+      const rows = await parseRows(buffer, 'emoji.xlsx');
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].cells.varianceReason).toBe(
+        `meter swapped ${String.fromCodePoint(0x1f600)}`,
+      );
+    });
+
+    it('keeps a legitimately escaped literal, which is not the same thing', async () => {
+      // Excel writes a literal `_x0000_` by escaping the underscore first, as
+      // `_x005F_x0000_`, and that decodes to the seven ordinary characters —
+      // no NUL anywhere. Pinned because the obvious "simplification" is to
+      // scan the RAW cell text for /_x0000_/, which would refuse this and pass
+      // every other test in the file.
+      const buffer = await workbookBuffer([
+        HEADER.split(','),
+        row('_x005F_x0000_'),
+      ]);
+
+      const rows = await parseRows(buffer, 'escaped.xlsx');
+
+      expect(rows[0].cells.varianceReason).toBe('_x0000_');
+    });
+
+    it('sees it through a SHARED string too, not only an inline one', async () => {
+      // exceljs's writer emits inline strings, so every fixture above reaches
+      // one of `decodeEscapes`'s two call sites and none reaches the other.
+      // Hand-built, because nothing in this repo writes a shared string.
+      const buffer = xlsx({
+        sharedStrings: ['<t>before_x0000_after</t>'],
+        sheetData:
+          `${HEADER_ROW}<row r="2">` +
+          `<c r="A2" t="inlineStr"><is><t>sub-1</t></is></c>` +
+          `<c r="I2" t="s"><v>0</v></c>` +
+          `</row>`,
+      });
+
+      expect(await refusal(buffer)).toMatch(/^Row 2 has a character in its varianceReason cell/);
+    });
+
+    it('does not jump the row cap', async () => {
+      // The cap is counted across the whole stream on purpose, so it can name
+      // the real total. A refusal thrown from inside the row handler skipped
+      // that: a 1,005-row file with one bad cell in row 4 reported the
+      // character, and the user learned about the cap on the NEXT upload.
+      const rows = Array.from({ length: 1005 }, (_, i) =>
+        i === 2
+          ? xmlRow(i + 2, ['sub-1', null, 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', 'x_x0000_y'])
+          : dataRow(i + 2),
+      ).join('');
+
+      await expect(parseRows(xlsx({ sheetData: HEADER_ROW + rows }), 'big.xlsx')).rejects.toThrow(
+        'The file has 1005 rows; the limit is 1000.',
+      );
+    });
+
+    it('does not jump the value no header names', async () => {
+      // Both families are reported in row order, and shape comes before
+      // content — so row 2's stray value is named, not row 3's character.
+      const buffer = xlsx({
+        sheetData:
+          `${HEADER_ROW}` +
+          xmlRow(2, ['sub-1', null, 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', null, 'stray']) +
+          xmlRow(3, ['sub-1', null, 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', 'x_x0000_y']),
+      });
+
+      expect(await refusal(buffer)).toBe(
+        'Row 2 has a value in column 10, which has no header. Name the column or clear it.',
+      );
+    });
+
+    it('leaves a HEADER cell to the refusal that names what it cannot echo', async () => {
+      // Deliberately NOT this guard's business: `mapHeader` already refuses a
+      // header carrying one, in a sentence that NAMES the character. That is
+      // better than a generic refusal, it is pinned two describes above, and
+      // it is why the check sits on data cells rather than in `decodeEscapes`.
+      const buffer = await workbookBuffer([
+        [...HEADER.split(','), 't_x0000_e'],
+        [...row(''), 'x'],
+      ]);
+
+      expect(await refusal(buffer)).toMatch(/^Unrecognised column\(s\): "t<U\+0000>e"/);
+    });
+  });
+
   it('refuses a raw NUL in a part, for parity with the CSV rule', async () => {
     // Belt and braces, and labelled as such: saxes refuses a raw NUL
     // everywhere today, so this is unreachable through that dependency. It is
