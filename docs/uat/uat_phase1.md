@@ -278,7 +278,7 @@ described in full.
 Subsidiaries, Data Entry, Overview and Emissions, tagged functional gap / UX /
 new capability. Prioritisation was deliberately left to development; the triage
 and the round-1 close-out are tracked in
-[`../roadmap_docs/project-status.md`](../roadmap_docs/project-status.md).
+[`../roadmap_docs/project_status_roadmap_phases.md`](../roadmap_docs/project_status_roadmap_phases.md).
 
 ### What happens to round-1 feedback
 
@@ -292,7 +292,7 @@ When you are told a fix has landed:
 Some items are deliberately **not** quick fixes and are scheduled later — mobile
 combustion and refrigerants need emission-factor values we do not have yet, and the
 invoice-level completeness tracking is a data-model change. The routing for all 16
-items is in [`../roadmap_docs/project-status.md`](../roadmap_docs/project-status.md).
+items is in [`../roadmap_docs/project_status_roadmap_phases.md`](../roadmap_docs/project_status_roadmap_phases.md).
 
 ## 6. Sign-off
 
