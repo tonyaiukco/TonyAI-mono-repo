@@ -533,11 +533,16 @@ describe('readFirstWorksheet — work that could hold the event loop', () => {
     // measured; it is the quadratic backtrack an unclosed bracket forces).
     // Taken here rather than through `readFirstWorksheet` because the reader
     // spends ~180 ms parsing the XML around it, which left the old budget
-    // 1.6x from the defect. Directly, the margin is four orders of magnitude.
+    // 1.6x from the defect. Directly, the margin is four orders of magnitude —
+    // provided only the scan is timed: an `expect()` per code inside the timed
+    // loop cost more than the scan and pushed a slow CI runner to 112 ms.
     const codes = Array.from({ length: 4_096 }, () => '['.repeat(1_024));
 
     const started = performance.now();
-    for (const code of codes) expect(isDateFormatCode(code)).toBe(false);
-    expect(performance.now() - started).toBeLessThan(100);
+    const judged = codes.map((code) => isDateFormatCode(code));
+    const elapsed = performance.now() - started;
+
+    expect(judged.every((isDate) => isDate === false)).toBe(true);
+    expect(elapsed).toBeLessThan(100);
   });
 });
