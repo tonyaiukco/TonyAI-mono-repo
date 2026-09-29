@@ -1,6 +1,6 @@
 # 4. Acceptance evidence, recreation and recovery
 
-The owner records each actual result in the PR's B9 handoff, including integrated
+First [restore the session](00-session.md). The owner records each actual result in the PR's B9 handoff, including integrated
 SHA, timestamp, environment/project ref, command/scenario, result and a sanitized
 evidence location. A blank checklist is not a successful cloud execution.
 
@@ -63,12 +63,14 @@ secret-resolution/image-pull failures privately; do not publish raw logs.
 | Foundation recreates | Run steps 1–3 in a separately named, owner-approved staging rehearsal RG/project; record IDs, region, successful deployment IDs, migration status and image digests. Reapplying the original environment only proves convergence, not fresh recreation. |
 | Idempotence | Repeat foundation, secret-access and bucket reconciliation; stable resource identities/origins and same private settings. |
 | No demo credentials | `verify.sql` counts, no `@tonyai.local` Auth users; before onboarding, zero Auth/factor rows. Inspect ACA env names: no `ALLOW_INSECURE_LOCAL_AUTH`, no `SUPABASE_JWT_SECRET`, JWKS pinned. |
-| Auth confinement | Verify dashboard signup disabled/redirect list; in a private owner test, signup is refused. Never post passwords/tokens as evidence. |
+| Auth confinement | Run the public-key `/auth/v1/settings` probe (signup/unused providers disabled) and separately verify the dashboard redirect list; in a private owner test, signup is refused. Never post passwords/tokens as evidence. |
 | Storage works privately | Both bucket probes pass; SQL confirms default-deny policies. Also test authenticated browser direct read/write denial with a controlled user when onboarding exists. |
 | No exposed service keys | Compare deployment secret references and RBAC scopes; in private DevTools confirm web requests use only public browser credentials. No service key in assets/build settings/GitHub. |
 | Web environment binding | Browser login contacts the exact staging Supabase host and API URL; record public hosts and image digest. |
 | Federation | Subject/audience/issuer plus protected environment settings now; successful and denied OIDC exchanges from LP2-02 workflow later. |
 | Runtime privilege/RLS | Coordinate LP1-03/LP2-03 cloud-safe fixtures and full containment suite with random unique credentials. Existing `scripts/rls-probes.mjs` assumes local demo accounts and mutates fixtures; **do not run it against staging**. No empty-database containment claim. |
+
+Run [rotation/recovery](05-rotation.md) when credentials change or a vault is recovered.
 
 Only mark LP2-01 DONE after its actual foundation/recreation evidence closes.
 The pending cloud containment work, exact-image startup/login/export smoke

@@ -19,7 +19,9 @@ Preserve these project-specific traps:
 - Use Supavisor transaction mode for runtime, session mode for migrations. Cloud
   JWT scheme is `jwks`; omit the legacy secret and insecure-local bypass.
 - API and web identities are separate. Only API's two named secrets get data-plane
-  read grants; migration credentials stay owner-only. Never inspect/print values.
+  read grants; migration credentials stay owner-only. A GitHub deployer can replace
+  API code and therefore access runtime secrets. Enforced staging environment and
+  branch protections are the trust boundary. Never inspect/print values.
 - GitHub's environment OIDC subject does not constrain the branch by itself.
   Verify enforced environment restrictions before establishing federation.
 - Current API health is liveness, not DB readiness. Image rollback is not schema

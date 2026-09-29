@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 import subprocess
 import unittest
+import sys
 from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
+sys.path.insert(0, str(SCRIPTS))
 
 
 def load(name):
@@ -27,7 +29,7 @@ BASE = 'https://' + PROJECT + '.supabase.co/storage/v1'
 class CloudOpsTests(unittest.TestCase):
     def test_pooler_requires_correct_project_tls_and_mode(self):
         # Synthetic password only, never a real credential.
-        url = 'postgresql://postgres.' + PROJECT + ':synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&pgbouncer=true'
+        url = 'postgresql://postgres.' + PROJECT + ':synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true'
         ops.validate_pooler(url, PROJECT, 6543)
         for bad in [url.replace(PROJECT, 'wrongproject'), url.replace('6543', '5432'),
                     url.replace('sslmode=require', 'sslmode=disable'),
@@ -47,8 +49,8 @@ class CloudOpsTests(unittest.TestCase):
 
     def test_migrations_get_secrets_via_environment_not_arguments(self):
         values = {
-            'database-url': f'postgresql://postgres.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&pgbouncer=true',
-            'direct-url': f'postgresql://postgres.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require',
+            'database-url': f'postgresql://postgres.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true',
+            'direct-url': f'postgresql://postgres.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt',
         }
         with patch.object(ops, 'secret', side_effect=lambda vault, name: values[name]), patch.object(ops, 'command') as command, contextlib.redirect_stdout(io.StringIO()):
             ops.migrate('test-vault', PROJECT)
@@ -56,7 +58,7 @@ class CloudOpsTests(unittest.TestCase):
         self.assertEqual(command.call_args_list[0].args[0], ['pnpm', 'db:deploy'])
         for call in command.call_args_list:
             self.assertNotIn('synthetic', ' '.join(call.args[0]))
-            self.assertEqual(call.args[1]['DIRECT_URL'], values['direct-url'])
+            self.assertEqual(call.args[1]['DIRECT_URL'], ops.local_ca_url(values['direct-url']))
 
     def test_failed_bucket_list_must_not_create_or_update(self):
         with patch.object(ops, 'request', return_value=(403, b'')) as request:
@@ -74,7 +76,8 @@ class CloudOpsTests(unittest.TestCase):
                 return 200, json.dumps(list(state.values())).encode()
             if method in ('PUT', 'POST'):
                 settings = json.loads(body)
-                state[settings['id']] = settings
+                name = settings.get('id', url.rsplit('/', 1)[-1])
+                state[name] = {'id': name, **settings}
                 return 200, b'{}'
             return 200, json.dumps(state[url.rsplit('/', 1)[-1]]).encode()
 

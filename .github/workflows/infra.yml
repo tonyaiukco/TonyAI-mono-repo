@@ -1,0 +1,25 @@
+name: Infrastructure
+on:
+  pull_request:
+    paths: ['infra/**', '.github/workflows/infra.yml', '.gitignore']
+  push:
+    branches: [main]
+    paths: ['infra/**', '.github/workflows/infra.yml', '.gitignore']
+permissions:
+  contents: read
+jobs:
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Infrastructure unit and failure-path tests
+        run: python3 -m unittest discover -s infra/tests -v
+      - name: Regression mutation checks
+        run: python3 infra/tests/check_mutations.py
+      - name: Compile Bicep (no Azure login)
+        shell: bash
+        run: |
+          az bicep install --version v0.47.16
+          for template in infra/azure/*.bicep; do
+            az bicep build --file "$template" --outfile "$RUNNER_TEMP/$(basename "$template" .bicep).json"
+          done

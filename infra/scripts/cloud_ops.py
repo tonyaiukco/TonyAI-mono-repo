@@ -8,9 +8,10 @@ import re
 import subprocess
 import sys
 from urllib.error import HTTPError
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 from uuid import uuid4
+from pooler import SafeFailure, validate_pooler, local_ca_url
 
 ROOT = Path(__file__).resolve().parents[2]
 XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -18,10 +19,6 @@ BUCKETS = {
     'evidence': (10 * 1024 * 1024, ['application/pdf', 'image/jpeg', 'image/png', XLSX, 'text/csv']),
     'import-sources': (2 * 1024 * 1024, ['text/csv', XLSX]),
 }
-
-
-class SafeFailure(Exception):
-    """Only fixed, credential-free messages may be surfaced to the operator."""
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -44,24 +41,12 @@ def secret(vault, name):
     return value
 
 
-def validate_pooler(value, project, port):
-    parsed = urlparse(value)
-    query = parse_qs(parsed.query)
-    if (parsed.scheme not in ('postgres', 'postgresql')
-            or not re.fullmatch(r'aws-[a-z0-9-]+\.pooler\.supabase\.com', parsed.hostname or '')
-            or parsed.port != port or not (parsed.username or '').endswith('.' + project)
-            or not parsed.password or parsed.path != '/postgres'
-            or query.get('sslmode') != ['require']
-            or (port == 6543 and query.get('pgbouncer') != ['true'])):
-        raise SafeFailure('Pooler URL must match this project, mode, database and TLS contract.')
-
-
 def migrate(vault, project):
     runtime = secret(vault, 'database-url')
     direct = secret(vault, 'direct-url')
     validate_pooler(runtime, project, 6543)
     validate_pooler(direct, project, 5432)
-    env = {**os.environ, 'DATABASE_URL': runtime, 'DIRECT_URL': direct}
+    env = {**os.environ, 'DATABASE_URL': local_ca_url(runtime), 'DIRECT_URL': local_ca_url(direct)}
     # Only deploy the committed migration chain. No reset, migrate dev or seed.
     command(['pnpm', 'db:deploy'], env)
     command(['pnpm', '--filter', '@tonyai/db', 'exec', 'prisma', 'migrate', 'status'], env)
@@ -71,7 +56,9 @@ def migrate(vault, project):
 def request(url, method='GET', key=None, body=None, content_type='application/json'):
     headers = {}
     if key:
-        headers.update({'apikey': key, 'Authorization': 'Bearer ' + key})
+        headers['apikey'] = key
+        if not key.startswith(('sb_secret_', 'sb_publishable_')):
+            headers['Authorization'] = 'Bearer ' + key
     if body is not None:
         headers['Content-Type'] = content_type
     req = Request(url, data=body, headers=headers, method=method)
@@ -94,10 +81,10 @@ def provision_buckets(base, key):
     existing = json.loads(require_success(request(base + '/bucket', key=key)))
     names = {bucket['id'] for bucket in existing}
     for name, (limit, mime_types) in BUCKETS.items():
-        settings = {'id': name, 'name': name, 'public': False,
+        settings = {'public': False,
                     'file_size_limit': limit, 'allowed_mime_types': mime_types}
         if name not in names:
-            require_success(request(base + '/bucket', 'POST', key, json.dumps(settings).encode()))
+            require_success(request(base + '/bucket', 'POST', key, json.dumps({'id': name, 'name': name, **settings}).encode()))
         else:
             require_success(request(base + '/bucket/' + name, 'PUT', key, json.dumps(settings).encode()))
         actual = json.loads(require_success(request(base + '/bucket/' + name, key=key)))
@@ -143,6 +130,11 @@ def main():
         raise SafeFailure('Invalid Key Vault name.')
     if os.environ.get('ALLOW_INSECURE_LOCAL_AUTH'):
         raise SafeFailure('Start a clean shell without local-auth settings.')
+    release = os.environ.get('RELEASE_SHA', '')
+    if (not re.fullmatch(r'[a-f0-9]{40}', release)
+            or command(['git', 'rev-parse', 'HEAD']) != release
+            or command(['git', 'status', '--porcelain'])):
+        raise SafeFailure('Restore a reviewed release and use its clean checkout before cloud operations.')
     if args.operation == 'migrate':
         migrate(args.vault, args.project_ref)
         return

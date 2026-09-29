@@ -17,6 +17,13 @@ param apiDigest string
 @minLength(71)
 @maxLength(71)
 param webDigest string
+@description('Exact enabled Key Vault version IDs, supplied by the owner/deployment metadata, never secret values.')
+@minLength(32)
+@maxLength(32)
+param databaseSecretVersion string
+@minLength(32)
+@maxLength(32)
+param backendSecretVersion string
 
 var stem = '${prefix}-staging'
 var suffix = uniqueString(resourceGroup().id)
@@ -42,7 +49,7 @@ module api './container-app.bicep' = {
     isApi: true
     secrets: [for secretName in ['database-url', 'supabase-service-role-key']: {
       name: secretName
-      keyVaultUrl: '${vault.properties.vaultUri}secrets/${secretName}'
+      keyVaultUrl: '${vault.properties.vaultUri}secrets/${secretName}/${secretName == 'database-url' ? databaseSecretVersion : backendSecretVersion}'
       identity: apiIdentity.id
     }]
     env: [
