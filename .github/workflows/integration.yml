@@ -1,0 +1,68 @@
+name: Integration
+
+# PostgreSQL integration tests (LP0-03): `apps/api/test/int/**/*.int.spec.ts`
+# against the real local Supabase stack, with every migration applied. They
+# prove what the DB-free unit suite cannot — transaction rollback and
+# interleaved requests on two connections. A separate workflow (not a job in
+# ci.yml) so it can filter on paths: it runs only when the API, the schema or
+# the harness's own wiring changes. Because of the filter it must NOT be made
+# a required status check as is: a PR outside these paths never reports it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'packages/db/**'
+      - 'packages/shared-types/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'turbo.json'
+      - 'supabase/**'
+      - '.github/actions/supabase-stack/**'
+      - '.github/workflows/integration.yml'
+  pull_request:
+    paths:
+      - 'apps/api/**'
+      - 'packages/db/**'
+      - 'packages/shared-types/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'turbo.json'
+      - 'supabase/**'
+      - '.github/actions/supabase-stack/**'
+      - '.github/workflows/integration.yml'
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  api-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Starts Supabase, exports DATABASE_URL, runs `migrate deploy`, generates
+      # the client and seeds. The tests create their own synthetic tenants and
+      # do not read the seed.
+      - uses: ./.github/actions/supabase-stack
+
+      - name: PostgreSQL integration tests
+        run: pnpm --filter @tonyai/api test:int
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          supabase status || true
+          docker ps || true
