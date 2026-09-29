@@ -10,6 +10,13 @@ import tempfile
 
 INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
+    ('unrecorded app adoption restored', 'configure_oidc.py',
+     "        if apps:\n            raise SafeFailure('Unrecorded Entra app already uses the staging name; refusing adoption.')\n        app = az(",
+     "        app = apps[0] if apps else az("),
+    ('app ownership check removed', 'configure_oidc.py', "    validate_owners('app', client, operator)", '    pass'),
+    ('principal ownership check removed', 'configure_oidc.py', "    validate_owners('sp', principal['id'], operator)", '    pass'),
+    ('principal credential check removed', 'configure_oidc.py',
+     "if principal.get('passwordCredentials') != [] or principal.get('keyCredentials') != []:", 'if False:'),
     ('runtime URL validation skipped', 'cloud_ops.py', "    validate_pooler(data['value'], project, 6543)", '    pass'),
     ('query allowlist removed', 'pooler.py', "set(query) - {'pgbouncer', 'sslmode', 'sslaccept', 'sslcert', 'connection_limit'}", 'False'),
     ('public download denial removed', 'cloud_ops.py', 'if public_status not in (400, 401, 403, 404):', 'if False:'),

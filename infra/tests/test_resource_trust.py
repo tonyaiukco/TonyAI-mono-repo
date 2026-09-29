@@ -73,6 +73,11 @@ class OidcTrustTests(unittest.TestCase):
             if defect == 'certificate': app['keyCredentials'] = [{}]
             def az(*args):
                 calls.append(args)
+                if args[:3] == ('ad','signed-in-user','show'): return {'id':'operator'}
+                if args[:4] in (('ad','app','owner','list'), ('ad','sp','owner','list')): return []
+                if args[:3] == ('ad','sp','show'):
+                    return {'id':'principal','appId':'wrong' if defect=='wrong-principal' else 'client',
+                            'passwordCredentials':[], 'keyCredentials':[]}
                 if args[:2] == ('group','show'):
                     return {'id':GROUP,'tags':{'environment':'staging','githubClientId':'client',
                             'githubPrincipalId':'wrong' if defect=='saved-principal' else 'principal'}}

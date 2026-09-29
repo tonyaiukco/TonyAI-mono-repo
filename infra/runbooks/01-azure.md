@@ -106,21 +106,35 @@ changes through owner review. If these controls are unavailable on the plan,
 or equivalent enforced deployment restriction. An environment subject alone does
 not restrict the originating branch. Never enable federation for fork PR jobs.
 
-Run the idempotent helper only after verifying those enforced protections:
+Run the helper only after verifying those enforced protections, signed in as the
+project owner. On first setup it creates its own app; it refuses any pre-existing
+app with the predictable name. Never add an unfamiliar app ID to the group tags
+to bypass that refusal. On subsequent runs it resumes only the recorded ID.
+Both the app and service principal must have no owners or only your signed-in
+user object ID, and neither may have password/certificate credentials:
 
 ```bash
 python3 infra/scripts/configure_oidc.py --subscription "$AZURE_SUBSCRIPTION_ID" --group "$RESOURCE_GROUP" --repo "$GITHUB_REPOSITORY" --environment-protection-verified
 source infra/scripts/restore-session.sh "$AZURE_SUBSCRIPTION_ID" "$RESOURCE_GROUP"
-az ad app credential list --id "$AZURE_CLIENT_ID" --query 'length(@)' -o tsv
+az ad signed-in-user show --query id -o tsv
+az ad app owner list --id "$AZURE_CLIENT_ID" --query '[].id' -o json
+az ad sp owner list --id "$DEPLOYER_OBJECT_ID" --query '[].id' -o json
+az ad app show --id "$AZURE_CLIENT_ID" --query '{passwordCount:length(passwordCredentials),certificateCount:length(keyCredentials)}'
+az ad sp show --id "$DEPLOYER_OBJECT_ID" --query '{passwordCount:length(passwordCredentials),certificateCount:length(keyCredentials)}'
 az ad app federated-credential list --id "$AZURE_CLIENT_ID" --query '[].{name:name,issuer:issuer,subject:subject,audiences:audiences}'
 ```
 
-Expected/evidence: repeated execution reuses the same dedicated app/service
-principal and exact named credential; no password credentials (`0`). The helper
-uses a deterministic app name per resource-group ID, stores IDs in group tags,
-and refuses ambiguous apps or an existing federation with a different subject.
-If reusing an older deployment's app, first record its reviewed client/object IDs
-in `githubClientId`/`githubPrincipalId` group tags; do not create a duplicate.
+Expected/evidence: record the signed-in user ID, both owner-ID lists (empty or
+containing only that user), and **zero password and certificate counts on both
+objects**. The helper checks these before federation; missing SP credential
+metadata also fails closed. Repeated execution must retain the same recorded
+app/principal IDs and exact federation. It refuses an unrecorded same-name app,
+foreign owners, credentials, ambiguous apps or mismatched federation. If the
+first creation was interrupted before its ID could be recorded, stop and inspect
+it with the owner; do not automatically adopt a name match or blindly retry
+creation. Resolve the collision before rerunning. Recheck owners and credential
+counts before runbook 03 grants deployment roles; unexpected changes are a stop
+condition. These controls must pass **before the first runbook 01 federation**.
 Expected issuer `https://token.actions.githubusercontent.com`, audience
 `api://AzureADTokenExchange`, subject `repo:<owner>/<repository>:environment:staging`.
 No password is created and no Entra credential file is written.
@@ -144,6 +158,8 @@ from an authorized or compromised deployment. Audit inherited broad grants too.
 Record actual OIDC-login success and negative branch/environment rejection in
 LP2-02; creating the trust relationship alone does not prove token exchange.
 
-Sources: [federation setup](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-create-trust),
+Sources: [service-principal metadata](https://learn.microsoft.com/en-us/graph/api/serviceprincipal-get),
+[service-principal owner commands](https://learn.microsoft.com/en-us/cli/azure/ad/sp/owner),
+[federation setup](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-create-trust),
 [Container Apps roles](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/containers),
 [ACR managed identity](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-authentication-managed-identity).

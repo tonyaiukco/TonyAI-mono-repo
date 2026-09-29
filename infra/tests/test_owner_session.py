@@ -86,6 +86,9 @@ class FederationTests(unittest.TestCase):
         calls = []
         def az(*args):
             calls.append(args)
+            if args[:3] == ('ad','signed-in-user','show'): return {'id':'operator'}
+            if args[:4] in (('ad','app','owner','list'), ('ad','sp','owner','list')): return [{'id':'operator'}]
+            if args[:3] == ('ad','sp','show'): return state['principals'][0]
             if args[:2] == ('group','show'):
                 return {'id':'/subscriptions/sub/resourceGroups/staging','tags':state['tags']}
             if args[:3] == ('ad','app','list'): return state['apps']
@@ -96,7 +99,7 @@ class FederationTests(unittest.TestCase):
                 return app
             if args[:3] == ('ad','sp','list'): return state['principals']
             if args[:3] == ('ad','sp','create'):
-                state['principals'].append({'id':'principal','appId':'client'})
+                state['principals'].append({'id':'principal','appId':'client','passwordCredentials':[],'keyCredentials':[]})
                 return state['principals'][0]
             if args[:2] == ('group','update'):
 
