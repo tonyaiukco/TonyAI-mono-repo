@@ -1,0 +1,7 @@
+{
+  "name": "github-staging",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:<OWNER>/<REPOSITORY>:environment:staging",
+  "description": "TonyAI staging deployments from the protected GitHub environment",
+  "audiences": ["api://AzureADTokenExchange"]
+}

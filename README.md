@@ -326,6 +326,12 @@ pnpm docker:down
 
 The wrapper sources `apps/api/.env` + `apps/web/.env.local` so the containers use your instance's real keys (supabase-cli demo JWTs differ per CLI version — never hardcoded). `NEXT_PUBLIC_*` values are inlined into the web bundle at build time, so images are environment-specific; server-side auth can override the Supabase URL at runtime via `SUPABASE_URL_INTERNAL`. CI builds both images on every PR (`docker-build` job, no push).
 
+### Staging deployment (LP2-01)
+
+The versioned [staging foundation and owner-run runbooks](infra/README.md) configure Azure Germany West Central (Consumption Container Apps, ACR Basic, Key Vault references, managed identities, Log Analytics and GitHub OIDC) with an isolated Supabase Frankfurt project. Follow the numbered steps for account setup, private buckets, migrations, environment-bound web builds and acceptance evidence. The root [`.env.example`](.env.example) is a placeholder-only cloud reference; local setup continues to use the per-package examples.
+
+Cloud execution is performed by the project owner and remains required evidence: generated templates do not establish a working staging environment. Never run the local demo seed or demo-account RLS probes against cloud. LP2-02 supplies CI/image qualification; LP2-03 supplies dependency readiness, authenticated staging smoke and rollback proof.
+
 ---
 
 ## Scripts
