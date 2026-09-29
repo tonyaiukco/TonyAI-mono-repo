@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+# Compile templates outside the checkout; do not version generated ARM output.
+azure/*.json
+!azure/github-federation.example.json
