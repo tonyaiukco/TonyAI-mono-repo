@@ -69,32 +69,31 @@ restore invalidated credentials. Never switch JWT_SCHEME away from `jwks`.
 ## Database password rotation
 
 A password change immediately invalidates new connections using the old password;
-this is not a two-key overlap. Schedule a maintenance window and stop API traffic
-before the change. Independently list/select each active API revision and deactivate it (commands
-below), and keep the web in the agreed maintenance state.
+this is not a two-key overlap. Schedule a maintenance window with staging users
+signed out and test activity paused. Keep the single active API revision active;
+DB-backed requests may fail between the password change and the verified restart.
+Do not deactivate the only revision. Record the active revision before changing credentials.
 
 ```bash
 az containerapp revision list -g "$RESOURCE_GROUP" -n "$PREFIX-staging-api" --query '[?properties.active].name' -o tsv
 export API_REVISION='<active-api-revision-from-this-list>'
-az containerapp revision deactivate -g "$RESOURCE_GROUP" -n "$PREFIX-staging-api" --revision "$API_REVISION" --output none
 ```
 
 In Supabase rotate the database password. In the vault create new enabled versions
 of **both** `database-url` (6543) and `direct-url` (5432), with the same new password,
 project/Frankfurt host and strict TLS/CA options. Neither URL may retain the old
 password. Run the owner migration/status command against the new session URL,
-then apply its exact reference with the API still inactive. **Do not use the full
-app deploy helper while traffic is paused**: it can reactivate a revision. Set only
-the existing app secret reference, then restart/reactivate each recorded revision:
+then apply its exact validated reference without changing images. Set only
+the existing app secret reference, then restart the recorded active revision:
 
 ```bash
 bash <<'BASH'
 set -euo pipefail
 python3 infra/scripts/cloud_ops.py migrate --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF"
-# These are secret-reference IDs, not values; keep the app inactive until both URLs pass.
-DATABASE_SECRET_ID="$(az keyvault secret show --vault-name "$VAULT_NAME" --name database-url --query id -o tsv)"
+# Validate the exact selected runtime version again; output is an ID, never a value.
+DATABASE_SECRET_ID="$(python3 infra/scripts/cloud_ops.py runtime-secret-id --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF")"
 [[ "$DATABASE_SECRET_ID" =~ /secrets/database-url/[a-f0-9]{32}$ ]]
-API_IDENTITY_ID="$(az deployment group show -g "$RESOURCE_GROUP" -n lp2-foundation --query properties.outputs.apiIdentityId.value -o tsv)"
+API_IDENTITY_ID="$(az identity show -g "$RESOURCE_GROUP" -n "$PREFIX-staging-api" --query id -o tsv)"
 test "$API_IDENTITY_ID" = "$GROUP_ID/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$PREFIX-staging-api"
 az containerapp secret set -g "$RESOURCE_GROUP" -n "$PREFIX-staging-api" --secrets "database-url=keyvaultref:$DATABASE_SECRET_ID,identityref:$API_IDENTITY_ID" --output none
 az containerapp secret list -g "$RESOURCE_GROUP" -n "$PREFIX-staging-api" --query '[].{name:name,keyVaultUrl:keyVaultUrl}'
@@ -102,7 +101,6 @@ CURRENT_DATABASE_ID="$(az containerapp secret list -g "$RESOURCE_GROUP" -n "$PRE
 test "$CURRENT_DATABASE_ID" = "$DATABASE_SECRET_ID"
 az group update -n "$RESOURCE_GROUP" --set "tags.databaseSecretVersion=${DATABASE_SECRET_ID##*/}" --output none
 az containerapp revision restart -g "$RESOURCE_GROUP" -n "$PREFIX-staging-api" --revision "$API_REVISION" --output none
-az containerapp revision activate -g "$RESOURCE_GROUP" -n "$PREFIX-staging-api" --revision "$API_REVISION" --output none
 BASH
 ```
 

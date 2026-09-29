@@ -31,15 +31,23 @@ def configure(subscription, group, repo):
     else:
         app = apps[0] if apps else az('ad', 'app', 'create', '--display-name', name, '--sign-in-audience', 'AzureADMyOrg')
     client = app['appId']
+    if (app['displayName'] != name or (saved and client != saved)
+            or any(match['appId'] != client for match in apps)):
+        raise SafeFailure('Saved Entra app does not match the dedicated staging application.')
+    if app.get('passwordCredentials') or app.get('keyCredentials'):
+        raise SafeFailure('Existing Entra app has password/certificate credentials; review before federation.')
+    # Record the validated app before service-principal creation (which may need a retry).
+    az('group', 'update', '--subscription', subscription, '-n', group, '--set', 'tags.githubClientId=' + client)
     principals = az('ad', 'sp', 'list', '--filter', "appId eq '" + client + "'")
     if len(principals) > 1:
         raise SafeFailure('Ambiguous service principal.')
     principal = principals[0] if principals else az('ad', 'sp', 'create', '--id', client)
-    # Save immediately, including when later federation operations fail.
+    if (principal.get('appId') != client
+            or resource.get('tags', {}).get('githubPrincipalId', principal['id']) != principal['id']):
+        raise SafeFailure('Saved service principal does not match the dedicated application.')
+    # Save the validated pair, including when later federation operations fail.
     az('group', 'update', '--subscription', subscription, '-n', group, '--set',
        'tags.githubClientId=' + client, 'tags.githubPrincipalId=' + principal['id'])
-    if app.get('passwordCredentials') or app.get('keyCredentials'):
-        raise SafeFailure('Existing Entra app has password/certificate credentials; review before federation.')
     credentials = az('ad', 'app', 'federated-credential', 'list', '--id', client)
     if any(item['name'] != 'github-staging' for item in credentials):
         raise SafeFailure('Unexpected federation on the deployment app; review before reuse.')

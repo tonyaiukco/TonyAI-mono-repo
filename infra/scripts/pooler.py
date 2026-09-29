@@ -15,7 +15,8 @@ class SafeFailure(Exception):
 def validate_pooler(value, project, port):
     parsed = urlparse(value)
     query = parse_qs(parsed.query, keep_blank_values=True)
-    if (parsed.scheme not in ('postgres', 'postgresql')
+    if (set(query) - {'pgbouncer', 'sslmode', 'sslaccept', 'sslcert', 'connection_limit'}
+            or parsed.scheme not in ('postgres', 'postgresql')
             or not re.fullmatch(r'aws-[0-9]+-eu-central-1\.pooler\.supabase\.com', parsed.hostname or '')
             or parsed.port != port or not (parsed.username or '').endswith('.' + project)
             or not parsed.password or parsed.path != '/postgres'

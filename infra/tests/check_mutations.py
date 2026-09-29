@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Reproduce the seven reported surviving mutations in disposable source copies."""
+"""Reproduce reported security mutations in disposable source copies."""
 import ast
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,6 +10,10 @@ import tempfile
 
 INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
+    ('runtime URL validation skipped', 'cloud_ops.py', "    validate_pooler(data['value'], project, 6543)", '    pass'),
+    ('query allowlist removed', 'pooler.py', "set(query) - {'pgbouncer', 'sslmode', 'sslaccept', 'sslcert', 'connection_limit'}", 'False'),
+    ('public download denial removed', 'cloud_ops.py', 'if public_status not in (400, 401, 403, 404):', 'if False:'),
+    ('build Auth validation removed', 'check_browser_key.py', '    validate_auth_settings(settings)', '    pass'),
     ('redirect handler removed', 'cloud_ops.py', 'build_opener(NoRedirect)', 'build_opener()'),
     ('public readback check removed', 'cloud_ops.py', "actual.get('public') is not False or ", ''),
     ('migration URL validation skipped', 'cloud_ops.py',
@@ -38,11 +43,21 @@ def main():
             mutated = source.replace(before, after)
             ast.parse(mutated)  # Syntax errors are not a valid security-test kill.
             path.write_text(mutated)
-            result = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(target / 'tests')], capture_output=True)
-            if result.returncode == 0:
+            runner = """import json, sys, unittest
+suite = unittest.defaultTestLoader.discover(sys.argv[1])
+result = unittest.TextTestRunner(stream=sys.stderr).run(suite)
+print(json.dumps({'failures': len(result.failures), 'errors': len(result.errors)}))
+"""
+            result = subprocess.run([sys.executable, '-c', runner, str(target / 'tests')], capture_output=True, text=True)
+            if result.returncode:
+                sys.exit('INVALID: mutation test process failed: ' + name)
+            summary = json.loads(result.stdout.strip().splitlines()[-1])
+            if summary['errors']:
+                sys.exit('INVALID: mutation caused a test error, not an assertion failure: ' + name)
+            if not summary['failures']:
                 sys.exit('SURVIVED: ' + name)
             print('KILLED: ' + name)
-    print('PASS: all seven reported surviving mutations are now detected.')
+    print(f'PASS: all {len(MUTANTS)} mutations detected by assertion failures, with no test errors.')
 
 
 if __name__ == '__main__':

@@ -89,6 +89,32 @@ schema changes, stop traffic and use a separately verified DB/file restoration
 or forward fix. The evidence relationship migration cannot be undone by reverting
 a container. LP2-03 rehearses that decision with a known candidate.
 
+After the compatibility review, restore the session and select the two previously
+verified image digests from the release evidence. Keep the current reviewed
+infrastructure checkout (`RELEASE_SHA`); the older image source SHA is separate
+provenance. Keep current credentials; an image rollback does not revive old keys.
+
+```bash
+bash <<'BASH'
+set -euo pipefail
+export API_DIGEST='sha256:<previous-reviewed-api-digest>'
+export WEB_DIGEST='sha256:<previous-reviewed-web-digest>'
+rollback_api="$API_DIGEST"
+rollback_web="$WEB_DIGEST"
+bash infra/scripts/deploy-apps.sh
+source infra/scripts/restore-session.sh "$AZURE_SUBSCRIPTION_ID" "$RESOURCE_GROUP"
+test "$API_DIGEST" = "$rollback_api"
+test "$WEB_DIGEST" = "$rollback_web"
+BASH
+```
+
+Expected: the helper validates the current runtime URL, deploys the selected
+images, reads back both images and secret references, and only then records the
+deployed digest tags. Restoring those tags must return the rollback digests;
+subsequent rotation uses them, even if newer candidate tags exist. Repeat 4.1–4.3
+and record actual ready revisions plus authenticated flow results. A failed
+readback means deployment state is uncertain: inspect it before continuing.
+
 Supabase database backups exclude Storage file bytes. Protect `evidence` **and**
 `import-sources` separately, including object key, size and SHA-256 inventory,
 and retain bucket policies, Auth settings, identities/RBAC, image digests and

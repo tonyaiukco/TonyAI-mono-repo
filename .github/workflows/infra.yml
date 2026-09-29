@@ -1,10 +1,10 @@
 name: Infrastructure
 on:
   pull_request:
-    paths: ['infra/**', '.github/workflows/infra.yml', '.gitignore']
+    paths: ['infra/**', '.github/workflows/infra.yml', 'apps/*/Dockerfile']
   push:
     branches: [main]
-    paths: ['infra/**', '.github/workflows/infra.yml', '.gitignore']
+    paths: ['infra/**', '.github/workflows/infra.yml', 'apps/*/Dockerfile']
 permissions:
   contents: read
 jobs:

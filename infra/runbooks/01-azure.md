@@ -72,6 +72,11 @@ az acr config authentication-as-arm show -r "$ACR_NAME" --query status -o tsv
 BASH
 ```
 
+Keep foundation `what-if` output in the owner's private, unrecorded terminal.
+Whether a rerun displays the evaluated Log Analytics shared key is still
+unverified; do not attach raw output to the PR. Record only the reviewed resource
+changes and pass/fail, never evaluated settings or keys.
+
 Expected/evidence: validation/apply `Succeeded`; what-if only intended staging
 resources; ACR ARM-token authentication `enabled`. Save the nonsecret deployment
 ID and resource IDs. App origins are derived before image builds, avoiding a

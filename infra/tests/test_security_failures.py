@@ -72,6 +72,24 @@ class GuardTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(SafeFailure):
                 validate_pooler(url, PROJECT, 6543)
 
+    def test_pooler_rejects_every_unapproved_query_key(self):
+        for extra in ('host=127.0.0.1', 'host=evil.example.com',
+                      'host=aws-0-us-east-1.pooler.supabase.com', 'SSLACCEPT=strict',
+                      'schema=public', 'options=anything', 'unknown=', '%68ost=evil.example.com'):
+            with self.subTest(extra=extra), self.assertRaises(SafeFailure):
+                validate_pooler(GOOD_URL + '&' + extra, PROJECT, 6543)
+
+    def test_runtime_secret_returns_only_validated_enabled_exact_version(self):
+        record = {'id':'https://vault.vault.azure.net/secrets/database-url/'+'a'*32,
+                  'value':GOOD_URL, 'attributes':{'enabled':True}}
+        with patch.object(ops,'command',return_value=json.dumps(record)):
+            self.assertEqual(ops.runtime_secret_id('vault',PROJECT), record['id'])
+        for change in ({'value':GOOD_URL+'&host=evil.example.com'}, {'attributes':{'enabled':False}},
+                       {'id':record['id'].replace('vault.vault','foreign.vault')},
+                       {'id':record['id'].rsplit('/',1)[0]}):
+            with self.subTest(change=change), patch.object(ops,'command',return_value=json.dumps({**record,**change})):
+                with self.assertRaises(SafeFailure): ops.runtime_secret_id('vault',PROJECT)
+
     def test_migrate_refuses_invalid_secret_before_any_prisma_command(self):
         for position in (0, 1):
             secrets = [GOOD_URL, GOOD_URL.replace(':6543', ':5432')]
@@ -84,37 +102,50 @@ class GuardTests(unittest.TestCase):
     def test_bucket_readback_must_not_trust_write_acknowledgement(self):
         limit, mimes = ops.BUCKETS['evidence']
         stale = {'id':'evidence','public':True,'file_size_limit':limit,'allowed_mime_types':mimes}
-        with patch.object(ops, 'request', side_effect=[(200,b'[]'), (200,b'{}'), (200,json.dumps(stale).encode())]):
+        def request(url, method='GET', *args, **kwargs):
+            if url == BASE + '/bucket': return 200, b'[]'
+            if method != 'GET': return 200, b'{}'
+            bucket = url.rsplit('/', 1)[-1]
+            limit, mimes = ops.BUCKETS[bucket]
+            return 200, json.dumps({**stale, 'id':bucket, 'file_size_limit':limit, 'allowed_mime_types':mimes}).encode()
+        with patch.object(ops, 'request', side_effect=request):
             with self.assertRaises(SafeFailure):
                 ops.provision_buckets(BASE, 'synthetic')
 
     def test_signed_bytes_and_exact_cleanup_targets(self):
-        for correct_bytes in (True, False):
-            uploads, deletes = {}, []
-            def request(url, method='GET', key=None, body=None, content_type='application/json'):
-                if method == 'DELETE':
-                    deletes.append((url, json.loads(body)['prefixes']))
-                    return 200, b'{}'
-                if '/object/public/' in url:
-                    return 404, b''
-                if '/object/sign/' in url:
-                    if method == 'POST':
-                        self.assertEqual(json.loads(body), {'expiresIn':60})
-                        return 200,json.dumps({'signedURL':url[len(BASE):] + '?token=synthetic'}).encode()
-                    original = url.split('?')[0].replace('/object/sign/', '/object/')
-                    return 200, uploads[original] if correct_bytes else b'wrong bytes'
-                uploads[url] = body
-                return 200,b'{}'
-            with patch.object(ops, 'request', side_effect=request), contextlib.redirect_stdout(io.StringIO()):
-                if correct_bytes:
+        self.storage_probe(correct_bytes=True, public=False)
+        self.storage_probe(correct_bytes=False, public=False)
+
+    def test_public_download_is_denied_even_when_signed_download_is_valid(self):
+        self.storage_probe(correct_bytes=True, public=True)
+
+    def storage_probe(self, correct_bytes, public):
+        uploads, deletes = {}, []
+        def request(url, method='GET', key=None, body=None, content_type='application/json'):
+            if method == 'DELETE':
+                deletes.append((url, json.loads(body)['prefixes']))
+                return 200, b'{}'
+            if '/object/public/' in url:
+                return (200, b'public bytes') if public else (404, b'')
+            if '/object/sign/' in url:
+                if method == 'POST':
+                    self.assertEqual(json.loads(body), {'expiresIn':60})
+                    return 200,json.dumps({'signedURL':url[len(BASE):] + '?token=synthetic'}).encode()
+                original = url.split('?')[0].replace('/object/sign/', '/object/')
+                return 200, uploads[original] if correct_bytes else b'wrong bytes'
+            uploads[url] = body
+            return 200,b'{}'
+        with patch.object(ops, 'request', side_effect=request), contextlib.redirect_stdout(io.StringIO()):
+            if correct_bytes and not public:
+                ops.probe_buckets(BASE, 'synthetic')
+            else:
+                with self.assertRaises(SafeFailure):
                     ops.probe_buckets(BASE, 'synthetic')
-                else:
-                    with self.assertRaises(SafeFailure):
-                        ops.probe_buckets(BASE, 'synthetic')
-            self.assertEqual(len(uploads), len(deletes))
-            for upload in uploads:
-                bucket, path = upload[len(BASE + '/object/'):].split('/', 1)
-                self.assertIn((BASE + '/object/' + bucket, [path]), deletes)
+        self.assertEqual(len(uploads), len(deletes))
+        for upload in uploads:
+            bucket, path = upload[len(BASE + '/object/'):].split('/', 1)
+            self.assertIn((BASE + '/object/' + bucket, [path]), deletes)
+
 
     def test_auth_settings_fail_closed_for_enabled_or_missing_controls(self):
         validate_auth_settings(AUTH)
@@ -134,22 +165,44 @@ class GuardTests(unittest.TestCase):
     def test_public_key_must_be_accepted_by_exact_project_and_urls(self):
         env = {'SUPABASE_PROJECT_REF':PROJECT, 'NEXT_PUBLIC_SUPABASE_ANON_KEY':'sb_publishable_synthetic',
                'NEXT_PUBLIC_SUPABASE_URL':'https://' + PROJECT + '.supabase.co',
+               'PREFIX':'tonyai', 'ACA_DEFAULT_DOMAIN':'example.germanywestcentral.azurecontainerapps.io',
                'API_ORIGIN':'https://tonyai-staging-api.example.germanywestcentral.azurecontainerapps.io'}
         env['NEXT_PUBLIC_API_BASE_URL'] = env['API_ORIGIN'] + '/api/v1'
-        with patch('check_browser_key.request', return_value=(200,json.dumps(AUTH).encode())) as request:
+        with patch('check_browser_key.request', side_effect=[(401,b''),(200,json.dumps(AUTH).encode())]) as request:
             check_inputs(env)
             self.assertEqual(request.call_args.args[0], env['NEXT_PUBLIC_SUPABASE_URL'] + '/auth/v1/settings')
         with patch('check_browser_key.request', return_value=(401,b'')):
             with self.assertRaises(SafeFailure): check_inputs(env)
+        with patch('check_browser_key.request') as request:
+            forged = 'https://tonyai-staging-api.evil.com.germanywestcentral.azurecontainerapps.io'
+            with self.assertRaises(SafeFailure):
+                check_inputs({**env, 'API_ORIGIN':forged, 'NEXT_PUBLIC_API_BASE_URL':forged+'/api/v1'})
+            request.assert_not_called()
         for field in ('NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_API_BASE_URL','API_ORIGIN'):
             with patch('check_browser_key.request') as request:
                 with self.assertRaises(SafeFailure): check_inputs({**env,field:'http://localhost:3000'})
                 request.assert_not_called()
 
+    def test_browser_build_rejects_open_auth_settings_and_missing_key_enforcement(self):
+        env = {'SUPABASE_PROJECT_REF':PROJECT, 'NEXT_PUBLIC_SUPABASE_ANON_KEY':'sb_publishable_synthetic',
+               'NEXT_PUBLIC_SUPABASE_URL':'https://' + PROJECT + '.supabase.co',
+               'PREFIX':'tonyai', 'ACA_DEFAULT_DOMAIN':'example.germanywestcentral.azurecontainerapps.io',
+               'API_ORIGIN':'https://tonyai-staging-api.example.germanywestcentral.azurecontainerapps.io'}
+        env['NEXT_PUBLIC_API_BASE_URL'] = env['API_ORIGIN'] + '/api/v1'
+        for field in ('disable_signup', 'phone', 'anonymous_users'):
+            settings = json.loads(json.dumps(AUTH))
+            if field == 'disable_signup': settings[field] = False
+            else: settings['external'][field] = True
+            with self.subTest(field=field), patch('check_browser_key.request', side_effect=[(401,b''),(200,json.dumps(settings).encode())]):
+                with self.assertRaises(SafeFailure): check_inputs(env)
+        with patch('check_browser_key.request', return_value=(200,json.dumps(AUTH).encode())):
+            with self.assertRaises(SafeFailure): check_inputs(env)
+
     def test_asset_scan_refuses_privileged_material_without_echoing_it(self):
         import base64
         payload = base64.urlsafe_b64encode(b'{"role":"service_role"}').rstrip(b'=')
         with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError): scan(Path(directory))
             path = Path(directory) / 'chunk.js'
             for bad in [b'sb_secret_synthetic', b'eyJhbGciOiJIUzI1NiJ9.' + payload + b'.synthetic']:
                 path.write_bytes(bad)

@@ -42,8 +42,8 @@ pnpm build
 pnpm test
 ```
 
-The dedicated `.github/workflows/infra.yml` runs the Python suite, seven reported
-regression mutations and pinned Bicep compilation on infra PRs, without cloud login.
+The dedicated `.github/workflows/infra.yml` runs the Python suite, security
+regression mutations (assertion failures required; test errors do not count) and pinned Bicep compilation on infra PRs, without cloud login.
 
 These checks do not validate Azure quotas/RBAC propagation, Supabase settings,
 image startup or tenant containment. Azure `validate`/`what-if` and actual apply

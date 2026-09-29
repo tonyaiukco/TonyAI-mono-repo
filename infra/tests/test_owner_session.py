@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -28,13 +29,16 @@ if args[:2]==['group','show']:
       'environment':'staging','tonyaiPrefix':'tonyai','releaseSha':'a'*40,'githubRepository':'owner/repo',
       'supabaseProjectRef':'abcdefghijklmnopqrst','githubClientId':'client','githubPrincipalId':'principal',
       'apiDigest':'sha256:'+'a'*64,'webDigest':'sha256:'+'b'*64}}))
-elif args[:3]==['deployment','group','show']:
-    if args[args.index('--query')+1]=='properties.outputs':
-      print(json.dumps({key:{'value':value} for key,value in {
-        'registryName':'registry','registryHost':'registry.azurecr.io','vaultName':'vault',
-        'webOrigin':'https://web','apiOrigin':'https://api'}.items()}))
-    else: print('vault-id')
-elif args[:2]==['account','show']: print('tenant')
+elif args[:2]==['resource','list']:
+    print(json.dumps([{'type':kind,'name':name,'id':'/subscriptions/sub/resourceGroups/staging/providers/'+kind+'/'+name,
+      'location':'germanywestcentral','tags':{'application':'TonyAI','environment':'staging','task':'LP2-01'}}
+      for kind,name in [('Microsoft.ContainerRegistry/registries','registry'),('Microsoft.KeyVault/vaults','vault'),
+        ('Microsoft.App/managedEnvironments','tonyai-staging-env'),
+        ('Microsoft.ManagedIdentity/userAssignedIdentities','tonyai-staging-api'),
+        ('Microsoft.OperationalInsights/workspaces','tonyai-staging-logs')]]))
+elif args[:2]==['acr','show']: print(json.dumps({'loginServer':'registry.azurecr.io'}))
+elif args[:3]==['containerapp','env','show']: print(json.dumps({'properties':{'defaultDomain':'example.germanywestcentral.azurecontainerapps.io'}}))
+elif args[:2]==['account','show']: print(json.dumps({'tenantId':'tenant'}))
 elif args[:2]!=['account','set']: sys.exit(99)
 ''')
             path.chmod(0o755)
@@ -49,14 +53,31 @@ foundation_output vaultId
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertIn('tenant|vault|registry.azurecr.io|' + 'a'*40, result.stdout)
             self.assertIn('abcdefghijklmnopqrst|client|principal|sha256:', result.stdout)
-            self.assertIn('vault-id', result.stdout)
+            self.assertIn('/providers/Microsoft.KeyVault/vaults/vault', result.stdout)
 
     def test_restore_failure_returns_without_exiting_interactive_caller(self):
         result = subprocess.run(['bash','--noprofile','--norc','-c',
-                                 'source "$1"; rc=$?; printf "ALIVE:%s" "$rc"',
+                                 'export VAULT_NAME=stale API_DIGEST=stale; source "$1"; rc=$?; printf "ALIVE:%s|%s|%s" "$rc" "${VAULT_NAME-unset}" "${API_DIGEST-unset}"',
                                  'test',str(SCRIPTS/'restore-session.sh')],capture_output=True,text=True)
         self.assertEqual(result.returncode,0)
-        self.assertIn('ALIVE:1',result.stdout)
+        self.assertIn('ALIVE:1|unset|unset',result.stdout)
+
+    def test_failed_resource_read_clears_session_and_never_reports_pass(self):
+        shells = [['bash','--noprofile','--norc']]
+        if shutil.which('zsh'): shells.append(['zsh','-f'])
+        with tempfile.TemporaryDirectory() as directory:
+            az = Path(directory) / 'az'
+            az.write_text('#!/bin/sh\nexit 1\n')
+            az.chmod(0o755)
+            for shell in shells:
+                script = 'export VAULT_NAME=stale API_DIGEST=stale; source "$1" sub staging; rc=$?; printf "ALIVE:%s|%s|%s" "$rc" "${VAULT_NAME-unset}" "${API_DIGEST-unset}"'
+                result = subprocess.run([*shell,'-c',script,'test',str(SCRIPTS/'restore-session.sh')],
+                                        env={**os.environ,'PATH':directory+os.pathsep+os.environ['PATH']},capture_output=True,text=True)
+                with self.subTest(shell=shell):
+                    self.assertEqual(result.returncode,0)
+                    self.assertIn('ALIVE:1|unset|unset',result.stdout)
+                    self.assertNotIn('PASS:',result.stdout)
+
 
 
 class FederationTests(unittest.TestCase):
@@ -75,10 +96,13 @@ class FederationTests(unittest.TestCase):
                 return app
             if args[:3] == ('ad','sp','list'): return state['principals']
             if args[:3] == ('ad','sp','create'):
-                state['principals'].append({'id':'principal'})
+                state['principals'].append({'id':'principal','appId':'client'})
                 return state['principals'][0]
             if args[:2] == ('group','update'):
-                state['tags'].update(githubClientId='client',githubPrincipalId='principal')
+
+                for assignment in args[args.index('--set')+1:]:
+                    key,value=assignment.split('=',1)
+                    state['tags'][key.removeprefix('tags.')]=value
                 return {}
             if args[:4] == ('ad','app','federated-credential','list'): return state['credentials']
             if args[:4] == ('ad','app','federated-credential','create'):

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from auth_settings import validate_auth_settings
 from cloud_ops import request, require_success
 from pooler import SafeFailure
@@ -30,11 +31,17 @@ def check_inputs(env):
     key = env.get('NEXT_PUBLIC_SUPABASE_ANON_KEY', '')
     supabase = 'https://' + project + '.supabase.co'
     api = env.get('API_ORIGIN', '')
-    if (not validate(key, project) or env.get('NEXT_PUBLIC_SUPABASE_URL') != supabase
-            or not re.fullmatch(r'https://[a-z0-9-]+-staging-api\.[a-z0-9.-]+\.germanywestcentral\.azurecontainerapps\.io', api)
+    domain = env.get('ACA_DEFAULT_DOMAIN', '')
+    prefix = env.get('PREFIX', '')
+    if (not re.fullmatch(r'[a-z0-9]{3,12}', prefix)
+            or not re.fullmatch(r'[a-z0-9-]+\.germanywestcentral\.azurecontainerapps\.io', domain)
+            or api != 'https://' + prefix + '-staging-api.' + domain
+            or not validate(key, project) or env.get('NEXT_PUBLIC_SUPABASE_URL') != supabase
             or env.get('NEXT_PUBLIC_API_BASE_URL') != api + '/api/v1'):
         raise SafeFailure('Invalid public key, project or staging build URLs.')
-    # A successful request with this public key proves the target project accepts it.
+    # Prove the endpoint enforces the key before relying on its successful response.
+    if request(supabase + '/auth/v1/settings', key='sb_publishable_invalid_' + uuid.uuid4().hex)[0] != 401:
+        raise SafeFailure('Auth endpoint did not reject the invalid-key control.')
     settings = json.loads(require_success(request(supabase + '/auth/v1/settings', key=key)))
     validate_auth_settings(settings)
 

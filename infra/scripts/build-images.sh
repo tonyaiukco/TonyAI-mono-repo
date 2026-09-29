@@ -41,5 +41,5 @@ container_id=$(docker create --platform linux/amd64 "$ACR_HOST/tonyai/web@$WEB_D
 docker cp "$container_id:/app/apps/web/.next/static" "$work_dir/static"
 python3 infra/scripts/scan_browser_assets.py "$work_dir/static"
 # Persist only public digests after the scan passes, for a later terminal/session.
-az group update -n "$RESOURCE_GROUP" --set "tags.apiDigest=$API_DIGEST" "tags.webDigest=$WEB_DIGEST" --output none
+az group update -n "$RESOURCE_GROUP" --set "tags.candidateApiDigest=$API_DIGEST" "tags.candidateWebDigest=$WEB_DIGEST" --output none
 printf 'PASS: built and scanned release %s\nAPI %s\nWeb %s\n' "$RELEASE_SHA" "$API_DIGEST" "$WEB_DIGEST"

@@ -41,6 +41,17 @@ def secret(vault, name):
     return value
 
 
+def runtime_secret_id(vault, project):
+    # Owner only: Azure returns the value into memory; stdout contains only the validated ID.
+    data = json.loads(command(['az', 'keyvault', 'secret', 'show', '--vault-name', vault,
+                               '--name', 'database-url', '-o', 'json', '--only-show-errors']))
+    if (not re.fullmatch(r'https://' + re.escape(vault) + r'\.vault\.azure\.net/secrets/database-url/[a-f0-9]{32}', data.get('id', ''))
+            or data.get('attributes', {}).get('enabled') is not True):
+        raise SafeFailure('Invalid or disabled runtime secret version.')
+    validate_pooler(data['value'], project, 6543)
+    return data['id']
+
+
 def migrate(vault, project):
     runtime = secret(vault, 'database-url')
     direct = secret(vault, 'direct-url')
@@ -120,7 +131,7 @@ def probe_buckets(base, key):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['migrate', 'buckets', 'probe-storage'])
+    parser.add_argument('operation', choices=['migrate', 'buckets', 'probe-storage', 'runtime-secret-id'])
     parser.add_argument('--vault', required=True)
     parser.add_argument('--project-ref', required=True)
     args = parser.parse_args()
@@ -135,6 +146,9 @@ def main():
             or command(['git', 'rev-parse', 'HEAD']) != release
             or command(['git', 'status', '--porcelain'])):
         raise SafeFailure('Restore a reviewed release and use its clean checkout before cloud operations.')
+    if args.operation == 'runtime-secret-id':
+        print(runtime_secret_id(args.vault, args.project_ref))
+        return
     if args.operation == 'migrate':
         migrate(args.vault, args.project_ref)
         return
