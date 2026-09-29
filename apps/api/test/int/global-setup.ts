@@ -1,6 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PrismaClient } from '@tonyai/db';
+import { TENANT_EMAIL_PATTERN, TENANT_ORG_PREFIX } from './db';
 
 /**
  * Runs once before any integration spec. It refuses — loudly, never by
@@ -52,6 +53,24 @@ export default async function setup(): Promise<void> {
       throw new Error(
         `The database is missing ${pending.length} migration(s): ${pending.join(', ')}. Run \`pnpm db:deploy\`.`,
       );
+    }
+
+    // A run killed mid-test skips its cleanup(); sweep synthetic tenants left
+    // behind. Only rows carrying the fixtures' own markers are touched.
+    const orphanOrgs = await prisma.organisation.findMany({
+      where: { legalName: { startsWith: TENANT_ORG_PREFIX } },
+      select: { id: true },
+    });
+    const orphanProfiles = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT id::text FROM profiles WHERE email LIKE ${TENANT_EMAIL_PATTERN}`;
+    const orgIds = orphanOrgs.map((o) => o.id);
+    const profileIds = orphanProfiles.map((p) => p.id);
+    if (orgIds.length > 0 || profileIds.length > 0) {
+      await prisma.auditLog.deleteMany({
+        where: { OR: [{ organisationId: { in: orgIds } }, { userId: { in: profileIds } }] },
+      });
+      await prisma.profile.deleteMany({ where: { id: { in: profileIds } } });
+      await prisma.organisation.deleteMany({ where: { id: { in: orgIds } } });
     }
   } finally {
     await prisma.$disconnect();

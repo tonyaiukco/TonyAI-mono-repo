@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ActivityRecordStatus } from '@tonyai/db';
 import { ActivityRecordsService } from '../../src/activity-records/activity-records.service';
 import { AuditService } from '../../src/audit/audit.service';
@@ -6,6 +7,7 @@ import { CalculationsService } from '../../src/calculations/calculations.service
 import type { EvidenceService } from '../../src/evidence/evidence.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
+  backendPid,
   connect,
   createRecord,
   createTenant,
@@ -41,16 +43,17 @@ function makeService(prisma: PrismaService): ActivityRecordsService {
 
 let a: PrismaService;
 let b: PrismaService;
+let observer: PrismaService;
 let tenant: Tenant;
 
 beforeAll(() => {
   a = connect();
   b = connect();
+  observer = connect();
 });
 
 afterAll(async () => {
-  await a.$disconnect();
-  await b.$disconnect();
+  await Promise.all([a, b, observer].map((c) => c.$disconnect()));
 });
 
 beforeEach(async () => {
@@ -68,7 +71,7 @@ interface Transition {
 }
 
 async function transitionsOf(recordId: string): Promise<Transition[]> {
-  const rows = await b.auditLog.findMany({
+  const rows = await observer.auditLog.findMany({
     where: { entity: 'activity_record', entityId: recordId },
     orderBy: { createdAt: 'asc' },
   });
@@ -76,6 +79,23 @@ async function transitionsOf(recordId: string): Promise<Transition[]> {
     const t = (row.diff as { transition: { from: string; to: string } }).transition;
     return { from: t.from, to: t.to, userId: row.userId };
   });
+}
+
+/**
+ * Follows the transitions from `start`, consuming each edge once. Returns the
+ * end state, or null when an edge is left over or two edges leave one state —
+ * i.e. when the trail is not a single chain.
+ */
+function chainEnd(transitions: Transition[], start: string): string | null {
+  const remaining = [...transitions];
+  let state = start;
+  while (remaining.length > 0) {
+    const next = remaining.filter((t) => t.from === state);
+    if (next.length !== 1) return null;
+    remaining.splice(remaining.indexOf(next[0]), 1);
+    state = next[0].to;
+  }
+  return state;
 }
 
 /**
@@ -88,7 +108,10 @@ async function interleaveStartReviewWithApprove() {
     status: ActivityRecordStatus.submitted,
     submittedAt: new Date(),
   });
-  const hold = holdBefore(a, 'ActivityRecord', 'update');
+  // Both write shapes a fix might use: `update`, or `updateMany` with the
+  // expected status in its WHERE.
+  const hold = holdBefore(a, 'ActivityRecord', ['update', 'updateMany']);
+  const pidB = await backendPid(b);
 
   const startReview = makeService(hold.client).startReview(tenant.users.consultant, record.id);
   const startReviewOutcome = startReview.then(
@@ -102,11 +125,11 @@ async function interleaveStartReviewWithApprove() {
     () => 'ok' as const,
     (err: unknown) => err,
   );
-  await settledOrBlocked(approve, b);
+  await settledOrBlocked(approve, pidB, observer);
   hold.release();
 
   const outcomes = { startReview: await startReviewOutcome, approve: await approveOutcome };
-  const final = await b.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
+  const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
   return { outcomes, finalStatus: final.status, transitions: await transitionsOf(record.id) };
 }
 
@@ -119,13 +142,18 @@ describe('F03 — startReview racing approve', () => {
     expect(outcomes.approve).toBe('ok');
     expect(finalStatus).toBe(ActivityRecordStatus.approved);
 
+    // The losing startReview, if refused, is refused as a client error (the
+    // contract LP1-01 settles), never a raw database error surfacing as a 500.
+    const review = outcomes.startReview;
+    expect(
+      review === 'ok' || review instanceof ConflictException || review instanceof BadRequestException,
+    ).toBe(true);
+
     // The trail is one chain from `submitted` to the final state: no
     // transition was written from a state the record had already left.
-    expect(transitions[0]?.from).toBe(ActivityRecordStatus.submitted);
-    for (let i = 1; i < transitions.length; i++) {
-      expect(transitions[i].from).toBe(transitions[i - 1].to);
-    }
-    expect(transitions.at(-1)?.to).toBe(finalStatus);
+    // Rebuilt from the edges, not from `created_at` order (millisecond
+    // precision, so two rows can tie).
+    expect(chainEnd(transitions, ActivityRecordStatus.submitted)).toBe(finalStatus);
 
     // One audit row per successful call, none for a refused one.
     const succeeded = Object.values(outcomes).filter((o) => o === 'ok').length;
@@ -137,9 +165,12 @@ describe('F03 — startReview racing approve', () => {
 
     expect(outcomes).toEqual({ startReview: 'ok', approve: 'ok' });
     expect(finalStatus).toBe(ActivityRecordStatus.under_review);
-    expect(transitions).toEqual([
-      { from: 'submitted', to: 'approved', userId: tenant.users.superAdmin.id },
-      { from: 'submitted', to: 'under_review', userId: tenant.users.consultant.id },
-    ]);
+    expect(transitions).toHaveLength(2);
+    expect(transitions).toEqual(
+      expect.arrayContaining([
+        { from: 'submitted', to: 'approved', userId: tenant.users.superAdmin.id },
+        { from: 'submitted', to: 'under_review', userId: tenant.users.consultant.id },
+      ]),
+    );
   });
 });

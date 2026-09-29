@@ -5,7 +5,8 @@ name: Integration
 # prove what the DB-free unit suite cannot — transaction rollback and
 # interleaved requests on two connections. A separate workflow (not a job in
 # ci.yml) so it can filter on paths: it runs only when the API, the schema or
-# the harness's own wiring changes.
+# the harness's own wiring changes. Because of the filter it must NOT be made
+# a required status check as is: a PR outside these paths never reports it.
 on:
   push:
     branches: [main]
@@ -14,6 +15,9 @@ on:
       - 'packages/db/**'
       - 'packages/shared-types/**'
       - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'turbo.json'
+      - 'supabase/**'
       - '.github/actions/supabase-stack/**'
       - '.github/workflows/integration.yml'
   pull_request:
@@ -22,12 +26,20 @@ on:
       - 'packages/db/**'
       - 'packages/shared-types/**'
       - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'turbo.json'
+      - 'supabase/**'
       - '.github/actions/supabase-stack/**'
       - '.github/workflows/integration.yml'
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   api-integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 

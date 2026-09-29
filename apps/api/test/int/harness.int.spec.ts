@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
+  backendPid,
   connect,
   countTenantRows,
   createRecord,
@@ -18,15 +19,16 @@ import {
 
 let a: PrismaService;
 let b: PrismaService;
+let observer: PrismaService;
 
 beforeAll(() => {
   a = connect();
   b = connect();
+  observer = connect();
 });
 
 afterAll(async () => {
-  await a.$disconnect();
-  await b.$disconnect();
+  await Promise.all([a, b, observer].map((c) => c.$disconnect()));
 });
 
 describe('withRollback', () => {
@@ -40,7 +42,7 @@ describe('withRollback', () => {
         id: org.id,
         insideTx: await tx.organisation.count({ where: { id: org.id } }),
         // Another connection must not see an uncommitted row.
-        otherConnection: await b.organisation.count({ where: { id: org.id } }),
+        otherConnection: await observer.organisation.count({ where: { id: org.id } }),
       };
     });
 
@@ -132,6 +134,12 @@ describe('interleaving', () => {
     await expect(hold.reached(50)).rejects.toThrow('never reached ActivityRecord.delete');
   });
 
+  it('connect() clients hold one connection each, on distinct backends', async () => {
+    const [pidA, pidA2, pidB] = [await backendPid(a), await backendPid(a), await backendPid(b)];
+    expect(pidA2).toBe(pidA);
+    expect(pidB).not.toBe(pidA);
+  });
+
   it('settledOrBlocked sees request B waiting on A’s row lock', async () => {
     const record = await createRecord(a, tenant);
     const locked = deferred();
@@ -144,15 +152,16 @@ describe('interleaving', () => {
     });
     await locked.promise;
 
+    const pidB = await backendPid(b);
     const requestB = b.activityRecord.update({
       where: { id: record.id },
       data: { activityValue: 7 },
     });
-    expect(await settledOrBlocked(requestB, a)).toBe('blocked');
+    expect(await settledOrBlocked(requestB, pidB, observer)).toBe('blocked');
 
     release.resolve();
     await requestA;
     await requestB;
-    expect(await settledOrBlocked(requestB, a)).toBe('settled');
+    expect(await settledOrBlocked(requestB, pidB, observer)).toBe('settled');
   });
 });
