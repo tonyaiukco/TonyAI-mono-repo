@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 """Owner-only exact-version verification or hidden-entry rotation, without Terraform secrets."""
 import argparse
-import base64
 import getpass
 import json
 import sys
 from pathlib import Path
 from pooler import SafeFailure, validate_pooler
 from secure_transport import Vault
+from supabase_keys import validate_backend
 from terraform_run import validate_release, clean_environment
-
-
-def validate_backend(value, project):
-    if value.startswith('sb_secret_'):
-        # Opaque keys need the live project binding check below.
-        return
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(value.split('.')[1] + '==='))
-    except Exception:
-        raise SafeFailure('Invalid backend API key.') from None
-    if payload.get('ref') != project or payload.get('role') != 'service_role':
-        raise SafeFailure('Backend key is not this project service role.')
 
 
 def verify(inputs):
@@ -32,13 +20,11 @@ def verify(inputs):
         record = vault.get(name, version)
         if not record:
             raise SafeFailure('Selected secret version is missing.')
-        vault.identifier(record, name)
+        vault.identifier(record, name, version)
         if name == 'database-url':
             validate_pooler(record['value'], project, 6543)
         else:
             validate_backend(record['value'], project)
-            from cloud_ops import request, require_success
-            require_success(request('https://' + project + '.supabase.co/storage/v1/bucket', key=record['value']))
     print('PASS: selected versions are enabled, project-bound and use strict pooler TLS.')
 
 

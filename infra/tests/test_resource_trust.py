@@ -12,7 +12,7 @@ import configure_oidc as oidc
 from pooler import SafeFailure
 
 GROUP = '/subscriptions/sub/resourceGroups/staging'
-TAGS = {'application':'TonyAI','environment':'staging','task':'LP2-01'}
+TAGS = {'application':'TonyAI','environment':'staging','githubRepository':'owner/repo','task':'LP2-01'}
 
 
 class ResourceTrustTests(unittest.TestCase):
@@ -42,8 +42,9 @@ class ResourceTrustTests(unittest.TestCase):
     def test_resources_override_forged_outputs_and_keep_rollback_separate_from_candidates(self):
         with patch.object(session, 'az', side_effect=self.az): env = session.restore('sub','staging')
         self.assertEqual(env['API_ORIGIN'],'https://tonyai-staging-api.real.germanywestcentral.azurecontainerapps.io')
-        self.assertEqual(env['API_DIGEST'],self.tags['apiDigest'])
-        self.assertNotEqual(env['API_DIGEST'],env['CANDIDATE_API_DIGEST'])
+        self.assertNotIn('API_DIGEST', env)
+        self.assertNotIn('CANDIDATE_API_DIGEST', env)
+        self.assertEqual(env['SUPABASE_PROJECT_REF'], '')
         self.assertFalse(any(call[0]=='deployment' for call in self.calls))
 
     def test_forged_registry_host_and_environment_domain_refused(self):
@@ -90,7 +91,7 @@ class OidcTrustTests(unittest.TestCase):
                     return {'id':'principal','appId':'wrong' if defect=='wrong-principal' else 'client',
                             'passwordCredentials':[], 'keyCredentials':[]}
                 if args[:2] == ('group','show'):
-                    return {'id':GROUP,'tags':{'environment':'staging','githubClientId':'client',
+                    return {'id':GROUP,'tags':{'environment':'staging','githubRepository':'owner/repo','githubClientId':'client',
                             'githubPrincipalId':'wrong' if defect=='saved-principal' else 'principal'}}
                 if args[:3] == ('ad','app','list'): return [app,app] if defect=='duplicate-app' else []
                 if args[:3] == ('ad','app','show'): return app
@@ -100,7 +101,7 @@ class OidcTrustTests(unittest.TestCase):
                 if args[:4] == ('ad','app','federated-credential','list'):
                     return [{'name':'unexpected'}] if defect=='unexpected-federation' else []
                 self.fail('Unexpected identity mutation: '+str(args[:4]))
-            with self.subTest(defect=defect), patch.object(oidc,'az',side_effect=az):
+            with self.subTest(defect=defect), patch.object(oidc,'verify_environment'), patch.object(oidc,'az',side_effect=az):
                 with self.assertRaises(SafeFailure): oidc.configure('sub','staging','owner/repo')
             self.assertFalse(any(call[:4]==('ad','app','federated-credential','create') for call in calls))
             if defect in ('wrong-name','wrong-client','password','certificate','duplicate-app'):

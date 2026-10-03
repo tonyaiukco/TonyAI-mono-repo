@@ -47,4 +47,5 @@ supabase/.temp
 **/terraform.rc
 infra/*
 !infra/certs
-!infra/certs/**
+infra/certs/**
+!infra/certs/prod-ca-2021.crt

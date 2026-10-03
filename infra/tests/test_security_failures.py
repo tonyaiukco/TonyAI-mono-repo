@@ -94,12 +94,12 @@ class GuardTests(unittest.TestCase):
         record = {'id':'https://vault.vault.azure.net/secrets/database-url/'+'a'*32,
                   'value':GOOD_URL, 'attributes':{'enabled':True}}
         with patch('secure_transport.azure_token', return_value='synthetic'), patch('secure_transport.json_request', return_value=record):
-            self.assertEqual(ops.runtime_secret_id('vault',PROJECT), record['id'])
+            self.assertEqual(ops.runtime_secret_id('vault',PROJECT,'a'*32), record['id'])
         for change in ({'value':GOOD_URL+'&host=evil.example.com'}, {'attributes':{'enabled':False}},
                        {'id':record['id'].replace('vault.vault','foreign.vault')},
                        {'id':record['id'].rsplit('/',1)[0]}):
             with self.subTest(change=change), patch('secure_transport.azure_token', return_value='synthetic'), patch('secure_transport.json_request', return_value={**record,**change}):
-                with self.assertRaises(SafeFailure): ops.runtime_secret_id('vault',PROJECT)
+                with self.assertRaises(SafeFailure): ops.runtime_secret_id('vault',PROJECT,'a'*32)
 
     def test_migrate_refuses_invalid_secret_before_any_prisma_command(self):
         for position in (0, 1):
@@ -107,7 +107,7 @@ class GuardTests(unittest.TestCase):
             secrets[position] = secrets[position].replace('sslaccept=strict', 'sslaccept=accept_invalid_certs')
             with patch.object(ops, 'secret', side_effect=secrets), patch.object(ops, 'command') as command:
                 with self.assertRaises(SafeFailure):
-                    ops.migrate('test-vault', PROJECT)
+                    ops.migrate('test-vault', PROJECT, 'a'*32, 'b'*32)
                 command.assert_not_called()
 
     def test_bucket_readback_must_not_trust_write_acknowledgement(self):

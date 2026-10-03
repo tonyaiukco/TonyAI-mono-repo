@@ -51,11 +51,21 @@ required reviewers, no self-approval/bypass, deployment branches limited to main
 and protected workflow/source review. A displayed setting without enforcement
 is insufficient. If unavailable, keep owner-only deployment and stop before
 federation. The environment subject does not itself restrict branches. A deployer
-can replace API code and obtain runtime data despite having no direct vault role.
+can replace API code and obtain the shared database-owner password despite having
+no direct vault role, until LP1-03 separates the runtime role.
 
 ```bash
 python3 infra/scripts/configure_oidc.py --subscription "$AZURE_SUBSCRIPTION_ID" --group "$RESOURCE_GROUP" --repo '<owner/repo>' --environment-protection-verified
 ```
+
+The helper first requires `--repo` to equal the foundation `githubRepository`
+tag. With an owner-authorized `gh` session on github.com, it reads the existing
+staging environment and its branch policies: required reviewers, prevented
+self-review and exactly one `main` branch rule are mandatory. Missing/unreadable
+environments or policies stop before Graph mutations; it never creates an
+environment. The flag attests actual plan enforcement and no bypass, which
+configuration readback alone cannot prove. Retain sanitized configuration and
+actual denied/approved deployment evidence.
 
 Expected: dedicated app/SP IDs, trusted owner lists, no passwords/certificates,
 exact issuer `https://token.actions.githubusercontent.com`, audience

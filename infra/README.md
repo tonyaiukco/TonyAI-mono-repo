@@ -6,7 +6,7 @@ files.** LP2-01 closes only after the owner evidences fresh recreation. Inputs f
 tenant, subscription, organization and budget remain placeholders.
 
 Use Terraform **1.13.3**, AzAPI **2.6.1**, Node **22**, pnpm **11.9.0**, Python **3.10+**,
-Azure CLI and Docker/buildx. Run from a clean, reviewed checkout. Terraform provider
+Azure CLI, GitHub CLI (`gh`) and Docker/buildx. Run from a clean, reviewed checkout. Terraform provider
 locks belong with the two roots; no Supabase or secret-reading Terraform provider
 is used. All secret payloads stay in helper memory and Key Vault, never tfvars,
 state, plan files, logs, repository files or chat.
@@ -36,8 +36,9 @@ One account per environment, two state containers, no workspaces as an isolation
 boundary, no application remote-state data source. The deployer receives no
 foundation-state access and cannot create arbitrary apps/jobs or change RBAC.
 The owner exports a small public contract (resource names/domain/tenant) for the
-application root. Deploy access is still access to runtime data: code replacing
-the API can read its secrets. Enforced GitHub environment protections are required.
+application root. Until LP1-03 separates the runtime DB role, deploy access equals
+database-owner access: both pooler URLs carry the same owner password and code
+replacing the API can read it. Rotate both URLs together. Enforced GitHub environment protections are required.
 
 Bicep is retired from the active tree. Its reviewed baseline remains in Git at
 `40ed0f9` (#139); there is no second Azure writer to apply. As no Bicep deployment
@@ -55,7 +56,9 @@ for root in foundation application; do
   terraform -chdir="infra/terraform/$root" init -backend=false -input=false -lockfile=readonly
   terraform -chdir="infra/terraform/$root" validate
   terraform -chdir="infra/terraform/$root" test
- done
+done
+python3 infra/tests/check_grant_mutations.py
+python3 infra/tests/check_docker_context.py
 pnpm lint
 pnpm typecheck
 pnpm build

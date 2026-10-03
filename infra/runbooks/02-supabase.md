@@ -21,13 +21,21 @@ Enter the token at the hidden prompt. The helper:
    unrecorded projects, duplicate matches and unknown outcomes stop safely.
 3. Waits for `ACTIVE_HEALTHY` by returning a resumable message; rerun the **same**
    command/journal after provisioning finishes. It does not create a second project.
-4. Reads provider-created anon/service-role keys directly into memory; verifies
-   project/role; puts only the backend key in Key Vault. No duplicate API keys are
-   created. Pooler host comes from the Management API; URLs are built in memory.
+4. Reads existing keys into memory, preferring `sb_publishable_` / `sb_secret_`.
+   Legacy anon/service-role JWTs are a fallback only when that modern key type is
+   absent. Ambiguous inventories stop for owner reconciliation; no keys are created.
+   Both keys must pass live probes against this exact project before any transfer.
+   Only the backend key enters Key Vault. Pooler host comes from the Management API.
 5. Stores `database-url` (transaction 6543) and `direct-url` (session 5432), with
    Frankfurt/project binding, `/postgres`, strict CA verification, and an allowlist
    of query parameters. API's runtime DIRECT_URL is deliberately the runtime URL;
-   the migration URL stays owner-only. LP1-03 later narrows runtime DB privileges.
+   only the owner reads the separate migration secret. **Both URLs currently use
+   the same `postgres.<ref>` role and password: deploy access equals database-owner
+   access until LP1-03 supplies a separate least-privilege runtime role.** Rotate
+   both URLs together. After both writes, the journal checkpoints exact versions
+   and the helper disables that bootstrap password version. On interruption it
+   reuses the checkpointed URLs and repeats the disable without reading the
+   disabled password or making replacement URLs.
 6. Reconciles both private buckets (`evidence`, `import-sources`), limits/MIME types
    and readback. Disables signup/anonymous/phone/SAML/passkeys/unused providers,
    pins site URL and redirects to exactly `WEB_ORIGIN` and `WEB_ORIGIN/login`.
@@ -53,16 +61,23 @@ Restore public project variables using runbook 00. Copy journal
 release's `database_secret_version`/`backend_secret_version`. Then set foundation
 `runtime_secrets_ready=true` and run its plan/apply again. Only API gets Secrets
 User on `database-url` and `supabase-service-role-key` at individual-secret scopes.
-The bootstrap password and `direct-url` have no API/web/deployer read grant.
+The disabled bootstrap version and `direct-url` have no API/web/deployer read
+grant; this does not isolate database authority because the enabled runtime URL
+contains the same database-owner password. Disabling the bootstrap copy reduces
+retained enabled copies; it does not revoke or reduce runtime privileges.
 
 ```bash
-python3 infra/scripts/cloud_ops.py probe-storage --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --source-sha '<reviewed-helper-full-sha>'
+python3 infra/scripts/cloud_ops.py probe-storage --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --source-sha '<reviewed-helper-full-sha>' --secret-version '<selected-backend-secret-version>'
 ```
 
+Use `versions.backend_secret_version` from the completed setup journal, or the
+backend version from the selected release after rotation; never select latest.
+
 Expected for both buckets: upload, public denial, 60-second signed download byte
-match, and removal of exactly the probe object. Failed cleanup remains an owner
-action; identify only that synthetic probe path and remove it before recording a
-pass. Inspect `infra/supabase/verify.sql` through the secure SQL editor after
+match, and a deletion acknowledgment for the exact probe prefix. This is an API
+acknowledgment, not an independent absence readback. In the Storage dashboard
+confirm no objects remain under `lp2-foundation-probe/` before recording cleanup
+evidence; inspect/remove only these synthetic probes if cleanup was interrupted. Inspect `infra/supabase/verify.sql` through the secure SQL editor after
 migrations: no demo users/tenants/factors; private buckets and expected RLS. Never
 run local seed or local RLS/E2E fixtures against cloud. Assess Supabase network
 restrictions against actual ACA egress; don't claim a fixed egress allowlist on

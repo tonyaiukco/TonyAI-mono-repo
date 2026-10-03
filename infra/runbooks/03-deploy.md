@@ -37,11 +37,19 @@ helper checks HEAD and refuses a different chain. Node 22 and pnpm must be on PA
 previous images before applying. No reset, seed, `migrate dev`, or down migration.
 
 ```bash
-python3 infra/scripts/cloud_ops.py migrate --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --inputs .infra-local/staging/release-r001.json
+pnpm install --frozen-lockfile
+pnpm db:generate
+python3 infra/scripts/cloud_ops.py migrate --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --inputs .infra-local/staging/release-r001.json --direct-secret-version '<selected-direct-url-version>'
 ```
 
 Expected: `prisma migrate deploy` then `prisma migrate status` succeed using
-owner-only session URL and the repo's Supabase CA. Both URLs are validated before
+the explicitly selected session URL and the repo's Supabase CA. For initial setup,
+select `versions.direct_url_version` from the journal; after rotation use its
+recorded replacement version. The runtime version comes from the release manifest.
+Both URLs currently share database-owner credentials; deploy access equals
+database-owner access until LP1-03 introduces a separate runtime role. Both rotate
+together. The helper is owner-run, but its DB authority is also available to the API.
+Both URLs are validated before
 Prisma starts. The child receives credentials through its environment; output is
 captured/suppressed and errors never print URLs. Do not run on a shared shell host.
 A failure requires owner inspection of migration history and a forward recovery

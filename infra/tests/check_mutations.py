@@ -36,6 +36,23 @@ MUTANTS = [
     ('cleanup prefix emptied', 'cloud_ops.py', "{'prefixes': [path]}", "{'prefixes': []}"),
     ('database path check removed', 'pooler.py', " or parsed.path != '/postgres'", ''),
     ('error body returned', 'cloud_ops.py', "return error.code, b''", 'return error.code, error.read()'),
+    ('migration project binding removed', 'cloud_ops.py', " or release['supabase_project_ref'] != project", ''),
+    ('helper SHA guard removed', 'cloud_ops.py',
+     "    if (not re.fullmatch(r'[a-f0-9]{40}', release)\n            or command(['git', 'rev-parse', 'HEAD']) != release\n            or command(['git', 'status', '--porcelain'])):", '    if False:'),
+    ('exact selected version check removed', 'secure_transport.py',
+     "                or (version and record['id'].rsplit('/', 1)[1] != version)\n", ''),
+    ('enabled version check removed', 'secure_transport.py',
+     "                or record.get('attributes', {}).get('enabled') is not True", ''),
+    ('rotation project binding removed', 'release_secrets.py',
+     "        validate_backend(value, release['supabase_project_ref'])", '        pass'),
+    ('bucket size readback removed', 'cloud_ops.py', " or actual.get('file_size_limit') != limit", ''),
+    ('bucket MIME readback removed', 'cloud_ops.py', "\n                or set(actual.get('allowed_mime_types') or []) != set(mime_types)", ''),
+    ('owner deployer separation removed', 'foundation_contract.py', "if deployer == config['owner_object_id']:", 'if False:'),
+    ('unrecorded project adoption allowed', 'supabase_project.py', "if not journal.data.get('project_pending'):", 'if False:'),
+    ('unknown project creation reposted', 'supabase_project.py', "    if journal.data.get('project_pending'):", '    if False:'),
+    ('repository binding removed', 'configure_oidc.py', "if resource.get('tags', {}).get('githubRepository') != repo:", 'if False:'),
+    ('bootstrap disable skipped', 'runtime_urls.py', "    vault.disable('bootstrap-db-password', saved['bootstrap_password_version'])", '    pass'),
+
 ]
 
 

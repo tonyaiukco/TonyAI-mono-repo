@@ -33,28 +33,30 @@ def command(args, env=None):
     return result.stdout.strip()
 
 
-def secret(vault, name):
+def secret(vault, name, version):
     from secure_transport import Vault
-    record = Vault(vault).get(name)
+    client = Vault(vault)
+    record = client.get(name, version)
     if not record or record.get('attributes', {}).get('enabled') is not True or not record.get('value'):
         raise SafeFailure('Required enabled Key Vault secret is missing.')
+    client.identifier(record, name, version)
     return record['value']
 
 
-def runtime_secret_id(vault, project):
+def runtime_secret_id(vault, project, version):
     from secure_transport import Vault
     client = Vault(vault)
-    data = client.get('database-url')
+    data = client.get('database-url', version)
     if not data:
         raise SafeFailure('Runtime secret is missing.')
-    identity = client.identifier(data, 'database-url')
+    identity = client.identifier(data, 'database-url', version)
     validate_pooler(data['value'], project, 6543)
     return identity
 
 
-def migrate(vault, project):
-    runtime = secret(vault, 'database-url')
-    direct = secret(vault, 'direct-url')
+def migrate(vault, project, runtime_version, direct_version):
+    runtime = secret(vault, 'database-url', runtime_version)
+    direct = secret(vault, 'direct-url', direct_version)
     validate_pooler(runtime, project, 6543)
     validate_pooler(direct, project, 5432)
     env = {**os.environ, 'DATABASE_URL': local_ca_url(runtime), 'DIRECT_URL': local_ca_url(direct)}
@@ -126,7 +128,7 @@ def probe_buckets(base, key):
         finally:
             require_success(request(base + '/object/' + name, 'DELETE', key,
                                     json.dumps({'prefixes': [path]}).encode()))
-            print('PASS: probe object removed: ' + name)
+            print('PASS: deletion acknowledged for the exact probe prefix: ' + name)
 
 
 def migration_release(inputs, vault, project):
@@ -146,6 +148,8 @@ def main():
     parser.add_argument('--vault', required=True)
     parser.add_argument('--project-ref', required=True)
     parser.add_argument('--source-sha', help='Reviewed helper source SHA for non-migration operations.')
+    parser.add_argument('--secret-version', help='Exact selected version for non-migration operations.')
+    parser.add_argument('--direct-secret-version', help='Exact session URL version for migrations.')
     parser.add_argument('--inputs', help='Required for migrations: selected application release manifest.')
     args = parser.parse_args()
     if not re.fullmatch(r'[a-z]{20}', args.project_ref):
@@ -157,20 +161,25 @@ def main():
     if args.operation == 'migrate':
         if not args.inputs:
             raise SafeFailure('Migrations require --inputs for the selected release.')
-        migration_release(json.loads(Path(args.inputs).read_text()), args.vault, args.project_ref)
-        migrate(args.vault, args.project_ref)
+        inputs = json.loads(Path(args.inputs).read_text())
+        migration_release(inputs, args.vault, args.project_ref)
+        if not re.fullmatch(r'[a-f0-9]{32}', args.direct_secret_version or ''):
+            raise SafeFailure('Migrations require the selected --direct-secret-version.')
+        migrate(args.vault, args.project_ref, inputs['release']['database_secret_version'], args.direct_secret_version)
         return
     release = args.source_sha or ''
     if (not re.fullmatch(r'[a-f0-9]{40}', release)
             or command(['git', 'rev-parse', 'HEAD']) != release
             or command(['git', 'status', '--porcelain'])):
         raise SafeFailure('Supply --source-sha for the reviewed clean helper checkout before cloud operations.')
+    if not re.fullmatch(r'[a-f0-9]{32}', args.secret_version or ''):
+        raise SafeFailure('Supply an exact --secret-version from the selected release or setup journal.')
     if args.operation == 'runtime-secret-id':
-        print(runtime_secret_id(args.vault, args.project_ref))
+        print(runtime_secret_id(args.vault, args.project_ref, args.secret_version))
         return
     # URL is derived from a strict project ref; credentials cannot be sent to an arbitrary host.
     base = 'https://' + args.project_ref + '.supabase.co/storage/v1'
-    key = secret(args.vault, 'supabase-service-role-key')
+    key = secret(args.vault, 'supabase-service-role-key', args.secret_version)
     if args.operation == 'buckets':
         provision_buckets(base, key)
     else:

@@ -22,7 +22,10 @@ python3 infra/scripts/release_secrets.py store --inputs .infra-local/staging/rel
 
 Each prints only a validated Key Vault version ID. The strict URL checks reject
 foreign projects/regions, wrong ports, unknown query keys, insecure TLS and wrong
-CA paths. Copy the new runtime/backend version IDs into the new manifest. A
+CA paths. Opaque backend keys also require a successful live exact-project probe
+before storage. Copy the new runtime/backend version IDs into the new manifest.
+Record the direct URL version alongside this release for future migrations; the
+migration helper requires that explicit version and never reads latest. A
 legacy JWT/anon-key rotation also changes compiled browser configuration:
 rebuild the web for the same target and qualified source commit, select that web
 digest, and **retain the deployed API digest** unless explicitly promoting an API

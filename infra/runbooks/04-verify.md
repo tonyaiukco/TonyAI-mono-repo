@@ -19,7 +19,11 @@ Expected: Germany West Central; ACR Basic/admin false; Key Vault RBAC/purge
 protection true; API's two **references** with API identity; no web secrets.
 Inspect the secret-level role assignments in the portal as well: API has Secrets
 User on the two runtime secrets only; `direct-url` has no API/web/deployer grant.
-Record the scope/role/principal IDs, never call a secret command with `--show-values`.
+**These are Key Vault grant boundaries, not separate DB roles. Both URLs share
+database-owner credentials: deploy access equals database-owner access until
+LP1-03 delivers the least-privilege runtime role. Both URLs rotate together.**
+Verify the journaled `bootstrap-db-password` version is disabled using secret
+version metadata only. Record the scope/role/principal IDs, never call a secret command with `--show-values`.
 Audit inherited subscription/group assignments too; an inherited broad role can
 invalidate least-privilege claims despite correct template assignments.
 
@@ -61,7 +65,7 @@ secret-resolution/image-pull failures privately; do not publish raw logs.
 | Requirement | Owner action and evidence |
 |---|---|
 | Foundation recreates | Run steps 0–3 with a separate backend account, owner-approved staging rehearsal RG and Supabase project; record IDs, region, successful deployment IDs, migration status and image digests. Reapplying the original environment only proves convergence, not fresh recreation. |
-| Idempotence | Repeat foundation and bucket reconciliation; stable resource identities/origins and same private settings. |
+| Idempotence | Repeat foundation plan/apply and the bucket command below; stable resource identities/origins and same private settings. |
 | No demo credentials | `verify.sql` counts, no `@tonyai.local` Auth users; before onboarding, zero Auth/factor rows. Inspect ACA env names: no `ALLOW_INSECURE_LOCAL_AUTH`, no `SUPABASE_JWT_SECRET`, JWKS pinned. |
 | Auth confinement | Run the public-key `/auth/v1/settings` probe (signup/unused providers disabled) and separately verify the dashboard redirect list; in a private owner test, signup is refused. Never post passwords/tokens as evidence. |
 | Storage works privately | Both bucket probes pass; SQL confirms default-deny policies. Also test authenticated browser direct read/write denial with a controlled user when onboarding exists. |
@@ -69,6 +73,13 @@ secret-resolution/image-pull failures privately; do not publish raw logs.
 | Web environment binding | Browser login contacts the exact staging Supabase host and API URL; record public hosts and image digest. |
 | Federation | Subject/audience/issuer plus protected environment settings now; successful and denied OIDC exchanges from LP2-02 workflow later. |
 | Runtime privilege/RLS | Coordinate LP1-03/LP2-03 cloud-safe fixtures and full containment suite with random unique credentials. Existing `scripts/rls-probes.mjs` assumes local demo accounts and mutates fixtures; **do not run it against staging**. No empty-database containment claim. |
+
+To repeat bucket reconciliation, select the backend version from the reviewed
+release manifest (or completed initial setup journal):
+
+```bash
+python3 infra/scripts/cloud_ops.py buckets --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --source-sha '<reviewed-helper-full-sha>' --secret-version '<selected-backend-secret-version>'
+```
 
 Run [rotation/recovery](05-rotation.md) when credentials change or a vault is recovered.
 

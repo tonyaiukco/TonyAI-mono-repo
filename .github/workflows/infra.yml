@@ -12,8 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.13.3
           terraform_wrapper: false
@@ -32,3 +34,7 @@ jobs:
             terraform -chdir="infra/terraform/$root" validate -no-color
             terraform -chdir="infra/terraform/$root" test -no-color
           done
+      - name: Terraform secret grant mutation checks
+        run: python3 infra/tests/check_grant_mutations.py
+      - name: Docker context excludes infrastructure secrets and state
+        run: python3 infra/tests/check_docker_context.py

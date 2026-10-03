@@ -61,8 +61,20 @@ class Vault:
                               {'value': value, 'attributes': {'enabled': True}, 'tags': tags or {}})
         return self.identifier(record, name)
 
-    def identifier(self, record, name):
+    def identifier(self, record, name, version=None):
         expected = re.escape(self.origin + '/secrets/' + name + '/') + r'[a-f0-9]{32}'
-        if not re.fullmatch(expected, record.get('id', '')) or record.get('attributes', {}).get('enabled') is not True:
+        if (not re.fullmatch(expected, record.get('id', ''))
+                or (version and record['id'].rsplit('/', 1)[1] != version)
+                or record.get('attributes', {}).get('enabled') is not True):
             raise SafeFailure('Unexpected or disabled vault version.')
         return record['id']
+
+    def disable(self, name, version):
+        # PATCH needs no value read and is safe to repeat after a lost response.
+        if not re.fullmatch(r'[a-z0-9-]+', name) or not re.fullmatch(r'[a-f0-9]{32}', version):
+            raise SafeFailure('Invalid secret identifier.')
+        identity = self.origin + '/secrets/' + name + '/' + version
+        record = json_request(identity + '?api-version=7.4', 'PATCH', self.token,
+                              {'attributes': {'enabled': False}})
+        if record.get('id') != identity or record.get('attributes', {}).get('enabled') is not False:
+            raise SafeFailure('Bootstrap password disable was not confirmed; resume the same journal.')

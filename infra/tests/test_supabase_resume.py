@@ -45,8 +45,9 @@ class ResumeTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as d:
                 journal = Journal(Path(d)/'j.json',TARGET)
                 if pending: journal.set(project_pending=True)
-                api=Mock(return_value=rows)
-                with self.assertRaises(SafeFailure): ensure_project(api,Mock(),journal)
+                api=Mock(side_effect=lambda path, method='GET', body=None: PROJECT if method == 'POST' else rows)
+                vault=Mock();vault.get.return_value={'value':'synthetic'}
+                with self.assertRaises(SafeFailure): ensure_project(api,vault,journal)
                 self.assertEqual(api.call_count,1)
                 journal.close()
 

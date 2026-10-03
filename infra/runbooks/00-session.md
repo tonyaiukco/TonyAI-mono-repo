@@ -11,6 +11,7 @@ node --version      # v22.x
 pnpm --version      # 11.9.0
 terraform version   # 1.13.3
 az version
+gh --version
 python3 --version
 mkdir -p .infra-local/staging
 chmod 700 .infra-local .infra-local/staging
@@ -51,20 +52,23 @@ After foundation exists, this works in a fresh Bash/zsh terminal:
 source infra/scripts/restore-session.sh '<subscription-uuid>' '<staging-resource-group>'
 ```
 
-Expected: `PASS: staging session restored`. The helper clears stale values first,
+Expected: `PASS: foundation session restored`. The helper clears stale values first,
 checks real resource IDs, tags, region, ACR host and environment domain and quotes
-exports. Failure returns to the interactive shell with targets unset. Empty
-optional project/release values mean later setup is pending. The foundation's
+exports. Failure returns to the interactive shell with targets unset. Without a
+journal argument, project variables are empty. Digests and secret versions come
+from the explicitly selected release manifest, never resource-group tags. The foundation's
 `releaseSha` tag is initial infrastructure provenance, **not** the current image
 release: builds take an explicit SHA and deployments take an explicit manifest.
-Never substitute candidate tags for the selected release.
+Never substitute a candidate file for the selected release.
 
 Restore the Supabase project after runbook 02 without exposing keys:
 
 ```bash
-export SUPABASE_PROJECT_REF="$(python3 -c 'import json; print(json.load(open(".infra-local/staging/supabase-journal.json"))["project_ref"])')"
-export SUPABASE_URL="https://$SUPABASE_PROJECT_REF.supabase.co"
+source infra/scripts/restore-session.sh '<subscription-uuid>' '<staging-resource-group>' .infra-local/staging/supabase-journal.json
 ```
+
+The journal must be completed and match the verified vault and web origin; a
+foreign, missing or incomplete journal fails without leaving stale exports.
 
 The application runner reinitializes its backend every time from explicit inputs,
 rejects target/environment mismatches and ambient `TF_VAR_*`, debug flags, CLI
