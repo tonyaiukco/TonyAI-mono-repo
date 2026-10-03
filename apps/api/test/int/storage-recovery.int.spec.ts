@@ -463,6 +463,9 @@ describe('LP1-02 — late bytes, whatever else fails (`qa-auditor` round 2)', ()
     });
     const started = deferred();
     slowUpload(storage, removed.promise, started);
+    // The request's own removal of the late bytes fails too: the reset intent
+    // must then outlive the sweep's close — which holds only under its lease.
+    vi.spyOn(storage, 'remove').mockRejectedValueOnce(new Error(INJECTED));
 
     const upload = outcome(
       lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),

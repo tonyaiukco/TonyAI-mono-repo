@@ -182,7 +182,19 @@ describe('checkEvidenceFile — the bytes must be what the upload claims', () =>
       { name: '[Content_Types].xml', data: workbookTypes },
       { name: 'xl\\vbaProject.bin', data: Buffer.from([0xd0, 0xcf, 0x11, 0xe0]) },
     ]);
+    // A part in UTF-16 without a BOM: only its NULs say so.
+    const utf16NoBom = zip([
+      { name: '[Content_Types].xml', data: workbookTypes },
+      {
+        name: 'xl/_rels/workbook.xml.rels',
+        data: Buffer.from('<Relationships><Relationship Type="vbaProject"/></Relationships>', 'utf16le'),
+      },
+    ]);
+    // A DTD with no entity to resolve: OPC forbids DTDs whatever they declare.
+    const bareDtd = zip([{ name: '[Content_Types].xml', data: '<!DOCTYPE Types>' + workbookTypes }]);
     expect(refusal(() => checkEvidenceFile(file(XLSX, dtd))), 'dtd').toMatch(/not a XLSX file/);
+    expect(refusal(() => checkEvidenceFile(file(XLSX, bareDtd))), 'bare dtd').toMatch(/not a XLSX file/);
+    expect(refusal(() => checkEvidenceFile(file(XLSX, utf16NoBom))), 'utf16 no bom').toMatch(/not a XLSX file|macros/);
     expect(refusal(() => checkEvidenceFile(file(XLSX, undefinedEntity))), 'entity').toMatch(/not a XLSX file/);
     expect(refusal(() => checkEvidenceFile(file(XLSX, utf16Rels))), 'utf16').toMatch(/not a XLSX file|macros/);
     expect(refusal(() => checkEvidenceFile(file(XLSX, secondTypes))), 'second types').toMatch(/not a XLSX file|macros/);
