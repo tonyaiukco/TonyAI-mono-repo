@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from pooler import SafeFailure
 from bootstrap_backend import validate as validate_backend
 from foundation_contract import validate_foundation
@@ -51,6 +52,8 @@ def validate_release(inputs):
 
 
 def invoke(lane, backend_path, inputs_path, action):
+    if action == 'approved-apply' and lane != 'application':
+        raise SafeFailure('Unattended apply is restricted to the application root.')
     env = clean_environment()
     backend = json.loads(Path(backend_path).read_text())
     validate_backend(backend)
@@ -79,6 +82,16 @@ def invoke(lane, backend_path, inputs_path, action):
           '-backend-config=key=' + target['environment'] + '.tfstate'])
     if action == 'output':
         call(['output', '-json', 'application_contract'])
+        return
+    if action == 'approved-apply':
+        # The protected environment reviewer approves the release before this
+        # job starts. Apply exactly this plan; never silently re-plan at apply.
+        # A private temporary directory is deleted even after a failed apply.
+        with tempfile.TemporaryDirectory(prefix='tonyai-plan-') as directory:
+            plan = str(Path(directory) / 'application.tfplan')
+            call(['plan', '-input=false', '-lock-timeout=60s',
+                  '-var-file=' + str(Path(inputs_path).resolve()), '-out=' + plan])
+            call(['apply', '-input=false', '-lock-timeout=60s', plan])
         return
     call([action, *([] if action == 'apply' else ['-input=false']), '-lock-timeout=60s', '-var-file=' + str(Path(inputs_path).resolve())])
 

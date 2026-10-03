@@ -10,6 +10,14 @@ import tempfile
 
 INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
+    ('candidate workflow path check removed', 'candidate_artifact.py',
+     "run.get('path') != '.github/workflows/candidate.yml'", 'False'),
+    ('candidate artifact digest check removed', 'candidate_artifact.py',
+     "artifact.get('digest') != 'sha256:' + hashlib.sha256(archive).hexdigest()", 'False'),
+    ('candidate provenance comparison removed', 'candidate.py',
+     'if candidate != expected:', 'if False:'),
+    ('synthetic cleanup metadata check removed', 'cloud_smoke.py',
+     "\n                    or user.get('app_metadata', {}).get('lp2_smoke') != tenant['organisationId']", ''),
     ('application state grant escapes its container', 'bootstrap_backend.py',
      "if lane == 'application' and config['application_object_id']:", "if config['application_object_id']:"),
     ('deployed secret identity readback removed', 'deploy_apps.py',
@@ -73,6 +81,18 @@ def main():
             target.mkdir()
             for folder in ('scripts', 'tests', 'terraform', 'config'):
                 shutil.copytree(INFRA / folder, target / folder, ignore=shutil.ignore_patterns('__pycache__', '.terraform'))
+            # New provenance tests read the actual migration/lockfile inputs; the
+            # local-only guard test executes its copied script, never the original.
+            root = INFRA.parent
+            for relative in ('pnpm-lock.yaml', 'scripts/rls-probes.mjs'):
+                destination = target.parent / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(root / relative, destination)
+            shutil.copytree(root / 'packages/db/prisma/migrations', target.parent / 'packages/db/prisma/migrations')
+            control = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(target / 'tests')],
+                                     cwd=target.parent, capture_output=True)
+            if control.returncode:
+                sys.exit('INVALID: unmodified disposable-copy tests do not pass: ' + name)
             path = target / 'scripts' / filename
             source = path.read_text()
             if source.count(before) != 1:

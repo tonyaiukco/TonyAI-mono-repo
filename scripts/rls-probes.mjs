@@ -38,6 +38,17 @@ function readVar(file, key) {
   }
 }
 const URL_ = process.env.E2E_SUPABASE_URL || readVar('apps/web/.env.local', 'NEXT_PUBLIC_SUPABASE_URL');
+// This harness writes demo fixtures and performs cleanup. Never target cloud.
+try {
+  const target = new URL(URL_);
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(target.hostname)
+      || !['http:', 'https:'].includes(target.protocol)
+      || target.username || target.password || target.search || target.hash
+      || target.pathname !== '/') throw new Error('Non-local target');
+} catch {
+  console.error('RLS demo probes require a loopback Supabase origin; cloud targets are refused.');
+  process.exit(2);
+}
 const ANON = process.env.E2E_SUPABASE_ANON_KEY || readVar('apps/web/.env.local', 'NEXT_PUBLIC_SUPABASE_ANON_KEY');
 const SERVICE = process.env.E2E_SUPABASE_SERVICE_KEY || readVar('apps/api/.env', 'SUPABASE_SERVICE_ROLE_KEY');
 if (!URL_ || !ANON || !SERVICE) {

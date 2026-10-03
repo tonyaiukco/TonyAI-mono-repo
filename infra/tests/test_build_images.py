@@ -44,8 +44,9 @@ elif args[0]=='cp':
 ''')
                 env={**os.environ,'PATH':d+os.pathsep+os.environ['PATH'],'BUILD_TEST_MODE':mode,'CALL_LOG':str(log),
                      'SUPABASE_PROJECT_REF':'abcdefghijklmnopqrst','SUPABASE_URL':'https://abcdefghijklmnopqrst.supabase.co',
-                     'ACR_HOST':'registry.azurecr.io','ACR_NAME':'registry','API_ORIGIN':'https://api.example',
-                     'WEB_ORIGIN':'https://web.example','RESOURCE_GROUP':'staging'}
+                     'ACR_HOST':'registry.azurecr.io','ACR_NAME':'registry','API_ORIGIN':'https://tonyai-staging-api.real.germanywestcentral.azurecontainerapps.io',
+                     'WEB_ORIGIN':'https://tonyai-staging-web.real.germanywestcentral.azurecontainerapps.io','RESOURCE_GROUP':'staging',
+                     'PREFIX':'tonyai','ACA_DEFAULT_DOMAIN':'real.germanywestcentral.azurecontainerapps.io'}
                 result=subprocess.run(['bash',str(SCRIPT),'a'*40,str(output)],cwd=ROOT,env=env,input='sb_publishable_synthetic\n',capture_output=True,text=True)
                 self.assertEqual(result.returncode==0,mode=='ok',result.stderr)
                 self.assertEqual(output.exists(),mode=='ok')
