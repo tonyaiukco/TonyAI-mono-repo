@@ -13,11 +13,12 @@ import {
   connect,
   createRecord,
   createTenant,
+  deferred,
   holdBefore,
   settledOrBlocked,
   type Tenant,
 } from './db';
-import { lifecycleServices } from './services';
+import { lifecycleServices, pdfFile, storageStub } from './services';
 
 /**
  * F03 (Part C): lifecycle, period and evidence writers race.
@@ -330,5 +331,57 @@ describe('F03 — void and period lock', () => {
     expect(r).toMatchObject({ first: 'ok', second: 'ok' });
     expect(await statusOf(record.id)).toBe(ActivityRecordStatus.voided);
     expect(await lockCount()).toBe(1);
+  });
+});
+
+describe('F03 — a record moved to another period between an upload\'s read and its locks', () => {
+  it('the upload is refused as a lost race — it never writes under a period lock it did not take', async () => {
+    // The upload reads the record (January) and stores the blob BEFORE its
+    // transaction; the author moves the record to February meanwhile. The
+    // upload's transaction then shares JANUARY — the period it read — so
+    // nothing stops a lock of FEBRUARY committing before the link does: a
+    // draft would gain a file inside a closed period. The locked re-read has
+    // to notice the move and refuse.
+    const record = await createRecord(a, tenant);
+    const storage = storageStub();
+    const blobStored = deferred();
+    const letUploadContinue = deferred();
+    storage.upload.mockImplementation(async () => {
+      blobStored.resolve();
+      await letUploadContinue.promise;
+    });
+    const held = holdBefore(a, 'Evidence', 'create');
+
+    const upload = outcome(
+      lifecycleServices(held.client, storage).evidence.upload(
+        tenant.users.dataEntry,
+        record.id,
+        pdfFile(),
+      ),
+    );
+    await blobStored.promise;
+    await lifecycleServices(b).records.update(tenant.users.dataEntry, record.id, {
+      periodValue: 'February',
+    });
+    letUploadContinue.resolve();
+
+    // Without the check the upload reaches its insert; lock February there,
+    // which nothing in the upload's locks prevents, then let it commit.
+    const first = await Promise.race([upload.then(() => 'settled' as const), held.reached().then(() => 'held' as const)]);
+    if (first === 'held') {
+      await lifecycleServices(b).periodLocks.lock(tenant.users.superAdmin, {
+        subsidiaryId: tenant.subsidiaryId,
+        reportingYear: 2026,
+        reportingPeriod: 'monthly',
+        periodValue: 'February',
+      });
+      held.release();
+    }
+
+    expect(await upload).toBeInstanceOf(RecordChangedError);
+    expect(await linkCount(record.id)).toBe(0);
+    expect(await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
+    // The blob stored before the transaction is removed again.
+    expect(storage.remove).toHaveBeenCalledWith('evidence', [storage.upload.mock.calls[0][1]]);
   });
 });

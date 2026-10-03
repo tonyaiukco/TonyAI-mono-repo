@@ -201,11 +201,13 @@ export class BulkSubmitService {
    * `loadScoped` is still the tenant boundary. What it adds is three things
    * the per-record path cannot give a BATCH:
    *
-   * 1. **The author gate this route needs and `submit` does not have.** That
-   *    method gates only a resubmission, so a draft is submittable by any
-   *    colleague who can see the subsidiary. At one click that is a curiosity;
-   *    at a thousand ids it is a way to sweep someone's half-finished month
-   *    into review, where they can no longer edit it.
+   * 1. **The author gate, before anything is locked.** `submit` has the same
+   *    gate since decision D02 (only the author submits, `super_admin`
+   *    included); here it turns a colleague's draft into a `not_author` row
+   *    without a transaction per id. It was this route's own rule first: at a
+   *    thousand ids, a draft any colleague could submit was a way to sweep
+   *    someone's half-finished month into review, where they can no longer
+   *    edit it.
    * 2. **`draft` only.** A `rejected` record reverses a reviewer's decision,
    *    and this route is not a mass-reversal endpoint.
    * 3. **A deterministic order.** `submitted` is in `COUNTED_STATUSES`, so

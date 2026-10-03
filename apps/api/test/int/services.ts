@@ -15,8 +15,8 @@ import type { StorageService } from '../../src/storage/storage.service';
 /** A Storage stand-in: records what the services asked of the bucket, stores nothing. */
 export function storageStub() {
   return {
-    upload: vi.fn(async () => undefined),
-    remove: vi.fn(async () => undefined),
+    upload: vi.fn(async (_bucket: string, _path: string, _body: Buffer, _mimeType: string) => undefined),
+    remove: vi.fn(async (_bucket: string, _paths: string[]) => undefined),
     createSignedUrl: vi.fn(async () => 'https://storage.invalid/signed'),
   };
 }

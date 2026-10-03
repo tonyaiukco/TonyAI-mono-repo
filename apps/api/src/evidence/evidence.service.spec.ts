@@ -430,6 +430,19 @@ describe('EvidenceService', () => {
       expect(storage.remove).toHaveBeenCalledWith('evidence', [storage.upload.mock.calls[0][1]]);
     });
 
+    it('answers a lost race when the record moved to another period while the file uploaded', async () => {
+      const record = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(record);
+      prisma.activityRecord.findMany.mockResolvedValue([{ ...record, periodValue: 'Q4' }]);
+      stubStore([record]);
+
+      await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toBeInstanceOf(
+        RecordChangedError,
+      );
+      expect(tx.evidence.create).not.toHaveBeenCalled();
+      expect(storage.remove).toHaveBeenCalledWith('evidence', [storage.upload.mock.calls[0][1]]);
+    });
+
     it('removes the stored object again when the rows cannot be written', async () => {
       prisma.activityRecord.findUnique.mockResolvedValue(makeRecord({ id: 'rec-1' }));
       tx.evidence.create.mockRejectedValue(new Error('insert failed'));
@@ -857,6 +870,18 @@ describe('EvidenceService', () => {
       expect(prisma.evidence.delete).not.toHaveBeenCalled();
       expect(storage.remove).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('answers a lost race when a record it backs moved to another period meanwhile — its lock was never taken', async () => {
+      const draft = makeRecord({ id: 'rec-1' });
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([draft]));
+      prisma.activityRecord.findMany
+        .mockResolvedValueOnce([draft])
+        .mockResolvedValueOnce([{ ...draft, reportingYear: 2025 }]);
+
+      await expect(service.remove(dataEntry(), 'ev-1')).rejects.toBeInstanceOf(RecordChangedError);
+      expect(prisma.evidence.delete).not.toHaveBeenCalled();
+      expect(storage.remove).not.toHaveBeenCalled();
     });
 
     it('removes no object when the audit fails — the delete rolled back', async () => {

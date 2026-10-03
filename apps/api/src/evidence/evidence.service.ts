@@ -91,6 +91,11 @@ function periodOf(r: PeriodKey): PeriodKey {
   };
 }
 
+/** Whether a locked re-read is still the record read before the locks: same subsidiary, same period. */
+function sameRead(current: ActivityRecord, seen: ActivityRecord | undefined, subsidiaryId: string): boolean {
+  return !!seen && current.subsidiaryId === subsidiaryId && lockKey(current) === lockKey(seen);
+}
+
 /**
  * A refusal raised against a LOCKED record (the lifecycle protocol's step 4,
  * `lifecycle-lock.ts`) that the caller's own read did not raise: the record
@@ -392,7 +397,9 @@ export class EvidenceService {
         const current = await tx.activityRecord.findMany({ where: { id: { in: ids } } });
         const locked = await this.lockedRecordIds(current, tx);
         for (const record of current) {
-          if (record.subsidiaryId !== subsidiaryId) throw new RecordChangedError();
+          // The period locks above are the ones the records were in when read;
+          // a record moved since is guarded by a lock this upload never took.
+          if (!sameRead(record, seen.get(record.id), subsidiaryId)) throw new RecordChangedError();
           const refusal = this.refusalFor(user, record, locked.has(record.id));
           if (refusal) throw lockedRefusal(refusal, seen.get(record.id), record);
         }
@@ -589,7 +596,11 @@ export class EvidenceService {
         const current = await tx.activityRecord.findMany({
           where: { evidenceLinks: { some: { evidenceId: evidence.id } } },
         });
-        if (current.some((r) => !seen.has(r.id))) throw new RecordChangedError();
+        // A record that is not one read above, or that moved to another period
+        // since, is guarded by a lock this delete never took.
+        if (current.some((r) => !sameRead(r, seen.get(r.id), evidence.subsidiaryId))) {
+          throw new RecordChangedError();
+        }
         const locked = await this.lockedRecordIds(current, tx);
         for (const record of current) {
           const refusal = this.refusalFor(user, record, locked.has(record.id));
