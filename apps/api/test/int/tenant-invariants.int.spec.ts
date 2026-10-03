@@ -64,12 +64,22 @@ const DROP_GRANT_KEYS = [
   'ALTER TABLE user_subsidiary_access DROP CONSTRAINT user_subsidiary_access_subsidiary_id_organisation_id_fkey',
 ];
 
-/** In an owner transaction: removes the keys and grants A's data_entry user B's subsidiary — the malformed grant. */
-async function plantCrossTenantGrant(tx: Prisma.TransactionClient, userId = a.users.dataEntry.id) {
+/**
+ * In an owner transaction: removes the keys and grants A's user B's subsidiary
+ * — the malformed grant. Labelled with A's organisation by default, the worst
+ * case: it then looks like A's own grant to anything that trusts the label
+ * (Prisma's composite `profile.subsidiaryAccess` relation joins on it).
+ */
+async function plantCrossTenantGrant(
+  tx: Prisma.TransactionClient,
+  userId = a.users.dataEntry.id,
+  label: 'profile' | 'subsidiary' = 'profile',
+) {
   for (const sql of DROP_GRANT_KEYS) await tx.$executeRawUnsafe(sql);
+  const organisationId = label === 'profile' ? a.organisationId : b.organisationId;
   await tx.$executeRaw`
     INSERT INTO user_subsidiary_access (user_id, subsidiary_id, organisation_id)
-    VALUES (${userId}::uuid, ${b.subsidiaryId}::uuid, ${b.organisationId}::uuid)`;
+    VALUES (${userId}::uuid, ${b.subsidiaryId}::uuid, ${organisationId}::uuid)`;
 }
 
 describe('the database refuses a grant across organisations', () => {
@@ -249,13 +259,16 @@ async function guardUser(client: PrismaService | Prisma.TransactionClient, userI
 }
 
 describe("the API's guard on a real database: a grant counts only inside the user's organisation", () => {
-  it("A's data_entry user with a stray grant of B's subsidiary reaches only A's", async () => {
-    const user = await withRollback(owner, async (tx) => {
-      await plantCrossTenantGrant(tx);
-      return guardUser(tx, a.users.dataEntry.id);
-    });
-    expect(user.accessibleSubsidiaryIds).toEqual([a.subsidiaryId]);
-  });
+  it.each(['profile', 'subsidiary'] as const)(
+    "A's data_entry user with a stray grant of B's subsidiary (labelled with the %s's organisation) reaches only A's",
+    async (label) => {
+      const user = await withRollback(owner, async (tx) => {
+        await plantCrossTenantGrant(tx, a.users.dataEntry.id, label);
+        return guardUser(tx, a.users.dataEntry.id);
+      });
+      expect(user.accessibleSubsidiaryIds).toEqual([a.subsidiaryId]);
+    },
+  );
 
   it('a data_entry user whose organisation is gone reaches nothing, whatever it was granted', async () => {
     const user = await withRollback(owner, async (tx) => {

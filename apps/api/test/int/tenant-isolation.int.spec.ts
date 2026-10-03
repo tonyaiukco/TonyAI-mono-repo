@@ -202,7 +202,9 @@ const ID_ROUTES: Route[] = [
   { name: 'GET /activity-records/:id', method: 'GET', path: (i) => `/activity-records/${i.recordId}`, own: { role: 'consultant' } },
   { name: 'PATCH /activity-records/:id', method: 'PATCH', path: (i) => `/activity-records/${i.recordId}`, body: () => ({ activityValue: 7 }), own: { role: 'dataEntry' } },
   { name: 'DELETE /activity-records/:id', method: 'DELETE', path: (i) => `/activity-records/${i.recordId}`, own: { role: 'dataEntry' } },
-  { name: 'POST /activity-records', method: 'POST', path: () => '/activity-records', body: (i) => ({ subsidiaryId: i.subsidiaryId, reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'February', category: 'Electricity', activityValue: 10, activityUnit: 'kWh' }), own: { role: 'dataEntry', ok: differs } },
+  // Into the period B has LOCKED (createTenantData): a create that looked at the
+  // period before the tenant would answer 409 for B's id and 404 for a random one.
+  { name: 'POST /activity-records', method: 'POST', path: () => '/activity-records', body: (i) => ({ subsidiaryId: i.subsidiaryId, reportingYear: 2019, reportingPeriod: 'monthly', periodValue: 'January', category: 'Electricity', activityValue: 10, activityUnit: 'kWh' }), own: { role: 'dataEntry', ok: differs } },
   { name: 'POST /activity-records/:id/submit', method: 'POST', path: (i) => `/activity-records/${i.recordId}/submit`, own: { role: 'dataEntry', ok: created } },
   { name: 'POST /activity-records/:id/review', method: 'POST', path: (i) => `/activity-records/${i.recordId}/review`, own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
   { name: 'POST /activity-records/:id/approve', method: 'POST', path: (i) => `/activity-records/${i.recordId}/approve`, own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
@@ -322,5 +324,29 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
   it("a list shows A's own rows to A (control: the lists above were not empty for everyone)", async () => {
     const res = await call('consultant', 'GET', '/activity-records');
     expect(res.text).toContain(dataA.recordId);
+  });
+
+  it("counts carry no trace of B either: A's dashboard counts exactly A's subsidiary and site", async () => {
+    for (const role of ROLES) {
+      const res = await call(role, 'GET', '/kpi');
+      expect(res.status, `${role} GET /kpi`).toBe(200);
+      expect(JSON.parse(res.text), `${role} GET /kpi`).toMatchObject({ totalSubsidiaries: 1, totalLocations: 1 });
+    }
+  });
+
+  it("a B record pointing at A's import batch (malformed) is not listed in A's batch", async () => {
+    const stray = await createRecord(owner, B, { periodValue: 'May', importBatchId: dataA.importBatchId });
+    try {
+      for (const role of ROLES) {
+        const res = await call(role, 'GET', `/import-batches/${dataA.importBatchId}`);
+        expect(res.status, `${role}: ${res.text.slice(0, 200)}`).toBeLessThan(500);
+        expect(res.text, role).not.toContain(stray.id);
+      }
+      // Control: A's batch is readable, and lists its own record when one points at it.
+      const own = await createRecord(owner, A, { periodValue: 'May', importBatchId: dataA.importBatchId });
+      expect((await call('consultant', 'GET', `/import-batches/${dataA.importBatchId}`)).text).toContain(own.id);
+    } finally {
+      await owner.activityRecord.delete({ where: { id: stray.id } });
+    }
   });
 });
