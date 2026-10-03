@@ -449,8 +449,9 @@ model SubsidiaryDenominator {
 // reaches data (the other roles see their whole organisation). Both foreign
 // keys are composite over `organisation_id` (LP1-03, F06), so a grant can only
 // join a profile and a subsidiary of the SAME organisation, whoever writes it —
-// the API, the seed, a service-role client or the owner — and a profile with
-// no organisation can hold none. ON UPDATE NO ACTION: a profile or subsidiary
+// the API, the seed, a service-role client or the owner (short of a replica-mode
+// restore, which skips the keys: `runtime-role.mjs check` scans for that) — and
+// a profile with no organisation can hold none. ON UPDATE NO ACTION: a profile or subsidiary
 // cannot change organisation while a grant still ties it to the old one.
 model UserSubsidiaryAccess {
   userId         String     @map("user_id") @db.Uuid

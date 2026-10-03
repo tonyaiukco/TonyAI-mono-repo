@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { defineConfig, type Plugin } from 'vitest/config';
-import { RUNTIME_ROLE, runtimeUrlFrom, urlUser } from '../../packages/db/scripts/runtime-role.mjs';
+import { RUNTIME_ROLE, randomRuntimePassword, runtimeUrlFrom, urlUser } from '../../packages/db/scripts/runtime-role.mjs';
 
 // PostgreSQL integration tests (LP0-03). They run against a real database with
 // the repository's migrations applied — the local Supabase stack, or in CI the
@@ -18,13 +18,18 @@ if (!process.env.DATABASE_URL && existsSync(apiEnv)) process.loadEnvFile(apiEnv)
 // runtime's grants suffice; fixtures and cleanup — which create organisations
 // and profiles and delete synthetic audit rows — run as the owner. The owner is
 // DIRECT_URL (local), or DATABASE_URL where both name it (CI's supabase-stack);
-// the runtime URL is then derived from it, and the global setup gives the role
-// its local login.
+// the runtime URL is then derived from it with a password generated for this
+// run, which the global setup gives the role (INT_PROVISION_RUNTIME_LOGIN).
 const databaseUrl = process.env.DATABASE_URL ?? '';
 const ownerUrl = process.env.DIRECT_URL || databaseUrl;
+const runtimeGiven = Boolean(databaseUrl) && urlUser(databaseUrl) === RUNTIME_ROLE;
 process.env.INT_OWNER_DATABASE_URL = ownerUrl;
-process.env.INT_RUNTIME_DATABASE_URL =
-  databaseUrl && urlUser(databaseUrl) === RUNTIME_ROLE ? databaseUrl : ownerUrl ? runtimeUrlFrom(ownerUrl) : '';
+process.env.INT_RUNTIME_DATABASE_URL = runtimeGiven
+  ? databaseUrl
+  : ownerUrl
+    ? runtimeUrlFrom(ownerUrl, randomRuntimePassword())
+    : '';
+process.env.INT_PROVISION_RUNTIME_LOGIN = runtimeGiven ? '' : '1';
 
 // esbuild — Vitest's TypeScript transform — cannot emit decorator metadata,
 // so Nest's dependency injection finds no constructor types and injects

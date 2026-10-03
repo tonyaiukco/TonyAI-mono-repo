@@ -3,12 +3,20 @@
 -- 1. A grant of a subsidiary to a profile can only join the SAME organisation —
 --    enforced by composite foreign keys, so it holds for every writer (the API,
 --    the seed, a service-role client, the owner), not only for the API's guard.
+--    The one exception is a session in replica mode (a restore), which skips
+--    foreign-key triggers: `runtime-role.mjs check` scans the data for that.
 -- 2. Every RLS policy's explicit-grant branch also requires the same
 --    organisation, independently of (1): before this, a stray cross-organisation
 --    grant row was refused by the API's guard but honoured by PostgREST.
 -- 3. A least-privilege runtime role, `tonyai_runtime`, for the API process and
 --    its tools (DATABASE_URL). Migrations, DDL and the seed stay on the owner
 --    (DIRECT_URL). See README "Security model" for the trust boundary.
+
+-- Every statement below locks a table the API reads on each request (DROP FK,
+-- ALTER POLICY: ACCESS EXCLUSIVE until commit). Queued behind a long
+-- transaction, that lock would stall every request behind it; give up instead,
+-- and let the deploy be retried.
+SET LOCAL lock_timeout = '5s';
 
 -- Shadow-DB shim (rls-for-table): Prisma validates migrations on a database
 -- without Supabase's `auth` schema. A no-op on real Supabase. Not CREATE OR
@@ -243,7 +251,8 @@ ALTER POLICY "import_batches_select_scoped" ON "import_batches" USING (
 --
 -- No password and NOLOGIN here: a credential never goes into git. The login is
 -- provisioned per environment — locally by `packages/db/scripts/runtime-role.mjs`
--- (loopback only), in a deployed environment by its operator (rotation runbook).
+-- (loopback only, a random password, sent as a SCRAM verifier), in a deployed
+-- environment by its operator with psql's `\password` (rotation runbook).
 -- Created once per cluster (roles are cluster-wide, so a shadow database
 -- replaying this migration finds it already there).
 DO $$
@@ -271,9 +280,10 @@ REVOKE ALL ON ALL TABLES IN SCHEMA "public" FROM "tonyai_runtime";
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA "public" FROM "tonyai_runtime";
 GRANT USAGE ON SCHEMA "public" TO "tonyai_runtime";
 
--- Read-only to the runtime. Profiles and organisations are created by the
--- operator boundary (LP4-01), not by a request; factors are reference data
--- written by the seed/import tooling.
+-- Read-only to the runtime today. Organisations and first administrators are
+-- provisioned by the operator (D18, LP4-01); the invitation flow LP4-01 builds
+-- will need its own narrow grant on `profiles`, decided there. Factors are
+-- reference data written by the seed/import tooling.
 GRANT SELECT ON "organisations", "emission_factors" TO "tonyai_runtime";
 
 -- A profile: read by the guard on every request; only its role changes at
@@ -287,9 +297,19 @@ GRANT UPDATE ("role", "updated_at") ON "profiles" TO "tonyai_runtime";
 -- A grant is never edited in place.
 GRANT SELECT, INSERT, DELETE ON "user_subsidiary_access" TO "tonyai_runtime";
 
+-- A subsidiary: every column an edit changes is updatable, never `id` or
+-- `organisation_id` — not even a bug can move a subsidiary, and every record,
+-- file and lock under it, to another tenant. Column-level UPDATE also satisfies
+-- the `SELECT … FOR UPDATE` the delete path takes.
+GRANT SELECT, INSERT, DELETE ON "subsidiaries" TO "tonyai_runtime";
+GRANT UPDATE (
+  "legal_name", "trading_name", "location", "geography_code", "business_area", "sector",
+  "designated_person", "reporting_status", "included_scopes", "updated_at",
+  "contact_email", "contact_phone", "tracking_granularity"
+) ON "subsidiaries" TO "tonyai_runtime";
+
 -- Tenant data the API creates, edits and deletes.
 GRANT SELECT, INSERT, UPDATE, DELETE ON
-  "subsidiaries",
   "locations",
   "targets",
   "subsidiary_denominators",

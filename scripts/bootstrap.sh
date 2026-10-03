@@ -91,9 +91,11 @@ info "wrote apps/web/.env.local"
 
 # Two database credentials (LP1-03): the API and its tools run as the
 # least-privileged runtime role; migrations, the seed and DDL as the owner.
-# The role is created by a migration; its LOCAL login is set below, after
-# the migrations, by packages/db/scripts/runtime-role.mjs.
-RUNTIME_DB_URL="$(node -e "import('./packages/db/scripts/runtime-role.mjs').then((m) => process.stdout.write(m.runtimeUrlFrom(process.argv[1])))" "${DB_URL}")"
+# The role is created by a migration; its LOCAL login — a password generated
+# here, kept only in the .env files — is set below, after the migrations, by
+# packages/db/scripts/runtime-role.mjs. Re-running setup rotates it.
+RUNTIME_DB_PASSWORD="$(node -e "import('./packages/db/scripts/runtime-role.mjs').then((m) => process.stdout.write(m.randomRuntimePassword()))")"
+RUNTIME_DB_URL="$(RUNTIME_DB_PASSWORD="${RUNTIME_DB_PASSWORD}" node -e "import('./packages/db/scripts/runtime-role.mjs').then((m) => process.stdout.write(m.runtimeUrlFrom(process.argv[1], process.env.RUNTIME_DB_PASSWORD)))" "${DB_URL}")"
 [ -n "${RUNTIME_DB_URL}" ] || die "Could not derive the runtime database URL from ${DB_URL}."
 
 cat > apps/api/.env <<EOF
@@ -125,7 +127,7 @@ step "Applying migrations"
 pnpm --filter @tonyai/db run deploy
 
 step "Giving the runtime database role its local login"
-DIRECT_URL="${DB_URL}" node packages/db/scripts/runtime-role.mjs provision
+DIRECT_URL="${DB_URL}" RUNTIME_DB_PASSWORD="${RUNTIME_DB_PASSWORD}" node packages/db/scripts/runtime-role.mjs provision
 
 step "Generating Prisma client"
 pnpm --filter @tonyai/db run generate

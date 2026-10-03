@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { PrismaClient } from '@tonyai/db';
 import {
   RUNTIME_ROLE,
+  isLoopbackUrl,
   provisionLocalRuntimeLogin,
   urlUser,
 } from '../../../../packages/db/scripts/runtime-role.mjs';
@@ -37,8 +38,10 @@ export default async function setup(): Promise<void> {
 
   // The fixtures create and delete tenants. Never point them at a shared or
   // customer database by accident (B2: no local test tooling against production).
+  // `isLoopbackUrl`, not the hostname alone: Prisma honours a `?host=`
+  // parameter over the URL's host (LP1-03 `security-rls`).
   const host = new URL(url).hostname;
-  if (!LOCAL_HOSTS.has(host) && process.env.INT_TEST_ALLOW_NONLOCAL_DB !== '1') {
+  if (!(isLoopbackUrl(url) && isLoopbackUrl(runtimeUrl)) && process.env.INT_TEST_ALLOW_NONLOCAL_DB !== '1') {
     throw new Error(
       `Refusing to run integration tests against non-local host "${host}". ` +
         'Set INT_TEST_ALLOW_NONLOCAL_DB=1 only for a disposable database.',
@@ -70,9 +73,12 @@ export default async function setup(): Promise<void> {
       );
     }
 
-    // The runtime role's login (the migration creates it without one). When
+    // The runtime role's login (the migration creates it without one), with
+    // the password vitest.int.config.ts generated for this run. When
     // DATABASE_URL already names the role, its own password stands.
-    if (urlUser(process.env.DATABASE_URL ?? '') !== RUNTIME_ROLE) await provisionLocalRuntimeLogin(prisma, url);
+    if (process.env.INT_PROVISION_RUNTIME_LOGIN === '1') {
+      await provisionLocalRuntimeLogin(prisma, url, decodeURIComponent(new URL(runtimeUrl).password));
+    }
     const runtime = new PrismaClient({ datasourceUrl: runtimeUrl });
     try {
       const [{ user }] = await runtime.$queryRaw<{ user: string }[]>`SELECT current_user AS "user"`;

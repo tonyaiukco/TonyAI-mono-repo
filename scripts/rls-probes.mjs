@@ -864,14 +864,25 @@ async function main() {
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
     const { PrismaClient } = req('../packages/db/generated/client');
-    const { checkRuntimeRole } = await import('../packages/db/scripts/runtime-role.mjs');
-    const prisma = new PrismaClient();
-    const problems = await checkRuntimeRole((sql) => prisma.$queryRawUnsafe(sql)).finally(() => prisma.$disconnect());
-    check(
-      'the runtime role holds exactly its intended privileges (no DDL, append-only audit_log, no _prisma_migrations, BYPASSRLS, owns nothing)',
-      problems.length === 0,
-      problems.length ? problems.join('; ') : 'as intended',
+    const { checkRuntimeRole, checkTenantInvariants, runtimeRoleExposures } = await import(
+      '../packages/db/scripts/runtime-role.mjs'
     );
+    const prisma = new PrismaClient();
+    const query = (sql) => prisma.$queryRawUnsafe(sql);
+    try {
+      const problems = await checkRuntimeRole(query);
+      check(
+        'the runtime role holds exactly its intended privileges (no DDL, append-only audit_log, no _prisma_migrations, BYPASSRLS, owns nothing)',
+        problems.length === 0,
+        problems.length ? problems.join('; ') : 'as intended',
+      );
+      const broken = await checkTenantInvariants(query);
+      check('no grant crosses an organisation in the data (a restore skips the keys)', broken.length === 0, broken.join('; ') || 'none');
+      // Not a failure: what every role inherits from PUBLIC through the platform.
+      for (const e of await runtimeRoleExposures(query)) console.log(`  ⚠️  the runtime role can also reach ${e}`);
+    } finally {
+      await prisma.$disconnect();
+    }
   } catch (e) {
     check('runtime role check could run', false, e.message);
   }

@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaService } from '../../src/prisma/prisma.service';
-import { RUNTIME_ROLE, checkRuntimeRole } from '../../../../packages/db/scripts/runtime-role.mjs';
+import {
+  RUNTIME_ROLE,
+  checkRuntimeRole,
+  checkTenantInvariants,
+  runtimeRoleExposures,
+} from '../../../../packages/db/scripts/runtime-role.mjs';
 import { connect, connectOwner, createTenant, withRollback } from './db';
 
 /**
@@ -45,6 +50,29 @@ describe('the runtime role', () => {
   it('holds exactly the intended privileges (catalogue check, the same one `runtime-role.mjs check` runs)', async () => {
     const problems = await checkRuntimeRole((sql) => runtime.$queryRawUnsafe(sql));
     expect(problems).toEqual([]);
+  });
+
+  it('no grant in the data crosses an organisation (what a restore could bring back past the keys)', async () => {
+    expect(await checkTenantInvariants((sql) => runtime.$queryRawUnsafe(sql))).toEqual([]);
+  });
+
+  it("reaches nothing outside its grants except what PUBLIC holds — and the check notices a grant of ours there", async () => {
+    // Whatever the platform grants to PUBLIC (pg_net's queue, Storage's helper
+    // functions) is reported, not failed: the owner cannot revoke it.
+    const exposures = await runtimeRoleExposures((sql) => runtime.$queryRawUnsafe(sql));
+    for (const e of exposures) expect(e).toMatch(/\(via PUBLIC\)$/);
+    // A grant made by us outside public is a problem, not an exposure.
+    const problems = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('GRANT SELECT ON storage.buckets TO tonyai_runtime');
+      return checkRuntimeRole((sql) => tx.$queryRawUnsafe(sql));
+    });
+    expect(problems).toContain('tonyai_runtime was granted SELECT on storage.buckets');
+  });
+
+  it('cannot move a subsidiary to another organisation — every other column of it, it can edit', async () => {
+    expect(await attempt('UPDATE subsidiaries SET organisation_id = organisation_id WHERE false')).toMatch(DENIED);
+    expect(await attempt('UPDATE subsidiaries SET id = id WHERE false')).toMatch(DENIED);
+    expect(await attempt(`UPDATE subsidiaries SET legal_name = legal_name, updated_at = now() WHERE false`)).toBeNull();
   });
 
   it('sees every row (BYPASSRLS) — the API and the Storage sweeper act for every tenant', async () => {

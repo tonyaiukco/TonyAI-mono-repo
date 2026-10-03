@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -57,20 +58,22 @@ const apiStartCmd = 'pnpm --filter @tonyai/api build && node dist/main.js';
  * a deployed one does — so a route that needs a grant the role lacks fails
  * here, not in staging. Locally `apps/api/.env` already says so. CI's
  * `supabase-stack` exports the OWNER as DATABASE_URL (and DIRECT_URL) for the
- * migrations and the seed; there the API gets the runtime URL derived from it,
- * after the role's local login is provisioned (loopback only).
+ * migrations and the seed; there the API gets a runtime URL with a password
+ * generated for this run, which `runtime-role.mjs provision` (loopback only)
+ * sets first. Everything reaches the command through its environment, never
+ * the command line.
  */
-const RUNTIME_ROLE = 'tonyai_runtime';
-const LOCAL_RUNTIME_PASSWORD = 'tonyai-runtime-local'; // = packages/db/scripts/runtime-role.mjs
+const RUNTIME_ROLE = 'tonyai_runtime'; // = packages/db/scripts/runtime-role.mjs
 function runtimeApi(): { command: string; env?: Record<string, string> } {
   const owner = process.env.DIRECT_URL || process.env.DATABASE_URL;
   if (!owner || decodeURIComponent(new URL(owner).username) === RUNTIME_ROLE) return { command: apiStartCmd };
+  const password = randomBytes(24).toString('base64url');
   const runtime = new URL(owner);
   runtime.username = RUNTIME_ROLE;
-  runtime.password = LOCAL_RUNTIME_PASSWORD;
+  runtime.password = password;
   return {
-    command: `DIRECT_URL='${owner}' node ../../packages/db/scripts/runtime-role.mjs provision && ${apiStartCmd}`,
-    env: { DATABASE_URL: runtime.toString() },
+    command: `node ../../packages/db/scripts/runtime-role.mjs provision && ${apiStartCmd}`,
+    env: { DIRECT_URL: owner, RUNTIME_DB_PASSWORD: password, DATABASE_URL: runtime.toString() },
   };
 }
 const api = runtimeApi();
