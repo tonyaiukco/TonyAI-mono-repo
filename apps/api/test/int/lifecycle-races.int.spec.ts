@@ -145,6 +145,15 @@ describe('F03 — edit, submit and approve', () => {
     expect(final.status).toBe(ActivityRecordStatus.approved);
     expect(final.activityValue).toBe(250);
     expect(await auditActions(record.id)).toEqual(['approve', 'submit', 'update']);
+    // The edit landed on the DRAFT, before the submit — not on the submitted
+    // record after it, which is the same final row with an edit nobody
+    // reviewed in between (what this interleaving did before LP1-01).
+    const edit = await observer.auditLog.findFirstOrThrow({
+      where: { entityId: record.id, action: 'update' },
+    });
+    expect((edit.diff as { after: { status: string } }).after.status).toBe(
+      ActivityRecordStatus.draft,
+    );
   });
 
   it('a submit held before its write: the edit waits, then is refused — the approved figure is the one submitted', async () => {
