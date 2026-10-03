@@ -1,0 +1,456 @@
+import {
+  Injectable,
+  Logger,
+  type OnApplicationBootstrap,
+  type OnModuleDestroy,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { Prisma, StorageIntentKind } from '@tonyai/db';
+import { PrismaService } from '../prisma/prisma.service';
+import { captureException } from '../observability/sentry';
+import { StorageService } from './storage.service';
+import { type Bucket, isBucket, ownedPaths } from './buckets';
+
+/** One object in one bucket. */
+export interface ObjectRef {
+  bucket: Bucket;
+  path: string;
+}
+
+/** Who wrote an intent — for operators reading the table, never for access. */
+export interface IntentOrigin {
+  reason: string;
+  organisationId?: string | null;
+  subsidiaryId?: string | null;
+}
+
+type IntentClient = Pick<Prisma.TransactionClient, 'storageIntent'>;
+
+/**
+ * An `upload` intent older than this is abandoned by the sweeper. Its owning
+ * transaction runs under LIFECYCLE_TX (15 s), so one this old cannot still
+ * commit — and if it tried, adopting the intent would fail and roll it back.
+ */
+export const UPLOAD_GRACE_SECONDS = 15 * 60;
+
+/** How long one process may hold a claimed intent before another may take it over. */
+export const CLAIM_LEASE_SECONDS = 120;
+
+/** The most intents one sweep handles: bounded work per tick, whatever the backlog. */
+export const SWEEP_BATCH = 100;
+
+/** An intent that has failed this many times is reported as stuck, on every sweep it stays. */
+export const STUCK_AFTER_ATTEMPTS = 5;
+
+/** First retry after 30 s, doubling, capped at 6 h — and never given up. */
+const BACKOFF_BASE_SECONDS = 30;
+const BACKOFF_MAX_SECONDS = 6 * 3600;
+
+/** Storage caps one remove() at 1,000 keys; stay well under it. */
+const REMOVE_CHUNK = 100;
+
+/** `STORAGE_CLEANUP_HOLD` — set while a backup or a restore runs: nothing removes bytes. */
+export function removalsHeld(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(1|true|yes|on)$/i.test(env.STORAGE_CLEANUP_HOLD?.trim() ?? '');
+}
+
+/** `STORAGE_SWEEP_INTERVAL_SECONDS` — default 300; 0 turns the in-process sweeper off. */
+export function sweepIntervalSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.STORAGE_SWEEP_INTERVAL_SECONDS?.trim();
+  if (!raw) return 300;
+  const seconds = Number(raw);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : 300;
+}
+
+/**
+ * The owning row's transaction found its upload intent gone: the sweeper took
+ * it (the upload outlived `UPLOAD_GRACE_SECONDS`), so its object is being
+ * removed and no row may point at it.
+ */
+export class UploadExpiredError extends ServiceUnavailableException {
+  constructor() {
+    super('The upload took too long and was discarded. Upload the file again.');
+  }
+}
+
+export interface Backlog {
+  /** Uploads whose owning row is not committed yet — normally a handful, in flight. */
+  uploads: number;
+  /** Objects committed to removal and not yet confirmed gone. */
+  deletes: number;
+  /** Intents that failed `STUCK_AFTER_ATTEMPTS` times or more. */
+  stuck: number;
+  oldest: Date | null;
+}
+
+export interface SweepReport {
+  held: boolean;
+  /** Upload intents past their grace, turned into deletes. */
+  abandoned: number;
+  /** Objects removed, intents closed. */
+  removed: number;
+  /** Removals that failed in this sweep; retried with backoff. */
+  failed: number;
+  /** Intents closed WITHOUT removing, because a row owns the object. */
+  kept: number;
+  backlog: Backlog;
+}
+
+interface ClaimedIntent {
+  id: string;
+  bucket: string;
+  objectPath: string;
+  attempts: number;
+}
+
+interface Outcome {
+  removed: number;
+  failed: number;
+  kept: number;
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Database ↔ Storage effects that survive a failure at any boundary (LP1-02,
+ * F14). Storage has no transaction, so the database records what it has
+ * committed to and this service carries it out, retrying until Storage
+ * confirms:
+ *
+ *  - UPLOAD: `beginUpload` commits an `upload` intent BEFORE the bytes go up;
+ *    the transaction that writes the owning row calls `adoptUpload`, which
+ *    deletes it. If that transaction fails, `abandonUpload` turns the intent
+ *    into a delete — but only while it is still an upload, so a transaction
+ *    that DID commit (its acknowledgement lost) keeps its object. A crash in
+ *    between leaves the intent for the sweeper, which abandons uploads older
+ *    than `UPLOAD_GRACE_SECONDS`.
+ *  - DELETE: `enqueueDeletes` writes a `delete` intent in the same transaction
+ *    as the row delete and its audit row; after the commit `runNow` removes
+ *    the object and closes the intent. A failure, or a crash before it, leaves
+ *    the intent for the sweeper.
+ *
+ * Removal is by lease (`claimed_until`), so no transaction is held across a
+ * Storage call and two processes never remove the same object at once; a
+ * failed removal is released with exponential backoff and retried forever,
+ * and one that keeps failing is reported as stuck. Bytes a row still owns are
+ * never removed (`ownedPaths`), whatever an intent says. While
+ * `STORAGE_CLEANUP_HOLD` is set nothing is removed at all — intents wait.
+ *
+ * The sweeper runs in-process every `STORAGE_SWEEP_INTERVAL_SECONDS` (each
+ * replica; the lease keeps them apart). `pnpm storage:reconcile` covers what
+ * no intent records: orphans and rows whose bytes are missing.
+ */
+@Injectable()
+export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDestroy {
+  private readonly logger = new Logger(StorageIntentsService.name);
+  private interval: NodeJS.Timeout | null = null;
+  private firstTick: NodeJS.Timeout | null = null;
+  private running: Promise<void> | null = null;
+  private lastStuck = 0;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
+
+  // --- The writer's side ------------------------------------------------------
+
+  /** Commit an `upload` intent, on its own, before the bytes are sent. Returns its id for `adoptUpload`. */
+  async beginUpload(ref: ObjectRef, origin: IntentOrigin): Promise<string> {
+    const { id } = await this.prisma.storageIntent.create({
+      data: { kind: StorageIntentKind.upload, bucket: ref.bucket, objectPath: ref.path, ...origin },
+      select: { id: true },
+    });
+    return id;
+  }
+
+  /**
+   * In the transaction that writes the row owning the object: the row takes
+   * the object over. Refused when the sweeper got there first — the delete it
+   * made of the intent is already on its way, so no row may point at it.
+   */
+  async adoptUpload(tx: IntentClient, intentId: string): Promise<void> {
+    const { count } = await tx.storageIntent.deleteMany({
+      where: { id: intentId, kind: StorageIntentKind.upload },
+    });
+    if (count !== 1) throw new UploadExpiredError();
+  }
+
+  /**
+   * After the owning transaction failed. If the intent is still an upload, no
+   * row was committed and the object goes now. If it is gone, the transaction
+   * committed after all — its acknowledgement was lost — and the object stays
+   * with its row. Never throws: what it cannot do, the sweeper does.
+   */
+  async abandonUpload(intentId: string, ref: ObjectRef): Promise<void> {
+    try {
+      const { count } = await this.prisma.storageIntent.updateMany({
+        where: { id: intentId, kind: StorageIntentKind.upload },
+        data: { kind: StorageIntentKind.delete, nextAttemptAt: new Date() },
+      });
+      if (count === 1) await this.runNow([ref]);
+    } catch (error) {
+      this.logger.error(
+        `Could not abandon the upload of ${ref.bucket}/${ref.path}; the sweeper removes it after ${UPLOAD_GRACE_SECONDS / 60} minutes`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  /** In the transaction that deleted the rows owning these objects: record that the objects must go. */
+  async enqueueDeletes(tx: IntentClient, refs: ObjectRef[], origin: IntentOrigin): Promise<void> {
+    if (refs.length === 0) return;
+    await tx.storageIntent.createMany({
+      data: refs.map((ref) => ({
+        kind: StorageIntentKind.delete,
+        bucket: ref.bucket,
+        objectPath: ref.path,
+        ...origin,
+      })),
+      // A second intent for one object adds nothing: one removal satisfies both.
+      skipDuplicates: true,
+    });
+  }
+
+  /**
+   * After the commit: remove these objects now and close their intents.
+   * Never throws — the change they belong to has happened; a failure stays an
+   * intent, retried by the sweeper.
+   */
+  async runNow(refs: ObjectRef[]): Promise<void> {
+    if (refs.length === 0) return;
+    if (removalsHeld()) {
+      this.logger.warn(
+        `STORAGE_CLEANUP_HOLD is set: ${refs.length} object(s) wait for removal as intents`,
+      );
+      return;
+    }
+    try {
+      for (const [bucket, paths] of groupPaths(refs)) {
+        const claimed = await this.claim(
+          Prisma.sql`bucket = ${bucket} AND object_path = ANY(${paths}::text[])`,
+          paths.length,
+        );
+        await this.execute(claimed);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Could not remove ${refs.length} object(s) after the commit; their intents stay for the sweeper: ${refs
+          .map((r) => `${r.bucket}/${r.path}`)
+          .join(', ')}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  // --- The sweeper ------------------------------------------------------------
+
+  /**
+   * One bounded pass: abandon uploads past their grace, then remove the due
+   * deletes — at most `limit` of each — and report the backlog left.
+   */
+  async sweep(limit = SWEEP_BATCH): Promise<SweepReport> {
+    const held = removalsHeld();
+    let abandoned = 0;
+    let outcome: Outcome = { removed: 0, failed: 0, kept: 0 };
+    if (!held) {
+      // An upload intent this old belongs to a transaction that cannot still
+      // commit. SKIP LOCKED passes over one an owning transaction is adopting
+      // right now; if that transaction then rolls back, the next sweep takes it.
+      abandoned = await this.prisma.$executeRaw`
+        UPDATE storage_intents
+        SET kind = 'delete', next_attempt_at = now()
+        WHERE id IN (
+          SELECT id FROM storage_intents
+          WHERE kind = 'upload'
+            AND created_at < now() - ${UPLOAD_GRACE_SECONDS}::int * interval '1 second'
+          ORDER BY created_at, id
+          LIMIT ${limit}
+          FOR UPDATE SKIP LOCKED
+        )`;
+      outcome = await this.execute(await this.claim(Prisma.sql`next_attempt_at <= now()`, limit));
+    }
+    const backlog = await this.backlog();
+    const report: SweepReport = { held, abandoned, ...outcome, backlog };
+    this.reportSweep(report);
+    return report;
+  }
+
+  /** What is waiting, for the sweep's log line and `storage:reconcile`. */
+  async backlog(): Promise<Backlog> {
+    const rows = await this.prisma.$queryRaw<
+      { kind: string; n: bigint; stuck: bigint; oldest: Date | null }[]
+    >`
+      SELECT kind::text AS kind,
+             count(*) AS n,
+             count(*) FILTER (WHERE attempts >= ${STUCK_AFTER_ATTEMPTS}::int) AS stuck,
+             min(created_at) AS oldest
+      FROM storage_intents
+      GROUP BY kind`;
+    const backlog: Backlog = { uploads: 0, deletes: 0, stuck: 0, oldest: null };
+    for (const row of rows) {
+      if (row.kind === 'upload') backlog.uploads = Number(row.n);
+      else backlog.deletes = Number(row.n);
+      backlog.stuck += Number(row.stuck);
+      if (row.oldest && (!backlog.oldest || row.oldest < backlog.oldest)) backlog.oldest = row.oldest;
+    }
+    return backlog;
+  }
+
+  onApplicationBootstrap(): void {
+    const seconds = sweepIntervalSeconds();
+    if (seconds === 0) {
+      this.logger.warn('The storage sweeper is off (STORAGE_SWEEP_INTERVAL_SECONDS=0); run pnpm storage:reconcile --sweep');
+      return;
+    }
+    // The first pass soon after boot — a replica scaled up from zero should
+    // not wait a whole interval — jittered so replicas do not start together.
+    this.firstTick = setTimeout(() => void this.tick(), 10_000 + Math.random() * 30_000);
+    this.firstTick.unref();
+    this.interval = setInterval(() => void this.tick(), seconds * 1000);
+    this.interval.unref();
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.firstTick) clearTimeout(this.firstTick);
+    if (this.interval) clearInterval(this.interval);
+    await this.running;
+  }
+
+  /** One sweep at a time per process; an error is logged and the next tick tries again. */
+  private async tick(): Promise<void> {
+    if (this.running) return;
+    this.running = this.sweep()
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        this.logger.error('Storage sweep failed', error instanceof Error ? error.stack : String(error));
+      })
+      .finally(() => {
+        this.running = null;
+      });
+    await this.running;
+  }
+
+  private reportSweep(report: SweepReport): void {
+    const { held, abandoned, removed, failed, kept, backlog } = report;
+    const summary =
+      `Storage sweep: removed ${removed}, failed ${failed}, kept ${kept}, abandoned ${abandoned}; ` +
+      `waiting ${backlog.deletes} delete(s), ${backlog.uploads} upload(s), ${backlog.stuck} stuck` +
+      (backlog.oldest ? `, oldest ${backlog.oldest.toISOString()}` : '');
+    if (held && backlog.deletes + backlog.uploads > 0) {
+      this.logger.warn(`STORAGE_CLEANUP_HOLD is set, nothing removed. ${summary}`);
+    } else if (failed > 0 || kept > 0) {
+      this.logger.error(summary);
+    } else if (removed + abandoned + backlog.deletes > 0) {
+      this.logger.log(summary);
+    }
+    // Stuck intents page an operator — once per change, not once per tick.
+    if (backlog.stuck > 0 && backlog.stuck !== this.lastStuck) {
+      const error = new Error(
+        `${backlog.stuck} storage intent(s) have failed ${STUCK_AFTER_ATTEMPTS} or more times; see storage_intents.last_error`,
+      );
+      this.logger.error(error.message);
+      captureException(error);
+    }
+    this.lastStuck = backlog.stuck;
+  }
+
+  // --- Execution --------------------------------------------------------------
+
+  /**
+   * Take a lease on up to `limit` delete intents matching `filter`. A short
+   * statement of its own, so no transaction stays open across the Storage
+   * call; SKIP LOCKED and the lease keep two processes off one intent.
+   */
+  private claim(filter: Prisma.Sql, limit: number): Promise<ClaimedIntent[]> {
+    return this.prisma.$queryRaw<ClaimedIntent[]>`
+      UPDATE storage_intents
+      SET claimed_until = now() + ${CLAIM_LEASE_SECONDS}::int * interval '1 second',
+          attempts = attempts + 1
+      WHERE id IN (
+        SELECT id FROM storage_intents
+        WHERE kind = 'delete'
+          AND (claimed_until IS NULL OR claimed_until < now())
+          AND ${filter}
+        ORDER BY next_attempt_at, id
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, bucket, object_path AS "objectPath", attempts`;
+  }
+
+  private async execute(claimed: ClaimedIntent[]): Promise<Outcome> {
+    const outcome: Outcome = { removed: 0, failed: 0, kept: 0 };
+    const byBucket = new Map<string, ClaimedIntent[]>();
+    for (const intent of claimed) {
+      byBucket.set(intent.bucket, [...(byBucket.get(intent.bucket) ?? []), intent]);
+    }
+    for (const [bucket, intents] of byBucket) {
+      if (!isBucket(bucket)) {
+        await this.release(intents, `Unknown bucket "${bucket}"`);
+        outcome.failed += intents.length;
+        continue;
+      }
+      const owned = await ownedPaths(this.prisma, bucket, intents.map((i) => i.objectPath));
+      const keep = intents.filter((i) => owned.has(i.objectPath));
+      if (keep.length > 0) {
+        // Unreachable under the protocol — an upload intent is adopted in its
+        // row's own transaction, a delete intent is written as its row goes —
+        // so a row and an intent disagree. The bytes stay; the intent is
+        // closed and reported.
+        await this.prisma.storageIntent.deleteMany({ where: { id: { in: keep.map((i) => i.id) } } });
+        const error = new Error(
+          `${keep.length} storage intent(s) named objects a row still owns; the objects were kept: ${keep
+            .map((i) => `${bucket}/${i.objectPath}`)
+            .join(', ')}`,
+        );
+        this.logger.error(error.message);
+        captureException(error);
+        outcome.kept += keep.length;
+      }
+      const remove = intents.filter((i) => !owned.has(i.objectPath));
+      for (let start = 0; start < remove.length; start += REMOVE_CHUNK) {
+        const chunk = remove.slice(start, start + REMOVE_CHUNK);
+        try {
+          await this.storage.remove(bucket, chunk.map((i) => i.objectPath));
+        } catch (error) {
+          await this.release(chunk, message(error));
+          outcome.failed += chunk.length;
+          this.logger.error(
+            `Could not remove ${chunk.length} ${bucket} object(s), retried with backoff: ${chunk
+              .map((i) => `${i.objectPath} (attempt ${i.attempts})`)
+              .join(', ')}`,
+            error instanceof Error ? error.stack : String(error),
+          );
+          continue;
+        }
+        // Storage confirmed. If closing the intents fails now, the lease runs
+        // out and the next sweep removes again — removal is idempotent.
+        await this.prisma.storageIntent.deleteMany({ where: { id: { in: chunk.map((i) => i.id) } } });
+        outcome.removed += chunk.length;
+      }
+    }
+    return outcome;
+  }
+
+  /** Give a failed removal back with its error and the next attempt's time. */
+  private async release(intents: ClaimedIntent[], error: string): Promise<void> {
+    await this.prisma.$executeRaw`
+      UPDATE storage_intents
+      SET claimed_until = NULL,
+          last_error = ${error.slice(0, 1000)},
+          next_attempt_at = now() + LEAST(
+            ${BACKOFF_BASE_SECONDS}::int * power(2, LEAST(GREATEST(attempts - 1, 0), 20)),
+            ${BACKOFF_MAX_SECONDS}::int
+          ) * interval '1 second'
+      WHERE id = ANY(${intents.map((i) => i.id)}::uuid[])`;
+  }
+}
+
+function groupPaths(refs: ObjectRef[]): Map<Bucket, string[]> {
+  const groups = new Map<Bucket, string[]>();
+  for (const ref of refs) groups.set(ref.bucket, [...(groups.get(ref.bucket) ?? []), ref.path]);
+  return groups;
+}

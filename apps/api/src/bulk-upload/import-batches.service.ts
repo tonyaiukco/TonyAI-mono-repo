@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { ImportBatch } from '@tonyai/db';
 import {
   mayAuthorRecords,
@@ -12,9 +12,10 @@ import type { RequestUser } from '../auth/auth.types';
 import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
 import { evidenceReadyWhere } from '../activity-records/activity-records.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { StorageService } from '../storage/storage.service';
+import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
+import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
+import { captureException } from '../observability/sentry';
 import { BulkSubmitService } from './bulk-submit.service';
-import { IMPORT_SOURCES_BUCKET } from './bulk-upload.service';
 
 const DEFAULT_LIST_LIMIT = 20;
 /** Seconds a source-file download link stays valid — the evidence module's. */
@@ -38,6 +39,8 @@ const ORGANISATION_READERS = new Set(['super_admin', 'consultant', 'executive_vi
  */
 @Injectable()
 export class ImportBatchesService {
+  private readonly logger = new Logger(ImportBatchesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
@@ -89,12 +92,26 @@ export class ImportBatchesService {
     if (!batch.storagePath) {
       throw new NotFoundException('This import has no source file.');
     }
-    const url = await this.storage.createSignedUrl(
-      IMPORT_SOURCES_BUCKET,
-      batch.storagePath,
-      SIGNED_URL_TTL_SECONDS,
-      batch.fileName,
-    );
+    let url: string;
+    try {
+      url = await this.storage.createSignedUrl(
+        IMPORT_SOURCES_BUCKET,
+        batch.storagePath,
+        SIGNED_URL_TTL_SECONDS,
+        batch.fileName,
+      );
+    } catch (error) {
+      if (!(error instanceof StorageObjectMissingError)) throw error;
+      // The row says the file was kept and Storage has no bytes: an integrity
+      // incident, reported — `storage:reconcile` lists every such row.
+      this.logger.error(
+        `Import batch ${batch.id} has no source object in Storage (${IMPORT_SOURCES_BUCKET}/${batch.storagePath})`,
+      );
+      captureException(error, { userId: user.id });
+      throw new NotFoundException(
+        "This import's source file is missing from storage. The problem has been reported to the administrators.",
+      );
+    }
     return { url, expiresIn: SIGNED_URL_TTL_SECONDS };
   }
 

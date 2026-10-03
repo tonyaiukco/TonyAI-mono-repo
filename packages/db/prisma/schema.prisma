@@ -295,7 +295,9 @@ model ImportBatch {
   fileFormat     String            @map("file_format")
   sizeBytes      Int               @map("size_bytes")
   sha256         String            @db.Char(64)
-  storagePath    String?           @map("storage_path")
+  // Unique: one object backs one batch (LP1-02), so removing an object can
+  // never take bytes another row still points at.
+  storagePath    String?           @unique @map("storage_path")
   status         ImportBatchStatus @default(processing)
   totalRows      Int               @map("total_rows")
   acceptedCount  Int?              @map("accepted_count")
@@ -316,17 +318,24 @@ model ImportBatch {
 // pointer (`storagePath`). Owned by a subsidiary rather than by a record, so
 // one invoice uploaded once can back several records (WP8 decision 3a) — the
 // links live in `activity_record_evidence`. A file never outlives its last
-// link: the API deletes the blob and the row when the last one goes. Written
-// only via the owner/service-role backend, which enforces access and
-// type/size validation.
+// link: the API deletes the row when the last one goes, and its blob through a
+// `storage_intents` row committed with it (LP1-02). Written only via the
+// owner/service-role backend, which enforces access and type/size/content
+// validation.
 model Evidence {
   id           String                   @id @default(uuid()) @db.Uuid
   subsidiaryId String                   @map("subsidiary_id") @db.Uuid
   subsidiary   Subsidiary               @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
-  storagePath  String                   @map("storage_path") // object key in the `evidence` bucket
+  // Object key in the `evidence` bucket. Unique: one object backs one file
+  // row, so removing an object can never take bytes another row points at.
+  storagePath  String                   @unique @map("storage_path")
   fileName     String                   @map("file_name")
   mimeType     String                   @map("mime_type")
   sizeBytes    Int                      @map("size_bytes")
+  // SHA-256 of the bytes as uploaded (hex) — the file's content identity,
+  // checked against Storage by `storage:reconcile --verify`. Null on files
+  // uploaded before LP1-02: unverified, never back-filled with a guess.
+  sha256       String?                  @db.Char(64)
   uploadedBy   String                   @map("uploaded_by") @db.Uuid
   links        ActivityRecordEvidence[]
   createdAt    DateTime                 @default(now()) @map("created_at")
@@ -490,4 +499,51 @@ model AuditLog {
   // The viewer lists newest-first, scoped to one organisation.
   @@index([organisationId, createdAt])
   @@map("audit_log")
+}
+
+enum StorageIntentKind {
+  // An upload in flight: the object may exist, the row that will own it is
+  // not committed yet. Adopted (deleted) by that row's transaction.
+  upload
+  // The object must go: its row was deleted, or its upload was abandoned.
+  delete
+
+  @@map("storage_intent_kind")
+}
+
+// A Storage effect the database has committed to and Storage has not carried
+// out yet (LP1-02, F14). Storage is a second system with no transaction of its
+// own, so every object an API path writes or removes is named here FIRST:
+//  - an upload writes an `upload` intent and commits it before sending the
+//    bytes; the transaction that writes the owning row deletes it. One left
+//    behind is an upload whose row never committed — its object is removed.
+//  - a delete writes a `delete` intent in the SAME transaction as the row
+//    delete and its audit row; the object is removed after the commit, and the
+//    intent goes when Storage confirms.
+// A failure at any boundary therefore leaves a row here, retried with backoff
+// by the API's sweeper (`StorageIntentsService`), never a silent orphan or a
+// row pointing at bytes that are gone. Operational state, not tenant data:
+// RLS is enabled with no policy and nothing is granted to client roles.
+model StorageIntent {
+  id             String            @id @default(uuid()) @db.Uuid
+  kind           StorageIntentKind
+  bucket         String
+  objectPath     String            @map("object_path")
+  // What wrote it, e.g. `evidence.upload`, `evidence.delete` — for operators.
+  reason         String
+  organisationId String?           @map("organisation_id") @db.Uuid
+  subsidiaryId   String?           @map("subsidiary_id") @db.Uuid
+  attempts       Int               @default(0)
+  lastError      String?           @map("last_error")
+  // timestamptz, unlike the rest of the schema: the sweeper compares these
+  // with now() in SQL, which must not depend on the session's time zone.
+  nextAttemptAt  DateTime          @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  // A lease, not a lock: set while one process removes the object, so a
+  // second sweeper skips it without a transaction held across the HTTP call.
+  claimedUntil   DateTime?         @map("claimed_until") @db.Timestamptz(3)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([bucket, objectPath])
+  @@index([kind, nextAttemptAt])
+  @@map("storage_intents")
 }

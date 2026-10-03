@@ -45,6 +45,8 @@ import { isFormulaLead } from '../common/csv-cell';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { StorageIntentsService, type ObjectRef } from '../storage/storage-intents.service';
+import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
 import { InaccessibleEntityError } from './errors';
 import {
@@ -90,7 +92,7 @@ const COLUMN_NAMES = new Set<string>(BULK_UPLOAD_COLUMNS);
 const TEMPLATE_ENTITY_LIMIT = 5000;
 
 /** The private bucket an applied import's source file is kept in. */
-export const IMPORT_SOURCES_BUCKET = 'import-sources';
+export { IMPORT_SOURCES_BUCKET };
 
 /**
  * How much of the caller's own text one audit row keeps. A refusal is quoted
@@ -109,6 +111,7 @@ export class BulkUploadService {
     private readonly records: ActivityRecordsService,
     private readonly audit: AuditService,
     private readonly storage: StorageService,
+    private readonly intents: StorageIntentsService,
   ) {}
 
   /**
@@ -799,6 +802,13 @@ export class BulkUploadService {
    * the other order could leave a batch claiming a file that is not there.
    * The key holds no part of the caller's file name (it can carry personal
    * data); the name lives on the row and rides on the download URL.
+   *
+   * The same recoverable protocol as an evidence upload (LP1-02): an `upload`
+   * intent commits before the bytes go up and the batch row's transaction
+   * adopts it, so a failure at any step leaves an intent the sweeper finishes
+   * — never an unlogged object (the removal used to be a swallowed
+   * `.catch(() => undefined)`). Retention is D21's: kept while the tenant is
+   * active, no user delete; offboarding deletes it (LP4-01).
    */
   private async openBatch(
     user: RequestUser,
@@ -809,31 +819,44 @@ export class BulkUploadService {
     const id = randomUUID();
     const format = extensionOf(upload.originalname ?? '') === '.xlsx' ? 'xlsx' : 'csv';
     const storagePath = `${user.organisationId}/${id}/source.${format}`;
-    await this.storage.upload(
-      IMPORT_SOURCES_BUCKET,
-      storagePath,
-      upload.buffer,
-      format === 'xlsx'
-        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        : 'text/csv',
-    );
+    const ref: ObjectRef = { bucket: IMPORT_SOURCES_BUCKET, path: storagePath };
+    const intentId = await this.intents.beginUpload(ref, {
+      reason: 'import.source',
+      organisationId: user.organisationId,
+    });
     try {
-      await this.prisma.importBatch.create({
-        data: {
-          id,
-          organisationId: user.organisationId as string,
-          uploadedBy: user.id,
-          subsidiaryIds,
-          fileName: this.shownFileName(upload),
-          fileFormat: format,
-          sizeBytes: upload.size,
-          sha256: createHash('sha256').update(upload.buffer).digest('hex'),
-          storagePath,
-          totalRows,
-        },
+      await this.storage.upload(
+        IMPORT_SOURCES_BUCKET,
+        storagePath,
+        upload.buffer,
+        format === 'xlsx'
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'text/csv',
+      );
+    } catch (error) {
+      await this.intents.abandonUpload(intentId, ref);
+      throw error;
+    }
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await this.intents.adoptUpload(tx, intentId);
+        await tx.importBatch.create({
+          data: {
+            id,
+            organisationId: user.organisationId as string,
+            uploadedBy: user.id,
+            subsidiaryIds,
+            fileName: this.shownFileName(upload),
+            fileFormat: format,
+            sizeBytes: upload.size,
+            sha256: createHash('sha256').update(upload.buffer).digest('hex'),
+            storagePath,
+            totalRows,
+          },
+        });
       });
     } catch (error) {
-      await this.storage.remove(IMPORT_SOURCES_BUCKET, [storagePath]).catch(() => undefined);
+      await this.intents.abandonUpload(intentId, ref);
       throw error;
     }
     return id;

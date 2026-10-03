@@ -34,6 +34,7 @@ import { AuditService } from '../audit/audit.service';
 import { blockedUnitReason } from '../calculations/normalization';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import type { StorageIntentsService } from '../storage/storage-intents.service';
 import type { RequestUser } from '../auth/auth.types';
 import { row as sheetRow, xlsx } from '../../test/xlsx';
 
@@ -165,6 +166,9 @@ function build() {
     // misleading message). With the spy present the assertion says what it
     // means.
     activityRecord: { findMany: vi.fn().mockResolvedValue([]), create: vi.fn() },
+    // The batch row and its source file's intent adoption commit together;
+    // the transaction client is this same mock.
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
   };
   const records = {
     previewCreate: vi.fn().mockResolvedValue({
@@ -196,13 +200,21 @@ function build() {
     upload: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
   };
+  // The protocol itself runs against real PostgreSQL in
+  // test/int/storage-recovery.int.spec.ts; here, which step was asked for.
+  const intents = {
+    beginUpload: vi.fn().mockResolvedValue('intent-1'),
+    adoptUpload: vi.fn().mockResolvedValue(undefined),
+    abandonUpload: vi.fn().mockResolvedValue(undefined),
+  };
   const service = new BulkUploadService(
     prisma as unknown as PrismaService,
     records as unknown as ActivityRecordsService,
     audit as unknown as AuditService,
     storage as unknown as StorageService,
+    intents as unknown as StorageIntentsService,
   );
-  return { prisma, records, audit, storage, service };
+  return { prisma, records, audit, storage, intents, service };
 }
 
 /**
@@ -2251,16 +2263,53 @@ describe('BulkUploadService — import batches', () => {
     });
   });
 
-  it('removes the stored file and writes no record when the batch row cannot be written', async () => {
-    const { prisma, storage, records, service } = build();
+  it('abandons the stored file\'s intent and writes no record when the batch row cannot be written', async () => {
+    const { prisma, storage, intents, records, service } = build();
     prisma.importBatch.create.mockRejectedValue(new Error('db down'));
 
     await expect(service.import(dataEntry(), csvFile([row()]), NOTHING)).rejects.toThrow('db down');
 
-    expect(storage.remove).toHaveBeenCalledWith('import-sources', [
-      storage.upload.mock.calls[0][1],
-    ]);
+    // Abandoned, not removed directly: a removal that fails stays a retryable
+    // intent (it used to be a swallowed `.catch(() => undefined)`).
+    expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', {
+      bucket: 'import-sources',
+      path: storage.upload.mock.calls[0][1],
+    });
+    expect(storage.remove).not.toHaveBeenCalled();
     expect(records.create).not.toHaveBeenCalled();
+  });
+
+  it('names the source file in an intent before storing it, and adopts it with the batch row', async () => {
+    const { prisma, storage, intents, service } = build();
+
+    await service.import(dataEntry(), csvFile([row()]), NOTHING);
+
+    const path = storage.upload.mock.calls[0][1];
+    expect(intents.beginUpload).toHaveBeenCalledWith(
+      { bucket: 'import-sources', path },
+      { reason: 'import.source', organisationId: 'org-1' },
+    );
+    expect(intents.beginUpload.mock.invocationCallOrder[0]).toBeLessThan(
+      storage.upload.mock.invocationCallOrder[0],
+    );
+    expect(intents.adoptUpload).toHaveBeenCalledWith(prisma, 'intent-1');
+    expect(intents.adoptUpload.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.importBatch.create.mock.invocationCallOrder[0],
+    );
+    expect(intents.abandonUpload).not.toHaveBeenCalled();
+  });
+
+  it('abandons the intent and opens no batch when the file cannot be stored', async () => {
+    const { prisma, storage, intents, service } = build();
+    storage.upload.mockRejectedValue(new Error('storage down'));
+
+    await expect(service.import(dataEntry(), csvFile([row()]), NOTHING)).rejects.toThrow('storage down');
+
+    expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', {
+      bucket: 'import-sources',
+      path: storage.upload.mock.calls[0][1],
+    });
+    expect(prisma.importBatch.create).not.toHaveBeenCalled();
   });
 
   it('marks the batch failed when the loop aborts on the role backstop', async () => {
