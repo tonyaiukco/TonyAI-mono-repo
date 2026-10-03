@@ -21,6 +21,17 @@ def verify(inputs, read=az):
         expected_image = foundation['registry_name'] + '.azurecr.io/tonyai/' + kind + '@' + release[kind + '_digest']
         if container.get('image') != expected_image:
             raise SafeFailure('Deployed image differs from selected release.')
+        if kind == 'api':
+            env = {item['name']: item for item in container.get('env', [])}
+            expected_settings = {'STORAGE_CLEANUP_HOLD': '1' if release.get('storage_cleanup_hold', False) else '0',
+                                 'STORAGE_SWEEP_INTERVAL_SECONDS': str(release.get('storage_sweep_interval_seconds', 300))}
+            if any(env.get(key, {}).get('value') != value for key, value in expected_settings.items()):
+                raise SafeFailure('Storage operational settings differ from the release.')
+            probes = {item['type']: item for item in container.get('probes', [])}
+            for probe in ('Startup', 'Liveness', 'Readiness'):
+                path = '/api/v1/health/ready' if probe == 'Readiness' else '/api/v1/health'
+                if probes.get(probe, {}).get('httpGet', {}).get('path') != path:
+                    raise SafeFailure('Health probes differ from the release contract.')
         configuration = properties['configuration']
         expected_fqdn = stem + '-' + kind + '.' + foundation['default_domain']
         if (configuration['ingress'].get('allowInsecure') is not False

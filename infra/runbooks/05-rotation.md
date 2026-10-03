@@ -41,7 +41,9 @@ the authenticated runtime flow; any migration change requires a separately revie
 source-bound release under runbook 03. The new release ID creates fresh revisions, even when only secret versions
 change. Verify authenticated requests/new DB connections, both bucket probes,
 login and the browser build before revoking the old provider key or disabling old
-vault versions. Record references and results only. If a DB password reset revokes
+vault versions. Update the owner-managed scheduled verification job to the selected digest and new
+secret versions through runbook 06 before retiring the old versions. Record
+references and results only. If a DB password reset revokes
 the old credential immediately, use a maintenance window: old revisions cannot
 recover by restarting. Restore service with consistent new transaction/session
 URLs and the new manifest; a second reset may be required after an interrupted

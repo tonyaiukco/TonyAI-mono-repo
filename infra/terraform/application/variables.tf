@@ -14,13 +14,19 @@ variable "release" {
   type = object({
     source_sha              = string, release_id = string, supabase_project_ref = string,
     api_digest              = string, web_digest = string,
-    database_secret_version = string, backend_secret_version = string
+    database_secret_version = string, backend_secret_version = string,
+    storage_cleanup_hold    = optional(bool, false), storage_sweep_interval_seconds = optional(number, 300)
   })
   validation {
     condition     = alltrue([for digest in [var.release.api_digest, var.release.web_digest] : can(regex("^sha256:[a-f0-9]{64}$", digest))]) && alltrue([for version in [var.release.database_secret_version, var.release.backend_secret_version] : can(regex("^[a-f0-9]{32}$", version))]) && can(regex("^[a-z]{20}$", var.release.supabase_project_ref)) && can(regex("^[a-f0-9]{40}$", var.release.source_sha)) && can(regex("^[a-z][a-z0-9-]{0,29}$", var.release.release_id))
     error_message = "Use immutable digests, exact enabled vault versions, a project ref, full source SHA and unique revision suffix."
   }
+  validation {
+    condition     = var.release.storage_sweep_interval_seconds >= 1 && var.release.storage_sweep_interval_seconds <= 86400 && floor(var.release.storage_sweep_interval_seconds) == var.release.storage_sweep_interval_seconds
+    error_message = "Storage sweep interval must be an integer from 1 to 86400 seconds."
+  }
 }
+# Operational settings are plain values, never Key Vault secrets.
 locals {
   stem            = "${var.foundation.prefix}-${var.foundation.environment}"
   group_id        = "/subscriptions/${var.foundation.subscription_id}/resourceGroups/${var.foundation.resource_group}"
@@ -32,6 +38,8 @@ locals {
   secret_versions = { database-url = var.release.database_secret_version, supabase-service-role-key = var.release.backend_secret_version }
   api_env = [
     { name = "NODE_ENV", value = "production" }, { name = "PORT", value = "3001" },
+    { name = "STORAGE_CLEANUP_HOLD", value = var.release.storage_cleanup_hold ? "1" : "0" },
+    { name = "STORAGE_SWEEP_INTERVAL_SECONDS", value = tostring(var.release.storage_sweep_interval_seconds) },
     { name = "LOG_FORMAT", value = "json" }, { name = "SUPABASE_URL", value = local.supabase_url },
     { name = "SUPABASE_JWT_SCHEME", value = "jwks" }, { name = "WEB_ORIGIN", value = local.web_origin },
     { name = "DATABASE_URL", secretRef = "database-url" },

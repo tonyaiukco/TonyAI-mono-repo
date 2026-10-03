@@ -86,6 +86,11 @@ LP2-02/03's actual image/login/export and readiness acceptance before release.
 
 ## 3.4 LP2-02 release sequence (D22/D23)
 
+**No other E2E during a release.** Reserve the E2E window with the owner; avoid
+the nightly schedule and do not dispatch another branch/PR run until release
+qualification finishes. The shared concurrency group cancels an earlier run;
+a cancelled release run must be rerun at the exact candidate SHA.
+
 These are **owner-run instructions**, not recorded cloud evidence. Terraform is
 still the only Azure application writer. LP2-01 cloud/fresh-recreation acceptance
 remains open. LP2-02 is not DONE until the exact deployed candidate passes below.
@@ -195,7 +200,7 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
    From the candidate's clean checkout run:
 
    ```bash
-   python3 infra/scripts/candidate.py verify --sha '<full-sha>' --candidate .infra-local/staging/candidate.json --inputs .infra-local/staging/release-r001.json
+   python3 infra/scripts/candidate.py verify --sha '<full-sha>' --candidate .infra-local/staging/candidate-download/candidate.json --inputs .infra-local/staging/release-r001.json
    ```
 
 4. Review migration compatibility with the previous release. Run section 3.2
@@ -250,7 +255,7 @@ pnpm install --frozen-lockfile
 pnpm db:generate
 pnpm --filter @tonyai/shared-types build
 pnpm exec playwright install chromium
-python3 infra/scripts/cloud_smoke.py --candidate .infra-local/staging/candidate.json --inputs .infra-local/staging/release-r001.json --journal .infra-local/staging/smoke-r001.json
+python3 infra/scripts/cloud_smoke.py --candidate .infra-local/staging/candidate-download/candidate.json --inputs .infra-local/staging/release-r001.json --journal .infra-local/staging/smoke-r001.json
 ```
 
 The public browser key is entered at a hidden prompt. Exact Key Vault backend
@@ -281,7 +286,7 @@ results. No successful deploy workflow alone qualifies a release.
 If interrupted (including a lost Auth-create response), keep the journal and run:
 
 ```bash
-python3 infra/scripts/cloud_smoke.py --candidate .infra-local/staging/candidate.json --inputs .infra-local/staging/release-r001.json --journal .infra-local/staging/smoke-r001.json --cleanup-only
+python3 infra/scripts/cloud_smoke.py --candidate .infra-local/staging/candidate-download/candidate.json --inputs .infra-local/staging/release-r001.json --journal .infra-local/staging/smoke-r001.json --cleanup-only
 ```
 
 Cleanup attempts both exact accounts even if one fails; any mismatch/failure
@@ -302,7 +307,16 @@ recreation remain owner evidence. Auth inventory/create/delete API responses,
 OIDC, static runner access, provider apply and live browser behavior must still
 be proven in staging.
 
-Offline checks: `python3 -m unittest discover -s infra/tests -v`,
+Offline checks (first create the PyYAML environment):
+
+```bash
+python3 -m venv /private/tmp/tonyai-infra-venv
+source /private/tmp/tonyai-infra-venv/bin/activate
+python3 -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
+python3 -m unittest discover -s infra/tests -v
+```
+
+Then
 `node --test infra/tests/*.test.mjs`, the existing mutation/policy/Terraform suites,
 plus root lint/typecheck/build/test. CI's `docker-build` now **loads and starts**
 the actual linux/amd64 images against its isolated local Supabase stack and runs

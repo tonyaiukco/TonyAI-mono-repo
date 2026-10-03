@@ -10,7 +10,8 @@ ALLOWED = {
         'Microsoft.OperationalInsights/workspaces', 'Microsoft.App/managedEnvironments',
         'Microsoft.Insights/diagnosticSettings', 'Microsoft.KeyVault/vaults',
         'Microsoft.ManagedIdentity/userAssignedIdentities', 'Microsoft.Authorization/roleAssignments',
-        'Microsoft.Authorization/roleDefinitions'},
+        'Microsoft.Authorization/roleDefinitions', 'Microsoft.App/jobs',
+        'Microsoft.Insights/actionGroups', 'Microsoft.Insights/scheduledQueryRules'},
     'application': {'Microsoft.App/containerApps'},
 }
 

@@ -21,6 +21,7 @@ type SentryApi = {
   init(options: Record<string, unknown>): void;
   withScope(callback: (scope: SentryScope) => void): void;
   captureException(error: unknown): void;
+  flush(timeout: number): Promise<boolean>;
 };
 
 const dsn = process.env.SENTRY_DSN;
@@ -39,6 +40,14 @@ export async function initSentry(): Promise<void> {
     // Compliance: this is a carbon-accounting product — never ship request
     // bodies, headers or cookies, which can carry tenant data and tokens.
     sendDefaultPii: false,
+    // Fetch/HTTP breadcrumbs can contain Storage object keys (file names),
+    // signed URLs and tokens. Drop them before they enter any later event.
+    beforeBreadcrumb: (breadcrumb: { type?: string; category?: string }) => {
+      if (breadcrumb.type === 'http' || /^(http|fetch)(\.|$)/i.test(breadcrumb.category ?? '')) {
+        return null;
+      }
+      return breadcrumb;
+    },
   });
   sentry = mod;
 }
@@ -61,4 +70,9 @@ export function captureException(
     if (context?.userId) scope.setUser({ id: context.userId });
     mod.captureException(error);
   });
+}
+
+/** Used only by the owner-run synthetic reporter before its process exits. */
+export async function flushSentry(): Promise<boolean> {
+  return sentry ? sentry.flush(5_000) : false;
 }

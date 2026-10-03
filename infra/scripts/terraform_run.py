@@ -40,7 +40,7 @@ def validate_release(inputs):
         if not isinstance(foundation[key], str) or not re.fullmatch(pattern, foundation[key]):
             raise SafeFailure('Invalid foundation identifier or domain.')
     expected = {'source_sha', 'release_id', 'supabase_project_ref', 'api_digest', 'web_digest', 'database_secret_version', 'backend_secret_version'}
-    if set(release) != expected:
+    if not expected <= set(release) or set(release) - expected - {'storage_cleanup_hold', 'storage_sweep_interval_seconds'}:
         raise SafeFailure('Release contains unknown fields; secret values are prohibited.')
     patterns = {'source_sha': r'[a-f0-9]{40}', 'release_id': r'[a-z][a-z0-9-]{0,29}',
                 'supabase_project_ref': r'[a-z]{20}', 'api_digest': r'sha256:[a-f0-9]{64}',
@@ -48,6 +48,11 @@ def validate_release(inputs):
                 'backend_secret_version': r'[a-f0-9]{32}'}
     if any(not isinstance(release[k], str) or not re.fullmatch(p, release[k]) for k, p in patterns.items()):
         raise SafeFailure('Release needs immutable digests, exact versions and a reviewed source SHA.')
+    if type(release.get('storage_cleanup_hold', False)) is not bool:
+        raise SafeFailure('Storage cleanup hold must be a boolean.')
+    interval = release.get('storage_sweep_interval_seconds', 300)
+    if type(interval) is not int or not 1 <= interval <= 86400:
+        raise SafeFailure('Storage sweep interval must be integer seconds from 1 to 86400.')
     return foundation, release
 
 
