@@ -164,7 +164,6 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
   private firstTick: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
   private lastStuck = 0;
-  private everyRowVisible = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -310,22 +309,29 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
   }
 
   /**
-   * Whether this connection's role sees every row of the tables that own
+   * Whether the role `client` runs as sees every row of the tables that own
    * objects and of Storage's catalogue: a superuser, a BYPASSRLS role, the
-   * table's owner, or a table without RLS. Asked before any removal — the
-   * owned-bytes guard is only as good as the rows it can see. Remembered once
-   * true; a role does not lose it mid-process.
+   * table's owner (unless the table FORCEs RLS), or a table without RLS.
+   * Asked before any removal, in the SAME transaction as the owned-bytes
+   * read it vouches for — a pooled connection can carry another role, so a
+   * check on one connection says nothing about a read on the next. Never
+   * cached, for the same reason and because a role can lose BYPASSRLS
+   * mid-process. Membership of an owning role does not count: that fails
+   * closed.
    */
-  async seesEveryRow(): Promise<boolean> {
-    if (this.everyRowVisible) return true;
-    const [{ ok }] = await this.prisma.$queryRaw<{ ok: boolean | null }[]>`
-      SELECT bool_and(r.rolsuper OR r.rolbypassrls OR c.relowner = r.oid OR NOT c.relrowsecurity) AS ok
+  async seesEveryRow(client: Pick<Prisma.TransactionClient, '$queryRaw'> = this.prisma): Promise<boolean> {
+    const [{ ok }] = await client.$queryRaw<{ ok: boolean | null }[]>`
+      SELECT bool_and(
+               r.rolsuper
+               OR r.rolbypassrls
+               OR (c.relowner = r.oid AND NOT c.relforcerowsecurity)
+               OR NOT c.relrowsecurity
+             ) AS ok
       FROM pg_roles r
       CROSS JOIN pg_class c
       WHERE r.rolname = current_user
         AND c.oid IN ('public.evidence'::regclass, 'public.import_batches'::regclass, 'storage.objects'::regclass)`;
-    this.everyRowVisible = ok === true;
-    return this.everyRowVisible;
+    return ok === true;
   }
 
   /** What is waiting, for the sweep's log line and `storage:reconcile`. */
@@ -437,15 +443,6 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
   private async execute(claimed: ClaimedIntent[]): Promise<Outcome> {
     const outcome: Outcome = { removed: 0, failed: 0, kept: 0 };
     if (claimed.length === 0) return outcome;
-    // Fail closed: under a role RLS filters, every object would read as
-    // unowned. The intents go back, untouched, and wait for a role that sees.
-    if (!(await this.seesEveryRow())) {
-      const refused = new RowsHiddenError();
-      await this.release(claimed, refused.message);
-      this.logger.error(refused.message);
-      captureException(refused);
-      return { ...outcome, failed: claimed.length };
-    }
     const byBucket = new Map<string, ClaimedIntent[]>();
     for (const intent of claimed) {
       byBucket.set(intent.bucket, [...(byBucket.get(intent.bucket) ?? []), intent]);
@@ -456,7 +453,24 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
         outcome.failed += intents.length;
         continue;
       }
-      const owned = await ownedPaths(this.prisma, bucket, intents.map((i) => i.objectPath));
+      let owned: Set<string>;
+      try {
+        // One short read-only transaction: the visibility check and the read
+        // it vouches for share a connection, and so a role. Fail closed —
+        // under a role RLS filters every object would read as unowned; the
+        // intents go back untouched and wait for a role that sees.
+        owned = await this.prisma.$transaction(async (tx) => {
+          if (!(await this.seesEveryRow(tx))) throw new RowsHiddenError();
+          return ownedPaths(tx, bucket, intents.map((i) => i.objectPath));
+        });
+      } catch (error) {
+        if (!(error instanceof RowsHiddenError)) throw error;
+        await this.release(intents, error.message);
+        this.logger.error(error.message);
+        captureException(error);
+        outcome.failed += intents.length;
+        continue;
+      }
       const keep = intents.filter((i) => owned.has(i.objectPath));
       if (keep.length > 0) {
         // Unreachable under the protocol — an upload intent is adopted in its

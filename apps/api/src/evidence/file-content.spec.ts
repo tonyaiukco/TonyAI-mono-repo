@@ -131,6 +131,42 @@ describe('checkEvidenceFile — the bytes must be what the upload claims', () =>
     for (const [label, archive] of Object.entries({ encoded, encodedVba, undeclared, related })) {
       expect(refusal(() => checkEvidenceFile(file(XLSX, archive))), label).toMatch(/macros/);
     }
+    // A DTD splitting the token across entities; a part in UTF-16; a second
+    // content-types part; a VBA part behind a backslash (security-rls, round 2).
+    const dtd = zip([
+      {
+        name: '[Content_Types].xml',
+        data:
+          '<!DOCTYPE Types [<!ENTITY a "macro"><!ENTITY b "Enabled">]>' +
+          contentTypes('application/vnd.ms-excel.sheet.&a;&b;.main+xml'),
+      },
+    ]);
+    const undefinedEntity = zip([
+      { name: '[Content_Types].xml', data: contentTypes('application/vnd.ms-excel.sheet.&macro;.main+xml') },
+    ]);
+    const utf16Rels = zip([
+      { name: '[Content_Types].xml', data: workbookTypes },
+      {
+        name: 'xl/_rels/workbook.xml.rels',
+        data: Buffer.concat([
+          Buffer.from([0xff, 0xfe]),
+          Buffer.from('<Relationships><Relationship Type="vbaProject"/></Relationships>', 'utf16le'),
+        ]),
+      },
+    ]);
+    const secondTypes = zip([
+      { name: '[Content_Types].xml', data: workbookTypes },
+      { name: '/[Content_Types].xml', data: contentTypes('application/vnd.ms-excel.sheet.macroEnabled.main+xml') },
+    ]);
+    const backslash = zip([
+      { name: '[Content_Types].xml', data: workbookTypes },
+      { name: 'xl\\vbaProject.bin', data: Buffer.from([0xd0, 0xcf, 0x11, 0xe0]) },
+    ]);
+    expect(refusal(() => checkEvidenceFile(file(XLSX, dtd))), 'dtd').toMatch(/not a XLSX file/);
+    expect(refusal(() => checkEvidenceFile(file(XLSX, undefinedEntity))), 'entity').toMatch(/not a XLSX file/);
+    expect(refusal(() => checkEvidenceFile(file(XLSX, utf16Rels))), 'utf16').toMatch(/not a XLSX file|macros/);
+    expect(refusal(() => checkEvidenceFile(file(XLSX, secondTypes))), 'second types').toMatch(/not a XLSX file|macros/);
+    expect(refusal(() => checkEvidenceFile(file(XLSX, backslash))), 'backslash').toMatch(/macros/);
     // A named entity a real file may use is still read as text, not refused.
     const amp = zip([
       {

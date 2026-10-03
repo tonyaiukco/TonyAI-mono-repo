@@ -74,6 +74,8 @@ describe('StorageIntentsService — after the commit, never throws', () => {
       $queryRaw: vi.fn().mockResolvedValueOnce(claimed).mockResolvedValueOnce([{ ok: false }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       evidence: { findMany: vi.fn() },
+      // The check and the owned-bytes read share one transaction (and so one connection).
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     };
     const remove = vi.fn();
     const intents = new StorageIntentsService(prisma as unknown as PrismaService, { remove } as unknown as StorageService);
@@ -84,6 +86,7 @@ describe('StorageIntentsService — after the commit, never throws', () => {
     // Not even asked who owns it: under RLS the answer would be "nobody".
     expect(prisma.evidence.findMany).not.toHaveBeenCalled();
     expect(prisma.$executeRaw).toHaveBeenCalledOnce(); // the release
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
     expect(logged.mock.calls[0][0]).toMatch(/cannot see every row/);
     logged.mockRestore();
   });

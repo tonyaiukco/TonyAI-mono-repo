@@ -21,12 +21,15 @@ import { sanitiseCallerText } from '../common/caller-text';
  *  - PDF: `%PDF-` within the first 1,024 bytes — where readers look for it;
  *  - PNG / JPEG: the format's signature;
  *  - XLSX: a ZIP whose `[Content_Types].xml` declares a spreadsheetml
- *    workbook, refused when it carries a VBA project however it is spelled —
- *    declared as macro-enabled or VBA in the content types or the workbook's
- *    relationships (XML character references decoded first), or present as
- *    `xl/vbaProject.bin` (a renamed .xlsm). Embedded OLE objects and DDE
- *    links are NOT refused: they are the residual risk K1 accepts, named for
- *    the LP5-02 pen-test;
+ *    workbook, refused when it carries a VBA project in the forms an Office
+ *    reader honours — a macro-enabled or VBA content type or workbook
+ *    relationship (XML character references decoded first), or any part
+ *    whose name says vbaProject (a renamed .xlsm). Parts that could hide
+ *    those words are refused outright: a DTD or an entity reference XML
+ *    does not predefine (OPC forbids DTDs), a UTF-16 part, a second
+ *    `[Content_Types].xml`. Embedded OLE objects and DDE links are NOT
+ *    refused: they are the residual risk K1 accepts, named for the LP5-02
+ *    pen-test;
  *  - CSV: text — no NUL or other C0 control byte besides tab, LF, CR and FF.
  *    The encoding is not judged: Turkish Excel saves CSV as Windows-1254.
  */
@@ -87,26 +90,50 @@ function decodeXmlText(xml: string): string {
 
 const MACRO = /macroEnabled|vbaProject/i;
 
+/** An `&` that does not open a reference XML predefines — legal only with a DTD, which OPC forbids. */
+const UNDECLARED_REFERENCE = /&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-f]+);)/i;
+
+/**
+ * A part's text, references decoded — or null for a part that could spell a
+ * word without containing it: UTF-16 (a BOM, or the NULs of its ASCII), a
+ * DTD, or a reference XML does not predefine.
+ */
+function partText(part: Buffer): string | null {
+  if (part.includes(0) || (part.length >= 2 && ((part[0] === 0xfe && part[1] === 0xff) || (part[0] === 0xff && part[1] === 0xfe)))) {
+    return null;
+  }
+  const raw = part.toString('utf8');
+  if (/<!(?:DOCTYPE|ENTITY)/i.test(raw) || UNDECLARED_REFERENCE.test(raw)) return null;
+  return decodeXmlText(raw);
+}
+
+function occurrences(haystack: string, needle: RegExp): number {
+  return haystack.match(needle)?.length ?? 0;
+}
+
 function xlsxVerdict(bytes: Buffer): XlsxVerdict {
   if (bytes.length < 4 || bytes.readUInt32LE(0) !== ZIP_LOCAL_HEADER) return 'other';
+  // Entry names are stored uncompressed — in each local header and again in
+  // the central directory — so the raw bytes name every part. Any part named
+  // vbaProject, at any path or with any separator, is a macro project.
+  const raw = bytes.toString('latin1');
+  if (/vbaproject/i.test(raw)) return 'macro';
+  // One content-types part has its name exactly twice; a second spelling of
+  // it (`/[Content_Types].xml`) is a part some reader might pick instead.
+  if (occurrences(raw, /\[content_types\]\.xml/gi) !== 2) return 'other';
   try {
     const archive = ZipArchive.open(bytes);
     // One budget for every part read here, as the importer's reader does.
     const budget = new UnpackBudget(CONTENT_TYPES_BUDGET_BYTES);
-    const types = archive.read('[Content_Types].xml', budget);
-    if (!types) return 'other';
-    const relationships = archive.read('xl/_rels/workbook.xml.rels', budget);
-    if (
-      MACRO.test(decodeXmlText(types.toString('utf8'))) ||
-      (relationships && MACRO.test(decodeXmlText(relationships.toString('utf8'))))
-    ) {
-      return 'macro';
-    }
-    // Present but undeclared still counts: a reader that loads it by name
-    // must not find it. (Reading it at all spends the budget; an oversized
-    // one is refused by the catch below, which is the right answer too.)
-    if (archive.read('xl/vbaProject.bin', budget)) return 'macro';
-    return /spreadsheetml\.sheet\.main\+xml/i.test(decodeXmlText(types.toString('utf8'))) ? 'workbook' : 'other';
+    const typesPart = archive.read('[Content_Types].xml', budget);
+    if (!typesPart) return 'other';
+    const types = partText(typesPart);
+    if (types === null) return 'other';
+    const relationshipsPart = archive.read('xl/_rels/workbook.xml.rels', budget);
+    const relationships = relationshipsPart ? partText(relationshipsPart) : '';
+    if (relationships === null) return 'other';
+    if (MACRO.test(types) || MACRO.test(relationships)) return 'macro';
+    return /spreadsheetml\.sheet\.main\+xml/i.test(types) ? 'workbook' : 'other';
   } catch {
     return 'other';
   }
