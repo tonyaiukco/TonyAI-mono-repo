@@ -185,8 +185,25 @@ describe('setRole', () => {
       action: 'update',
       entity: 'profile',
       organisationId: A.organisationId,
-      diff: { role: { from: 'consultant', to: 'executive_viewer' } },
+      diff: { before: { role: 'consultant' }, after: { role: 'executive_viewer' } },
     });
+  });
+
+  it('a data_entry user moved to another role loses its grants (audited); moved back, it starts with none', async () => {
+    await service(a).grantSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, secondSubsidiaryA);
+    expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(2);
+
+    await service(a).setRole(A.users.superAdmin, A.users.dataEntry.id, UserRole.consultant);
+    expect(await grantsOf(A.users.dataEntry.id)).toEqual([]);
+    await service(a).setRole(A.users.superAdmin, A.users.dataEntry.id, UserRole.data_entry);
+    expect(await grantsOf(A.users.dataEntry.id)).toEqual([]);
+
+    const rows = await auditOf(A.users.dataEntry.id);
+    const withdrawn = rows.filter((r) => r.entity === 'subsidiary_access' && r.action === 'delete');
+    expect(withdrawn.map((r) => (r.diff as { subsidiaryId: string }).subsidiaryId).sort()).toEqual(
+      [A.subsidiaryId, secondSubsidiaryA].sort(),
+    );
+    expect(rows.filter((r) => r.entity === 'profile')).toHaveLength(2);
   });
 
   it('nobody changes their own role — not even to promote or keep the last super_admin', async () => {

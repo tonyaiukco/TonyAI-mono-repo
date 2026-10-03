@@ -5,7 +5,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, UserRole } from '@tonyai/db';
+import { Prisma, UserRole as DbUserRole } from '@tonyai/db';
+import type { UserRole } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from './auth.types';
@@ -31,6 +32,9 @@ import type { RequestUser } from './auth.types';
  *    demoted a moment ago cannot act on the stale role their request was
  *    authenticated with, and two administrators cannot demote each other at
  *    once.
+ *  - Only data_entry users hold grants: a user moved to another role loses them,
+ *    each withdrawal audited, so a later move back to data_entry starts with
+ *    nothing rather than silently regaining old access.
  *  - Every change writes its audit row in the same transaction.
  *
  * Organisations and first administrators are provisioned by the operator, not
@@ -49,7 +53,7 @@ export class AccessAdminService {
     await this.prisma.$transaction(async (tx) => {
       const admin = await lockAndReadActor(tx, actor, organisationId);
       const target = await findMember(tx, organisationId, profileId);
-      if (target.role !== UserRole.data_entry) {
+      if (target.role !== DbUserRole.data_entry) {
         // The guard ignores grants for organisation-wide roles; storing one would
         // silently widen that user's access if their role later changed.
         throw new BadRequestException(
@@ -68,7 +72,16 @@ export class AccessAdminService {
       });
       if (existing) return;
 
-      await tx.userSubsidiaryAccess.create({ data: { userId: profileId, subsidiaryId, organisationId } });
+      try {
+        await tx.userSubsidiaryAccess.create({ data: { userId: profileId, subsidiaryId, organisationId } });
+      } catch (err) {
+        // The subsidiary (or profile) was deleted after the lookup above — a
+        // subsidiary delete does not take this lock. The same answer as a miss.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+          throw new NotFoundException('Subsidiary not found');
+        }
+        throw err;
+      }
       await this.audit.record(
         admin,
         { action: 'create', entity: 'subsidiary_access', entityId: profileId, diff: { subsidiaryId } },
@@ -97,7 +110,7 @@ export class AccessAdminService {
   /** Changes the role of `profileId`, a member of the actor's organisation other than the actor. */
   async setRole(actor: RequestUser, profileId: string, role: UserRole): Promise<void> {
     const organisationId = assertTenantAdmin(actor);
-    if (!Object.values(UserRole).includes(role)) throw new BadRequestException('Unknown role');
+    if (!(Object.values(DbUserRole) as string[]).includes(role)) throw new BadRequestException('Unknown role');
     if (profileId === actor.id) {
       throw new ForbiddenException('You cannot change your own role; ask another super_admin.');
     }
@@ -108,9 +121,29 @@ export class AccessAdminService {
       await tx.profile.update({ where: { id: profileId }, data: { role } });
       await this.audit.record(
         admin,
-        { action: 'update', entity: 'profile', entityId: profileId, diff: { role: { from: target.role, to: role } } },
+        { action: 'update', entity: 'profile', entityId: profileId, diff: { before: { role: target.role }, after: { role } } },
         tx,
       );
+      if (target.role === DbUserRole.data_entry) {
+        const grants = await tx.userSubsidiaryAccess.findMany({
+          where: { userId: profileId, organisationId },
+          select: { subsidiaryId: true },
+          orderBy: { subsidiaryId: 'asc' },
+        });
+        await tx.userSubsidiaryAccess.deleteMany({ where: { userId: profileId, organisationId } });
+        for (const { subsidiaryId } of grants) {
+          await this.audit.record(
+            admin,
+            {
+              action: 'delete',
+              entity: 'subsidiary_access',
+              entityId: profileId,
+              diff: { subsidiaryId, reason: `role changed from data_entry to ${role}` },
+            },
+            tx,
+          );
+        }
+      }
     });
   }
 }
@@ -126,7 +159,7 @@ export function tenantAdminLockKey(organisationId: string): number {
 
 /** The actor's organisation, when the actor may administer it at all. */
 function assertTenantAdmin(actor: RequestUser): string {
-  if (actor.role !== UserRole.super_admin || !actor.organisationId) {
+  if (actor.role !== DbUserRole.super_admin || !actor.organisationId) {
     throw new ForbiddenException('Only a super_admin manages roles and access.');
   }
   return actor.organisationId;
@@ -147,7 +180,7 @@ async function lockAndReadActor(
     where: { id: actor.id },
     select: { role: true, organisationId: true },
   });
-  if (!current || current.role !== UserRole.super_admin || current.organisationId !== organisationId) {
+  if (!current || current.role !== DbUserRole.super_admin || current.organisationId !== organisationId) {
     throw new ForbiddenException('Only a super_admin manages roles and access.');
   }
   return { ...actor, role: current.role };
