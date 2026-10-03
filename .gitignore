@@ -42,3 +42,23 @@ supabase/.temp/
 *.pem
 .vscode/
 .idea/
+
+# Infrastructure local inputs/recovery journals and Terraform generated artifacts
+.infra-local/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+*.plan
+*.plan.json
+*.tfvars
+*.tfvars.json
+*.auto.tfvars*
+*.tfbackend
+crash.log
+crash.*.log
+.terraformrc
+terraform.rc
+**/__pycache__/
+# Provider dependency locks under infra are intentional source files.

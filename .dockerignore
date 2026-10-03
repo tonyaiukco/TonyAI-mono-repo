@@ -27,3 +27,24 @@ playwright-report
 supabase/.temp
 *.log
 .DS_Store
+
+# No infrastructure state, plans, owner inputs or helper payloads in image context.
+.infra-local
+**/.infra-local
+**/.terraform
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/*.tfplan.*
+**/*.plan
+**/*.plan.json
+**/*.tfvars
+**/*.tfvars.json
+**/*.auto.tfvars*
+**/*.tfbackend
+**/crash*.log
+**/.terraformrc
+**/terraform.rc
+infra/*
+!infra/certs
+!infra/certs/**

@@ -2,7 +2,9 @@
 # Owner-run child process: failure stops this script, never the interactive shell.
 set -euo pipefail
 set +x
-: "${RELEASE_SHA:?Restore the staging session first}"
+: "${1:?Usage: build-images.sh <source-sha> <new-candidate-json>}" "${2:?Output path required}"
+export RELEASE_SHA="$1"
+test ! -e "$2"
 : "${SUPABASE_PROJECT_REF:?Complete Supabase setup first}"
 : "${ACR_HOST:?}" "${ACR_NAME:?}" "${API_ORIGIN:?}" "${RESOURCE_GROUP:?}"
 test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
@@ -40,6 +42,10 @@ docker pull --platform linux/amd64 "$ACR_HOST/tonyai/web@$WEB_DIGEST"
 container_id=$(docker create --platform linux/amd64 "$ACR_HOST/tonyai/web@$WEB_DIGEST")
 docker cp "$container_id:/app/apps/web/.next/static" "$work_dir/static"
 python3 infra/scripts/scan_browser_assets.py "$work_dir/static"
-# Persist only public digests after the scan passes, for a later terminal/session.
-az group update -n "$RESOURCE_GROUP" --set "tags.candidateApiDigest=$API_DIGEST" "tags.candidateWebDigest=$WEB_DIGEST" --output none
+# Record only public provenance after the exact pushed image scan passes. Never mutate foundation tags.
+python3 - "$2" "$RELEASE_SHA" "$API_DIGEST" "$WEB_DIGEST" "$SUPABASE_PROJECT_REF" "$API_ORIGIN" "$WEB_ORIGIN" <<'PYJSON'
+import json,sys
+with open(sys.argv[1], 'x') as target:
+    json.dump(dict(zip(['source_sha','api_digest','web_digest','supabase_project_ref','api_origin','web_origin'],sys.argv[2:])),target,indent=2)
+PYJSON
 printf 'PASS: built and scanned release %s\nAPI %s\nWeb %s\n' "$RELEASE_SHA" "$API_DIGEST" "$WEB_DIGEST"

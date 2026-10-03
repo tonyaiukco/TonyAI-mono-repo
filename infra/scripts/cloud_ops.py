@@ -34,22 +34,22 @@ def command(args, env=None):
 
 
 def secret(vault, name):
-    value = command(['az', 'keyvault', 'secret', 'show', '--vault-name', vault,
-                     '--name', name, '--query', 'value', '-o', 'tsv', '--only-show-errors'])
-    if not value or '<' in value or '\n' in value:
-        raise SafeFailure('Required Key Vault secret is empty or still a placeholder.')
-    return value
+    from secure_transport import Vault
+    record = Vault(vault).get(name)
+    if not record or record.get('attributes', {}).get('enabled') is not True or not record.get('value'):
+        raise SafeFailure('Required enabled Key Vault secret is missing.')
+    return record['value']
 
 
 def runtime_secret_id(vault, project):
-    # Owner only: Azure returns the value into memory; stdout contains only the validated ID.
-    data = json.loads(command(['az', 'keyvault', 'secret', 'show', '--vault-name', vault,
-                               '--name', 'database-url', '-o', 'json', '--only-show-errors']))
-    if (not re.fullmatch(r'https://' + re.escape(vault) + r'\.vault\.azure\.net/secrets/database-url/[a-f0-9]{32}', data.get('id', ''))
-            or data.get('attributes', {}).get('enabled') is not True):
-        raise SafeFailure('Invalid or disabled runtime secret version.')
+    from secure_transport import Vault
+    client = Vault(vault)
+    data = client.get('database-url')
+    if not data:
+        raise SafeFailure('Runtime secret is missing.')
+    identity = client.identifier(data, 'database-url')
     validate_pooler(data['value'], project, 6543)
-    return data['id']
+    return identity
 
 
 def migrate(vault, project):
@@ -129,11 +129,24 @@ def probe_buckets(base, key):
             print('PASS: probe object removed: ' + name)
 
 
+def migration_release(inputs, vault, project):
+    from terraform_run import validate_release
+    foundation, release = validate_release(inputs)
+    if foundation['vault_name'] != vault or release['supabase_project_ref'] != project:
+        raise SafeFailure('Migration target differs from the selected release.')
+    if (command(['git', 'rev-parse', 'HEAD']) != release['source_sha']
+            or command(['git', 'status', '--porcelain'])):
+        raise SafeFailure('Migrations require the selected image source SHA and a clean checkout.')
+    return release['source_sha']
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('operation', choices=['migrate', 'buckets', 'probe-storage', 'runtime-secret-id'])
     parser.add_argument('--vault', required=True)
     parser.add_argument('--project-ref', required=True)
+    parser.add_argument('--source-sha', help='Reviewed helper source SHA for non-migration operations.')
+    parser.add_argument('--inputs', help='Required for migrations: selected application release manifest.')
     args = parser.parse_args()
     if not re.fullmatch(r'[a-z]{20}', args.project_ref):
         raise SafeFailure('Use the 20-letter hosted Supabase project ref, not a URL.')
@@ -141,16 +154,19 @@ def main():
         raise SafeFailure('Invalid Key Vault name.')
     if os.environ.get('ALLOW_INSECURE_LOCAL_AUTH'):
         raise SafeFailure('Start a clean shell without local-auth settings.')
-    release = os.environ.get('RELEASE_SHA', '')
+    if args.operation == 'migrate':
+        if not args.inputs:
+            raise SafeFailure('Migrations require --inputs for the selected release.')
+        migration_release(json.loads(Path(args.inputs).read_text()), args.vault, args.project_ref)
+        migrate(args.vault, args.project_ref)
+        return
+    release = args.source_sha or ''
     if (not re.fullmatch(r'[a-f0-9]{40}', release)
             or command(['git', 'rev-parse', 'HEAD']) != release
             or command(['git', 'status', '--porcelain'])):
-        raise SafeFailure('Restore a reviewed release and use its clean checkout before cloud operations.')
+        raise SafeFailure('Supply --source-sha for the reviewed clean helper checkout before cloud operations.')
     if args.operation == 'runtime-secret-id':
         print(runtime_secret_id(args.vault, args.project_ref))
-        return
-    if args.operation == 'migrate':
-        migrate(args.vault, args.project_ref)
         return
     # URL is derived from a strict project ref; credentials cannot be sent to an arbitrary host.
     base = 'https://' + args.project_ref + '.supabase.co/storage/v1'

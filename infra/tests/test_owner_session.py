@@ -49,7 +49,7 @@ printf '%s\\n' "$AZURE_TENANT_ID|$VAULT_NAME|$ACR_HOST|$RELEASE_SHA|$SUPABASE_PR
 foundation_output vaultId
 '''
             result = subprocess.run(['bash','--noprofile','--norc','-c',script,'test',str(SCRIPTS/'restore-session.sh')],
-                                    env={**os.environ,'PATH':directory + os.pathsep + os.environ['PATH']},capture_output=True,text=True)
+                                    env={**os.environ,'PATH':directory + os.pathsep + os.environ['PATH'], 'TONYAI_INFRA_SCRIPTS':str(SCRIPTS)},capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertIn('tenant|vault|registry.azurecr.io|' + 'a'*40, result.stdout)
             self.assertIn('abcdefghijklmnopqrst|client|principal|sha256:', result.stdout)
@@ -62,6 +62,14 @@ foundation_output vaultId
         self.assertEqual(result.returncode,0)
         self.assertIn('ALIVE:1|unset|unset',result.stdout)
 
+    def test_every_restored_variable_is_invalidated_before_failed_restore(self):
+        names = 'AZURE_SUBSCRIPTION_ID RESOURCE_GROUP GROUP_ID PREFIX RELEASE_SHA GITHUB_REPOSITORY ACR_NAME ACR_HOST VAULT_NAME VAULT_ID API_IDENTITY_ID LOGS_NAME ACA_DEFAULT_DOMAIN WEB_ORIGIN API_ORIGIN AZURE_TENANT_ID SUPABASE_PROJECT_REF SUPABASE_URL AZURE_CLIENT_ID DEPLOYER_OBJECT_ID API_DIGEST WEB_DIGEST CANDIDATE_API_DIGEST CANDIDATE_WEB_DIGEST DATABASE_SECRET_VERSION BACKEND_SECRET_VERSION'.split()
+        env = {**os.environ, **dict.fromkeys(names, 'stale')}
+        script = 'source "$1"; for name in '+ ' '.join(names) + '; do if [ "${!name+x}" = x ]; then echo "STALE:$name"; fi; done; echo ALIVE'
+        result = subprocess.run(['bash','--noprofile','--norc','-c',script,'test',str(SCRIPTS/'restore-session.sh')],env=env,capture_output=True,text=True)
+        self.assertIn('ALIVE', result.stdout)
+        self.assertNotIn('STALE:', result.stdout)
+
     def test_failed_resource_read_clears_session_and_never_reports_pass(self):
         shells = [['bash','--noprofile','--norc']]
         if shutil.which('zsh'): shells.append(['zsh','-f'])
@@ -72,7 +80,7 @@ foundation_output vaultId
             for shell in shells:
                 script = 'export VAULT_NAME=stale API_DIGEST=stale; source "$1" sub staging; rc=$?; printf "ALIVE:%s|%s|%s" "$rc" "${VAULT_NAME-unset}" "${API_DIGEST-unset}"'
                 result = subprocess.run([*shell,'-c',script,'test',str(SCRIPTS/'restore-session.sh')],
-                                        env={**os.environ,'PATH':directory+os.pathsep+os.environ['PATH']},capture_output=True,text=True)
+                                        env={**os.environ,'PATH':directory+os.pathsep+os.environ['PATH'], 'TONYAI_INFRA_SCRIPTS':str(SCRIPTS)},capture_output=True,text=True)
                 with self.subTest(shell=shell):
                     self.assertEqual(result.returncode,0)
                     self.assertIn('ALIVE:1|unset|unset',result.stdout)

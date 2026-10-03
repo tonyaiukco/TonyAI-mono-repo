@@ -1,0 +1,10 @@
+{
+  "subscription_id": "<subscription-uuid>",
+  "tenant_id": "<tenant-uuid>",
+  "environment": "staging",
+  "resource_group": "tonyai-staging-state",
+  "storage_account": "<globally-unique-staging-account>",
+  "owner_object_id": "<signed-in-owner-object-uuid>",
+  "application_object_id": "",
+  "allowed_ipv4": ["<owner-public-ipv4>/32"]
+}

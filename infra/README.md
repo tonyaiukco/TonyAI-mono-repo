@@ -1,84 +1,74 @@
-# TonyAI staging foundation (LP2-01)
+# TonyAI cloud foundation (LP2-01)
 
-These files implement the accepted Azure/Supabase design. They are not evidence that
-an environment exists. The project owner executes every authenticated cloud step;
-record actual results in the LP2-01 PR using the roadmap B9 handoff. Do not mark the
-card DONE until recreation and cloud verification succeed on the integrated SHA.
+Owner-run Terraform for Azure Germany West Central; coded Supabase Management API
+operations for Frankfurt. **No resources or cloud evidence are implied by these
+files.** LP2-01 closes only after the owner evidences fresh recreation. Inputs for
+tenant, subscription, organization and budget remain placeholders.
 
-Run from the repository root, in Bash. On later visits, [restore the session](runbooks/00-session.md); do not enable interactive `set -e`. Then run in order:
+Use Terraform **1.13.3**, AzAPI **2.6.1**, Node **22**, pnpm **11.9.0**, Python **3.10+**,
+Azure CLI and Docker/buildx. Run from a clean, reviewed checkout. Terraform provider
+locks belong with the two roots; no Supabase or secret-reading Terraform provider
+is used. All secret payloads stay in helper memory and Key Vault, never tfvars,
+state, plan files, logs, repository files or chat.
 
-1. [Azure foundation and GitHub federation](runbooks/01-azure.md).
-2. [Supabase, secrets, migrations and private buckets](runbooks/02-supabase.md).
-3. [Build and deploy the staging containers](runbooks/03-deploy.md).
-4. [Acceptance evidence and recovery boundaries](runbooks/04-verify.md).
-5. When needed, [secret rotation and vault recovery](runbooks/05-rotation.md).
+## Ordered owner path
 
-The design uses Germany West Central, a Consumption ACA environment, ACR Basic,
-Log Analytics, two user-assigned runtime identities and Key Vault secret references.
-Supabase is a separate Frankfurt (`eu-central-1`) project. Production requires a
-separate resource group, identities, vault and Supabase project (LP2-04); these
-staging-only templates deliberately reject another Azure region.
+1. [Restore a safe session](runbooks/00-session.md).
+2. [Bootstrap backend, apply foundation, establish OIDC](runbooks/01-azure.md).
+3. [Create/resume Supabase, configure Auth/JWKS and private buckets](runbooks/02-supabase.md).
+4. [Build immutable images, migrate, deploy one release](runbooks/03-deploy.md).
+5. [Collect live acceptance and fresh-recreation evidence](runbooks/04-verify.md).
+6. [Rotate, roll back or recover state/vault](runbooks/05-rotation.md).
 
-Bicep was chosen over Terraform to avoid introducing a state backend for these
-Azure-only resources. Supabase project/Auth setup remains an explicit dashboard
-procedure; bucket reconciliation and migrations use a small owner-only Python
-standard-library tool. No new package or lockfile dependencies are required.
+## Authoritative writers
 
-## Local checks (no cloud account or database)
+| Surface | Sole writer | Access |
+|---|---|---|
+| Backend group/account, firewall, containers, recovery/lock and backend RBAC | `bootstrap_backend.py` | Owner only; no Terraform state needed |
+| Azure resource group, registry, logs, environment, diagnostics, vault, managed identities, Azure role assignments | `terraform/foundation` | Owner; `foundation` blob container only |
+| Entra app/SP/federation and RG `githubClientId`/`githubPrincipalId` recovery markers | Reviewed `configure_oidc.py` | Owner Graph access; these two tag fields are explicitly excluded from Terraform ownership |
+| Both Container Apps, revisions, ingress, image digests, secret references | `terraform/application`, through `deploy-apps.sh` | First create by owner; then app-scoped deployer and `application` blob container |
+| Supabase project, Auth/signing keys, buckets | `supabase_setup.py`, journaled Management API calls | Owner management token entered with hidden input |
+| Key Vault secret **values** | Supabase transfer or explicit `release_secrets.py store` rotation | Owner; no Terraform secret resource/data source |
+| Builds and Prisma migrations | Build/migration helpers | Outside Terraform |
 
-Use Node 22, the repository-pinned pnpm, Python 3.10+ and the Bicep CLI. Compile
-outside the checkout; no generated ARM files belong in git.
+One account per environment, two state containers, no workspaces as an isolation
+boundary, no application remote-state data source. The deployer receives no
+foundation-state access and cannot create arbitrary apps/jobs or change RBAC.
+The owner exports a small public contract (resource names/domain/tenant) for the
+application root. Deploy access is still access to runtime data: code replacing
+the API can read its secrets. Enforced GitHub environment protections are required.
+
+Bicep is retired from the active tree. Its reviewed baseline remains in Git at
+`40ed0f9` (#139); there is no second Azure writer to apply. As no Bicep deployment
+exists, this transition starts with empty remote state. Do not import arbitrary
+existing resources or state; inspect provider read behavior and ownership first.
+
+## Offline validation
 
 ```bash
-bicep build infra/azure/foundation.bicep --outfile /tmp/tonyai-foundation.json
-bicep build infra/azure/apps.bicep --outfile /tmp/tonyai-apps.json
-bicep build infra/azure/secret-access.bicep --outfile /tmp/tonyai-secret-access.json
-bicep build infra/azure/deployer-access.bicep --outfile /tmp/tonyai-deployer-access.json
 python3 -m unittest discover -s infra/tests -v
 python3 infra/tests/check_mutations.py
+python3 infra/scripts/check_terraform_policy.py
+terraform fmt -check -recursive infra/terraform
+for root in foundation application; do
+  terraform -chdir="infra/terraform/$root" init -backend=false -input=false -lockfile=readonly
+  terraform -chdir="infra/terraform/$root" validate
+  terraform -chdir="infra/terraform/$root" test
+ done
 pnpm lint
 pnpm typecheck
 pnpm build
 pnpm test
 ```
 
-The dedicated `.github/workflows/infra.yml` runs the Python suite, security
-regression mutations (assertion failures required; test errors do not count) and pinned Bicep compilation on infra PRs, without cloud login.
+Terraform tests use **mock providers**. They test expressions/guards and do not
+establish permissions, region availability, provisioning, pricing, OIDC, TLS,
+secret resolution or health. Infrastructure CI has no cloud credentials and never
+applies resources. D22 keeps per-PR E2E nongating; full release-candidate E2E and
+flow-changing manual runs remain required elsewhere.
 
-These checks do not validate Azure quotas/RBAC propagation, Supabase settings,
-image startup or tenant containment. Azure `validate`/`what-if` and actual apply
-are owner-run checks below. Cloud acceptance requires Claude Code's `security-rls`
-review under Part A, as well as the independent local security/QA pass.
-
-## Security boundaries
-
-- Never use local env files, `pnpm setup`, `db:seed`, `db:reset`, `migrate dev`,
-  local E2E teardown or the existing demo-account `rls:probe` against staging.
-  Never `supabase link` or `supabase config push` from this local-config checkout.
-- Store service keys, passwords and pooler connection strings only in Key Vault.
-  Do not paste them into command arguments, parameter files, tickets, screenshots
-  or chat. Do not enable shell tracing, Azure debug output or terminal recording.
-- `cloud_ops.py` retrieves secrets into memory, captures subprocess output and
-  reports fixed messages. It does not write env files or print API error bodies.
-  A failure withholds details intentionally; use the owner's private consoles to
-  diagnose it, then rerun the step. No redirects are followed with credentials.
-- The API identity reads only its two named secrets. Web reads no vault secrets.
-  The migration URL is not injected into either app. Deployments pin exact Key Vault version IDs; follow [explicit rotation steps](runbooks/05-rotation.md) for
-  backend keys, coupled legacy keys, both DB URLs and recovered vault contents.
-- GitHub can publish images and replace staging code, which can use the API's
-  identity. Treat deployment permission as access to staging data; protect the
-  GitHub environment even though federation itself has no stored cloud secret.
-- Public network endpoints are intentional for this Consumption/Basic foundation.
-  TLS, RBAC and private buckets gate access; private networking/static egress
-  requires a separately reviewed design. No customer inventory until launch gates.
-
-The reusable [Azure deployment recipe](azure-deploy/SKILL.md) stays within this
-assignment's `infra/**` reservation. It is a manually linked recipe, not an
-auto-discovered installed skill; moving it into `.claude/skills/` requires that
-lane's reservation. Root `.env.example` was explicitly allowed in this dispatch
-and is a reference only, never a file to copy into `.env.staging`.
-
-Key Vault and ACR remain public network endpoints. This foundation has no Key
-Vault/ACR diagnostic settings, so it does not yet evidence secret-access auditing;
-container Log Analytics is not a substitute. Retain this operational limitation
-for owner review and the observability follow-up.
+See [provider/state security review](terraform/README.md). API health currently
+proves process liveness only; DB readiness is LP2-03. The included CA under
+`infra/certs/` remains in the API Docker context; other infra files and all
+Terraform/owner artifacts are excluded.

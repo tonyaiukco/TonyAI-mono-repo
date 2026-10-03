@@ -46,6 +46,17 @@ class ResourceTrustTests(unittest.TestCase):
         self.assertNotEqual(env['API_DIGEST'],env['CANDIDATE_API_DIGEST'])
         self.assertFalse(any(call[0]=='deployment' for call in self.calls))
 
+    def test_forged_registry_host_and_environment_domain_refused(self):
+        for wrong in ('registry', 'domain'):
+            def read(*args):
+                if wrong == 'registry' and args[:2] == ('acr','show'):
+                    return {'loginServer':'attacker.azurecr.io'}
+                if wrong == 'domain' and args[:3] == ('containerapp','env','show'):
+                    return {'properties':{'defaultDomain':'attacker.example'}}
+                return self.az(*args)
+            with self.subTest(wrong=wrong), patch.object(session,'az',side_effect=read):
+                with self.assertRaises(SafeFailure): session.restore('sub','staging')
+
     def test_wrong_region_identity_tags_or_ambiguous_resources_refused(self):
         original = copy.deepcopy(self.resources)
         for field, value in [('location','eastus'),('id',GROUP+'/providers/forged'),('tags',{})]:

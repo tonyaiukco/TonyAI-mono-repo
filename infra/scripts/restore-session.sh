@@ -11,7 +11,7 @@ _tonyai_restore_session() {
     printf '%s\n' 'Usage: source infra/scripts/restore-session.sh <subscription-id> <group>' >&2
     return 1
   fi
-  exports=$(python3 infra/scripts/session_resources.py "$subscription" "$group") || return 1
+  exports=$(python3 "${TONYAI_INFRA_SCRIPTS:-infra/scripts}/session_resources.py" "$subscription" "$group") || return 1
   az account set --subscription "$subscription" || return 1
   eval "$exports"
   printf '%s\n' 'PASS: staging session restored. Empty optional IDs mean their setup step is still pending.'

@@ -1,0 +1,7 @@
+{
+  "organization_id": "<organization-id>",
+  "organization_slug": "<organization-slug>",
+  "name": "tonyai-staging-<unique-recreation-id>",
+  "vault": "<foundation-vault-name>",
+  "web_origin": "https://tonyai-staging-web.<environment-domain>.germanywestcentral.azurecontainerapps.io"
+}

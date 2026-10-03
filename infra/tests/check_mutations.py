@@ -10,6 +10,12 @@ import tempfile
 
 INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
+    ('application state grant escapes its container', 'bootstrap_backend.py',
+     "if lane == 'application' and config['application_object_id']:", "if config['application_object_id']:"),
+    ('deployed secret identity readback removed', 'deploy_apps.py',
+     " or actual[name].get('identity') != identity", ''),
+    ('Auth exact-origin readback removed', 'supabase_auth.py',
+     "if any(actual.get(key) != value for key, value in desired.items()):", 'if False:'),
     ('unrecorded app adoption restored', 'configure_oidc.py',
      "        if apps:\n            raise SafeFailure('Unrecorded Entra app already uses the staging name; refusing adoption.')\n        app = az(",
      "        app = apps[0] if apps else az("),
@@ -40,9 +46,10 @@ def main():
         sys.exit('FAIL: unmodified tests do not pass; mutation evidence is invalid.')
     for name, filename, before, after in MUTANTS:
         with tempfile.TemporaryDirectory(prefix='tonyai-infra-mutant-') as directory:
-            target = Path(directory)
-            for folder in ('scripts', 'tests'):
-                shutil.copytree(INFRA / folder, target / folder, ignore=shutil.ignore_patterns('__pycache__'))
+            target = Path(directory) / 'infra'
+            target.mkdir()
+            for folder in ('scripts', 'tests', 'terraform', 'config'):
+                shutil.copytree(INFRA / folder, target / folder, ignore=shutil.ignore_patterns('__pycache__', '.terraform'))
             path = target / 'scripts' / filename
             source = path.read_text()
             if source.count(before) != 1:
@@ -55,7 +62,7 @@ suite = unittest.defaultTestLoader.discover(sys.argv[1])
 result = unittest.TextTestRunner(stream=sys.stderr).run(suite)
 print(json.dumps({'failures': len(result.failures), 'errors': len(result.errors)}))
 """
-            result = subprocess.run([sys.executable, '-c', runner, str(target / 'tests')], capture_output=True, text=True)
+            result = subprocess.run([sys.executable, '-c', runner, str(target / 'tests')], cwd=target.parent, capture_output=True, text=True)
             if result.returncode:
                 sys.exit('INVALID: mutation test process failed: ' + name)
             summary = json.loads(result.stdout.strip().splitlines()[-1])

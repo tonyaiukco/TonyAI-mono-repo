@@ -1,49 +1,73 @@
-# Restore an owner session
+# 0. Safe owner session and restoration
 
-Use a **Bash** terminal (`bash` from zsh), with shell tracing and recording off.
-Do not paste `set -e` into the interactive shell. Run one numbered step at a time;
-on a nonzero result, stop and fix that step. Executable Bash helpers use `set -e`
-inside their child process, so failures stop the helper without closing your shell.
-
-After the foundation exists, this is the single restoration block for runbooks
-02–05 and any later terminal. It reads nonsecret resource-group tags and foundation
-resources from Azure (never ARM deployment outputs); it never reads Key Vault values or writes an env file:
+These commands are for the owner after cloud/budget approval, not for the coding
+agent. Use Bash or zsh from the repository root, a private terminal without
+transcripts, shell tracing, Azure/HTTP debug logging or Terraform debug variables.
+No secrets in command arguments, shell history, files or chat. Helpers use hidden
+input and captured in-memory requests; failures suppress provider bodies.
 
 ```bash
-set +x
-# If your session expired, authenticate yourself first:
+node --version      # v22.x
+pnpm --version      # 11.9.0
+terraform version   # 1.13.3
+az version
+python3 --version
+mkdir -p .infra-local/staging
+chmod 700 .infra-local .infra-local/staging
+cp infra/config/backend.example.json .infra-local/staging/backend.json
+cp infra/config/foundation.example.json .infra-local/staging/foundation.json
+cp infra/config/supabase.example.json .infra-local/staging/supabase.json
+cp infra/config/application.example.json .infra-local/staging/release-r001.json
+```
+
+On first setup only, replace placeholders using an editor. Subsequent sessions
+**do not copy templates over existing files**. These JSON files and the journal
+contain only public identifiers, digests and version IDs. Keep private backups
+of the nonsecret journal/release manifests outside Git; losing an intent journal
+makes automatic project adoption unsafe. Never fill a secret into a JSON input.
+Use unique backend account, vault, registry, group and project names for each
+recreation. Production uses a separate backend account, RG, identities, vault,
+Supabase project and protected GitHub environment; LP2-04 completes its domain,
+email, backup and operational acceptance. No shared staging credentials/state.
+
+```bash
 az login --tenant '<tenant-uuid>' --output none
+az account set --subscription '<subscription-uuid>'
+az account show --query '{subscription:id,tenant:tenantId}' -o json
+az ad signed-in-user show --query id -o tsv
+```
+
+Expected: the reviewed tenant/subscription and owner object ID. Fill both Azure
+config files consistently. Owner has the necessary subscription/RG creation and
+RBAC administration rights plus permission to create the dedicated Entra app.
+Register `Microsoft.App`, `Microsoft.ContainerRegistry`, `Microsoft.KeyVault`,
+`Microsoft.ManagedIdentity`, `Microsoft.OperationalInsights`, `Microsoft.Insights`
+and `Microsoft.Storage` as the owner (`az provider register --namespace <name>
+--wait`). Record each registration, not a claim based on these instructions.
+
+After foundation exists, this works in a fresh Bash/zsh terminal:
+
+```bash
 source infra/scripts/restore-session.sh '<subscription-uuid>' '<staging-resource-group>'
 ```
 
-Expected: `PASS: staging session restored`. This restores subscription, tenant,
-group/ID, prefix, release SHA, GitHub repository, ACR name/host, vault, origins,
-Supabase project/URL, Entra IDs and deployed/candidate image digests plus pinned secret versions; it defines `foundation_output`.
-Optional fields are empty until their numbered setup step records them. Never
-continue if restore fails; never infer an empty field is a valid target.
+Expected: `PASS: staging session restored`. The helper clears stale values first,
+checks real resource IDs, tags, region, ACR host and environment domain and quotes
+exports. Failure returns to the interactive shell with targets unset. Empty
+optional project/release values mean later setup is pending. The foundation's
+`releaseSha` tag is initial infrastructure provenance, **not** the current image
+release: builds take an explicit SHA and deployments take an explicit manifest.
+Never substitute candidate tags for the selected release.
 
-The initial group records `tonyaiPrefix`, `releaseSha`, `githubRepository`;
-Supabase setup adds `supabaseProjectRef`; federation adds `githubClientId` and
-`githubPrincipalId`; a successful image build/scan adds `candidateApiDigest`/
-`candidateWebDigest`. Deployment readback records `apiDigest`/`webDigest`,
-`databaseSecretVersion` and `backendSecretVersion`. Candidate builds never replace
-the deployed image record used by rotation.
-All are identifiers/settings, never credentials. For an older foundation without
-these tags, the owner supplies the reviewed values with `az group update --set`
-using the same tag names before restoring. Verify the group is staging first.
-
-Before deploying a new reviewed release, select its clean checkout and update
-only the release tag (never replace all tags):
+Restore the Supabase project after runbook 02 without exposing keys:
 
 ```bash
-export RELEASE_SHA="$(git rev-parse HEAD)"
-# Run only for an owner-reviewed SHA. This guard also works when pasted into zsh.
-if test -z "$(git status --porcelain)"; then
-  az group update -n "$RESOURCE_GROUP" --set "tags.releaseSha=$RELEASE_SHA" --output none
-else
-  printf '%s\n' 'STOP: clean checkout required; release tag unchanged.'
-fi
+export SUPABASE_PROJECT_REF="$(python3 -c 'import json; print(json.load(open(".infra-local/staging/supabase-journal.json"))["project_ref"])')"
+export SUPABASE_URL="https://$SUPABASE_PROJECT_REF.supabase.co"
 ```
 
-Restoring does not validate a release or create credentials. Record the selected
-SHA in the PR evidence; resume at the last successful numbered step.
+The application runner reinitializes its backend every time from explicit inputs,
+rejects target/environment mismatches and ambient `TF_VAR_*`, debug flags, CLI
+arguments, SAS/access keys and client secrets. It uses no saved plan file. Apply
+shows a fresh plan and asks for Terraform's normal confirmation. A failure is not
+permission to paste provider output into chat; retain sanitized IDs/status only.
