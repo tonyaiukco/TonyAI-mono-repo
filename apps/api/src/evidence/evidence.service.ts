@@ -382,11 +382,15 @@ export class EvidenceService {
     const safeName = checked.fileName.replace(/[^\w.-]+/g, '_').slice(0, 120);
     const storagePath = `${subsidiaryId}/${randomUUID()}-${safeName}`;
     const ref: ObjectRef = { bucket: EVIDENCE_BUCKET, path: storagePath };
-    const intentId = await this.intents.beginUpload(ref, { reason: 'evidence.upload', subsidiaryId });
+    const intentId = await this.intents.beginUpload(ref, {
+      reason: 'evidence.upload',
+      subsidiaryId,
+      organisationId: user.organisationId,
+    });
     try {
       await this.storage.upload(EVIDENCE_BUCKET, storagePath, file.buffer, checked.mimeType);
     } catch (error) {
-      await this.intents.abandonUpload(intentId, ref);
+      await this.intents.abandonUpload(intentId, ref, error);
       throw error;
     }
 
@@ -445,7 +449,7 @@ export class EvidenceService {
         return stored;
       }, LIFECYCLE_TX);
     } catch (error) {
-      await this.intents.abandonUpload(intentId, ref);
+      await this.intents.abandonUpload(intentId, ref, error);
       // A record deleted between the checks and the link: the link's foreign
       // key refuses it (P2003). That is the same answer as a record that was
       // never there, not a server error.
@@ -477,7 +481,9 @@ export class EvidenceService {
       this.logger.error(
         `Evidence ${evidence.id} has no object in Storage (${EVIDENCE_BUCKET}/${evidence.storagePath})`,
       );
-      captureException(error, { userId: user.id });
+      // The key carries a cleaned file name, which can be personal data: the
+      // Sentry event names the row, not the key.
+      captureException(new Error(`Evidence ${evidence.id} has no object in Storage`), { userId: user.id });
       throw new NotFoundException(
         "This file's contents are missing from storage. The problem has been reported to the administrators.",
       );
@@ -635,7 +641,7 @@ export class EvidenceService {
         await this.intents.enqueueDeletes(
           tx,
           [{ bucket: EVIDENCE_BUCKET, path: before.storagePath }],
-          { reason: 'evidence.delete', subsidiaryId: before.subsidiaryId },
+          { reason: 'evidence.delete', subsidiaryId: before.subsidiaryId, organisationId: user.organisationId },
         );
         await this.audit.record(
           user,
@@ -696,7 +702,7 @@ export class EvidenceService {
     if (evidenceIds.length === 0) return [];
     const unlinked = await tx.evidence.findMany({
       where: { id: { in: evidenceIds }, links: { none: {} } },
-      select: { id: true, storagePath: true, subsidiaryId: true },
+      select: { id: true, storagePath: true, subsidiaryId: true, subsidiary: { select: { organisationId: true } } },
     });
     if (unlinked.length === 0) return [];
     await tx.evidence.deleteMany({ where: { id: { in: unlinked.map((f) => f.id) } } });
@@ -704,7 +710,11 @@ export class EvidenceService {
       tx,
       unlinked.map((f) => ({ bucket: EVIDENCE_BUCKET, path: f.storagePath })),
       // One subsidiary per file; a record delete's files share its subsidiary.
-      { reason: 'evidence.unlinked', subsidiaryId: unlinked[0].subsidiaryId },
+      {
+        reason: 'evidence.unlinked',
+        subsidiaryId: unlinked[0].subsidiaryId,
+        organisationId: unlinked[0].subsidiary.organisationId,
+      },
     );
     return unlinked.map(({ id, storagePath }) => ({ id, storagePath }));
   }

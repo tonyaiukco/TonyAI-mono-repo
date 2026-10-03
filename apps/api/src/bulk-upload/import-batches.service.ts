@@ -15,11 +15,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
 import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
 import { captureException } from '../observability/sentry';
+import { downloadName } from '../evidence/file-content';
 import { BulkSubmitService } from './bulk-submit.service';
 
 const DEFAULT_LIST_LIMIT = 20;
 /** Seconds a source-file download link stays valid — the evidence module's. */
 const SIGNED_URL_TTL_SECONDS = 60;
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 /** Roles that read every batch of their organisation, as they read its records. */
 const ORGANISATION_READERS = new Set(['super_admin', 'consultant', 'executive_viewer']);
 
@@ -98,7 +100,9 @@ export class ImportBatchesService {
         IMPORT_SOURCES_BUCKET,
         batch.storagePath,
         SIGNED_URL_TTL_SECONDS,
-        batch.fileName,
+        // Saved under its own format's extension: a name cut at 255 code
+        // points can end in `.html`, and a download is opened by its name.
+        downloadName(batch.fileName, batch.fileFormat === 'xlsx' ? XLSX_MIME : 'text/csv'),
       );
     } catch (error) {
       if (!(error instanceof StorageObjectMissingError)) throw error;
@@ -107,7 +111,9 @@ export class ImportBatchesService {
       this.logger.error(
         `Import batch ${batch.id} has no source object in Storage (${IMPORT_SOURCES_BUCKET}/${batch.storagePath})`,
       );
-      captureException(error, { userId: user.id });
+      captureException(new Error(`Import batch ${batch.id} has no source object in Storage`), {
+        userId: user.id,
+      });
       throw new NotFoundException(
         "This import's source file is missing from storage. The problem has been reported to the administrators.",
       );

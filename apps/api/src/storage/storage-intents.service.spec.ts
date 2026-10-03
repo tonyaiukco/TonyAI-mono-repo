@@ -66,6 +66,28 @@ describe('StorageIntentsService — after the commit, never throws', () => {
     vi.unstubAllEnvs();
   });
 
+  it('removes nothing, and gives the intents back, when the role cannot see every owning row', async () => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const claimed = [{ id: 'i-1', bucket: 'evidence', objectPath: 'sub-1/a.pdf', attempts: 1 }];
+    const prisma = {
+      // The claim, then the visibility check: RLS hides rows from this role.
+      $queryRaw: vi.fn().mockResolvedValueOnce(claimed).mockResolvedValueOnce([{ ok: false }]),
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      evidence: { findMany: vi.fn() },
+    };
+    const remove = vi.fn();
+    const intents = new StorageIntentsService(prisma as unknown as PrismaService, { remove } as unknown as StorageService);
+
+    await intents.runNow([{ bucket: 'evidence', path: 'sub-1/a.pdf' }]);
+
+    expect(remove).not.toHaveBeenCalled();
+    // Not even asked who owns it: under RLS the answer would be "nobody".
+    expect(prisma.evidence.findMany).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).toHaveBeenCalledOnce(); // the release
+    expect(logged.mock.calls[0][0]).toMatch(/cannot see every row/);
+    logged.mockRestore();
+  });
+
   it('abandonUpload logs a database failure instead of throwing over the request\'s own error', async () => {
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const prisma = { storageIntent: { updateMany: vi.fn().mockRejectedValue(new Error('db down')) } };

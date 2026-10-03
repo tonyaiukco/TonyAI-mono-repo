@@ -2271,10 +2271,11 @@ describe('BulkUploadService — import batches', () => {
 
     // Abandoned, not removed directly: a removal that fails stays a retryable
     // intent (it used to be a swallowed `.catch(() => undefined)`).
-    expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', {
-      bucket: 'import-sources',
-      path: storage.upload.mock.calls[0][1],
-    });
+    expect(intents.abandonUpload).toHaveBeenCalledWith(
+      'intent-1',
+      { bucket: 'import-sources', path: storage.upload.mock.calls[0][1] },
+      expect.anything(),
+    );
     expect(storage.remove).not.toHaveBeenCalled();
     expect(records.create).not.toHaveBeenCalled();
   });
@@ -2305,10 +2306,11 @@ describe('BulkUploadService — import batches', () => {
 
     await expect(service.import(dataEntry(), csvFile([row()]), NOTHING)).rejects.toThrow('storage down');
 
-    expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', {
-      bucket: 'import-sources',
-      path: storage.upload.mock.calls[0][1],
-    });
+    expect(intents.abandonUpload).toHaveBeenCalledWith(
+      'intent-1',
+      { bucket: 'import-sources', path: storage.upload.mock.calls[0][1] },
+      expect.anything(),
+    );
     expect(prisma.importBatch.create).not.toHaveBeenCalled();
   });
 

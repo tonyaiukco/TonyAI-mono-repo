@@ -85,6 +85,48 @@ describe('checkEvidenceFile — the bytes must be what the upload claims', () =>
     expect(refusal(() => checkEvidenceFile(file(XLSX, vba)))).toMatch(/macros/);
   });
 
+  it('refuses a VBA project however it is spelled or hidden (security-rls, LP1-02)', () => {
+    const workbookTypes = contentTypes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml');
+    // XML character references in the content type: still macro-enabled.
+    const encoded = zip([
+      { name: '[Content_Types].xml', data: contentTypes('application/vnd.ms-excel.sheet.macro&#69;nabled.main+xml') },
+    ]);
+    const encodedVba = zip([
+      {
+        name: '[Content_Types].xml',
+        data: contentTypes(
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+          '<Override PartName="/xl/vba&#x50;roject.bin" ContentType="application/vnd.ms-office.vba&#80;roject"/>',
+        ),
+      },
+    ]);
+    // Undeclared, but present where a reader looks for it.
+    const undeclared = zip([
+      { name: '[Content_Types].xml', data: workbookTypes },
+      { name: 'xl/workbook.xml', data: '<workbook/>' },
+      { name: 'XL/VBAPROJECT.BIN', data: Buffer.from([0xd0, 0xcf, 0x11, 0xe0]) },
+    ]);
+    // Declared only in the workbook's relationships.
+    const related = zip([
+      { name: '[Content_Types].xml', data: workbookTypes },
+      {
+        name: 'xl/_rels/workbook.xml.rels',
+        data: '<Relationships><Relationship Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="code.bin"/></Relationships>',
+      },
+    ]);
+    for (const [label, archive] of Object.entries({ encoded, encodedVba, undeclared, related })) {
+      expect(refusal(() => checkEvidenceFile(file(XLSX, archive))), label).toMatch(/macros/);
+    }
+    // A named entity a real file may use is still read as text, not refused.
+    const amp = zip([
+      {
+        name: '[Content_Types].xml',
+        data: contentTypes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml', '<!-- R&amp;D -->'),
+      },
+    ]);
+    expect(checkEvidenceFile(file(XLSX, amp)).mimeType).toBe(XLSX);
+  });
+
   it('refuses a ZIP that is not a workbook, and bytes that are not a ZIP', () => {
     const docx = zip([
       {

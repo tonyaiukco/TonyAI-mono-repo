@@ -21,8 +21,12 @@ import { sanitiseCallerText } from '../common/caller-text';
  *  - PDF: `%PDF-` within the first 1,024 bytes — where readers look for it;
  *  - PNG / JPEG: the format's signature;
  *  - XLSX: a ZIP whose `[Content_Types].xml` declares a spreadsheetml
- *    workbook, refused when it declares macros or a VBA project (a renamed
- *    .xlsm);
+ *    workbook, refused when it carries a VBA project however it is spelled —
+ *    declared as macro-enabled or VBA in the content types or the workbook's
+ *    relationships (XML character references decoded first), or present as
+ *    `xl/vbaProject.bin` (a renamed .xlsm). Embedded OLE objects and DDE
+ *    links are NOT refused: they are the residual risk K1 accepts, named for
+ *    the LP5-02 pen-test;
  *  - CSV: text — no NUL or other C0 control byte besides tab, LF, CR and FF.
  *    The encoding is not judged: Turkish Excel saves CSV as Windows-1254.
  */
@@ -70,21 +74,42 @@ export interface CheckedEvidenceFile {
 
 type XlsxVerdict = 'workbook' | 'macro' | 'other';
 
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+/** XML text with its character and entity references resolved: `macro&#69;nabled` must read as `macroEnabled`. */
+function decodeXmlText(xml: string): string {
+  return xml.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, ref: string) => {
+    if (ref[0] !== '#') return NAMED_ENTITIES[ref.toLowerCase()] ?? whole;
+    const code = ref[1] === 'x' || ref[1] === 'X' ? parseInt(ref.slice(2), 16) : parseInt(ref.slice(1), 10);
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+  });
+}
+
+const MACRO = /macroEnabled|vbaProject/i;
+
 function xlsxVerdict(bytes: Buffer): XlsxVerdict {
   if (bytes.length < 4 || bytes.readUInt32LE(0) !== ZIP_LOCAL_HEADER) return 'other';
-  let types: string;
   try {
-    const part = ZipArchive.open(bytes).read(
-      '[Content_Types].xml',
-      new UnpackBudget(CONTENT_TYPES_BUDGET_BYTES),
-    );
-    if (!part) return 'other';
-    types = part.toString('utf8');
+    const archive = ZipArchive.open(bytes);
+    // One budget for every part read here, as the importer's reader does.
+    const budget = new UnpackBudget(CONTENT_TYPES_BUDGET_BYTES);
+    const types = archive.read('[Content_Types].xml', budget);
+    if (!types) return 'other';
+    const relationships = archive.read('xl/_rels/workbook.xml.rels', budget);
+    if (
+      MACRO.test(decodeXmlText(types.toString('utf8'))) ||
+      (relationships && MACRO.test(decodeXmlText(relationships.toString('utf8'))))
+    ) {
+      return 'macro';
+    }
+    // Present but undeclared still counts: a reader that loads it by name
+    // must not find it. (Reading it at all spends the budget; an oversized
+    // one is refused by the catch below, which is the right answer too.)
+    if (archive.read('xl/vbaProject.bin', budget)) return 'macro';
+    return /spreadsheetml\.sheet\.main\+xml/i.test(decodeXmlText(types.toString('utf8'))) ? 'workbook' : 'other';
   } catch {
     return 'other';
   }
-  if (/macroEnabled|vbaProject/i.test(types)) return 'macro';
-  return /spreadsheetml\.sheet\.main\+xml/i.test(types) ? 'workbook' : 'other';
 }
 
 function isText(bytes: Buffer): boolean {

@@ -187,6 +187,24 @@ export class StorageReconcileService {
     return { reclaimed: orphans };
   }
 
+  /**
+   * After a database restore, before `STORAGE_CLEANUP_HOLD` is lifted: forget
+   * every `upload` intent. One restored from the restore point names an upload
+   * that was in flight then — and committed later, in the history the restore
+   * discarded — so its bytes may be the only copy of a file nothing remembers
+   * now. Left alone, the sweeper would abandon it and remove those bytes;
+   * forgotten, the object becomes an orphan, reported and judged by a person
+   * (K5). Refused unless the hold is set, so it cannot race live uploads.
+   */
+  async forgetUploadIntents(): Promise<{ bucket: string; path: string }[]> {
+    if (!removalsHeld()) {
+      throw new Error('--forget-uploads is for a restore: set STORAGE_CLEANUP_HOLD first, on every API process too.');
+    }
+    const forgotten = await this.prisma.$queryRaw<{ bucket: string; path: string }[]>`
+      DELETE FROM storage_intents WHERE kind = 'upload' RETURNING bucket, object_path AS path`;
+    return forgotten;
+  }
+
   private async withRecords(bucket: Bucket, found: MissingBytes[]): Promise<MissingBytes[]> {
     if (bucket !== EVIDENCE_BUCKET || found.length === 0) return found;
     const links = await this.prisma.activityRecordEvidence.findMany({

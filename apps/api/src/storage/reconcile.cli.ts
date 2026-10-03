@@ -11,11 +11,15 @@
  *   pnpm storage:reconcile --sweep               # + one sweep of pending intents now
  *   pnpm storage:reconcile --reclaim-orphans     # + list orphans old enough to reclaim (dry run)
  *   pnpm storage:reconcile --reclaim-orphans --apply [--older-than=168]
+ *   pnpm storage:reconcile --forget-uploads      # after a DB restore, under the hold (see below)
  *
  *   --bucket=evidence|import-sources   one bucket (default: both)
  *   --limit=<n>                        rows/objects per check (default 500); a list that
  *                                      reaches it says `truncated: true`
- *   --allow-remote                     required for --sweep or --apply off a loopback host
+ *   --allow-remote                     required for --sweep, --apply or --forget-uploads off a
+ *                                      loopback host — a guard against a typo, not a control: a
+ *                                      tunnel to production is "localhost" too. Off loopback,
+ *                                      --older-than cannot go below 24 hours.
  *
  * Prints one JSON report. Exit code 0 when nothing needs a person; 1 when a
  * row's bytes are missing or changed, an unlinked evidence row exists, or an
@@ -27,30 +31,43 @@
  * object newer than the restore point is an orphan that may be the only copy
  * of a file the restored database no longer remembers.
  *
+ * After a database restore: set STORAGE_CLEANUP_HOLD on every API process AND
+ * in the shell running this tool (the hold is per process), run
+ * `--forget-uploads` (upload intents restored from the restore point name
+ * bytes that may be the only copy of a file — forgotten, they become reported
+ * orphans), then `--verify`, and lift the hold only after reading the report.
+ *
+ * Refuses to run at all under a database role that cannot see every row of
+ * evidence, import_batches and storage.objects: its "orphans" would be every
+ * object, and its "missing" every row.
+ *
  * In the API image: `node dist/storage/reconcile.cli.js [flags]`.
  */
 import { Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BUCKETS, type Bucket, isBucket } from './buckets';
 import { StorageService } from './storage.service';
-import { StorageIntentsService, removalsHeld } from './storage-intents.service';
+import { RowsHiddenError, StorageIntentsService, removalsHeld } from './storage-intents.service';
 import { StorageReconcileService } from './storage-reconcile.service';
 
 const DEFAULT_LIMIT = 500;
 const DEFAULT_ORPHAN_AGE_HOURS = 7 * 24;
+/** Off a loopback host, an orphan younger than this is never reclaimed, whatever --older-than says. */
+export const REMOTE_MIN_ORPHAN_AGE_HOURS = 24;
 
-interface Options {
+export interface Options {
   buckets: Bucket[];
   limit: number;
   verify: boolean;
   sweep: boolean;
   reclaim: boolean;
   apply: boolean;
+  forgetUploads: boolean;
   olderThanHours: number;
   allowRemote: boolean;
 }
 
-class UsageError extends Error {}
+export class UsageError extends Error {}
 
 export function parseArgs(argv: string[]): Options {
   const flags = new Map<string, string | true>();
@@ -60,7 +77,17 @@ export function parseArgs(argv: string[]): Options {
     if (!match) throw new UsageError(`Unknown argument "${arg}"`);
     flags.set(match[1], match[2] ?? true);
   }
-  const known = ['bucket', 'limit', 'verify', 'sweep', 'reclaim-orphans', 'apply', 'older-than', 'allow-remote'];
+  const known = [
+    'bucket',
+    'limit',
+    'verify',
+    'sweep',
+    'reclaim-orphans',
+    'apply',
+    'older-than',
+    'allow-remote',
+    'forget-uploads',
+  ];
   for (const name of flags.keys()) {
     if (!known.includes(name)) throw new UsageError(`Unknown flag --${name}`);
   }
@@ -84,6 +111,7 @@ export function parseArgs(argv: string[]): Options {
     sweep: flags.has('sweep'),
     reclaim: flags.has('reclaim-orphans'),
     apply: flags.has('apply'),
+    forgetUploads: flags.has('forget-uploads'),
     olderThanHours: number('older-than', DEFAULT_ORPHAN_AGE_HOURS, 0),
     allowRemote: flags.has('allow-remote'),
   };
@@ -93,7 +121,22 @@ export function parseArgs(argv: string[]): Options {
   return options;
 }
 
-function isLoopback(url: string | undefined): boolean {
+/** The run's refusals that depend on where it points, separate from the database work so they can be tested alone. */
+export function refuseUnsafe(options: Options, local: boolean): void {
+  const mutates = options.sweep || options.apply || options.forgetUploads;
+  if (mutates && !local && !options.allowRemote) {
+    throw new UsageError(
+      '--sweep, --apply and --forget-uploads change Storage or its intents; off a loopback host they need --allow-remote. The service-role key reaches every tenant at once.',
+    );
+  }
+  if (options.apply && !local && options.olderThanHours < REMOTE_MIN_ORPHAN_AGE_HOURS) {
+    throw new UsageError(
+      `Off a loopback host, --older-than cannot go below ${REMOTE_MIN_ORPHAN_AGE_HOURS} hours: an orphan that young may be an upload still in flight.`,
+    );
+  }
+}
+
+export function isLoopback(url: string | undefined): boolean {
   if (!url) return false;
   try {
     const host = new URL(url).hostname;
@@ -104,19 +147,15 @@ function isLoopback(url: string | undefined): boolean {
 }
 
 export async function run(options: Options): Promise<{ report: unknown; needsAPerson: boolean }> {
-  const mutates = options.sweep || options.apply;
-  const local = isLoopback(process.env.DATABASE_URL) && isLoopback(process.env.SUPABASE_URL);
-  if (mutates && !local && !options.allowRemote) {
-    throw new UsageError(
-      '--sweep and --apply remove objects; off a loopback host they need --allow-remote. The service-role key reaches every tenant at once.',
-    );
-  }
+  refuseUnsafe(options, isLoopback(process.env.DATABASE_URL) && isLoopback(process.env.SUPABASE_URL));
   const prisma = new PrismaService();
   try {
     const storage = new StorageService();
     const intents = new StorageIntentsService(prisma, storage);
     const reconcile = new StorageReconcileService(prisma, storage, intents);
+    if (!(await intents.seesEveryRow())) throw new RowsHiddenError();
     const page = { limit: options.limit };
+    const forgottenUploads = options.forgetUploads ? await reconcile.forgetUploadIntents() : null;
     const listed = <T>(items: T[]) => ({ count: items.length, truncated: items.length === options.limit, items });
 
     const sweep = options.sweep ? await intents.sweep(options.limit) : null;
@@ -130,7 +169,12 @@ export async function run(options: Options): Promise<{ report: unknown; needsAPe
       if (options.reclaim) {
         if (options.apply) {
           const { reclaimed } = await reconcile.reclaimOrphans(bucket, options.olderThanHours, options.limit);
-          reclaim = { applied: true, olderThanHours: options.olderThanHours, reclaimed: reclaimed.length };
+          // The paths are the run's trail: a reclaimed intent is closed once Storage confirms.
+          reclaim = {
+            applied: true,
+            olderThanHours: options.olderThanHours,
+            reclaimed: reclaimed.map((o) => o.path),
+          };
           orphans = await reconcile.orphans(bucket, page);
         } else {
           const eligible = await reconcile.orphans(bucket, { limit: options.limit }, options.olderThanHours);
@@ -159,7 +203,14 @@ export async function run(options: Options): Promise<{ report: unknown; needsAPe
     const backlog = await intents.backlog();
     if (backlog.stuck > 0) needsAPerson = true;
     return {
-      report: { held: removalsHeld(), limit: options.limit, intents: backlog, sweep, buckets },
+      report: {
+        held: removalsHeld(),
+        limit: options.limit,
+        intents: backlog,
+        ...(forgottenUploads ? { forgottenUploads } : {}),
+        sweep,
+        buckets,
+      },
       needsAPerson,
     };
   } finally {

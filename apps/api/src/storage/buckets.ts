@@ -16,6 +16,23 @@ export function isBucket(value: string): value is Bucket {
 type OwnerClient = Pick<PrismaClient, 'evidence' | 'importBatch'>;
 
 /**
+ * The table that owns each bucket's objects, as a lookup of the paths it
+ * holds. A `Record` over every bucket, so a new bucket does not compile until
+ * it names its owner — a bucket checked against the wrong table would read as
+ * unowned, and its objects would be removed.
+ */
+const OWNED: Record<Bucket, (client: OwnerClient, paths: string[]) => Promise<(string | null)[]>> = {
+  [EVIDENCE_BUCKET]: async (client, paths) =>
+    (await client.evidence.findMany({ where: { storagePath: { in: paths } }, select: { storagePath: true } })).map(
+      (r) => r.storagePath,
+    ),
+  [IMPORT_SOURCES_BUCKET]: async (client, paths) =>
+    (await client.importBatch.findMany({ where: { storagePath: { in: paths } }, select: { storagePath: true } })).map(
+      (r) => r.storagePath,
+    ),
+};
+
+/**
  * Which of `paths` a row still points at. The one question asked before any
  * object is removed: bytes a row owns are never deleted, whatever an intent or
  * a reconciliation run says.
@@ -26,15 +43,6 @@ export async function ownedPaths(
   paths: string[],
 ): Promise<Set<string>> {
   if (paths.length === 0) return new Set();
-  const rows =
-    bucket === EVIDENCE_BUCKET
-      ? await client.evidence.findMany({
-          where: { storagePath: { in: paths } },
-          select: { storagePath: true },
-        })
-      : await client.importBatch.findMany({
-          where: { storagePath: { in: paths } },
-          select: { storagePath: true },
-        });
-  return new Set(rows.map((r) => r.storagePath).filter((p): p is string => p !== null));
+  const owned = await OWNED[bucket](client, paths);
+  return new Set(owned.filter((p): p is string => p !== null));
 }

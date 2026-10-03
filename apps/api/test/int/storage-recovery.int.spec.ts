@@ -18,6 +18,7 @@ import {
   connect,
   createRecord,
   createTenant,
+  deferred,
   holdBefore,
   settledOrBlocked,
   type Tenant,
@@ -300,6 +301,39 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
     expect(await intents()).toEqual([]);
   });
 
+  it('the sweeper abandons an upload whose bytes are still on their way: the late bytes are removed too', async () => {
+    quiet();
+    const record = await draft();
+    const started = deferred();
+    const gate = deferred();
+    const send = storage.upload.bind(storage);
+    vi.spyOn(storage, 'upload').mockImplementationOnce(async (...args) => {
+      started.resolve();
+      await gate.promise;
+      return send(...args);
+    });
+    const upload = outcome(
+      lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+    );
+    await started.promise;
+    // The intent is committed, the bytes are not there yet — and the sweeper
+    // decides the upload is dead: it removes nothing (yet) and closes the intent.
+    const [intent] = await intents();
+    await observer.$executeRaw`
+      UPDATE storage_intents
+      SET created_at = now() - ${UPLOAD_GRACE_SECONDS + 60}::int * interval '1 second'
+      WHERE id = ${intent.id}::uuid`;
+    await sweeper().sweep();
+    expect(await intents()).toEqual([]);
+
+    gate.resolve();
+    expect(await upload).toBeInstanceOf(UploadExpiredError);
+    // The bytes landed after the sweeper's removal; the request's own refusal removed them.
+    expect(await objectExists(observer, EVIDENCE_BUCKET, intent.objectPath)).toBe(false);
+    expect(await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
+    expect(await intents()).toEqual([]);
+  });
+
   it('a sweep while the owning transaction holds its adopted intent: the sweep skips it, the row keeps its bytes', async () => {
     const record = await draft();
     // Every intent this client writes is already past its grace.
@@ -567,6 +601,19 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
     expect(sha256(await storage.download(EVIDENCE_BUCKET, path))).toBe(sha256(original));
   });
 
+  it('refuses to remove under a database role that RLS filters — "no row owns it" would be a guess', async () => {
+    expect(await sweeper(observer).seesEveryRow()).toBe(true);
+    const restricted = connect();
+    try {
+      await restricted.$executeRawUnsafe('SET ROLE authenticated');
+      // The same question under RLS: this role sees no evidence row at all.
+      expect(await restricted.evidence.count()).toBe(0);
+      expect(await sweeper(restricted).seesEveryRow()).toBe(false);
+    } finally {
+      await restricted.$disconnect();
+    }
+  });
+
   it('never removes an orphan — an object no row owns and no intent names', async () => {
     const path = `${tenant.subsidiaryId}/orphan.pdf`;
     await storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4\n'), 'application/pdf');
@@ -617,6 +664,24 @@ describe('LP1-02 — reconciliation: both directions', () => {
     await sweeper().beginUpload({ bucket: EVIDENCE_BUCKET, path }, { reason: 'evidence.upload' });
     await storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4\n'), 'application/pdf');
     expect((await reconcile().orphans(EVIDENCE_BUCKET, ALL)).map((o) => o.path)).not.toContain(path);
+  });
+
+  it('after a restore, forgetting upload intents turns their objects into reported orphans — only under the hold', async () => {
+    const path = `${tenant.subsidiaryId}/restored-in-flight.pdf`;
+    // As restored from the restore point: an upload in flight then, committed later in a lost history.
+    await sweeper().beginUpload({ bucket: EVIDENCE_BUCKET, path }, { reason: 'evidence.upload' });
+    await storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4 only copy'), 'application/pdf');
+
+    await expect(reconcile().forgetUploadIntents()).rejects.toThrow(/STORAGE_CLEANUP_HOLD/);
+    vi.stubEnv('STORAGE_CLEANUP_HOLD', '1');
+    expect(await reconcile().forgetUploadIntents()).toContainEqual({ bucket: EVIDENCE_BUCKET, path });
+    vi.unstubAllEnvs();
+
+    // The hold is lifted: no intent is left to abandon, so the bytes stay — for a person to judge.
+    expect(await intents()).toEqual([]);
+    await sweeper().sweep();
+    expect(await objectExists(observer, EVIDENCE_BUCKET, path)).toBe(true);
+    expect((await reconcile().orphans(EVIDENCE_BUCKET, ALL)).map((o) => o.path)).toContain(path);
   });
 
   it('reclaims only orphans past the age threshold, never while STORAGE_CLEANUP_HOLD is set', async () => {

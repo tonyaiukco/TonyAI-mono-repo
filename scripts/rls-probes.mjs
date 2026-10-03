@@ -481,6 +481,34 @@ async function main() {
       !forged.ok && forgedRows.total === 0,
       `status=${forged.status}, rows=${forgedRows.total}`,
     );
+    // Redirecting an existing intent at another object is the same attack by
+    // UPDATE; deleting one would hide a pending removal. Both against the REAL
+    // seeded row, read back with the service role — "0 rows returned" is not
+    // "0 rows changed".
+    const adminToken = await getToken(ADMIN_EMAIL);
+    const clientWrite = (method, body) =>
+      fetch(`${URL_}/rest/v1/storage_intents?id=eq.${PROBE_INTENT}`, {
+        method,
+        headers: {
+          apikey: ANON,
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=representation',
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    const patched = await clientWrite('PATCH', { object_path: 'rls-probe/redirected.pdf' });
+    const deleted = await clientWrite('DELETE');
+    const [stillThere] = await (
+      await fetch(`${URL_}/rest/v1/storage_intents?select=object_path&id=eq.${PROBE_INTENT}`, {
+        headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+      })
+    ).json();
+    check(
+      'storage_intents: a client cannot redirect or delete an intent (PATCH, DELETE)',
+      !patched.ok && !deleted.ok && stillThere?.object_path === 'rls-probe/none.pdf',
+      `patch=${patched.status}, delete=${deleted.status}, row=${stillThere?.object_path ?? 'gone'}`,
+    );
   } finally {
     await svc('DELETE', `storage_intents?id=in.(${PROBE_INTENT},99999999-0000-0000-0000-00000000f002)`);
   }

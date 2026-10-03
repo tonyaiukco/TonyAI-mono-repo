@@ -1,9 +1,9 @@
 import {
+  ConflictException,
   Injectable,
   Logger,
   type OnApplicationBootstrap,
   type OnModuleDestroy,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma, StorageIntentKind } from '@tonyai/db';
 import { PrismaService } from '../prisma/prisma.service';
@@ -65,11 +65,26 @@ export function sweepIntervalSeconds(env: NodeJS.ProcessEnv = process.env): numb
 /**
  * The owning row's transaction found its upload intent gone: the sweeper took
  * it (the upload outlived `UPLOAD_GRACE_SECONDS`), so its object is being
- * removed and no row may point at it.
+ * removed and no row may point at it. A 409 — the caller retries — not a 5xx:
+ * nothing is down, and a 5xx would page whoever watches the error rate.
  */
-export class UploadExpiredError extends ServiceUnavailableException {
+export class UploadExpiredError extends ConflictException {
   constructor() {
     super('The upload took too long and was discarded. Upload the file again.');
+  }
+}
+
+/**
+ * Removal refused: this database role cannot see every row of the tables that
+ * own objects, so "no row owns this object" would be a guess — under a role
+ * RLS filters, every object looks like an orphan (`security-rls`, LP1-02).
+ */
+export class RowsHiddenError extends Error {
+  constructor() {
+    super(
+      'Storage removal refused: this database role cannot see every row of evidence, import_batches and storage.objects (it needs BYPASSRLS, ownership of the tables, or tables without RLS). Run it as the API\'s owner role.',
+    );
+    this.name = 'RowsHiddenError';
   }
 }
 
@@ -149,6 +164,7 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
   private firstTick: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
   private lastStuck = 0;
+  private everyRowVisible = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -179,12 +195,16 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
   }
 
   /**
-   * After the owning transaction failed. If the intent is still an upload, no
-   * row was committed and the object goes now. If it is gone, the transaction
-   * committed after all — its acknowledgement was lost — and the object stays
-   * with its row. Never throws: what it cannot do, the sweeper does.
+   * After the owning transaction failed with `cause`. If the intent is still
+   * an upload, no row was committed and the object goes now. If it is gone,
+   * either the transaction committed after all — its acknowledgement was lost
+   * — and the object stays with its row; or the sweeper abandoned it first,
+   * which is certain when `cause` is this request's own failed adoption
+   * (`UploadExpiredError`): then the transaction rolled back, and bytes that
+   * landed AFTER the sweeper's removal are removed again. Never throws: what
+   * it cannot do, the sweeper does.
    */
-  async abandonUpload(intentId: string, ref: ObjectRef): Promise<void> {
+  async abandonUpload(intentId: string, ref: ObjectRef, cause?: unknown): Promise<void> {
     try {
       const { count } = await this.prisma.storageIntent.updateMany({
         where: { id: intentId, kind: StorageIntentKind.upload },
@@ -192,7 +212,10 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
         // once. Never stamped from this process's clock.
         data: { kind: StorageIntentKind.delete },
       });
-      if (count === 1) await this.runNow([ref]);
+      if (count === 0 && cause instanceof UploadExpiredError) {
+        await this.enqueueDeletes(this.prisma, [ref], { reason: 'upload.expired' });
+      }
+      if (count === 1 || cause instanceof UploadExpiredError) await this.runNow([ref]);
     } catch (error) {
       this.logger.error(
         `Could not abandon the upload of ${ref.bucket}/${ref.path}; the sweeper removes it after ${UPLOAD_GRACE_SECONDS / 60} minutes`,
@@ -278,6 +301,25 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
     const report: SweepReport = { held, abandoned, ...outcome, backlog };
     this.reportSweep(report);
     return report;
+  }
+
+  /**
+   * Whether this connection's role sees every row of the tables that own
+   * objects and of Storage's catalogue: a superuser, a BYPASSRLS role, the
+   * table's owner, or a table without RLS. Asked before any removal — the
+   * owned-bytes guard is only as good as the rows it can see. Remembered once
+   * true; a role does not lose it mid-process.
+   */
+  async seesEveryRow(): Promise<boolean> {
+    if (this.everyRowVisible) return true;
+    const [{ ok }] = await this.prisma.$queryRaw<{ ok: boolean | null }[]>`
+      SELECT bool_and(r.rolsuper OR r.rolbypassrls OR c.relowner = r.oid OR NOT c.relrowsecurity) AS ok
+      FROM pg_roles r
+      CROSS JOIN pg_class c
+      WHERE r.rolname = current_user
+        AND c.oid IN ('public.evidence'::regclass, 'public.import_batches'::regclass, 'storage.objects'::regclass)`;
+    this.everyRowVisible = ok === true;
+    return this.everyRowVisible;
   }
 
   /** What is waiting, for the sweep's log line and `storage:reconcile`. */
@@ -385,6 +427,16 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
 
   private async execute(claimed: ClaimedIntent[]): Promise<Outcome> {
     const outcome: Outcome = { removed: 0, failed: 0, kept: 0 };
+    if (claimed.length === 0) return outcome;
+    // Fail closed: under a role RLS filters, every object would read as
+    // unowned. The intents go back, untouched, and wait for a role that sees.
+    if (!(await this.seesEveryRow())) {
+      const refused = new RowsHiddenError();
+      await this.release(claimed, refused.message);
+      this.logger.error(refused.message);
+      captureException(refused);
+      return { ...outcome, failed: claimed.length };
+    }
     const byBucket = new Map<string, ClaimedIntent[]>();
     for (const intent of claimed) {
       byBucket.set(intent.bucket, [...(byBucket.get(intent.bucket) ?? []), intent]);
@@ -403,13 +455,18 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
         // so a row and an intent disagree. The bytes stay; the intent is
         // closed and reported.
         await this.prisma.storageIntent.deleteMany({ where: { id: { in: keep.map((i) => i.id) } } });
-        const error = new Error(
+        // Keys carry a cleaned file name, which can be personal data: the log
+        // line names them for an operator, the Sentry event only the intents.
+        this.logger.error(
           `${keep.length} storage intent(s) named objects a row still owns; the objects were kept: ${keep
             .map((i) => `${bucket}/${i.objectPath}`)
             .join(', ')}`,
         );
-        this.logger.error(error.message);
-        captureException(error);
+        captureException(
+          new Error(
+            `${keep.length} storage intent(s) named objects a row still owns; kept. Intents: ${keep.map((i) => i.id).join(', ')}`,
+          ),
+        );
         outcome.kept += keep.length;
       }
       const remove = intents.filter((i) => !owned.has(i.objectPath));
