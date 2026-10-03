@@ -131,12 +131,48 @@ describe('grantSubsidiaryAccess', () => {
   );
 
   it('the grant and its audit row commit together (audit insert fails / audit insert aborts)', async () => {
+    // Pooled clients both: a service that wrote its audit row on the root client
+    // instead of the transaction's would then commit it on another connection
+    // and be caught here, not merely starve a one-connection client.
     const pooled = connect(3);
     try {
-      for (const client of [failingAuditClient(a), abortAfterAuditClient(pooled)]) {
+      for (const client of [failingAuditClient(pooled), abortAfterAuditClient(pooled)]) {
         await expect(
           service(client).grantSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, secondSubsidiaryA),
         ).rejects.toThrow();
+        expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(1);
+        expect(await auditOf(A.users.dataEntry.id)).toEqual([]);
+      }
+    } finally {
+      await pooled.$disconnect();
+    }
+  });
+});
+
+describe('every change commits with its audit rows, or not at all', () => {
+  it('a revoke whose audit insert fails or aborts leaves the grant in place', async () => {
+    const pooled = connect(3);
+    try {
+      for (const client of [failingAuditClient(pooled), abortAfterAuditClient(pooled)]) {
+        await expect(
+          service(client).revokeSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, A.subsidiaryId),
+        ).rejects.toThrow();
+        expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(1);
+        expect(await auditOf(A.users.dataEntry.id)).toEqual([]);
+      }
+    } finally {
+      await pooled.$disconnect();
+    }
+  });
+
+  it('a role change whose audit insert fails or aborts leaves the role AND the grants as they were', async () => {
+    const pooled = connect(3);
+    try {
+      for (const client of [failingAuditClient(pooled), abortAfterAuditClient(pooled)]) {
+        await expect(
+          service(client).setRole(A.users.superAdmin, A.users.dataEntry.id, UserRole.consultant),
+        ).rejects.toThrow();
+        expect(await roleOf(A.users.dataEntry.id)).toBe('data_entry');
         expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(1);
         expect(await auditOf(A.users.dataEntry.id)).toEqual([]);
       }

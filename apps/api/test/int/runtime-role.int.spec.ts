@@ -69,6 +69,22 @@ describe('the runtime role', () => {
     expect(problems).toContain('tonyai_runtime was granted SELECT on storage.buckets');
   });
 
+  it('notices column-level grants, which has_table_privilege does not see (`qa-auditor`)', async () => {
+    const problems = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('GRANT INSERT (id, email, full_name, updated_at) ON profiles TO tonyai_runtime');
+      await tx.$executeRawUnsafe('GRANT SELECT (migration_name) ON _prisma_migrations TO tonyai_runtime');
+      await tx.$executeRawUnsafe('GRANT UPDATE (organisation_id) ON subsidiaries TO tonyai_runtime');
+      return checkRuntimeRole((sql) => tx.$queryRawUnsafe(sql));
+    });
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        'tonyai_runtime has column-level INSERT on public.profiles',
+        'tonyai_runtime has column-level SELECT on public._prisma_migrations',
+        'tonyai_runtime can UPDATE public.subsidiaries.organisation_id',
+      ]),
+    );
+  });
+
   it('cannot move a subsidiary to another organisation — every other column of it, it can edit', async () => {
     expect(await attempt('UPDATE subsidiaries SET organisation_id = organisation_id WHERE false')).toMatch(DENIED);
     expect(await attempt('UPDATE subsidiaries SET id = id WHERE false')).toMatch(DENIED);

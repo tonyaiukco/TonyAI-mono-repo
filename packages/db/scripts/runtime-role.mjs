@@ -254,6 +254,14 @@ export async function checkRuntimeRole(query) {
       if (rows[0][p] && !expected.has(p)) problems.push(`${role} has ${p} on public.${name}`);
       if (!rows[0][p] && expected.has(p)) problems.push(`${role} lacks ${p} on public.${name}`);
     }
+    // Column-level grants are invisible to has_table_privilege: `INSERT (…)` on
+    // `profiles` or `SELECT (migration_name)` on `_prisma_migrations` would
+    // pass the loop above (`qa-auditor`).
+    for (const p of ['SELECT', 'INSERT', 'REFERENCES']) {
+      if (expected.has(p)) continue;
+      const [{ any }] = await query(`SELECT has_any_column_privilege('${role}', 'public.${name}', '${p}') AS any`);
+      if (any) problems.push(`${role} has column-level ${p} on public.${name}`);
+    }
     if (!expected.has('UPDATE')) {
       const allowed = new Set(RUNTIME_COLUMN_UPDATES[name] ?? []);
       const cols = await query(

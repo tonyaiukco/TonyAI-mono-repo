@@ -38,7 +38,18 @@ process.env.INT_PROVISION_RUNTIME_LOGIN = runtimeGiven ? '' : '1';
 // project's tsconfig, as `nest build` compiles them.
 const { config: tsconfig } = ts.readConfigFile(resolve(__dirname, 'tsconfig.json'), ts.sys.readFile);
 const compilerOptions = ts.convertCompilerOptionsFromJson(
-  { ...tsconfig.compilerOptions, module: 'ESNext', sourceMap: true, inlineSources: true, declaration: false, incremental: false },
+  {
+    ...tsconfig.compilerOptions,
+    module: 'ESNext',
+    sourceMap: true,
+    inlineSources: true,
+    declaration: false,
+    incremental: false,
+    // Without these the map's sources resolve against outDir/baseUrl and stack
+    // traces name `src/src/…` paths that do not exist.
+    outDir: undefined,
+    baseUrl: undefined,
+  },
   __dirname,
 ).options;
 const API_SOURCES = resolve(__dirname, 'src');
