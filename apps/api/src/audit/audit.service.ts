@@ -30,8 +30,8 @@ import { ListAuditQueryDto } from './dto/list-audit-query.dto';
 // import it from there directly rather than through this module.
 
 /** Reading the trail is super_admin-only, matching the RLS policy exactly.
- * The API is the primary control (Prisma connects as the owner and bypasses
- * RLS), so this check is what actually enforces it. */
+ * The API is the primary control (Prisma connects as the runtime role, which
+ * bypasses RLS — LP1-03), so this check is what actually enforces it. */
 const READ_ROLES = new Set<UserRole>(['super_admin']);
 
 /** Accepts a transaction client so the audit row commits with the mutation. */

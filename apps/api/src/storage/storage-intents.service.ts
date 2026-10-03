@@ -83,7 +83,7 @@ export class UploadExpiredError extends ConflictException {
 export class RowsHiddenError extends Error {
   constructor() {
     super(
-      'Storage removal refused: this database role cannot see every row of evidence, import_batches and storage.objects (it needs BYPASSRLS, ownership of the tables, or tables without RLS). Run it as the API\'s owner role.',
+      'Storage removal refused: this database role cannot see every row of evidence, import_batches and storage.objects (it needs BYPASSRLS, ownership of the tables, or tables without RLS). Run it as the API\'s runtime role, tonyai_runtime (LP1-03).',
     );
     this.name = 'RowsHiddenError';
   }

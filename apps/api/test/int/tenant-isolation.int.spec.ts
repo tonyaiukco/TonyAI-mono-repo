@@ -124,7 +124,7 @@ interface Res {
 
 async function call(role: Role, method: string, path: string, body?: unknown): Promise<Res> {
   const headers: Record<string, string> = { authorization: `Bearer ${await tokenFor(A.users[role].id)}` };
-  let payload: BodyInit | undefined;
+  let payload: FormData | string | undefined;
   if (body instanceof FormData) payload = body;
   else if (body !== undefined) {
     headers['content-type'] = 'application/json';
@@ -156,10 +156,10 @@ async function snapshotB(): Promise<string> {
 }
 
 /** A response with every id of `ids` replaced, so B's answer and a random id's answer compare as text. */
-const normalise = (res: Res, ids: Record<string, string>) =>
-  `${res.status} ${Object.values(ids).reduce((t, id) => t.split(id).join('<id>'), res.text)}`;
-
 type Ids = TenantData & { subsidiaryId: string; organisationId: string };
+
+const normalise = (res: Res, ids: Ids) =>
+  `${res.status} ${Object.values(ids).reduce((t, id) => t.split(id).join('<id>'), res.text)}`;
 
 interface Route {
   name: string;
@@ -248,6 +248,7 @@ const ID_ROUTES: Route[] = [
       ['/emissions/completeness', '&year=2026'],
       ['/reports/meta', '&year=2026'],
       ['/reports/csv', '&year=2026&template=executive_summary'],
+      ['/reports/excel', '&year=2026&template=executive_summary'],
     ] as const
   ).map(
     ([path, rest]): Route => ({

@@ -111,7 +111,7 @@ const ACCESSIBLE_QUERY = {
   // the token.
   //
   // What this proves is the DB layer, which is NOT the layer WP22 changed: the
-  // API reads `profiles` as the owner, so RLS is defence-in-depth here. The
+  // API reads `profiles` as the runtime role (BYPASSRLS), so RLS is defence-in-depth here. The
   // containment argument for the API path is that actor ids come from records
   // already filtered by `accessibleSubsidiaryIds`.
   //

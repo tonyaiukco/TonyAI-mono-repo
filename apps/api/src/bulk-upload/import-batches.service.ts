@@ -29,7 +29,7 @@ const ORGANISATION_READERS = new Set(['super_admin', 'consultant', 'executive_vi
  * Applied bulk imports: list, read, download the source file, submit the
  * drafts one produced. The rule for who may see a batch is the RLS policy's
  * (`import_batches_select_scoped`), applied here because the API reads as the
- * owner role, which bypasses RLS:
+ * runtime role (`tonyai_runtime`, LP1-03), which bypasses RLS:
  *
  *   - super_admin, consultant, executive_viewer: every batch of their
  *     organisation;

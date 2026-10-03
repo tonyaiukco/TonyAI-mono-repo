@@ -36,7 +36,10 @@ For an endpoint that ingests MANY rows from an uploaded file into an existing re
 1. **Types** — add `XxxDTO`, `CreateXxxInput`, `UpdateXxxInput` to `packages/shared-types/src/index.ts`,
    then `pnpm --filter @tonyai/shared-types build`.
 2. **Prisma** — if a new table is needed, add the model (snake_case `@@map`, `organisation_id`/`subsidiary_id`
-   FK, timestamps), run a migration, and apply the **`rls-for-table`** skill for the new tenant table.
+   FK, timestamps), run a migration, and apply the **`rls-for-table`** skill for the new tenant table —
+   including its step 2c, the runtime role's grants (the API connects as `tonyai_runtime`, LP1-03). The
+   service's `accessibleSubsidiaryIds` scoping is the only filter on the API's queries (RLS does not apply to
+   the runtime role), so add the new routes to `apps/api/test/int/tenant-isolation.int.spec.ts`.
 3. **DTOs** — `apps/api/src/<res>/dto/create-<res>.dto.ts` and `update-<res>.dto.ts` (update = all optional).
 4. **Service** — inject `PrismaService`; implement `list/get/create/update/remove` with the tenant filter,
    `assertCanWrite`, a `toDTO` mapper, and a private `audit(...)`.
