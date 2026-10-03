@@ -1,6 +1,7 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import {
   ADMIN_EMAIL,
+  APPROVER_EMAIL,
   API_BASE,
   CONSULTANT_EMAIL,
   E2E_PERIOD,
@@ -36,8 +37,9 @@ import {
 const ACTIVITY_VALUE = 77_777;
 const REASON = 'Duplicate of the site-level invoice for the same quarter.';
 
-/** Create an approved figure to withdraw. Approve is API-only — there is no UI
- *  for it, and `approved` is the one status the void path accepts. */
+/** Create an approved figure to withdraw — `approved` is the one status the
+ *  void path accepts. Created by ADMIN and approved by the second super_admin:
+ *  nobody approves a record they created (D01). */
 async function arrangeApproved(
   request: APIRequestContext,
   periodValue: string,
@@ -50,7 +52,7 @@ async function arrangeApproved(
     activityValue: ACTIVITY_VALUE,
     activityUnit: 'litres',
   });
-  await approveRecord(request, token, id);
+  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
   return id;
 }
 
@@ -148,20 +150,14 @@ test('a super_admin withdraws an approved figure, and the record agrees', async 
   // confirmation of the one irreversible act in the product. The names are
   // required now, so a write response cannot omit them.
   await expect(drawer.getByText('Entered by')).toBeVisible();
-  // THREE TIMES, and the count is the assertion. One admin created this
-  // record, approved it AND withdrew it, so the same name stands against all
-  // three actors — which is the segregation-of-duties gap made visible rather
-  // than prevented. Four eyes is a property of the consultant seat only;
-  // before these columns existed, a self-approval was discoverable solely from
-  // /audit, which data_entry and consultant cannot read. `toBeVisible()` here
-  // is a strict-mode violation for exactly that reason, so do not "fix" it
-  // with .first().
-  //
-  // It was two until `voidedByName` landed. The third occurrence is the
-  // withdrawer, and it makes the point stronger rather than weaker: the same
-  // person entered the figure, accepted it, and took it back out of the
-  // inventory, with nothing in the product stopping any of the three.
-  await expect(drawer.getByText('Tony Admin')).toHaveCount(3);
+  // Every actor is named, and the counts are the assertion. Admin entered the
+  // figure and withdrew it; the second super_admin approved it, because the
+  // approver may not be the creator (decision D01, LP1-01 — this test used to
+  // count THREE "Tony Admin", the segregation-of-duties gap made visible
+  // rather than prevented). `toBeVisible()` on the doubled name is a
+  // strict-mode violation, so do not "fix" it with .first().
+  await expect(drawer.getByText('Tony Admin')).toHaveCount(2);
+  await expect(drawer.getByText('Arda Approver')).toHaveCount(1);
 
   // And the server agrees. Without this the test would pass on a UI that
   // rendered an optimistic result and dropped the request.

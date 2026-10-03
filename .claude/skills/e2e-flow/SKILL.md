@@ -32,8 +32,11 @@ in `e2e/helpers.ts`.
   category the seed's factor library covers is evidence-required, so committing always needs a file —
   and so does anything a bulk import produces. `seedE2EFactor` opens a non-evidence lane for the cases
   that need one.
-- **Approve is API-only** (no UI) — use `getAccessToken` + `approveRecord` for any flow that needs an
-  approved record.
+- **Approve via the API** — `getAccessToken` + `approveRecord` for any flow that needs an approved
+  record (`/review` has an Approve button; `review-queue.spec.ts` covers it). **The approver may not be
+  the record's creator** (decision D01): a record created with `ADMIN_EMAIL`'s token is approved with
+  `APPROVER_EMAIL`'s, the seed's second super_admin. And only the author submits (D02), so submit with
+  the creating token.
 - **Select shadcn/Radix dropdowns by their field Label, not the trigger's accessible name.** Use
   `pickByFieldLabel(page, 'Value', 'Q3')` / `selectSubsidiary`. Matching the trigger by accessible name is
   unreliable (Radix composes it) and the Subsidiary field is a Skeleton until data loads — the

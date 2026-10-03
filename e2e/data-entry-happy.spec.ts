@@ -3,6 +3,7 @@ import {
   login,
   selectSubsidiary,
   ADMIN_EMAIL,
+  APPROVER_EMAIL,
   EVIDENCE_FIXTURE,
   getAccessToken,
   findRecordId,
@@ -13,8 +14,8 @@ import {
 /**
  * The end-to-end demo flow (Phase-1 exit gate rehearsal): a super_admin enters
  * activity data, sees a live tCO₂e preview, saves a draft, attaches the required
- * evidence, submits, then approves it (via the API — the UI path is covered
- * by `review-queue.spec.ts`) and
+ * evidence, submits, then has the second super_admin approve it (via the API —
+ * the UI path is covered by `review-queue.spec.ts`) and
  * the record shows as Approved. Uses TonyAI Energy · Electricity · 2026 · Q1 —
  * an unseeded quarterly tuple with no baseline, so nothing is flagged anomalous.
  */
@@ -62,14 +63,15 @@ test('data entry: draft → live preview → evidence → submit → approve →
   await page.getByRole('button', { name: 'Submit for review' }).click();
   await expect(page.getByText('Submitted for review')).toBeVisible();
 
-  // Approve via the API (super_admin; no UI path exists for approval).
+  // Approve via the API, as the OTHER super_admin: nobody approves a record
+  // they created (D01).
   const token = await getAccessToken(request, ADMIN_EMAIL);
   const id = await findRecordId(request, token, {
     subsidiaryId: SUB.energy,
     category: 'Electricity',
     periodValue: 'Q1',
   });
-  await approveRecord(request, token, id);
+  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
 
   // Reload, re-select Energy (the page defaults to the first subsidiary), and
   // confirm the record now reads as Approved in Previous submissions. Scope to

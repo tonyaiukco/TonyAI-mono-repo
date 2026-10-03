@@ -535,6 +535,11 @@ async function main() {
   const adminId = await ensureAuthUser('admin@tonyai.local', 'TonyAI!2026', 'Tony Admin');
   const entryId = await ensureAuthUser('entry@tonyai.local', 'TonyAI!2026', 'Eda Entry');
   const reviewId = await ensureAuthUser('review@tonyai.local', 'TonyAI!2026', 'Cem Consultant');
+  // A second super_admin, because the approver may not be the record's
+  // creator (decision D01, 2026-09-29): with one super_admin, nothing that
+  // super_admin entered could ever be approved. The e2e suite and the UAT
+  // catalogue approve as this user whatever admin@ created.
+  const approverId = await ensureAuthUser('approver@tonyai.local', 'TonyAI!2026', 'Arda Approver');
 
   await prisma.profile.upsert({
     where: { id: adminId },
@@ -546,6 +551,12 @@ async function main() {
     where: { id: entryId },
     update: { role: UserRole.data_entry, organisationId: ORG_ID },
     create: { id: entryId, email: 'entry@tonyai.local', fullName: 'Eda Entry', role: UserRole.data_entry, organisationId: ORG_ID },
+  });
+
+  await prisma.profile.upsert({
+    where: { id: approverId },
+    update: { role: UserRole.super_admin, organisationId: ORG_ID },
+    create: { id: approverId, email: 'approver@tonyai.local', fullName: 'Arda Approver', role: UserRole.super_admin, organisationId: ORG_ID },
   });
 
   // Review-only (decision 2026-07-30): may take records into review and reject
@@ -933,6 +944,7 @@ const LOCATION_ACTIVITY = [
 
   console.log('\nSeed complete.');
   console.log('  super_admin -> admin@tonyai.local / TonyAI!2026 (sees all 5 subsidiaries)');
+  console.log('  super_admin -> approver@tonyai.local / TonyAI!2026 (a second approver: nobody approves a record they created)');
   console.log('  data_entry  -> entry@tonyai.local / TonyAI!2026 (sees 2 subsidiaries)');
   console.log('  consultant  -> review@tonyai.local / TonyAI!2026 (org-wide read; review/reject only, cannot approve)');
 }

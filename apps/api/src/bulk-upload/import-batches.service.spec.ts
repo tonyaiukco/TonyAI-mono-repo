@@ -218,14 +218,14 @@ describe('ImportBatchesService — submitting a batch', () => {
     expect(bulkSubmit.submitIds).toHaveBeenCalledWith(user(), ['r1', 'r2'], { batchId: BATCH });
   });
 
-  it('lets a super_admin submit every draft of the batch, not only their own', async () => {
+  it("hands a super_admin only their OWN drafts too — only the author submits (D02)", async () => {
     const { prisma, service } = build();
     prisma.importBatch.findUnique.mockResolvedValue(batch());
     const admin = user({ id: 'u-a', role: 'super_admin', accessibleSubsidiaryIds: [SUB_A, SUB_B] });
 
     await service.submit(admin, BATCH);
 
-    expect(prisma.activityRecord.findMany.mock.calls[0][0].where).not.toHaveProperty('createdBy');
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toMatchObject({ createdBy: 'u-a' });
   });
 
   it('sends a role that may not submit straight to the bulk submit, which refuses and audits it', async () => {

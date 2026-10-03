@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import {
   login, bearer, getAccessToken, pickByFieldLabel, cleanupE2ESubsidiaries,
-  ADMIN_EMAIL, ENTRY_EMAIL, API_BASE, E2E_YEAR, E2E_PERIOD, EVIDENCE_FIXTURE,
+  ADMIN_EMAIL, APPROVER_EMAIL, ENTRY_EMAIL, API_BASE, E2E_YEAR, E2E_PERIOD, EVIDENCE_FIXTURE,
 } from './helpers';
 
 /**
@@ -94,7 +94,9 @@ test('a subsidiary holding committed records cannot be deleted', async ({ reques
     multipart: { file: { name: 'guard.pdf', mimeType: 'application/pdf', buffer: readFileSync(EVIDENCE_FIXTURE) } },
   });
   await request.post(`${API_BASE}/activity-records/${rec.id}/submit`, { headers: bearer(token) });
-  const approved = await request.post(`${API_BASE}/activity-records/${rec.id}/approve`, { headers: bearer(token) });
+  // The other super_admin approves: nobody approves a record they created (D01).
+  const approver = await getAccessToken(request, APPROVER_EMAIL);
+  const approved = await request.post(`${API_BASE}/activity-records/${rec.id}/approve`, { headers: bearer(approver) });
   expect((await approved.json()).status).toBe('approved');
 
   const refused = await request.delete(`${API_BASE}/subsidiaries/${sub.id}`, { headers: bearer(token) });

@@ -294,6 +294,7 @@ pnpm dev            # web -> http://localhost:3000   api -> http://localhost:300
 | Email | Password | Role | Sees |
 | --- | --- | --- | --- |
 | `admin@tonyai.local` | `TonyAI!2026` | `super_admin` | all 5 subsidiaries |
+| `approver@tonyai.local` | `TonyAI!2026` | `super_admin` | all 5 subsidiaries — the second approver: nobody approves a record they created (D01) |
 | `entry@tonyai.local` | `TonyAI!2026` | `data_entry` | 2 subsidiaries (tenant‑isolation demo) |
 | `review@tonyai.local` | `TonyAI!2026` | `consultant` | organisation‑wide read; review/reject only (cannot enter, edit, submit or approve) |
 
@@ -406,7 +407,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) requir
 | `GET` | `/evidence/:id/url` | Short‑lived signed download URL for a private file (scoped by the file's subsidiary) | any |
 | `DELETE` | `/evidence/:id` | Delete a file from every record it backs — only while **each** of them is editable; a shared file backing a record that can no longer change is a 409. API-only: the web removes a file from one record with the detach route above | `data_entry` / `super_admin` |
 | `GET` | `/period-locks` | List locked periods (tenant‑scoped; filters `?subsidiaryId=&year=`) | any |
-| `POST` | `/period-locks` | Close a reporting period (blocked while records await review) | `super_admin` |
+| `POST` | `/period-locks` | Close a reporting period (blocked while records await review, or while a rejected record waits for its author — D03) | `super_admin` |
 | `DELETE` | `/period-locks/:id` | Reopen a period (locked records revert to `approved`) | `super_admin` |
 | `GET` | `/targets` | List reduction targets (tenant‑scoped) | any |
 | `GET` | `/targets/progress` | Live progress vs committed emissions (`null` = no post‑baseline data) | any |

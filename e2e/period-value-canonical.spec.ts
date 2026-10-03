@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   ADMIN_EMAIL,
+  APPROVER_EMAIL,
   API_BASE,
   E2E_PERIOD,
   E2E_YEAR,
@@ -121,7 +122,8 @@ test('a closed period is closed whatever spelling closed it', async ({ request }
     periodValue: PERIOD,
     activityValue: 260,
   });
-  await approveRecord(request, token, id);
+  // The other super_admin approves: nobody approves a record they created (D01).
+  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
 
   // Locked with a DIFFERENT spelling from the record it must cover.
   const lockId = await lockPeriod(request, token, {

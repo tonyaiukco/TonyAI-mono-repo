@@ -2,6 +2,7 @@ import { test, expect, type APIRequestContext } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import {
   ADMIN_EMAIL,
+  APPROVER_EMAIL,
   API_BASE,
   E2E_YEAR,
   ENTRY_EMAIL,
@@ -109,7 +110,8 @@ test('reports: a withdrawn figure is disclosed in the export, not silently omitt
     periodValue: 'Q2',
     activityValue: 54_321,
   });
-  await approveRecord(request, token, id);
+  // The other super_admin approves: nobody approves a record they created (D01).
+  await approveRecord(request, await getAccessToken(request, APPROVER_EMAIL), id);
   const withdrawal = await request.post(`${API_BASE}/activity-records/${id}/void`, {
     headers: bearer(token),
     data: { voidReason: REASON },

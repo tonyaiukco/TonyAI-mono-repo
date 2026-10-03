@@ -177,7 +177,7 @@ Two column layout:
 1. user clicks an `incomplete` cell in `SubsidiaryMatrix`
 2. `DetailDrawer` opens from the right
 3. if user role is `data_entry`, drawer may show quick edit or jump to Data Entry
-4. if user role is `super_admin`, drawer may show review actions such as approve or reject where applicable
+4. if user role is `super_admin`, drawer may show review actions such as approve or reject where applicable — approve never on a record the viewer created (D01)
 
 ## 4.2 Live Calculation Flow
 1. user enters value in `ActivityValue`
