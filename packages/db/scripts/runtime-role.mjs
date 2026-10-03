@@ -20,8 +20,10 @@
  *   RUNTIME_DB_PASSWORD=<pw> DIRECT_URL=<owner> node packages/db/scripts/runtime-role.mjs provision
  *   node packages/db/scripts/runtime-role.mjs check       # verifies DATABASE_URL's database
  *
- * `provision` refuses any database that is not plainly on this machine, and
- * sends a SCRAM verifier computed here, so the password itself never reaches
+ * `provision` refuses any database that is not plainly on this machine — an
+ * accident guard, not proof of locality: a port forwarded to a deployed
+ * database (`ssh -L`, a cloud proxy) looks local, so never run local tooling
+ * through one — and sends a SCRAM verifier computed here, so the password itself never reaches
  * the server (or its statement logs). `check` only reads the catalogue, so an
  * operator can point it at a deployed database (with either credential) to
  * verify the privileges actually granted there:
@@ -199,7 +201,15 @@ export async function checkRuntimeRole(query) {
   }
   // Settings attached to the role (`ALTER ROLE … SET`) apply to every session
   // it opens — a search_path among them would change what its queries resolve to.
-  if (attrs.rolconfig?.length) problems.push(`${role} carries role settings: ${attrs.rolconfig.join(', ')}`);
+  // `pg_roles.rolconfig` shows only the settings for every database; `ALTER
+  // ROLE … IN DATABASE … SET` lives in pg_db_role_setting alone.
+  const settings = await query(
+    `SELECT array_to_string(s.setconfig, ', ') AS config, s.setdatabase <> 0 AS per_database
+       FROM pg_db_role_setting s WHERE s.setrole = (SELECT oid FROM pg_roles WHERE rolname = '${role}')`,
+  );
+  for (const { config, per_database } of settings) {
+    problems.push(`${role} carries role settings${per_database ? ' for a database' : ''}: ${config}`);
+  }
 
   const memberships = await query(
     `SELECT r.rolname FROM pg_auth_members m
@@ -299,49 +309,82 @@ export async function checkRuntimeRole(query) {
   return problems;
 }
 
-const OWN_SCHEMAS = ['public', 'pg_catalog', 'information_schema'];
+const SYSTEM_SCHEMAS = ['pg_catalog', 'information_schema'];
+const RELATION_PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'];
+const COLUMN_PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'];
+const sqlList = (xs) => xs.map((x) => `'${x}'`).join(', ');
 
 /**
- * What the role can reach outside `public` beyond `RUNTIME_STORAGE_PRIVILEGES`:
- * schemas it may use, relations it may touch in them, and SECURITY DEFINER
- * functions it may call there — each marked when PUBLIC holds the grant.
+ * Everything the role can reach beyond its declared grants (the tables of
+ * `public`, checked against RUNTIME_TABLE_PRIVILEGES, and
+ * RUNTIME_STORAGE_PRIVILEGES): USAGE or CREATE on a schema; any privilege, table
+ * or column level, on a relation of a schema it can use — in `public` the
+ * relations that are not tables; EXECUTE on a SECURITY DEFINER function there.
+ * Each privilege is marked `viaPublic` only when PUBLIC itself holds THAT
+ * privilege, so a grant this repository made cannot hide behind an unrelated
+ * PUBLIC entry in the same ACL (`security-rls` round 2).
  */
 async function outsideReach(query) {
   const role = RUNTIME_ROLE;
-  const expected = Object.keys(RUNTIME_STORAGE_PRIVILEGES);
-  const schemas = await query(
-    `SELECT n.nspname AS name,
-            EXISTS (SELECT 1 FROM aclexplode(n.nspacl) a WHERE a.grantee = 0 AND a.privilege_type = 'USAGE') AS via_public
-       FROM pg_namespace n
-      WHERE has_schema_privilege('${role}', n.oid, 'USAGE')
-        AND n.nspname NOT IN (${OWN_SCHEMAS.map((x) => `'${x}'`).join(', ')})
-        AND n.nspname NOT LIKE 'pg\\_%'
-      ORDER BY 1`,
+  const declared = new Set(
+    Object.entries(RUNTIME_STORAGE_PRIVILEGES).flatMap(([rel, privileges]) => privileges.map((p) => `${rel}:${p}`)),
   );
   const out = [];
-  for (const { name, via_public } of schemas) {
-    if (name !== 'storage') out.push({ what: `USAGE on schema ${name}`, viaPublic: via_public });
-    const relations = await query(
-      `SELECT c.relname AS rel,
-              array_to_string(ARRAY(SELECT p FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE']) p
-                                    WHERE has_table_privilege('${role}', c.oid, p)), ',') AS privs,
-              EXISTS (SELECT 1 FROM aclexplode(c.relacl) a WHERE a.grantee = 0) AS via_public
+  const schemas = await query(
+    `SELECT n.nspname AS name, n.oid::int AS oid,
+            has_schema_privilege('${role}', n.oid, 'USAGE') AS usage,
+            has_schema_privilege('public', n.oid, 'USAGE') AS usage_public,
+            has_schema_privilege('${role}', n.oid, 'CREATE') AS create_,
+            has_schema_privilege('public', n.oid, 'CREATE') AS create_public
+       FROM pg_namespace n
+      WHERE n.nspname NOT IN (${sqlList(SYSTEM_SCHEMAS)})
+        AND n.nspname NOT LIKE 'pg\\_%'
+        AND (has_schema_privilege('${role}', n.oid, 'USAGE') OR has_schema_privilege('${role}', n.oid, 'CREATE'))
+      ORDER BY 1`,
+  );
+  for (const { name, usage, usage_public, create_, create_public } of schemas) {
+    // `public` is checked above, as a problem whoever granted it.
+    if (create_ && name !== 'public') out.push({ what: `CREATE on schema ${name}`, viaPublic: create_public });
+    if (!usage) continue;
+    if (name !== 'public' && name !== 'storage') out.push({ what: `USAGE on schema ${name}`, viaPublic: usage_public });
+    const kinds = name === 'public' ? ['v', 'm', 'S', 'f'] : ['r', 'p', 'v', 'm', 'S', 'f'];
+    const reach = await query(
+      `SELECT c.relname AS rel, x.priv, false AS column_level, has_table_privilege('public', c.oid, x.priv) AS via_public
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = '${name}' AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
-        ORDER BY 1`,
+        CROSS JOIN unnest(ARRAY[${sqlList(RELATION_PRIVILEGES)}]) AS x(priv)
+        WHERE n.nspname = '${name}' AND c.relkind IN (${sqlList(kinds)})
+          AND has_table_privilege('${role}', c.oid, x.priv)
+       UNION ALL
+       SELECT c.relname, x.priv, true, has_any_column_privilege('public', c.oid, x.priv)
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        CROSS JOIN unnest(ARRAY[${sqlList(COLUMN_PRIVILEGES)}]) AS x(priv)
+        WHERE n.nspname = '${name}' AND c.relkind IN (${sqlList(kinds.filter((k) => k !== 'S'))})
+          AND NOT has_table_privilege('${role}', c.oid, x.priv)
+          AND has_any_column_privilege('${role}', c.oid, x.priv)
+        ORDER BY 1, 2`,
     );
-    for (const { rel, privs, via_public: relPublic } of relations) {
-      if (!privs || expected.includes(`${name}.${rel}`)) continue;
-      out.push({ what: `${privs} on ${name}.${rel}`, viaPublic: relPublic });
+    const grouped = new Map();
+    for (const { rel, priv, column_level, via_public } of reach) {
+      if (!column_level && declared.has(`${name}.${rel}:${priv}`)) continue;
+      const key = `${rel}|${column_level}|${via_public}`;
+      const entry = grouped.get(key) ?? { rel, column_level, via_public, privs: [] };
+      entry.privs.push(priv);
+      grouped.set(key, entry);
+    }
+    for (const { rel, column_level, via_public, privs } of grouped.values()) {
+      out.push({
+        what: `${privs.join(',')}${column_level ? ' (column-level)' : ''} on ${name}.${rel}`,
+        viaPublic: via_public,
+      });
     }
     const definers = await query(
-      `SELECT p.proname AS fn, p.proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0) AS via_public
+      `SELECT p.proname AS fn, has_function_privilege('public', p.oid, 'EXECUTE') AS via_public
          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = '${name}' AND p.prosecdef AND has_function_privilege('${role}', p.oid, 'EXECUTE')
         ORDER BY 1`,
     );
-    for (const { fn, via_public: fnPublic } of definers) {
-      out.push({ what: `EXECUTE on SECURITY DEFINER ${name}.${fn}()`, viaPublic: fnPublic });
+    for (const { fn, via_public } of definers) {
+      out.push({ what: `EXECUTE on SECURITY DEFINER ${name}.${fn}()`, viaPublic: via_public });
     }
   }
   return out;

@@ -69,6 +69,34 @@ describe('the runtime role', () => {
     expect(problems).toContain('tonyai_runtime was granted SELECT on storage.buckets');
   });
 
+  it('a grant of ours cannot hide behind PUBLIC, a per-database setting, CREATE elsewhere or a Storage column (`security-rls` round 2)', async () => {
+    const { problems, exposures } = await withRollback(owner, async (tx) => {
+      // A schema and table PUBLIC can use and read — and then OUR extra grants on them.
+      await tx.$executeRawUnsafe('CREATE SCHEMA lp103_probe');
+      await tx.$executeRawUnsafe('GRANT USAGE ON SCHEMA lp103_probe TO PUBLIC');
+      await tx.$executeRawUnsafe('CREATE TABLE lp103_probe.t (id int)');
+      await tx.$executeRawUnsafe('GRANT SELECT ON lp103_probe.t TO PUBLIC');
+      await tx.$executeRawUnsafe('GRANT INSERT ON lp103_probe.t TO tonyai_runtime');
+      await tx.$executeRawUnsafe('GRANT CREATE ON SCHEMA lp103_probe TO tonyai_runtime');
+      await tx.$executeRawUnsafe(
+        `DO $$ BEGIN EXECUTE format('ALTER ROLE tonyai_runtime IN DATABASE %I SET search_path = public', current_database()); END $$`,
+      );
+      await tx.$executeRawUnsafe('GRANT UPDATE (name) ON storage.objects TO tonyai_runtime');
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      return { problems: await checkRuntimeRole(query), exposures: await runtimeRoleExposures(query) };
+    });
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        'tonyai_runtime was granted INSERT on lp103_probe.t',
+        'tonyai_runtime was granted CREATE on schema lp103_probe',
+        'tonyai_runtime carries role settings for a database: search_path=public',
+        'tonyai_runtime was granted UPDATE (column-level) on storage.objects',
+      ]),
+    );
+    // What PUBLIC itself holds stays a warning.
+    expect(exposures).toEqual(expect.arrayContaining(['SELECT on lp103_probe.t (via PUBLIC)']));
+  });
+
   it('notices column-level grants, which has_table_privilege does not see (`qa-auditor`)', async () => {
     const problems = await withRollback(owner, async (tx) => {
       await tx.$executeRawUnsafe('GRANT INSERT (id, email, full_name, updated_at) ON profiles TO tonyai_runtime');

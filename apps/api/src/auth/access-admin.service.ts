@@ -125,12 +125,15 @@ export class AccessAdminService {
         tx,
       );
       if (target.role === DbUserRole.data_entry) {
-        const grants = await tx.userSubsidiaryAccess.findMany({
-          where: { userId: profileId, organisationId },
-          select: { subsidiaryId: true },
-          orderBy: { subsidiaryId: 'asc' },
-        });
-        await tx.userSubsidiaryAccess.deleteMany({ where: { userId: profileId, organisationId } });
+        // One statement, so the audit names exactly the grants it removed — a
+        // subsidiary deleted (or a grant added by the seed) between a read and
+        // a delete would otherwise be audited without being removed, or the
+        // reverse (`security-rls` round 2).
+        const grants = await tx.$queryRaw<{ subsidiaryId: string }[]>`
+          DELETE FROM user_subsidiary_access
+          WHERE user_id = ${profileId}::uuid AND organisation_id = ${organisationId}::uuid
+          RETURNING subsidiary_id::text AS "subsidiaryId"`;
+        grants.sort((x, y) => x.subsidiaryId.localeCompare(y.subsidiaryId));
         for (const { subsidiaryId } of grants) {
           await this.audit.record(
             admin,
