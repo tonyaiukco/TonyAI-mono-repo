@@ -188,7 +188,9 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
     try {
       const { count } = await this.prisma.storageIntent.updateMany({
         where: { id: intentId, kind: StorageIntentKind.upload },
-        data: { kind: StorageIntentKind.delete, nextAttemptAt: new Date() },
+        // Its next_attempt_at is its creation time, already past: due at
+        // once. Never stamped from this process's clock.
+        data: { kind: StorageIntentKind.delete },
       });
       if (count === 1) await this.runNow([ref]);
     } catch (error) {

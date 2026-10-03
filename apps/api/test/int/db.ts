@@ -131,16 +131,30 @@ async function populateTenant(
     // matched by this tenant's organisation and profiles only, so no real
     // trail is touched; the organisation cascades to subsidiaries, records,
     // locks and evidence (not Storage objects — a test that uploads removes
-    // its own). TRIPWIRE: if audit_log ever gets a DB-level append-only guard
-    // (trigger or REVOKE DELETE for the owner), do not weaken it for this —
-    // leave the tagged rows instead.
+    // its own, `storage.ts`). Storage intents carry no foreign key, so the
+    // tenant's are matched by its ids and key prefixes. TRIPWIRE: if
+    // audit_log ever gets a DB-level append-only guard (trigger or REVOKE
+    // DELETE for the owner), do not weaken it for this — leave the tagged
+    // rows instead.
     async cleanup() {
+      await prisma.storageIntent.deleteMany({ where: tenantIntents([subsidiary.id], [organisation.id]) });
       await prisma.auditLog.deleteMany({
         where: { OR: [{ organisationId: organisation.id }, { userId: { in: profileIds } }] },
       });
       await prisma.profile.deleteMany({ where: { id: { in: profileIds } } });
       await prisma.organisation.delete({ where: { id: organisation.id } });
     },
+  };
+}
+
+/** The storage intents of synthetic tenants: by their ids, or by the key prefixes their objects live under. */
+export function tenantIntents(subsidiaryIds: string[], organisationIds: string[]): Prisma.StorageIntentWhereInput {
+  return {
+    OR: [
+      { subsidiaryId: { in: subsidiaryIds } },
+      { organisationId: { in: organisationIds } },
+      ...[...subsidiaryIds, ...organisationIds].map((id) => ({ objectPath: { startsWith: `${id}/` } })),
+    ],
   };
 }
 

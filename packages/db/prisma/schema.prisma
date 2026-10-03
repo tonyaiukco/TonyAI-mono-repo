@@ -535,13 +535,17 @@ model StorageIntent {
   subsidiaryId   String?           @map("subsidiary_id") @db.Uuid
   attempts       Int               @default(0)
   lastError      String?           @map("last_error")
-  // timestamptz, unlike the rest of the schema: the sweeper compares these
-  // with now() in SQL, which must not depend on the session's time zone.
-  nextAttemptAt  DateTime          @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  // Every time here is the DATABASE's: the sweeper compares them with now()
+  // in SQL. So timestamptz(6), unlike the rest of the schema (no session time
+  // zone, no rounding past the next statement's now()), and defaults the
+  // database fills — Prisma's `@default(now())` is filled by the query engine
+  // from the API host's clock, and a host a few ms ahead made an intent
+  // written a moment ago read as not yet due (measured, LP1-02).
+  nextAttemptAt  DateTime          @default(dbgenerated("now()")) @map("next_attempt_at") @db.Timestamptz(6)
   // A lease, not a lock: set while one process removes the object, so a
   // second sweeper skips it without a transaction held across the HTTP call.
-  claimedUntil   DateTime?         @map("claimed_until") @db.Timestamptz(3)
-  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  claimedUntil   DateTime?         @map("claimed_until") @db.Timestamptz(6)
+  createdAt      DateTime          @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
 
   @@unique([bucket, objectPath])
   @@index([kind, nextAttemptAt])
