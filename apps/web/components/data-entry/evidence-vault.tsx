@@ -109,6 +109,7 @@ export function EvidenceVault({
       await refresh();
     } catch (e) {
       toast.error((e as Error).message);
+      if (e instanceof ApiError && e.status === 409) await refresh();
     }
   }
 

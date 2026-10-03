@@ -17,11 +17,9 @@ import {
   isPeriodLockedFor,
   MAX_FAILURES_SHOWN,
   needsEvidenceBeforeSubmit,
-  othersWarning,
   selectableDrafts,
   selectAllEligible,
   selectAllNotices,
-  selectedFromOthers,
   submitBlockReason,
   submitConfirmation,
   submitErrorMessage,
@@ -412,16 +410,12 @@ describe('submitBlockReason', () => {
     );
   });
 
-  it("refuses someone else's record for every role but super_admin", () => {
-    // Parameterised over the whole enum, because the exemption is a LIST
-    // membership test and widening it by one role is a one-word edit. With
-    // only `data_entry` and `super_admin` exercised, adding `consultant` to
-    // the exemption was invisible.
+  it("refuses someone else's record for every role", () => {
     const theirs = draft({ createdBy: 'user-them' });
-    expect(submitBlockReason(theirs, { ...ME, role: 'super_admin' }, [])).toBeNull();
+    expect(submitBlockReason(theirs, { ...ME, role: 'super_admin' }, [])).toBe('Entered by someone else.');
     expect(submitBlockReason(theirs, ME, [])).toBe('Entered by someone else.');
     // The other two are refused earlier, by the role gate — which is itself the
-    // point: no non-super_admin role reaches a colleague's record.
+    // point: no role can submit a colleague's record.
     for (const role of ['consultant', 'executive_viewer'] as const) {
       expect(submitBlockReason(theirs, { ...ME, role }, [])).not.toBeNull();
       expect(submitBlockReason(theirs, { ...ME, role }, [])).not.toBe(null);
@@ -515,7 +509,6 @@ describe('selectableDrafts', () => {
   it('selects nothing while the user is unknown', () => {
     expect(selectableDrafts([draft()], null, [])).toEqual({
       selectableIds: [],
-      ownSelectableIds: [],
       reasonById: {},
     });
   });
@@ -615,63 +608,22 @@ describe('draftsSubmitLabel', () => {
   });
 });
 
-describe('what a super_admin may sweep', () => {
-  const ADMIN: SubmittingUser = { id: 'user-admin', role: 'super_admin' };
-
-  it('lets a super_admin tick a colleague\'s draft, but not sweep one', () => {
-    // The endpoint's own DTO refused to take a FILTER because it would let one
-    // user sweep another's work-in-progress into review in a single call. A
-    // "Select all 240" over other people's rows is that filter wearing a
-    // checkbox — so select-all takes only your own, while ticking one
-    // deliberately stays allowed, because the server allows it and one row at
-    // a time is a different act.
-    const rows = [
-      draft({ id: 'mine', createdBy: ADMIN.id }),
-      draft({ id: 'theirs', createdBy: 'user-them' }),
-    ];
-    const { selectableIds, ownSelectableIds } = selectableDrafts(rows, ADMIN, []);
-    expect(selectableIds).toEqual(['mine', 'theirs']);
-    expect(ownSelectableIds).toEqual(['mine']);
-  });
-
-  it('is the same list for everyone else, because the author gate already ran', () => {
-    const rows = [
-      draft({ id: 'mine', createdBy: ME.id }),
-      draft({ id: 'theirs', createdBy: 'user-them' }),
-    ];
-    const { selectableIds, ownSelectableIds } = selectableDrafts(rows, ME, []);
-    expect(selectableIds).toEqual(['mine']);
-    expect(ownSelectableIds).toEqual(['mine']);
-  });
-
-  it('counts what was ticked from someone else, and says so once', () => {
-    const rows = [
-      draft({ id: 'a', createdBy: ADMIN.id }),
-      draft({ id: 'b', createdBy: 'user-them' }),
-      draft({ id: 'c', createdBy: 'user-other' }),
-    ];
-    expect(selectedFromOthers(rows, ['a', 'b', 'c'], ADMIN)).toBe(2);
-    expect(selectedFromOthers(rows, ['a'], ADMIN)).toBe(0);
-    expect(selectedFromOthers(rows, ['a', 'b'], null)).toBe(0);
-
-    expect(othersWarning(0)).toBeNull();
-    expect(othersWarning(1)).toMatch(/1 of them was entered by someone else/);
-    expect(othersWarning(1)).toMatch(/only a reviewer can send it back/);
-    expect(othersWarning(2)).toMatch(/2 of them were entered by someone else/);
-  });
-
-  it('exempts a super_admin from the author gate, and nobody else', () => {
-    const theirs = draft({ createdBy: 'user-them' });
-    expect(authoredBy(theirs, ADMIN)).toBe(true);
-    expect(authoredBy(draft({ createdBy: ME.id }), ME)).toBe(true);
-    // Every other role, asserted on the exported predicate directly. Through
-    // `submitBlockReason` the role gate refuses these two first, so widening
-    // the exemption to one of them is unreachable there and survives every
-    // test — but this function is exported, and the next caller may not have a
-    // role gate in front of it.
-    for (const role of ['data_entry', 'consultant', 'executive_viewer'] as const) {
-      expect(authoredBy(theirs, { id: ME.id, role })).toBe(false);
-    }
+describe('authorship has no submission exemption', () => {
+  it.each(['super_admin', 'data_entry', 'consultant', 'executive_viewer'] as const)(
+    'requires the same author for %s', (role) => {
+      const user = { id: 'user-author', role };
+      expect(authoredBy(draft({ createdBy: user.id }), user)).toBe(true);
+      expect(authoredBy(draft({ createdBy: 'user-other' }), user)).toBe(false);
+    },
+  );
+  it.each(['super_admin', 'data_entry'] as const)('selects only own rows for %s', (role) => {
+    const user = { id: 'user-author', role };
+    const result = selectableDrafts([
+      draft({ id: 'mine', createdBy: user.id }),
+      draft({ id: 'theirs', createdBy: 'user-other' }),
+    ], user, []);
+    expect(result.selectableIds).toEqual(['mine']);
+    expect(result.reasonById.theirs).toBe('Entered by someone else.');
   });
 });
 
@@ -701,28 +653,13 @@ describe('liveSelection', () => {
 });
 
 describe('the notices select-all owes the user', () => {
-  it('says nothing when it took everything', () => {
-    expect(selectAllNotices(5, 0, 0)).toEqual([]);
+  it('says nothing when every eligible row fits', () => {
+    expect(selectAllNotices(5, 0)).toEqual([]);
   });
-
-  it('separates the two reasons, because the remedies differ', () => {
-    const [others] = selectAllNotices(3, 2, 0);
-    expect(others).toMatch(/Selected your own 3/);
-    expect(others).toMatch(/2 records were entered by someone else/);
-    expect(others).toMatch(/ticked one at a time/);
-
-    const [over] = selectAllNotices(1000, 0, 7);
-    expect(over).toMatch(/Selected the first 1,000/);
-    expect(over).toMatch(/7 more can go in a second submission/);
-
-    expect(selectAllNotices(1000, 4, 7)).toHaveLength(2);
-  });
-
-  it('agrees with itself about one record', () => {
-    expect(selectAllNotices(3, 1, 0)[0]).toMatch(/1 record was entered by someone else/);
-  });
-
-  it('names the cap in the refusal, from the constant', () => {
+  it('explains only the cap', () => {
+    expect(selectAllNotices(1000, 7)).toEqual([
+      'Selected the first 1,000. 7 more can go in a second submission.',
+    ]);
     expect(capRefusedNotice()).toBe('1,000 records is the most one submission can carry.');
   });
 });

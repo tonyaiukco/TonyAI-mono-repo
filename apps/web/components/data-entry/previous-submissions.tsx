@@ -34,11 +34,9 @@ import {
   draftsSubmitLabel,
   failuresToShow,
   liveSelection,
-  othersWarning,
   selectableDrafts,
   selectAllEligible,
   selectAllNotices,
-  selectedFromOthers,
   submitConfirmation,
   submitErrorMessage,
   SUBMIT_ISSUE_LABEL,
@@ -173,7 +171,7 @@ export function PreviousSubmissions({
   const [attaching, setAttaching] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { selectableIds, ownSelectableIds, reasonById } = useMemo(
+  const { selectableIds, reasonById } = useMemo(
     () => selectableDrafts(records, user, locks),
     [records, user, locks],
   );
@@ -185,11 +183,6 @@ export function PreviousSubmissions({
   // `selectableIds` is already empty when there is no user, so this is the
   // whole condition.
   const showSelection = selectableIds.length > 0;
-  // The master control speaks for what `select all` can take — your own rows —
-  // not for rows you ticked one at a time from someone else.
-  const liveOwn = live.filter((id) => ownSelectableIds.includes(id));
-  const fromOthers = selectedFromOthers(records, live, user);
-  const warning = othersWarning(fromOthers);
   const summary = report ? summariseSubmit(report) : null;
 
   const attach = useMemo(
@@ -265,15 +258,11 @@ export function PreviousSubmissions({
   }
 
   function selectAll() {
-    // Own rows only — see `DraftSelection.ownSelectableIds`. A `super_admin`
-    // may still tick a colleague's row deliberately; what they cannot do is
-    // sweep a subsidiary's worth of other people's drafts with one click.
-    const { selected: next, overCap } = selectAllEligible(ownSelectableIds);
+    const { selected: next, overCap } = selectAllEligible(selectableIds);
     setReport(null);
     setSelected(next);
     for (const notice of selectAllNotices(
       next.length,
-      selectableIds.length - ownSelectableIds.length,
       overCap,
     )) {
       toast.info(notice);
@@ -319,18 +308,18 @@ export function PreviousSubmissions({
             Attach one file to several records
           </Button>
         )}
-        {!attachMode && ownSelectableIds.length > 0 && (
+        {!attachMode && selectableIds.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <Checkbox
               data-testid="drafts-select-all"
-              checked={allEligibleSelected(liveOwn.length, ownSelectableIds.length)}
+              checked={allEligibleSelected(live.length, selectableIds.length)}
               onCheckedChange={(on) => (on ? selectAll() : setSelected([]))}
               // Starts with the visible text (WCAG 2.5.3, label in name): a
               // voice-control user says what they see — "Select all 3" — and a
               // name that never contains it cannot be activated that way.
-              aria-label={`Select all ${ownSelectableIds.length}: every draft you entered and can send`}
+              aria-label={`Select all ${selectableIds.length}: every draft you entered and can send`}
             />
-            Select all {ownSelectableIds.length}
+            Select all {selectableIds.length}
           </label>
         )}
       </CardHeader>
@@ -644,14 +633,6 @@ export function PreviousSubmissions({
               <DialogTitle>Send these for review?</DialogTitle>
               <DialogDescription>
                 {submitConfirmation(live.length)}
-                {/* The sentence the shared one cannot carry: on the import
-                    surface every row is the importer's own by construction, so
-                    this case only exists here. */}
-                {warning && (
-                  <span className="mt-2 block" data-testid="drafts-submit-others">
-                    {warning}
-                  </span>
-                )}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

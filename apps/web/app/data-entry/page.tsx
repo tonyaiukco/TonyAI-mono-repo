@@ -1,5 +1,7 @@
 "use client";
 
+import { canSubmitEntry, saveErrorMessage } from "@/lib/record-lifecycle-view";
+
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
@@ -107,12 +109,6 @@ const numberFmt = new Intl.NumberFormat("en-GB", {
   maximumFractionDigits: 3,
 });
 
-/** Turn a save/submit failure into a message a user can act on.
- *
- * A duplicate reporting entity is a 409 — the API grew a P2002 handler and this
- * still claimed it was "a bare 500", so the one case it existed to explain was
- * the one case it no longer caught. 5xx keeps a generic hint because an
- * unexpected server error tells the user nothing on its own. */
 /** A record's reporting entity, in PROSE — it appears mid-sentence ("Moved to
  *  the whole company, draft saved"), which is why it is not `entityLabel`: that
  *  one is a standalone label and is now exported from `@tonyai/shared-types`,
@@ -122,28 +118,6 @@ function entityPhrase(rec: ActivityRecordDTO): string {
   return rec.locationId
     ? (rec.locationName ?? "a site")
     : `the ${WHOLE_COMPANY_ENTITY_LABEL.toLowerCase()}`;
-}
-
-function saveErrorMessage(e: unknown, moving = false): string {
-  if (e instanceof ApiError && e.status === 409) {
-    // Three things return 409: a duplicate reporting entity, and two period-lock
-    // refusals. Only the first is fixed by opening the existing record, so the
-    // advice is attached to the message that earns it — the lock's own sentence
-    // already says what to do.
-    if (/locked/i.test(e.message)) return e.message;
-    // A MOVE that collides is a different situation from a create that
-    // collides, and the create's advice is wrong for it: there is nothing to
-    // "continue" — the record the user is holding still exists where it was.
-    // Saying only what is true, because the honest remedy (removing one of the
-    // two) is not something this screen can currently offer for committed data.
-    return moving
-      ? `${e.message} The record has not been moved, and stays where it is.`
-      : `${e.message} Open it from Previous submissions to continue it.`;
-  }
-  if (e instanceof ApiError && e.status >= 500) {
-    return "Could not save — the server failed to process this record. Try again, and report it if it persists.";
-  }
-  return (e as Error).message;
 }
 
 // The optional "context" fields from the elaborate mock, kept as demo extras
@@ -249,6 +223,8 @@ function DataEntryPageInner() {
   const deepLinkHandled = useRef(false);
   const [subsLoading, setSubsLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingCreatedBy, setEditingCreatedBy] = useState<string | null>(null);
+  const canSubmit = canSubmitEntry(user, editingId, editingCreatedBy);
   const [saving, setSaving] = useState<null | "draft" | "submit">(null);
 
   const selectedSubsidiary = useMemo(
@@ -626,6 +602,7 @@ function DataEntryPageInner() {
       return;
     }
     setEditingId(rec.id);
+    setEditingCreatedBy(rec.createdBy);
     setSubsidiaryId(rec.subsidiaryId);
     setLocationId(rec.locationId ?? "");
     setReportingYear(rec.reportingYear);
@@ -674,6 +651,7 @@ function DataEntryPageInner() {
     });
     if (!movedOff) return;
     setEditingId(null);
+    setEditingCreatedBy(null);
     setEditingTuple(null);
     toast.info("Now entering a new record — the one you opened is untouched.");
   }, [
@@ -692,6 +670,7 @@ function DataEntryPageInner() {
     setPreview(null);
     setPreviewError(null);
     setEditingId(null);
+    setEditingCreatedBy(null);
     setEditingTuple(null);
     setLocationId("");
     setVerdict({
@@ -766,6 +745,7 @@ function DataEntryPageInner() {
       const rec = await persist();
       if (!rec) return;
       setEditingId(rec.id);
+      setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
       setVerdict(verdictOf(rec));
       // Composed, not branched. A move is the operation most likely to RAISE
@@ -791,6 +771,8 @@ function DataEntryPageInner() {
   }
 
   async function handleSubmit() {
+    // Check before persist: an admin may save another author's edits but not submit them.
+    if (!canSubmit) return;
     setSaving("submit");
     const wasMoving = movingTo !== null;
     try {
@@ -799,6 +781,7 @@ function DataEntryPageInner() {
       // Keep the saved record "current" so that if submit is blocked (evidence
       // or anomaly gate), the vault + variance field stay visible to fix + retry.
       setEditingId(rec.id);
+      setEditingCreatedBy(rec.createdBy);
       setEditingTuple(tupleOf(rec));
       setVerdict(verdictOf(rec));
       // Mirror the server anomaly gate (VAR §2.2 / §4.3): a flagged value needs
@@ -1339,14 +1322,14 @@ function DataEntryPageInner() {
                   <Save className="h-4 w-4" />
                   {saving === "draft" ? "Saving…" : "Save draft"}
                 </Button>
-                <Button
+                {canSubmit && <Button
                   className="gap-2"
                   onClick={handleSubmit}
                   disabled={isBusy || !hasValidInput}
                 >
                   <Send className="h-4 w-4" />
                   {saving === "submit" ? "Submitting…" : "Submit for review"}
-                </Button>
+                </Button>}
               </div>
             </div>
 

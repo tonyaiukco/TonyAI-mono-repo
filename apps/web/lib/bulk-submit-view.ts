@@ -278,10 +278,9 @@ export function isPeriodLockedFor(
   );
 }
 
-/** Is this record the caller's own to send? `super_admin` is exempt, exactly as
- *  `preflight` is. */
+/** Only the author may submit, including when the caller is a super_admin. */
 export function authoredBy(row: SubmittableRow, user: SubmittingUser): boolean {
-  return user.role === 'super_admin' || row.createdBy === user.id;
+  return row.createdBy === user.id;
 }
 
 /**
@@ -332,20 +331,6 @@ export interface DraftSelection {
   /** Ids that may be ticked, in the order they were given. */
   selectableIds: string[];
   /**
-   * The subset a `select all` may take: the ones this user AUTHORED.
-   *
-   * Identical to `selectableIds` for everyone except a `super_admin`, whose
-   * author gate never fires — so without this, one control on a subsidiary's
-   * page reads "Select all 240" and sweeps two hundred of three colleagues'
-   * half-finished drafts into review, where they can no longer edit them and
-   * only a reviewer can send them back. The endpoint's own DTO refused to take
-   * a filter for exactly that reason; a select-all over other people's rows is
-   * that filter wearing a checkbox. Ticking one deliberately is still allowed,
-   * because the server allows it and doing it one row at a time is a different
-   * act.
-   */
-  ownSelectableIds: string[];
-  /**
    * Why a row has no checkbox — but only for the rows that LOOK selectable.
    *
    * The list already shows a status badge, so spelling out "Already approved."
@@ -367,50 +352,19 @@ export function selectableDrafts(
   // `api.me()` is in flight — it would rather open a record than block one —
   // but offering a checkbox and then retracting it is the opposite trade, so
   // this one waits.
-  if (!user) return { selectableIds: [], ownSelectableIds: [], reasonById: {} };
+  if (!user) return { selectableIds: [], reasonById: {} };
 
   const selectableIds: string[] = [];
-  const ownSelectableIds: string[] = [];
   const reasonById: Record<string, string> = {};
   for (const row of rows) {
     const reason = submitBlockReason(row, user, locks);
     if (reason === null) {
       selectableIds.push(row.id);
-      if (row.createdBy === user.id) ownSelectableIds.push(row.id);
     } else if (isSubmittable(row.status)) {
       reasonById[row.id] = reason;
     }
   }
-  return { selectableIds, ownSelectableIds, reasonById };
-}
-
-/** How many of the selected records someone else entered. Zero for everyone
- *  but a `super_admin`, whose author gate never fires. */
-export function selectedFromOthers(
-  rows: SubmittableRow[],
-  selectedIds: string[],
-  user: SubmittingUser | null,
-): number {
-  if (!user) return 0;
-  return rows.filter(
-    (r) => selectedIds.includes(r.id) && r.createdBy !== user.id,
-  ).length;
-}
-
-/**
- * The extra sentence the confirm step needs when the selection is not all
- * yours, or `null` when it is.
- *
- * Separate from `submitConfirmation`, which both surfaces share and where this
- * case cannot arise — an import's rows are the importer's own by construction.
- */
-export function othersWarning(count: number): string | null {
-  if (count <= 0) return null;
-  return `${formatNumber(count)} of ${
-    count === 1 ? 'them was' : 'them were'
-  } entered by someone else. They will not be able to edit ${
-    count === 1 ? 'it' : 'them'
-  } again — only a reviewer can send ${count === 1 ? 'it' : 'them'} back.`;
+  return { selectableIds, reasonById };
 }
 
 /**
@@ -490,26 +444,9 @@ export function capRefusedNotice(): string {
   )} records is the most one submission can carry.`;
 }
 
-/**
- * What "select all" has to admit, or `null` when it took everything.
- *
- * Two things can hold it back and they are separate sentences because they have
- * separate remedies: rows someone else entered are ticked one at a time, and
- * rows past the cap go in a second submission.
- */
-export function selectAllNotices(
-  taken: number,
-  skippedOthers: number,
-  overCap: number,
-): string[] {
+/** Explain the submission cap when select-all cannot take every eligible row. */
+export function selectAllNotices(taken: number, overCap: number): string[] {
   const notices: string[] = [];
-  if (skippedOthers > 0) {
-    notices.push(
-      `Selected your own ${formatNumber(taken)}. ${formatNumber(skippedOthers)} ${
-        skippedOthers === 1 ? 'record was' : 'records were'
-      } entered by someone else — those are ticked one at a time.`,
-    );
-  }
   if (overCap > 0) {
     notices.push(
       `Selected the first ${formatNumber(taken)}. ${formatNumber(

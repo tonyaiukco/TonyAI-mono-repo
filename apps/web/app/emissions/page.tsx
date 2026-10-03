@@ -305,7 +305,7 @@ export default function EmissionsAnalysisPage() {
       await loadSummary();
     } catch (e) {
       // Re-read BEFORE saying anything, and on ANY failure rather than only on
-      // the statuses that mean "your page is stale" (400 = someone else voided
+      // the statuses that mean "your page is stale" (409 = someone else voided
       // it first, so it is no longer approved; 409 = the period was locked
       // between opening the drawer and clicking). A dropped connection or a
       // timeout throws a TypeError rather than an ApiError, and that is exactly
