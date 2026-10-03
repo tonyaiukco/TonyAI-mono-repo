@@ -22,8 +22,9 @@ import {
 import {
   EvidenceRequiredError,
   PeriodLockedError,
-  ResubmitAuthorRefusedError,
+  RecordChangedError,
   SUBMIT_ROLE_REFUSAL,
+  SubmitAuthorRefusedError,
   SubmitRoleRefusedError,
   VarianceReasonRequiredError,
 } from '../activity-records/errors';
@@ -259,7 +260,9 @@ export class BulkSubmitService {
         });
         continue;
       }
-      if (user.role !== 'super_admin' && row.createdBy !== user.id) {
+      // No `super_admin` exemption: only the author submits (decision D02),
+      // the same rule `submit` itself enforces.
+      if (row.createdBy !== user.id) {
         rejected.push({
           recordId: id,
           code: 'not_author',
@@ -348,8 +351,14 @@ export class BulkSubmitService {
     // including a `ForbiddenException` or `ConflictException` nobody typed —
     // is unexpected and is logged as such.
     if (error instanceof SubmitRoleRefusedError) throw error;
-    if (error instanceof ResubmitAuthorRefusedError) {
+    if (error instanceof SubmitAuthorRefusedError) {
       return { recordId, code: 'not_author', message: error.message };
+    }
+    // Changed by someone else between this batch's read and the record's
+    // lock — most often no longer a draft, which is what `not_submittable`
+    // already tells the user; the sentence says to reload.
+    if (error instanceof RecordChangedError) {
+      return { recordId, code: 'not_submittable', message: error.message };
     }
     if (error instanceof PeriodLockedError) {
       return { recordId, code: 'period_locked', message: error.message };

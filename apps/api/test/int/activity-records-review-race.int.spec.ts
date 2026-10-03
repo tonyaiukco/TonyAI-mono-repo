@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ActivityRecordStatus } from '@tonyai/db';
+import { RecordChangedError } from '../../src/activity-records/errors';
 import { ActivityRecordsService } from '../../src/activity-records/activity-records.service';
 import { AuditService } from '../../src/audit/audit.service';
 import { CalculationsService } from '../../src/calculations/calculations.service';
@@ -17,22 +18,23 @@ import {
 } from './db';
 
 /**
- * F03 (Part C): a late `startReview` can regress an approval.
+ * F03 (Part C): a late `startReview` could regress an approval.
  *
- * Both methods read the record, check its status in memory, then write on the
- * id alone (`transition()` puts the expected status in the WHERE only for a
- * void). So a consultant's `startReview` that read `submitted` and is then
- * overtaken by a super_admin's `approve` still writes `under_review` over the
- * approval — and the audit trail records two transitions out of `submitted`.
+ * Before LP1-01 both methods read the record, checked its status in memory,
+ * then wrote on the id alone, so a consultant's `startReview` that read
+ * `submitted` and was then overtaken by a super_admin's `approve` still wrote
+ * `under_review` over the approval — and the audit trail recorded two
+ * transitions out of `submitted` (reproduced in LP0-03, where this file held
+ * the requirement as `it.fails` beside a pin of that behaviour).
  *
- * The first test states the required behaviour and is an EXPECTED FAILURE on
- * current code. The second pins what current code actually does, so the first
- * cannot "pass" through a harness fault. LP1-01 fixes the race, deletes the
- * second test and turns the first into a plain `it`.
+ * Under the lifecycle protocol the first writer holds the record's row lock,
+ * so the second waits, then re-checks against what the first committed: the
+ * approval goes ahead from `under_review`, and a startReview arriving after
+ * an approval is refused as a lost race.
  */
 
 function makeService(prisma: PrismaService): ActivityRecordsService {
-  // startReview/approve/transition never touch evidence.
+  // startReview/approve never touch evidence.
   return new ActivityRecordsService(
     prisma,
     new CalculationsService(prisma),
@@ -101,7 +103,7 @@ function chainEnd(transitions: Transition[], start: string): string | null {
 /**
  * Consultant A reads a submitted record and is held just before its write;
  * super_admin B approves the record; then A is released. If B blocks on a lock
- * A holds (a row-locking fix), A is released as soon as that is observed.
+ * A holds, A is released as soon as that is observed.
  */
 async function interleaveStartReviewWithApprove() {
   const record = await createRecord(a, tenant, {
@@ -125,17 +127,44 @@ async function interleaveStartReviewWithApprove() {
     () => 'ok' as const,
     (err: unknown) => err,
   );
-  await settledOrBlocked(approve, pidB, observer);
+  const how = await settledOrBlocked(approve, pidB, observer);
   hold.release();
 
   const outcomes = { startReview: await startReviewOutcome, approve: await approveOutcome };
   const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
-  return { outcomes, finalStatus: final.status, transitions: await transitionsOf(record.id) };
+  return { outcomes, how, finalStatus: final.status, transitions: await transitionsOf(record.id) };
+}
+
+/** The other order: super_admin A's approve is held before its write; consultant B starts review. */
+async function interleaveApproveWithStartReview() {
+  const record = await createRecord(a, tenant, {
+    status: ActivityRecordStatus.submitted,
+    submittedAt: new Date(),
+  });
+  const hold = holdBefore(a, 'ActivityRecord', ['update', 'updateMany']);
+  const pidB = await backendPid(b);
+
+  const approveOutcome = makeService(hold.client)
+    .approve(tenant.users.superAdmin, record.id)
+    .then(() => 'ok' as const, (err: unknown) => err);
+  await hold.reached();
+
+  const startReview = makeService(b).startReview(tenant.users.consultant, record.id);
+  const startReviewOutcome = startReview.then(() => 'ok' as const, (err: unknown) => err);
+  const how = await settledOrBlocked(startReview, pidB, observer);
+  hold.release();
+
+  const outcomes = { startReview: await startReviewOutcome, approve: await approveOutcome };
+  const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
+  return { outcomes, how, finalStatus: final.status, transitions: await transitionsOf(record.id) };
 }
 
 describe('F03 — startReview racing approve', () => {
-  it.fails('an overtaken startReview cannot regress an approval (expected failure until LP1-01)', async () => {
-    const { outcomes, finalStatus, transitions } = await interleaveStartReviewWithApprove();
+  it('an overtaken startReview cannot regress an approval', async () => {
+    const { outcomes, how, finalStatus, transitions } = await interleaveStartReviewWithApprove();
+
+    // The approve waited for the held startReview's row lock.
+    expect(how).toBe('blocked');
 
     // Every serial order of these two calls ends approved: review-then-approve,
     // or approve-then-(refused)-review.
@@ -160,17 +189,15 @@ describe('F03 — startReview racing approve', () => {
     expect(transitions).toHaveLength(succeeded);
   });
 
-  it('current code: the late startReview overwrites the approval (F03 reproduced — LP1-01 deletes this test)', async () => {
-    const { outcomes, finalStatus, transitions } = await interleaveStartReviewWithApprove();
+  it('a startReview arriving after an approval is refused as a lost race', async () => {
+    const { outcomes, how, finalStatus, transitions } = await interleaveApproveWithStartReview();
 
-    expect(outcomes).toEqual({ startReview: 'ok', approve: 'ok' });
-    expect(finalStatus).toBe(ActivityRecordStatus.under_review);
-    expect(transitions).toHaveLength(2);
-    expect(transitions).toEqual(
-      expect.arrayContaining([
-        { from: 'submitted', to: 'approved', userId: tenant.users.superAdmin.id },
-        { from: 'submitted', to: 'under_review', userId: tenant.users.consultant.id },
-      ]),
-    );
+    expect(how).toBe('blocked');
+    expect(outcomes.approve).toBe('ok');
+    expect(outcomes.startReview).toBeInstanceOf(RecordChangedError);
+    expect(finalStatus).toBe(ActivityRecordStatus.approved);
+    expect(transitions).toEqual([
+      { from: 'submitted', to: 'approved', userId: tenant.users.superAdmin.id },
+    ]);
   });
 });

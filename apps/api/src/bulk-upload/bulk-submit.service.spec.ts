@@ -18,8 +18,9 @@ import {
   EVIDENCE_REFUSAL_FRAGMENT,
   EvidenceRequiredError,
   PeriodLockedError,
-  ResubmitAuthorRefusedError,
+  RecordChangedError,
   SUBMIT_ROLE_REFUSAL,
+  SubmitAuthorRefusedError,
   SubmitRoleRefusedError,
   VARIANCE_REFUSAL,
   VarianceReasonRequiredError,
@@ -248,7 +249,7 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
     expect(records.submit).toHaveBeenCalledTimes(1);
   });
 
-  it('lets a super_admin submit anyone’s draft', async () => {
+  it('refuses a super_admin someone else’s draft too — only the author submits (D02)', async () => {
     const { records, service } = build([
       candidate({ id: 'theirs', createdBy: 'user-colleague' }),
     ]);
@@ -258,8 +259,11 @@ describe('BulkSubmitService — the pre-flight declines what submit would not', 
       ids('theirs'),
     );
 
-    expect(report.submitted).toHaveLength(1);
-    expect(records.submit).toHaveBeenCalledTimes(1);
+    expect(report.submitted).toEqual([]);
+    expect(report.failed).toEqual([
+      expect.objectContaining({ recordId: 'theirs', code: 'not_author' }),
+    ]);
+    expect(records.submit).not.toHaveBeenCalled();
   });
 
   it.each(['rejected', 'submitted', 'approved', 'locked', 'voided'])(
@@ -484,7 +488,10 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       'period_locked',
       /locked/i,
     ],
-    [new ResubmitAuthorRefusedError(), 'not_author', /resubmit/i],
+    [new SubmitAuthorRefusedError(false), 'not_author', /only submit activity records you created/i],
+    [new SubmitAuthorRefusedError(true), 'not_author', /resubmit/i],
+    // Changed by someone else between the batch's read and the record's lock.
+    [new RecordChangedError(), 'not_submittable', /reload it and try again/i],
     [new NotFoundException('Activity record not found'), 'not_found', /does not exist/i],
   ])('%s', async (error, code, messagePattern) => {
     // The MESSAGE is asserted as well as the code: the panel renders it

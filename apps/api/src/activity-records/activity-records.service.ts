@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -15,7 +14,9 @@ import {
   DuplicateActivityRecordError,
   EvidenceRequiredError,
   PeriodLockedError,
-  ResubmitAuthorRefusedError,
+  RecordChangedError,
+  SelfApprovalRefusedError,
+  SubmitAuthorRefusedError,
   SubmitRoleRefusedError,
   VarianceReasonRequiredError,
 } from './errors';
@@ -51,7 +52,16 @@ import { storedUnit } from '../calculations/storable-unit';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { EvidenceService } from '../evidence/evidence.service';
-import { lockActivityRecordRow } from './row-lock';
+import {
+  LIFECYCLE_TX,
+  asLostRace,
+  changedSince,
+  lockActivityRecordRow,
+  lockEvidenceRows,
+  lockPeriodsShared,
+  regate,
+  type PeriodKey,
+} from './lifecycle-lock';
 import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
@@ -70,6 +80,36 @@ interface AnomalyParams {
 
 
 // The refusal classes and their sentences live in `./errors`.
+
+/** The period a record sits in, as `period_locks` and the lifecycle locks key it. */
+function periodOf(r: PeriodKey): PeriodKey {
+  return {
+    subsidiaryId: r.subsidiaryId,
+    reportingYear: r.reportingYear,
+    reportingPeriod: r.reportingPeriod,
+    periodValue: r.periodValue,
+  };
+}
+
+function samePeriod(a: PeriodKey, b: PeriodKey): boolean {
+  return (
+    a.subsidiaryId === b.subsidiaryId &&
+    a.reportingYear === b.reportingYear &&
+    a.reportingPeriod === b.reportingPeriod &&
+    a.periodValue === b.periodValue
+  );
+}
+
+/** What a record write returns: the row as every read path includes it. */
+type WrittenRecord = ActivityRecord & {
+  _count: { evidenceLinks: number };
+  location: { name: string } | null;
+};
+
+const WRITTEN_RECORD_INCLUDE = {
+  _count: { select: { evidenceLinks: true } },
+  location: { select: { name: true } },
+} as const;
 
 /**
  * `needsEvidenceBeforeSubmit` (the submit gate below) as a Prisma `where`:
@@ -364,6 +404,48 @@ export class ActivityRecordsService {
     return record;
   }
 
+  /**
+   * Steps 2-4 of the lifecycle protocol (`lifecycle-lock.ts`) for one record
+   * the caller has already read as `seen`: share its period — and `alsoPeriods`,
+   * the period an edit moves it into — lock its row, re-read it, and hand the
+   * locked row to `fn`, which re-runs its gates and writes with its audit row
+   * through `tx`. One transaction; nothing in `fn` may use `this.prisma`.
+   *
+   * The period locks are taken for the period the record was in when READ,
+   * before its row lock (the protocol's order). An edit committed in between
+   * may have moved it; then those locks guard the wrong period, and the honest
+   * answer is a lost race rather than a write the period's lock never saw.
+   */
+  private async withLockedRecord<T>(
+    seen: ActivityRecord,
+    fn: (
+      tx: Prisma.TransactionClient,
+      current: ActivityRecord & { location: { name: string } | null },
+    ) => Promise<T>,
+    alsoPeriods: PeriodKey[] = [],
+  ): Promise<T> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await lockPeriodsShared(tx, [periodOf(seen), ...alsoPeriods]);
+        // Deleted meanwhile by a concurrent request, which audited it.
+        if (!(await lockActivityRecordRow(tx, seen.id))) {
+          throw new NotFoundException('Activity record not found');
+        }
+        const current = await tx.activityRecord.findUnique({
+          where: { id: seen.id },
+          include: { location: { select: { name: true } } },
+        });
+        if (!current) throw new NotFoundException('Activity record not found');
+        if (!samePeriod(periodOf(seen), periodOf(current))) {
+          throw new RecordChangedError();
+        }
+        return fn(tx, current);
+      }, LIFECYCLE_TX);
+    } catch (e) {
+      throw asLostRace(e);
+    }
+  }
+
   /** Author-or-super_admin gate for edit/delete on a mutable record. */
   private assertCanMutate(user: RequestUser, record: ActivityRecord): void {
     if (!mayAuthorRecords(user)) {
@@ -442,14 +524,11 @@ export class ActivityRecordsService {
    * submit is allowed — the period is closed. super_admin must unlock first.
    */
   private async assertPeriodNotLocked(
-    subsidiaryId: string,
-    reportingYear: number,
-    reportingPeriod: string,
-    periodValue: string,
+    period: PeriodKey,
+    client: Pick<Prisma.TransactionClient, 'periodLock'> = this.prisma,
   ): Promise<void> {
-    const lock = await this.prisma.periodLock.findFirst({
-      where: { subsidiaryId, reportingYear, reportingPeriod, periodValue },
-    });
+    const { reportingYear, periodValue } = period;
+    const lock = await client.periodLock.findFirst({ where: periodOf(period) });
     if (lock) {
       throw new PeriodLockedError(
         `Reporting period ${periodValue} ${reportingYear} is locked — a super_admin must unlock it before records can change.`,
@@ -470,13 +549,14 @@ export class ActivityRecordsService {
   private async detectAnomalyFor(
     calculation: ActivityCalculationSnapshot,
     params: Omit<AnomalyParams, 'currentTCo2e'>,
+    client: Pick<Prisma.TransactionClient, 'activityRecord'> = this.prisma,
   ): Promise<AnomalyVerdict> {
     // Reports 0 priors because none were ever queried, not because none exist.
     // "Has no figure of its own" and "has no comparable periods" are different
     // facts; a reader separates them with isCalculated() on the snapshot, which
     // travels on the same DTO.
     if (!isCalculated(calculation)) return anomalyNotEvaluated();
-    return this.detectAnomaly({ ...params, currentTCo2e: calculation.tCo2e });
+    return this.detectAnomaly({ ...params, currentTCo2e: calculation.tCo2e }, client);
   }
 
   /**
@@ -490,7 +570,10 @@ export class ActivityRecordsService {
    * meter against a whole-company roll-up flags a change of SCOPE as a change of
    * consumption, and it is what stops a re-attribution raising a false anomaly.
    */
-  private async detectAnomaly(params: AnomalyParams): Promise<AnomalyVerdict> {
+  private async detectAnomaly(
+    params: AnomalyParams,
+    client: Pick<Prisma.TransactionClient, 'activityRecord'> = this.prisma,
+  ): Promise<AnomalyVerdict> {
     // Prisma DROPS a `where` entry whose value is `undefined`, so an unset
     // subsidiary here would widen the pool to every tenant in the database and
     // persist a cross-tenant average onto the record. Unreachable today — all
@@ -500,7 +583,7 @@ export class ActivityRecordsService {
     if (!params.subsidiaryId) {
       throw new Error('anomaly baseline requires a subsidiary scope');
     }
-    const rows = await this.prisma.activityRecord.findMany({
+    const rows = await client.activityRecord.findMany({
       where: {
         subsidiaryId: params.subsidiaryId,
         locationId: params.locationId,
@@ -588,13 +671,17 @@ export class ActivityRecordsService {
    *
    * Extracted so the bulk importer (WP8) can offer a dry-run that PROVABLY
    * persists nothing. The obvious alternative, running the batch inside a
-   * rolled-back transaction, is not available here: `create` opens no
-   * transaction (it writes through the default client and audits afterwards;
-   * the only transaction in this service is `remove`'s row lock), and Prisma's
-   * interactive-transaction timeout would not survive
-   * a thousand-row loop even if it did. A read-only seam is the mechanism the
-   * code actually supports, and "no write happened" is then a claim a spec can
-   * assert against the write spies rather than a claim about a rollback.
+   * rolled-back transaction, is not available here: each `create` is its own
+   * short transaction (the lifecycle protocol, `lifecycle-lock.ts`), and
+   * Prisma's interactive-transaction timeout would not survive a thousand-row
+   * loop in one. A read-only seam is the mechanism the code actually
+   * supports, and "no write happened" is then a claim a spec can assert
+   * against the write spies rather than a claim about a rollback.
+   *
+   * It runs OUTSIDE `create`'s transaction, on purpose: the snapshot reads
+   * factors and the anomaly baseline, none of which the period lock guards,
+   * and a transaction that asked a second pooled connection for them could
+   * starve the pool under load.
    *
    * It keeps the role gate deliberately, even though a bulk caller checks the
    * role once per batch: a security control that only runs on the path someone
@@ -659,13 +746,14 @@ export class ActivityRecordsService {
       dto.reportingPeriod,
       dto.periodValue,
     );
-    // Period-lock gate (FR §4.2): no new records in a closed period.
-    await this.assertPeriodNotLocked(
-      dto.subsidiaryId,
-      dto.reportingYear,
-      dto.reportingPeriod,
+    // Period-lock gate (FR §4.2): no new records in a closed period. An early
+    // answer only — `create` asks again once it holds the period.
+    await this.assertPeriodNotLocked({
+      subsidiaryId: dto.subsidiaryId,
+      reportingYear: dto.reportingYear,
+      reportingPeriod: dto.reportingPeriod,
       periodValue,
-    );
+    });
 
     const { calculation, scope } = await this.computeSnapshot(
       dto.subsidiaryId,
@@ -709,37 +797,59 @@ export class ActivityRecordsService {
   ): Promise<ActivityRecordDTO> {
     const { subsidiaryId, locationId, periodValue, calculation, scope, verdict } =
       await this.previewCreate(user, dto);
+    const period: PeriodKey = {
+      subsidiaryId,
+      reportingYear: dto.reportingYear,
+      reportingPeriod: dto.reportingPeriod,
+      periodValue,
+    };
 
     let created: ActivityRecord & { location: { name: string } | null };
     try {
-      created = await this.prisma.activityRecord.create({
-        // Same include as every other read path — the create response is what
-        // the subsidiary create flow renders, and it must not claim the record
-        // has no location seconds after being handed one.
-        include: { location: { select: { name: true } } },
-        data: {
-          subsidiaryId,
-          locationId,
-          reportingYear: dto.reportingYear,
-          reportingPeriod: dto.reportingPeriod,
-          periodValue,
-          category: dto.category,
-          scope,
-          status: ActivityRecordStatus.draft,
-          anomalyFlag: verdict.anomalous,
-          anomalyBaselinePriorCount: verdict.priorCount,
-          anomalyBaselineTCo2e: verdict.baseline,
-          activityValue: dto.activityValue,
-          // The vocabulary's canonical spelling; the snapshot keeps the entered
-          // one as `inputUnit` until the record is next edited. See `storedUnit`.
-          activityUnit: storedUnit(dto.activityUnit),
-          input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
-          calculation: calculation as unknown as Prisma.InputJsonValue,
-          createdBy: user.id,
-          varianceReason: dto.varianceReason ?? null,
-          importBatchId: provenance?.importBatchId ?? null,
-        },
-      });
+      created = await this.prisma.$transaction(async (tx) => {
+        // A create has no row to lock, so the period lock is the whole of its
+        // serialisation: a `lock` of this period either committed before this
+        // point (and the check below sees it) or waits for this commit (and
+        // then counts the new draft like any other record).
+        await lockPeriodsShared(tx, [period]);
+        await this.assertPeriodNotLocked(period, tx);
+        const row = await tx.activityRecord.create({
+          // Same include as every other read path — the create response is what
+          // the subsidiary create flow renders, and it must not claim the record
+          // has no location seconds after being handed one.
+          include: { location: { select: { name: true } } },
+          data: {
+            subsidiaryId,
+            locationId,
+            reportingYear: dto.reportingYear,
+            reportingPeriod: dto.reportingPeriod,
+            periodValue,
+            category: dto.category,
+            scope,
+            status: ActivityRecordStatus.draft,
+            anomalyFlag: verdict.anomalous,
+            anomalyBaselinePriorCount: verdict.priorCount,
+            anomalyBaselineTCo2e: verdict.baseline,
+            activityValue: dto.activityValue,
+            // The vocabulary's canonical spelling; the snapshot keeps the entered
+            // one as `inputUnit` until the record is next edited. See `storedUnit`.
+            activityUnit: storedUnit(dto.activityUnit),
+            input: (dto.input ?? undefined) as Prisma.InputJsonValue | undefined,
+            calculation: calculation as unknown as Prisma.InputJsonValue,
+            createdBy: user.id,
+            varianceReason: dto.varianceReason ?? null,
+            importBatchId: provenance?.importBatchId ?? null,
+          },
+        });
+        await this.auditCreateUpdateDelete(
+          user,
+          'create',
+          row.id,
+          { after: this.toAuditSnapshot(row) },
+          tx,
+        );
+        return row;
+      }, LIFECYCLE_TX);
     } catch (e) {
       // Unique constraint (subsidiary, location, year, period, periodValue,
       // category) is a user-actionable conflict, not a server error.
@@ -749,11 +859,8 @@ export class ActivityRecordsService {
       ) {
         throw new DuplicateActivityRecordError();
       }
-      throw e;
+      throw asLostRace(e);
     }
-    await this.auditCreateUpdateDelete(user, 'create', created.id, {
-      after: this.toAuditSnapshot(created),
-    });
     return this.toDTO(created, 0, await this.actorsFor(user, [created]));
   }
 
@@ -780,26 +887,18 @@ export class ActivityRecordsService {
       reportingPeriod,
       dto.periodValue ?? existing.periodValue,
     );
+    const target: PeriodKey = {
+      subsidiaryId: existing.subsidiaryId,
+      reportingYear,
+      reportingPeriod,
+      periodValue,
+    };
+    const moves = !samePeriod(periodOf(existing), target);
     // Period-lock gate (FR §4.2): the record's current period must be open, and
-    // it cannot be re-targeted INTO a locked period either.
-    await this.assertPeriodNotLocked(
-      existing.subsidiaryId,
-      existing.reportingYear,
-      existing.reportingPeriod,
-      existing.periodValue,
-    );
-    if (
-      reportingYear !== existing.reportingYear ||
-      reportingPeriod !== existing.reportingPeriod ||
-      periodValue !== existing.periodValue
-    ) {
-      await this.assertPeriodNotLocked(
-        existing.subsidiaryId,
-        reportingYear,
-        reportingPeriod,
-        periodValue,
-      );
-    }
+    // it cannot be re-targeted INTO a locked period either. Early answers —
+    // both are asked again under the lock below.
+    await this.assertPeriodNotLocked(periodOf(existing));
+    if (moves) await this.assertPeriodNotLocked(target);
 
     const { calculation, scope } = await this.computeSnapshot(
       existing.subsidiaryId,
@@ -865,19 +964,38 @@ export class ActivityRecordsService {
     }
     if (dto.varianceReason !== undefined) data.varianceReason = dto.varianceReason;
 
-    let updated: ActivityRecord & {
-      _count: { evidenceLinks: number };
-      location: { name: string } | null;
-    };
+    let updated: WrittenRecord;
     try {
-      updated = await this.prisma.activityRecord.update({
-        where: { id },
-        data,
-        include: {
-          _count: { select: { evidenceLinks: true } },
-          location: { select: { name: true } },
+      updated = await this.withLockedRecord(
+        existing,
+        async (tx, current) => {
+          // Everything above was computed from `existing` — the snapshot, the
+          // verdict, the audit "before". If the row changed since, writing it
+          // would overwrite a change this edit's author never saw (F03: a
+          // stale edit landing on a record someone else had already
+          // submitted). No partial re-check can save it; the caller reloads.
+          if (changedSince(existing, current)) throw new RecordChangedError();
+          await this.assertPeriodNotLocked(periodOf(current), tx);
+          if (moves) await this.assertPeriodNotLocked(target, tx);
+          const row = await tx.activityRecord.update({
+            where: { id, status: current.status },
+            data,
+            include: WRITTEN_RECORD_INCLUDE,
+          });
+          await this.auditCreateUpdateDelete(
+            user,
+            'update',
+            id,
+            {
+              before: this.toAuditSnapshot(current),
+              after: this.toAuditSnapshot(row, row._count.evidenceLinks),
+            },
+            tx,
+          );
+          return row;
         },
-      });
+        moves ? [target] : [],
+      );
     } catch (e) {
       // Re-targeting can collide with an existing record for the new entity.
       if (
@@ -888,10 +1006,6 @@ export class ActivityRecordsService {
       }
       throw e;
     }
-    await this.auditCreateUpdateDelete(user, 'update', id, {
-      before: this.toAuditSnapshot(existing),
-      after: this.toAuditSnapshot(updated, updated._count.evidenceLinks),
-    });
     return this.toDTO(
       updated,
       updated._count.evidenceLinks,
@@ -905,120 +1019,135 @@ export class ActivityRecordsService {
   ): Promise<{ id: string; deleted: true }> {
     const existing = await this.loadScoped(user, id);
     this.assertCanMutate(user, existing);
-    // Period-lock gate (FR §4.2): no deletions in a closed period.
-    await this.assertPeriodNotLocked(
-      existing.subsidiaryId,
-      existing.reportingYear,
-      existing.reportingPeriod,
-      existing.periodValue,
-    );
+    // Period-lock gate (FR §4.2): no deletions in a closed period. An early
+    // answer; asked again under the lock.
+    await this.assertPeriodNotLocked(periodOf(existing));
     // The record's evidence LINKS go by themselves — ON DELETE CASCADE — but a
     // file can back other records too (WP8 PR7), so only the files this record
     // was the last to hold are deleted, rows and blobs, once the links are
     // gone. Skip that and the invoices outlive every pointer to them, which is
     // a retention problem, not wasted disk.
     //
-    // The file ids are read under a row lock on the record. An upload linking a
+    // The file ids are read under the record's row lock. An upload linking a
     // file to it checks the link's foreign key with FOR KEY SHARE on this row,
     // which FOR UPDATE blocks: the link either committed first and is read
     // here, or fails after the delete. Without the lock an upload landing
     // between the read and the delete left a file no record held — measured,
-    // 7 of 24 racing pairs.
-    const fileIds = await this.prisma.$transaction(async (tx) => {
-      // Deleted meanwhile by a concurrent request, which audited it.
-      if (!(await lockActivityRecordRow(tx, existing.id))) {
-        throw new NotFoundException('Activity record not found');
-      }
-      const held = await this.evidence.fileIdsFor(existing.id, tx);
-      await tx.activityRecord.delete({ where: { id: existing.id } });
-      return held;
+    // 7 of 24 racing pairs. The files are then locked too (records before
+    // files, the protocol's order), so a concurrent detach of the same file
+    // from another record cannot leave it with no link and no owner to delete
+    // it; and the file rows go in this transaction, so the one audit row that
+    // names them commits with them. Only their blobs wait for the commit.
+    const deleted = await this.withLockedRecord(existing, async (tx, current) => {
+      regate(existing, current, () => this.assertCanMutate(user, current));
+      await this.assertPeriodNotLocked(periodOf(current), tx);
+      const fileIds = await this.evidence.fileIdsFor(current.id, tx);
+      await lockEvidenceRows(tx, fileIds);
+      await tx.activityRecord.delete({ where: { id: current.id } });
+      const gone = await this.evidence.deleteUnlinkedRows(fileIds, tx);
+      await this.auditCreateUpdateDelete(
+        user,
+        'delete',
+        current.id,
+        {
+          before: this.toAuditSnapshot(current, fileIds.length),
+          evidence: { fileIds, deletedFileIds: gone.map((f) => f.id) },
+        },
+        tx,
+      );
+      return gone;
     });
-    const deletedFileIds = await this.evidence.deleteUnlinked(fileIds);
-    await this.auditCreateUpdateDelete(user, 'delete', existing.id, {
-      before: this.toAuditSnapshot(existing, fileIds.length),
-      evidence: { fileIds, deletedFileIds },
-    });
+    await this.evidence.removeBlobs(deleted.map((f) => f.storagePath));
     return { id: existing.id, deleted: true };
   }
 
   // --- Workflow transitions --------------------------------------------------
+  //
+  // Each one reads the record (404 / tenant), checks the caller's role, then
+  // runs its state gates and its write inside `withLockedRecord`: against the
+  // row as locked, never as first read. A status gate that fails only because
+  // someone else moved the record first answers `RecordChangedError` (409).
 
   async submit(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
-    const record = await this.loadScoped(user, id);
+    const seen = await this.loadScoped(user, id);
     if (!mayAuthorRecords(user)) {
       throw new SubmitRoleRefusedError();
     }
-    if (!SUBMITTABLE_STATUSES.has(record.status)) {
-      throw new BadRequestException(
-        `Only a draft or rejected record can be submitted (current status "${record.status}")`,
+    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+      regate(seen, record, () => {
+        if (!SUBMITTABLE_STATUSES.has(record.status)) {
+          throw new BadRequestException(
+            `Only a draft or rejected record can be submitted (current status "${record.status}")`,
+          );
+        }
+        // Only the author submits (decision D02, 2026-09-29) — a draft as much
+        // as a rejected record, and `super_admin` is not exempt. Resubmitting
+        // REVERSES a reviewer's decision, and submitting at all moves a
+        // colleague's half-finished figure out of their hands into review. It
+        // is also what makes the submitter always the creator, which the
+        // approval gate (D01) relies on.
+        if (record.createdBy !== user.id) {
+          throw new SubmitAuthorRefusedError(
+            record.status === ActivityRecordStatus.rejected,
+          );
+        }
+      });
+      // Period-lock gate (FR §4.2): no submissions into a closed period.
+      await this.assertPeriodNotLocked(periodOf(record), tx);
+      // Evidence gate (FR §4.1 / §5.4): categories configured as evidence-required
+      // cannot be submitted without at least one supporting file.
+      // The count is only worth a query when the category could need one, so the
+      // short-circuit stays here; the RULE over the two values is the contract's,
+      // shared with the checkbox the client offers, because it has already been
+      // copied wrongly once. Counted under the row lock: a detach must take the
+      // same lock to remove a link, so the file counted here is still attached
+      // when the status changes.
+      const evidenceCount = isEvidenceRequired(record.category)
+        ? await tx.activityRecordEvidence.count({ where: { activityRecordId: id } })
+        : 0;
+      if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
+        throw new EvidenceRequiredError(record.category);
+      }
+      // Anomaly gate (VAR §2.2 / §4.3 / §8): re-evaluate against the baseline as of
+      // submit time — a comparable period may have been committed since the draft
+      // was saved. The API is the final enforcement layer, so it recomputes rather
+      // than trusting the write-time flag, and persists the fresh value.
+      // A record with no calculated figure is not comparable to anything, so it
+      // is not evaluated at all. Passing 0 instead — which is what a naive
+      // `?? 0` does — reads as a 100% drop against any real baseline and would
+      // block the submit demanding a variance comment for a value that was never
+      // computed. Harmless while a category is uniformly factor-less, and a live
+      // bug the day a factor lands mid-year and the priors become calculable.
+      const calc = record.calculation as unknown as ActivityCalculationSnapshot;
+      const verdict = await this.detectAnomalyFor(
+        calc,
+        {
+          subsidiaryId: record.subsidiaryId,
+          locationId: record.locationId,
+          category: record.category,
+          reportingPeriod: record.reportingPeriod,
+          reportingYear: record.reportingYear,
+          periodValue: record.periodValue,
+          excludeId: record.id,
+        },
+        tx,
       );
-    }
-    const isResubmission = record.status === ActivityRecordStatus.rejected;
-    // Resubmitting REVERSES a reviewer's decision, so it needs the author gate
-    // that `update`/`remove` already apply. Without it, any data_entry user who
-    // can merely SEE the subsidiary could overturn a rejection — while still
-    // being forbidden from editing the number, so the only thing the capability
-    // could be used for is making the rejection go away.
-    if (
-      isResubmission &&
-      user.role !== 'super_admin' &&
-      record.createdBy !== user.id
-    ) {
-      throw new ResubmitAuthorRefusedError();
-    }
-    // Period-lock gate (FR §4.2): no submissions into a closed period.
-    await this.assertPeriodNotLocked(
-      record.subsidiaryId,
-      record.reportingYear,
-      record.reportingPeriod,
-      record.periodValue,
-    );
-    // Evidence gate (FR §4.1 / §5.4): categories configured as evidence-required
-    // cannot be submitted without at least one supporting file.
-    // The count is only worth a query when the category could need one, so the
-    // short-circuit stays here; the RULE over the two values is the contract's,
-    // shared with the checkbox the client offers, because it has already been
-    // copied wrongly once.
-    const evidenceCount = isEvidenceRequired(record.category)
-      ? await this.prisma.activityRecordEvidence.count({ where: { activityRecordId: id } })
-      : 0;
-    if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
-      throw new EvidenceRequiredError(record.category);
-    }
-    // Anomaly gate (VAR §2.2 / §4.3 / §8): re-evaluate against the baseline as of
-    // submit time — a comparable period may have been committed since the draft
-    // was saved. The API is the final enforcement layer, so it recomputes rather
-    // than trusting the write-time flag, and persists the fresh value.
-    // A record with no calculated figure is not comparable to anything, so it
-    // is not evaluated at all. Passing 0 instead — which is what a naive
-    // `?? 0` does — reads as a 100% drop against any real baseline and would
-    // block the submit demanding a variance comment for a value that was never
-    // computed. Harmless while a category is uniformly factor-less, and a live
-    // bug the day a factor lands mid-year and the priors become calculable.
-    const calc = record.calculation as unknown as ActivityCalculationSnapshot;
-    const verdict = await this.detectAnomalyFor(calc, {
-      subsidiaryId: record.subsidiaryId,
-      locationId: record.locationId,
-      category: record.category,
-      reportingPeriod: record.reportingPeriod,
-      reportingYear: record.reportingYear,
-      periodValue: record.periodValue,
-      excludeId: record.id,
+      if (verdict.anomalous && !record.varianceReason?.trim()) {
+        throw new VarianceReasonRequiredError();
+      }
+      // The note is deliberately KEPT. Clearing it on resubmit was the first cut,
+      // and it was wrong twice over: `reviewedBy`/`reviewedAt` survived anyway, so
+      // the review stamp was only half-cleared, and it dead-coded the reviewer
+      // sheet's "Previous review note" — a consultant re-reviewing a bounced-back
+      // record would see something indistinguishable from a first submission. The
+      // stale-note problem it was meant to solve is a RENDERING one, fixed where
+      // it belongs: `/emissions` shows the note only on a `rejected` record.
+      // The verdict travels whole: the flag and the window it was taken against
+      // are one fact, and `transition` takes them as one argument so that
+      // persisting a flag beside a window nobody can name is not expressible.
+      return this.transition(tx, user, record, ActivityRecordStatus.submitted, { verdict });
     });
-    if (verdict.anomalous && !record.varianceReason?.trim()) {
-      throw new VarianceReasonRequiredError();
-    }
-    // The note is deliberately KEPT. Clearing it on resubmit was the first cut,
-    // and it was wrong twice over: `reviewedBy`/`reviewedAt` survived anyway, so
-    // the review stamp was only half-cleared, and it dead-coded the reviewer
-    // sheet's "Previous review note" — a consultant re-reviewing a bounced-back
-    // record would see something indistinguishable from a first submission. The
-    // stale-note problem it was meant to solve is a RENDERING one, fixed where
-    // it belongs: `/emissions` shows the note only on a `rejected` record.
-    // The verdict travels whole: the flag and the window it was taken against
-    // are one fact, and `transition` takes them as one argument so that
-    // persisting a flag beside a window nobody can name is not expressible.
-    return this.transition(user, record, ActivityRecordStatus.submitted, { verdict });
+    return this.writtenDTO(user, updated);
   }
 
   /**
@@ -1027,52 +1156,59 @@ export class ActivityRecordsService {
    * only exits. Same reviewer RBAC + period-lock gate as approve/reject.
    */
   async startReview(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
-    const record = await this.loadScoped(user, id);
+    const seen = await this.loadScoped(user, id);
     if (!REVIEW_ROLES.has(user.role)) {
       throw new ForbiddenException(
         'Only a consultant or super_admin may review records',
       );
     }
-    if (record.status !== ActivityRecordStatus.submitted) {
-      throw new BadRequestException(
-        `Only a submitted record can be taken into review (current status "${record.status}")`,
-      );
-    }
-    await this.assertPeriodNotLocked(
-      record.subsidiaryId,
-      record.reportingYear,
-      record.reportingPeriod,
-      record.periodValue,
-    );
-    return this.transition(user, record, ActivityRecordStatus.under_review);
+    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+      regate(seen, record, () => {
+        if (record.status !== ActivityRecordStatus.submitted) {
+          throw new BadRequestException(
+            `Only a submitted record can be taken into review (current status "${record.status}")`,
+          );
+        }
+      });
+      await this.assertPeriodNotLocked(periodOf(record), tx);
+      return this.transition(tx, user, record, ActivityRecordStatus.under_review);
+    });
+    return this.writtenDTO(user, updated);
   }
 
   async approve(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
-    const record = await this.loadScoped(user, id);
+    const seen = await this.loadScoped(user, id);
     if (!APPROVE_ROLES.has(user.role)) {
       throw new ForbiddenException('Only a super_admin may approve records');
     }
-    if (
-      record.status !== ActivityRecordStatus.submitted &&
-      record.status !== ActivityRecordStatus.under_review
-    ) {
-      throw new BadRequestException(
-        `Only a submitted or under_review record can be approved (current status "${record.status}")`,
-      );
-    }
-    // Period-lock gate (defense-in-depth): no review transitions in a closed
-    // period, even for a record that slipped in around the lock (race).
-    await this.assertPeriodNotLocked(
-      record.subsidiaryId,
-      record.reportingYear,
-      record.reportingPeriod,
-      record.periodValue,
-    );
-    // Clear any earlier rejection note: an approved record showing last
-    // round's rejection reason would misread as "approved, but rejected".
-    return this.transition(user, record, ActivityRecordStatus.approved, {
-      reviewNote: null,
+    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+      regate(seen, record, () => {
+        if (
+          record.status !== ActivityRecordStatus.submitted &&
+          record.status !== ActivityRecordStatus.under_review
+        ) {
+          throw new BadRequestException(
+            `Only a submitted or under_review record can be approved (current status "${record.status}")`,
+          );
+        }
+      });
+      // Segregation of duties (decision D01, 2026-09-29): the approver is
+      // neither the creator nor the submitter, `super_admin` included. Only
+      // the author may submit, so the submitter IS the creator and one
+      // comparison covers both.
+      if (record.createdBy === user.id) {
+        throw new SelfApprovalRefusedError();
+      }
+      // Period-lock gate (defense-in-depth): no review transitions in a closed
+      // period.
+      await this.assertPeriodNotLocked(periodOf(record), tx);
+      // Clear any earlier rejection note: an approved record showing last
+      // round's rejection reason would misread as "approved, but rejected".
+      return this.transition(tx, user, record, ActivityRecordStatus.approved, {
+        reviewNote: null,
+      });
     });
+    return this.writtenDTO(user, updated);
   }
 
   /**
@@ -1095,55 +1231,42 @@ export class ActivityRecordsService {
    * may send a record back for revision (`reject`), but removing an accepted
    * figure from the client's reported inventory is the holding company's own
    * decision. Same reasoning as `APPROVE_ROLES`.
+   *
+   * The pilot's correction procedure (decision D04, 2026-09-29) is an audited
+   * unlock → void → re-entry: the voided row leaves the uniqueness index, so
+   * the corrected figure is a new record in the same slot.
    */
   async void(
     user: RequestUser,
     id: string,
     reason: string,
   ): Promise<ActivityRecordDTO> {
-    const record = await this.loadScoped(user, id);
+    const seen = await this.loadScoped(user, id);
     if (!APPROVE_ROLES.has(user.role)) {
       throw new ForbiddenException('Only a super_admin may void records');
     }
-    if (record.status !== ActivityRecordStatus.approved) {
-      // Deliberately `approved` alone. A `locked` record sits in a closed
-      // period, and reopening one already has its own audited path (unlock);
-      // letting a void bypass that would make the lock a suggestion. Draft and
-      // rejected records can simply be deleted, and submitted/under_review ones
-      // rejected — none of them needs this.
-      throw new BadRequestException(
-        `Only an approved record can be voided (current status "${record.status}"). ` +
-          'A locked period must be unlocked first.',
-      );
-    }
-    // Defense-in-depth, and not redundant with the status check: a period can
-    // be locked while this request is in flight, and a lock is precisely the
-    // statement that this period's figures are closed.
-    await this.assertPeriodNotLocked(
-      record.subsidiaryId,
-      record.reportingYear,
-      record.reportingPeriod,
-      record.periodValue,
-    );
-    try {
-      return await this.transition(user, record, ActivityRecordStatus.voided, {
+    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+      regate(seen, record, () => {
+        if (record.status !== ActivityRecordStatus.approved) {
+          // Deliberately `approved` alone. A `locked` record sits in a closed
+          // period, and reopening one already has its own audited path (unlock);
+          // letting a void bypass that would make the lock a suggestion. Draft and
+          // rejected records can simply be deleted, and submitted/under_review ones
+          // rejected — none of them needs this.
+          throw new BadRequestException(
+            `Only an approved record can be voided (current status "${record.status}"). ` +
+              'A locked period must be unlocked first.',
+          );
+        }
+      });
+      // Defense-in-depth, and not redundant with the status check: a lock is
+      // precisely the statement that this period's figures are closed.
+      await this.assertPeriodNotLocked(periodOf(record), tx);
+      return this.transition(tx, user, record, ActivityRecordStatus.voided, {
         voidReason: reason,
       });
-    } catch (e) {
-      // P2025 = the row stopped being `approved` between the check above and
-      // the write. In practice that means a period lock committed in the
-      // window, so the honest answer is the lock's own refusal rather than a
-      // 500 about a record that plainly exists.
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2025'
-      ) {
-        throw new ConflictException(
-          'This record changed while it was being voided — it is most likely inside a period that has just been locked. Reload and try again.',
-        );
-      }
-      throw e;
-    }
+    });
+    return this.writtenDTO(user, updated);
   }
 
   async reject(
@@ -1151,32 +1274,32 @@ export class ActivityRecordsService {
     id: string,
     varianceReason: string,
   ): Promise<ActivityRecordDTO> {
-    const record = await this.loadScoped(user, id);
+    const seen = await this.loadScoped(user, id);
     if (!REVIEW_ROLES.has(user.role)) {
       throw new ForbiddenException(
         'Only a consultant or super_admin may reject records',
       );
     }
-    if (
-      record.status !== ActivityRecordStatus.submitted &&
-      record.status !== ActivityRecordStatus.under_review
-    ) {
-      throw new BadRequestException(
-        `Only a submitted or under_review record can be rejected (current status "${record.status}")`,
-      );
-    }
-    // Period-lock gate (defense-in-depth): symmetric with approve.
-    await this.assertPeriodNotLocked(
-      record.subsidiaryId,
-      record.reportingYear,
-      record.reportingPeriod,
-      record.periodValue,
-    );
-    // The reviewer's reason goes in reviewNote — overwriting varianceReason
-    // would destroy the author's own anomaly justification (VAR §4).
-    return this.transition(user, record, ActivityRecordStatus.rejected, {
-      reviewNote: varianceReason,
+    const updated = await this.withLockedRecord(seen, async (tx, record) => {
+      regate(seen, record, () => {
+        if (
+          record.status !== ActivityRecordStatus.submitted &&
+          record.status !== ActivityRecordStatus.under_review
+        ) {
+          throw new BadRequestException(
+            `Only a submitted or under_review record can be rejected (current status "${record.status}")`,
+          );
+        }
+      });
+      // Period-lock gate (defense-in-depth): symmetric with approve.
+      await this.assertPeriodNotLocked(periodOf(record), tx);
+      // The reviewer's reason goes in reviewNote — overwriting varianceReason
+      // would destroy the author's own anomaly justification (VAR §4).
+      return this.transition(tx, user, record, ActivityRecordStatus.rejected, {
+        reviewNote: varianceReason,
+      });
     });
+    return this.writtenDTO(user, updated);
   }
 
   /**
@@ -1192,6 +1315,10 @@ export class ActivityRecordsService {
     [ActivityRecordStatus.voided]: 'void',
   };
 
+  /**
+   * Every record write's audit row, through the write's own transaction
+   * client: the row and the change commit together or not at all (F02).
+   */
   private async auditCreateUpdateDelete(
     user: RequestUser,
     action: 'create' | 'update' | 'delete',
@@ -1208,12 +1335,22 @@ export class ActivityRecordsService {
        *  a record delete writes, so this is the only trace of those files. */
       evidence?: { fileIds: string[]; deletedFileIds: string[] };
     },
+    tx: Prisma.TransactionClient,
   ): Promise<void> {
-    await this.audit.record(user, { action, entity: 'activity_record', entityId, diff });
+    await this.audit.record(user, { action, entity: 'activity_record', entityId, diff }, tx);
   }
 
-  /** Apply a status change + optional field patch, and audit it. */
+  /** The response for a committed write: resolved actor names, after the transaction. */
+  private async writtenDTO(user: RequestUser, row: WrittenRecord): Promise<ActivityRecordDTO> {
+    return this.toDTO(row, row._count.evidenceLinks, await this.actorsFor(user, [row]));
+  }
+
+  /**
+   * Apply a status change + optional field patch to the LOCKED row, and audit
+   * it, through the caller's transaction.
+   */
   private async transition(
+    tx: Prisma.TransactionClient,
     user: RequestUser,
     record: ActivityRecord,
     status: ActivityRecordStatus,
@@ -1226,7 +1363,7 @@ export class ActivityRecordsService {
       reviewNote?: string | null;
       voidReason?: string;
     } = {},
-  ): Promise<ActivityRecordDTO> {
+  ): Promise<WrittenRecord> {
     // A review outcome records WHO decided and WHEN, so the reviewer screen
     // does not have to reconstruct it from the audit log.
     const isReviewOutcome =
@@ -1239,19 +1376,15 @@ export class ActivityRecordsService {
     // audit log, and so a row carries its own provenance.
     const isVoid = status === ActivityRecordStatus.voided;
 
-    // The status is part of the WHERE for a void, not just the guard above it.
-    // Every other transition reads its pre-state, checks it, then writes on the
-    // id alone — and for them the window is harmless, because `lock` refuses to
-    // run while a pending-review record exists, so their pre-state cannot be
-    // flipped concurrently. `approved` is the one status `lock` DOES mutate: a
-    // lock committing between the check and this write would be silently
-    // overwritten, leaving the record `voided` inside a closed period with no
-    // unlock to reopen it. Prisma raises P2025 when the row no longer matches,
-    // which the caller maps to the same 409 the lock itself would have given.
-    const updated = await this.prisma.activityRecord.update({
-      where: isVoid
-        ? { id: record.id, status: ActivityRecordStatus.approved }
-        : { id: record.id },
+    // `record` is the row as LOCKED, so its status is the one this write moves
+    // from — the audit row's `from` cannot name a state the record had already
+    // left (F03: a late startReview once wrote `submitted → under_review` over
+    // an approval). The expected status stays in the WHERE as well, as a
+    // compare-and-set behind the lock: it cannot miss under the protocol, and
+    // if a writer ever bypasses the protocol it turns that writer's damage
+    // into this request's 409 (P2025, mapped by `withLockedRecord`).
+    const updated = await tx.activityRecord.update({
+      where: { id: record.id, status: record.status },
       data: {
         status,
         ...(extra.varianceReason !== undefined
@@ -1282,35 +1415,32 @@ export class ActivityRecordsService {
             }
           : {}),
       },
-      include: {
-        _count: { select: { evidenceLinks: true } },
-        location: { select: { name: true } },
-      },
+      include: WRITTEN_RECORD_INCLUDE,
     });
-    await this.audit.record(user, {
-      action: ActivityRecordsService.TRANSITION_ACTIONS[status] ?? 'update',
-      entity: 'activity_record',
-      entityId: record.id,
-      diff: {
-        transition: { from: record.status, to: status },
-        ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
-        ...(extra.varianceReason !== undefined
-          ? { varianceReason: extra.varianceReason }
-          : {}),
-        // A void takes a figure OUT of the inventory, so the trail has to hold
-        // what the figure was — FR §4.3's "original value visibility".
-        // Every other transition leaves the number where anyone can still read
-        // it; this one is the only case where the audit row is the last place
-        // the withdrawn value is reported alongside the reason.
-        ...(isVoid
-          ? { voidReason: extra.voidReason, before: this.toAuditSnapshot(record) }
-          : {}),
+    await this.audit.record(
+      user,
+      {
+        action: ActivityRecordsService.TRANSITION_ACTIONS[status] ?? 'update',
+        entity: 'activity_record',
+        entityId: record.id,
+        diff: {
+          transition: { from: record.status, to: status },
+          ...(extra.reviewNote !== undefined ? { reviewNote: extra.reviewNote } : {}),
+          ...(extra.varianceReason !== undefined
+            ? { varianceReason: extra.varianceReason }
+            : {}),
+          // A void takes a figure OUT of the inventory, so the trail has to hold
+          // what the figure was — FR §4.3's "original value visibility".
+          // Every other transition leaves the number where anyone can still read
+          // it; this one is the only case where the audit row is the last place
+          // the withdrawn value is reported alongside the reason.
+          ...(isVoid
+            ? { voidReason: extra.voidReason, before: this.toAuditSnapshot(record) }
+            : {}),
+        },
       },
-    });
-    return this.toDTO(
-      updated,
-      updated._count.evidenceLinks,
-      await this.actorsFor(user, [updated]),
+      tx,
     );
+    return updated;
   }
 }

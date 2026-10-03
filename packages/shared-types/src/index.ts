@@ -3168,12 +3168,12 @@ export const BULK_SUBMIT_ISSUE_CODES = [
   /**
    * Someone else wrote it.
    *
-   * Stricter than the single-record path, which gates only a RESUBMISSION and
-   * so lets any colleague who can see the subsidiary submit a draft. At one
-   * click that is a curiosity; at a thousand ids in one call it is a way to
-   * sweep a colleague's half-finished month into review, where they can no
-   * longer edit it and only a reviewer can send it back. Enumerability is a
-   * forensics property, not a control.
+   * The same rule as the single-record path since decision D02 (2026-09-29):
+   * only a record's author submits it, `super_admin` included. Before that the
+   * single-record path gated only a RESUBMISSION; at a thousand ids in one
+   * call that was a way to sweep a colleague's half-finished month into
+   * review, where they can no longer edit it and only a reviewer can send it
+   * back.
    */
   'not_author',
   /** The reporting period is closed. */

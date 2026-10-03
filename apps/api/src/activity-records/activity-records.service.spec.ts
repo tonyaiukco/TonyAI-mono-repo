@@ -19,7 +19,10 @@ import {
   EvidenceRequiredError,
   PeriodLockedError,
   RESUBMIT_AUTHOR_REFUSAL,
-  ResubmitAuthorRefusedError,
+  RecordChangedError,
+  SelfApprovalRefusedError,
+  SUBMIT_AUTHOR_REFUSAL,
+  SubmitAuthorRefusedError,
   SUBMIT_ROLE_REFUSAL,
   SubmitRoleRefusedError,
   VARIANCE_REFUSAL,
@@ -46,18 +49,12 @@ beforeEach(() => audit.record.mockClear());
 // --- Local, DB-free mocks --------------------------------------------------
 
 function createPrismaMock() {
-  // `remove` deletes inside a transaction (a row lock against a racing upload).
-  // Its client has its OWN spies — the #50 rule — so "deleted inside the
-  // transaction, after the lock" is an assertion that can fail, and every
-  // "was not deleted" below asserts against the spy a delete would really hit.
-  const tx = {
-    // One row: the record was there to lock.
-    $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1 }]),
-    activityRecord: { delete: vi.fn() },
-  };
-  return {
-    tx,
-    $transaction: vi.fn(async (fn: (client: typeof tx) => unknown) => fn(tx)),
+  const client = {
+    // The lifecycle locks (`lifecycle-lock.ts`): row locks read back one row
+    // — the record was there to lock — and the period's advisory lock runs as
+    // a statement.
+    $queryRaw: vi.fn().mockResolvedValue([{ id: 'locked' }]),
+    $executeRaw: vi.fn().mockResolvedValue(1),
     activityRecord: {
       // Default [] so the anomaly baseline query finds no priors (no anomaly)
       // unless a test overrides it.
@@ -89,6 +86,18 @@ function createPrismaMock() {
     profile: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+  };
+  // Every write runs in one interactive transaction (the lifecycle protocol).
+  // Its client shares this mock's spies — so "the record was updated" and
+  // "not deleted" assert against the one spy a query really hits, inside or
+  // outside — but is a different OBJECT, so a spec can tell which client a
+  // collaborator was handed: `audit.record(..., prisma.tx)` fails if the
+  // service passes its root client, which would audit outside the write.
+  const tx = { ...client };
+  return {
+    ...client,
+    tx,
+    $transaction: vi.fn(async (fn: (c: typeof tx) => unknown) => fn(tx)),
   };
 }
 type PrismaMock = ReturnType<typeof createPrismaMock>;
@@ -236,13 +245,15 @@ function consultant(overrides: Partial<RequestUser> = {}): RequestUser {
 
 /**
  * A record's evidence LINKS go by themselves through the FK cascade; the files
- * it was the last to hold are deleted by the evidence service afterwards. Only
- * `fileIdsFor` and `deleteUnlinked` are used from here.
+ * it was the last to hold are deleted by the evidence service in the same
+ * transaction, and their objects after it. Only `fileIdsFor`,
+ * `deleteUnlinkedRows` and `removeBlobs` are used from here.
  */
 function createEvidenceMock() {
   return {
     fileIdsFor: vi.fn().mockResolvedValue([]),
-    deleteUnlinked: vi.fn().mockResolvedValue([]),
+    deleteUnlinkedRows: vi.fn().mockResolvedValue([]),
+    removeBlobs: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -385,6 +396,8 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
           action: 'create',
           entity: 'activity_record',
         }),
+        // Through the write's own transaction client (F02).
+        prisma.tx,
       );
   });
 
@@ -746,8 +759,8 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       withLocation(prisma);
       prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
       prisma.activityRecord.update.mockRejectedValue(
-        new Prisma.PrismaClientKnownRequestError('Record to update not found', {
-          code: 'P2025',
+        new Prisma.PrismaClientKnownRequestError('Foreign key constraint failed', {
+          code: 'P2003',
           clientVersion: 'test',
         }),
       );
@@ -759,6 +772,25 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
       await expect(
         service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' }),
       ).rejects.not.toBeInstanceOf(ConflictException);
+    });
+
+    it('answers a lost race, not a duplicate, when the expected-status write matches nothing', async () => {
+      // P2025 here is the compare-and-set behind the row lock missing — the
+      // record left its status. It cannot happen under the protocol; if a
+      // writer ever bypasses it, the answer is "reload", never "duplicate".
+      const { prisma, service } = build(2);
+      withLocation(prisma);
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt(null));
+      prisma.activityRecord.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      const refusal = service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' });
+      await expect(refusal).rejects.toBeInstanceOf(RecordChangedError);
+      await expect(refusal).rejects.not.toBeInstanceOf(DuplicateActivityRecordError);
     });
 
     it('records both sides of the move in the audit diff', async () => {
@@ -840,45 +872,83 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     );
   }
 
-  it('locks the record, reads its files and deletes it in one transaction, then sweeps the unlinked files', async () => {
+  it('locks the record, then its files, deletes it and the files only it held in one transaction, then their objects', async () => {
     const { prisma, evidence, service } = build();
     deletableRecord(prisma);
     evidence.fileIdsFor.mockResolvedValue(['ev-1', 'ev-2']);
+    evidence.deleteUnlinkedRows.mockResolvedValue([{ id: 'ev-2', storagePath: 'sub-1/ev-2.pdf' }]);
 
     await service.remove(dataEntry(), 'rec-del');
 
-    // The files are read through the TRANSACTION's client, under the lock.
+    // Everything inside goes through the TRANSACTION's client.
     expect(evidence.fileIdsFor).toHaveBeenCalledWith('rec-del', prisma.tx);
+    expect(evidence.deleteUnlinkedRows).toHaveBeenCalledWith(['ev-1', 'ev-2'], prisma.tx);
     expect(prisma.tx.activityRecord.delete).toHaveBeenCalledWith({ where: { id: 'rec-del' } });
-    expect(prisma.tx.$queryRaw.mock.calls[0][0].join('?')).toMatch(/FOR UPDATE/);
-    expect(prisma.tx.$queryRaw.mock.calls[0].slice(1)).toEqual(['rec-del']);
-    expect(evidence.deleteUnlinked).toHaveBeenCalledWith(['ev-1', 'ev-2']);
-    // Order is the whole point: the lock before the read (an upload's link
-    // either committed first and is read, or waits and then fails), the read
-    // while the links still exist, the sweep only once they are gone.
-    const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
-      fn.mock.invocationCallOrder[0];
+    const rowLocks = prisma.tx.$queryRaw.mock.calls.map((c) => (c[0] as string[]).join('?'));
+    expect(rowLocks[0]).toMatch(/"activity_records"[\s\S]*FOR UPDATE/);
+    expect(prisma.tx.$queryRaw.mock.calls[0].slice(1)).toEqual([['rec-del']]);
+    expect(rowLocks[1]).toMatch(/"evidence"[\s\S]*FOR UPDATE/);
+    expect(prisma.tx.$queryRaw.mock.calls[1].slice(1)).toEqual([['ev-1', 'ev-2']]);
+    // Only the objects of rows that went, and only after the commit.
+    expect(evidence.removeBlobs).toHaveBeenCalledWith(['sub-1/ev-2.pdf']);
+    // Order is the whole point: the period, then the record's lock before the
+    // read (an upload's link either committed first and is read, or waits and
+    // then fails), the read while the links still exist, the files' locks
+    // before the record goes (a concurrent detach of a shared file waits),
+    // the sweep once the links are gone, the objects last.
+    const order = (fn: { mock: { invocationCallOrder: number[] } }, call = 0) =>
+      fn.mock.invocationCallOrder[call];
+    expect(order(prisma.tx.$executeRaw)).toBeLessThan(order(prisma.tx.$queryRaw));
     expect(order(prisma.tx.$queryRaw)).toBeLessThan(order(evidence.fileIdsFor));
-    expect(order(evidence.fileIdsFor)).toBeLessThan(order(prisma.tx.activityRecord.delete));
-    expect(order(prisma.tx.activityRecord.delete)).toBeLessThan(order(evidence.deleteUnlinked));
+    expect(order(evidence.fileIdsFor)).toBeLessThan(order(prisma.tx.$queryRaw, 1));
+    expect(order(prisma.tx.$queryRaw, 1)).toBeLessThan(order(prisma.tx.activityRecord.delete));
+    expect(order(prisma.tx.activityRecord.delete)).toBeLessThan(order(evidence.deleteUnlinkedRows));
+    expect(order(evidence.deleteUnlinkedRows)).toBeLessThan(order(audit.record));
+    expect(order(audit.record)).toBeLessThan(order(evidence.removeBlobs));
   });
 
-  it('audits the files the record held and the ones deleted with it, with the real count', async () => {
+  it('audits the files the record held and the ones deleted with it, with the real count, in the same transaction', async () => {
     // One audit row per record delete, so it is the only trace of the files.
     const { prisma, evidence, service } = build();
     deletableRecord(prisma);
     evidence.fileIdsFor.mockResolvedValue(['ev-1', 'ev-2']);
-    evidence.deleteUnlinked.mockResolvedValue(['ev-2']);
+    evidence.deleteUnlinkedRows.mockResolvedValue([{ id: 'ev-2', storagePath: 'sub-1/ev-2.pdf' }]);
 
     await service.remove(dataEntry(), 'rec-del');
 
-    const row = audit.record.mock.calls.at(-1)![1] as {
-      action: string;
-      diff: { before: { evidenceCount: number }; evidence: unknown };
-    };
+    const [, row, client] = audit.record.mock.calls.at(-1)! as [
+      unknown,
+      { action: string; diff: { before: { evidenceCount: number }; evidence: unknown } },
+      unknown,
+    ];
+    expect(client).toBe(prisma.tx);
     expect(row.action).toBe('delete');
     expect(row.diff.before.evidenceCount).toBe(2);
     expect(row.diff.evidence).toEqual({ fileIds: ['ev-1', 'ev-2'], deletedFileIds: ['ev-2'] });
+  });
+
+  it('removes no object when the audit fails — the delete rolled back', async () => {
+    const { prisma, evidence, service } = build();
+    deletableRecord(prisma);
+    evidence.fileIdsFor.mockResolvedValue(['ev-1']);
+    evidence.deleteUnlinkedRows.mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/ev-1.pdf' }]);
+    audit.record.mockRejectedValueOnce(new Error('audit down'));
+
+    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toThrow(/audit down/);
+    expect(evidence.removeBlobs).not.toHaveBeenCalled();
+  });
+
+  it('answers a lost race when the record was submitted while it waited for the lock', async () => {
+    const { prisma, evidence, service } = build();
+    const seen = makeRecord({ id: 'rec-del', status: ActivityRecordStatus.draft, createdBy: 'user-entry' });
+    prisma.activityRecord.findUnique
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValueOnce({ ...seen, status: ActivityRecordStatus.submitted });
+
+    await expect(service.remove(dataEntry(), 'rec-del')).rejects.toBeInstanceOf(RecordChangedError);
+    expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
+    expect(evidence.fileIdsFor).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('is a 404 with no audit row when a concurrent delete removed the record while it waited for the lock', async () => {
@@ -889,7 +959,8 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     await expect(service.remove(dataEntry(), 'rec-del')).rejects.toBeInstanceOf(NotFoundException);
     expect(evidence.fileIdsFor).not.toHaveBeenCalled();
     expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
-    expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
+    expect(evidence.deleteUnlinkedRows).not.toHaveBeenCalled();
+    expect(evidence.removeBlobs).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
   });
 
@@ -901,7 +972,8 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
     await expect(service.remove(dataEntry(), 'rec-del')).rejects.toThrow(/db down/);
     expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
-    expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
+    expect(evidence.deleteUnlinkedRows).not.toHaveBeenCalled();
+    expect(evidence.removeBlobs).not.toHaveBeenCalled();
   });
 
   it('is not attempted for a record that is refused (gate runs first)', async () => {
@@ -914,7 +986,8 @@ describe('ActivityRecordsService — deleting a record reclaims the files only i
       BadRequestException,
     );
     expect(evidence.fileIdsFor).not.toHaveBeenCalled();
-    expect(evidence.deleteUnlinked).not.toHaveBeenCalled();
+    expect(evidence.deleteUnlinkedRows).not.toHaveBeenCalled();
+    expect(evidence.removeBlobs).not.toHaveBeenCalled();
     expect(prisma.tx.activityRecord.delete).not.toHaveBeenCalled();
   });
 });
@@ -963,6 +1036,8 @@ describe('ActivityRecordsService — RBAC', () => {
           action: 'approve',
           entity: 'activity_record',
         }),
+        // Through the write's own transaction client (F02).
+        prisma.tx,
       );
   });
 
@@ -1017,6 +1092,8 @@ describe('ActivityRecordsService — start review (FR §6.3)', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ id: expect.any(String) }),
       expect.objectContaining({ action: 'review', entity: 'activity_record' }),
+      // Through the write's own transaction client (F02).
+      prisma.tx,
     );
   });
 
@@ -1187,7 +1264,7 @@ describe('ActivityRecordsService — transition rules', () => {
     );
   });
 
-  it('submit moves draft -> submitted (any accessor) and audits', async () => {
+  it('submit moves draft -> submitted (by its author) and audits', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({ id: 'rec-s', status: ActivityRecordStatus.draft }),
@@ -1201,6 +1278,8 @@ describe('ActivityRecordsService — transition rules', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ id: expect.any(String) }),
       expect.objectContaining({ action: 'submit', entity: 'activity_record' }),
+      // Through the write's own transaction client (F02).
+      prisma.tx,
     );
   });
 
@@ -1249,12 +1328,29 @@ describe('ActivityRecordsService — transition rules', () => {
       RESUBMIT_AUTHOR_REFUSAL,
     );
     await expect(service.submit(dataEntry(), 'rec-n')).rejects.toBeInstanceOf(
-      ResubmitAuthorRefusedError,
+      SubmitAuthorRefusedError,
     );
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
-  it('a super_admin may resubmit a record they did not author', async () => {
+  // Decision D02 (2026-09-29): only the author submits — a draft as much as a
+  // rejected record, and super_admin is not exempt. Before it, any colleague
+  // who could see the subsidiary could submit someone else's draft.
+  it.each([
+    ['a colleague', dataEntry],
+    ['a super_admin', superAdmin],
+  ] as const)("%s may not submit someone else's draft (D02)", async (_who, caller) => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-o', status: ActivityRecordStatus.draft, createdBy: 'someone-else' }),
+    );
+
+    await expect(service.submit(caller(), 'rec-o')).rejects.toThrow(SUBMIT_AUTHOR_REFUSAL);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('a super_admin may not resubmit a record they did not author either (D02)', async () => {
     const { prisma, service } = build();
     prisma.activityRecord.findUnique.mockResolvedValue(
       makeRecord({
@@ -1263,12 +1359,56 @@ describe('ActivityRecordsService — transition rules', () => {
         createdBy: 'someone-else',
       }),
     );
+
+    await expect(service.submit(superAdmin(), 'rec-sa')).rejects.toBeInstanceOf(
+      SubmitAuthorRefusedError,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('a super_admin submits a record they authored', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-own', status: ActivityRecordStatus.draft, createdBy: 'user-admin' }),
+    );
     prisma.activityRecord.update.mockImplementation(({ data }: any) =>
-      makeRecord({ id: 'rec-sa', status: data.status }),
+      makeRecord({ id: 'rec-own', status: data.status, createdBy: 'user-admin' }),
     );
 
-    const dto = await service.submit(superAdmin(), 'rec-sa');
+    const dto = await service.submit(superAdmin(), 'rec-own');
     expect(dto.status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  // Decision D01 (2026-09-29): segregation of duties — the approver is neither
+  // the record's creator nor its submitter, super_admin included.
+  it('a super_admin may not approve a record they created (D01)', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-self', status: ActivityRecordStatus.submitted, createdBy: 'user-admin' }),
+    );
+
+    await expect(service.approve(superAdmin(), 'rec-self')).rejects.toBeInstanceOf(
+      SelfApprovalRefusedError,
+    );
+    await expect(service.approve(superAdmin(), 'rec-self')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('D01 does not stop a creator from reviewing or rejecting — only approving', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-self', status: ActivityRecordStatus.submitted, createdBy: 'user-admin' }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-self', status: data.status, createdBy: 'user-admin' }),
+    );
+
+    await expect(service.reject(superAdmin(), 'rec-self', 'Wrong meter')).resolves.toMatchObject({
+      status: ActivityRecordStatus.rejected,
+    });
   });
 
   it('a first submit does not touch reviewNote at all', async () => {
@@ -1656,6 +1796,8 @@ describe('ActivityRecordsService — transition rules', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ id: expect.any(String) }),
       expect.objectContaining({ action: 'reject', entity: 'activity_record' }),
+      // Through the write's own transaction client (F02).
+      prisma.tx,
     );
   });
 
@@ -2966,7 +3108,12 @@ describe('ActivityRecordsService — previewCreate is the read-only half of crea
 
     await service.create(dataEntry(), CREATE_DTO);
 
-    expect(prisma.periodLock.findFirst).toHaveBeenCalledTimes(1);
+    // Twice, deliberately: the read half's early answer, and the lifecycle
+    // protocol's check once the period is held — a lock committed between
+    // the two is only visible to the second. One extra indexed lookup per
+    // imported row, plus the period's advisory lock.
+    expect(prisma.periodLock.findFirst).toHaveBeenCalledTimes(2);
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
     expect(prisma.subsidiary.findUnique).toHaveBeenCalledTimes(1);
     expect(calc.compute).toHaveBeenCalledTimes(1);
     expect(prisma.activityRecord.findMany).toHaveBeenCalledTimes(1);
@@ -3150,4 +3297,158 @@ describe('evidenceReadyWhere — the submit gate as a query', () => {
       expect(matches(evidenceReadyWhere(), row)).toBe(!needsEvidenceBeforeSubmit(row));
     },
   );
+});
+
+describe('ActivityRecordsService — the lifecycle protocol (LP1-01)', () => {
+  // The DB-level proof — interleavings and rollbacks on real PostgreSQL — is
+  // in `test/int/lifecycle-*.int.spec.ts`. These pin the decisions a mock can
+  // see: the gates run against the LOCKED re-read, and which answer a refusal
+  // gets.
+  const order = (fn: { mock: { invocationCallOrder: number[] } }, call = 0) =>
+    fn.mock.invocationCallOrder[call];
+
+  it('takes the period lock, then the row lock, then re-reads, then writes — all inside one transaction', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-a', status: ActivityRecordStatus.submitted }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-a', status: data.status }),
+    );
+
+    await service.approve(superAdmin(), 'rec-a');
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect((prisma.$executeRaw.mock.calls[0][0] as string[]).join('?')).toMatch(
+      /pg_advisory_xact_lock_shared/,
+    );
+    expect((prisma.$queryRaw.mock.calls[0][0] as string[]).join('?')).toMatch(/FOR UPDATE/);
+    // findUnique #0 is the caller's read (outside), #1 the locked re-read.
+    expect(order(prisma.activityRecord.findUnique, 0)).toBeLessThan(order(prisma.$transaction));
+    expect(order(prisma.$executeRaw)).toBeLessThan(order(prisma.$queryRaw));
+    expect(order(prisma.$queryRaw)).toBeLessThan(order(prisma.activityRecord.findUnique, 1));
+    expect(order(prisma.activityRecord.findUnique, 1)).toBeLessThan(
+      order(prisma.activityRecord.update),
+    );
+    // The expected status rides in the WHERE, behind the lock.
+    expect(prisma.activityRecord.update.mock.calls[0][0].where).toEqual({
+      id: 'rec-a',
+      status: ActivityRecordStatus.submitted,
+    });
+  });
+
+  it('a status gate failing only on the locked re-read is a lost race (409), and nothing is written', async () => {
+    const { prisma, service } = build();
+    const seen = makeRecord({ id: 'rec-r', status: ActivityRecordStatus.submitted });
+    prisma.activityRecord.findUnique
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValueOnce({
+        ...seen,
+        status: ActivityRecordStatus.approved,
+        updatedAt: new Date(seen.updatedAt.getTime() + 1),
+      });
+
+    await expect(service.startReview(consultant(), 'rec-r')).rejects.toBeInstanceOf(
+      RecordChangedError,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('a request that was already stale on arrival keeps its own answer', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-r', status: ActivityRecordStatus.approved }),
+    );
+
+    await expect(service.startReview(consultant(), 'rec-r')).rejects.toThrow(
+      /Only a submitted record can be taken into review/,
+    );
+  });
+
+  it('a gate the locked re-read still passes goes ahead from where the record now is', async () => {
+    // Approve is valid from `under_review` too, so a startReview that got in
+    // first does not make the approval a conflict — and the audit row names
+    // the state the record actually left.
+    const { prisma, service } = build();
+    const seen = makeRecord({ id: 'rec-r', status: ActivityRecordStatus.submitted });
+    prisma.activityRecord.findUnique
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValueOnce({ ...seen, status: ActivityRecordStatus.under_review });
+    prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ id: 'rec-r', status: data.status }),
+    );
+
+    await service.approve(superAdmin(), 'rec-r');
+    expect(prisma.activityRecord.update.mock.calls[0][0].where.status).toBe(
+      ActivityRecordStatus.under_review,
+    );
+    const row = audit.record.mock.calls[0][1] as { diff: { transition: unknown } };
+    expect(row.diff.transition).toEqual({ from: 'under_review', to: 'approved' });
+  });
+
+  it('an edit refuses to land on a record that changed after it was read', async () => {
+    const { prisma, service } = build();
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    const seen = makeRecord({ id: 'rec-e', status: ActivityRecordStatus.draft });
+    prisma.activityRecord.findUnique
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValueOnce({ ...seen, updatedAt: new Date(seen.updatedAt.getTime() + 5) });
+
+    await expect(
+      service.update(dataEntry(), 'rec-e', { activityValue: 7 }),
+    ).rejects.toBeInstanceOf(RecordChangedError);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('a record moved to another period meanwhile is a lost race — the period lock taken was the wrong one', async () => {
+    const { prisma, service } = build();
+    const seen = makeRecord({ id: 'rec-m', status: ActivityRecordStatus.submitted });
+    prisma.activityRecord.findUnique
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValueOnce({ ...seen, periodValue: 'Q4' });
+
+    await expect(service.approve(superAdmin(), 'rec-m')).rejects.toBeInstanceOf(
+      RecordChangedError,
+    );
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('a period locked after the read keeps the lock\'s own answer, checked under the period lock', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-l', status: ActivityRecordStatus.submitted }),
+    );
+    prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+
+    await expect(service.approve(superAdmin(), 'rec-l')).rejects.toBeInstanceOf(PeriodLockedError);
+    expect(order(prisma.$executeRaw)).toBeLessThan(order(prisma.periodLock.findFirst));
+  });
+
+  it('create checks the period again once it holds it, and audits through the same transaction', async () => {
+    const { prisma, service } = build();
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    prisma.activityRecord.create.mockResolvedValue(makeRecord());
+    // Open for the early answer, locked by the time the period is held.
+    prisma.periodLock.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'lock-1' });
+
+    await expect(service.create(dataEntry(), CREATE_DTO)).rejects.toBeInstanceOf(PeriodLockedError);
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    expect(order(prisma.$executeRaw)).toBeLessThan(order(prisma.periodLock.findFirst, 1));
+  });
+
+  it('maps a deadlock or serialisation failure (P2034) to the lost-race answer', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-d', status: ActivityRecordStatus.submitted }),
+    );
+    prisma.activityRecord.update.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('deadlock detected', {
+        code: 'P2034',
+        clientVersion: 'test',
+      }),
+    );
+
+    await expect(service.approve(superAdmin(), 'rec-d')).rejects.toBeInstanceOf(RecordChangedError);
+  });
 });

@@ -23,7 +23,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
-import { PeriodLockedError } from '../activity-records/errors';
+import { PeriodLockedError, RecordChangedError } from '../activity-records/errors';
+import {
+  LIFECYCLE_TX,
+  asLostRace,
+  changedSince,
+  lockActivityRecordRows,
+  lockEvidenceRows,
+  lockPeriodsShared,
+  type PeriodKey,
+} from '../activity-records/lifecycle-lock';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
 
 export const EVIDENCE_BUCKET = 'evidence';
@@ -69,13 +78,29 @@ function recordLabel(r: ActivityRecord): string {
   return `${r.category} · ${r.periodValue} ${r.reportingYear}`;
 }
 
-function lockKey(r: {
-  subsidiaryId: string;
-  reportingYear: number;
-  reportingPeriod: string;
-  periodValue: string;
-}): string {
+function lockKey(r: PeriodKey): string {
   return [r.subsidiaryId, r.reportingYear, r.reportingPeriod, r.periodValue].join('|');
+}
+
+function periodOf(r: PeriodKey): PeriodKey {
+  return {
+    subsidiaryId: r.subsidiaryId,
+    reportingYear: r.reportingYear,
+    reportingPeriod: r.reportingPeriod,
+    periodValue: r.periodValue,
+  };
+}
+
+/**
+ * A refusal raised against a LOCKED record (the lifecycle protocol's step 4,
+ * `lifecycle-lock.ts`) that the caller's own read did not raise: the record
+ * changed in between, so it is a lost race (409) — unless it is the period
+ * lock, whose own sentence says what happened.
+ */
+function lockedRefusal(refusal: HttpException, seen: ActivityRecord | undefined, current: ActivityRecord): HttpException {
+  if (refusal instanceof PeriodLockedError) return refusal;
+  if (seen && !changedSince(seen, current)) return refusal;
+  return new RecordChangedError();
 }
 
 /**
@@ -165,12 +190,15 @@ export class EvidenceService {
   }
 
   /** The ids of `records` whose reporting period is closed — one query for all of them. */
-  private async lockedRecordIds(records: ActivityRecord[]): Promise<Set<string>> {
+  private async lockedRecordIds(
+    records: ActivityRecord[],
+    client: Pick<Prisma.TransactionClient, 'periodLock'> = this.prisma,
+  ): Promise<Set<string>> {
     if (records.length === 0) return new Set();
     // One condition per distinct period, not per record: a thousand drafts of
     // one import share a handful of periods.
     const periods = [...new Map(records.map((r) => [lockKey(r), r])).values()];
-    const locks = await this.prisma.periodLock.findMany({
+    const locks = await client.periodLock.findMany({
       where: {
         OR: periods.map((r) => ({
           subsidiaryId: r.subsidiaryId,
@@ -322,9 +350,13 @@ export class EvidenceService {
   }
 
   /**
-   * Upload the blob, then write the file row and its links in one transaction.
-   * The caller has already checked every record. If the rows cannot be
-   * written the blob is removed again, so a failed upload leaves nothing.
+   * Upload the blob, then write the file row, its links and its audit row in
+   * one transaction. The caller has already checked every record; the
+   * transaction checks them again under the lifecycle protocol — their
+   * periods shared, their rows locked — so a record submitted, or a period
+   * locked, while the blob was uploading does not gain the file. If the rows
+   * cannot be written the blob is removed again, so a failed upload leaves
+   * nothing.
    */
   private async store(
     user: RequestUser,
@@ -349,9 +381,21 @@ export class EvidenceService {
       file.mimetype,
     );
 
+    const seen = new Map(records.map((r) => [r.id, r]));
+    const ids = [...seen.keys()];
     let created: EvidenceWithLinks;
     try {
       created = await this.prisma.$transaction(async (tx) => {
+        await lockPeriodsShared(tx, records.map(periodOf));
+        const present = await lockActivityRecordRows(tx, ids);
+        if (present.size !== ids.length) throw new NotFoundException(RECORD_NOT_FOUND);
+        const current = await tx.activityRecord.findMany({ where: { id: { in: ids } } });
+        const locked = await this.lockedRecordIds(current, tx);
+        for (const record of current) {
+          if (record.subsidiaryId !== subsidiaryId) throw new RecordChangedError();
+          const refusal = this.refusalFor(user, record, locked.has(record.id));
+          if (refusal) throw lockedRefusal(refusal, seen.get(record.id), record);
+        }
         const row = await tx.evidence.create({
           data: {
             subsidiaryId,
@@ -370,11 +414,22 @@ export class EvidenceService {
             linkedBy: user.id,
           })),
         });
-        return tx.evidence.findUniqueOrThrow({
+        const stored = await tx.evidence.findUniqueOrThrow({
           where: { id: row.id },
           include: WITH_LINKED_RECORDS,
         });
-      });
+        await this.audit.record(
+          user,
+          {
+            action: 'create',
+            entity: 'evidence',
+            entityId: stored.id,
+            diff: { after: this.auditSnapshot(stored) },
+          },
+          tx,
+        );
+        return stored;
+      }, LIFECYCLE_TX);
     } catch (error) {
       await this.removeBlobs([storagePath]);
       // A record deleted between the checks and the link: the link's foreign
@@ -383,15 +438,8 @@ export class EvidenceService {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
         throw new NotFoundException(RECORD_NOT_FOUND);
       }
-      throw error;
+      throw asLostRace(error);
     }
-
-    await this.audit.record(user, {
-      action: 'create',
-      entity: 'evidence',
-      entityId: created.id,
-      diff: { after: this.auditSnapshot(created) },
-    });
     return this.toDTO(created);
   }
 
@@ -428,25 +476,60 @@ export class EvidenceService {
     });
     if (!evidence) throw new NotFoundException(EVIDENCE_NOT_FOUND);
 
-    // From here on the DATABASE's ids, never the path's: the route accepts
-    // either case, and an uppercase id once made a deleted file answer
-    // `fileDeleted: false` and audit as a `detach` under an id no lookup finds.
-    const { count } = await this.prisma.activityRecordEvidence.deleteMany({
-      where: { activityRecordId: record.id, evidenceId: evidence.id },
-    });
-    // A concurrent detach of the same link got there first: it answers and
-    // audits the change; this request changed nothing.
-    if (count === 0) throw new NotFoundException(EVIDENCE_NOT_FOUND);
-    const deleted = await this.deleteUnlinked([evidence.id]);
-    const fileDeleted = deleted.includes(evidence.id);
+    // The lifecycle protocol: the record's period shared, its row locked, then
+    // the file's row. A submit counts this record's files under the same row
+    // lock, so a detach either lands first (and the submit counts one file
+    // fewer) or waits and then finds the record no longer editable — never a
+    // submitted record that lost the file it was counted with (F03). The file
+    // lock serialises two detaches of one shared file's last two links, or
+    // each would see the other's link still there and neither would delete it.
+    let gone: { id: string; storagePath: string }[];
+    try {
+      gone = await this.prisma.$transaction(async (tx) => {
+        await lockPeriodsShared(tx, [periodOf(record)]);
+        if ((await lockActivityRecordRows(tx, [record.id])).size === 0) {
+          throw new NotFoundException(RECORD_NOT_FOUND);
+        }
+        const current = await tx.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
+        if (lockKey(current) !== lockKey(record)) throw new RecordChangedError();
+        const locked = await this.lockedRecordIds([current], tx);
+        const refusal = this.refusalFor(user, current, locked.has(current.id));
+        if (refusal) throw lockedRefusal(refusal, record, current);
+        await lockEvidenceRows(tx, [evidence.id]);
+        // The file as it is now, under its lock — the audit row's "before".
+        const file = await tx.evidence.findUnique({
+          where: { id: evidence.id },
+          include: WITH_LINKED_RECORDS,
+        });
+        if (!file) throw new NotFoundException(EVIDENCE_NOT_FOUND);
 
-    await this.audit.record(user, {
-      action: fileDeleted ? 'delete' : 'detach',
-      entity: 'evidence',
-      entityId: evidence.id,
-      diff: { before: { ...this.auditSnapshot(evidence), recordId: record.id } },
-    });
-    return { evidenceId: evidence.id, recordId: record.id, fileDeleted };
+        // From here on the DATABASE's ids, never the path's: the route accepts
+        // either case, and an uppercase id once made a deleted file answer
+        // `fileDeleted: false` and audit as a `detach` under an id no lookup finds.
+        const { count } = await tx.activityRecordEvidence.deleteMany({
+          where: { activityRecordId: current.id, evidenceId: file.id },
+        });
+        // A concurrent detach of the same link got there first: it answers and
+        // audits the change; this request changed nothing.
+        if (count === 0) throw new NotFoundException(EVIDENCE_NOT_FOUND);
+        const deleted = await this.deleteUnlinkedRows([file.id], tx);
+        await this.audit.record(
+          user,
+          {
+            action: deleted.length > 0 ? 'delete' : 'detach',
+            entity: 'evidence',
+            entityId: file.id,
+            diff: { before: { ...this.auditSnapshot(file), recordId: current.id } },
+          },
+          tx,
+        );
+        return deleted;
+      }, LIFECYCLE_TX);
+    } catch (error) {
+      throw asLostRace(error);
+    }
+    await this.removeBlobs(gone.map((f) => f.storagePath));
+    return { evidenceId: evidence.id, recordId: record.id, fileDeleted: gone.length > 0 };
   }
 
   /**
@@ -480,24 +563,65 @@ export class EvidenceService {
       );
     }
 
-    // Blob BEFORE the row, as before: here nothing has changed yet, so a
-    // storage failure aborts with the file and every link intact.
-    await this.storage.remove(EVIDENCE_BUCKET, [evidence.storagePath]);
-    const { count } = await this.prisma.evidence.deleteMany({ where: { id: evidence.id } });
-    // Deleted meanwhile by another request, which audited it.
-    if (count === 0) throw new NotFoundException(EVIDENCE_NOT_FOUND);
-    await this.audit.record(user, {
-      action: 'delete',
-      entity: 'evidence',
-      entityId: evidence.id,
-      diff: { before: this.auditSnapshot(evidence) },
-    });
+    // The checks above are an early answer. The lifecycle protocol asks them
+    // again with every record the file backs locked — periods shared, then
+    // rows, then the file — so a record submitted meanwhile keeps its file
+    // and this delete answers 409 (F03: a shared file deleted under a record
+    // on its way to approval). A file never gains a record after its upload,
+    // so the records read above are every record it can back now.
+    //
+    // The row, its links and the audit row commit together; the blob goes
+    // AFTER the commit — the reverse of this method's old order, which
+    // removed the blob first and so could leave a record pointing at bytes
+    // that were gone if the row delete then lost a race. Now a storage
+    // failure leaves an object with no row: logged, and removed by
+    // `pnpm evidence:reclaim`.
+    const seen = new Map(records.map((r) => [r.id, r]));
+    let file: EvidenceWithLinks;
+    try {
+      file = await this.prisma.$transaction(async (tx) => {
+        await lockPeriodsShared(tx, records.map(periodOf));
+        await lockActivityRecordRows(tx, [...seen.keys()]);
+        // Deleted meanwhile by another request, which audited it.
+        if ((await lockEvidenceRows(tx, [evidence.id])).size === 0) {
+          throw new NotFoundException(EVIDENCE_NOT_FOUND);
+        }
+        const current = await tx.activityRecord.findMany({
+          where: { evidenceLinks: { some: { evidenceId: evidence.id } } },
+        });
+        if (current.some((r) => !seen.has(r.id))) throw new RecordChangedError();
+        const locked = await this.lockedRecordIds(current, tx);
+        for (const record of current) {
+          const refusal = this.refusalFor(user, record, locked.has(record.id));
+          if (refusal) throw lockedRefusal(refusal, seen.get(record.id), record);
+        }
+        const before = await tx.evidence.findUniqueOrThrow({
+          where: { id: evidence.id },
+          include: WITH_LINKED_RECORDS,
+        });
+        await tx.evidence.delete({ where: { id: evidence.id } });
+        await this.audit.record(
+          user,
+          {
+            action: 'delete',
+            entity: 'evidence',
+            entityId: evidence.id,
+            diff: { before: this.auditSnapshot(before) },
+          },
+          tx,
+        );
+        return before;
+      }, LIFECYCLE_TX);
+    } catch (error) {
+      throw asLostRace(error);
+    }
+    await this.removeBlobs([file.storagePath]);
     return { id: evidence.id, deleted: true };
   }
 
   /**
    * The files linked to a record — read BEFORE the record is deleted, for
-   * `deleteUnlinked` after. Takes the caller's transaction: the record delete
+   * `deleteUnlinkedRows` after. Takes the caller's transaction: the record delete
    * reads these under its row lock, so an upload cannot link a file in between.
    */
   async fileIdsFor(
@@ -512,53 +636,39 @@ export class EvidenceService {
   }
 
   /**
-   * Delete those of `evidenceIds` that no record links to any more, rows then
-   * blobs, and return the ids deleted here.
+   * Delete the rows of those `evidenceIds` that no record links to any more,
+   * through the caller's transaction, and return them — for `removeBlobs`
+   * once that transaction has committed.
    *
    * Called after links go — a detach, or a record delete whose links went by
-   * cascade. Safe against a concurrent caller: nothing can link an existing
-   * file, so "no links" is final, and each row is deleted by a conditional
-   * statement that only one caller can win; only the winner removes the blob.
+   * cascade — by a caller holding these files' row locks (`lockEvidenceRows`).
+   * Nothing can link an existing file (a file is uploaded with every record it
+   * backs), and every other unlink takes the same lock, so "no links" read
+   * here is final.
    *
-   * Rows BEFORE blobs, the reverse of `remove()`'s order: whether a file is
-   * unlinked can only be decided once the link is gone, and by then the
-   * record may already be deleted. A storage failure
-   * therefore leaves an object with no row — logged, and found by
-   * `pnpm evidence:reclaim`, which removes exactly such objects — rather than
-   * a row nothing can reach.
-   *
-   * Never throws. Its callers run it AFTER their own change has committed (a
-   * record deleted, a link removed) and audit afterwards; a failure here that
-   * propagated would leave that change with no audit row. A database failure
-   * is logged instead, and the files it left unlinked are reclaimed by
-   * `pnpm evidence:reclaim`, which deletes unlinked rows past its grace window.
+   * Rows in the transaction, blobs after it: the rows commit with the change
+   * that unlinked them and with its audit row, or not at all; a storage
+   * failure afterwards leaves an object with no row — logged by
+   * `removeBlobs`, and removed by `pnpm evidence:reclaim`, which deletes
+   * exactly such objects.
    */
-  async deleteUnlinked(evidenceIds: string[]): Promise<string[]> {
+  async deleteUnlinkedRows(
+    evidenceIds: string[],
+    tx: Pick<Prisma.TransactionClient, 'evidence'>,
+  ): Promise<{ id: string; storagePath: string }[]> {
     if (evidenceIds.length === 0) return [];
-    const deleted: { id: string; storagePath: string }[] = [];
-    try {
-      const candidates = await this.prisma.evidence.findMany({
-        where: { id: { in: evidenceIds }, links: { none: {} } },
-        select: { id: true, storagePath: true },
-      });
-      for (const c of candidates) {
-        const { count } = await this.prisma.evidence.deleteMany({
-          where: { id: c.id, links: { none: {} } },
-        });
-        if (count === 1) deleted.push(c);
-      }
-    } catch (error) {
-      this.logger.error(
-        `Could not delete unlinked evidence — run pnpm evidence:reclaim: ${evidenceIds.join(', ')}`,
-        error instanceof Error ? error.stack : String(error),
-      );
+    const unlinked = await tx.evidence.findMany({
+      where: { id: { in: evidenceIds }, links: { none: {} } },
+      select: { id: true, storagePath: true },
+    });
+    if (unlinked.length > 0) {
+      await tx.evidence.deleteMany({ where: { id: { in: unlinked.map((f) => f.id) } } });
     }
-    await this.removeBlobs(deleted.map((d) => d.storagePath));
-    return deleted.map((d) => d.id);
+    return unlinked;
   }
 
   /** Remove objects whose rows are gone; a failure is logged, never thrown — the row's change has already happened. */
-  private async removeBlobs(paths: string[]): Promise<void> {
+  async removeBlobs(paths: string[]): Promise<void> {
     if (paths.length === 0) return;
     try {
       await this.storage.remove(EVIDENCE_BUCKET, paths);

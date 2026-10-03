@@ -297,3 +297,34 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
     clearTimeout(timer);
   }
 }
+
+/**
+ * An evidence file of the tenant's subsidiary, linked to `recordIds`, written
+ * straight to the database. No Storage object exists for it: the services
+ * under test get a storage stub (`services.ts`), so nothing reaches a bucket.
+ */
+export async function attachEvidence(
+  prisma: PrismaService,
+  tenant: Tenant,
+  recordIds: string[],
+) {
+  const file = await prisma.evidence.create({
+    data: {
+      subsidiaryId: tenant.subsidiaryId,
+      storagePath: `${tenant.subsidiaryId}/${randomUUID()}-int-test.pdf`,
+      fileName: 'int-test.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 4,
+      uploadedBy: tenant.users.dataEntry.id,
+    },
+  });
+  await prisma.activityRecordEvidence.createMany({
+    data: recordIds.map((activityRecordId) => ({
+      activityRecordId,
+      evidenceId: file.id,
+      subsidiaryId: tenant.subsidiaryId,
+      linkedBy: tenant.users.dataEntry.id,
+    })),
+  });
+  return file;
+}

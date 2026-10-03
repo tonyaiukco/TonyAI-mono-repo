@@ -17,6 +17,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { quoteCallerText } from '../common/caller-text';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
+import {
+  LIFECYCLE_TX,
+  asLostRace,
+  lockPeriodExclusive,
+  type PeriodKey,
+} from '../activity-records/lifecycle-lock';
 import { CreatePeriodLockDto } from './dto/create-period-lock.dto';
 
 // Closing a period is only allowed once every record in it has been reviewed:
@@ -24,8 +30,8 @@ import { CreatePeriodLockDto } from './dto/create-period-lock.dto';
 // the flip is strictly `approved` → `locked` and unlock restores exactly
 // `approved`. This keeps lock/unlock from ever promoting unreviewed data past
 // the consultant review workflow, and makes the bulk flip fully reconstructible
-// from the audit row (period tuple + count). Drafts/rejected keep their status
-// (the record gate blocks them anyway).
+// from the audit row (period tuple + count). Drafts keep their status (the
+// record gate blocks them anyway).
 // Derived from the shared list rather than restated, so the reviewer queue and
 // the lock gate cannot drift: any status added to one is a status the other
 // starts refusing to lock past.
@@ -36,6 +42,17 @@ import { CreatePeriodLockDto } from './dto/create-period-lock.dto';
 // `['submitted', undefined]` at runtime, silently disarming the gate below.
 // Assignability is checked regardless of that flag, and names the bad status.
 const PENDING_REVIEW_STATUSES: ActivityRecordStatus[] = [...SHARED_PENDING_REVIEW];
+
+// What a lock refuses to close over: the review queue, and a `rejected` record
+// (decision D03, 2026-09-29). A rejected record is waiting for its author, who
+// cannot edit or resubmit it once the period is closed — locking over it
+// strands it, outside the inventory and with no path back except an unlock
+// nobody knows to ask for. The reviewer queue itself stays as it is: a
+// rejected record is the author's to act on, not the reviewer's.
+const LOCK_BLOCKING_STATUSES: ActivityRecordStatus[] = [
+  ...PENDING_REVIEW_STATUSES,
+  ActivityRecordStatus.rejected,
+];
 
 @Injectable()
 export class PeriodLocksService {
@@ -92,6 +109,13 @@ export class PeriodLocksService {
    * Close a reporting period (FR §4.2). Creates the lock row and, in the same
    * transaction, flips the period's committed records to `locked` status so
    * the UI reflects the closed state. Audited as `lock`.
+   *
+   * Under the lifecycle protocol (`lifecycle-lock.ts`) it first takes the
+   * period's EXCLUSIVE lock, which waits for every record and evidence
+   * writer of the period to commit and holds off new ones until this commits
+   * — a create into an empty period included. Only then does it count what
+   * blocks the lock, so a record submitted a moment ago is counted, and none
+   * can be submitted between the count and the lock row.
    */
   async lock(user: RequestUser, dto: CreatePeriodLockDto): Promise<PeriodLockDTO> {
     this.assertCanLock(user);
@@ -114,26 +138,42 @@ export class PeriodLocksService {
       );
     }
 
-    // A period with unreviewed records cannot be closed — approving via a
-    // lock/unlock round-trip would bypass the consultant review workflow.
-    const pendingReview = await this.prisma.activityRecord.count({
-      where: {
-        subsidiaryId: dto.subsidiaryId,
-        reportingYear: dto.reportingYear,
-        reportingPeriod: dto.reportingPeriod,
-        periodValue,
-        status: { in: PENDING_REVIEW_STATUSES },
-      },
-    });
-    if (pendingReview > 0) {
-      throw new ConflictException(
-        `${pendingReview} record(s) in this period are still awaiting review — approve or reject them before locking.`,
-      );
-    }
+    const period: PeriodKey = {
+      subsidiaryId: dto.subsidiaryId,
+      reportingYear: dto.reportingYear,
+      reportingPeriod: dto.reportingPeriod,
+      periodValue,
+    };
 
     let created: PeriodLock;
     try {
       created = await this.prisma.$transaction(async (tx) => {
+        await lockPeriodExclusive(tx, period);
+        // A period with unreviewed records cannot be closed — approving via a
+        // lock/unlock round-trip would bypass the consultant review workflow.
+        // Nor with rejected ones (D03), which the lock would strand.
+        const blocking = await tx.activityRecord.groupBy({
+          by: ['status'],
+          where: { ...period, status: { in: LOCK_BLOCKING_STATUSES } },
+          _count: { _all: true },
+        });
+        const count = (statuses: ActivityRecordStatus[]) =>
+          blocking
+            .filter((g) => statuses.includes(g.status))
+            .reduce((n, g) => n + g._count._all, 0);
+        const pendingReview = count(PENDING_REVIEW_STATUSES);
+        const rejected = count([ActivityRecordStatus.rejected]);
+        if (pendingReview > 0 || rejected > 0) {
+          const parts = [
+            ...(pendingReview > 0
+              ? [`${pendingReview} record(s) in this period are still awaiting review — approve or reject them`]
+              : []),
+            ...(rejected > 0
+              ? [`${rejected} rejected record(s) are waiting for their authors — have them corrected and resubmitted, or deleted`]
+              : []),
+          ];
+          throw new ConflictException(`${parts.join('; ')} before locking.`);
+        }
         const row = await tx.periodLock.create({
           data: {
             subsidiaryId: dto.subsidiaryId,
@@ -165,7 +205,7 @@ export class PeriodLocksService {
           tx,
         );
         return row;
-      });
+      }, LIFECYCLE_TX);
     } catch (e) {
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -173,7 +213,7 @@ export class PeriodLocksService {
       ) {
         throw new ConflictException('This reporting period is already locked.');
       }
-      throw e;
+      throw asLostRace(e);
     }
 
     return this.toDTO(created);
@@ -196,32 +236,41 @@ export class PeriodLocksService {
       throw new NotFoundException('Period lock not found');
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.periodLock.delete({ where: { id } });
-      // Strictly the inverse of lock: `locked` → `approved` (lock only ever
-      // flips approved records, since pending-review periods cannot be locked).
-      const flipped = await tx.activityRecord.updateMany({
-        where: {
-          subsidiaryId: existing.subsidiaryId,
-          reportingYear: existing.reportingYear,
-          reportingPeriod: existing.reportingPeriod,
-          periodValue: existing.periodValue,
-          status: ActivityRecordStatus.locked,
-        },
-        data: { status: ActivityRecordStatus.approved },
-      });
-      // Audit inside the transaction so a bulk flip can never go unaudited.
-      await this.audit.record(
-        user,
-        {
-          action: 'unlock',
-          entity: 'period_lock',
-          entityId: id,
-          diff: { lock: this.toDTO(existing), recordsReverted: flipped.count },
-        },
-        tx,
-      );
-    });
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // The period's exclusive lock, as `lock` takes it: one serialisation
+        // point for every writer of the period. A second unlock of the same row
+        // waits here and then finds it gone.
+        await lockPeriodExclusive(tx, existing);
+        const { count } = await tx.periodLock.deleteMany({ where: { id } });
+        if (count === 0) throw new NotFoundException('Period lock not found');
+        // Strictly the inverse of lock: `locked` → `approved` (lock only ever
+        // flips approved records, since pending-review periods cannot be locked).
+        const flipped = await tx.activityRecord.updateMany({
+          where: {
+            subsidiaryId: existing.subsidiaryId,
+            reportingYear: existing.reportingYear,
+            reportingPeriod: existing.reportingPeriod,
+            periodValue: existing.periodValue,
+            status: ActivityRecordStatus.locked,
+          },
+          data: { status: ActivityRecordStatus.approved },
+        });
+        // Audit inside the transaction so a bulk flip can never go unaudited.
+        await this.audit.record(
+          user,
+          {
+            action: 'unlock',
+            entity: 'period_lock',
+            entityId: id,
+            diff: { lock: this.toDTO(existing), recordsReverted: flipped.count },
+          },
+          tx,
+        );
+      }, LIFECYCLE_TX);
+    } catch (e) {
+      throw asLostRace(e);
+    }
 
     return { id, deleted: true };
   }
