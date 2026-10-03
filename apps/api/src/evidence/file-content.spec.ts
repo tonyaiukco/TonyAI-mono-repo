@@ -178,6 +178,23 @@ describe('checkEvidenceFile — the bytes must be what the upload claims', () =>
       { name: '[Content_Types].xml', data: workbookTypes },
       { name: '/[Content_Types].xml', data: contentTypes('application/vnd.ms-excel.sheet.macroEnabled.main+xml') },
     ]);
+    // The count is case-insensitive: the reader lowercases names, so this is one more candidate.
+    const lowerTypes = zip([
+      { name: '[Content_Types].xml', data: workbookTypes },
+      { name: '/[content_types].xml', data: contentTypes('application/vnd.ms-excel.sheet.macroEnabled.main+xml') },
+    ]);
+    // A workbook type, and a word broken by an entity XML never declared.
+    const brokenWord = zip([
+      {
+        name: '[Content_Types].xml',
+        data: contentTypes(
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+          '<Default Extension="bin" ContentType="application/vnd.ms-office.&vba;Project"/>',
+        ),
+      },
+    ]);
+    expect(refusal(() => checkEvidenceFile(file(XLSX, lowerTypes))), 'lower-case second types').toMatch(/not a XLSX file/);
+    expect(refusal(() => checkEvidenceFile(file(XLSX, brokenWord))), 'undeclared entity').toMatch(/not a XLSX file/);
     const backslash = zip([
       { name: '[Content_Types].xml', data: workbookTypes },
       { name: 'xl\\vbaProject.bin', data: Buffer.from([0xd0, 0xcf, 0x11, 0xe0]) },

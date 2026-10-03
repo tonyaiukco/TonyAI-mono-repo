@@ -481,15 +481,46 @@ describe('LP1-02 — late bytes, whatever else fails (`qa-auditor` round 2)', ()
     await sweep;
 
     expect(refused).toBeInstanceOf(UploadExpiredError);
-    if (await objectExists(observer, EVIDENCE_BUCKET, intent.objectPath)) {
-      // The reset intent outlived the sweep's close: it is still named, and the next pass removes it.
-      expect(await intents()).toHaveLength(1);
-      await makeDue();
-      await sweeper().sweep();
-    }
+    // The late bytes are there, and still named: the reset intent outlived the sweep's close.
+    expect(await objectExists(observer, EVIDENCE_BUCKET, intent.objectPath)).toBe(true);
+    expect(await intents()).toHaveLength(1);
+    await makeDue();
+    await sweeper().sweep();
     expect(await objectExists(observer, EVIDENCE_BUCKET, intent.objectPath)).toBe(false);
     expect(await intents()).toEqual([]);
     expect(await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
+  });
+
+  it('the intent naming late bytes carries its tenant when it must outlive a failed removal', async () => {
+    quiet();
+    const record = await draft();
+    const started = deferred();
+    const gate = deferred();
+    slowUpload(storage, gate.promise, started);
+    const upload = outcome(
+      lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+    );
+    await started.promise;
+    const [intent] = await intents();
+    await backdate(intent.id);
+    await sweeper().sweep(); // abandons, removes nothing yet, closes
+    expect(await intents()).toEqual([]);
+    vi.spyOn(storage, 'remove').mockRejectedValueOnce(new Error(INJECTED));
+    gate.resolve();
+    expect(await upload).toBeInstanceOf(UploadExpiredError);
+
+    expect(await intents()).toMatchObject([
+      {
+        kind: 'delete',
+        objectPath: intent.objectPath,
+        reason: 'upload.expired',
+        organisationId: tenant.organisationId,
+        subsidiaryId: tenant.subsidiaryId,
+      },
+    ]);
+    await makeDue();
+    await sweeper().sweep();
+    expect(await objectExists(observer, EVIDENCE_BUCKET, intent.objectPath)).toBe(false);
   });
 
   it('bytes landing after the sweep abandoned their upload, and the record gone meanwhile: still removed', async () => {
@@ -646,6 +677,13 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
     }
     return paths;
   }
+
+  it('one enqueue naming an object twice writes one intent (a duplicate would be a statement error)', async () => {
+    const path = `${tenant.subsidiaryId}/twice.pdf`;
+    const ref = { bucket: EVIDENCE_BUCKET as Bucket, path };
+    await sweeper(observer).enqueueDeletes(observer, [ref, ref], { reason: 'test' });
+    expect(await intents()).toHaveLength(1);
+  });
 
   it('two sweepers at once remove each object exactly once', async () => {
     const paths = await dueDeletes(6);

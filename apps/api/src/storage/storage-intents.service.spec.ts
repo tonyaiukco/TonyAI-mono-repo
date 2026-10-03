@@ -94,6 +94,32 @@ describe('StorageIntentsService — after the commit, never throws', () => {
     logged.mockRestore();
   });
 
+  it('asks the visibility question on the transaction that reads the owners, not on the pool', async () => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    // The pool's connection would say yes; the transaction's says no — and the transaction decides.
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ ok: false }]),
+      evidence: { findMany: vi.fn() },
+    };
+    const prisma = {
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([{ id: 'i-1', bucket: 'evidence', objectPath: 'sub-1/a.pdf', attempts: 1, lease: 'L' }])
+        .mockResolvedValue([{ ok: true }]),
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      evidence: { findMany: vi.fn().mockResolvedValue([]) },
+      $transaction: vi.fn(async (fn: (client: unknown) => unknown) => fn(tx)),
+    };
+    const remove = vi.fn();
+    await new StorageIntentsService(prisma as unknown as PrismaService, { remove } as unknown as StorageService).runNow([
+      { bucket: 'evidence', path: 'sub-1/a.pdf' },
+    ]);
+    expect(tx.$queryRaw).toHaveBeenCalledOnce();
+    expect(remove).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).toHaveBeenCalledOnce(); // the release
+    logged.mockRestore();
+  });
+
   it('keeps bytes a row owns, and reports the intent to Sentry without the key (a key carries a file name)', async () => {
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const path = 'sub-1/uuid-Ayse-Yilmaz-fatura.pdf';
