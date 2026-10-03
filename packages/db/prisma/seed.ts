@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import {
   Prisma,
@@ -258,6 +259,8 @@ async function resolveFactor(
 const EVIDENCE_BUCKET = 'evidence';
 const DEMO_EVIDENCE_CSV =
   'field,value\nnote,"DEMO placeholder evidence — not a real document"\n';
+/** Its content identity (LP1-02), so `storage:reconcile --verify` checks the seed's files too. */
+const DEMO_EVIDENCE_SHA256 = createHash('sha256').update(DEMO_EVIDENCE_CSV).digest('hex');
 
 /** Create the private `evidence` bucket if it does not already exist. */
 async function ensureEvidenceBucket(): Promise<void> {
@@ -300,7 +303,15 @@ async function ensureSeedEvidence(
   const existing = await prisma.activityRecordEvidence.count({
     where: { activityRecordId: recordId },
   });
-  if (existing > 0) return false;
+  if (existing > 0) {
+    // A database seeded before LP1-02: give the seed's OWN file its hash. Only
+    // this key, whose bytes the seed itself wrote — never another file's.
+    await prisma.evidence.updateMany({
+      where: { storagePath: `${recordId}/seed-evidence.csv`, sha256: null },
+      data: { sha256: DEMO_EVIDENCE_SHA256 },
+    });
+    return false;
+  }
   const { subsidiaryId } = await prisma.activityRecord.findUniqueOrThrow({
     where: { id: recordId },
     select: { subsidiaryId: true },
@@ -323,6 +334,7 @@ async function ensureSeedEvidence(
         fileName: 'demo-evidence.csv',
         mimeType: 'text/csv',
         sizeBytes: Buffer.byteLength(DEMO_EVIDENCE_CSV),
+        sha256: DEMO_EVIDENCE_SHA256,
         uploadedBy,
       },
     });

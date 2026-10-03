@@ -6,6 +6,7 @@ import { EvidenceService } from '../../src/evidence/evidence.service';
 import { PeriodLocksService } from '../../src/period-locks/period-locks.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StorageService } from '../../src/storage/storage.service';
+import { StorageIntentsService } from '../../src/storage/storage-intents.service';
 
 /**
  * The lifecycle services as Nest would wire them, on one client — so every
@@ -22,12 +23,22 @@ export function storageStub() {
 }
 export type StorageStub = ReturnType<typeof storageStub>;
 
-export function lifecycleServices(prisma: PrismaService, storage: StorageStub = storageStub()) {
+/**
+ * The lifecycle services on `prisma`, with the REAL storage-intent protocol
+ * (its rows in this database) in front of `storage` — a stub that records the
+ * calls, or a `StorageService` on the local Supabase Storage. The sweeper's
+ * timer never starts: nothing here bootstraps an application.
+ */
+export function lifecycleServices(
+  prisma: PrismaService,
+  storage: StorageStub | StorageService = storageStub(),
+) {
   const audit = new AuditService(prisma);
-  const evidence = new EvidenceService(prisma, storage as unknown as StorageService, audit);
+  const intents = new StorageIntentsService(prisma, storage as unknown as StorageService);
+  const evidence = new EvidenceService(prisma, storage as unknown as StorageService, audit, intents);
   const records = new ActivityRecordsService(prisma, new CalculationsService(prisma), audit, evidence);
   const periodLocks = new PeriodLocksService(prisma, audit);
-  return { records, evidence, periodLocks, storage };
+  return { records, evidence, periodLocks, storage, intents };
 }
 
 export const INJECTED_AUDIT_FAILURE = 'injected audit failure (LP1-01 test)';
@@ -80,7 +91,8 @@ export function pdfFile(): Express.Multer.File {
     originalname: 'invoice.pdf',
     encoding: '7bit',
     mimetype: 'application/pdf',
-    size: 4,
-    buffer: Buffer.from('%PDF'),
+    size: 9,
+    // A real PDF header: the upload checks the bytes against the declared type.
+    buffer: Buffer.from('%PDF-1.4\n'),
   } as Express.Multer.File;
 }

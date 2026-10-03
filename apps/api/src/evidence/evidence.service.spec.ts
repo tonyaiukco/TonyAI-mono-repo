@@ -10,11 +10,15 @@ import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import type { EvidenceLinkRefusedDTO } from '@tonyai/shared-types';
 import { EvidenceService } from './evidence.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { StorageService } from '../storage/storage.service';
+import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
+import type { StorageIntentsService } from '../storage/storage-intents.service';
 import type { RequestUser } from '../auth/auth.types';
 import { PeriodLockedError, RecordChangedError } from '../activity-records/errors';
 
 import { AuditService } from '../audit/audit.service';
+import { captureException } from '../observability/sentry';
+
+vi.mock('../observability/sentry', () => ({ captureException: vi.fn() }));
 
 /**
  * Audit writes go through the shared AuditService. A single shared spy lets the
@@ -73,6 +77,29 @@ function createStorageMock() {
     remove: vi.fn().mockResolvedValue(undefined),
   };
 }
+
+/**
+ * The Storage protocol (`StorageIntentsService`) is exercised against real
+ * PostgreSQL and Storage in `test/int/storage-recovery.int.spec.ts`; here it
+ * is a set of spies, so a spec asserts WHICH step the service asked for and
+ * when — the intent before the bytes, its adoption inside the transaction,
+ * the abandonment on failure, the delete intent with the row.
+ */
+function createIntentsMock() {
+  return {
+    beginUpload: vi.fn().mockResolvedValue('intent-1'),
+    adoptUpload: vi.fn().mockResolvedValue(undefined),
+    abandonUpload: vi.fn().mockResolvedValue(undefined),
+    enqueueDeletes: vi.fn().mockResolvedValue(undefined),
+    runNow: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+/** What `deleteUnlinkedRows` selects beside the id and the key: the file's tenant, for its delete intent. */
+const UNLINKED_OWNER = { subsidiaryId: 'sub-1', subsidiary: { organisationId: 'org-1' } };
+
+/** The tenant an upload's intents carry, abandoned or not. */
+const ORIGIN = { subsidiaryId: 'sub-1', organisationId: 'org-1' };
 
 let seq = 0;
 function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
@@ -136,7 +163,7 @@ function makeFile(over: Partial<Express.Multer.File> = {}): Express.Multer.File 
     encoding: '7bit',
     mimetype: 'application/pdf',
     size: 1024,
-    buffer: Buffer.from('demo'),
+    buffer: Buffer.from('%PDF-1.4 demo'),
     stream: undefined as never,
     destination: '',
     filename: '',
@@ -161,6 +188,7 @@ describe('EvidenceService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
   let storage: ReturnType<typeof createStorageMock>;
+  let intents: ReturnType<typeof createIntentsMock>;
   let service: EvidenceService;
 
   /** Make the transaction create a file backing `records`. */
@@ -198,10 +226,12 @@ describe('EvidenceService', () => {
       one(prisma.evidence.findUnique),
     );
     storage = createStorageMock();
+    intents = createIntentsMock();
     service = new EvidenceService(
       prisma as unknown as PrismaService,
       storage as unknown as StorageService,
       auditMock(),
+      intents as unknown as StorageIntentsService,
     );
   });
 
@@ -398,7 +428,7 @@ describe('EvidenceService', () => {
         NotFoundException,
       );
       const key = storage.upload.mock.calls[0][1] as string;
-      expect(storage.remove).toHaveBeenCalledWith('evidence', [key]);
+      expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', { bucket: 'evidence', path: key }, expect.anything(), ORIGIN);
       expect(audit.record).not.toHaveBeenCalled();
     });
 
@@ -427,7 +457,12 @@ describe('EvidenceService', () => {
       expect(tx.evidence.create).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
       // The object stored before the transaction is removed again.
-      expect(storage.remove).toHaveBeenCalledWith('evidence', [storage.upload.mock.calls[0][1]]);
+      expect(intents.abandonUpload).toHaveBeenCalledWith(
+        'intent-1',
+        { bucket: 'evidence', path: storage.upload.mock.calls[0][1] },
+        expect.anything(),
+        ORIGIN,
+      );
     });
 
     it('answers a lost race when the record moved to another period while the file uploaded', async () => {
@@ -440,7 +475,93 @@ describe('EvidenceService', () => {
         RecordChangedError,
       );
       expect(tx.evidence.create).not.toHaveBeenCalled();
-      expect(storage.remove).toHaveBeenCalledWith('evidence', [storage.upload.mock.calls[0][1]]);
+      expect(intents.abandonUpload).toHaveBeenCalledWith(
+        'intent-1',
+        { bucket: 'evidence', path: storage.upload.mock.calls[0][1] },
+        expect.anything(),
+        ORIGIN,
+      );
+    });
+
+    it('names the object in an intent before the bytes go up, and adopts it inside the transaction', async () => {
+      const record = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(record);
+      stubStore([record]);
+
+      await service.upload(dataEntry(), 'rec-1', makeFile());
+
+      const path = storage.upload.mock.calls[0][1] as string;
+      expect(intents.beginUpload).toHaveBeenCalledWith(
+        { bucket: 'evidence', path },
+        { reason: 'evidence.upload', subsidiaryId: 'sub-1', organisationId: 'org-1' },
+      );
+      expect(intents.beginUpload.mock.invocationCallOrder[0]).toBeLessThan(
+        storage.upload.mock.invocationCallOrder[0],
+      );
+      // Adopted through the transaction that writes the row — never outside it.
+      expect(intents.adoptUpload).toHaveBeenCalledWith(tx, 'intent-1');
+      expect(intents.adoptUpload.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.evidence.create.mock.invocationCallOrder[0],
+      );
+      // FIRST in the transaction, before even the period lock: whatever fails
+      // after it rolls the adoption back, so late bytes stay named.
+      expect(intents.adoptUpload.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.$executeRaw.mock.invocationCallOrder[0],
+      );
+      expect(intents.abandonUpload).not.toHaveBeenCalled();
+    });
+
+    it('stores the checked type, the content hash and a cleaned name', async () => {
+      const record = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(record);
+      stubStore([record]);
+      // U+202E (right-to-left override) would make the name read as another type.
+      const rlo = String.fromCharCode(0x202e);
+
+      await service.upload(dataEntry(), 'rec-1', makeFile({ originalname: `invoice${rlo}fdp.pdf` }));
+
+      expect(tx.evidence.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          fileName: 'invoicefdp.pdf',
+          mimeType: 'application/pdf',
+          // sha256 of "%PDF-1.4 demo"
+          sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+        }),
+      });
+      expect(audit.record.mock.calls[0][1].diff.after.sha256).toBe(
+        tx.evidence.create.mock.calls[0][0].data.sha256,
+      );
+    });
+
+    it('refuses a file whose bytes are not the type it claims, before any intent or upload', async () => {
+      prisma.activityRecord.findUnique.mockResolvedValue(makeRecord({ id: 'rec-1' }));
+      await expect(
+        service.upload(dataEntry(), 'rec-1', makeFile({ buffer: Buffer.from('<html><script>') })),
+      ).rejects.toThrow(/not a PDF file/);
+      expect(intents.beginUpload).not.toHaveBeenCalled();
+      expect(storage.upload).not.toHaveBeenCalled();
+    });
+
+    it('abandons the intent when the bytes cannot be stored, and writes no row', async () => {
+      prisma.activityRecord.findUnique.mockResolvedValue(makeRecord({ id: 'rec-1' }));
+      storage.upload.mockRejectedValue(new Error('storage down'));
+
+      await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toThrow('storage down');
+      expect(intents.abandonUpload).toHaveBeenCalledWith(
+        'intent-1',
+        { bucket: 'evidence', path: storage.upload.mock.calls[0][1] },
+        expect.anything(),
+        ORIGIN,
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('stores nothing when the intent cannot be written', async () => {
+      prisma.activityRecord.findUnique.mockResolvedValue(makeRecord({ id: 'rec-1' }));
+      intents.beginUpload.mockRejectedValue(new Error('db down'));
+
+      await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toThrow('db down');
+      expect(storage.upload).not.toHaveBeenCalled();
     });
 
     it('removes the stored object again when the rows cannot be written', async () => {
@@ -450,7 +571,7 @@ describe('EvidenceService', () => {
       await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toThrow('insert failed');
 
       const key = storage.upload.mock.calls[0][1] as string;
-      expect(storage.remove).toHaveBeenCalledWith('evidence', [key]);
+      expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', { bucket: 'evidence', path: key }, expect.anything(), ORIGIN);
       expect(audit.record).not.toHaveBeenCalled();
     });
   });
@@ -619,7 +740,7 @@ describe('EvidenceService', () => {
       );
       await expect(service.remove(author, 'ev-1')).rejects.toBeInstanceOf(ForbiddenException);
       expect(storage.upload).not.toHaveBeenCalled();
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
       expect(prisma.activityRecordEvidence.deleteMany).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     },
@@ -647,7 +768,7 @@ describe('EvidenceService', () => {
         where: { activityRecordId: 'rec-1', evidenceId: 'ev-1' },
       });
       expect(prisma.evidence.deleteMany).not.toHaveBeenCalled();
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
       expect(res).toEqual({ evidenceId: 'ev-1', recordId: 'rec-1', fileDeleted: false });
       expect(audit.record.mock.calls[0][1]).toMatchObject({
         action: 'detach',
@@ -661,7 +782,7 @@ describe('EvidenceService', () => {
       const mine = makeRecord({ id: 'rec-1' });
       prisma.activityRecord.findUnique.mockResolvedValue(mine);
       prisma.evidence.findFirst.mockResolvedValue(makeEvidence([mine]));
-      prisma.evidence.findMany.mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/a.pdf' }]);
+      prisma.evidence.findMany.mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/a.pdf', ...UNLINKED_OWNER }]);
       prisma.evidence.deleteMany.mockResolvedValue({ count: 1 });
 
       const res = await service.detach(dataEntry(), 'rec-1', 'ev-1');
@@ -669,12 +790,12 @@ describe('EvidenceService', () => {
       // Read under the file's lock, so "no links left" is final.
       expect(prisma.evidence.findMany).toHaveBeenCalledWith({
         where: { id: { in: ['ev-1'] }, links: { none: {} } },
-        select: { id: true, storagePath: true },
+        select: { id: true, storagePath: true, subsidiaryId: true, subsidiary: { select: { organisationId: true } } },
       });
       expect(prisma.evidence.deleteMany).toHaveBeenCalledWith({
         where: { id: { in: ['ev-1'] } },
       });
-      expect(storage.remove).toHaveBeenCalledWith('evidence', ['sub-1/a.pdf']);
+      expect(intents.runNow).toHaveBeenCalledWith([{ bucket: 'evidence', path: 'sub-1/a.pdf' }]);
       expect(res.fileDeleted).toBe(true);
       expect(audit.record.mock.calls[0][1]).toMatchObject({ action: 'delete', entityId: 'ev-1' });
       // The link, the row and the audit row in one transaction; the object
@@ -686,7 +807,7 @@ describe('EvidenceService', () => {
         order(prisma.evidence.deleteMany),
       );
       expect(order(prisma.evidence.deleteMany)).toBeLessThan(order(audit.record));
-      expect(order(audit.record)).toBeLessThan(order(storage.remove));
+      expect(order(audit.record)).toBeLessThan(order(intents.runNow));
     });
 
     it('takes the record lock before the file lock, and both before the link goes (the protocol\'s order)', async () => {
@@ -721,18 +842,18 @@ describe('EvidenceService', () => {
       );
       expect(prisma.activityRecordEvidence.deleteMany).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
     });
 
     it('removes no object when the audit fails — the detach rolled back', async () => {
       const mine = makeRecord({ id: 'rec-1' });
       prisma.activityRecord.findUnique.mockResolvedValue(mine);
       prisma.evidence.findFirst.mockResolvedValue(makeEvidence([mine]));
-      prisma.evidence.findMany.mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/a.pdf' }]);
+      prisma.evidence.findMany.mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/a.pdf', ...UNLINKED_OWNER }]);
       audit.record.mockRejectedValueOnce(new Error('audit down'));
 
       await expect(service.detach(dataEntry(), 'rec-1', 'ev-1')).rejects.toThrow(/audit down/);
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
     });
 
     it('refuses on the record it is taken off: not the author, not editable, period locked', async () => {
@@ -774,7 +895,7 @@ describe('EvidenceService', () => {
       const mine = makeRecord({ id: 'rec-1' });
       prisma.activityRecord.findUnique.mockResolvedValue(mine);
       prisma.evidence.findFirst.mockResolvedValue(makeEvidence([mine]));
-      prisma.evidence.findMany.mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/a.pdf' }]);
+      prisma.evidence.findMany.mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/a.pdf', ...UNLINKED_OWNER }]);
 
       const res = await service.detach(dataEntry(), 'REC-1', 'EV-1');
 
@@ -827,7 +948,7 @@ describe('EvidenceService', () => {
 
       const res = await service.remove(dataEntry(), 'ev-1');
 
-      expect(storage.remove).toHaveBeenCalledWith('evidence', ['sub-1/a.pdf']);
+      expect(intents.runNow).toHaveBeenCalledWith([{ bucket: 'evidence', path: 'sub-1/a.pdf' }]);
       expect(prisma.evidence.delete).toHaveBeenCalledWith({ where: { id: 'ev-1' } });
       // The object AFTER the commit — the old order (object first) could leave
       // a record pointing at bytes that were gone when the row delete lost a race.
@@ -835,7 +956,7 @@ describe('EvidenceService', () => {
         audit.record.mock.invocationCallOrder[0],
       );
       expect(audit.record.mock.invocationCallOrder[0]).toBeLessThan(
-        storage.remove.mock.invocationCallOrder[0],
+        intents.runNow.mock.invocationCallOrder[0],
       );
       expect(res).toEqual({ id: 'ev-1', deleted: true });
       expect(audit.record.mock.calls[0][1]).toMatchObject({
@@ -843,6 +964,25 @@ describe('EvidenceService', () => {
         diff: { before: { recordIds: ['rec-1'] } },
       });
       expect(audit.record.mock.calls[0][2]).toBe(tx);
+      // The object's delete intent commits with the row and its audit row.
+      expect(intents.enqueueDeletes).toHaveBeenCalledWith(
+        tx,
+        [{ bucket: 'evidence', path: 'sub-1/a.pdf' }],
+        { reason: 'evidence.delete', subsidiaryId: 'sub-1', organisationId: 'org-1' },
+      );
+      expect(prisma.evidence.delete.mock.invocationCallOrder[0]).toBeLessThan(
+        intents.enqueueDeletes.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('records no delete intent when the transaction fails, so nothing is removed', async () => {
+      const record = makeRecord({ id: 'rec-1' });
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([record]));
+      prisma.activityRecord.findMany.mockResolvedValue([record]);
+      audit.record.mockRejectedValueOnce(new Error('audit down'));
+
+      await expect(service.remove(dataEntry(), 'ev-1')).rejects.toThrow('audit down');
+      expect(intents.runNow).not.toHaveBeenCalled();
     });
 
     it('locks every record the file backs, then the file, before re-checking them', async () => {
@@ -868,7 +1008,7 @@ describe('EvidenceService', () => {
 
       await expect(service.remove(dataEntry(), 'ev-1')).rejects.toBeInstanceOf(RecordChangedError);
       expect(prisma.evidence.delete).not.toHaveBeenCalled();
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
 
@@ -881,7 +1021,7 @@ describe('EvidenceService', () => {
 
       await expect(service.remove(dataEntry(), 'ev-1')).rejects.toBeInstanceOf(RecordChangedError);
       expect(prisma.evidence.delete).not.toHaveBeenCalled();
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
     });
 
     it('removes no object when the audit fails — the delete rolled back', async () => {
@@ -891,7 +1031,7 @@ describe('EvidenceService', () => {
       audit.record.mockRejectedValueOnce(new Error('audit down'));
 
       await expect(service.remove(dataEntry(), 'ev-1')).rejects.toThrow(/audit down/);
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
     });
 
     it('keeps the single-record refusals for a file backing one record', async () => {
@@ -899,7 +1039,7 @@ describe('EvidenceService', () => {
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([record]));
       prisma.activityRecord.findMany.mockResolvedValue([record]);
       await expect(service.remove(dataEntry(), 'ev-1')).rejects.toBeInstanceOf(BadRequestException);
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
     });
 
     it('refuses to delete a SHARED file while any record it backs can no longer change', async () => {
@@ -919,7 +1059,7 @@ describe('EvidenceService', () => {
       expect(error).toBeInstanceOf(ConflictException);
       expect((error as Error).message).toContain('Electricity · Q3 2024');
       expect((error as Error).message).toContain('Remove it from each editable record instead');
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
       expect(prisma.evidence.delete).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
@@ -937,7 +1077,7 @@ describe('EvidenceService', () => {
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([open, locked]));
       prisma.activityRecord.findMany.mockResolvedValue([open, locked]);
       await expect(service.remove(dataEntry(), 'ev-1')).rejects.toThrow(/can no longer change.*is locked/);
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
       expect(prisma.evidence.delete).not.toHaveBeenCalled();
     });
 
@@ -964,7 +1104,7 @@ describe('EvidenceService', () => {
       expect(prisma.$queryRaw.mock.calls.at(-1)!.slice(1)).toEqual([['ev-1']]);
       expect(prisma.evidence.delete).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
     });
 
     it('treats a file of a subsidiary out of reach as not found', async () => {
@@ -972,7 +1112,7 @@ describe('EvidenceService', () => {
         makeEvidence([], { subsidiaryId: 'sub-999' }),
       );
       await expect(service.remove(dataEntry(), 'ev-1')).rejects.toBeInstanceOf(NotFoundException);
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
     });
   });
 
@@ -982,10 +1122,14 @@ describe('EvidenceService', () => {
       expect(prisma.evidence.findMany).not.toHaveBeenCalled();
     });
 
-    it('deletes only the rows no record links to any more, and returns them for their objects', async () => {
+    it('deletes only the rows no record links to any more, records their delete intents, and returns them', async () => {
       const client = {
         evidence: {
-          findMany: vi.fn().mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/a.pdf' }]),
+          findMany: vi
+            .fn()
+            .mockResolvedValue([
+              { id: 'ev-1', storagePath: 'sub-1/a.pdf', subsidiaryId: 'sub-1', subsidiary: { organisationId: 'org-1' } },
+            ]),
           deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
       };
@@ -995,12 +1139,25 @@ describe('EvidenceService', () => {
       ]);
       expect(client.evidence.findMany).toHaveBeenCalledWith({
         where: { id: { in: ['ev-1', 'ev-2'] }, links: { none: {} } },
-        select: { id: true, storagePath: true },
+        select: { id: true, storagePath: true, subsidiaryId: true, subsidiary: { select: { organisationId: true } } },
       });
       expect(client.evidence.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['ev-1'] } } });
+      // The intent is written through the SAME client, so it commits with the row delete.
+      expect(intents.enqueueDeletes).toHaveBeenCalledWith(
+        client,
+        [{ bucket: 'evidence', path: 'sub-1/a.pdf' }],
+        { reason: 'evidence.unlinked', subsidiaryId: 'sub-1', organisationId: 'org-1' },
+      );
       // Through the caller's client only — and Storage waits for the commit.
       expect(prisma.evidence.findMany).not.toHaveBeenCalled();
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
+    });
+
+    it('records no intent when every file is still linked', async () => {
+      const client = { evidence: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn() } };
+      expect(await service.deleteUnlinkedRows(['ev-1'], client as never)).toEqual([]);
+      expect(client.evidence.deleteMany).not.toHaveBeenCalled();
+      expect(intents.enqueueDeletes).not.toHaveBeenCalled();
     });
 
     it('lets a database failure propagate — it rolls back the change that unlinked the file, audit row included', async () => {
@@ -1010,19 +1167,16 @@ describe('EvidenceService', () => {
   });
 
   describe('removeBlobs — after the commit', () => {
-    it('logs a storage failure instead of throwing — the rows are already gone', async () => {
-      storage.remove.mockRejectedValue(new Error('storage down'));
-      const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-
+    it('hands the committed delete intents to the intents service, which never throws', async () => {
       await expect(service.removeBlobs(['sub-1/a.pdf'])).resolves.toBeUndefined();
-      // The object key is in the line, so whoever reads it can reclaim it.
-      expect(logged.mock.calls[0][0]).toContain('sub-1/a.pdf');
-      logged.mockRestore();
+      expect(intents.runNow).toHaveBeenCalledWith([{ bucket: 'evidence', path: 'sub-1/a.pdf' }]);
+      // Nothing is removed here directly: a failure must stay a retryable intent.
+      expect(storage.remove).not.toHaveBeenCalled();
     });
 
     it('does nothing for no paths', async () => {
       await service.removeBlobs([]);
-      expect(storage.remove).not.toHaveBeenCalled();
+      expect(intents.runNow).not.toHaveBeenCalled();
     });
   });
 
@@ -1045,6 +1199,36 @@ describe('EvidenceService', () => {
   });
 
   describe('signedUrl', () => {
+    it('saves a download under the type\'s extension when the stored name lacks it', async () => {
+      prisma.evidence.findUnique.mockResolvedValue(
+        makeEvidence([makeRecord({ id: 'rec-1' })], { fileName: 'fatura.html' }),
+      );
+      await service.signedUrl(dataEntry(), 'ev-1');
+      expect(storage.createSignedUrl).toHaveBeenCalledWith('evidence', 'sub-1/a.pdf', 60, 'fatura.html.pdf');
+    });
+
+    it('answers 404 — not 500 — and reports it, when the row\'s bytes are missing from Storage', async () => {
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([makeRecord({ id: 'rec-1' })]));
+      storage.createSignedUrl.mockRejectedValue(new StorageObjectMissingError('evidence', 'sub-1/a.pdf'));
+      const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      const refusal = service.signedUrl(dataEntry(), 'ev-1');
+      await expect(refusal).rejects.toBeInstanceOf(NotFoundException);
+      await expect(refusal).rejects.toThrow(/missing from storage/);
+      expect(logged.mock.calls[0][0]).toContain('sub-1/a.pdf');
+      // The Sentry event names the row, never the key: a key carries a cleaned file name.
+      const reported = vi.mocked(captureException).mock.calls.at(-1)![0] as Error;
+      expect(reported.message).toContain('ev-1');
+      expect(reported.message).not.toContain('a.pdf');
+      logged.mockRestore();
+    });
+
+    it('lets any other Storage failure through unchanged', async () => {
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([makeRecord({ id: 'rec-1' })]));
+      storage.createSignedUrl.mockRejectedValue(new Error('storage down'));
+      await expect(service.signedUrl(dataEntry(), 'ev-1')).rejects.toThrow('storage down');
+    });
+
     it('returns a signed URL for a file of an accessible subsidiary', async () => {
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([makeRecord({ id: 'rec-1' })]));
 

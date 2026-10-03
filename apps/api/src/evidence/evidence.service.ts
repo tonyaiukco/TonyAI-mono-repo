@@ -11,8 +11,6 @@ import { randomUUID } from 'node:crypto';
 import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import {
   type Category,
-  EVIDENCE_ALLOWED_MIME_TYPES,
-  EVIDENCE_MAX_SIZE_BYTES,
   type EvidenceDTO,
   type EvidenceDetachDTO,
   type EvidenceLinkRefusal,
@@ -20,7 +18,10 @@ import {
   mayAuthorRecords,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
-import { StorageService } from '../storage/storage.service';
+import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
+import { StorageIntentsService, type ObjectRef } from '../storage/storage-intents.service';
+import { EVIDENCE_BUCKET } from '../storage/buckets';
+import { captureException } from '../observability/sentry';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { PeriodLockedError, RecordChangedError } from '../activity-records/errors';
@@ -34,8 +35,9 @@ import {
   type PeriodKey,
 } from '../activity-records/lifecycle-lock';
 import { canonicalUuid } from '../common/parse-uuid-param.pipe';
+import { type CheckedEvidenceFile, checkEvidenceFile, downloadName } from './file-content';
 
-export const EVIDENCE_BUCKET = 'evidence';
+export { EVIDENCE_BUCKET };
 const SIGNED_URL_TTL_SECONDS = 60;
 
 // Mirrors activity-records: who may attach/remove evidence, and while the parent
@@ -131,6 +133,7 @@ export class EvidenceService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly audit: AuditService,
+    private readonly intents: StorageIntentsService,
   ) {}
 
   private toDTO(e: EvidenceWithLinks): EvidenceDTO {
@@ -155,10 +158,13 @@ export class EvidenceService {
     };
   }
 
-  /** The audit trail's picture of a file: its metadata and the ids it backs, not the record details. */
+  /**
+   * The audit trail's picture of a file: its metadata, its content hash (null
+   * before LP1-02) and the ids it backs — not the record details.
+   */
   private auditSnapshot(e: EvidenceWithLinks) {
     const { linkedRecords, ...file } = this.toDTO(e);
-    return { ...file, recordIds: linkedRecords.map((r) => r.id) };
+    return { ...file, sha256: e.sha256, recordIds: linkedRecords.map((r) => r.id) };
   }
 
   /** Load an activity record and enforce tenant isolation (out-of-set → 404). */
@@ -265,18 +271,6 @@ export class EvidenceService {
     if (refusal) throw refusal;
   }
 
-  private assertFile(file: Express.Multer.File | undefined): asserts file {
-    if (!file) throw new BadRequestException('No file provided');
-    if (!(EVIDENCE_ALLOWED_MIME_TYPES as readonly string[]).includes(file.mimetype)) {
-      throw new BadRequestException(
-        `Unsupported file type "${file.mimetype}". Allowed: PDF, JPG, PNG, XLSX, CSV.`,
-      );
-    }
-    if (file.size > EVIDENCE_MAX_SIZE_BYTES) {
-      throw new BadRequestException('File exceeds the 10 MB limit');
-    }
-  }
-
   async list(user: RequestUser, recordId: string): Promise<EvidenceDTO[]> {
     await this.loadRecordScoped(user, recordId);
     const rows = await this.prisma.evidence.findMany({
@@ -295,8 +289,8 @@ export class EvidenceService {
   ): Promise<EvidenceDTO> {
     const record = await this.loadRecordScoped(user, recordId);
     await this.assertCanMutate(user, record);
-    this.assertFile(file);
-    return this.store(user, [record], file);
+    const checked = checkEvidenceFile(file);
+    return this.store(user, [record], file, checked);
   }
 
   /**
@@ -350,8 +344,8 @@ export class EvidenceService {
       throw new BadRequestException(body);
     }
 
-    this.assertFile(file);
-    return this.store(user, ids.map((id) => byId.get(id)!), file);
+    const checked = checkEvidenceFile(file);
+    return this.store(user, ids.map((id) => byId.get(id)!), file, checked);
   }
 
   /**
@@ -359,14 +353,22 @@ export class EvidenceService {
    * one transaction. The caller has already checked every record; the
    * transaction checks them again under the lifecycle protocol — their
    * periods shared, their rows locked — so a record submitted, or a period
-   * locked, while the blob was uploading does not gain the file. If the rows
-   * cannot be written the blob is removed again, so a failed upload leaves
-   * nothing.
+   * locked, while the blob was uploading does not gain the file.
+   *
+   * Storage is not in that transaction, so the object is named first: an
+   * `upload` intent commits before the bytes go up, and the row's transaction
+   * adopts (deletes) it. If anything fails before the commit, the intent is
+   * abandoned and the object removed — and only then: a transaction that
+   * committed although its acknowledgement was lost has already adopted the
+   * intent, so its object stays with its row (this method used to delete the
+   * bytes of a committed row in that case). A crash anywhere leaves the
+   * intent for the sweeper (`StorageIntentsService`).
    */
   private async store(
     user: RequestUser,
     records: ActivityRecord[],
     file: Express.Multer.File,
+    checked: CheckedEvidenceFile,
   ): Promise<EvidenceDTO> {
     const subsidiaryId = records[0].subsidiaryId;
     // Opaque object key: <subsidiaryId>/<uuid>-<sanitised name>.
@@ -377,20 +379,31 @@ export class EvidenceService {
     // signed URL's download parameter. Transliterating instead would buy nothing
     // and risk collisions. Files uploaded before WP8 PR7 keep their
     // <recordId>/… keys; keys are matched exactly, never parsed.
-    const safeName = file.originalname.replace(/[^\w.-]+/g, '_').slice(0, 120);
+    const safeName = checked.fileName.replace(/[^\w.-]+/g, '_').slice(0, 120);
     const storagePath = `${subsidiaryId}/${randomUUID()}-${safeName}`;
-    await this.storage.upload(
-      EVIDENCE_BUCKET,
-      storagePath,
-      file.buffer,
-      file.mimetype,
-    );
+    const ref: ObjectRef = { bucket: EVIDENCE_BUCKET, path: storagePath };
+    const intentId = await this.intents.beginUpload(ref, {
+      reason: 'evidence.upload',
+      subsidiaryId,
+      organisationId: user.organisationId,
+    });
+    try {
+      await this.storage.upload(EVIDENCE_BUCKET, storagePath, file.buffer, checked.mimeType);
+    } catch (error) {
+      await this.intents.abandonUpload(intentId, ref, error, { subsidiaryId, organisationId: user.organisationId });
+      throw error;
+    }
 
     const seen = new Map(records.map((r) => [r.id, r]));
     const ids = [...seen.keys()];
     let created: EvidenceWithLinks;
     try {
       created = await this.prisma.$transaction(async (tx) => {
+        // The row takes the object over FIRST — refused if the sweeper
+        // abandoned it during a slow upload — so whatever fails after this
+        // point rolls the adoption back and leaves the intent to abandon:
+        // late bytes are never left unnamed (`qa-auditor`, measured).
+        await this.intents.adoptUpload(tx, intentId);
         await lockPeriodsShared(tx, records.map(periodOf));
         const present = await lockActivityRecordRows(tx, ids);
         if (present.size !== ids.length) throw new NotFoundException(RECORD_NOT_FOUND);
@@ -407,9 +420,10 @@ export class EvidenceService {
           data: {
             subsidiaryId,
             storagePath,
-            fileName: file.originalname.slice(0, 255),
-            mimeType: file.mimetype,
+            fileName: checked.fileName,
+            mimeType: checked.mimeType,
             sizeBytes: file.size,
+            sha256: checked.sha256,
             uploadedBy: user.id,
           },
         });
@@ -438,7 +452,7 @@ export class EvidenceService {
         return stored;
       }, LIFECYCLE_TX);
     } catch (error) {
-      await this.removeBlobs([storagePath]);
+      await this.intents.abandonUpload(intentId, ref, error, { subsidiaryId, organisationId: user.organisationId });
       // A record deleted between the checks and the link: the link's foreign
       // key refuses it (P2003). That is the same answer as a record that was
       // never there, not a server error.
@@ -455,12 +469,28 @@ export class EvidenceService {
     id: string,
   ): Promise<{ url: string; expiresIn: number }> {
     const evidence = await this.loadEvidenceScoped(user, id);
-    const url = await this.storage.createSignedUrl(
-      EVIDENCE_BUCKET,
-      evidence.storagePath,
-      SIGNED_URL_TTL_SECONDS,
-      evidence.fileName,
-    );
+    let url: string;
+    try {
+      url = await this.storage.createSignedUrl(
+        EVIDENCE_BUCKET,
+        evidence.storagePath,
+        SIGNED_URL_TTL_SECONDS,
+        downloadName(evidence.fileName, evidence.mimeType),
+      );
+    } catch (error) {
+      if (!(error instanceof StorageObjectMissingError)) throw error;
+      // A row whose bytes are gone: never answered as a server fault, never
+      // silent. `storage:reconcile` lists every such row.
+      this.logger.error(
+        `Evidence ${evidence.id} has no object in Storage (${EVIDENCE_BUCKET}/${evidence.storagePath})`,
+      );
+      // The key carries a cleaned file name, which can be personal data: the
+      // Sentry event names the row, not the key.
+      captureException(new Error(`Evidence ${evidence.id} has no object in Storage`), { userId: user.id });
+      throw new NotFoundException(
+        "This file's contents are missing from storage. The problem has been reported to the administrators.",
+      );
+    }
     return { url, expiresIn: SIGNED_URL_TTL_SECONDS };
   }
 
@@ -577,12 +607,12 @@ export class EvidenceService {
     // on its way to approval). A file never gains a record after its upload,
     // so the records read above are every record it can back now.
     //
-    // The row, its links and the audit row commit together; the blob goes
-    // AFTER the commit — the reverse of this method's old order, which
-    // removed the blob first and so could leave a record pointing at bytes
-    // that were gone if the row delete then lost a race. Now a storage
-    // failure leaves an object with no row: logged, and removed by
-    // `pnpm evidence:reclaim`.
+    // The row, its links, the audit row and a `delete` intent for the blob
+    // commit together; the blob goes AFTER the commit — the reverse of this
+    // method's old order, which removed the blob first and so could leave a
+    // record pointing at bytes that were gone if the row delete then lost a
+    // race. A storage failure after the commit leaves the intent, retried by
+    // the sweeper until Storage confirms.
     const seen = new Map(records.map((r) => [r.id, r]));
     let file: EvidenceWithLinks;
     try {
@@ -611,6 +641,11 @@ export class EvidenceService {
           include: WITH_LINKED_RECORDS,
         });
         await tx.evidence.delete({ where: { id: evidence.id } });
+        await this.intents.enqueueDeletes(
+          tx,
+          [{ bucket: EVIDENCE_BUCKET, path: before.storagePath }],
+          { reason: 'evidence.delete', subsidiaryId: before.subsidiaryId, organisationId: user.organisationId },
+        );
         await this.audit.record(
           user,
           {
@@ -648,8 +683,9 @@ export class EvidenceService {
 
   /**
    * Delete the rows of those `evidenceIds` that no record links to any more,
-   * through the caller's transaction, and return them — for `removeBlobs`
-   * once that transaction has committed.
+   * through the caller's transaction, record a `delete` intent for each of
+   * their blobs in it, and return them — for `removeBlobs` once that
+   * transaction has committed.
    *
    * Called after links go — a detach, or a record delete whose links went by
    * cascade — by a caller holding these files' row locks (`lockEvidenceRows`).
@@ -657,37 +693,42 @@ export class EvidenceService {
    * backs), and every other unlink takes the same lock, so "no links" read
    * here is final.
    *
-   * Rows in the transaction, blobs after it: the rows commit with the change
-   * that unlinked them and with its audit row, or not at all; a storage
-   * failure afterwards leaves an object with no row — logged by
-   * `removeBlobs`, and removed by `pnpm evidence:reclaim`, which deletes
-   * exactly such objects.
+   * Rows and intents in the transaction, blobs after it: the rows commit
+   * with the change that unlinked them, its audit row and the intents to
+   * remove their blobs, or none of it does; a storage failure afterwards
+   * leaves the intents, retried by the sweeper.
    */
   async deleteUnlinkedRows(
     evidenceIds: string[],
-    tx: Pick<Prisma.TransactionClient, 'evidence'>,
+    tx: Pick<Prisma.TransactionClient, 'evidence' | '$executeRaw'>,
   ): Promise<{ id: string; storagePath: string }[]> {
     if (evidenceIds.length === 0) return [];
     const unlinked = await tx.evidence.findMany({
       where: { id: { in: evidenceIds }, links: { none: {} } },
-      select: { id: true, storagePath: true },
+      select: { id: true, storagePath: true, subsidiaryId: true, subsidiary: { select: { organisationId: true } } },
     });
-    if (unlinked.length > 0) {
-      await tx.evidence.deleteMany({ where: { id: { in: unlinked.map((f) => f.id) } } });
-    }
-    return unlinked;
+    if (unlinked.length === 0) return [];
+    await tx.evidence.deleteMany({ where: { id: { in: unlinked.map((f) => f.id) } } });
+    await this.intents.enqueueDeletes(
+      tx,
+      unlinked.map((f) => ({ bucket: EVIDENCE_BUCKET, path: f.storagePath })),
+      // One subsidiary per file; a record delete's files share its subsidiary.
+      {
+        reason: 'evidence.unlinked',
+        subsidiaryId: unlinked[0].subsidiaryId,
+        organisationId: unlinked[0].subsidiary.organisationId,
+      },
+    );
+    return unlinked.map(({ id, storagePath }) => ({ id, storagePath }));
   }
 
-  /** Remove objects whose rows are gone; a failure is logged, never thrown — the row's change has already happened. */
+  /**
+   * After the commit: remove the blobs whose rows (and `delete` intents)
+   * committed. Never throws — the row's change has already happened; a
+   * failure leaves the intents to the sweeper.
+   */
   async removeBlobs(paths: string[]): Promise<void> {
     if (paths.length === 0) return;
-    try {
-      await this.storage.remove(EVIDENCE_BUCKET, paths);
-    } catch (error) {
-      this.logger.error(
-        `Could not remove ${paths.length} evidence object(s) — run pnpm evidence:reclaim: ${paths.join(', ')}`,
-        error instanceof Error ? error.stack : String(error),
-      );
-    }
+    await this.intents.runNow(paths.map((path) => ({ bucket: EVIDENCE_BUCKET, path })));
   }
 }

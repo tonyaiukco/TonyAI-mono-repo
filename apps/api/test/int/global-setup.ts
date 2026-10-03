@@ -1,7 +1,9 @@
 import { readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PrismaClient } from '@tonyai/db';
-import { TENANT_EMAIL_PATTERN, TENANT_ORG_PREFIX } from './db';
+import { BUCKETS } from '../../src/storage/buckets';
+import { StorageService } from '../../src/storage/storage.service';
+import { TENANT_EMAIL_PATTERN, TENANT_ORG_PREFIX, tenantIntents } from './db';
 
 /**
  * Runs once before any integration spec. It refuses — loudly, never by
@@ -66,6 +68,11 @@ export default async function setup(): Promise<void> {
     const orgIds = orphanOrgs.map((o) => o.id);
     const profileIds = orphanProfiles.map((p) => p.id);
     if (orgIds.length > 0 || profileIds.length > 0) {
+      const subsidiaryIds = (
+        await prisma.subsidiary.findMany({ where: { organisationId: { in: orgIds } }, select: { id: true } })
+      ).map((s) => s.id);
+      await sweepTenantObjects(prisma, subsidiaryIds, orgIds);
+      await prisma.storageIntent.deleteMany({ where: tenantIntents(subsidiaryIds, orgIds) });
       await prisma.auditLog.deleteMany({
         where: { OR: [{ organisationId: { in: orgIds } }, { userId: { in: profileIds } }] },
       });
@@ -74,5 +81,30 @@ export default async function setup(): Promise<void> {
     }
   } finally {
     await prisma.$disconnect();
+  }
+}
+
+/**
+ * Objects a killed Storage test left under synthetic tenants' prefixes
+ * (evidence by subsidiary, import sources by organisation). Only against a
+ * local Storage, and only when one is configured — the stub-based specs need
+ * none.
+ */
+async function sweepTenantObjects(
+  prisma: PrismaClient,
+  subsidiaryIds: string[],
+  organisationIds: string[],
+): Promise<void> {
+  const url = process.env.SUPABASE_URL;
+  if (!url || !process.env.SUPABASE_SERVICE_ROLE_KEY || !LOCAL_HOSTS.has(new URL(url).hostname)) return;
+  const storage = new StorageService();
+  for (const bucket of BUCKETS) {
+    const prefixes = (bucket === 'evidence' ? subsidiaryIds : organisationIds).map((id) => `${id}/`);
+    if (prefixes.length === 0) continue;
+    const rows = await prisma.$queryRaw<{ name: string }[]>`
+      SELECT name FROM storage.objects
+      WHERE bucket_id = ${bucket} AND split_part(name, '/', 1) || '/' = ANY(${prefixes}::text[])`;
+    const paths = rows.map((r) => r.name);
+    for (let i = 0; i < paths.length; i += 100) await storage.remove(bucket, paths.slice(i, i + 100));
   }
 }
