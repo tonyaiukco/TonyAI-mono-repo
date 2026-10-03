@@ -24,9 +24,9 @@ CREATE TABLE "storage_intents" (
     "subsidiary_id" UUID,
     "attempts" INTEGER NOT NULL DEFAULT 0,
     "last_error" TEXT,
-    "next_attempt_at" TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
+    "next_attempt_at" TIMESTAMPTZ(6) NOT NULL DEFAULT transaction_timestamp(),
     "claimed_until" TIMESTAMPTZ(6),
-    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT transaction_timestamp(),
 
     CONSTRAINT "storage_intents_pkey" PRIMARY KEY ("id")
 );

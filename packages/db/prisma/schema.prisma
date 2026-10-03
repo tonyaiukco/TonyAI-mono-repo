@@ -540,12 +540,14 @@ model StorageIntent {
   // zone, no rounding past the next statement's now()), and defaults the
   // database fills — Prisma's `@default(now())` is filled by the query engine
   // from the API host's clock, and a host a few ms ahead made an intent
-  // written a moment ago read as not yet due (measured, LP1-02).
-  nextAttemptAt  DateTime          @default(dbgenerated("now()")) @map("next_attempt_at") @db.Timestamptz(6)
+  // written a moment ago read as not yet due (measured, LP1-02). Spelled
+  // transaction_timestamp() — the same value as now() — because Prisma reads
+  // a database default of now() as its own and reports drift on every diff.
+  nextAttemptAt  DateTime          @default(dbgenerated("transaction_timestamp()")) @map("next_attempt_at") @db.Timestamptz(6)
   // A lease, not a lock: set while one process removes the object, so a
   // second sweeper skips it without a transaction held across the HTTP call.
   claimedUntil   DateTime?         @map("claimed_until") @db.Timestamptz(6)
-  createdAt      DateTime          @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+  createdAt      DateTime          @default(dbgenerated("transaction_timestamp()")) @map("created_at") @db.Timestamptz(6)
 
   @@unique([bucket, objectPath])
   @@index([kind, nextAttemptAt])
