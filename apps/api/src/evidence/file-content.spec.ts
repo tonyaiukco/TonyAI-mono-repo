@@ -128,7 +128,27 @@ describe('checkEvidenceFile — the bytes must be what the upload claims', () =>
         data: '<Relationships><Relationship Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="code.bin"/></Relationships>',
       },
     ]);
-    for (const [label, archive] of Object.entries({ encoded, encodedVba, undeclared, related })) {
+    // Hex references alone (a decimal one would hide a decoder that skips hex).
+    const hexOnly = zip([
+      {
+        name: '[Content_Types].xml',
+        data: contentTypes(
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+          '<Default Extension="bin" ContentType="application/vnd.ms-office.vba&#x50;roject"/>',
+        ),
+      },
+    ]);
+    // An Excel 4.0 macro sheet runs code without any VBA project.
+    const macroSheet = zip([
+      {
+        name: '[Content_Types].xml',
+        data: contentTypes(
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+          '<Override PartName="/xl/macrosheets/sheet1.xml" ContentType="application/vnd.ms-excel.macrosheet+xml"/>',
+        ),
+      },
+    ]);
+    for (const [label, archive] of Object.entries({ encoded, encodedVba, undeclared, related, hexOnly, macroSheet })) {
       expect(refusal(() => checkEvidenceFile(file(XLSX, archive))), label).toMatch(/macros/);
     }
     // A DTD splitting the token across entities; a part in UTF-16; a second

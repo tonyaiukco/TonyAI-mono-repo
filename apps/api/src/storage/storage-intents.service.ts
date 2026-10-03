@@ -25,6 +25,7 @@ export interface IntentOrigin {
 }
 
 type IntentClient = Pick<Prisma.TransactionClient, 'storageIntent'>;
+type EnqueueClient = Pick<Prisma.TransactionClient, '$executeRaw'>;
 
 /**
  * An `upload` intent older than this is abandoned by the sweeper. Its owning
@@ -116,6 +117,8 @@ interface ClaimedIntent {
   bucket: string;
   objectPath: string;
   attempts: number;
+  /** The lease this claim set, as the database's own text (microseconds): the close is conditional on it. */
+  lease: string;
 }
 
 interface Outcome {
@@ -203,7 +206,12 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
    * landed AFTER the sweeper's removal are removed again. Never throws: what
    * it cannot do, the sweeper does.
    */
-  async abandonUpload(intentId: string, ref: ObjectRef, cause?: unknown): Promise<void> {
+  async abandonUpload(
+    intentId: string,
+    ref: ObjectRef,
+    cause?: unknown,
+    origin: Omit<IntentOrigin, 'reason'> = {},
+  ): Promise<void> {
     try {
       const { count } = await this.prisma.storageIntent.updateMany({
         where: { id: intentId, kind: StorageIntentKind.upload },
@@ -212,7 +220,7 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
         data: { kind: StorageIntentKind.delete },
       });
       if (count === 0 && cause instanceof UploadExpiredError) {
-        await this.enqueueDeletes(this.prisma, [ref], { reason: 'upload.expired' });
+        await this.enqueueDeletes(this.prisma, [ref], { reason: 'upload.expired', ...origin });
       }
       if (count === 1 || cause instanceof UploadExpiredError) await this.runNow([ref]);
     } catch (error) {
@@ -223,19 +231,26 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
     }
   }
 
-  /** In the transaction that deleted the rows owning these objects: record that the objects must go. */
-  async enqueueDeletes(tx: IntentClient, refs: ObjectRef[], origin: IntentOrigin): Promise<void> {
-    if (refs.length === 0) return;
-    await tx.storageIntent.createMany({
-      data: refs.map((ref) => ({
-        kind: StorageIntentKind.delete,
-        bucket: ref.bucket,
-        objectPath: ref.path,
-        ...origin,
-      })),
-      // A second intent for one object adds nothing: one removal satisfies both.
-      skipDuplicates: true,
-    });
+  /**
+   * In the transaction that deleted the rows owning these objects: record
+   * that the objects must go. An object that already has a `delete` intent
+   * gets that one reset — due now, its lease cleared — rather than a second:
+   * the existing one may belong to a sweep whose removal ran BEFORE bytes
+   * landed, and whose close would otherwise swallow this request (`qa-auditor`,
+   * measured). The sweep's close is conditional on its own lease, so a reset
+   * intent survives it and is removed again.
+   */
+  async enqueueDeletes(tx: EnqueueClient, refs: ObjectRef[], origin: IntentOrigin): Promise<void> {
+    for (const [bucket, paths] of groupPaths(refs)) {
+      await tx.$executeRaw`
+        INSERT INTO storage_intents (id, kind, bucket, object_path, reason, organisation_id, subsidiary_id)
+        SELECT gen_random_uuid(), 'delete', ${bucket}, path, ${origin.reason},
+               ${origin.organisationId ?? null}::uuid, ${origin.subsidiaryId ?? null}::uuid
+        FROM unnest(${[...new Set(paths)]}::text[]) AS path
+        ON CONFLICT (bucket, object_path) DO UPDATE
+          SET claimed_until = NULL, next_attempt_at = now()
+          WHERE storage_intents.kind = 'delete'`;
+    }
   }
 
   /**
@@ -280,26 +295,7 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
     let abandoned = 0;
     let outcome: Outcome = { removed: 0, failed: 0, kept: 0 };
     if (!held) {
-      // An upload intent this old belongs to a transaction that cannot still
-      // commit. SKIP LOCKED passes over one an owning transaction is adopting
-      // right now; if that transaction then rolls back, the next sweep takes it.
-      // A MATERIALIZED CTE, not `WHERE id IN (SELECT … LIMIT n)`: a plan that
-      // rescans that subquery skips the rows it already updated and takes n
-      // MORE each time, so the LIMIT bounded nothing (`qa-auditor`, measured:
-      // 5 claimed under LIMIT 2). A CTE is scanned once.
-      abandoned = await this.prisma.$executeRaw`
-        WITH stale AS MATERIALIZED (
-          SELECT id FROM storage_intents
-          WHERE kind = 'upload'
-            AND created_at < now() - ${UPLOAD_GRACE_SECONDS}::int * interval '1 second'
-          ORDER BY created_at, id
-          LIMIT ${limit}
-          FOR UPDATE SKIP LOCKED
-        )
-        UPDATE storage_intents s
-        SET kind = 'delete', next_attempt_at = now()
-        FROM stale
-        WHERE s.id = stale.id`;
+      abandoned = await this.abandonStale(limit);
       outcome = await this.execute(await this.claim(Prisma.sql`next_attempt_at <= now()`, limit));
     }
     const backlog = await this.backlog();
@@ -332,6 +328,33 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
       WHERE r.rolname = current_user
         AND c.oid IN ('public.evidence'::regclass, 'public.import_batches'::regclass, 'storage.objects'::regclass)`;
     return ok === true;
+  }
+
+  /**
+   * Turn up to `limit` upload intents past their grace into deletes; returns
+   * how many. Part of `sweep`, on its own so its bound can be pinned.
+   */
+  async abandonStale(limit = SWEEP_BATCH): Promise<number> {
+    // An upload intent this old belongs to a transaction that cannot still
+    // commit. SKIP LOCKED passes over one an owning transaction is adopting
+    // right now; if that transaction then rolls back, the next sweep takes it.
+    // A MATERIALIZED CTE, not `WHERE id IN (SELECT … LIMIT n)`: a plan that
+    // rescans that subquery skips the rows it already updated and takes n
+    // MORE each time, so the LIMIT bounded nothing (`qa-auditor`, measured:
+    // 5 claimed under LIMIT 2). A CTE is scanned once.
+    return this.prisma.$executeRaw`
+      WITH stale AS MATERIALIZED (
+        SELECT id FROM storage_intents
+        WHERE kind = 'upload'
+          AND created_at < now() - ${UPLOAD_GRACE_SECONDS}::int * interval '1 second'
+        ORDER BY created_at, id
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE storage_intents s
+      SET kind = 'delete', next_attempt_at = now()
+      FROM stale
+      WHERE s.id = stale.id`;
   }
 
   /** What is waiting, for the sweep's log line and `storage:reconcile`. */
@@ -437,7 +460,7 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
           attempts = s.attempts + 1
       FROM due
       WHERE s.id = due.id
-      RETURNING s.id, s.bucket, s.object_path AS "objectPath", s.attempts`;
+      RETURNING s.id, s.bucket, s.object_path AS "objectPath", s.attempts, s.claimed_until::text AS lease`;
   }
 
   private async execute(claimed: ClaimedIntent[]): Promise<Outcome> {
@@ -508,9 +531,14 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
           );
           continue;
         }
-        // Storage confirmed. If closing the intents fails now, the lease runs
-        // out and the next sweep removes again — removal is idempotent.
-        await this.prisma.storageIntent.deleteMany({ where: { id: { in: chunk.map((i) => i.id) } } });
+        // Storage confirmed. Closed only while still under THIS claim's lease:
+        // an intent reset meanwhile (`enqueueDeletes`) names bytes that may
+        // have landed after the removal, and stays. If closing fails, the
+        // lease runs out and the next sweep removes again — idempotently.
+        await this.prisma.$executeRaw`
+          DELETE FROM storage_intents s
+          USING unnest(${chunk.map((i) => i.id)}::uuid[], ${chunk.map((i) => i.lease)}::timestamptz[]) AS c(id, lease)
+          WHERE s.id = c.id AND s.claimed_until = c.lease`;
         outcome.removed += chunk.length;
       }
     }

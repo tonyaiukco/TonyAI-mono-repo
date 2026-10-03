@@ -16,6 +16,9 @@ import type { RequestUser } from '../auth/auth.types';
 import { PeriodLockedError, RecordChangedError } from '../activity-records/errors';
 
 import { AuditService } from '../audit/audit.service';
+import { captureException } from '../observability/sentry';
+
+vi.mock('../observability/sentry', () => ({ captureException: vi.fn() }));
 
 /**
  * Audit writes go through the shared AuditService. A single shared spy lets the
@@ -94,6 +97,9 @@ function createIntentsMock() {
 
 /** What `deleteUnlinkedRows` selects beside the id and the key: the file's tenant, for its delete intent. */
 const UNLINKED_OWNER = { subsidiaryId: 'sub-1', subsidiary: { organisationId: 'org-1' } };
+
+/** The tenant an upload's intents carry, abandoned or not. */
+const ORIGIN = { subsidiaryId: 'sub-1', organisationId: 'org-1' };
 
 let seq = 0;
 function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
@@ -422,7 +428,7 @@ describe('EvidenceService', () => {
         NotFoundException,
       );
       const key = storage.upload.mock.calls[0][1] as string;
-      expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', { bucket: 'evidence', path: key }, expect.anything());
+      expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', { bucket: 'evidence', path: key }, expect.anything(), ORIGIN);
       expect(audit.record).not.toHaveBeenCalled();
     });
 
@@ -455,6 +461,7 @@ describe('EvidenceService', () => {
         'intent-1',
         { bucket: 'evidence', path: storage.upload.mock.calls[0][1] },
         expect.anything(),
+        ORIGIN,
       );
     });
 
@@ -472,6 +479,7 @@ describe('EvidenceService', () => {
         'intent-1',
         { bucket: 'evidence', path: storage.upload.mock.calls[0][1] },
         expect.anything(),
+        ORIGIN,
       );
     });
 
@@ -494,6 +502,11 @@ describe('EvidenceService', () => {
       expect(intents.adoptUpload).toHaveBeenCalledWith(tx, 'intent-1');
       expect(intents.adoptUpload.mock.invocationCallOrder[0]).toBeLessThan(
         tx.evidence.create.mock.invocationCallOrder[0],
+      );
+      // FIRST in the transaction, before even the period lock: whatever fails
+      // after it rolls the adoption back, so late bytes stay named.
+      expect(intents.adoptUpload.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.$executeRaw.mock.invocationCallOrder[0],
       );
       expect(intents.abandonUpload).not.toHaveBeenCalled();
     });
@@ -538,6 +551,7 @@ describe('EvidenceService', () => {
         'intent-1',
         { bucket: 'evidence', path: storage.upload.mock.calls[0][1] },
         expect.anything(),
+        ORIGIN,
       );
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -557,7 +571,7 @@ describe('EvidenceService', () => {
       await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toThrow('insert failed');
 
       const key = storage.upload.mock.calls[0][1] as string;
-      expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', { bucket: 'evidence', path: key }, expect.anything());
+      expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', { bucket: 'evidence', path: key }, expect.anything(), ORIGIN);
       expect(audit.record).not.toHaveBeenCalled();
     });
   });
@@ -1202,6 +1216,10 @@ describe('EvidenceService', () => {
       await expect(refusal).rejects.toBeInstanceOf(NotFoundException);
       await expect(refusal).rejects.toThrow(/missing from storage/);
       expect(logged.mock.calls[0][0]).toContain('sub-1/a.pdf');
+      // The Sentry event names the row, never the key: a key carries a cleaned file name.
+      const reported = vi.mocked(captureException).mock.calls.at(-1)![0] as Error;
+      expect(reported.message).toContain('ev-1');
+      expect(reported.message).not.toContain('a.pdf');
       logged.mockRestore();
     });
 

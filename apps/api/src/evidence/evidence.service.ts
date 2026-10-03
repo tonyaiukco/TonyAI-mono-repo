@@ -390,7 +390,7 @@ export class EvidenceService {
     try {
       await this.storage.upload(EVIDENCE_BUCKET, storagePath, file.buffer, checked.mimeType);
     } catch (error) {
-      await this.intents.abandonUpload(intentId, ref, error);
+      await this.intents.abandonUpload(intentId, ref, error, { subsidiaryId, organisationId: user.organisationId });
       throw error;
     }
 
@@ -399,6 +399,11 @@ export class EvidenceService {
     let created: EvidenceWithLinks;
     try {
       created = await this.prisma.$transaction(async (tx) => {
+        // The row takes the object over FIRST — refused if the sweeper
+        // abandoned it during a slow upload — so whatever fails after this
+        // point rolls the adoption back and leaves the intent to abandon:
+        // late bytes are never left unnamed (`qa-auditor`, measured).
+        await this.intents.adoptUpload(tx, intentId);
         await lockPeriodsShared(tx, records.map(periodOf));
         const present = await lockActivityRecordRows(tx, ids);
         if (present.size !== ids.length) throw new NotFoundException(RECORD_NOT_FOUND);
@@ -411,8 +416,6 @@ export class EvidenceService {
           const refusal = this.refusalFor(user, record, locked.has(record.id));
           if (refusal) throw lockedRefusal(refusal, seen.get(record.id), record);
         }
-        // The row takes the object over; refused if the sweeper abandoned it.
-        await this.intents.adoptUpload(tx, intentId);
         const row = await tx.evidence.create({
           data: {
             subsidiaryId,
@@ -449,7 +452,7 @@ export class EvidenceService {
         return stored;
       }, LIFECYCLE_TX);
     } catch (error) {
-      await this.intents.abandonUpload(intentId, ref, error);
+      await this.intents.abandonUpload(intentId, ref, error, { subsidiaryId, organisationId: user.organisationId });
       // A record deleted between the checks and the link: the link's foreign
       // key refuses it (P2003). That is the same answer as a record that was
       // never there, not a server error.
@@ -697,7 +700,7 @@ export class EvidenceService {
    */
   async deleteUnlinkedRows(
     evidenceIds: string[],
-    tx: Pick<Prisma.TransactionClient, 'evidence' | 'storageIntent'>,
+    tx: Pick<Prisma.TransactionClient, 'evidence' | '$executeRaw'>,
   ): Promise<{ id: string; storagePath: string }[]> {
     if (evidenceIds.length === 0) return [];
     const unlinked = await tx.evidence.findMany({

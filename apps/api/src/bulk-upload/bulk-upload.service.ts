@@ -834,7 +834,7 @@ export class BulkUploadService {
           : 'text/csv',
       );
     } catch (error) {
-      await this.intents.abandonUpload(intentId, ref, error);
+      await this.intents.abandonUpload(intentId, ref, error, { organisationId: user.organisationId });
       throw error;
     }
     try {
@@ -856,7 +856,7 @@ export class BulkUploadService {
         });
       });
     } catch (error) {
-      await this.intents.abandonUpload(intentId, ref, error);
+      await this.intents.abandonUpload(intentId, ref, error, { organisationId: user.organisationId });
       throw error;
     }
     return id;

@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { Logger } from '@nestjs/common';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { StorageService } from './storage.service';
+import { captureException } from '../observability/sentry';
+
+vi.mock('../observability/sentry', () => ({ captureException: vi.fn() }));
 import { StorageIntentsService, removalsHeld, sweepIntervalSeconds } from './storage-intents.service';
 
 /*
@@ -88,6 +91,33 @@ describe('StorageIntentsService — after the commit, never throws', () => {
     expect(prisma.$executeRaw).toHaveBeenCalledOnce(); // the release
     expect(prisma.$transaction).toHaveBeenCalledOnce();
     expect(logged.mock.calls[0][0]).toMatch(/cannot see every row/);
+    logged.mockRestore();
+  });
+
+  it('keeps bytes a row owns, and reports the intent to Sentry without the key (a key carries a file name)', async () => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const path = 'sub-1/uuid-Ayse-Yilmaz-fatura.pdf';
+    const prisma = {
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([{ id: 'i-1', bucket: 'evidence', objectPath: path, attempts: 1, lease: 'L' }])
+        .mockResolvedValueOnce([{ ok: true }]),
+      $executeRaw: vi.fn(),
+      evidence: { findMany: vi.fn().mockResolvedValue([{ storagePath: path }]) },
+      storageIntent: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
+    };
+    const remove = vi.fn();
+    await new StorageIntentsService(prisma as unknown as PrismaService, { remove } as unknown as StorageService).runNow([
+      { bucket: 'evidence', path },
+    ]);
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(prisma.storageIntent.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['i-1'] } } });
+    expect(logged.mock.calls[0][0]).toContain(path); // the operator's log keeps it
+    const reported = vi.mocked(captureException).mock.calls.at(-1)![0] as Error;
+    expect(reported.message).toContain('i-1');
+    expect(reported.message).not.toContain('Ayse');
     logged.mockRestore();
   });
 

@@ -5,6 +5,9 @@ import type { BulkSubmitService } from './bulk-submit.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import { StorageObjectMissingError, type StorageService } from '../storage/storage.service';
 import type { RequestUser } from '../auth/auth.types';
+import { captureException } from '../observability/sentry';
+
+vi.mock('../observability/sentry', () => ({ captureException: vi.fn() }));
 
 const ORG = 'e1111111-1111-4111-8111-11111111111e';
 const SUB_A = 'a1111111-1111-4111-8111-11111111111a';
@@ -191,6 +194,9 @@ describe('ImportBatchesService — the source file', () => {
     prisma.importBatch.findUnique.mockResolvedValue(batch({ fileName: 'report.html' }));
     await service.sourceUrl(user(), BATCH);
     expect(storage.createSignedUrl.mock.calls[0][3]).toBe('report.html.csv');
+    prisma.importBatch.findUnique.mockResolvedValue(batch({ fileName: 'q3', fileFormat: 'xlsx' }));
+    await service.sourceUrl(user(), BATCH);
+    expect(storage.createSignedUrl.mock.calls[1][3]).toBe('q3.xlsx');
   });
 
   it('answers 404 — not 500 — and reports it, when the kept file\'s bytes are missing (LP1-02)', async () => {
@@ -200,6 +206,9 @@ describe('ImportBatchesService — the source file', () => {
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     await expect(service.sourceUrl(user(), BATCH)).rejects.toThrow(/missing from storage/);
     expect(logged).toHaveBeenCalled();
+    const reported = vi.mocked(captureException).mock.calls.at(-1)![0] as Error;
+    expect(reported.message).toContain(BATCH);
+    expect(reported.message).not.toContain('source.csv');
     logged.mockRestore();
     storage.createSignedUrl.mockRejectedValue(new Error('storage down'));
     await expect(service.sourceUrl(user(), BATCH)).rejects.toThrow('storage down');

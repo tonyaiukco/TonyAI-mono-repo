@@ -2275,6 +2275,7 @@ describe('BulkUploadService — import batches', () => {
       'intent-1',
       { bucket: 'import-sources', path: storage.upload.mock.calls[0][1] },
       expect.anything(),
+      { organisationId: 'org-1' },
     );
     expect(storage.remove).not.toHaveBeenCalled();
     expect(records.create).not.toHaveBeenCalled();
@@ -2310,6 +2311,7 @@ describe('BulkUploadService — import batches', () => {
       'intent-1',
       { bucket: 'import-sources', path: storage.upload.mock.calls[0][1] },
       expect.anything(),
+      { organisationId: 'org-1' },
     );
     expect(prisma.importBatch.create).not.toHaveBeenCalled();
   });

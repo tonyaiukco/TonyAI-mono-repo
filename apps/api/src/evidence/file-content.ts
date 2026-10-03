@@ -22,7 +22,8 @@ import { sanitiseCallerText } from '../common/caller-text';
  *  - PNG / JPEG: the format's signature;
  *  - XLSX: a ZIP whose `[Content_Types].xml` declares a spreadsheetml
  *    workbook, refused when it carries a VBA project in the forms an Office
- *    reader honours — a macro-enabled or VBA content type or workbook
+ *    reader honours — a macro-enabled, VBA or Excel 4.0 macro-sheet content
+ *    type or workbook
  *    relationship (XML character references decoded first), or any part
  *    whose name says vbaProject (a renamed .xlsm). Parts that could hide
  *    those words are refused outright: a DTD or an entity reference XML
@@ -88,7 +89,8 @@ function decodeXmlText(xml: string): string {
   });
 }
 
-const MACRO = /macroEnabled|vbaProject/i;
+// Excel 4.0 macro sheets (`macrosheet`, `intlmacrosheet`) run code too.
+const MACRO = /macroEnabled|vbaProject|macrosheet/i;
 
 /** An `&` that does not open a reference XML predefines — legal only with a DTD, which OPC forbids. */
 const UNDECLARED_REFERENCE = /&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-f]+);)/i;

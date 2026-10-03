@@ -34,6 +34,8 @@ describe('storage:reconcile — arguments', () => {
     expect(() => parseArgs(['reclaim'])).toThrow(/Unknown argument/);
     expect(() => parseArgs(['--bucket=reports'])).toThrow(/--bucket must be one of/);
     expect(() => parseArgs(['--limit=0'])).toThrow(/at least 1/);
+    // A fraction would make `truncated` (count === limit) unreachable.
+    expect(() => parseArgs(['--limit=1.5'])).toThrow(/whole number/);
     expect(() => parseArgs(['--older-than=-1'])).toThrow(/at least 0/);
     expect(() => parseArgs(['--apply'])).toThrow(/only applies to --reclaim-orphans/);
     // An empty value is not zero, and a switch with a value is not on.

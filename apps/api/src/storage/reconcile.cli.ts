@@ -101,8 +101,8 @@ export function parseArgs(argv: string[]): Options {
     const raw = flags.get(name);
     if (raw === undefined) return fallback;
     const value = Number(raw);
-    if (!Number.isFinite(value) || value < min) {
-      throw new UsageError(`--${name} needs a number of at least ${min}`);
+    if (!Number.isInteger(value) || value < min) {
+      throw new UsageError(`--${name} needs a whole number of at least ${min}`);
     }
     return value;
   };

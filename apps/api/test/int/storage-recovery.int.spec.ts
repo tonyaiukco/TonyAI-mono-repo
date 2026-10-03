@@ -315,7 +315,10 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
     expect(await objectExists(observer, EVIDENCE_BUCKET, intent.objectPath)).toBe(false);
     held.release();
 
-    expect(await upload).toBeInstanceOf(UploadExpiredError);
+    const refused = await upload;
+    expect(refused).toBeInstanceOf(UploadExpiredError);
+    // A retry, not an outage: 409, never a 5xx that would page whoever watches the error rate.
+    expect((refused as UploadExpiredError).getStatus()).toBe(409);
     expect(await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
     expect(await intents()).toEqual([]);
   });
@@ -346,7 +349,10 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
     expect(await intents()).toEqual([]);
 
     gate.resolve();
-    expect(await upload).toBeInstanceOf(UploadExpiredError);
+    const refused = await upload;
+    expect(refused).toBeInstanceOf(UploadExpiredError);
+    // A retry, not an outage: 409, never a 5xx that would page whoever watches the error rate.
+    expect((refused as UploadExpiredError).getStatus()).toBe(409);
     // The bytes landed after the sweeper's removal; the request's own refusal removed them.
     expect(await objectExists(observer, EVIDENCE_BUCKET, intent.objectPath)).toBe(false);
     expect(await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
@@ -421,6 +427,89 @@ describe('LP1-02 — the sweeper and an adoption, at the same moment', () => {
     expect(result).toBeInstanceOf(UploadExpiredError);
     expect(await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
     expect(await evidenceObjects()).toEqual([]);
+    expect(await intents()).toEqual([]);
+  });
+});
+
+describe('LP1-02 — late bytes, whatever else fails (`qa-auditor` round 2)', () => {
+  /** An upload whose bytes wait at `gate`; resolves `started` once the intent is committed and the call is made. */
+  function slowUpload(store: StorageService, gate: Promise<void>, started: { resolve(): void }) {
+    const send = store.upload.bind(store);
+    vi.spyOn(store, 'upload').mockImplementationOnce(async (...args) => {
+      started.resolve();
+      await gate;
+      return send(...args);
+    });
+  }
+
+  async function backdate(id: string) {
+    await observer.$executeRaw`
+      UPDATE storage_intents
+      SET created_at = now() - ${UPLOAD_GRACE_SECONDS + 60}::int * interval '1 second'
+      WHERE id = ${id}::uuid`;
+  }
+
+  it('bytes landing after the sweep removed them, while its intent is still open: the re-enqueue is not swallowed', async () => {
+    quiet();
+    const record = await draft();
+    const sweepStorage = localStorage();
+    const removed = deferred();
+    const closed = deferred();
+    const remove = sweepStorage.remove.bind(sweepStorage);
+    vi.spyOn(sweepStorage, 'remove').mockImplementation(async (bucket, paths) => {
+      await remove(bucket, paths);
+      removed.resolve();
+      await closed.promise; // the sweep holds its claim open past the removal
+    });
+    const started = deferred();
+    slowUpload(storage, removed.promise, started);
+
+    const upload = outcome(
+      lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+    );
+    await started.promise;
+    const [intent] = await intents();
+    await backdate(intent.id);
+    const sweep = sweeper(b, sweepStorage).sweep();
+    // The bytes land after the sweep's removal; the upload's adoption fails;
+    // its re-enqueue meets the sweep's still-open intent.
+    const refused = await upload;
+    closed.resolve();
+    await sweep;
+
+    expect(refused).toBeInstanceOf(UploadExpiredError);
+    if (await objectExists(observer, EVIDENCE_BUCKET, intent.objectPath)) {
+      // The reset intent outlived the sweep's close: it is still named, and the next pass removes it.
+      expect(await intents()).toHaveLength(1);
+      await makeDue();
+      await sweeper().sweep();
+    }
+    expect(await objectExists(observer, EVIDENCE_BUCKET, intent.objectPath)).toBe(false);
+    expect(await intents()).toEqual([]);
+    expect(await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
+  });
+
+  it('bytes landing after the sweep abandoned their upload, and the record gone meanwhile: still removed', async () => {
+    quiet();
+    const record = await draft();
+    const started = deferred();
+    const gate = deferred();
+    slowUpload(storage, gate.promise, started);
+
+    const upload = outcome(
+      lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+    );
+    await started.promise;
+    const [intent] = await intents();
+    await backdate(intent.id);
+    await sweeper().sweep();
+    // Another failure the transaction would meet before its adoption — if adoption were not first.
+    await observer.activityRecord.delete({ where: { id: record.id } });
+    gate.resolve();
+    const refused = await upload;
+
+    expect(refused).toBeInstanceOf(UploadExpiredError);
+    expect(await objectExists(observer, EVIDENCE_BUCKET, intent.objectPath)).toBe(false);
     expect(await intents()).toEqual([]);
   });
 });
@@ -510,25 +599,20 @@ describe('LP1-02 — deleting evidence, failed at each boundary', () => {
     quiet();
     const record = await draft();
     const file = await uploaded([record.id]);
-    let failClose = true;
-    const flaky = a.$extends({
-      query: {
-        storageIntent: {
-          async deleteMany({ args, query }) {
-            const byIds = (args.where?.id as { in?: unknown } | undefined)?.in;
-            if (failClose && byIds) {
-              failClose = false;
-              throw new Error('injected close failure');
-            }
-            return query(args);
-          },
-        },
-      },
-    }) as unknown as PrismaService;
+    const services = lifecycleServices(a, storage);
+    // The detach commits; its own post-commit removal is replaced by one on a
+    // client whose first raw statement — the conditional close — fails.
+    vi.spyOn(services.intents, 'runNow').mockResolvedValueOnce(undefined);
+    await services.evidence.detach(tenant.users.dataEntry, record.id, file.id);
+    const flaky = connect();
+    try {
+      const close = vi.spyOn(flaky, '$executeRaw').mockRejectedValueOnce(new Error('injected close failure'));
+      await sweeper(flaky).runNow([{ bucket: EVIDENCE_BUCKET, path: file.storagePath }]);
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      await flaky.$disconnect();
+    }
 
-    await lifecycleServices(flaky, storage).evidence.detach(tenant.users.dataEntry, record.id, file.id);
-
-    expect(failClose).toBe(false);
     expect(await objectExists(observer, EVIDENCE_BUCKET, file.storagePath)).toBe(false);
     const [claimed] = await intents();
     expect(claimed.claimedUntil!.getTime()).toBeGreaterThan(Date.now());
@@ -549,11 +633,14 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
     for (const path of paths) {
       await storage.upload(EVIDENCE_BUCKET, path, Buffer.from(`%PDF-1.4 ${path}`), 'application/pdf');
     }
-    await sweeper(observer).enqueueDeletes(
-      observer,
-      paths.map((path) => ({ bucket: EVIDENCE_BUCKET as Bucket, path })),
-      { reason: 'test', subsidiaryId: tenant.subsidiaryId },
-    );
+    // One statement each: distinct next_attempt_at, so claim order is the
+    // insertion order and a bound test cannot pass by the luck of uuids.
+    for (const path of paths) {
+      await sweeper(observer).enqueueDeletes(observer, [{ bucket: EVIDENCE_BUCKET as Bucket, path }], {
+        reason: 'test',
+        subsidiaryId: tenant.subsidiaryId,
+      });
+    }
     return paths;
   }
 
@@ -616,6 +703,39 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
     }
     expect((await evidenceObjects()).map((o) => o.path).filter((p) => due.includes(p))).toHaveLength(3);
     expect((await intents()).filter((i) => i.kind === 'upload')).toHaveLength(3);
+  });
+
+  it('the abandon bound holds under a plan that rescans it — with an index a future query could add (`qa-auditor`)', async () => {
+    // Oldest first, each dated right after its insert: physical order is created_at order.
+    for (let i = 0; i < 5; i += 1) {
+      const path = `${tenant.subsidiaryId}/stale-${i}.pdf`;
+      await sweeper(observer).beginUpload({ bucket: EVIDENCE_BUCKET, path }, { reason: 'test' });
+      await observer.$executeRaw`
+        UPDATE storage_intents
+        SET created_at = now() - ${UPLOAD_GRACE_SECONDS + 600 - i * 60}::int * interval '1 second'
+        WHERE object_path = ${path}`;
+    }
+    class Rollback extends Error {}
+    const forced = connect();
+    let abandoned = -1;
+    try {
+      await forced
+        .$transaction(async (tx) => {
+          // Rolled back with the test: the index that made `WHERE id IN (SELECT … LIMIT 2)` abandon 5.
+          await tx.$executeRawUnsafe('CREATE INDEX lp1_02_probe_kind_created ON storage_intents (kind, created_at)');
+          for (const setting of ['enable_material', 'enable_hashagg', 'enable_sort', 'enable_hashjoin', 'enable_mergejoin']) {
+            await tx.$executeRawUnsafe(`SET LOCAL ${setting} = off`);
+          }
+          abandoned = await sweeper(tx as unknown as PrismaService).abandonStale(2);
+          throw new Rollback();
+        })
+        .catch((error: unknown) => {
+          if (!(error instanceof Rollback)) throw error;
+        });
+    } finally {
+      await forced.$disconnect();
+    }
+    expect(abandoned).toBe(2);
   });
 
   it('a failing removal backs off exponentially, never gives up, and is reported as stuck', async () => {
@@ -712,6 +832,29 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
     expect(sha256(await storage.download(IMPORT_SOURCES_BUCKET, batch.storagePath!))).toBe(batch.sha256);
   });
 
+  it('the visibility check covers Storage\'s catalogue too — seeing every owning row is not enough', async () => {
+    class Rollback extends Error {}
+    const restricted = connect();
+    let seen: boolean | null = null;
+    try {
+      await restricted
+        .$transaction(async (tx) => {
+          // Rolled back: this role now sees every evidence and import_batches row, but not storage.objects.
+          await tx.$executeRawUnsafe('ALTER TABLE evidence DISABLE ROW LEVEL SECURITY');
+          await tx.$executeRawUnsafe('ALTER TABLE import_batches DISABLE ROW LEVEL SECURITY');
+          await tx.$executeRawUnsafe('SET LOCAL ROLE authenticated');
+          seen = await sweeper(observer).seesEveryRow(tx);
+          throw new Rollback();
+        })
+        .catch((error: unknown) => {
+          if (!(error instanceof Rollback)) throw error;
+        });
+    } finally {
+      await restricted.$disconnect();
+    }
+    expect(seen).toBe(false);
+  });
+
   it('never removes an orphan — an object no row owns and no intent names', async () => {
     const path = `${tenant.subsidiaryId}/orphan.pdf`;
     await storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4\n'), 'application/pdf');
@@ -766,6 +909,21 @@ describe('LP1-02 — reconciliation: both directions', () => {
     expect(sha256(await storage.download(IMPORT_SOURCES_BUCKET, batch.storagePath!))).toBe(batch.sha256);
   });
 
+  it('pages rows missing their object by id, too', async () => {
+    const record = await draft();
+    const first = await uploaded([record.id]);
+    const second = await uploaded([record.id]);
+    await storage.remove(EVIDENCE_BUCKET, [first.storagePath, second.storagePath]);
+    const mine = new Set([first.id, second.id]);
+    const page1 = (await reconcile().missingObjects(EVIDENCE_BUCKET, { limit: 1 })).filter((m) => mine.has(m.rowId));
+    expect(page1).toHaveLength(1);
+    const page2 = (await reconcile().missingObjects(EVIDENCE_BUCKET, { limit: 1, after: page1[0].rowId })).filter((m) =>
+      mine.has(m.rowId),
+    );
+    expect(page2).toHaveLength(1);
+    expect(page2[0].rowId).not.toBe(page1[0].rowId);
+  });
+
   it('pages its checks by id: each page starts after the last', async () => {
     const record = await draft();
     await uploaded([record.id]);
@@ -812,10 +970,18 @@ describe('LP1-02 — reconciliation: both directions', () => {
     await sweeper().beginUpload({ bucket: EVIDENCE_BUCKET, path }, { reason: 'evidence.upload' });
     await storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4 only copy'), 'application/pdf');
 
+    // A removal the restored database had committed to: it must survive the forget.
+    const pendingDelete = `${tenant.subsidiaryId}/pending-delete.pdf`;
+    await sweeper().enqueueDeletes(observer, [{ bucket: EVIDENCE_BUCKET, path: pendingDelete }], { reason: 'test' });
+
     await expect(reconcile().forgetUploadIntents()).rejects.toThrow(/STORAGE_CLEANUP_HOLD/);
     vi.stubEnv('STORAGE_CLEANUP_HOLD', '1');
-    expect(await reconcile().forgetUploadIntents()).toContainEqual({ bucket: EVIDENCE_BUCKET, path });
+    const forgotten = await reconcile().forgetUploadIntents();
+    expect(forgotten).toContainEqual({ bucket: EVIDENCE_BUCKET, path });
+    expect(forgotten).not.toContainEqual({ bucket: EVIDENCE_BUCKET, path: pendingDelete });
     vi.unstubAllEnvs();
+    expect((await intents()).map((i) => [i.objectPath, i.kind])).toEqual([[pendingDelete, 'delete']]);
+    await observer.storageIntent.deleteMany({ where: { objectPath: pendingDelete } });
 
     // The hold is lifted: no intent is left to abandon, so the bytes stay — for a person to judge.
     expect(await intents()).toEqual([]);
