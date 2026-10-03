@@ -2,13 +2,15 @@ import 'reflect-metadata';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { ActivityRecordStatus } from '@tonyai/db';
+import { BULK_UPLOAD_COLUMNS } from '@tonyai/shared-types';
+import ExcelJS from 'exceljs';
 import { SignJWT } from 'jose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { PrismaService } from '../../src/prisma/prisma.service';
+import { PrismaService } from '../../src/prisma/prisma.service';
 import { attachEvidence, connectOwner, createRecord, createTenant, createTenantData, type Tenant, type TenantData } from './db';
 
 /**
- * LP1-03 (F06): every externally reachable tenant path, through the REAL API —
+ * LP1-03 (F06): the externally reachable tenant paths, through the REAL API —
  * the Nest application with its global guard and validation pipe, on the
  * least-privileged runtime role — for two organisations and all four roles.
  *
@@ -22,7 +24,10 @@ import { attachEvidence, connectOwner, createRecord, createTenant, createTenantD
  * rows stay byte-for-byte unchanged. Each route also has a positive control —
  * A's own id succeeds, or at least answers differently — so a mistyped route
  * (Nest answers 404 to those too) cannot pass for a refusal. Every list and
- * aggregate, unfiltered, carries no trace of B for any of A's roles.
+ * aggregate, unfiltered, carries no trace of B for any of A's roles, and —
+ * because a leak into a SUM carries no marker — every answer A gets must stay
+ * the same while B's data changes underneath it. Not covered here: `GET
+ * /reports/pdf` (Puppeteer) and the global `/factors` and `/calculations/preview`.
  */
 
 const JWT_SECRET = randomBytes(32).toString('hex');
@@ -58,6 +63,8 @@ beforeAll(async () => {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   await app.listen(0, '127.0.0.1');
   base = `${await app.getUrl()}/api/v1`.replace('[::1]', '127.0.0.1');
+  const [{ user }] = await app.get(PrismaService).$queryRaw<{ user: string }[]>`SELECT current_user AS "user"`;
+  if (user !== 'tonyai_runtime') throw new Error(`the application under test connects as ${user}, not tonyai_runtime`);
 
   owner = connectOwner(2);
   B = await createTenant();
@@ -79,10 +86,14 @@ beforeAll(async () => {
     },
   });
   const subB = await owner.subsidiary.findUniqueOrThrow({ where: { id: B.subsidiaryId } });
+  const orgB = await owner.organisation.findUniqueOrThrow({ where: { id: B.organisationId } });
+  const profilesB = await owner.profile.findMany({ where: { id: { in: B.profileIds } } });
   markersB = [
     B.organisationId,
     B.subsidiaryId,
     subB.legalName,
+    orgB.legalName,
+    ...profilesB.map((p) => p.fullName),
     approvedB.id,
     String(B_TCO2E),
     '987,654',
@@ -131,8 +142,28 @@ async function call(role: Role, method: string, path: string, body?: unknown): P
     payload = JSON.stringify(body);
   }
   const res = await fetch(`${base}${path}`, { method, headers, body: payload });
+  if (res.headers.get('content-type')?.includes('spreadsheetml')) {
+    // A workbook is a zip stamped with the time it was built: compare and
+    // search what its cells say instead (`qa-auditor`).
+    return { status: res.status, text: await workbookText(Buffer.from(await res.arrayBuffer())) };
+  }
   return { status: res.status, text: await res.text() };
 }
+
+async function workbookText(buffer: Buffer): Promise<string> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const lines: string[] = [];
+  workbook.eachSheet((sheet) => {
+    lines.push(`# ${sheet.name}`);
+    sheet.eachRow((row) => lines.push(JSON.stringify(row.values)));
+  });
+  return lines.join('\n');
+}
+
+/** Times a response states about itself ("generated at"), which differ between two calls. */
+const withoutTimes = (text: string) =>
+  text.replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?/g, '<time>');
 
 /** Every row of B, as the owner sees it — compared before and after each attack. */
 async function snapshotB(): Promise<string> {
@@ -159,7 +190,7 @@ async function snapshotB(): Promise<string> {
 type Ids = TenantData & { subsidiaryId: string; organisationId: string };
 
 const normalise = (res: Res, ids: Ids) =>
-  `${res.status} ${Object.values(ids).reduce((t, id) => t.split(id).join('<id>'), res.text)}`;
+  `${res.status} ${withoutTimes(Object.values(ids).reduce((t, id) => t.split(id).join('<id>'), res.text))}`;
 
 interface Route {
   name: string;
@@ -205,6 +236,9 @@ const ID_ROUTES: Route[] = [
   // Into the period B has LOCKED (createTenantData): a create that looked at the
   // period before the tenant would answer 409 for B's id and 404 for a random one.
   { name: 'POST /activity-records', method: 'POST', path: () => '/activity-records', body: (i) => ({ subsidiaryId: i.subsidiaryId, reportingYear: 2019, reportingPeriod: 'monthly', periodValue: 'January', category: 'Electricity', activityValue: 10, activityUnit: 'kWh' }), own: { role: 'dataEntry', ok: differs } },
+  // B's LOCATION inside a record of A's own subsidiary (`qa-auditor`).
+  { name: 'POST /activity-records (B location)', method: 'POST', path: () => '/activity-records', body: (i) => ({ subsidiaryId: A.subsidiaryId, locationId: i.locationId, reportingYear: 2026, reportingPeriod: 'monthly', periodValue: 'August', category: 'Electricity', activityValue: 10, activityUnit: 'kWh' }), own: { role: 'dataEntry', ok: differs } },
+  { name: 'PATCH /activity-records/:id (B location)', method: 'PATCH', path: () => `/activity-records/${dataA.recordId}`, body: (i) => ({ locationId: i.locationId }), own: { role: 'dataEntry' } },
   { name: 'POST /activity-records/:id/submit', method: 'POST', path: (i) => `/activity-records/${i.recordId}/submit`, own: { role: 'dataEntry', ok: created } },
   { name: 'POST /activity-records/:id/review', method: 'POST', path: (i) => `/activity-records/${i.recordId}/review`, own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
   { name: 'POST /activity-records/:id/approve', method: 'POST', path: (i) => `/activity-records/${i.recordId}/approve`, own: { role: 'superAdmin', prepare: recordIn(ActivityRecordStatus.submitted), ok: created } },
@@ -307,6 +341,8 @@ const LIST_ROUTES = [
   '/emissions/tracking-matrix?year=2026',
   '/reports/meta?year=2026',
   '/reports/csv?year=2026&template=executive_summary',
+  '/reports/excel?year=2026&template=executive_summary',
+  '/bulk-upload/template',
 ];
 
 describe("every list and aggregate, unfiltered, as each of A's roles: no trace of B", () => {
@@ -350,4 +386,156 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
       await owner.activityRecord.delete({ where: { id: stray.id } });
     }
   });
+});
+
+describe('POST /bulk-upload/activity-records (dry run): rows naming B are refused exactly as rows naming nothing', () => {
+  it('a row with B\'s subsidiary, and a row with B\'s location under A\'s subsidiary', async () => {
+    const csv = (subsidiaryId: string, locationId: string) =>
+      [
+        BULK_UPLOAD_COLUMNS.join(','),
+        `${subsidiaryId},,2026,monthly,September,Electricity,10,kWh,`,
+        `${A.subsidiaryId},${locationId},2026,monthly,October,Electricity,10,kWh,`,
+      ].join('\n');
+    const form = (body: string) => {
+      const f = new FormData();
+      f.append('file', new Blob([body], { type: 'text/csv' }), 'int-test.csv');
+      f.append('dryRun', 'true');
+      return f;
+    };
+    const foreignIds = { ...dataB, subsidiaryId: B.subsidiaryId, organisationId: B.organisationId };
+    const missingIds = { ...foreignIds, subsidiaryId: randomUUID(), locationId: randomUUID() };
+    const before = await snapshotB();
+    // The route allows five calls a minute: two authoring roles × (B, random) + the control.
+    let foreign: Res | undefined;
+    for (const role of ['superAdmin', 'dataEntry'] as const) {
+      foreign = await call(role, 'POST', '/bulk-upload/activity-records', form(csv(B.subsidiaryId, dataB.locationId)));
+      const missing = await call(role, 'POST', '/bulk-upload/activity-records', form(csv(missingIds.subsidiaryId, missingIds.locationId)));
+      expect(foreign.status, `${role}: ${foreign.text.slice(0, 300)}`).toBeLessThan(500);
+      expect(normalise(foreign, foreignIds), role).toBe(normalise(missing, missingIds));
+      for (const marker of markersB.filter((m) => m !== B.subsidiaryId && m !== dataB.locationId)) {
+        expect(foreign.text, `${role} leaks ${marker}`).not.toContain(marker);
+      }
+    }
+    expect(await snapshotB()).toBe(before);
+    const own = await call('dataEntry', 'POST', '/bulk-upload/activity-records', form(csv(A.subsidiaryId, dataA.locationId)));
+    expect(own.status, own.text.slice(0, 300)).toBeLessThan(500);
+    expect(normalise(own, { ...dataA, subsidiaryId: A.subsidiaryId, organisationId: A.organisationId })).not.toBe(
+      normalise(foreign!, foreignIds),
+    );
+  });
+});
+
+describe('inside one organisation: a data_entry user reaches only what it is granted', () => {
+  it('a batch over a subsidiary of its organisation it is not granted is neither listed nor readable', async () => {
+    const ungranted = await owner.subsidiary.create({
+      data: { organisationId: A.organisationId, legalName: 'Int-test ungranted subsidiary', geographyCode: 'UK' },
+    });
+    const batch = await owner.importBatch.create({
+      data: {
+        organisationId: A.organisationId,
+        uploadedBy: A.users.dataEntry.id,
+        fileName: 'int-test-two.csv',
+        fileFormat: 'csv',
+        sizeBytes: 1,
+        sha256: '0'.repeat(64),
+        totalRows: 1,
+        subsidiaryIds: [A.subsidiaryId, ungranted.id],
+      },
+    });
+    const list = await call('dataEntry', 'GET', '/import-batches');
+    expect(list.text).toContain(dataA.importBatchId); // control: its own batch over its granted subsidiary
+    expect(list.text).not.toContain(batch.id);
+    expect((await call('dataEntry', 'GET', `/import-batches/${batch.id}`)).status).toBe(404);
+    expect((await call('consultant', 'GET', '/import-batches')).text).toContain(batch.id); // organisation-wide readers do see it
+  });
+});
+
+describe("A's every answer stays the same while B's data changes (a leak into a sum carries no marker)", () => {
+  it('lists, aggregates, reports and exports, for all four roles', async () => {
+    // Something of A's own for the aggregates to compute: an approved 2025 figure.
+    await createRecord(owner, A, {
+      status: ActivityRecordStatus.approved,
+      reportingYear: 2025,
+      periodValue: 'June',
+      calculation: { tCo2e: 5, factorId: 'int-test-placeholder' },
+    });
+    const paths = [
+      '/me',
+      '/kpi',
+      '/subsidiaries',
+      `/subsidiaries/${A.subsidiaryId}/summary`,
+      '/activity-records',
+      '/locations',
+      '/targets',
+      '/targets/progress',
+      '/denominators',
+      '/period-locks',
+      '/import-batches',
+      // Not `/audit`: the exports below audit themselves, so A's own trail grows
+      // between the two passes. Its containment is the marker check above.
+      ...[2025, 2026].flatMap((year) => [
+        `/intensity?year=${year}`,
+        `/emissions/summary?year=${year}`,
+        `/emissions/tracking-matrix?year=${year}`,
+        `/emissions/completeness?subsidiaryId=${A.subsidiaryId}&year=${year}`,
+        `/reports/meta?year=${year}`,
+        `/reports/csv?year=${year}&template=ghg_protocol_detail`,
+        `/reports/excel?year=${year}&template=executive_summary`,
+      ]),
+    ];
+    const answers = async () => {
+      const out: Record<string, string> = {};
+      for (const role of ROLES) {
+        for (const path of paths) {
+          const res = await call(role, 'GET', path);
+          out[`${role} GET ${path}`] = `${res.status} ${withoutTimes(res.text)}`;
+        }
+      }
+      return out;
+    };
+
+    const before = await answers();
+    // B changes in every way an aggregate could pick up: committed figures in
+    // A's years and in a later one, a draft, denominators, a site, a target, a
+    // lock, an audit row.
+    const approved = (reportingYear: number, periodValue: string, tCo2e: number) =>
+      createRecord(owner, B, {
+        status: ActivityRecordStatus.approved,
+        reportingYear,
+        periodValue,
+        calculation: { tCo2e, factorId: 'int-test-placeholder' },
+      });
+    const records = [
+      await approved(2025, 'July', 1111),
+      await approved(2026, 'April', 2222),
+      await approved(2027, 'January', 3333),
+      await createRecord(owner, B, { reportingYear: 2026, periodValue: 'May' }),
+    ];
+    const by = B.users.dataEntry.id;
+    const denominators = [
+      await owner.subsidiaryDenominator.create({ data: { subsidiaryId: B.subsidiaryId, year: 2026, metric: 'revenue', value: 1e6, unit: 'EUR', createdBy: by } }),
+      await owner.subsidiaryDenominator.create({ data: { subsidiaryId: B.subsidiaryId, year: 2025, metric: 'headcount', value: 77, unit: 'FTE', createdBy: by } }),
+    ];
+    const location = await owner.location.create({ data: { subsidiaryId: B.subsidiaryId, name: 'Int-test B site two', geographyCode: 'UK' } });
+    const target = await owner.target.create({
+      data: { subsidiaryId: B.subsidiaryId, name: 'Int-test B target two', basis: 'internal_annual', scope: 'all', baselineYear: 2025, baselineTCo2e: 99, targetYear: 2027, targetTCo2e: 9, createdBy: by },
+    });
+    const lock = await owner.periodLock.create({
+      data: { subsidiaryId: B.subsidiaryId, reportingYear: 2025, reportingPeriod: 'monthly', periodValue: 'July', lockedBy: by },
+    });
+    const audit = await owner.auditLog.create({
+      data: { userId: B.users.superAdmin.id, organisationId: B.organisationId, role: 'super_admin', action: 'update', entity: 'subsidiary', entityId: B.subsidiaryId },
+    });
+    try {
+      const after = await answers();
+      for (const key of Object.keys(before)) expect(after[key], key).toBe(before[key]);
+    } finally {
+      await owner.auditLog.delete({ where: { id: audit.id } });
+      await owner.periodLock.delete({ where: { id: lock.id } });
+      await owner.target.delete({ where: { id: target.id } });
+      await owner.location.delete({ where: { id: location.id } });
+      await owner.subsidiaryDenominator.deleteMany({ where: { id: { in: denominators.map((d) => d.id) } } });
+      await owner.activityRecord.deleteMany({ where: { id: { in: records.map((r) => r.id) } } });
+    }
+  }, 120_000);
 });
