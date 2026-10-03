@@ -1,155 +1,90 @@
-# 2. Owner-run Supabase staging setup
+# 2. Resumable Supabase Frankfurt setup
 
-First [restore the Bash session](00-session.md) from the Azure foundation. Every dashboard step
-below is part of recreation, even when there is no CLI command. Record settings
-and pass/fail results only; crop credentials from any evidence before saving it.
-
-## 2.1 Create and isolate the project
-
-In the intended Supabase organisation, create **tonyai-staging**, region
-**Central EU (Frankfurt), `eu-central-1`**. Generate a unique database password in
-the owner's password manager; never use a local/demo password. Keep it in the
-approved secure store, never in repository/env files or screenshots. Select the
-owner-approved plan; a free project can pause while idle, so active UAT needs a
-plan/availability decision. Wait for project health to become ready.
+First restore the owner session. Complete `supabase.json` with organization ID
+**and slug**, a unique staging/recreation name, the foundation vault and exact
+`WEB_ORIGIN`. Obtain a scoped Supabase management token in the owner's secure
+session; never save it in the repository or Terraform/GitHub inputs. Billing is
+organization-level; selecting a `plan` on project creation is deprecated/ignored.
+The owner approves budget/Pro during UAT separately. The helper requests the exact
+`eu-central-1` region, not a broad smart-region group.
 
 ```bash
-export SUPABASE_PROJECT_REF='<20-letter-project-ref>'
-export SUPABASE_URL="https://${SUPABASE_PROJECT_REF}.supabase.co"
-az group update -n "$RESOURCE_GROUP" --set "tags.supabaseProjectRef=$SUPABASE_PROJECT_REF" --output none
+python3 infra/scripts/supabase_setup.py --config .infra-local/staging/supabase.json --journal .infra-local/staging/supabase-journal.json --foundation .infra-local/staging/foundation.json --billing-approved
 ```
 
-Expected/evidence: project ID, name, region, plan and healthy status. Existing
-local/dev and production projects are untouched. On recreation create a new
-isolated project (new ref/password/keys) and rebuild the web for its new inputs.
+Enter the token at the hidden prompt. The helper:
 
-**Never run `supabase link` or `supabase config push` from this checkout against
-staging.** Local `supabase/config.toml` enables signups and localhost redirects;
-pushing it would undo cloud controls. These runbooks configure cloud separately.
+1. Generates a DB bootstrap password and transfers it directly to owner-only
+   Key Vault `bootstrap-db-password` before project creation.
+2. Saves nonsecret creation intent before POST. On retry, a unique project with
+   matching name, organization and Frankfurt region is recovered. Existing
+   unrecorded projects, duplicate matches and unknown outcomes stop safely.
+3. Waits for `ACTIVE_HEALTHY` by returning a resumable message; rerun the **same**
+   command/journal after provisioning finishes. It does not create a second project.
+4. Reads existing keys into memory, preferring `sb_publishable_` / `sb_secret_`.
+   Legacy anon/service-role JWTs are a fallback only when that modern key type is
+   absent. Ambiguous inventories stop for owner reconciliation; no keys are created.
+   Both keys must pass live probes against this exact project before any transfer.
+   Only the backend key enters Key Vault. Pooler host comes from the Management API.
+   Its literal `[YOUR-PASSWORD]` marker is normalized only for host discovery;
+   the stored URLs use the bootstrap password read privately from Key Vault.
+5. Stores `database-url` (transaction 6543) and `direct-url` (session 5432), with
+   Frankfurt/project binding, `/postgres`, strict CA verification, and an allowlist
+   of query parameters. API's runtime DIRECT_URL is deliberately the runtime URL;
+   only the owner reads the separate migration secret. **Both URLs currently use
+   the same `postgres.<ref>` role and password: deploy access equals database-owner
+   access until LP1-03 supplies a separate least-privilege runtime role.** Rotate
+   both URLs together. After both writes, the journal checkpoints exact versions
+   and the helper disables that bootstrap password version. On interruption it
+   reuses the checkpointed URLs and repeats the disable without reading the
+   disabled password or making replacement URLs.
+6. Reconciles both private buckets (`evidence`, `import-sources`), limits/MIME types
+   and readback. Disables signup/anonymous/phone/SAML/passkeys/unused providers,
+   pins site URL and redirects to exactly `WEB_ORIGIN` and `WEB_ORIGIN/login`.
+7. Uses an existing active ES256/RS256 key or creates one journaled ES256 standby,
+   activates it and verifies the active public JWKS ID. Ambiguous signing-key
+   creation stops; subsequent runs reconcile the recorded key, never POST blindly.
 
-## 2.2 Auth settings (before exposing apps)
+Expected final `PASS`, public project reference and exact vault versions in the
+journal. Secret values never enter the journal. A completed initial setup is a
+no-op on retry; future credential changes use runbook 05. Preserve the journal
+before closing the terminal and prohibit simultaneous setup from different
+machines/journal copies; the helper locks its local journal, not the remote account.
 
-In Authentication settings:
+On a timeout with no visible project/key: wait for eventual visibility and retry.
+If it remains absent, reconcile the request with Supabase using operation time,
+project name and organization, then have the owner review the journal recovery.
+Do not delete `project_pending` or `signing_before_ids` simply to retry. If the
+journal is lost, stop automatic creation/adoption and reconstruct IDs/ownership
+from provider evidence. No automated project/key deletion is implemented.
 
-- Disable **Allow new users to sign up** and anonymous sign-ins. Disable providers
-  not used for the pilot. Provision controlled users only through approved owner
-  onboarding; no local fixture accounts.
-- Configure an asymmetric JWT signing key (ES256 or RS256) as current. Verify the
-  project's JWKS endpoint advertises it. Never switch the API to `auto` or `hs256`
-  to repair a failed cloud login.
-- Set Site URL to the exact `$WEB_ORIGIN`. Redirect allowlist: only
-  `$WEB_ORIGIN` and `$WEB_ORIGIN/login` for the current release, with no wildcard,
-  localhost or preview origins. LP4-01/LP2-04 must add their actual invitation and
-  reset callback routes when implemented; this release has none to invent.
-- Evaluate database network restrictions against ACA's actual egress addresses
-  and the owner's migration access. This default Consumption environment has no
-  fixed outbound IP; do not install an allowlist that strands new replicas.
-  Record the current restriction setting and accepted staging exposure. Static
-  egress/private networking is a separate owner decision, not a claimed control.
+Restore public project variables using runbook 00. Copy journal
+`versions.database_url_version` and `versions.backend_secret_version` into the
+release's `database_secret_version`/`backend_secret_version`. Then set foundation
+`runtime_secrets_ready=true` and run its plan/apply again. Only API gets Secrets
+User on `database-url` and `supabase-service-role-key` at individual-secret scopes.
+The disabled bootstrap version and `direct-url` have no API/web/deployer read
+grant; this does not isolate database authority because the enabled runtime URL
+contains the same database-owner password. Disabling the bootstrap copy reduces
+retained enabled copies; it does not revoke or reduce runtime privileges.
 
 ```bash
-curl --fail --silent --show-error "$SUPABASE_URL/auth/v1/.well-known/jwks.json" | python3 -c 'import json,sys; d=json.load(sys.stdin); a=[k.get("alg") for k in d.get("keys",[])]; assert a and all(x in ("ES256","RS256") for x in a); print("PASS: asymmetric JWKS published")'
+python3 infra/scripts/cloud_ops.py probe-storage --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --source-sha '<reviewed-helper-full-sha>' --secret-version '<selected-backend-secret-version>'
 ```
 
-Expected/evidence: signup/anonymous sign-in disabled; exact Site URL/allowlist;
-JWKS check passes. The live public-key/Auth probe below must pass too; dashboard
-inspection alone is insufficient. Redirect URLs are not exposed by that endpoint
-and still require separate dashboard evidence. Do not save keys or full Auth dashboard exports. Email delivery
-is LP2-04; this configuration alone does not prove invitations/password resets.
+Use `versions.backend_secret_version` from the completed setup journal, or the
+backend version from the selected release after rotation; never select latest.
 
-## 2.3 Store credentials in Key Vault
+Expected for both buckets: upload, public denial, 60-second signed download byte
+match, and a deletion acknowledgment for the exact probe prefix. This is an API
+acknowledgment, not an independent absence readback. In the Storage dashboard
+confirm no objects remain under `lp2-foundation-probe/` before recording cleanup
+evidence; inspect/remove only these synthetic probes if cleanup was interrupted. Inspect `infra/supabase/verify.sql` through the secure SQL editor after
+migrations: no demo users/tenants/factors; private buckets and expected RLS. Never
+run local seed or local RLS/E2E fixtures against cloud. Assess Supabase network
+restrictions against actual ACA egress; don't claim a fixed egress allowlist on
+plain Consumption. SMTP/invitation and production PITR are LP2-04.
 
-In the Azure portal, open `$VAULT_NAME` → Secrets. Add enabled secrets directly
-using secure copy/paste. Never use `az ... --value <secret>` or a local env file.
-
-| Secret name | Value selected privately by the owner |
-|---|---|
-| `database-url` | Project Connect → **Supavisor transaction** URL, port **6543**, database `postgres`; add `pgbouncer=true`, `sslmode=require`, `sslaccept=strict`, `sslcert=/app/infra/certs/prod-ca-2021.crt`, and a bounded `connection_limit=5`. |
-| `direct-url` | Project Connect → **Supavisor session** URL, port **5432**, database `postgres`; add `sslmode=require`, `sslaccept=strict`, `sslcert=/app/infra/certs/prod-ca-2021.crt`. This is for owner-run Prisma migrations. |
-| `supabase-service-role-key` | This staging project's separately rotatable **`sb_secret_` backend key** (preferred); a legacy service_role key is supported but has coupled rotation, used only by the API/owner Storage calls. Never the local demo key. |
-
-Take the exact pooler host from Connect (do not guess the `aws-N-...` segment).
-Only `aws-N-eu-central-1.pooler.supabase.com` is accepted. Both usernames end in `.<project-ref>`. URL-encode special characters in the
-password privately. Do not use the IPv6-first direct database hostname. Runtime
-initially uses the project's owner-backed Prisma path as the baseline does; its
-privileges do **not** prove end-user RLS containment. LP1-03 verifies the intended
-runtime privileges; do not invent a restricted DB role without migration review.
-The API's `DIRECT_URL` resolves to `database-url` for schema compatibility; only
-the migration runner receives the session URL from `direct-url`. Both URLs are
-validated before Prisma runs; the runner rewrites only the CA path in memory to
-this checkout. The public [bundled CA](../certs/README.md) is included by the
-existing API Dockerfile. Compare it to the project's CA before use; never bypass
-a certificate failure. Strict Supavisor handshakes still require owner evidence.
-The installed supabase-js supports opaque secret-key transport; live acceptance
-is checked by the bucket probes. The environment name remains
-`SUPABASE_SERVICE_ROLE_KEY` for compatibility. Follow [rotation](05-rotation.md)
-for either key scheme.
-
-```bash
-az keyvault secret list --vault-name "$VAULT_NAME" --query '[].{name:name,enabled:attributes.enabled}' -o table
-az deployment group create -g "$RESOURCE_GROUP" -n lp2-secret-access --template-file infra/azure/secret-access.bicep --parameters prefix="$PREFIX" --query properties.provisioningState -o tsv
-```
-
-Expected/evidence: three enabled names, no values; access deployment `Succeeded`.
-Only API can resolve `database-url` and `supabase-service-role-key`. Web and GitHub
-receive no direct secret-reading role; API cannot read `direct-url` through RBAC.
-Wait for RBAC propagation before running later steps.
-
-## 2.4 Machine-check Auth before proceeding
-
-```bash
-export NEXT_PUBLIC_SUPABASE_URL="$SUPABASE_URL"
-export NEXT_PUBLIC_API_BASE_URL="$API_ORIGIN/api/v1"
-read -r -s -p 'Paste staging public browser key: ' NEXT_PUBLIC_SUPABASE_ANON_KEY
-printf '\n'
-export NEXT_PUBLIC_SUPABASE_ANON_KEY
-python3 infra/scripts/check_browser_key.py
-unset NEXT_PUBLIC_SUPABASE_ANON_KEY
-```
-
-Expected: public URL/key accepted by this project and `/auth/v1/settings` asserts
-signup disabled, anonymous/phone/SAML/passkeys off, email enabled and every unused
-provider off. Missing controls fail closed. A publishable key has no project claim;
-its project binding is established by this live request, not its prefix.
-
-## 2.5 Deploy the schema; create and verify buckets
-
-Review committed migrations before execution. On a fresh project run the full
-chain, never generate migrations or seed demo data. For an existing environment,
-arrange a maintenance window and verified DB/file backup first: the historical
-evidence many-to-many migration is incompatible with older images. An image
-rollback cannot reverse that schema change.
-
-```bash
-bash <<'BASH'
-set -euo pipefail
-test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-test -z "$(git status --porcelain)"
-python3 infra/scripts/cloud_ops.py migrate --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF"
-python3 infra/scripts/cloud_ops.py buckets --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF"
-python3 infra/scripts/cloud_ops.py probe-storage --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF"
-BASH
-```
-
-Expected/evidence: migration deploy **and status** pass; two reconciled private
-buckets; upload/public denial/60-second signed-download byte comparison/cleanup
-pass for each. Rerun `buckets`: same settings, no duplicate buckets. The probe
-creates only uniquely named disposable CSV objects. If interrupted, inspect the
-`lp2-foundation-probe/` prefix and remove only this run's orphan probe objects.
-
-In Supabase SQL editor run [verify.sql](../supabase/verify.sql). Expected: zero
-unfinished migrations, zero demo/Auth users and factors on a fresh project; exactly two
-private buckets with their MIME/size limits; zero `storage.objects` policies and
-no returned public tables with RLS disabled or forced. Review the anon/authenticated/
-public policy inventory against committed migrations, including SELECT-only scope. Preserve default-deny object access:
-**do not add browser `authenticated` or `anon` Storage policies**. The API's service
-role bypasses Storage RLS after app tenant authorization; table RLS comes from the
-committed Prisma migrations. If any query disagrees, stop before application use.
-
-No factor-only safe seed exists at this baseline: leave factors empty (the UI
-will correctly report missing factors) until LP4-02 or separately approved
-labelled UAT fixtures. Never present prototype factors as authoritative.
-
-Sources: [Prisma and Supavisor](https://supabase.com/docs/guides/database/prisma),
-[Storage access control](https://supabase.com/docs/guides/storage/security/access-control),
-[Auth redirects](https://supabase.com/docs/guides/auth/redirect-urls).
+API contract reviewed against [Supabase Management API](https://supabase.com/docs/reference/api/introduction)
+and its public OpenAPI schema on 2026-10-03. Region availability, actual API
+responses, key propagation and the bundled CA chain remain owner-run evidence.

@@ -7,6 +7,7 @@ import re
 import sys
 from cloud_ops import command
 from pooler import SafeFailure
+from github_environment import verify_environment
 
 
 def az(*args):
@@ -25,6 +26,9 @@ def configure(subscription, group, repo):
     resource = az('group', 'show', '--subscription', subscription, '-n', group)
     if resource.get('tags', {}).get('environment') != 'staging':
         raise SafeFailure('Refusing a resource group not tagged staging.')
+    if resource.get('tags', {}).get('githubRepository') != repo:
+        raise SafeFailure('Repository differs from the foundation githubRepository tag.')
+    verify_environment(repo)
     name = 'tonyai-staging-github-' + hashlib.sha256(resource['id'].lower().encode()).hexdigest()[:12]
     # Exact display name is deterministic per subscription/RG; ambiguity fails closed.
     apps = az('ad', 'app', 'list', '--display-name', name)

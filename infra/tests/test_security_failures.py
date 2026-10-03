@@ -57,6 +57,17 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(ops.request(self.origin + '/redirect', key='synthetic'), (302, b''))
         self.assertEqual(self.seen, ['/redirect'])
 
+    def test_secret_transport_does_not_follow_redirect_or_echo_error_body(self):
+        from secure_transport import json_request
+        self.seen.clear()
+        with self.assertRaises(SafeFailure) as result:
+            json_request(self.origin + '/redirect', token='synthetic')
+        self.assertEqual(self.seen, ['/redirect'])
+        self.assertNotIn('synthetic', str(result.exception))
+        with self.assertRaises(SafeFailure) as result:
+            json_request(self.origin + '/error', token='synthetic')
+        self.assertNotIn('sensitive-error-body', str(result.exception))
+
     def test_http_error_body_is_discarded(self):
         self.assertEqual(ops.request(self.origin + '/error', key='synthetic'), (403, b''))
 
@@ -82,13 +93,13 @@ class GuardTests(unittest.TestCase):
     def test_runtime_secret_returns_only_validated_enabled_exact_version(self):
         record = {'id':'https://vault.vault.azure.net/secrets/database-url/'+'a'*32,
                   'value':GOOD_URL, 'attributes':{'enabled':True}}
-        with patch.object(ops,'command',return_value=json.dumps(record)):
-            self.assertEqual(ops.runtime_secret_id('vault',PROJECT), record['id'])
+        with patch('secure_transport.azure_token', return_value='synthetic'), patch('secure_transport.json_request', return_value=record):
+            self.assertEqual(ops.runtime_secret_id('vault',PROJECT,'a'*32), record['id'])
         for change in ({'value':GOOD_URL+'&host=evil.example.com'}, {'attributes':{'enabled':False}},
                        {'id':record['id'].replace('vault.vault','foreign.vault')},
                        {'id':record['id'].rsplit('/',1)[0]}):
-            with self.subTest(change=change), patch.object(ops,'command',return_value=json.dumps({**record,**change})):
-                with self.assertRaises(SafeFailure): ops.runtime_secret_id('vault',PROJECT)
+            with self.subTest(change=change), patch('secure_transport.azure_token', return_value='synthetic'), patch('secure_transport.json_request', return_value={**record,**change}):
+                with self.assertRaises(SafeFailure): ops.runtime_secret_id('vault',PROJECT,'a'*32)
 
     def test_migrate_refuses_invalid_secret_before_any_prisma_command(self):
         for position in (0, 1):
@@ -96,7 +107,7 @@ class GuardTests(unittest.TestCase):
             secrets[position] = secrets[position].replace('sslaccept=strict', 'sslaccept=accept_invalid_certs')
             with patch.object(ops, 'secret', side_effect=secrets), patch.object(ops, 'command') as command:
                 with self.assertRaises(SafeFailure):
-                    ops.migrate('test-vault', PROJECT)
+                    ops.migrate('test-vault', PROJECT, 'a'*32, 'b'*32)
                 command.assert_not_called()
 
     def test_bucket_readback_must_not_trust_write_acknowledgement(self):

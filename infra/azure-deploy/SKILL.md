@@ -7,7 +7,7 @@ Read the repository AGENTS.md, task reservation and roadmap card before acting.
 The task's cloud authorization controls execution; this recipe grants none.
 
 Use [infra/README.md](../README.md) to choose the relevant numbered runbook.
-Foundation, secret permissions and apps are separate deployments: first discover
+Backend bootstrap, foundation Terraform, secret transfer and application Terraform have separate writers: first discover
 stable origins, then configure Supabase/Key Vault, then build and deploy images.
 
 Preserve these project-specific traps:
@@ -19,15 +19,16 @@ Preserve these project-specific traps:
 - Use Supavisor transaction mode for runtime, session mode for migrations. Cloud
   JWT scheme is `jwks`; omit the legacy secret and insecure-local bypass.
 - API and web identities are separate. Only API's two named secrets get data-plane
-  read grants; migration credentials stay owner-only. A GitHub deployer can replace
-  API code and therefore access runtime secrets. Enforced staging environment and
+  read grants. Both pooler URLs share the database-owner password until LP1-03
+  supplies a separate least-privilege runtime role, so deploy access equals
+  database-owner access; rotate both URLs together. Enforced staging environment and
   branch protections are the trust boundary. Never inspect/print values.
 - GitHub's environment OIDC subject does not constrain the branch by itself.
   Verify enforced environment restrictions before establishing federation.
 - Current API health is liveness, not DB readiness. Image rollback is not schema
   rollback; Supabase database backups do not restore Storage object bytes.
 
-Compile all entrypoint Bicep templates locally, run the credential-free Python
+Validate both Terraform roots and their mock-provider tests locally, run the credential-free Python
 tests and required repository checks, then request the required independent
 reviews. Report actual SHA/environment/results and unexecuted cloud steps in the
 PR's B9 handoff. Leave roadmap edits to the Claude Code lane. Local mocks and

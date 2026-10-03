@@ -52,8 +52,8 @@ class CloudOpsTests(unittest.TestCase):
             'database-url': f'postgresql://postgres.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true',
             'direct-url': f'postgresql://postgres.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt',
         }
-        with patch.object(ops, 'secret', side_effect=lambda vault, name: values[name]), patch.object(ops, 'command') as command, contextlib.redirect_stdout(io.StringIO()):
-            ops.migrate('test-vault', PROJECT)
+        with patch.object(ops, 'secret', side_effect=lambda vault, name, version: values[name]), patch.object(ops, 'command') as command, contextlib.redirect_stdout(io.StringIO()):
+            ops.migrate('test-vault', PROJECT, 'a'*32, 'b'*32)
         self.assertEqual(command.call_count, 2)
         self.assertEqual(command.call_args_list[0].args[0], ['pnpm', 'db:deploy'])
         for call in command.call_args_list:

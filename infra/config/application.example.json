@@ -1,0 +1,21 @@
+{
+  "foundation": {
+    "subscription_id": "<subscription-uuid>",
+    "tenant_id": "<tenant-uuid>",
+    "environment": "staging",
+    "resource_group": "tonyai-staging",
+    "prefix": "tonyai",
+    "registry_name": "<registry-from-foundation>",
+    "vault_name": "<vault-from-foundation>",
+    "default_domain": "<environment-domain>.germanywestcentral.azurecontainerapps.io"
+  },
+  "release": {
+    "source_sha": "<image-source-commit-sha>",
+    "release_id": "r001",
+    "supabase_project_ref": "<20-letter-project-ref>",
+    "api_digest": "sha256:<64-lowercase-hex>",
+    "web_digest": "sha256:<64-lowercase-hex>",
+    "database_secret_version": "<32-lowercase-hex>",
+    "backend_secret_version": "<32-lowercase-hex>"
+  }
+}
