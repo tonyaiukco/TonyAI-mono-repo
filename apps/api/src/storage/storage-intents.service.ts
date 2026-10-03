@@ -500,7 +500,7 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
         // row's own transaction, a delete intent is written as its row goes —
         // so a row and an intent disagree. The bytes stay; the intent is
         // closed and reported.
-        await this.prisma.storageIntent.deleteMany({ where: { id: { in: keep.map((i) => i.id) } } });
+        await this.closeUnderLease(keep);
         // Keys carry a cleaned file name, which can be personal data: the log
         // line names them for an operator, the Sentry event only the intents.
         this.logger.error(
@@ -535,14 +535,23 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
         // an intent reset meanwhile (`enqueueDeletes`) names bytes that may
         // have landed after the removal, and stays. If closing fails, the
         // lease runs out and the next sweep removes again — idempotently.
-        await this.prisma.$executeRaw`
-          DELETE FROM storage_intents s
-          USING unnest(${chunk.map((i) => i.id)}::uuid[], ${chunk.map((i) => i.lease)}::timestamptz[]) AS c(id, lease)
-          WHERE s.id = c.id AND s.claimed_until = c.lease`;
+        await this.closeUnderLease(chunk);
         outcome.removed += chunk.length;
       }
     }
     return outcome;
+  }
+
+  /**
+   * Close intents only while they are still under the lease this claim set:
+   * one reset meanwhile (`enqueueDeletes`) names bytes that may have landed
+   * after the removal, and stays for the next pass.
+   */
+  private async closeUnderLease(intents: ClaimedIntent[]): Promise<void> {
+    await this.prisma.$executeRaw`
+      DELETE FROM storage_intents s
+      USING unnest(${intents.map((i) => i.id)}::uuid[], ${intents.map((i) => i.lease)}::timestamptz[]) AS c(id, lease)
+      WHERE s.id = c.id AND s.claimed_until = c.lease`;
   }
 
   /** Give a failed removal back with its error and the next attempt's time. */

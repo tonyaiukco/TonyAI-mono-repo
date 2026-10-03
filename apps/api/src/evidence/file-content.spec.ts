@@ -190,6 +190,19 @@ describe('checkEvidenceFile — the bytes must be what the upload claims', () =>
         data: Buffer.from('<Relationships><Relationship Type="vbaProject"/></Relationships>', 'utf16le'),
       },
     ]);
+    // A declared UTF-7 spells the words without containing them (security-rls round 3).
+    const utf7 = zip([
+      {
+        name: '[Content_Types].xml',
+        data: '<?xml version="1.0" encoding="UTF-7"?>' + contentTypes('application/vnd.ms-excel.sheet.macro+AEU-nabled.main+xml'),
+      },
+    ]);
+    expect(refusal(() => checkEvidenceFile(file(XLSX, utf7))), 'utf-7').toMatch(/not a XLSX file/);
+    // A declaration naming UTF-8 is the normal case, any spelling.
+    const declaredUtf8 = zip([
+      { name: '[Content_Types].xml', data: '<?xml version="1.0" encoding="utf-8" standalone="yes"?>' + workbookTypes },
+    ]);
+    expect(checkEvidenceFile(file(XLSX, declaredUtf8)).mimeType).toBe(XLSX);
     // A DTD with no entity to resolve: OPC forbids DTDs whatever they declare.
     const bareDtd = zip([{ name: '[Content_Types].xml', data: '<!DOCTYPE Types>' + workbookTypes }]);
     expect(refusal(() => checkEvidenceFile(file(XLSX, dtd))), 'dtd').toMatch(/not a XLSX file/);

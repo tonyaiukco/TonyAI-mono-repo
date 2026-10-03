@@ -102,9 +102,8 @@ describe('StorageIntentsService — after the commit, never throws', () => {
         .fn()
         .mockResolvedValueOnce([{ id: 'i-1', bucket: 'evidence', objectPath: path, attempts: 1, lease: 'L' }])
         .mockResolvedValueOnce([{ ok: true }]),
-      $executeRaw: vi.fn(),
+      $executeRaw: vi.fn().mockResolvedValue(1),
       evidence: { findMany: vi.fn().mockResolvedValue([{ storagePath: path }]) },
-      storageIntent: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
       $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     };
     const remove = vi.fn();
@@ -113,7 +112,9 @@ describe('StorageIntentsService — after the commit, never throws', () => {
     ]);
 
     expect(remove).not.toHaveBeenCalled();
-    expect(prisma.storageIntent.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['i-1'] } } });
+    // Closed — under its lease — without a removal.
+    expect(prisma.$executeRaw).toHaveBeenCalledOnce();
+    expect(prisma.$executeRaw.mock.calls[0].slice(1)).toEqual([['i-1'], ['L']]);
     expect(logged.mock.calls[0][0]).toContain(path); // the operator's log keeps it
     const reported = vi.mocked(captureException).mock.calls.at(-1)![0] as Error;
     expect(reported.message).toContain('i-1');

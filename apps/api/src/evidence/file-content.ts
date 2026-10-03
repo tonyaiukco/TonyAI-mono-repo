@@ -27,7 +27,8 @@ import { sanitiseCallerText } from '../common/caller-text';
  *    relationship (XML character references decoded first), or any part
  *    whose name says vbaProject (a renamed .xlsm). Parts that could hide
  *    those words are refused outright: a DTD or an entity reference XML
- *    does not predefine (OPC forbids DTDs), a UTF-16 part, a second
+ *    does not predefine (OPC forbids DTDs), a UTF-16 part or one declaring
+ *    any encoding but UTF-8, a second
  *    `[Content_Types].xml`. Embedded OLE objects and DDE links are NOT
  *    refused: they are the residual risk K1 accepts, named for the LP5-02
  *    pen-test;
@@ -105,6 +106,10 @@ function partText(part: Buffer): string | null {
     return null;
   }
   const raw = part.toString('utf8');
+  // OPC parts are UTF-8 or UTF-16 (M1.17); a declared UTF-7 could spell
+  // `macro+AEU-nabled` past every check below.
+  const declared = /^\s*<\?xml[^>]*\bencoding\s*=\s*["']([^"']*)["']/i.exec(raw)?.[1];
+  if (declared !== undefined && !/^utf-?8$/i.test(declared)) return null;
   if (/<!(?:DOCTYPE|ENTITY)/i.test(raw) || UNDECLARED_REFERENCE.test(raw)) return null;
   return decodeXmlText(raw);
 }
