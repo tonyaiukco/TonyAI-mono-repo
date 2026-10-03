@@ -16,6 +16,7 @@ import { StorageReconcileService } from '../../src/storage/storage-reconcile.ser
 import {
   backendPid,
   connect,
+  connectOwner,
   createRecord,
   createTenant,
   deferred,
@@ -68,7 +69,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  tenant = await createTenant(a);
+  tenant = await createTenant();
   storage = localStorage();
 });
 
@@ -757,7 +758,8 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
         WHERE object_path = ${path}`;
     }
     class Rollback extends Error {}
-    const forced = connect();
+    // The owner: only it may create an index, even one rolled back.
+    const forced = connectOwner();
     let abandoned = -1;
     try {
       await forced
@@ -848,8 +850,10 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
   });
 
   it('refuses to remove under a database role that RLS filters — "no row owns it" would be a guess', async () => {
+    // `observer` is the runtime role (LP1-03): BYPASSRLS, so it sees every row.
     expect(await sweeper(observer).seesEveryRow()).toBe(true);
-    const restricted = connect();
+    // The owner, because only a member of `authenticated` may assume it.
+    const restricted = connectOwner();
     try {
       await restricted.$executeRawUnsafe('SET ROLE authenticated');
       // The same question under RLS: this role sees no evidence row at all.
@@ -875,7 +879,8 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
 
   it('the visibility check covers Storage\'s catalogue too — seeing every owning row is not enough', async () => {
     class Rollback extends Error {}
-    const restricted = connect();
+    // The owner: it alone may alter the tables and assume `authenticated`.
+    const restricted = connectOwner();
     let seen: boolean | null = null;
     try {
       await restricted

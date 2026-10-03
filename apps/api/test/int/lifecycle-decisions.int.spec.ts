@@ -4,7 +4,7 @@ import { ConflictException } from '@nestjs/common';
 import { ActivityRecordStatus } from '@tonyai/db';
 import { SelfApprovalRefusedError, SubmitAuthorRefusedError } from '../../src/activity-records/errors';
 import type { PrismaService } from '../../src/prisma/prisma.service';
-import { attachEvidence, connect, createRecord, createTenant, type Tenant } from './db';
+import { attachEvidence, connect, connectOwner, createRecord, createTenant, type Tenant } from './db';
 import { lifecycleServices } from './services';
 
 /**
@@ -28,7 +28,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  tenant = await createTenant(prisma);
+  tenant = await createTenant();
 });
 
 afterEach(async () => {
@@ -57,15 +57,19 @@ describe('D01 — the approver is neither the creator nor the submitter', () => 
     const record = await createRecord(prisma, tenant, { createdBy: tenant.users.superAdmin.id });
     await attachEvidence(prisma, tenant, [record.id]);
     await s.records.submit(tenant.users.superAdmin, record.id);
-    const colleague = await prisma.profile.create({
-      data: {
-        id: randomUUID(),
-        email: `int-admin2-${record.id.slice(0, 8)}@tonyai.test`,
-        fullName: 'Int admin two',
-        role: 'super_admin',
-        organisationId: tenant.organisationId,
-      },
-    });
+    // Profiles are the owner's to create (the runtime role reads them).
+    const owner = connectOwner();
+    const colleague = await owner.profile
+      .create({
+        data: {
+          id: randomUUID(),
+          email: `int-admin2-${record.id.slice(0, 8)}@tonyai.test`,
+          fullName: 'Int admin two',
+          role: 'super_admin',
+          organisationId: tenant.organisationId,
+        },
+      })
+      .finally(() => owner.$disconnect());
     tenant.profileIds.push(colleague.id);
 
     await s.records.approve({ ...tenant.users.superAdmin, id: colleague.id }, record.id);

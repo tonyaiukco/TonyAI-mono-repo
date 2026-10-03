@@ -21,9 +21,27 @@ import { PrismaService } from '../../src/prisma/prisma.service';
  * queries run in. `connections` > 1 gives a pooled client instead, for a test
  * that must let a stray query outside a transaction reach the database (and
  * commit) rather than wait for the one connection the transaction holds.
+ *
+ * It logs in as the RUNTIME role (`tonyai_runtime`, LP1-03) — what the API
+ * uses in a deployed environment — so a service under test fails here exactly
+ * where a missing grant would fail it in production.
  */
 export function connect(connections = 1): PrismaService {
-  const url = new URL(process.env.DATABASE_URL ?? '');
+  return clientFor(process.env.INT_RUNTIME_DATABASE_URL, connections);
+}
+
+/**
+ * The same, logged in as the OWNER: for fixtures the runtime may not write
+ * (organisations, profiles, synthetic audit-row cleanup) and for tests that
+ * change the schema inside a rolled-back transaction or assume a client role.
+ * Never hand it to a service under test.
+ */
+export function connectOwner(connections = 1): PrismaService {
+  return clientFor(process.env.INT_OWNER_DATABASE_URL, connections);
+}
+
+function clientFor(raw: string | undefined, connections: number): PrismaService {
+  const url = new URL(raw ?? '');
   url.searchParams.set('connection_limit', String(connections));
   return new PrismaService({ datasourceUrl: url.toString() });
 }
@@ -56,27 +74,38 @@ export async function withRollback<T>(
 export interface Tenant {
   organisationId: string;
   subsidiaryId: string;
-  users: Record<'superAdmin' | 'consultant' | 'dataEntry', RequestUser>;
+  users: Record<'superAdmin' | 'consultant' | 'dataEntry' | 'executiveViewer', RequestUser>;
   /** Every id this tenant's rows can be found by, for cleanup and leak checks. */
   profileIds: string[];
   cleanup(): Promise<void>;
 }
 
-/** One organisation, one subsidiary, and a profile per workflow role. */
+/**
+ * One organisation, one subsidiary, and a profile per role — the data_entry
+ * profile with a real grant of the subsidiary. Written as the OWNER (the
+ * runtime role cannot create organisations or profiles), on a client of its
+ * own that `cleanup()` closes.
+ */
 export const TENANT_ORG_PREFIX = 'Int-test org ';
 export const TENANT_EMAIL_PATTERN = 'int-%@tonyai.test';
 
-export async function createTenant(prisma: PrismaService): Promise<Tenant> {
+export async function createTenant(): Promise<Tenant> {
+  const prisma = connectOwner(2);
   const tag = randomUUID().slice(0, 8);
-  const organisation = await prisma.organisation.create({
-    data: { legalName: `${TENANT_ORG_PREFIX}${tag}`, country: 'GB', geographyCode: 'UK' },
-  });
   try {
-    return await populateTenant(prisma, organisation.id, tag);
+    const organisation = await prisma.organisation.create({
+      data: { legalName: `${TENANT_ORG_PREFIX}${tag}`, country: 'GB', geographyCode: 'UK' },
+    });
+    try {
+      return await populateTenant(prisma, organisation.id, tag);
+    } catch (err) {
+      // A half-built tenant never reaches its caller's cleanup(); remove it here.
+      await prisma.profile.deleteMany({ where: { email: { endsWith: `-${tag}@tonyai.test` } } });
+      await prisma.organisation.delete({ where: { id: organisation.id } });
+      throw err;
+    }
   } catch (err) {
-    // A half-built tenant never reaches its caller's cleanup(); remove it here.
-    await prisma.profile.deleteMany({ where: { email: { endsWith: `-${tag}@tonyai.test` } } });
-    await prisma.organisation.delete({ where: { id: organisation.id } });
+    await prisma.$disconnect();
     throw err;
   }
 }
@@ -119,7 +148,11 @@ async function populateTenant(
     superAdmin: await makeUser(UserRole.super_admin, 'admin'),
     consultant: await makeUser(UserRole.consultant, 'consultant'),
     dataEntry: await makeUser(UserRole.data_entry, 'entry'),
+    executiveViewer: await makeUser(UserRole.executive_viewer, 'viewer'),
   };
+  await prisma.userSubsidiaryAccess.create({
+    data: { userId: users.dataEntry.id, subsidiaryId: subsidiary.id, organisationId: organisation.id },
+  });
   const profileIds = Object.values(users).map((u) => u.id);
 
   return {
@@ -137,12 +170,16 @@ async function populateTenant(
     // DELETE for the owner), do not weaken it for this — leave the tagged
     // rows instead.
     async cleanup() {
-      await prisma.storageIntent.deleteMany({ where: tenantIntents([subsidiary.id], [organisation.id]) });
-      await prisma.auditLog.deleteMany({
-        where: { OR: [{ organisationId: organisation.id }, { userId: { in: profileIds } }] },
-      });
-      await prisma.profile.deleteMany({ where: { id: { in: profileIds } } });
-      await prisma.organisation.delete({ where: { id: organisation.id } });
+      try {
+        await prisma.storageIntent.deleteMany({ where: tenantIntents([subsidiary.id], [organisation.id]) });
+        await prisma.auditLog.deleteMany({
+          where: { OR: [{ organisationId: organisation.id }, { userId: { in: profileIds } }] },
+        });
+        await prisma.profile.deleteMany({ where: { id: { in: profileIds } } });
+        await prisma.organisation.delete({ where: { id: organisation.id } });
+      } finally {
+        await prisma.$disconnect();
+      }
     },
   };
 }
@@ -160,10 +197,11 @@ export function tenantIntents(subsidiaryIds: string[], organisationIds: string[]
 
 /** Rows left behind by a tenant; all zero after `cleanup()`. */
 export async function countTenantRows(prisma: PrismaService, tenant: Tenant) {
-  const [organisations, subsidiaries, profiles, records, audit] = await Promise.all([
+  const [organisations, subsidiaries, profiles, grants, records, audit] = await Promise.all([
     prisma.organisation.count({ where: { id: tenant.organisationId } }),
     prisma.subsidiary.count({ where: { organisationId: tenant.organisationId } }),
     prisma.profile.count({ where: { id: { in: tenant.profileIds } } }),
+    prisma.userSubsidiaryAccess.count({ where: { userId: { in: tenant.profileIds } } }),
     prisma.activityRecord.count({ where: { subsidiaryId: tenant.subsidiaryId } }),
     prisma.auditLog.count({
       where: {
@@ -171,7 +209,7 @@ export async function countTenantRows(prisma: PrismaService, tenant: Tenant) {
       },
     }),
   ]);
-  return { organisations, subsidiaries, profiles, records, audit };
+  return { organisations, subsidiaries, profiles, grants, records, audit };
 }
 
 /**
@@ -343,4 +381,71 @@ export async function attachEvidence(
     })),
   });
   return file;
+}
+
+export interface TenantData {
+  recordId: string;
+  evidenceId: string;
+  locationId: string;
+  targetId: string;
+  denominatorId: string;
+  periodLockId: string;
+  importBatchId: string;
+}
+
+/**
+ * One row in every subsidiary-scoped table of the tenant, and an import batch
+ * naming its subsidiary — for isolation tests that must find each of them
+ * visible to the tenant and invisible to everyone else. Owner-written; the
+ * organisation's deletion in `cleanup()` cascades to all of it.
+ */
+export async function createTenantData(prisma: PrismaService, tenant: Tenant): Promise<TenantData> {
+  const by = tenant.users.dataEntry.id;
+  const subsidiaryId = tenant.subsidiaryId;
+  const record = await createRecord(prisma, tenant);
+  const evidence = await attachEvidence(prisma, tenant, [record.id]);
+  const location = await prisma.location.create({
+    data: { subsidiaryId, name: 'Int-test site', geographyCode: 'UK' },
+  });
+  const target = await prisma.target.create({
+    data: {
+      subsidiaryId,
+      name: 'Int-test target',
+      basis: 'internal_annual',
+      scope: 'all',
+      baselineYear: 2024,
+      baselineTCo2e: 10,
+      targetYear: 2030,
+      targetTCo2e: 5,
+      createdBy: by,
+    },
+  });
+  const denominator = await prisma.subsidiaryDenominator.create({
+    data: { subsidiaryId, year: 2026, metric: 'headcount', value: 10, unit: 'FTE', createdBy: by },
+  });
+  // A year no lifecycle test writes, so the lock blocks nothing.
+  const periodLock = await prisma.periodLock.create({
+    data: { subsidiaryId, reportingYear: 2019, reportingPeriod: 'monthly', periodValue: 'January', lockedBy: by },
+  });
+  const importBatch = await prisma.importBatch.create({
+    data: {
+      organisationId: tenant.organisationId,
+      uploadedBy: by,
+      fileName: 'int-test.csv',
+      fileFormat: 'csv',
+      sizeBytes: 1,
+      sha256: '0'.repeat(64),
+      totalRows: 1,
+      subsidiaryIds: [subsidiaryId],
+    },
+  });
+  return {
+    recordId: record.id,
+    evidenceId: evidence.id,
+    locationId: location.id,
+    targetId: target.id,
+    denominatorId: denominator.id,
+    periodLockId: periodLock.id,
+    importBatchId: importBatch.id,
+  };
 }

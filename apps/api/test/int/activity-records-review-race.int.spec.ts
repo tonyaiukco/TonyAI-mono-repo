@@ -59,7 +59,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  tenant = await createTenant(a);
+  tenant = await createTenant();
 });
 
 afterEach(async () => {
