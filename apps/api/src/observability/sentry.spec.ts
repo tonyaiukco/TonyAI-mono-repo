@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const sdk = vi.hoisted(() => ({
   init: vi.fn(),
+  httpIntegration: vi.fn(() => ({ name: 'Http' })),
+  requestDataIntegration: vi.fn(() => ({ name: 'RequestData' })),
   captureException: vi.fn(),
   withScope: vi.fn((callback) => callback({ setTag: vi.fn(), setUser: vi.fn() })),
 }));
@@ -29,6 +31,12 @@ describe('Sentry privacy and reporting', () => {
     await sentry.initSentry();
     const options = sdk.init.mock.calls[0][0];
     expect(options.sendDefaultPii).toBe(false);
+    expect(options.tracesSampleRate).toBe(0);
+    expect(options.beforeSendTransaction({ spans: [{ data: { 'http.url': 'secret' } }] })).toBeNull();
+    expect(sdk.httpIntegration).toHaveBeenCalledWith({ maxIncomingRequestBodySize: 'none' });
+    expect(options.beforeSend({ request: { method: 'POST', url: '/upload?secret=1', data: 'private', headers: { authorization: 'secret' } }, tags: { path: '/upload?secret=1' } })).toEqual({
+      request: { method: 'POST', url: '/upload' }, tags: { path: '/upload' },
+    });
     for (const path of ['object/evidence/tenant/private-invoice.pdf', 'object/sign/evidence/file?token=secret']) {
       for (const classification of [{ type: 'http' }, { category: 'http' }, { category: 'fetch' }]) {
         expect(options.beforeBreadcrumb({

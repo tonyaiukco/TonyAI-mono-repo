@@ -1,4 +1,5 @@
-import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { Public } from './auth/public.decorator';
 import { PrismaService } from './prisma/prisma.service';
 import { HealthReadiness } from './health-readiness';
@@ -20,14 +21,17 @@ export class HealthController {
 
   @Public()
   @Get('ready')
-  async ready() {
-    if (!await this.readiness.check()) throw new ServiceUnavailableException('Not ready');
+  async ready(@Res({ passthrough: true }) response: Response) {
+    if (!await this.readiness.check()) {
+      response.status(503);
+      return { status: 'Not ready' };
+    }
     return { status: 'ready' };
   }
 
   /** The global guard verifies a real token AND its profile/tenant grants. */
   @Get('synthetic')
-  async synthetic() {
-    return this.ready();
+  async synthetic(@Res({ passthrough: true }) response: Response) {
+    return this.ready(response);
   }
 }

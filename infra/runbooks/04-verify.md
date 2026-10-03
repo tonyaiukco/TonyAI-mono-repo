@@ -131,11 +131,14 @@ secure secret recovery/rotation procedures. Use this order for backup/restore; t
    Exit 1 requires investigation; exit 2 means the check failed. Any `truncated:true`
    makes coverage incomplete, even on exit 0; do not claim a complete restore.
 4. Read both reports, reconcile every missing/hash-mismatched file and record owner
-   sign-off. Only then deploy a new manifest with `storage_cleanup_hold=false`,
+   sign-off. Only then deploy a new manifest with `storage_cleanup_hold=false`
+   using owner-run `deploy-apps.sh --ack-clear-storage-hold` (plus backend/inputs),
    verify all processes, clear the shell hold, and resume writes. Never reclaim
    orphans as part of the restore procedure.
 
-`storage_sweep_interval_seconds` is a plain release setting (default 300).
+`storage_sweep_interval_seconds` is a required plain release setting (1–86400;
+normally 300). Both it and `storage_cleanup_hold` must be explicit, including in
+older manifests selected for rollback.
 The scheduled verification job always keeps its own hold set; it never removes
 objects and never replaces the private post-restore report review.
 

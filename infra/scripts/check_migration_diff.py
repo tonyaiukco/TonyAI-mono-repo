@@ -6,14 +6,15 @@ import re
 import subprocess
 import sys
 
-# Prisma cannot represent the raw NULLS NOT DISTINCT unique index. This exact
-# DROP is diagnostic output only and is NEVER executed or copied to a migration.
+# Prisma cannot represent the raw NULLS NOT DISTINCT unique index. Empty drift
+# means the mandatory raw index is missing and must fail. This exact DROP is
+# diagnostic output only and is NEVER executed or copied to a migration.
 RAW_INDEX_DROP = 'DROP INDEX "activity_records_reporting_entity_period_category_key";'
 
 
 def acceptable_diff(code, sql):
     statements = re.sub(r'--[^\n]*', '', sql).strip()
-    return (code == 0 and not statements) or (code == 2 and statements == RAW_INDEX_DROP)
+    return code == 2 and statements == RAW_INDEX_DROP
 
 
 def main():

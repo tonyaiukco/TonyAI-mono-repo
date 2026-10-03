@@ -13,8 +13,10 @@ The staging gate is open until the complete flow and recovery checks pass.
 uses runtime `SELECT 1` in a transaction (500 ms pool wait, 1,500 ms transaction,
 1,000 ms statement timeout), plus authenticated metadata reads for both private
 Storage buckets (2,000 ms fetch deadline). It returns generic 503 on failure and
-has a 2,500 ms outer deadline, a five-second cache and one underlying probe per
-process. It reads no tenant rows, migration tables or privileged DB catalogues.
+has a 2,500 ms outer deadline and a five-second cache. A pending probe aged
+10 seconds is abandoned for scheduling purposes; a later request can start a
+replacement. At most two unresolved probes may exist per process. If both hang,
+readiness stays false until one settles or the operator restarts the process. It reads no tenant rows, migration tables or privileged DB catalogues.
 LP1-03 must run it using the **actual least-privilege runtime credential**; success
 is connectivity proof, not a complete grant/isolation proof. Prisma connects on
 Nest startup, so an initial DB outage can prevent HTTP boot; this existing limit
@@ -29,9 +31,14 @@ login through the deployed web and verify `/me` and tenant-scoped data.
 
 In an isolated staging rehearsal, deny DB connectivity to the already-running
 API (owner-controlled network rule), then restore it. Repeat separately for
-Storage. Record readiness 503 within five seconds, liveness 200 through the
-in-process/container address (ACA ingress may remove unready replicas), no
-restart loop, and recovery after the five-second cache. Do not weaken grants or
+Storage. Allow up to 7.5 seconds for a cached success to expire and the next
+probe deadline, plus the polling interval; record readiness 503 and liveness 200
+through the in-process/container address (ACA ingress may remove unready replicas).
+Confirm expected readiness 503s produce no error stack or Sentry event. Record no
+restart loop and recovery on the next eligible probe after cache expiry. Rehearse
+a hung connection separately: replacement is eligible once the flight is at least
+10 seconds old and the cache expires. Two unresolved flights exhaust the cap;
+prove recovery when one settles, or record the required operator restart. Do not weaken grants or
 probe customer data to simulate failure. Also test a cold start with DB down.
 
 ## Scheduled Storage verification and operator delivery
@@ -59,7 +66,9 @@ runs `node dist/storage/reconcile.cli.js --verify --allow-remote`, with the hold
 set, a 15-minute child deadline and a bounded output buffer. It emits only
 `storage_verify` plus exitCode, never raw paths, report contents or child errors.
 Exit 1 (including truncated coverage) and exit 2 require attention. No result in
-26 hours also alerts, covering image pull, scheduling and timeout failures.
+26 hours also alerts, covering image pull, scheduling and timeout failures. The
+missing-result alert fires from enablement until the first result is ingested;
+run an initial verification and confirm ingestion when enabling monitoring.
 
 Update these **pinned job references on every release and rotation**, before
 retiring the old versions; application deployment does not update owner-managed
@@ -85,15 +94,32 @@ truncation requires an explicit coverage plan with the storage owner.
 
 ## Error reporting and secrets
 
-**No `SENTRY_DSN` in an environment holding real tenant data until this branch's
-breadcrumb filtering is deployed and reviewed.** HTTP/fetch breadcrumbs are
-removed before entering a later event. This check is a fixed synthetic message,
-not a public crash endpoint. In a private owner shell using the built API image,
-provide the staging DSN through the approved secret channel and run
-`node dist/observability/sentry-check.cli.js`. It fails if disabled or flush times
-out. Confirm the event/release in Sentry, absence of Storage URLs/keys/tokens in
-breadcrumbs, and delivery/acknowledgement by the named operator. A successful
-SDK flush alone is not delivery proof. Do not paste DSNs or event tenant data.
+**No `SENTRY_DSN` in an environment holding real tenant data until the request,
+breadcrumb and transaction protections below are deployed and the required
+security review passes.** API event requests contain only method and queryless
+URL; request headers, cookies, body and query are excluded, incoming body
+buffering is disabled, and path tags lose the query. HTTP/fetch breadcrumbs are
+dropped. API transaction telemetry is forced off, even if
+`SENTRY_TRACES_SAMPLE_RATE` is set; do not enable tracing without a separately
+reviewed real-SDK span privacy test. These guarantees do not sanitise arbitrary
+exception messages or establish the web SDK's privacy properties.
+
+Before enabling a real-data DSN, retain the real-SDK regression result for the
+exact source SHA: it calls `initSentry()`, captures envelopes using a memory
+transport, sends a real multipart request with synthetic Authorization/cookie,
+query and file markers, raises an in-request 500 and calls Storage with an object
+path/token. Assert that no marker and no transaction reach the envelopes, and
+that the request contains only method and queryless URL. Repeat in isolated
+staging with a dedicated synthetic tenant and a Storage-failure upload rehearsal;
+privately inspect the resulting event and confirm the same fields are absent.
+Use synthetic bytes and credentials only; no public crash endpoint is added.
+
+For delivery, in a private owner shell using the built API image, provide the
+isolated staging DSN through the approved secret channel and run
+`node dist/observability/sentry-check.cli.js`. This fixed-message check fails if
+disabled or flush times out. It proves neither request redaction nor receipt by
+itself: confirm the event/release in Sentry and delivery/acknowledgement by the
+named operator. Do not paste DSNs or event tenant data.
 
 Exercise [runbook 05](05-rotation.md) in the isolated staging rehearsal: record
 old references, store new versions, retain deployed image digests, verify exact
@@ -116,7 +142,10 @@ to their separate roles once that separation lands.
    with the owner-only migration credential. Keep previous binaries running and
    exercise reads/writes, evidence and reports against the new schema. Fresh
    migration replay/schema diff in CI is necessary but cannot prove binary/data
-   compatibility. If the old binary fails, choose a maintenance/forward-fix plan;
+   compatibility. It requires the exact known raw-index DROP representation
+   difference without executing it; an empty diff also fails. Prisma diff cannot
+   see RLS policies, grants, CHECK constraints or triggers: retain `rls-probe`
+   and `test:int` as their guards. If the old binary fails, choose a maintenance/forward-fix plan;
    never imply that image rollback restores a database.
 3. Deploy the candidate digests. In dedicated synthetic tenants: login as author,
    create entry with the selected labelled factor, upload genuine valid evidence,
@@ -125,7 +154,9 @@ to their separate roles once that separation lands.
    refused; foreign-tenant IDs must remain inaccessible. Record fixture IDs and
    digest/SHA without passwords/file names. No broad cleanup or audit deletion.
 4. Follow runbook 05 to select the previous **compatible** image digests with
-   current enabled credentials and a new revision ID; deploy/read back, repeat
+   current enabled credentials and a new revision ID. Include explicit hold and
+   sweep settings in every rollback manifest, preserving any incident hold; never
+   clear it before runbook 04 report review and owner acknowledgement. Deploy/read back, repeat
    readiness and the authenticated journey. Record elapsed recovery time and
    preserved record/evidence/report state. Redeploy the candidate and repeat.
 5. Record pass/fail, operator acknowledgement and unresolved gaps in B9. No other

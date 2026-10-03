@@ -29,6 +29,14 @@ are immutable evidence: keep each version privately and create a new file and
 `release_id` for later changes. Do not infer a selected image from a mutable ACR
 tag or a newer candidate. For the initial release also fill the two exact Key
 Vault version IDs from runbook 02. Never put the secret values into this file.
+Every manifest must explicitly include `storage_cleanup_hold` (boolean) and
+`storage_sweep_interval_seconds` (integer 1–86400, normally 300); legacy manifests
+with either field missing are rejected. For first creation set the hold to `true`.
+Before clearing it, inspect the reconciliation reports under runbook 04 and use
+an owner-run deployment with `--ack-clear-storage-hold`. The deploy helper reads
+the existing API's plain hold setting before planning/applying and refuses an
+on/unknown-to-off transition without that flag. Protected workflow deployment
+cannot clear an incident hold. Preserve the hold during rollback and rotation.
 
 ## 3.2 Deploy migrations separately
 

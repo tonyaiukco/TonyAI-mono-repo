@@ -11,13 +11,15 @@ variables {
     default_domain  = "example.germanywestcentral.azurecontainerapps.io"
   }
   release = {
-    source_sha              = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    release_id              = "r001"
-    supabase_project_ref    = "abcdefghijklmnopqrst"
-    api_digest              = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    web_digest              = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    database_secret_version = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    backend_secret_version  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    release_id                     = "r001"
+    supabase_project_ref           = "abcdefghijklmnopqrst"
+    api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    storage_cleanup_hold           = false
+    storage_sweep_interval_seconds = 300
   }
 }
 run "application_security_contract" {
@@ -58,13 +60,15 @@ run "mutable_image_rejected" {
   command = plan
   variables {
     release = {
-      source_sha              = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      release_id              = "r001"
-      supabase_project_ref    = "abcdefghijklmnopqrst"
-      api_digest              = "latest"
-      web_digest              = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-      database_secret_version = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      backend_secret_version  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "latest"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
     }
   }
   expect_failures = [var.release]

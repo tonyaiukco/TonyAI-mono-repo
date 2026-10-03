@@ -2,23 +2,37 @@ import type { PrismaService } from './prisma/prisma.service';
 
 const TIMEOUT_MS = 2_000;
 const CACHE_MS = 5_000;
+const FLIGHT_MAX_AGE_MS = 10_000;
+const MAX_OUTSTANDING = 2;
+type Flight = { started: number; result: Promise<boolean> };
 
-/** Process-local single flight: public polling cannot accumulate DB work. */
+/** Coalesce probes; allow one recovery flight while bounding stalled DB work. */
 export class HealthReadiness {
-  private pending?: Promise<boolean>;
+  private pending?: Flight;
+  private outstanding = new Set<Flight>();
   private cached?: { ready: boolean; until: number };
 
   constructor(private readonly prisma: PrismaService) {}
 
   async check(): Promise<boolean> {
     if (this.cached && this.cached.until > Date.now()) return this.cached.ready;
-    // Keep the underlying single flight even if the response deadline wins.
-    // A stuck driver must not cause a new query on every probe request.
-    this.pending ??= this.probe().finally(() => { this.pending = undefined; });
+    if (this.pending && Date.now() - this.pending.started >= FLIGHT_MAX_AGE_MS) {
+      this.pending = undefined;
+    }
+    if (!this.pending) {
+      if (this.outstanding.size >= MAX_OUTSTANDING) return false;
+      const flight: Flight = { started: Date.now(), result: this.probe() };
+      this.pending = flight;
+      this.outstanding.add(flight);
+      void flight.result.finally(() => {
+        this.outstanding.delete(flight);
+        if (this.pending === flight) this.pending = undefined;
+      });
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const ready = await Promise.race([
-        this.pending,
+        this.pending.result,
         new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), 2_500); }),
       ]);
       this.cached = { ready, until: Date.now() + CACHE_MS };

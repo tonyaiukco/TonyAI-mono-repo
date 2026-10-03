@@ -15,7 +15,7 @@ variable "release" {
     source_sha              = string, release_id = string, supabase_project_ref = string,
     api_digest              = string, web_digest = string,
     database_secret_version = string, backend_secret_version = string,
-    storage_cleanup_hold    = optional(bool, false), storage_sweep_interval_seconds = optional(number, 300)
+    storage_cleanup_hold    = bool, storage_sweep_interval_seconds = number
   })
   validation {
     condition     = alltrue([for digest in [var.release.api_digest, var.release.web_digest] : can(regex("^sha256:[a-f0-9]{64}$", digest))]) && alltrue([for version in [var.release.database_secret_version, var.release.backend_secret_version] : can(regex("^[a-f0-9]{32}$", version))]) && can(regex("^[a-z]{20}$", var.release.supabase_project_ref)) && can(regex("^[a-f0-9]{40}$", var.release.source_sha)) && can(regex("^[a-z][a-z0-9-]{0,29}$", var.release.release_id))

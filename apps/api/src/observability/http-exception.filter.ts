@@ -59,7 +59,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         : { statusCode: status, message: 'Internal server error' };
 
     const ctx = currentRequestContext();
-    const path = String(request?.originalUrl ?? request?.url ?? '');
+    const path = String(request?.originalUrl ?? request?.url ?? '').split('?')[0];
     const userId = (request?.user as { id?: string } | undefined)?.id;
 
     // 5xx and non-HTTP throws are defects; 4xx are expected business outcomes

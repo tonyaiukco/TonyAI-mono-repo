@@ -4,6 +4,10 @@ Use a private owner session restored through runbook 00. Keep the last verified
 release manifest and DB/schema compatibility evidence. **Every application
 change uses a new immutable manifest and the same `deploy-apps.sh` path**. Never
 mix mutable candidates, ad hoc Container App updates or latest secret references.
+Every selected manifest must explicitly carry `storage_cleanup_hold` and
+`storage_sweep_interval_seconds`; copy the current incident hold into any older
+rollback manifest. Clearing an on/unknown hold requires owner-run
+`--ack-clear-storage-hold` only after the runbook 04 reports have been reviewed.
 
 ## Rotate backend key or DB URLs
 

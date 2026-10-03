@@ -19,7 +19,7 @@ def inputs():
             'vault_name':'vault', 'default_domain':'real.germanywestcentral.azurecontainerapps.io'},
             'release': {'source_sha':'a'*40,'release_id':'r001','supabase_project_ref':'abcdefghijklmnopqrst',
             'api_digest':'sha256:'+'a'*64,'web_digest':'sha256:'+'b'*64,
-            'database_secret_version':'a'*32,'backend_secret_version':'b'*32}}
+            'database_secret_version':'a'*32,'backend_secret_version':'b'*32, 'storage_cleanup_hold':False, 'storage_sweep_interval_seconds':300}}
 
 
 def app(kind, contract):
@@ -36,11 +36,13 @@ def app(kind, contract):
 class DeploymentVersionTests(unittest.TestCase):
     def test_every_individual_reference_image_identity_origin_and_ready_revision(self):
         contract = inputs()
-        for defect in ('none','api-image','web-image','database-version','backend-version','identity','origin','http','not-ready','web-secret','hold','interval','readiness'):
+        for defect in ('none','api-image','web-image','database-version','backend-version','identity','origin','http','not-ready','web-secret','hold','interval','readiness','liveness','startup'):
             state = {kind:app(kind,contract) for kind in ('api','web')}
             api = state['api']['properties']; web = state['web']['properties']
             if defect == 'hold': api['template']['containers'][0]['env'][0]['value'] = '1'
             if defect == 'interval': api['template']['containers'][0]['env'][1]['value'] = '600'
+            if defect == 'startup': api['template']['containers'][0]['probes'][0]['httpGet']['path'] = '/api/v1/health/ready'
+            if defect == 'liveness': api['template']['containers'][0]['probes'][1]['httpGet']['path'] = '/api/v1/health/ready'
             if defect == 'readiness': api['template']['containers'][0]['probes'][2]['httpGet']['path'] = '/api/v1/health'
             if defect == 'api-image': api['template']['containers'][0]['image'] = 'old'
             if defect == 'web-image': web['template']['containers'][0]['image'] = 'old'

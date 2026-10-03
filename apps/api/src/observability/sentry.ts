@@ -17,7 +17,19 @@ type SentryScope = {
   setUser(user: { id: string }): void;
 };
 
+type SentryTransport = () => {
+  send(envelope: unknown): Promise<{ statusCode: number }>;
+  flush(timeout: number): Promise<boolean>;
+};
+
+type SentryEvent = {
+  request?: { method?: string; url?: string; [key: string]: unknown };
+  tags?: Record<string, unknown>;
+};
+
 type SentryApi = {
+  httpIntegration(options: { maxIncomingRequestBodySize: 'none' }): unknown;
+  requestDataIntegration(options: { include: Record<string, boolean> }): unknown;
   init(options: Record<string, unknown>): void;
   withScope(callback: (scope: SentryScope) => void): void;
   captureException(error: unknown): void;
@@ -28,15 +40,37 @@ const dsn = process.env.SENTRY_DSN;
 
 let sentry: SentryApi | null = null;
 
-export async function initSentry(): Promise<void> {
+export async function initSentry(transport?: SentryTransport): Promise<void> {
   if (sentry || !dsn) return;
   const mod = (await import('@sentry/nestjs')) as unknown as SentryApi;
   mod.init({
     dsn,
     environment: process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? 'development',
     release: process.env.SENTRY_RELEASE,
-    // Errors first; tune sampling when we can see real staging traffic.
-    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0),
+    // Tracing can expose Storage object names/tokens in span attributes. Keep
+    // it off regardless of environment until span privacy has independent proof.
+    tracesSampleRate: 0,
+    tracePropagationTargets: [],
+    beforeSendTransaction: () => null,
+    ...(transport ? { transport } : {}),
+    integrations: [
+      mod.httpIntegration({ maxIncomingRequestBodySize: 'none' }),
+      mod.requestDataIntegration({ include: {
+        headers: false, cookies: false, data: false, query_string: false, ip: false,
+      } }),
+    ],
+    // Final allowlist also covers request data manually added to a scope.
+    beforeSend: (event: SentryEvent) => {
+      if (event.request) {
+        const { method, url } = event.request;
+        event.request = {
+          ...(method ? { method } : {}),
+          ...(url ? { url: url.split(/[?#]/)[0] } : {}),
+        };
+      }
+      if (typeof event.tags?.path === 'string') event.tags.path = event.tags.path.split('?')[0];
+      return event;
+    },
     // Compliance: this is a carbon-accounting product — never ship request
     // bodies, headers or cookies, which can carry tenant data and tokens.
     sendDefaultPii: false,
@@ -65,7 +99,7 @@ export function captureException(
   const mod = sentry;
   mod.withScope((scope) => {
     if (context?.requestId) scope.setTag('requestId', context.requestId);
-    if (context?.path) scope.setTag('path', context.path);
+    if (context?.path) scope.setTag('path', context.path.split('?')[0]);
     // Only the opaque user id — no email or tenant payload.
     if (context?.userId) scope.setUser({ id: context.userId });
     mod.captureException(error);
