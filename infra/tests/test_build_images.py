@@ -13,7 +13,7 @@ SCRIPT=ROOT/'infra/scripts/build-images.sh'
 
 class BuildTests(unittest.TestCase):
     def test_only_scanned_build_digests_are_recorded_and_no_foundation_mutation(self):
-        for mode in ('ok','dirty','bad-digest','privileged-assets','build-failure'):
+        for mode in ('ok','dirty','bad-digest','privileged-assets','build-failure','invalid-provenance'):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as d:
                 directory=Path(d); log=directory/'calls.jsonl'; output=directory/'candidate.json'
                 def executable(name,source):
@@ -44,13 +44,16 @@ elif args[0]=='cp':
 ''')
                 env={**os.environ,'PATH':d+os.pathsep+os.environ['PATH'],'BUILD_TEST_MODE':mode,'CALL_LOG':str(log),
                      'SUPABASE_PROJECT_REF':'abcdefghijklmnopqrst','SUPABASE_URL':'https://abcdefghijklmnopqrst.supabase.co',
-                     'ACR_HOST':'registry.azurecr.io','ACR_NAME':'registry','API_ORIGIN':'https://api.example',
-                     'WEB_ORIGIN':'https://web.example','RESOURCE_GROUP':'staging'}
+                     'ACR_HOST':'registry.azurecr.io','ACR_NAME':'registry','API_ORIGIN':'https://tonyai-staging-api.real.germanywestcentral.azurecontainerapps.io',
+                     'WEB_ORIGIN':'https://tonyai-staging-web.real.germanywestcentral.azurecontainerapps.io','RESOURCE_GROUP':'staging',
+                     'PREFIX':'tonyai','ACA_DEFAULT_DOMAIN':'real.germanywestcentral.azurecontainerapps.io'}
+                if mode=='invalid-provenance': env['WEB_ORIGIN']='https://foreign.invalid'
                 result=subprocess.run(['bash',str(SCRIPT),'a'*40,str(output)],cwd=ROOT,env=env,input='sb_publishable_synthetic\n',capture_output=True,text=True)
                 self.assertEqual(result.returncode==0,mode=='ok',result.stderr)
                 self.assertEqual(output.exists(),mode=='ok')
                 calls=[json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
                 self.assertFalse(any(call[:2]==['group','update'] for call in calls))
+                if mode=='invalid-provenance': self.assertEqual(calls, [])
                 if mode=='ok':
                     actual=json.loads(output.read_text())
                     self.assertEqual(actual['api_digest'],'sha256:'+'a'*64)

@@ -2,9 +2,8 @@
 #
 # Deliberately NOT on pull_request. The suite is serial by construction —
 # `workers: 1`, one shared database, cross-spec tuple reservations — so it
-# cannot be sharded without giving each shard its own database, and this repo is
-# private, so a full run on every push is billed and would change how people
-# work. (It was ~13 minutes when this was written and 16.5 on 2026-09-20 —
+# cannot be sharded without giving each shard its own database. This public
+# repository retains the owner-selected nightly/manual cadence (D22). (It was ~13 minutes when this was written and 16.5 on 2026-09-20 —
 # the figure is the suite's own output, not a number to keep in sync here;
 # see the run summary. About 5 of those minutes are the Supabase stack.) Nightly catches drift within 24 hours, which is the thing that actually
 # matters here: the `rbac-tenant` approval fixture broke on 2026-08-20 and

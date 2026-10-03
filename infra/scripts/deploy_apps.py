@@ -47,12 +47,17 @@ def main():
     parser.add_argument('--backend', required=True)
     parser.add_argument('--inputs', required=True)
     parser.add_argument('--verify-only', action='store_true')
+    parser.add_argument('--approved-apply', action='store_true',
+                        help='Apply a saved application plan after protected environment approval.')
     args = parser.parse_args()
     inputs = json.loads(Path(args.inputs).read_text())
     validate_release(inputs)
     if not args.verify_only:
-        invoke('application', args.backend, args.inputs, 'plan')
-        invoke('application', args.backend, args.inputs, 'apply')
+        if args.approved_apply:
+            invoke('application', args.backend, args.inputs, 'approved-apply')
+        else:
+            invoke('application', args.backend, args.inputs, 'plan')
+            invoke('application', args.backend, args.inputs, 'apply')
     verify(inputs)
 
 

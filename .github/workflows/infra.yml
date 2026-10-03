@@ -1,10 +1,10 @@
 name: Infrastructure
 on:
   pull_request:
-    paths: ['infra/**', '.github/workflows/infra.yml', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
+    paths: ['scripts/rls-probes.mjs', 'infra/**', '.github/workflows/**', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
   push:
     branches: [main]
-    paths: ['infra/**', '.github/workflows/infra.yml', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
+    paths: ['scripts/rls-probes.mjs', 'infra/**', '.github/workflows/**', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
 permissions:
   contents: read
 jobs:
@@ -15,10 +15,19 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          package-manager-cache: false
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.13.3
           terraform_wrapper: false
+      - name: Install the pinned workflow parser
+        run: |
+          python3 -m venv "$RUNNER_TEMP/infra-tests"
+          "$RUNNER_TEMP/infra-tests/bin/python" -m pip install --require-hashes -r infra/tests/requirements.txt
+          echo "$RUNNER_TEMP/infra-tests/bin" >> "$GITHUB_PATH"
       - name: Infrastructure unit and failure-path tests
         run: python3 -m unittest discover -s infra/tests -v
       - name: Regression mutation checks
