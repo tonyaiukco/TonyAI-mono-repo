@@ -18,11 +18,13 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 /**
  * A new client holding exactly ONE connection, so "request A and request B on
  * two connections" is literal, and `backendPid` names the session a client's
- * queries run in.
+ * queries run in. `connections` > 1 gives a pooled client instead, for a test
+ * that must let a stray query outside a transaction reach the database (and
+ * commit) rather than wait for the one connection the transaction holds.
  */
-export function connect(): PrismaService {
+export function connect(connections = 1): PrismaService {
   const url = new URL(process.env.DATABASE_URL ?? '');
-  url.searchParams.set('connection_limit', '1');
+  url.searchParams.set('connection_limit', String(connections));
   return new PrismaService({ datasourceUrl: url.toString() });
 }
 

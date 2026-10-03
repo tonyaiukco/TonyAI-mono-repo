@@ -6,6 +6,8 @@ import {
   PeriodLockedError,
   RecordChangedError,
 } from '../../src/activity-records/errors';
+import { AuditService } from '../../src/audit/audit.service';
+import { BulkSubmitService } from '../../src/bulk-upload/bulk-submit.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
   attachEvidence,
@@ -383,5 +385,144 @@ describe('F03 — a record moved to another period between an upload\'s read and
     expect(await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
     // The blob stored before the transaction is removed again.
     expect(storage.remove).toHaveBeenCalledWith('evidence', [storage.upload.mock.calls[0][1]]);
+  });
+});
+
+describe('F03 — a REJECTED record moved into a period being locked (D03)', () => {
+  // An edit moving a record takes the TARGET period's lock too. Without it, a
+  // rejected record could land in a period whose lock had already counted it
+  // out — a locked period holding a record its author can no longer fix.
+  const rejectedInFebruary = () =>
+    createRecord(a, tenant, {
+      category: 'Water',
+      activityUnit: 'cubic_metres',
+      periodValue: 'February',
+      status: ActivityRecordStatus.rejected,
+    });
+  const moveToJanuary = (id: string) => (s: Services) =>
+    s.records.update(tenant.users.dataEntry, id, { periodValue: 'January' });
+
+  it('a lock held before its write: the move waits, then finds January closed', async () => {
+    const record = await rejectedInFebruary();
+    const r = await race(['PeriodLock', 'create'], lockJanuary, moveToJanuary(record.id));
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(PeriodLockedError);
+    expect((await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).periodValue).toBe(
+      'February',
+    );
+  });
+
+  it('a move held before its write: the lock waits, then refuses over the rejected record', async () => {
+    const record = await rejectedInFebruary();
+    const r = await race(['ActivityRecord', ['update', 'updateMany']], moveToJanuary(record.id), lockJanuary);
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(ConflictException);
+    expect((r.second as Error).message).toMatch(/rejected record/);
+    expect(await lockCount()).toBe(0);
+  });
+});
+
+describe('F03 — approve, reject and submit, against each other', () => {
+  const underReview = () => createRecord(a, tenant, { status: ActivityRecordStatus.under_review });
+
+  it('a reject held before its write: the approve waits, then is a lost race — nothing is approved unresubmitted', async () => {
+    const record = await underReview();
+    const r = await race(
+      ['ActivityRecord', ['update', 'updateMany']],
+      (s) => s.records.reject(tenant.users.consultant, record.id, 'Wrong meter'),
+      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(RecordChangedError);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.rejected);
+    expect(await auditActions(record.id)).toEqual(['reject']);
+  });
+
+  it('an approve held before its write: the reject waits, then is a lost race — the approval is not regressed', async () => {
+    const record = await underReview();
+    const r = await race(
+      ['ActivityRecord', ['update', 'updateMany']],
+      (s) => s.records.approve(tenant.users.superAdmin, record.id),
+      (s) => s.records.reject(tenant.users.consultant, record.id, 'Wrong meter'),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(RecordChangedError);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.approved);
+    expect(await auditActions(record.id)).toEqual(['approve']);
+  });
+
+  it('a double submit: the second waits, then is a lost race — one transition, one audit row', async () => {
+    const { record } = await submittableDraft();
+    const r = await race(
+      ['ActivityRecord', ['update', 'updateMany']],
+      (s) => s.records.submit(tenant.users.dataEntry, record.id),
+      (s) => s.records.submit(tenant.users.dataEntry, record.id),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r.first).toBe('ok');
+    expect(r.second).toBeInstanceOf(RecordChangedError);
+    expect(await auditActions(record.id)).toEqual(['submit']);
+  });
+});
+
+describe('F03 — two requests unlinking the last links of one shared file', () => {
+  // Each must see the other's unlink, or both find a link still there and
+  // neither deletes the file: an evidence row no record holds. The file's row
+  // lock is what serialises them; held here just before the first one's audit
+  // row, i.e. after its unlink and its "any links left?" read.
+  async function sharedFile() {
+    const first = await createRecord(a, tenant);
+    const second = await createRecord(a, tenant, { periodValue: 'February' });
+    const file = await attachEvidence(a, tenant, [first.id, second.id]);
+    return { first, second, file };
+  }
+
+  it('two detaches: the second waits, then deletes the file', async () => {
+    const { first, second, file } = await sharedFile();
+    const r = await race(
+      ['AuditLog', 'create'],
+      (s) => s.evidence.detach(tenant.users.dataEntry, first.id, file.id),
+      (s) => s.evidence.detach(tenant.users.dataEntry, second.id, file.id),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r).toMatchObject({ first: 'ok', second: 'ok' });
+    expect(await observer.evidence.count({ where: { id: file.id } })).toBe(0);
+  });
+
+  it('a record delete and a detach of the other link: the second waits, then deletes the file', async () => {
+    const { first, second, file } = await sharedFile();
+    const r = await race(
+      ['AuditLog', 'create'],
+      (s) => s.records.remove(tenant.users.dataEntry, first.id),
+      (s) => s.evidence.detach(tenant.users.dataEntry, second.id, file.id),
+    );
+    expect(r.how).toBe('blocked');
+    expect(r).toMatchObject({ first: 'ok', second: 'ok' });
+    expect(await observer.evidence.count({ where: { id: file.id } })).toBe(0);
+  });
+});
+
+describe('F03 — the importer reuses these paths (bulk submit)', () => {
+  it('a lock held before its write: the bulk submit waits, then reports the record as period_locked', async () => {
+    const { record } = await submittableDraft();
+    const held = holdBefore(a, 'PeriodLock', 'create');
+    const pidB = await backendPid(b);
+    const lock = outcome(lockJanuary(lifecycleServices(held.client)));
+    await held.reached();
+    const bulk = new BulkSubmitService(b, lifecycleServices(b).records, new AuditService(b));
+    const report = bulk.submitIds(tenant.users.dataEntry, [record.id]);
+    const how = await settledOrBlocked(report, pidB, observer);
+    held.release();
+
+    expect(how).toBe('blocked');
+    expect(await lock).toBe('ok');
+    expect((await report).failed).toEqual([
+      expect.objectContaining({ recordId: record.id, code: 'period_locked' }),
+    ]);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
   });
 });

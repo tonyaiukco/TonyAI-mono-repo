@@ -50,6 +50,29 @@ export function failingAuditClient(base: PrismaService): PrismaService {
   }) as unknown as PrismaService;
 }
 
+export const ABORTED_AFTER_AUDIT = 'aborted after the audit insert (LP1-01 test)';
+
+/**
+ * A client whose audit insert SUCCEEDS and then throws, so the transaction
+ * that issued it rolls back. Pass a client with more than one connection: a
+ * service that wrote the audit row (or its change) on its root client instead
+ * of the transaction's would then COMMIT that write on a second connection,
+ * and the test finds it — rather than catching the mistake only because a
+ * one-connection client starved.
+ */
+export function abortAfterAuditClient(base: PrismaService): PrismaService {
+  return base.$extends({
+    query: {
+      auditLog: {
+        async create({ args, query }) {
+          await query(args);
+          throw new Error(ABORTED_AFTER_AUDIT);
+        },
+      },
+    },
+  }) as unknown as PrismaService;
+}
+
 /** A multer-shaped file for the upload paths. */
 export function pdfFile(): Express.Multer.File {
   return {

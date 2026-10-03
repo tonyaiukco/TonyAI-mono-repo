@@ -1,9 +1,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ActivityRecordStatus } from '@tonyai/db';
+import { AuditService } from '../../src/audit/audit.service';
+import { BulkSubmitService } from '../../src/bulk-upload/bulk-submit.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { attachEvidence, connect, createRecord, createTenant, type Tenant } from './db';
 import {
+  ABORTED_AFTER_AUDIT,
   INJECTED_AUDIT_FAILURE,
+  abortAfterAuditClient,
   failingAuditClient,
   lifecycleServices,
   pdfFile,
@@ -21,17 +25,25 @@ import {
  * did not commit. Then run it again on a healthy client and require exactly
  * one logical mutation with exactly one audit row: a retry after the failure
  * is a clean first attempt, not a conflict with a half-done one.
+ *
+ * Between the two, the same mutation runs on a POOLED client whose audit
+ * insert succeeds and then throws: the transaction rolls back, and neither
+ * the change nor the audit row may survive. That is what proves both went
+ * through the transaction's client — a write or audit row issued on the
+ * service's root client would commit on another connection and be found.
  */
 
 let prisma: PrismaService;
+let pooled: PrismaService;
 let tenant: Tenant;
 
 beforeAll(() => {
   prisma = connect();
+  pooled = connect(4);
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  await Promise.all([prisma.$disconnect(), pooled.$disconnect()]);
 });
 
 beforeEach(async () => {
@@ -265,6 +277,16 @@ describe('F02 — a mutation and its audit row are one transaction', () => {
       expect(failedStorage.remove).not.toHaveBeenCalled();
     }
 
+    // Audit row written, then the transaction aborted: nothing survives, on
+    // a client where a stray root-client write could have committed.
+    const abortedStorage: StorageStub = storageStub();
+    await expect(c.act(lifecycleServices(abortAfterAuditClient(pooled), abortedStorage), ids)).rejects.toThrow(
+      ABORTED_AFTER_AUDIT,
+    );
+    expect(await tenantState()).toEqual(before);
+    expect(await auditRows()).toEqual([]);
+    if (c.name !== 'evidence upload') expect(abortedStorage.remove).not.toHaveBeenCalled();
+
     // The retry is a first attempt: it succeeds once, with one audit row.
     const storage = storageStub();
     await expect(c.act(lifecycleServices(prisma, storage), ids)).resolves.toBeDefined();
@@ -273,5 +295,27 @@ describe('F02 — a mutation and its audit row are one transaction', () => {
     expect(rows[0]).toMatchObject(c.audit);
     expect(await tenantState()).not.toEqual(before);
     expect(storage.remove).toHaveBeenCalledTimes(c.removesBlob ? 1 : 0);
+  });
+});
+
+describe('F02 — the importer reuses these paths (bulk submit)', () => {
+  it('an audit failure leaves the record untouched and reports it; the retry submits it once', async () => {
+    const record = await createRecord(prisma, tenant);
+    await attachEvidence(prisma, tenant, [record.id]);
+    const failing = failingAuditClient(prisma);
+    const bulk = (client: PrismaService) =>
+      new BulkSubmitService(client, lifecycleServices(client).records, new AuditService(client));
+
+    const report = await bulk(failing).submitIds(tenant.users.dataEntry, [record.id]);
+    expect(report.submitted).toEqual([]);
+    expect(report.failed).toEqual([expect.objectContaining({ recordId: record.id, code: 'unexpected' })]);
+    expect((await prisma.activityRecord.findUniqueOrThrow({ where: { id: record.id } })).status).toBe(
+      ActivityRecordStatus.draft,
+    );
+    expect(await prisma.auditLog.count({ where: { entityId: record.id } })).toBe(0);
+
+    const again = await bulk(prisma).submitIds(tenant.users.dataEntry, [record.id]);
+    expect(again.submitted).toHaveLength(1);
+    expect(await prisma.auditLog.count({ where: { entityId: record.id } })).toBe(1);
   });
 });
