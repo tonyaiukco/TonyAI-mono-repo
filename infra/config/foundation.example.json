@@ -1,0 +1,17 @@
+{
+  "config": {
+    "subscription_id": "<subscription-uuid>",
+    "tenant_id": "<tenant-uuid>",
+    "environment": "staging",
+    "prefix": "tonyai",
+    "resource_group": "tonyai-staging",
+    "registry_name": "<globally-unique-registry>",
+    "vault_name": "<globally-unique-vault>",
+    "repository": "tonyaiukco/TonyAI-mono-repo",
+    "release_sha": "<reviewed-infrastructure-commit-sha>",
+    "owner_object_id": "<signed-in-owner-object-uuid>",
+    "deployer_object_id": "",
+    "runtime_secrets_ready": false,
+    "apps_ready": false
+  }
+}

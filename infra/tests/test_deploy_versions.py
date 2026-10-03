@@ -1,68 +1,61 @@
-"""Execute the real owner deploy helper with fake CLIs; stale references must stop it."""
-import json
-import os
-from pathlib import Path
-import subprocess
+"""A single release contract must survive independent per-field ARM readback."""
+import copy
+import contextlib
+import io
 import sys
-import tempfile
+from pathlib import Path
 import unittest
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'scripts' / 'deploy-apps.sh'
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+from deploy_apps import verify
+from terraform_run import validate_release
+from pooler import SafeFailure
+
+
+def inputs():
+    return {'foundation': {'subscription_id':'00000000-0000-0000-0000-000000000001',
+            'tenant_id':'00000000-0000-0000-0000-000000000002', 'environment':'staging',
+            'resource_group':'staging', 'prefix':'tonyai', 'registry_name':'registry',
+            'vault_name':'vault', 'default_domain':'real.germanywestcentral.azurecontainerapps.io'},
+            'release': {'source_sha':'a'*40,'release_id':'r001','supabase_project_ref':'abcdefghijklmnopqrst',
+            'api_digest':'sha256:'+'a'*64,'web_digest':'sha256:'+'b'*64,
+            'database_secret_version':'a'*32,'backend_secret_version':'b'*32}}
+
+
+def app(kind, contract):
+    f, r = contract['foundation'], contract['release']
+    identity = '/subscriptions/'+f['subscription_id']+'/resourceGroups/staging/providers/Microsoft.ManagedIdentity/userAssignedIdentities/tonyai-staging-api'
+    secrets = [{'name':name,'identity':identity,'keyVaultUrl':'https://vault.vault.azure.net/secrets/'+name+'/'+r[field]}
+               for name,field in [('database-url','database_secret_version'),('supabase-service-role-key','backend_secret_version')]] if kind=='api' else []
+    return {'properties': {
+        'template': {'containers':[{'image':'registry.azurecr.io/tonyai/'+kind+'@'+r[kind+'_digest']}]},
+        'configuration': {'ingress': {'allowInsecure':False,'fqdn':'tonyai-staging-'+kind+'.'+f['default_domain']},'secrets':secrets},
+        'latestReadyRevisionName':'tonyai-staging-'+kind+'--'+r['release_id']}}
 
 
 class DeploymentVersionTests(unittest.TestCase):
-    def test_only_matching_versioned_references_are_recorded(self):
-        for stale in ('0','1','bad-url','dirty','wrong-image'):
-            with self.subTest(stale=stale), tempfile.TemporaryDirectory() as directory:
-                folder = Path(directory)
-                git = folder / 'git'
-                git.write_text('#!/bin/sh\nif [ "$1" = rev-parse ]; then printf "%s\\n" "$RELEASE_SHA"; elif [ "$STALE" = dirty ]; then echo dirty; fi\n')
-                git.chmod(0o755)
-                az = folder / 'az'
-                az.write_text('#!' + sys.executable + '\n' + '''
-import json,os,sys
-args=sys.argv[1:]
-with open(os.environ['CALL_LOG'],'a') as log: log.write(json.dumps(args)+'\\n')
-base='https://vault.vault.azure.net/secrets/'
-if args[:3]==['keyvault','secret','show']:
-    name=args[args.index('--name')+1]
-    id=base+name+'/'+('a' if name=='database-url' else 'b')*32
-    if name=='database-url':
-        value='postgresql://postgres.abcdefghijklmnopqrst:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt&pgbouncer=true'
-        if os.environ['STALE']=='bad-url': value+='&host=evil.example.com'
-        print(json.dumps({'id':id,'value':value,'attributes':{'enabled':True}}))
-    else: print(id)
-elif args[:3]==['containerapp','secret','list']:
-    query=args[args.index('--query')+1]
-    if '[0]' in query:
-        name='database-url' if 'database-url' in query else 'supabase-service-role-key'
-        version=('a' if name=='database-url' else 'b')*32
-        print(base+name+'/'+('c'*32 if os.environ['STALE']=='1' else version))
-    else: print('[]')
-elif args[:2]==['containerapp','show']:
-    app='api' if args[args.index('-n')+1].endswith('-api') else 'web'
-    print('wrong-image' if os.environ['STALE']=='wrong-image' else 'registry.azurecr.io/tonyai/'+app+'@'+os.environ[app.upper()+'_DIGEST'])
-else: print('Succeeded')
-''')
-                az.chmod(0o755)
-                log = folder / 'calls.jsonl'
-                env = {**os.environ,'PATH':directory+os.pathsep+os.environ['PATH'],
-                       'RELEASE_SHA':'a'*40,'RESOURCE_GROUP':'staging','PREFIX':'tonyai',
-                       'SUPABASE_PROJECT_REF':'abcdefghijklmnopqrst','VAULT_NAME':'vault','ACR_HOST':'registry.azurecr.io',
-                       'API_DIGEST':'sha256:'+'a'*64,'WEB_DIGEST':'sha256:'+'b'*64,
-                       'CALL_LOG':str(log),'STALE':stale}
-                result = subprocess.run(['bash',str(SCRIPT)],env=env,capture_output=True,text=True)
-                calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-                updated = any(call[:2]==['group','update'] for call in calls)
-                self.assertEqual(result.returncode==0, stale=='0',result.stderr)
-                self.assertEqual(updated,stale=='0')
-                if stale in ('bad-url','dirty'):
-                    self.assertFalse(any(call[:2]==['deployment','group'] for call in calls))
-                    continue
-                deployment = next(call for call in calls if call[:3]==['deployment','group','create'])
-                self.assertIn('databaseSecretVersion='+'a'*32,deployment)
-                self.assertIn('backendSecretVersion='+'b'*32,deployment)
-                if stale == '0':
-                    update = next(call for call in calls if call[:2]==['group','update'])
-                    self.assertIn('tags.apiDigest='+env['API_DIGEST'], update)
-                    self.assertIn('tags.webDigest='+env['WEB_DIGEST'], update)
+    def test_every_individual_reference_image_identity_origin_and_ready_revision(self):
+        contract = inputs()
+        for defect in ('none','api-image','web-image','database-version','backend-version','identity','origin','http','not-ready','web-secret'):
+            state = {kind:app(kind,contract) for kind in ('api','web')}
+            api = state['api']['properties']; web = state['web']['properties']
+            if defect == 'api-image': api['template']['containers'][0]['image'] = 'old'
+            if defect == 'web-image': web['template']['containers'][0]['image'] = 'old'
+            if defect == 'database-version': api['configuration']['secrets'][0]['keyVaultUrl'] += 'stale'
+            if defect == 'backend-version': api['configuration']['secrets'][1]['keyVaultUrl'] += 'stale'
+            if defect == 'identity': api['configuration']['secrets'][0]['identity'] = 'foreign'
+            if defect == 'origin': web['configuration']['ingress']['fqdn'] = 'foreign.invalid'
+            if defect == 'http': api['configuration']['ingress']['allowInsecure'] = True
+            if defect == 'not-ready': api['latestReadyRevisionName'] = 'old'
+            if defect == 'web-secret': web['configuration']['secrets'] = [{'name':'unexpected'}]
+            def read(*args): return state['api' if args[-1].endswith('-api') else 'web']
+            with self.subTest(defect=defect), contextlib.redirect_stdout(io.StringIO()):
+                if defect == 'none': verify(contract, read)
+                else:
+                    with self.assertRaises(SafeFailure): verify(contract, read)
+
+    def test_release_cannot_select_latest_cross_origin_or_include_secret_value(self):
+        for section,field,value in [('release','api_digest','latest'),('release','database_secret_version','latest'),
+                                   ('foundation','default_domain','evil.invalid'),('release','database_url','secret')]:
+            contract = inputs(); contract[section][field] = value
+            with self.subTest(field=field), self.assertRaises(SafeFailure): validate_release(contract)

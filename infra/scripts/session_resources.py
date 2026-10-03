@@ -1,4 +1,6 @@
 """Restore nonsecret settings from Azure resources, never writable deployment outputs."""
+import json
+from pathlib import Path
 import re
 import shlex
 import sys
@@ -6,7 +8,7 @@ from configure_oidc import az
 from pooler import SafeFailure
 
 
-def restore(subscription, group):
+def restore(subscription, group, journal_path=None):
     data = az('group', 'show', '--subscription', subscription, '-n', group)
     tags = data.get('tags') or {}
     if tags.get('environment') != 'staging':
@@ -50,14 +52,16 @@ def restore(subscription, group):
            'WEB_ORIGIN':'https://' + prefix + '-staging-web.' + domain,
            'API_ORIGIN':'https://' + prefix + '-staging-api.' + domain,
            'AZURE_TENANT_ID':az('account', 'show', '--subscription', subscription)['tenantId']}
-    project = tags.get('supabaseProjectRef', '')
-    if project and not re.fullmatch(r'[a-z]{20}', project):
-        raise SafeFailure('Invalid Supabase project metadata.')
+    project = ''
+    if journal_path:
+        journal = json.loads(Path(journal_path).read_text())
+        target = journal.get('target', {})
+        project = journal.get('project_ref', '')
+        if (target.get('vault') != env['VAULT_NAME'] or target.get('web_origin') != env['WEB_ORIGIN']
+                or journal.get('configured') is not True or not re.fullmatch(r'[a-z]{20}', project)):
+            raise SafeFailure('Supabase journal is incomplete or belongs to another foundation.')
     env.update(SUPABASE_PROJECT_REF=project, SUPABASE_URL='https://' + project + '.supabase.co' if project else '')
-    for var, tag in {'AZURE_CLIENT_ID':'githubClientId', 'DEPLOYER_OBJECT_ID':'githubPrincipalId',
-                     'API_DIGEST':'apiDigest','WEB_DIGEST':'webDigest',
-                     'CANDIDATE_API_DIGEST':'candidateApiDigest','CANDIDATE_WEB_DIGEST':'candidateWebDigest',
-                     'DATABASE_SECRET_VERSION':'databaseSecretVersion','BACKEND_SECRET_VERSION':'backendSecretVersion'}.items():
+    for var, tag in {'AZURE_CLIENT_ID':'githubClientId', 'DEPLOYER_OBJECT_ID':'githubPrincipalId'}.items():
         env[var] = tags.get(tag, '')
     return env
 

@@ -1,25 +1,40 @@
 name: Infrastructure
 on:
   pull_request:
-    paths: ['infra/**', '.github/workflows/infra.yml', 'apps/*/Dockerfile']
+    paths: ['infra/**', '.github/workflows/infra.yml', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
   push:
     branches: [main]
-    paths: ['infra/**', '.github/workflows/infra.yml', 'apps/*/Dockerfile']
+    paths: ['infra/**', '.github/workflows/infra.yml', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
 permissions:
   contents: read
 jobs:
   infra:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.13.3
+          terraform_wrapper: false
       - name: Infrastructure unit and failure-path tests
         run: python3 -m unittest discover -s infra/tests -v
       - name: Regression mutation checks
         run: python3 infra/tests/check_mutations.py
-      - name: Compile Bicep (no Azure login)
+      - name: State security and writer policy
+        run: python3 infra/scripts/check_terraform_policy.py
+      - name: Validate Terraform without a backend or cloud credentials
         shell: bash
         run: |
-          az bicep install --version v0.47.16
-          for template in infra/azure/*.bicep; do
-            az bicep build --file "$template" --outfile "$RUNNER_TEMP/$(basename "$template" .bicep).json"
+          terraform fmt -check -recursive infra/terraform
+          for root in foundation application; do
+            terraform -chdir="infra/terraform/$root" init -backend=false -input=false -lockfile=readonly
+            terraform -chdir="infra/terraform/$root" validate -no-color
+            terraform -chdir="infra/terraform/$root" test -no-color
           done
+      - name: Terraform secret grant mutation checks
+        run: python3 infra/tests/check_grant_mutations.py
+      - name: Docker context excludes infrastructure secrets and state
+        run: python3 infra/tests/check_docker_context.py

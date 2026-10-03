@@ -27,7 +27,7 @@ class OidcOwnershipTests(unittest.TestCase):
     def az(self, *args):
         self.calls.append(args)
         if args[:2] == ('group','show'):
-            return {'id':GROUP,'tags':{'environment':'staging', **({'githubClientId':'client'} if self.saved else {})}}
+            return {'id':GROUP,'tags':{'environment':'staging','githubRepository':'owner/repo', **({'githubClientId':'client'} if self.saved else {})}}
         if args[:3] == ('ad','signed-in-user','show'): return {'id':'operator'}
         if args[:3] == ('ad','app','list'): return self.named_apps
         if args[:3] in (('ad','app','show'),('ad','app','create')): return self.app
@@ -43,7 +43,7 @@ class OidcOwnershipTests(unittest.TestCase):
         self.fail('Unexpected Azure call: '+str(args[:4]))
 
     def configure(self):
-        with patch.object(oidc,'az',side_effect=self.az), contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(oidc,'verify_environment'), patch.object(oidc,'az',side_effect=self.az), contextlib.redirect_stdout(io.StringIO()):
             oidc.configure('sub','staging','owner/repo')
 
     def assert_no_federation(self):
