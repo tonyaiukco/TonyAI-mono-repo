@@ -145,7 +145,8 @@ export async function getAccessToken(
   return (await res.json()).access_token as string;
 }
 
-// Shared evidence fixture (a tiny valid PDF; the API checks MIME + size, not content).
+// Shared evidence fixture: a tiny but REAL PDF. Since LP1-02 the API checks the
+// bytes against the declared type, so a placeholder of another shape is refused.
 export const EVIDENCE_FIXTURE = resolve(__dirname, 'fixtures/sample-invoice.pdf');
 
 interface CommittedRecordInput {

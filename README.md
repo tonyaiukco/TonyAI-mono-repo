@@ -199,7 +199,7 @@ Recurring procedures are packaged as **skills** in [`.claude/skills/`](.claude/s
 | **aggregation-endpoint** | Add a server-side rollup endpoint (the status/total math lives in the API, never in the browser) |
 | **rls-for-table** | Add Supabase RLS to a new table (enable-not-force, `auth.uid()` policies, shadow-DB shim, verification) |
 | **wire-page** | Wire a page to live API data with real loading / empty / error (incl. 401/403) states |
-| **supabase-storage** | Add a private-bucket file capability: upload through the API, signed-URL download, RLS, reclaim on delete |
+| **supabase-storage** | Add a private-bucket file capability: upload through the API, content checks, signed-URL download, RLS, every write/removal recoverable through storage intents (LP1-02) |
 | **workflow-gate** | Add a lifecycle gate (status/lock/authorship) that refuses consistently across every affected route |
 | **e2e-flow** | Add a Playwright E2E spec or an RLS/API probe against the running local stack (shared login / API-token / safe-period / evidence-upload / teardown helpers) |
 | **report-generation** | Add a server-generated, tenant-scoped file artifact (PDF via Puppeteer / Excel / CSV) streamed as an audited download |
