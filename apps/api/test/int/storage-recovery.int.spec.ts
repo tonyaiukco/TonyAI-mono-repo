@@ -557,6 +557,16 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
     expect(await intents()).toEqual([]);
   });
 
+  it('Storage never overwrites an object: a second write to a key is refused and the first bytes stay', async () => {
+    const path = `${tenant.subsidiaryId}/written-once.pdf`;
+    const original = Buffer.from('%PDF-1.4 original');
+    await storage.upload(EVIDENCE_BUCKET, path, original, 'application/pdf');
+    await expect(
+      storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4 replaced'), 'application/pdf'),
+    ).rejects.toThrow(/already exists/);
+    expect(sha256(await storage.download(EVIDENCE_BUCKET, path))).toBe(sha256(original));
+  });
+
   it('never removes an orphan — an object no row owns and no intent names', async () => {
     const path = `${tenant.subsidiaryId}/orphan.pdf`;
     await storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4\n'), 'application/pdf');
