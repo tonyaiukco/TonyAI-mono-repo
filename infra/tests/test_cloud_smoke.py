@@ -115,18 +115,29 @@ class CloudSmokeTests(unittest.TestCase):
         from cloud_smoke import run
         from test_prepare_release import fixture
         candidate, contract = fixture()
-        for defect in ('none', 'candidate', 'sourceSha', 'projectRef', 'web', 'api'):
+        for defect in ('none', 'candidate', 'sourceSha', 'projectRef', 'web', 'api', 'supabase', 'mode',
+                       'tenants-missing', 'tenants-count', 'userId', 'organisationId', 'subsidiaryId',
+                       'duplicate-across', 'duplicate-within', 'email', 'name'):
             target = target_for(candidate)
             journal = {'candidate': candidate, 'target': target}
             if defect=='candidate': journal['candidate'] = {**candidate, 'source_sha':'b'*40}
-            elif defect!='none': target[defect] = 'foreign'
+            elif defect == 'tenants-missing': target.pop('tenants')
+            elif defect == 'tenants-count': target['tenants'] = target['tenants'][:1]
+            elif defect in ('userId', 'organisationId', 'subsidiaryId', 'email', 'name'):
+                target['tenants'][0][defect] = 'foreign'
+            elif defect == 'duplicate-across': target['tenants'][1]['userId'] = target['tenants'][0]['userId']
+            elif defect == 'duplicate-within': target['tenants'][0]['subsidiaryId'] = target['tenants'][0]['userId']
+            elif defect!='none': target[defect] = 'https://foreign.invalid' if defect=='supabase' else 'foreign'
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as d:
                 path = Path(d)/'journal.json'; path.write_text(json.dumps(journal))
-                with patch('cloud_smoke.bind'), patch('cloud_smoke.secret', return_value='synthetic'), patch('cloud_smoke.child'), patch('cloud_smoke.cleanup') as cleanup:
+                with patch('cloud_smoke.bind'), patch('cloud_smoke.secret', return_value='synthetic') as secret, patch('cloud_smoke.child') as child, patch('cloud_smoke.cleanup') as cleanup:
                     if defect=='none':
                         run(candidate, contract, path, cleanup_only=True)
                         cleanup.assert_called_once_with(target, 'synthetic')
+                        secret.assert_called_once()
                     else:
                         with self.assertRaises(SafeFailure): run(candidate, contract, path, cleanup_only=True)
                         cleanup.assert_not_called()
+                        secret.assert_not_called()
+                    child.assert_not_called()
                 self.assertFalse(Path(str(path)+'.passed.json').exists())

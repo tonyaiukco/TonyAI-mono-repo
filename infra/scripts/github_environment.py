@@ -24,6 +24,7 @@ def verify_repository(repo, read):
     if (not {'deletion', 'non_fast_forward', 'pull_request', 'required_status_checks'} <= rules.keys()
             or pull.get('required_approving_review_count', 0) < 1
             or pull.get('dismiss_stale_reviews_on_push') is not True
+            or pull.get('require_last_push_approval') is not True
             or checks.get('strict_required_status_checks_policy') is not True
             or not {'build', 'docker-build', 'rls-probe'} <= contexts):
         raise SafeFailure('Main requires reviewed PRs, current CI checks and no deletion or force pushes.')

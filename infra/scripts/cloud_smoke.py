@@ -4,6 +4,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import subprocess
@@ -71,22 +72,48 @@ def child(script, env):
         raise SafeFailure('Fixture or smoke child failed; credentials and browser diagnostics withheld.')
 
 
+def validate_cleanup_target(target, candidate, release):
+    """Validate the journal in-process before a credential read or Auth request."""
+    if (not isinstance(target, dict) or target.get('mode') != 'staging'
+            or target.get('sourceSha') != candidate['source_sha']
+            or target.get('projectRef') != release['supabase_project_ref']
+            or target.get('web') != candidate['web_origin']
+            or target.get('api') != candidate['api_origin'] + '/api/v1'
+            or target.get('supabase') != 'https://' + release['supabase_project_ref'] + '.supabase.co'):
+        raise SafeFailure('Cleanup target differs from the selected candidate.')
+    tenants = target.get('tenants')
+    if not isinstance(tenants, list) or len(tenants) != 2:
+        raise SafeFailure('Cleanup requires two synthetic tenants.')
+    identifiers = []
+    uuid_pattern = r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'
+    for tenant in tenants:
+        if not isinstance(tenant, dict):
+            raise SafeFailure('Invalid cleanup tenant.')
+        ids = [tenant.get(field) for field in ('userId', 'organisationId', 'subsidiaryId')]
+        if any(not isinstance(value, str) or not re.fullmatch(uuid_pattern, value) for value in ids):
+            raise SafeFailure('Invalid cleanup tenant identifiers.')
+        if (not isinstance(tenant.get('email'), str)
+                or not re.fullmatch(r'lp2-smoke-[a-z0-9-]+@tonyai\.test', tenant['email'])
+                or tenant.get('name') != 'LP2 smoke ' + tenant['organisationId']):
+            raise SafeFailure('Invalid synthetic cleanup identity.')
+        identifiers.extend(ids)
+    if len(set(identifiers)) != len(identifiers):
+        raise SafeFailure('Cleanup tenants must have disjoint identifiers.')
+
+
 def run(candidate, inputs, journal_path, cleanup_only=False):
     bind(candidate, inputs, inputs['release']['source_sha'])
     f, r = inputs['foundation'], inputs['release']
-    key = secret(f['vault_name'], 'supabase-service-role-key', r['backend_secret_version'])
     if cleanup_only:
         journal = json.loads(Path(journal_path).read_text())
         if journal['candidate'] != candidate:
             raise SafeFailure('Cleanup candidate differs from the ID journal.')
         target = journal['target']
-        # Validate every target/ID using the same contract without credentials.
-        child('validate-smoke.mjs', {**os.environ, 'SMOKE_TARGET_JSON': json.dumps(target)})
-        if (target['sourceSha'] != candidate['source_sha'] or target['projectRef'] != r['supabase_project_ref']
-                or target['web'] != candidate['web_origin'] or target['api'] != candidate['api_origin'] + '/api/v1'):
-            raise SafeFailure('Cleanup target differs from the selected candidate.')
+        validate_cleanup_target(target, candidate, r)
+        key = secret(f['vault_name'], 'supabase-service-role-key', r['backend_secret_version'])
         cleanup(target, key)
         return
+    key = secret(f['vault_name'], 'supabase-service-role-key', r['backend_secret_version'])
     verify(inputs)  # No fixture writes until exact running images/revisions match.
     public = getpass.getpass('Staging public browser key: ')
     check_inputs({'SUPABASE_PROJECT_REF': r['supabase_project_ref'], 'NEXT_PUBLIC_SUPABASE_ANON_KEY': public,

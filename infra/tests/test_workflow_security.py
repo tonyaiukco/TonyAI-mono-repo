@@ -1,6 +1,8 @@
 """Parse real workflow YAML and pin the pre-authentication release boundary."""
 from pathlib import Path
 import unittest
+import os
+import subprocess
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,3 +61,18 @@ class WorkflowTests(unittest.TestCase):
         for event in ('push', 'pull_request'):
             self.assertIn('scripts/rls-probes.mjs', doc['on'][event]['paths'])
         self.assertIn('workflow_dispatch', workflow('integration.yml')['on'])
+
+    def test_missing_or_wrong_runner_mode_fails_validate_instead_of_green_skip(self):
+        steps = workflow('deploy-staging.yml')['jobs']['validate']['steps']
+        guards = [step for step in steps if step.get('id') == 'runner-mode']
+        self.assertEqual(len(guards), 1)
+        guard = guards[0]
+        self.assertEqual(guard.get('env'), {'STAGING_RUNNER_MODE': '${{ vars.STAGING_RUNNER_MODE }}'})
+        self.assertEqual(steps[0], guard)
+        for mode in (None, '', 'persistent', 'ephemeral-jit'):
+            env = {key:value for key,value in os.environ.items() if key != 'STAGING_RUNNER_MODE'}
+            if mode is not None: env['STAGING_RUNNER_MODE'] = mode
+            result = subprocess.run(['bash', '-e', '-c', guard['run']], env=env, capture_output=True, text=True)
+            with self.subTest(mode=mode):
+                self.assertEqual(result.returncode == 0, mode == 'ephemeral-jit')
+                if mode != 'ephemeral-jit': self.assertIn('::error::', result.stdout)

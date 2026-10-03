@@ -11,7 +11,7 @@ def ruleset():
     return {'target':'branch', 'enforcement':'active', 'bypass_actors':[],
             'conditions':{'ref_name':{'include':['refs/heads/main'], 'exclude':[]}},
             'rules':[{'type':'deletion'}, {'type':'non_fast_forward'},
-                     {'type':'pull_request', 'parameters':{'required_approving_review_count':1, 'dismiss_stale_reviews_on_push':True}},
+                     {'type':'pull_request', 'parameters':{'required_approving_review_count':1, 'dismiss_stale_reviews_on_push':True, 'require_last_push_approval':True}},
                      {'type':'required_status_checks', 'parameters':{'strict_required_status_checks_policy':True,
                       'required_status_checks':[{'context':c, 'integration_id':15368} for c in ('build','docker-build','rls-probe')]}}]}
 
@@ -44,6 +44,13 @@ class RepositoryPolicyTests(unittest.TestCase):
         for context in ('build','docker-build','rls-probe'):
             rule=ruleset();rule['rules'][3]['parameters']['required_status_checks']=[{'context':c, 'integration_id':15368} for c in ('build','docker-build','rls-probe') if c!=context]
             with self.assertRaises(SafeFailure): self.check(rule)
+
+    def test_last_push_approval_must_be_explicitly_enabled(self):
+        for value in (False, None, 'missing'):
+            rule=ruleset();parameters=rule['rules'][2]['parameters']
+            if value == 'missing': parameters.pop('require_last_push_approval')
+            else: parameters['require_last_push_approval']=value
+            with self.subTest(value=value), self.assertRaises(SafeFailure): self.check(rule)
 
     def test_status_source_cannot_be_an_arbitrary_commit_status(self):
         rule=ruleset();rule['rules'][3]['parameters']['required_status_checks'][0].pop('integration_id')

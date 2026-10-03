@@ -101,7 +101,11 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
 - Create the active `tonyai-main-release` repository ruleset from the committed
   public template. It requires reviewed PRs, current `build`, `docker-build`
   and `rls-probe` checks from GitHub Actions, and prohibits deletion/force-push.
-  Its bypass list is empty, including administrators and automation. Do not make
+  Its bypass list is empty, including administrators and automation. Every PR
+  needs approval from an account other than the latest pusher; the verifier
+  requires `require_last_push_approval: true`. A solo owner cannot satisfy either
+  this ruleset or staging approval alone. Arrange independent human review before
+  applying the ruleset or configuring federation; do not add a bypass. Do not make
   path-filtered Infrastructure/Integration or manual E2E required PR checks;
   integration and E2E are separate exact-SHA **release** gates.
 
@@ -124,6 +128,8 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
   collaborators**, including returning contributors. Set the repository variable
   `STAGING_RUNNER_MODE=ephemeral-jit` only after reviewing the provisioner.
   Both protected jobs require that repository variable before they can run.
+  Deployment validation fails explicitly if it is missing or different, so a
+  skipped deployment cannot leave a successful validation run.
   `verify_environment` reads and checks both settings before federation; a label
   or this variable alone does **not** prove ephemeral host isolation. Never
   approve untrusted fork code for a firewall-allowlisted release host.
