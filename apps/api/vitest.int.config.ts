@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { defineConfig } from 'vitest/config';
+import ts from 'typescript';
+import { defineConfig, type Plugin } from 'vitest/config';
 import { RUNTIME_ROLE, runtimeUrlFrom, urlUser } from '../../packages/db/scripts/runtime-role.mjs';
 
 // PostgreSQL integration tests (LP0-03). They run against a real database with
@@ -25,7 +26,29 @@ process.env.INT_OWNER_DATABASE_URL = ownerUrl;
 process.env.INT_RUNTIME_DATABASE_URL =
   databaseUrl && urlUser(databaseUrl) === RUNTIME_ROLE ? databaseUrl : ownerUrl ? runtimeUrlFrom(ownerUrl) : '';
 
+// esbuild — Vitest's TypeScript transform — cannot emit decorator metadata,
+// so Nest's dependency injection finds no constructor types and injects
+// nothing. `tenant-isolation.int.spec.ts` boots the real application, so the
+// API's own sources are compiled here with TypeScript itself, under the
+// project's tsconfig, as `nest build` compiles them.
+const { config: tsconfig } = ts.readConfigFile(resolve(__dirname, 'tsconfig.json'), ts.sys.readFile);
+const compilerOptions = ts.convertCompilerOptionsFromJson(
+  { ...tsconfig.compilerOptions, module: 'ESNext', sourceMap: true, inlineSources: true, declaration: false, incremental: false },
+  __dirname,
+).options;
+const API_SOURCES = resolve(__dirname, 'src');
+const nestDecoratorMetadata: Plugin = {
+  name: 'nest-decorator-metadata',
+  enforce: 'pre',
+  transform(code, id) {
+    if (!id.startsWith(API_SOURCES) || !id.endsWith('.ts')) return null;
+    const out = ts.transpileModule(code, { compilerOptions, fileName: id });
+    return { code: out.outputText, map: out.sourceMapText };
+  },
+};
+
 export default defineConfig({
+  plugins: [nestDecoratorMetadata],
   test: {
     environment: 'node',
     globals: true,
