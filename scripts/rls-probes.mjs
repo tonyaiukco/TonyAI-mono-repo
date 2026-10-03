@@ -431,6 +431,60 @@ async function main() {
     await cleanupAuditRows();
   }
 
+  // --- storage_intents (LP1-02): operational state, no client access -------
+  // Not tenant data, so not in TENANT_TABLES: RLS on with NO policy and no
+  // grant to anon/authenticated. Every client role must read nothing and
+  // write nothing — a client able to write a `delete` intent could have the
+  // API's sweeper remove another tenant's evidence. One row is seeded through
+  // the service role first, so "nothing" is not vacuous.
+  console.log('▸ storage_intents (no client access)');
+  const PROBE_INTENT = '99999999-0000-0000-0000-00000000f001';
+  await svc('DELETE', `storage_intents?id=eq.${PROBE_INTENT}`);
+  const seeded = await svc('POST', 'storage_intents', [
+    { id: PROBE_INTENT, kind: 'delete', bucket: 'evidence', object_path: 'rls-probe/none.pdf', reason: 'rls-probe' },
+  ]);
+  if (!seeded.ok) throw new Error(`storage_intents seed failed: ${seeded.status} ${await seeded.text()}`);
+  try {
+    const refused = (r) => (r.error ? /42501|permission denied/i.test(r.error) : r.total === 0);
+    const intentsSvc = await count('storage_intents', { key: SERVICE, token: SERVICE });
+    const intentsAnon = await count('storage_intents');
+    const intentsEntry = await count('storage_intents', { token });
+    const intentsAdmin = await count('storage_intents', { token: await getToken(ADMIN_EMAIL) });
+    check(
+      'storage_intents: no client role reads a row (anon, data_entry, super_admin)',
+      intentsSvc.total > 0 && refused(intentsAnon) && refused(intentsEntry) && refused(intentsAdmin),
+      `service=${intentsSvc.total}, anon=${intentsAnon.error ?? intentsAnon.total}, entry=${intentsEntry.error ?? intentsEntry.total}, admin=${intentsAdmin.error ?? intentsAdmin.total}`,
+    );
+    const forged = await fetch(`${URL_}/rest/v1/storage_intents`, {
+      method: 'POST',
+      headers: {
+        apikey: ANON,
+        Authorization: `Bearer ${await getToken(ADMIN_EMAIL)}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({
+        id: '99999999-0000-0000-0000-00000000f002',
+        kind: 'delete',
+        bucket: 'evidence',
+        object_path: 'rls-probe/forged.pdf',
+        reason: 'rls-probe',
+      }),
+    });
+    const forgedRows = await count('storage_intents', {
+      key: SERVICE,
+      token: SERVICE,
+      query: 'select=id&id=eq.99999999-0000-0000-0000-00000000f002',
+    });
+    check(
+      'storage_intents: a client cannot write an intent (a forged delete would reach the sweeper)',
+      !forged.ok && forgedRows.total === 0,
+      `status=${forged.status}, rows=${forgedRows.total}`,
+    );
+  } finally {
+    await svc('DELETE', `storage_intents?id=in.(${PROBE_INTENT},99999999-0000-0000-0000-00000000f002)`);
+  }
+
   // --- The consultant seat (WP7 PR 3) -------------------------------------
   // Added with the reviewer UI. The NestJS guard grants a consultant org-wide
   // READ and no writes; that is the primary layer, and this asserts the second
