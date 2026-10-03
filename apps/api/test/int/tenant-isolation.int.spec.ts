@@ -405,7 +405,7 @@ describe('POST /bulk-upload/activity-records (dry run): rows naming B are refuse
     const foreignIds = { ...dataB, subsidiaryId: B.subsidiaryId, organisationId: B.organisationId };
     const missingIds = { ...foreignIds, subsidiaryId: randomUUID(), locationId: randomUUID() };
     const before = await snapshotB();
-    // The route allows five calls a minute: two authoring roles × (B, random) + the control.
+    // The route is throttled per user (five calls a minute): superAdmin makes two, dataEntry three.
     let foreign: Res | undefined;
     for (const role of ['superAdmin', 'dataEntry'] as const) {
       foreign = await call(role, 'POST', '/bulk-upload/activity-records', form(csv(B.subsidiaryId, dataB.locationId)));
@@ -452,6 +452,9 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
 
 describe("A's every answer stays the same while B's data changes (a leak into a sum carries no marker)", () => {
   it('lists, aggregates, reports and exports, for all four roles', async () => {
+    // Tracked by location, so completeness reads its records query (subsidiary-
+    // level tracking answers before reading any record — `qa-auditor` round 2).
+    await owner.subsidiary.update({ where: { id: A.subsidiaryId }, data: { trackingGranularity: 'location' } });
     // Something of A's own for the aggregates to compute: approved figures in
     // 2025 and 2026, so a target's "current year" is A's 2026 — and moves if a
     // later year of anyone else's leaks in.
@@ -501,6 +504,10 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
     const before = await answers();
     const progress = JSON.parse((await call('consultant', 'GET', '/targets/progress')).text) as { targetId: string; currentYear: number }[];
     expect(progress.find((p) => p.targetId === dataA.targetId)?.currentYear).toBe(2026);
+    const completeness = JSON.parse(
+      (await call('consultant', 'GET', `/emissions/completeness?subsidiaryId=${A.subsidiaryId}&year=2026`)).text,
+    ) as { categories: unknown[] };
+    expect(completeness.categories.length).toBeGreaterThan(0);
     // B changes in every way an aggregate could pick up: committed figures in
     // A's years and in a later one, a draft, denominators, a site, a target, a
     // lock, an audit row.

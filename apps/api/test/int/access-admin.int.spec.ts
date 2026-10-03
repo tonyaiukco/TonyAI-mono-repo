@@ -182,6 +182,36 @@ describe('every change commits with its audit rows, or not at all', () => {
   });
 });
 
+describe('the withdrawal leg of a role change commits with the rest, or not at all (`qa-auditor` round 2)', () => {
+  it('a role change whose SECOND audit insert (a withdrawal row) aborts leaves role, grants and trail unchanged', async () => {
+    const pooled = connect(3);
+    try {
+      let inserts = 0;
+      const client = pooled.$extends({
+        query: {
+          auditLog: {
+            async create({ args, query }) {
+              const row = await query(args);
+              inserts += 1;
+              if (inserts === 2) throw new Error('aborted at the withdrawal audit row (LP1-03 test)');
+              return row;
+            },
+          },
+        },
+      }) as unknown as PrismaService;
+      await expect(
+        service(client).setRole(A.users.superAdmin, A.users.dataEntry.id, UserRole.consultant),
+      ).rejects.toThrow();
+      expect(inserts).toBe(2);
+      expect(await roleOf(A.users.dataEntry.id)).toBe('data_entry');
+      expect(await grantsOf(A.users.dataEntry.id)).toHaveLength(1);
+      expect(await auditOf(A.users.dataEntry.id)).toEqual([]);
+    } finally {
+      await pooled.$disconnect();
+    }
+  });
+});
+
 describe('revokeSubsidiaryAccess', () => {
   it('withdraws a grant, with its audit row', async () => {
     await service(a).revokeSubsidiaryAccess(A.users.superAdmin, A.users.dataEntry.id, A.subsidiaryId);
