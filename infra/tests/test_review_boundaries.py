@@ -93,12 +93,20 @@ class KeyBindingTests(unittest.TestCase):
 
 class HelperGuardTests(unittest.TestCase):
     def test_helper_sha_missing_wrong_or_dirty_refuses_before_secret_read(self):
-        for sha,results in [(None,[]),('b'*40,['a'*40]),('a'*40,['a'*40,'dirty'])]:
+        for sha,head,dirty in [(None,'a'*40,''),('invalid','a'*40,''),
+                               ('b'*40,'a'*40,''),('a'*40,'a'*40,'dirty'),('a'*40,'a'*40,'')]:
             argv=['cloud_ops','probe-storage','--vault','vault','--project-ref',REF,'--secret-version','b'*32]
             if sha: argv+=['--source-sha',sha]
-            with patch.object(sys,'argv',argv), patch('cloud_ops.command',side_effect=results), patch('cloud_ops.secret',return_value='sb_secret_synthetic') as secret, patch('cloud_ops.request') as request, patch('cloud_ops.probe_buckets'):
-                with self.assertRaises(SafeFailure): ops.main()
-                secret.assert_not_called();request.assert_not_called()
+            def git(args):
+                return {('git','rev-parse','HEAD'):head, ('git','status','--porcelain'):dirty}[tuple(args)]
+            with self.subTest(sha=sha,dirty=dirty), patch.object(sys,'argv',argv), patch('cloud_ops.command',side_effect=git), patch('cloud_ops.secret',return_value='sb_secret_synthetic') as secret, patch('cloud_ops.request') as request, patch('cloud_ops.probe_buckets') as probe:
+                if sha==head and not dirty:
+                    ops.main()
+                    secret.assert_called_once_with('vault','supabase-service-role-key','b'*32)
+                    probe.assert_called_once()
+                else:
+                    with self.assertRaises(SafeFailure): ops.main()
+                    secret.assert_not_called();request.assert_not_called();probe.assert_not_called()
 
     def test_bucket_size_and_mimes_are_verified_independently_from_write_response(self):
         for changed in ({'file_size_limit':1},{'allowed_mime_types':['text/plain']}):
@@ -129,7 +137,7 @@ class HelperGuardTests(unittest.TestCase):
                 with patch.object(sys,'argv',argv+['--direct-secret-version','c'*32]): ops.main()
                 migrate.assert_called_once_with('vault',REF,'a'*32,'c'*32)
             argv=['cloud_ops','buckets','--vault','vault','--project-ref',REF,'--source-sha','a'*40]
-            with patch('cloud_ops.command',side_effect=['a'*40,'','a'*40,'']), patch('cloud_ops.secret',return_value='synthetic') as secret, patch('cloud_ops.provision_buckets'):
+            with patch('cloud_ops.command',side_effect=lambda args: {('git','rev-parse','HEAD'):'a'*40, ('git','status','--porcelain'):''}[tuple(args)]), patch('cloud_ops.secret',return_value='synthetic') as secret, patch('cloud_ops.provision_buckets'):
                 with patch.object(sys,'argv',argv):
                     with self.assertRaises(SafeFailure): ops.main()
                     secret.assert_not_called()

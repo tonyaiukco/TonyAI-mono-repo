@@ -59,7 +59,9 @@ class TransferTests(unittest.TestCase):
     def test_migration_chain_is_bound_to_manifest_sha_and_target(self):
         contract=inputs()
         for head,dirty in [('a'*40,''),('b'*40,''),('a'*40,'dirty')]:
-            with patch('cloud_ops.command',side_effect=[head,dirty]):
+            def git(args):
+                return {('git','rev-parse','HEAD'):head, ('git','status','--porcelain'):dirty}[tuple(args)]
+            with patch('cloud_ops.command',side_effect=git):
                 if head=='a'*40 and not dirty:
                     self.assertEqual(migration_release(contract,'vault',REF),'a'*40)
                 else:

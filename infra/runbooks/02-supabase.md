@@ -26,6 +26,8 @@ Enter the token at the hidden prompt. The helper:
    absent. Ambiguous inventories stop for owner reconciliation; no keys are created.
    Both keys must pass live probes against this exact project before any transfer.
    Only the backend key enters Key Vault. Pooler host comes from the Management API.
+   Its literal `[YOUR-PASSWORD]` marker is normalized only for host discovery;
+   the stored URLs use the bootstrap password read privately from Key Vault.
 5. Stores `database-url` (transaction 6543) and `direct-url` (session 5432), with
    Frankfurt/project binding, `/postgres`, strict CA verification, and an allowlist
    of query parameters. API's runtime DIRECT_URL is deliberately the runtime URL;
