@@ -452,13 +452,17 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
 
 describe("A's every answer stays the same while B's data changes (a leak into a sum carries no marker)", () => {
   it('lists, aggregates, reports and exports, for all four roles', async () => {
-    // Something of A's own for the aggregates to compute: an approved 2025 figure.
-    await createRecord(owner, A, {
-      status: ActivityRecordStatus.approved,
-      reportingYear: 2025,
-      periodValue: 'June',
-      calculation: { tCo2e: 5, factorId: 'int-test-placeholder' },
-    });
+    // Something of A's own for the aggregates to compute: approved figures in
+    // 2025 and 2026, so a target's "current year" is A's 2026 — and moves if a
+    // later year of anyone else's leaks in.
+    for (const [reportingYear, tCo2e] of [[2025, 5], [2026, 7]] as const) {
+      await createRecord(owner, A, {
+        status: ActivityRecordStatus.approved,
+        reportingYear,
+        periodValue: 'June',
+        calculation: { tCo2e, factorId: 'int-test-placeholder' },
+      });
+    }
     const paths = [
       '/me',
       '/kpi',
@@ -495,6 +499,8 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
     };
 
     const before = await answers();
+    const progress = JSON.parse((await call('consultant', 'GET', '/targets/progress')).text) as { targetId: string; currentYear: number }[];
+    expect(progress.find((p) => p.targetId === dataA.targetId)?.currentYear).toBe(2026);
     // B changes in every way an aggregate could pick up: committed figures in
     // A's years and in a later one, a draft, denominators, a site, a target, a
     // lock, an audit row.
