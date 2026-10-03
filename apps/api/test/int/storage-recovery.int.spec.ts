@@ -782,6 +782,23 @@ describe('LP1-02 — reconciliation: both directions', () => {
     expect([...seen].sort()).toEqual(seen);
   });
 
+  it('reclaims only under the prefix it is given — another key\'s orphan is left alone', async () => {
+    quiet();
+    const mine = `${tenant.subsidiaryId}/mine.pdf`;
+    // Outside the tenant's evidence prefix (its organisation id, not its subsidiary's).
+    const other = `${tenant.organisationId}/not-mine.pdf`;
+    for (const path of [mine, other]) {
+      await storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4\n'), 'application/pdf');
+    }
+    try {
+      await reconcile().reclaimOrphans(EVIDENCE_BUCKET, 0, 1000, tenantPrefixes(tenant).evidence);
+      expect(await objectExists(observer, EVIDENCE_BUCKET, mine)).toBe(false);
+      expect(await objectExists(observer, EVIDENCE_BUCKET, other)).toBe(true);
+    } finally {
+      await localStorage().remove(EVIDENCE_BUCKET, [other]);
+    }
+  });
+
   it('does not count an in-flight upload as an orphan', async () => {
     const path = `${tenant.subsidiaryId}/in-flight.pdf`;
     await sweeper().beginUpload({ bucket: EVIDENCE_BUCKET, path }, { reason: 'evidence.upload' });
