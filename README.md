@@ -343,9 +343,12 @@ HTTP/fetch breadcrumbs, allows only method and queryless URL in event request da
 and disables transaction telemetry regardless of the tracing environment setting. Cloud alert delivery,
 rotation and schema-compatible rollback remain unexecuted owner acceptance gates.
 CI also replays the migration chain in a disposable shadow database and compares
-it with Prisma's schema; only the exact known raw-index representation difference
-is required, never applied as SQL. An empty diff fails because the required raw
-index may be missing. This check covers only Prisma-visible schema differences;
+it with Prisma's schema. A separate read-only catalogue check proves the raw
+unique index's full definition (including NULLS NOT DISTINCT and the voided
+predicate) in that replayed database. Only after this succeeds can an empty diff
+or the exact known representation DROP pass; the DROP is never applied. CI also
+proves the guard rejects missing/weakened indexes using rolled-back mutations.
+The schema diff itself covers only Prisma-visible differences;
 RLS policies, grants, CHECK constraints and triggers remain guarded by `rls-probe`
 and `test:int`.
 

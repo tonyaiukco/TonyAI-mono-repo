@@ -166,3 +166,5 @@ jobs:
           -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;'
       - name: Replay migrations and compare schema with exit-code drift gate
         run: python3 infra/scripts/check_migration_diff.py
+      - name: Prove the raw-index guard against rolled-back shadow mutations
+        run: python3 infra/tests/check_migration_index.py

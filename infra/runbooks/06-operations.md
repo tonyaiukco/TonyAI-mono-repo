@@ -142,8 +142,11 @@ to their separate roles once that separation lands.
    with the owner-only migration credential. Keep previous binaries running and
    exercise reads/writes, evidence and reports against the new schema. Fresh
    migration replay/schema diff in CI is necessary but cannot prove binary/data
-   compatibility. It requires the exact known raw-index DROP representation
-   difference without executing it; an empty diff also fails. Prisma diff cannot
+   compatibility. A separate read-only catalogue check must verify the exact raw
+   unique index (including NULLS NOT DISTINCT and its voided predicate) in the
+   replayed shadow database before either an empty diff or the exact known DROP
+   representation can pass. The DROP is never executed. Rolled-back index
+   mutations prove the guard fails closed. Prisma diff cannot
    see RLS policies, grants, CHECK constraints or triggers: retain `rls-probe`
    and `test:int` as their guards. If the old binary fails, choose a maintenance/forward-fix plan;
    never imply that image rollback restores a database.
