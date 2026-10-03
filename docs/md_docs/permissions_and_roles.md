@@ -38,8 +38,8 @@ This matrix defines action permissions for UI rendering and backend enforcement.
 | Upload evidence files | ✅ | ❌ | ✅ | ❌ |
 | Attach one evidence file to several records (own editable records of one subsidiary; any author's for `super_admin`) | ✅ | ❌ | ✅ | ❌ |
 | Save draft records | ✅ | ❌ | ✅ | ❌ |
-| Submit records for review | ✅ | ❌ | ✅ | ❌ |
-| Approve records | ✅ | ❌ | ❌ | ❌ |
+| Submit records for review (own records only — decision D02, `super_admin` included) | ✅ | ❌ | ✅ | ❌ |
+| Approve records (never a record you created — decision D01) | ✅ | ❌ | ❌ | ❌ |
 | Reject records / flag for revision | ✅ | ✅ | ❌ | ❌ |
 | Lock records | ✅ | ❌ | ❌ | ❌ |
 | Manage subsidiaries | ✅ | ❌ | ❌ | ❌ |
@@ -69,9 +69,9 @@ The UI must show or hide navigation, pages, buttons, and actions based on role.
 ### Action Button Rules
 - `Add Supplier` renders only for `super_admin`
 - `Add Subsidiary` renders only for `super_admin`
-- `Approve` and `Lock` actions render only for `super_admin`
+- `Approve` and `Lock` actions render only for `super_admin`; `Approve` not on a record the viewer created (D01)
 - `Flag for Revision` renders for `super_admin` and `consultant`
-- `Save Draft` and `Submit for Review` render for `data_entry` and `super_admin`
+- `Save Draft` and `Submit for Review` render for `data_entry` and `super_admin`; `Submit for Review` only on the viewer's own record (D02)
 
 ### Form Rules
 If record status is `submitted`, `approved`, or `locked`:
@@ -95,6 +95,11 @@ The Submit button must be disabled when:
 The Approve button must only be enabled for `super_admin` when record status is:
 - `submitted`
 - `under_review`
+
+and the record was created by someone else: the approver is neither the record's creator nor its submitter (decision D01, 2026-09-29; the API answers 403 otherwise). Only the author may submit (D02), so the creator and the submitter are the same person.
+
+## 5.2a Concurrent changes
+Two people acting on one record at once are serialised by the API (LP1-01): the second request runs after the first commits and is re-checked against the result. If it no longer holds — the record was approved while a reviewer was opening it, submitted while its author was still editing — the API answers 409 "This record was changed by someone else while your request was in progress. Reload it and try again." and changes nothing.
 
 ## 5.3 Lock Rule
 Only `super_admin` can lock records or close reporting periods.

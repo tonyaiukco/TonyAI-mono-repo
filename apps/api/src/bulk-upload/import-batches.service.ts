@@ -99,8 +99,9 @@ export class ImportBatchesService {
   }
 
   /**
-   * Send for review every draft of this batch the caller authored (a
-   * super_admin: every draft). The ids are handed to the ordinary bulk submit,
+   * Send for review every draft of this batch the caller authored — a
+   * super_admin too, since only the author submits (decision D02). The ids are
+   * handed to the ordinary bulk submit,
    * whose pre-flight re-checks role, author, status and tenant for each — the
    * batch only names them. A role that may not submit is refused there, with
    * its audit row, before anything is looked up.
@@ -150,13 +151,17 @@ export class ImportBatchesService {
     );
   }
 
-  /** Drafts the caller could send for review now: their own, or any for a super_admin. */
+  /**
+   * Drafts the caller could send for review now: their own, whatever the role
+   * — only the author submits (decision D02), so counting a colleague's drafts
+   * would offer a "Send N" whose N the submit then refuses as `not_author`.
+   */
   private submittableWhere(user: RequestUser, batchIds: string[]) {
     return {
       importBatchId: { in: batchIds },
       status: 'draft' as const,
       subsidiaryId: { in: user.accessibleSubsidiaryIds },
-      ...(user.role === 'super_admin' ? {} : { createdBy: user.id }),
+      createdBy: user.id,
     };
   }
 

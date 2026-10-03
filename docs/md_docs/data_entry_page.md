@@ -277,9 +277,9 @@ The server-side rules behind this section, and the reasons for them, are in `REA
 
 ### 9.2 Bulk Submit
 
-Both entry points use the same bulk-submit endpoint. It submits the records one at a time through the same `submit` the form uses — so the status gate, the author gate on a resubmission, the period lock, the evidence requirement and the **recomputed** anomaly verdict all still run — in chronological order, whatever order they were selected in. On top of the single-record path:
+Both entry points use the same bulk-submit endpoint. It submits the records one at a time through the same `submit` the form uses — so the status gate, the author gate (every submit, decision D02), the period lock, the evidence requirement and the **recomputed** anomaly verdict all still run — in chronological order, whatever order they were selected in. On top of the single-record path:
 - **drafts only**: a `rejected` record is resubmitted on its own, so the reviewer's note gets read
-- **only records the user entered**, except for a `super_admin`, whose author gate never fires
+- **only records the user entered** — a `super_admin` included (decision D02, 2026-09-29: only the author submits)
 - at most 1,000 records per submission, and 10 submissions per minute per user
 - **no dry run, but always a confirmation**: `Send these for review?` states the count and that only a reviewer can send the records back — there is no author-side un-submit
 - the result is a verdict plus a per-record failure list in the server's own words. The anomaly verdict is recomputed at submit time, so the screen never tries to predict it
@@ -293,7 +293,7 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 #### From Recent Imports
 - each applied import shows its file name, date and time, who imported it, and its outcome (`2 imported · 1 refused`); a batch whose outcome was never recorded (the import was interrupted) says so rather than showing zero
 - `Download file` opens the original file the rows came from, through a short-lived link
-- `Send N drafts for review` sends the drafts of that import the user entered (all of them, for a `super_admin`) that are not waiting for an evidence file; drafts that are waiting are counted in a note under the batch — `2 drafts need an evidence file first — under Previous submissions, attach each invoice to the drafts it evidences; one file can cover several.` — and the button is absent when none can go
+- `Send N drafts for review` sends the drafts of that import the user entered that are not waiting for an evidence file; drafts that are waiting are counted in a note under the batch — `2 drafts need an evidence file first — under Previous submissions, attach each invoice to the drafts it evidences; one file can cover several.` — and the button is absent when none can go
 - the same confirmation as the other entry points; the toast gives the verdict and, when records were not moved, the reasons (`Needs an evidence file · 2`)
 - a `data_entry` user sees only the imports they made, and only while they can still reach every subsidiary the file names (the original file holds every row); `consultant`, `executive_viewer` and `super_admin` see every import in their organisation
 
@@ -301,7 +301,7 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 - a row gets a checkbox only when every gate the client can check passes. The list applies the server's gates in the server's order — role, status, authorship, period lock — plus the evidence rule: an evidence-required category with no file attached, so a draft whose invoice is attached qualifies. The anomaly verdict is left to the server, so a ticked draft can still come back refused, e.g. for a missing variance reason
 - a `draft` or `rejected` row that cannot be ticked shows a one-line reason instead, e.g. `Sent back by a reviewer — open it on its own, so the note gets read.`, `Entered by someone else.` or `Needs an evidence file.`; rows in other statuses rely on their status badge
 - no checkboxes appear until the current user has loaded
-- `Select all N` takes only the records the current user entered, up to 1,000. A `super_admin` can still tick someone else's draft one at a time; the confirmation then says how many were entered by someone else, who will no longer be able to edit them
+- `Select all N` takes only the records the current user entered, up to 1,000. Only the author submits (decision D02), a `super_admin` included: the screen still lets a `super_admin` tick someone else's draft one at a time (its confirmation says how many were entered by someone else), and the submit now refuses each such row as `not_author` — removing the tick is an LP1-01 web follow-up
 - a selection shows a bar with `N selected`, `Clear` and `Send N records for review`; a tick beyond 1,000 is refused with a notice
 
 #### Attaching One File to Several Records (Previous Submissions)

@@ -11,6 +11,9 @@ export const ENTRY_EMAIL = 'entry@tonyai.local';
  * comes from the organisation, so granting rows here would hide a regression in
  * that guard branch. */
 export const CONSULTANT_EMAIL = 'review@tonyai.local';
+/** A second super_admin. The approver may not be the record's creator
+ * (decision D01), so whatever ADMIN creates, APPROVER approves. */
+export const APPROVER_EMAIL = 'approver@tonyai.local';
 
 // NestJS API (versioned prefix). Absolute so it ignores the page baseURL.
 export const API_BASE = 'http://localhost:3001/api/v1';
@@ -234,7 +237,7 @@ export async function findRecordId(
   return rec.id as string;
 }
 
-/** Approve a submitted record (super_admin only; no UI for this). */
+/** Approve a submitted record (super_admin only, and never the record's creator — D01). */
 export async function approveRecord(request: APIRequestContext, token: string, id: string): Promise<void> {
   const res = await request.post(`${API_BASE}/activity-records/${id}/approve`, { headers: bearer(token) });
   if (!res.ok()) throw new Error(`approve failed: ${res.status()} ${await res.text()}`);

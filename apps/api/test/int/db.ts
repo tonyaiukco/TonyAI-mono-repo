@@ -18,11 +18,13 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 /**
  * A new client holding exactly ONE connection, so "request A and request B on
  * two connections" is literal, and `backendPid` names the session a client's
- * queries run in.
+ * queries run in. `connections` > 1 gives a pooled client instead, for a test
+ * that must let a stray query outside a transaction reach the database (and
+ * commit) rather than wait for the one connection the transaction holds.
  */
-export function connect(): PrismaService {
+export function connect(connections = 1): PrismaService {
   const url = new URL(process.env.DATABASE_URL ?? '');
-  url.searchParams.set('connection_limit', '1');
+  url.searchParams.set('connection_limit', String(connections));
   return new PrismaService({ datasourceUrl: url.toString() });
 }
 
@@ -296,4 +298,35 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * An evidence file of the tenant's subsidiary, linked to `recordIds`, written
+ * straight to the database. No Storage object exists for it: the services
+ * under test get a storage stub (`services.ts`), so nothing reaches a bucket.
+ */
+export async function attachEvidence(
+  prisma: PrismaService,
+  tenant: Tenant,
+  recordIds: string[],
+) {
+  const file = await prisma.evidence.create({
+    data: {
+      subsidiaryId: tenant.subsidiaryId,
+      storagePath: `${tenant.subsidiaryId}/${randomUUID()}-int-test.pdf`,
+      fileName: 'int-test.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 4,
+      uploadedBy: tenant.users.dataEntry.id,
+    },
+  });
+  await prisma.activityRecordEvidence.createMany({
+    data: recordIds.map((activityRecordId) => ({
+      activityRecordId,
+      evidenceId: file.id,
+      subsidiaryId: tenant.subsidiaryId,
+      linkedBy: tenant.users.dataEntry.id,
+    })),
+  });
+  return file;
 }

@@ -22,8 +22,9 @@ import {
 import {
   EvidenceRequiredError,
   PeriodLockedError,
-  ResubmitAuthorRefusedError,
+  RecordChangedError,
   SUBMIT_ROLE_REFUSAL,
+  SubmitAuthorRefusedError,
   SubmitRoleRefusedError,
   VarianceReasonRequiredError,
 } from '../activity-records/errors';
@@ -200,11 +201,13 @@ export class BulkSubmitService {
    * `loadScoped` is still the tenant boundary. What it adds is three things
    * the per-record path cannot give a BATCH:
    *
-   * 1. **The author gate this route needs and `submit` does not have.** That
-   *    method gates only a resubmission, so a draft is submittable by any
-   *    colleague who can see the subsidiary. At one click that is a curiosity;
-   *    at a thousand ids it is a way to sweep someone's half-finished month
-   *    into review, where they can no longer edit it.
+   * 1. **The author gate, before anything is locked.** `submit` has the same
+   *    gate since decision D02 (only the author submits, `super_admin`
+   *    included); here it turns a colleague's draft into a `not_author` row
+   *    without a transaction per id. It was this route's own rule first: at a
+   *    thousand ids, a draft any colleague could submit was a way to sweep
+   *    someone's half-finished month into review, where they can no longer
+   *    edit it.
    * 2. **`draft` only.** A `rejected` record reverses a reviewer's decision,
    *    and this route is not a mass-reversal endpoint.
    * 3. **A deterministic order.** `submitted` is in `COUNTED_STATUSES`, so
@@ -259,7 +262,9 @@ export class BulkSubmitService {
         });
         continue;
       }
-      if (user.role !== 'super_admin' && row.createdBy !== user.id) {
+      // No `super_admin` exemption: only the author submits (decision D02),
+      // the same rule `submit` itself enforces.
+      if (row.createdBy !== user.id) {
         rejected.push({
           recordId: id,
           code: 'not_author',
@@ -348,8 +353,14 @@ export class BulkSubmitService {
     // including a `ForbiddenException` or `ConflictException` nobody typed —
     // is unexpected and is logged as such.
     if (error instanceof SubmitRoleRefusedError) throw error;
-    if (error instanceof ResubmitAuthorRefusedError) {
+    if (error instanceof SubmitAuthorRefusedError) {
       return { recordId, code: 'not_author', message: error.message };
+    }
+    // Changed by someone else between this batch's read and the record's
+    // lock — most often no longer a draft, which is what `not_submittable`
+    // already tells the user; the sentence says to reload.
+    if (error instanceof RecordChangedError) {
+      return { recordId, code: 'not_submittable', message: error.message };
     }
     if (error instanceof PeriodLockedError) {
       return { recordId, code: 'period_locked', message: error.message };

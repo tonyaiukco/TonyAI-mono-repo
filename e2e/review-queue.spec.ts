@@ -7,6 +7,7 @@ import {
   backdateCreatedAt,
   createCommittedRecord,
   ADMIN_EMAIL,
+  APPROVER_EMAIL,
   CONSULTANT_EMAIL,
   ENTRY_EMAIL,
   API_BASE,
@@ -44,7 +45,9 @@ test('a submitted record reaches the queue and approving clears it', async ({
     activityValue: 7400,
   });
 
-  await login(page, ADMIN_EMAIL);
+  // The OTHER super_admin reviews it: nobody approves a record they created
+  // (D01), and the API refuses the creator's Approve with a 403.
+  await login(page, APPROVER_EMAIL);
   await page.goto('/review');
   await expect(page.getByRole('heading', { name: 'Review Queue' })).toBeVisible();
 
@@ -83,10 +86,9 @@ test('a submitted record reaches the queue and approving clears it', async ({
   // "not reviewed yet" is a fact about the record, and a field that appeared
   // only once populated would hide it.
   //
-  // Labels only, deliberately. Here the viewer IS the creator, so asserting the
-  // VALUE could not tell "shows the record's author" apart from "shows whoever
-  // is logged in" — an implementation rendering `user.fullName` would pass. The
-  // value is asserted in the consultant test below, where the two differ.
+  // Labels only here; the VALUE is asserted in the consultant test below. (The
+  // viewer used to BE the creator, which made a value assertion unable to tell
+  // "shows the record's author" from "shows whoever is logged in".)
   // Scoped to the sheet, not the page: renaming the queue's column header to
   // "Entered by" put a second copy of that exact string in the table head, and
   // an unscoped `getByText` is then a strict-mode violation. The same duplicate

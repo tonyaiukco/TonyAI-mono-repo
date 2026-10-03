@@ -12,7 +12,7 @@ import { EvidenceService } from './evidence.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import type { RequestUser } from '../auth/auth.types';
-import { PeriodLockedError } from '../activity-records/errors';
+import { PeriodLockedError, RecordChangedError } from '../activity-records/errors';
 
 import { AuditService } from '../audit/audit.service';
 
@@ -25,34 +25,46 @@ const audit = { record: vi.fn() };
 const auditMock = () => audit as unknown as AuditService;
 
 /**
- * The transaction client has its OWN spies (the #50 rule): with `tx === prisma`
- * no assertion could tell a write inside the transaction from one outside it.
+ * Every write runs in one interactive transaction (the lifecycle protocol,
+ * `lifecycle-lock.ts`). Its client shares the root mock's spies — so "the
+ * link was not deleted" asserts against the one spy a delete would really
+ * hit, inside the transaction or out — but is a different OBJECT, so a spec
+ * can tell which client the audit row was written through:
+ * `audit.record(..., tx)` fails if the service audits on its root client,
+ * outside the write.
  */
-function createTxMock() {
-  return {
-    evidence: { create: vi.fn(), findUniqueOrThrow: vi.fn() },
-    activityRecordEvidence: { createMany: vi.fn() },
-  };
-}
-
-function createPrismaMock(tx: ReturnType<typeof createTxMock>) {
-  return {
-    activityRecord: { findUnique: vi.fn(), findMany: vi.fn() },
+function createPrismaMock() {
+  const client = {
+    // Row locks (`FOR UPDATE`) read back every id they were given: all there.
+    $queryRaw: vi.fn(async (_sql: unknown, ids: string[]) => ids.map((id) => ({ id }))),
+    // The period's advisory lock.
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    activityRecord: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), findMany: vi.fn() },
     evidence: {
-      findMany: vi.fn(),
+      create: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       findFirst: vi.fn(),
+      delete: vi.fn(),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     activityRecordEvidence: {
+      createMany: vi.fn(),
       findMany: vi.fn(),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     periodLock: { findMany: vi.fn().mockResolvedValue([]) },
-    $transaction: vi.fn(async (fn: (client: unknown) => unknown) => fn(tx)),
+  };
+  const tx = { ...client };
+  return {
+    ...client,
+    tx,
+    $transaction: vi.fn(async (fn: (c: typeof tx) => unknown) => fn(tx)),
   };
 }
 type PrismaMock = ReturnType<typeof createPrismaMock>;
+type TxMock = PrismaMock['tx'];
 
 function createStorageMock() {
   return {
@@ -146,7 +158,7 @@ function dataEntry(over: Partial<RequestUser> = {}): RequestUser {
 }
 
 describe('EvidenceService', () => {
-  let tx: ReturnType<typeof createTxMock>;
+  let tx: TxMock;
   let prisma: PrismaMock;
   let storage: ReturnType<typeof createStorageMock>;
   let service: EvidenceService;
@@ -167,8 +179,24 @@ describe('EvidenceService', () => {
   beforeEach(() => {
     audit.record.mockClear();
     seq = 0;
-    tx = createTxMock();
-    prisma = createPrismaMock(tx);
+    prisma = createPrismaMock();
+    tx = prisma.tx;
+    // Unless a test races them, the locked re-reads see what the caller's own
+    // read saw: a record read alone answers the by-id re-read, and a file read
+    // with `findFirst` answers the lookup under its lock.
+    const one = <T>(fn: { getMockImplementation(): ((...a: never[]) => T) | undefined }) =>
+      fn.getMockImplementation()?.();
+    prisma.activityRecord.findMany.mockImplementation(async () => {
+      const record = await one(prisma.activityRecord.findUnique);
+      return record ? [record] : [];
+    });
+    prisma.activityRecord.findUniqueOrThrow.mockImplementation(async () =>
+      one(prisma.activityRecord.findUnique),
+    );
+    prisma.evidence.findUnique.mockImplementation(async () => one(prisma.evidence.findFirst));
+    prisma.evidence.findUniqueOrThrow.mockImplementation(async () =>
+      one(prisma.evidence.findUnique),
+    );
     storage = createStorageMock();
     service = new EvidenceService(
       prisma as unknown as PrismaService,
@@ -372,6 +400,47 @@ describe('EvidenceService', () => {
       const key = storage.upload.mock.calls[0][1] as string;
       expect(storage.remove).toHaveBeenCalledWith('evidence', [key]);
       expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('audits the new file through the transaction that writes it', async () => {
+      const record = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(record);
+      stubStore([record]);
+
+      await service.upload(dataEntry(), 'rec-1', makeFile());
+
+      expect(audit.record).toHaveBeenCalledTimes(1);
+      expect(audit.record.mock.calls[0][2]).toBe(tx);
+    });
+
+    it('re-checks the record under its lock: submitted while the file uploaded → lost race, nothing kept', async () => {
+      const record = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(record);
+      prisma.activityRecord.findMany.mockResolvedValue([
+        { ...record, status: ActivityRecordStatus.submitted },
+      ]);
+      stubStore([record]);
+
+      await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toBeInstanceOf(
+        RecordChangedError,
+      );
+      expect(tx.evidence.create).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+      // The object stored before the transaction is removed again.
+      expect(storage.remove).toHaveBeenCalledWith('evidence', [storage.upload.mock.calls[0][1]]);
+    });
+
+    it('answers a lost race when the record moved to another period while the file uploaded', async () => {
+      const record = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(record);
+      prisma.activityRecord.findMany.mockResolvedValue([{ ...record, periodValue: 'Q4' }]);
+      stubStore([record]);
+
+      await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toBeInstanceOf(
+        RecordChangedError,
+      );
+      expect(tx.evidence.create).not.toHaveBeenCalled();
+      expect(storage.remove).toHaveBeenCalledWith('evidence', [storage.upload.mock.calls[0][1]]);
     });
 
     it('removes the stored object again when the rows cannot be written', async () => {
@@ -597,20 +666,73 @@ describe('EvidenceService', () => {
 
       const res = await service.detach(dataEntry(), 'rec-1', 'ev-1');
 
+      // Read under the file's lock, so "no links left" is final.
       expect(prisma.evidence.findMany).toHaveBeenCalledWith({
         where: { id: { in: ['ev-1'] }, links: { none: {} } },
         select: { id: true, storagePath: true },
       });
-      // Conditional: only a row that is STILL unlinked is deleted.
       expect(prisma.evidence.deleteMany).toHaveBeenCalledWith({
-        where: { id: 'ev-1', links: { none: {} } },
+        where: { id: { in: ['ev-1'] } },
       });
       expect(storage.remove).toHaveBeenCalledWith('evidence', ['sub-1/a.pdf']);
-      expect(prisma.evidence.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
-        storage.remove.mock.invocationCallOrder[0],
-      );
       expect(res.fileDeleted).toBe(true);
       expect(audit.record.mock.calls[0][1]).toMatchObject({ action: 'delete', entityId: 'ev-1' });
+      // The link, the row and the audit row in one transaction; the object
+      // only after it committed.
+      expect(audit.record.mock.calls[0][2]).toBe(tx);
+      const order = (fn: { mock: { invocationCallOrder: number[] } }, call = 0) =>
+        fn.mock.invocationCallOrder[call];
+      expect(order(prisma.activityRecordEvidence.deleteMany)).toBeLessThan(
+        order(prisma.evidence.deleteMany),
+      );
+      expect(order(prisma.evidence.deleteMany)).toBeLessThan(order(audit.record));
+      expect(order(audit.record)).toBeLessThan(order(storage.remove));
+    });
+
+    it('takes the record lock before the file lock, and both before the link goes (the protocol\'s order)', async () => {
+      const mine = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(mine);
+      prisma.evidence.findFirst.mockResolvedValue(makeEvidence([mine]));
+
+      await service.detach(dataEntry(), 'rec-1', 'ev-1');
+
+      const locks = prisma.$queryRaw.mock.calls.map((c) => (c[0] as unknown as string[]).join('?'));
+      expect(locks[0]).toMatch(/"activity_records"[\s\S]*FOR UPDATE/);
+      expect(locks[1]).toMatch(/"evidence"[\s\S]*FOR UPDATE/);
+      expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.$queryRaw.mock.invocationCallOrder[0],
+      );
+      expect(prisma.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+        prisma.activityRecordEvidence.deleteMany.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('answers a lost race when the record was submitted while it waited for the lock', async () => {
+      const mine = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(mine);
+      prisma.activityRecord.findUniqueOrThrow.mockResolvedValue({
+        ...mine,
+        status: ActivityRecordStatus.submitted,
+      });
+      prisma.evidence.findFirst.mockResolvedValue(makeEvidence([mine]));
+
+      await expect(service.detach(dataEntry(), 'rec-1', 'ev-1')).rejects.toBeInstanceOf(
+        RecordChangedError,
+      );
+      expect(prisma.activityRecordEvidence.deleteMany).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+      expect(storage.remove).not.toHaveBeenCalled();
+    });
+
+    it('removes no object when the audit fails — the detach rolled back', async () => {
+      const mine = makeRecord({ id: 'rec-1' });
+      prisma.activityRecord.findUnique.mockResolvedValue(mine);
+      prisma.evidence.findFirst.mockResolvedValue(makeEvidence([mine]));
+      prisma.evidence.findMany.mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/a.pdf' }]);
+      audit.record.mockRejectedValueOnce(new Error('audit down'));
+
+      await expect(service.detach(dataEntry(), 'rec-1', 'ev-1')).rejects.toThrow(/audit down/);
+      expect(storage.remove).not.toHaveBeenCalled();
     });
 
     it('refuses on the record it is taken off: not the author, not editable, period locked', async () => {
@@ -698,7 +820,7 @@ describe('EvidenceService', () => {
   });
 
   describe('remove — the file from every record', () => {
-    it('deletes a file backing one editable record: object first, then the row, then audits', async () => {
+    it('deletes a file backing one editable record: the row and its audit row in one transaction, then the object', async () => {
       const record = makeRecord({ id: 'rec-1' });
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([record]));
       prisma.activityRecord.findMany.mockResolvedValue([record]);
@@ -706,15 +828,70 @@ describe('EvidenceService', () => {
       const res = await service.remove(dataEntry(), 'ev-1');
 
       expect(storage.remove).toHaveBeenCalledWith('evidence', ['sub-1/a.pdf']);
-      expect(prisma.evidence.deleteMany).toHaveBeenCalledWith({ where: { id: 'ev-1' } });
-      expect(storage.remove.mock.invocationCallOrder[0]).toBeLessThan(
-        prisma.evidence.deleteMany.mock.invocationCallOrder[0],
+      expect(prisma.evidence.delete).toHaveBeenCalledWith({ where: { id: 'ev-1' } });
+      // The object AFTER the commit — the old order (object first) could leave
+      // a record pointing at bytes that were gone when the row delete lost a race.
+      expect(prisma.evidence.delete.mock.invocationCallOrder[0]).toBeLessThan(
+        audit.record.mock.invocationCallOrder[0],
+      );
+      expect(audit.record.mock.invocationCallOrder[0]).toBeLessThan(
+        storage.remove.mock.invocationCallOrder[0],
       );
       expect(res).toEqual({ id: 'ev-1', deleted: true });
       expect(audit.record.mock.calls[0][1]).toMatchObject({
         action: 'delete',
         diff: { before: { recordIds: ['rec-1'] } },
       });
+      expect(audit.record.mock.calls[0][2]).toBe(tx);
+    });
+
+    it('locks every record the file backs, then the file, before re-checking them', async () => {
+      const a = makeRecord({ id: 'rec-2' });
+      const b = makeRecord({ id: 'rec-1', periodValue: 'Q2' });
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([a, b]));
+      prisma.activityRecord.findMany.mockResolvedValue([a, b]);
+
+      await service.remove(dataEntry(), 'ev-1');
+
+      // Two periods shared, in key order; then the records, in id order; then the file.
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(2);
+      expect(prisma.$queryRaw.mock.calls[0].slice(1)).toEqual([['rec-1', 'rec-2']]);
+      expect(prisma.$queryRaw.mock.calls[1].slice(1)).toEqual([['ev-1']]);
+    });
+
+    it('answers a lost race when a record it backs was submitted while it waited — and keeps the file', async () => {
+      const draft = makeRecord({ id: 'rec-1' });
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([draft]));
+      prisma.activityRecord.findMany
+        .mockResolvedValueOnce([draft])
+        .mockResolvedValueOnce([{ ...draft, status: ActivityRecordStatus.submitted }]);
+
+      await expect(service.remove(dataEntry(), 'ev-1')).rejects.toBeInstanceOf(RecordChangedError);
+      expect(prisma.evidence.delete).not.toHaveBeenCalled();
+      expect(storage.remove).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('answers a lost race when a record it backs moved to another period meanwhile — its lock was never taken', async () => {
+      const draft = makeRecord({ id: 'rec-1' });
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([draft]));
+      prisma.activityRecord.findMany
+        .mockResolvedValueOnce([draft])
+        .mockResolvedValueOnce([{ ...draft, reportingYear: 2025 }]);
+
+      await expect(service.remove(dataEntry(), 'ev-1')).rejects.toBeInstanceOf(RecordChangedError);
+      expect(prisma.evidence.delete).not.toHaveBeenCalled();
+      expect(storage.remove).not.toHaveBeenCalled();
+    });
+
+    it('removes no object when the audit fails — the delete rolled back', async () => {
+      const record = makeRecord({ id: 'rec-1' });
+      prisma.evidence.findUnique.mockResolvedValue(makeEvidence([record]));
+      prisma.activityRecord.findMany.mockResolvedValue([record]);
+      audit.record.mockRejectedValueOnce(new Error('audit down'));
+
+      await expect(service.remove(dataEntry(), 'ev-1')).rejects.toThrow(/audit down/);
+      expect(storage.remove).not.toHaveBeenCalled();
     });
 
     it('keeps the single-record refusals for a file backing one record', async () => {
@@ -743,7 +920,7 @@ describe('EvidenceService', () => {
       expect((error as Error).message).toContain('Electricity · Q3 2024');
       expect((error as Error).message).toContain('Remove it from each editable record instead');
       expect(storage.remove).not.toHaveBeenCalled();
-      expect(prisma.evidence.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.evidence.delete).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
 
@@ -761,7 +938,7 @@ describe('EvidenceService', () => {
       prisma.activityRecord.findMany.mockResolvedValue([open, locked]);
       await expect(service.remove(dataEntry(), 'ev-1')).rejects.toThrow(/can no longer change.*is locked/);
       expect(storage.remove).not.toHaveBeenCalled();
-      expect(prisma.evidence.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.evidence.delete).not.toHaveBeenCalled();
     });
 
     it('deletes a shared file when every record it backs is editable by the caller', async () => {
@@ -770,19 +947,24 @@ describe('EvidenceService', () => {
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([a, b]));
       prisma.activityRecord.findMany.mockResolvedValue([a, b]);
       await service.remove(dataEntry(), 'ev-1');
-      expect(prisma.evidence.deleteMany).toHaveBeenCalledOnce();
+      expect(prisma.evidence.delete).toHaveBeenCalledOnce();
     });
 
     it('is a 404 with no audit row when another request deleted the file meanwhile', async () => {
       const record = makeRecord({ id: 'rec-1' });
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([record], { id: 'ev-1' }));
       prisma.activityRecord.findMany.mockResolvedValue([record]);
-      prisma.evidence.deleteMany.mockResolvedValue({ count: 0 });
+      // The file's row lock wakes to no row: the other delete committed first.
+      prisma.$queryRaw.mockImplementation(async (sql: unknown, ids: string[]) =>
+        (sql as string[]).join('?').includes('"evidence"') ? [] : ids.map((id) => ({ id })),
+      );
 
       await expect(service.remove(dataEntry(), 'EV-1')).rejects.toBeInstanceOf(NotFoundException);
       // Scoped by the database's id, not the path's spelling.
-      expect(prisma.evidence.deleteMany).toHaveBeenCalledWith({ where: { id: 'ev-1' } });
+      expect(prisma.$queryRaw.mock.calls.at(-1)!.slice(1)).toEqual([['ev-1']]);
+      expect(prisma.evidence.delete).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
+      expect(storage.remove).not.toHaveBeenCalled();
     });
 
     it('treats a file of a subsidiary out of reach as not found', async () => {
@@ -794,46 +976,53 @@ describe('EvidenceService', () => {
     });
   });
 
-  describe('deleteUnlinked — after links went', () => {
+  describe('deleteUnlinkedRows — inside the caller\'s transaction, after links went', () => {
     it('does nothing for no ids', async () => {
-      expect(await service.deleteUnlinked([])).toEqual([]);
+      expect(await service.deleteUnlinkedRows([], tx as never)).toEqual([]);
+      expect(prisma.evidence.findMany).not.toHaveBeenCalled();
+    });
+
+    it('deletes only the rows no record links to any more, and returns them for their objects', async () => {
+      const client = {
+        evidence: {
+          findMany: vi.fn().mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/a.pdf' }]),
+          deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+      };
+
+      expect(await service.deleteUnlinkedRows(['ev-1', 'ev-2'], client as never)).toEqual([
+        { id: 'ev-1', storagePath: 'sub-1/a.pdf' },
+      ]);
+      expect(client.evidence.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['ev-1', 'ev-2'] }, links: { none: {} } },
+        select: { id: true, storagePath: true },
+      });
+      expect(client.evidence.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['ev-1'] } } });
+      // Through the caller's client only — and Storage waits for the commit.
       expect(prisma.evidence.findMany).not.toHaveBeenCalled();
       expect(storage.remove).not.toHaveBeenCalled();
     });
 
-    it('removes the object only for the row THIS call deleted — a concurrent winner keeps its own', async () => {
-      prisma.evidence.findMany.mockResolvedValue([
-        { id: 'ev-1', storagePath: 'sub-1/a.pdf' },
-        { id: 'ev-2', storagePath: 'sub-1/b.pdf' },
-      ]);
-      prisma.evidence.deleteMany
-        .mockResolvedValueOnce({ count: 1 })
-        .mockResolvedValueOnce({ count: 0 }); // another caller got ev-2 first
-
-      expect(await service.deleteUnlinked(['ev-1', 'ev-2', 'ev-3'])).toEqual(['ev-1']);
-      expect(storage.remove).toHaveBeenCalledWith('evidence', ['sub-1/a.pdf']);
+    it('lets a database failure propagate — it rolls back the change that unlinked the file, audit row included', async () => {
+      const client = { evidence: { findMany: vi.fn().mockRejectedValue(new Error('db down')) } };
+      await expect(service.deleteUnlinkedRows(['ev-1'], client as never)).rejects.toThrow(/db down/);
     });
+  });
 
-    it('logs a database failure instead of throwing — its caller has already committed and must still audit', async () => {
-      prisma.evidence.findMany.mockRejectedValue(new Error('db down'));
-      const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-
-      await expect(service.deleteUnlinked(['ev-1'])).resolves.toEqual([]);
-      expect(logged.mock.calls[0][0]).toContain('ev-1');
-      expect(storage.remove).not.toHaveBeenCalled();
-      logged.mockRestore();
-    });
-
+  describe('removeBlobs — after the commit', () => {
     it('logs a storage failure instead of throwing — the rows are already gone', async () => {
-      prisma.evidence.findMany.mockResolvedValue([{ id: 'ev-1', storagePath: 'sub-1/a.pdf' }]);
-      prisma.evidence.deleteMany.mockResolvedValue({ count: 1 });
       storage.remove.mockRejectedValue(new Error('storage down'));
       const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
-      await expect(service.deleteUnlinked(['ev-1'])).resolves.toEqual(['ev-1']);
+      await expect(service.removeBlobs(['sub-1/a.pdf'])).resolves.toBeUndefined();
       // The object key is in the line, so whoever reads it can reclaim it.
       expect(logged.mock.calls[0][0]).toContain('sub-1/a.pdf');
       logged.mockRestore();
+    });
+
+    it('does nothing for no paths', async () => {
+      await service.removeBlobs([]);
+      expect(storage.remove).not.toHaveBeenCalled();
     });
   });
 

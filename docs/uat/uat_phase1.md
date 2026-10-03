@@ -42,7 +42,8 @@ TonyAI is a multi-tenant carbon-accounting platform for holding companies. Phase
 
 | User | Role | Sees |
 | --- | --- | --- |
-| `admin@tonyai.local` | `super_admin` | all **5** subsidiaries; can manage everything |
+| `admin@tonyai.local` | `super_admin` | all **5** subsidiaries; can manage everything — except approve a record admin entered (D01) |
+| `approver@tonyai.local` | `super_admin` | a second super_admin, so that what admin enters can be approved (REV-09) |
 | `entry@tonyai.local` | `data_entry` | only **2** subsidiaries (TonyAI Energy, TonyAI Logistics); cannot manage org structure, cannot generate reports |
 | `review@tonyai.local` | `consultant` | organisation-wide read; may review and reject records but **may not approve**, and may not enter, edit or submit data |
 
@@ -122,7 +123,7 @@ Run **after** ENTRY-04, so at least one record is sitting in `submitted`.
 | REV-06 | Go to `/emissions` → **History** → open that record | Status **rejected**, and a **"Why this was sent back"** block shows the exact reason you typed | |
 | REV-07 | As the record's author, submit it again (Data Entry → *Submit for review*) | Accepted: a rejected record can be fixed and resubmitted, and it reappears in the queue | |
 | REV-08 | Back on `/review`, click a `submitted` row → **Start review** | Row **stays** in the queue and its status changes to **under review** (it is still undecided) | |
-| REV-09 | Click a row → **Approve** | Toast confirms; the row leaves the queue and the record reads **approved** on `/emissions` | |
+| REV-09 | Sign in as `approver@tonyai.local` (the second super_admin) → `/review` → click a row admin entered → **Approve** | Toast confirms; the row leaves the queue and the record reads **approved** on `/emissions`. (As admin, approving admin's own record is refused — the approver may not be the creator, decision D01) | |
 | REV-10 | Sign in as `review@tonyai.local` (consultant) → `/review` | Queue is visible with **Start review** and **Reject**, but **no Approve button**, plus a line explaining approval is `super_admin` only | |
 | REV-11 | Sign in as `entry@tonyai.local` → `/review` | An explanation card ("Reviewing is done by a consultant or a super_admin"), **not** an error or an empty page | |
 

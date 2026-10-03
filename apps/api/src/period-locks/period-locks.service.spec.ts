@@ -24,11 +24,16 @@ const auditMock = () => audit as unknown as AuditService;
 
 function createPrismaMock() {
   const tx = {
+    // The period's exclusive advisory lock (`lifecycle-lock.ts`).
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    $queryRaw: vi.fn(),
     periodLock: {
       create: vi.fn(),
-      delete: vi.fn(),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     activityRecord: {
+      // Default: nothing blocks the lock.
+      groupBy: vi.fn().mockResolvedValue([]),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     auditLog: { create: vi.fn() },
@@ -40,8 +45,9 @@ function createPrismaMock() {
       findUnique: vi.fn(),
     },
     activityRecord: {
-      // Default: no records awaiting review, so locking is allowed.
-      count: vi.fn().mockResolvedValue(0),
+      // Counted inside the transaction now (tx.activityRecord.groupBy); a
+      // count on the root client would run outside the period's lock.
+      count: vi.fn(),
     },
     auditLog: { create: vi.fn() },
     // $transaction(fn) runs the callback against the tx mock.
@@ -153,7 +159,7 @@ describe('PeriodLocksService', () => {
 
     await service.lock(superAdmin(), { ...CREATE_DTO, periodValue: '  q1  ' });
 
-    expect(prisma.activityRecord.count.mock.calls[0][0].where).toMatchObject({
+    expect(prisma.tx.activityRecord.groupBy.mock.calls[0][0].where).toMatchObject({
       periodValue: 'Q1',
     });
     expect(prisma.tx.periodLock.create.mock.calls[0][0].data).toMatchObject({
@@ -190,25 +196,69 @@ describe('PeriodLocksService', () => {
     );
   });
 
-  it('cannot lock a period with records still awaiting review (409, no transaction)', async () => {
-    prisma.activityRecord.count.mockResolvedValue(2);
+  it('cannot lock a period with records still awaiting review (409, nothing written)', async () => {
+    prisma.tx.activityRecord.groupBy.mockResolvedValue([
+      { status: 'submitted', _count: { _all: 1 } },
+      { status: 'under_review', _count: { _all: 1 } },
+    ]);
 
     await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toThrow(
-      /awaiting review/i,
+      /^2 record\(s\) in this period are still awaiting review/,
     );
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.tx.periodLock.create).not.toHaveBeenCalled();
+    expect(prisma.tx.activityRecord.updateMany).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
 
     // Assert WHICH statuses were counted, not just that a count happened. With
-    // the count mocked, an empty or truncated PENDING_REVIEW_STATUSES still
-    // produced a green suite — and an empty one means a super_admin can close a
-    // period holding undecided records, flipping them to the immutable `locked`
+    // the count mocked, an empty or truncated status list still produced a
+    // green suite — and an empty one means a super_admin can close a period
+    // holding undecided records, flipping them to the immutable `locked`
     // state unreviewed. That is the exact failure this gate exists to stop.
-    expect(prisma.activityRecord.count).toHaveBeenCalledWith(
+    expect(prisma.tx.activityRecord.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: { in: ['submitted', 'under_review'] },
+          status: { in: ['submitted', 'under_review', 'rejected'] },
         }),
       }),
+    );
+  });
+
+  it('counts what blocks the lock only once it holds the period exclusively', async () => {
+    // F03: counted before the lock, a submit landing between the count and
+    // the lock row put an unreviewed record inside a closed period.
+    prisma.tx.periodLock.create.mockResolvedValue(LOCK_ROW);
+
+    await service.lock(superAdmin(), CREATE_DTO);
+
+    expect((prisma.tx.$executeRaw.mock.calls[0][0] as string[]).join('?')).toMatch(
+      /pg_advisory_xact_lock\(/,
+    );
+    expect(prisma.tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.tx.activityRecord.groupBy.mock.invocationCallOrder[0],
+    );
+    expect(prisma.activityRecord.count).not.toHaveBeenCalled();
+  });
+
+  it('cannot lock a period holding a rejected record — the lock would strand it (D03)', async () => {
+    prisma.tx.activityRecord.groupBy.mockResolvedValue([
+      { status: 'rejected', _count: { _all: 1 } },
+    ]);
+
+    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toThrow(
+      /^1 rejected record\(s\) are waiting for their authors/,
+    );
+    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.tx.periodLock.create).not.toHaveBeenCalled();
+  });
+
+  it('names both kinds when both block the lock', async () => {
+    prisma.tx.activityRecord.groupBy.mockResolvedValue([
+      { status: 'submitted', _count: { _all: 2 } },
+      { status: 'rejected', _count: { _all: 1 } },
+    ]);
+
+    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toThrow(
+      /2 record\(s\).*awaiting review.*; 1 rejected record\(s\).* before locking\.$/,
     );
   });
 
@@ -226,12 +276,16 @@ describe('PeriodLocksService', () => {
 
   it('unlock deletes the row, reverts locked records to approved, and audits', async () => {
     prisma.periodLock.findUnique.mockResolvedValue(LOCK_ROW);
-    prisma.tx.periodLock.delete.mockResolvedValue(LOCK_ROW);
     prisma.tx.activityRecord.updateMany.mockResolvedValue({ count: 3 });
 
     const res = await service.unlock(superAdmin(), 'lock-1');
 
     expect(res).toEqual({ id: 'lock-1', deleted: true });
+    // The period held exclusively before the row goes.
+    expect(prisma.tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.tx.periodLock.deleteMany.mock.invocationCallOrder[0],
+    );
+    expect(prisma.tx.periodLock.deleteMany).toHaveBeenCalledWith({ where: { id: 'lock-1' } });
     expect(prisma.tx.activityRecord.updateMany).toHaveBeenCalledWith({
       where: {
         subsidiaryId: 'sub-1',
@@ -247,6 +301,16 @@ describe('PeriodLocksService', () => {
       expect.objectContaining({ action: 'unlock', entity: 'period_lock' }),
       prisma.tx,
     );
+  });
+
+  it('unlock that wakes to the row already gone is NotFound, with no audit row', async () => {
+    // A concurrent unlock held the period first and deleted the row.
+    prisma.periodLock.findUnique.mockResolvedValue(LOCK_ROW);
+    prisma.tx.periodLock.deleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.unlock(superAdmin(), 'lock-1')).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.tx.activityRecord.updateMany).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('unlock of an out-of-scope lock is NotFound (no leak)', async () => {
