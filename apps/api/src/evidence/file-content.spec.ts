@@ -211,7 +211,13 @@ describe('checkEvidenceFile — the bytes must be what the upload claims', () =>
     const utf7 = zip([
       {
         name: '[Content_Types].xml',
-        data: '<?xml version="1.0" encoding="UTF-7"?>' + contentTypes('application/vnd.ms-excel.sheet.macro+AEU-nabled.main+xml'),
+        // A real workbook type, and a VBA project spelled in UTF-7 ("+AFA-" is "P").
+        data:
+          '<?xml version="1.0" encoding="UTF-7"?>' +
+          contentTypes(
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+            '<Override PartName="/xl/code.bin" ContentType="application/vnd.ms-office.vba+AFA-roject"/>',
+          ),
       },
     ]);
     expect(refusal(() => checkEvidenceFile(file(XLSX, utf7))), 'utf-7').toMatch(/not a XLSX file/);
