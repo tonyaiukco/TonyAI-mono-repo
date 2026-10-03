@@ -52,6 +52,29 @@ const apiDir = resolve(__dirname, 'apps/api');
 // command someone types.
 const apiStartCmd = 'pnpm --filter @tonyai/api build && node dist/main.js';
 
+/**
+ * The API under test logs in as the least-privileged runtime role (LP1-03), as
+ * a deployed one does — so a route that needs a grant the role lacks fails
+ * here, not in staging. Locally `apps/api/.env` already says so. CI's
+ * `supabase-stack` exports the OWNER as DATABASE_URL (and DIRECT_URL) for the
+ * migrations and the seed; there the API gets the runtime URL derived from it,
+ * after the role's local login is provisioned (loopback only).
+ */
+const RUNTIME_ROLE = 'tonyai_runtime';
+const LOCAL_RUNTIME_PASSWORD = 'tonyai-runtime-local'; // = packages/db/scripts/runtime-role.mjs
+function runtimeApi(): { command: string; env?: Record<string, string> } {
+  const owner = process.env.DIRECT_URL || process.env.DATABASE_URL;
+  if (!owner || decodeURIComponent(new URL(owner).username) === RUNTIME_ROLE) return { command: apiStartCmd };
+  const runtime = new URL(owner);
+  runtime.username = RUNTIME_ROLE;
+  runtime.password = LOCAL_RUNTIME_PASSWORD;
+  return {
+    command: `DIRECT_URL='${owner}' node ../../packages/db/scripts/runtime-role.mjs provision && ${apiStartCmd}`,
+    env: { DATABASE_URL: runtime.toString() },
+  };
+}
+const api = runtimeApi();
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -89,7 +112,8 @@ export default defineConfig({
 
   webServer: [
     {
-      command: apiStartCmd,
+      command: api.command,
+      ...(api.env ? { env: api.env } : {}),
       cwd: apiDir,
       url: 'http://localhost:3001/api/v1/health',
       reuseExistingServer: !process.env.CI,
