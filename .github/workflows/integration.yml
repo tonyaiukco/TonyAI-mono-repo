@@ -8,6 +8,7 @@ name: Integration
 # the harness's own wiring changes. Because of the filter it must NOT be made
 # a required status check as is: a PR outside these paths never reports it.
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:

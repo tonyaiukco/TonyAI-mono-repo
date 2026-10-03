@@ -43,6 +43,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Candidate smoke contracts and lint scope
+        run: node --test infra/tests/*.test.mjs
+
   # The database-layer security gate, and the only one that runs on every PR.
   #
   # Tenant isolation in this product is two-layer: the NestJS guard is the
@@ -86,34 +89,48 @@ jobs:
           supabase status || true
           docker ps || true
 
-  # Proof-of-build for the container images (no registry push, no cloud creds —
-  # the Azure deploy pipeline (push to ACR + Container Apps via GitHub OIDC)
-  # lands in the credit-dependent half of Phase 2).
+  # Build, load and START these images against this disposable CI stack.
+  # Cloud qualification uses separately built environment-bound digests.
   docker-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
-
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/supabase-stack
+      - run: pnpm exec playwright install --with-deps chromium
       - uses: docker/setup-buildx-action@v3
-
-      - name: Build api image
+      - name: Build and load API image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: apps/api/Dockerfile
-          push: false
+          load: true
+          tags: tonyai-api:ci
           platforms: linux/amd64
           cache-from: type=gha,scope=api
           cache-to: type=gha,scope=api,mode=max
-
-      - name: Build web image
+      - name: Build and load environment-bound web image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: apps/web/Dockerfile
-          push: false
+          load: true
+          tags: tonyai-web:ci
           platforms: linux/amd64
           build-args: |
-            NEXT_PUBLIC_SUPABASE_ANON_KEY=ci-placeholder-not-a-real-key
+            NEXT_PUBLIC_SUPABASE_URL=${{ env.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_API_BASE_URL=${{ env.NEXT_PUBLIC_API_BASE_URL }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,scope=web,mode=max
+      - name: Actual-image startup, login and browser/export smoke
+        env:
+          API_IMAGE: tonyai-api:ci
+          WEB_IMAGE: tonyai-web:ci
+        run: bash infra/scripts/local-image-smoke.sh

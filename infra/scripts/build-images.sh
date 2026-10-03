@@ -11,10 +11,19 @@ test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 test -z "$(git status --porcelain)"
 export NEXT_PUBLIC_SUPABASE_URL="$SUPABASE_URL"
 export NEXT_PUBLIC_API_BASE_URL="$API_ORIGIN/api/v1"
-read -r -s -p 'Paste staging public browser key (never service_role): ' NEXT_PUBLIC_SUPABASE_ANON_KEY
-printf '\n'
+if [[ -z "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" ]]; then
+  read -r -s -p 'Paste staging public browser key (never service_role): ' NEXT_PUBLIC_SUPABASE_ANON_KEY
+  printf '\n'
+fi
 export NEXT_PUBLIC_SUPABASE_ANON_KEY
 python3 infra/scripts/check_browser_key.py
+# Validate public provenance before registry authentication or a build.
+python3 - <<'PYVALIDATE'
+import os,sys
+sys.path.insert(0, 'infra/scripts')
+from candidate import create
+create(os.environ['RELEASE_SHA'], 'sha256:'+'0'*64, 'sha256:'+'0'*64)
+PYVALIDATE
 work_dir=$(mktemp -d)
 container_id=''
 cleanup() {
@@ -23,8 +32,8 @@ cleanup() {
 }
 trap cleanup EXIT
 az acr login --name "$ACR_NAME" --output none
-docker buildx build --platform linux/amd64 --file apps/api/Dockerfile --tag "$ACR_HOST/tonyai/api:$RELEASE_SHA" --metadata-file "$work_dir/api.json" --push .
-docker buildx build --platform linux/amd64 --file apps/web/Dockerfile --tag "$ACR_HOST/tonyai/web:$RELEASE_SHA" --metadata-file "$work_dir/web.json" --build-arg NEXT_PUBLIC_SUPABASE_URL --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY --build-arg NEXT_PUBLIC_API_BASE_URL --push .
+docker buildx build --platform linux/amd64 --file apps/api/Dockerfile --label "org.opencontainers.image.revision=$RELEASE_SHA" --tag "$ACR_HOST/tonyai/api:$RELEASE_SHA" --metadata-file "$work_dir/api.json" --push .
+docker buildx build --platform linux/amd64 --file apps/web/Dockerfile --label "org.opencontainers.image.revision=$RELEASE_SHA" --tag "$ACR_HOST/tonyai/web:$RELEASE_SHA" --metadata-file "$work_dir/web.json" --build-arg NEXT_PUBLIC_SUPABASE_URL --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY --build-arg NEXT_PUBLIC_API_BASE_URL --push .
 unset NEXT_PUBLIC_SUPABASE_ANON_KEY
 # Digest comes from THIS build result, never a later lookup of the mutable tag.
 read_digest() {
@@ -43,9 +52,5 @@ container_id=$(docker create --platform linux/amd64 "$ACR_HOST/tonyai/web@$WEB_D
 docker cp "$container_id:/app/apps/web/.next/static" "$work_dir/static"
 python3 infra/scripts/scan_browser_assets.py "$work_dir/static"
 # Record only public provenance after the exact pushed image scan passes. Never mutate foundation tags.
-python3 - "$2" "$RELEASE_SHA" "$API_DIGEST" "$WEB_DIGEST" "$SUPABASE_PROJECT_REF" "$API_ORIGIN" "$WEB_ORIGIN" <<'PYJSON'
-import json,sys
-with open(sys.argv[1], 'x') as target:
-    json.dump(dict(zip(['source_sha','api_digest','web_digest','supabase_project_ref','api_origin','web_origin'],sys.argv[2:])),target,indent=2)
-PYJSON
+python3 infra/scripts/candidate.py create --sha "$RELEASE_SHA" --candidate "$2" --api-digest "$API_DIGEST" --web-digest "$WEB_DIGEST"
 printf 'PASS: built and scanned release %s\nAPI %s\nWeb %s\n' "$RELEASE_SHA" "$API_DIGEST" "$WEB_DIGEST"
