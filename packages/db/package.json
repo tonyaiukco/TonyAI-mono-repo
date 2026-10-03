@@ -9,12 +9,11 @@
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "deploy": "prisma migrate deploy",
-    "reset": "prisma migrate reset --force && node scripts/reclaim-evidence.mjs --apply --older-than=0",
+    "reset": "prisma migrate reset --force",
     "seed": "tsx prisma/seed.ts",
     "studio": "prisma studio",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "evidence:reclaim": "node scripts/reclaim-evidence.mjs",
     "test": "vitest run --passWithNoTests",
     "anomaly:probe": "node scripts/anomaly-probe.mjs",
     "anomaly:recompute": "tsx scripts/anomaly-recompute.mjs"
