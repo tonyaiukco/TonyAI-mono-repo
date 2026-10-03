@@ -294,6 +294,7 @@ model ImportBatch {
   fileName       String            @map("file_name")
   fileFormat     String            @map("file_format")
   sizeBytes      Int               @map("size_bytes")
+  // Lowercase hex, CHECKed in the database (LP1-02 migration).
   sha256         String            @db.Char(64)
   // Unique: one object backs one batch (LP1-02), so removing an object can
   // never take bytes another row still points at.
@@ -332,7 +333,8 @@ model Evidence {
   fileName     String                   @map("file_name")
   mimeType     String                   @map("mime_type")
   sizeBytes    Int                      @map("size_bytes")
-  // SHA-256 of the bytes as uploaded (hex) — the file's content identity,
+  // SHA-256 of the bytes as uploaded (lowercase hex, CHECKed in the
+  // database) — the file's content identity,
   // checked against Storage by `storage:reconcile --verify`. Null on files
   // uploaded before LP1-02: unverified, never back-filled with a guess.
   sha256       String?                  @db.Char(64)

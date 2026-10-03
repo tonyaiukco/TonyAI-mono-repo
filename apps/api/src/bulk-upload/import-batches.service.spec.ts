@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
 import { ImportBatchesService } from './import-batches.service';
 import type { BulkSubmitService } from './bulk-submit.service';
 import type { PrismaService } from '../prisma/prisma.service';
-import type { StorageService } from '../storage/storage.service';
+import { StorageObjectMissingError, type StorageService } from '../storage/storage.service';
 import type { RequestUser } from '../auth/auth.types';
 
 const ORG = 'e1111111-1111-4111-8111-11111111111e';
@@ -183,6 +183,26 @@ describe('ImportBatchesService — the source file', () => {
       60,
       'q3.csv',
     );
+  });
+
+  it('saves a download under its own format\'s extension when the name lost it', async () => {
+    const { prisma, storage, service } = build();
+    // A name cut at 255 code points can end anywhere — `.html` included.
+    prisma.importBatch.findUnique.mockResolvedValue(batch({ fileName: 'report.html' }));
+    await service.sourceUrl(user(), BATCH);
+    expect(storage.createSignedUrl.mock.calls[0][3]).toBe('report.html.csv');
+  });
+
+  it('answers 404 — not 500 — and reports it, when the kept file\'s bytes are missing (LP1-02)', async () => {
+    const { prisma, storage, service } = build();
+    prisma.importBatch.findUnique.mockResolvedValue(batch());
+    storage.createSignedUrl.mockRejectedValue(new StorageObjectMissingError('import-sources', 'x'));
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await expect(service.sourceUrl(user(), BATCH)).rejects.toThrow(/missing from storage/);
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+    storage.createSignedUrl.mockRejectedValue(new Error('storage down'));
+    await expect(service.sourceUrl(user(), BATCH)).rejects.toThrow('storage down');
   });
 
   it('404s a batch whose file is not kept, and signs nothing for an invisible one', async () => {

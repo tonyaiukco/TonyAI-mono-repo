@@ -88,14 +88,20 @@ export function parseArgs(argv: string[]): Options {
     'allow-remote',
     'forget-uploads',
   ];
-  for (const name of flags.keys()) {
+  const valued = ['bucket', 'limit', 'older-than'];
+  for (const [name, value] of flags) {
     if (!known.includes(name)) throw new UsageError(`Unknown flag --${name}`);
+    // `--verify=no` must not verify, and `--older-than=` must not mean 0.
+    if (!valued.includes(name) && value !== true) throw new UsageError(`--${name} takes no value`);
+    if (valued.includes(name) && (value === true || value.trim() === '')) {
+      throw new UsageError(`--${name} needs a value: --${name}=<value>`);
+    }
   }
   const number = (name: string, fallback: number, min: number): number => {
     const raw = flags.get(name);
     if (raw === undefined) return fallback;
     const value = Number(raw);
-    if (raw === true || !Number.isFinite(value) || value < min) {
+    if (!Number.isFinite(value) || value < min) {
       throw new UsageError(`--${name} needs a number of at least ${min}`);
     }
     return value;

@@ -46,11 +46,18 @@ CREATE UNIQUE INDEX "evidence_storage_path_key" ON "evidence"("storage_path");
 -- CreateIndex
 CREATE UNIQUE INDEX "import_batches_storage_path_key" ON "import_batches"("storage_path");
 
+-- Content identity has one shape in both tables: a lowercase hex SHA-256 (or,
+-- for evidence from before this migration, nothing). Reconciliation compares
+-- it byte for byte, so a malformed value would read as tampered bytes.
+-- Prisma does not model CHECK constraints, so it reports no drift for these.
+ALTER TABLE "evidence" ADD CONSTRAINT "evidence_sha256_hex" CHECK ("sha256" ~ '^[0-9a-f]{64}$');
+ALTER TABLE "import_batches" ADD CONSTRAINT "import_batches_sha256_hex" CHECK ("sha256" ~ '^[0-9a-f]{64}$');
+
 -- Operational state, not tenant data: RLS on with NO policy, and nothing
 -- granted to client roles, so PostgREST sees no row of it. Only the API (the
 -- owner role) and service_role touch it. Never FORCE (it would block the
--- owner path). Guarded so the shadow database, which has no Supabase roles,
--- skips the grant.
+-- owner path). Guarded so a database without Supabase's roles (a plain
+-- shadow database on another cluster) skips the grant.
 ALTER TABLE "storage_intents" ENABLE ROW LEVEL SECURITY;
 
 DO $$

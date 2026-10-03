@@ -36,6 +36,12 @@ describe('storage:reconcile — arguments', () => {
     expect(() => parseArgs(['--limit=0'])).toThrow(/at least 1/);
     expect(() => parseArgs(['--older-than=-1'])).toThrow(/at least 0/);
     expect(() => parseArgs(['--apply'])).toThrow(/only applies to --reclaim-orphans/);
+    // An empty value is not zero, and a switch with a value is not on.
+    expect(() => parseArgs(['--older-than='])).toThrow(/needs a value/);
+    expect(() => parseArgs(['--older-than'])).toThrow(/needs a value/);
+    expect(() => parseArgs(['--limit= '])).toThrow(/needs a value/);
+    expect(() => parseArgs(['--verify=no'])).toThrow(/takes no value/);
+    expect(() => parseArgs(['--apply=false', '--reclaim-orphans'])).toThrow(/takes no value/);
   });
 });
 

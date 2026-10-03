@@ -284,17 +284,23 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
       // An upload intent this old belongs to a transaction that cannot still
       // commit. SKIP LOCKED passes over one an owning transaction is adopting
       // right now; if that transaction then rolls back, the next sweep takes it.
+      // A MATERIALIZED CTE, not `WHERE id IN (SELECT … LIMIT n)`: a plan that
+      // rescans that subquery skips the rows it already updated and takes n
+      // MORE each time, so the LIMIT bounded nothing (`qa-auditor`, measured:
+      // 5 claimed under LIMIT 2). A CTE is scanned once.
       abandoned = await this.prisma.$executeRaw`
-        UPDATE storage_intents
-        SET kind = 'delete', next_attempt_at = now()
-        WHERE id IN (
+        WITH stale AS MATERIALIZED (
           SELECT id FROM storage_intents
           WHERE kind = 'upload'
             AND created_at < now() - ${UPLOAD_GRACE_SECONDS}::int * interval '1 second'
           ORDER BY created_at, id
           LIMIT ${limit}
           FOR UPDATE SKIP LOCKED
-        )`;
+        )
+        UPDATE storage_intents s
+        SET kind = 'delete', next_attempt_at = now()
+        FROM stale
+        WHERE s.id = stale.id`;
       outcome = await this.execute(await this.claim(Prisma.sql`next_attempt_at <= now()`, limit));
     }
     const backlog = await this.backlog();
@@ -409,11 +415,9 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
    * call; SKIP LOCKED and the lease keep two processes off one intent.
    */
   private claim(filter: Prisma.Sql, limit: number): Promise<ClaimedIntent[]> {
+    // MATERIALIZED for the bound — see the abandon statement in `sweep`.
     return this.prisma.$queryRaw<ClaimedIntent[]>`
-      UPDATE storage_intents
-      SET claimed_until = now() + ${CLAIM_LEASE_SECONDS}::int * interval '1 second',
-          attempts = attempts + 1
-      WHERE id IN (
+      WITH due AS MATERIALIZED (
         SELECT id FROM storage_intents
         WHERE kind = 'delete'
           AND (claimed_until IS NULL OR claimed_until < now())
@@ -422,7 +426,12 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
         LIMIT ${limit}
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, bucket, object_path AS "objectPath", attempts`;
+      UPDATE storage_intents s
+      SET claimed_until = now() + ${CLAIM_LEASE_SECONDS}::int * interval '1 second',
+          attempts = s.attempts + 1
+      FROM due
+      WHERE s.id = due.id
+      RETURNING s.id, s.bucket, s.object_path AS "objectPath", s.attempts`;
   }
 
   private async execute(claimed: ClaimedIntent[]): Promise<Outcome> {

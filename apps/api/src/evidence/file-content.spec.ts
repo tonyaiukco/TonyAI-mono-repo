@@ -60,6 +60,20 @@ describe('checkEvidenceFile — the bytes must be what the upload claims', () =>
     expect(refusal(() => checkEvidenceFile(file('text/csv', png)))).toMatch(/not a CSV file/);
   });
 
+  it('checks the WHOLE signature, not a prefix of it', () => {
+    // The first four PNG bytes, then garbage where CR LF SUB LF belong.
+    const halfPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    expect(refusal(() => checkEvidenceFile(file('image/png', halfPng)))).toMatch(/not a PNG file/);
+    // FF D8 is a JPEG start of image only with the FF that opens the next marker.
+    expect(refusal(() => checkEvidenceFile(file('image/jpeg', Buffer.from([0xff, 0xd8, 0x00, 0x10]))))).toMatch(
+      /not a JPG file/,
+    );
+  });
+
+  it('keeps the whitespace text files really contain — tab, line feed, carriage return, form feed', () => {
+    expect(() => checkEvidenceFile(file('text/csv', Buffer.from('a\tb\r\nc\fd\n')))).not.toThrow();
+  });
+
   it('judges CSV as text without judging its encoding — Windows-1254 passes, a NUL byte does not', () => {
     // "Şubat;1,5" in Windows-1254: Ş = 0xDE.
     const cp1254 = Buffer.from([0xde, 0x75, 0x62, 0x61, 0x74, 0x3b, 0x31, 0x2c, 0x35, 0x0d, 0x0a]);
@@ -167,6 +181,7 @@ describe('checkEvidenceFile — the bytes must be what the upload claims', () =>
     );
     // Nothing left to show: a name the user can still recognise by type.
     expect(checkEvidenceFile(file('application/pdf', pdf, rlo)).fileName).toBe('evidence.pdf');
+    expect(checkEvidenceFile(file('application/pdf', pdf, '   ')).fileName).toBe('evidence.pdf');
     expect([...checkEvidenceFile(file('application/pdf', pdf, 'x'.repeat(400))).fileName]).toHaveLength(255);
   });
 });
@@ -180,6 +195,9 @@ describe('downloadName — a download is saved under its checked type', () => {
 
   it('adds the type\'s extension to a name without it, or with another one', () => {
     expect(downloadName('fatura', 'application/pdf')).toBe('fatura.pdf');
+    // The type's FIRST extension — the usual one — is the one added.
+    expect(downloadName('photo', 'image/jpeg')).toBe('photo.jpg');
+    expect(downloadName('meter', 'text/csv')).toBe('meter.csv');
     expect(downloadName('fatura.html', 'application/pdf')).toBe('fatura.html.pdf');
     expect(downloadName('sheet.xlsm', XLSX)).toBe('sheet.xlsm.xlsx');
   });

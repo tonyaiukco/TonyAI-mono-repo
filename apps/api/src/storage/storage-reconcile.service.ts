@@ -29,17 +29,19 @@ export interface Page {
   limit: number;
   /** Keyset cursor: the last `path` (orphans) or row id (rows) of the previous page. */
   after?: string;
+  /** Only objects whose key starts with this — one tenant's subsidiary or organisation. */
+  prefix?: string;
 }
 
 /** The SQL that differs between the two buckets: which table owns its objects. */
 const OWNERS: Record<Bucket, { owned: Prisma.Sql; rows: Prisma.Sql }> = {
   evidence: {
     owned: Prisma.sql`EXISTS (SELECT 1 FROM evidence e WHERE e.storage_path = o.name)`,
-    rows: Prisma.sql`SELECT e.id::text AS id, e.storage_path AS path, e.sha256 FROM evidence e`,
+    rows: Prisma.sql`SELECT e.id, e.storage_path AS path, e.sha256 FROM evidence e`,
   },
   'import-sources': {
     owned: Prisma.sql`EXISTS (SELECT 1 FROM import_batches b WHERE b.storage_path = o.name)`,
-    rows: Prisma.sql`SELECT b.id::text AS id, b.storage_path AS path, b.sha256 FROM import_batches b WHERE b.storage_path IS NOT NULL`,
+    rows: Prisma.sql`SELECT b.id, b.storage_path AS path, b.sha256 FROM import_batches b WHERE b.storage_path IS NOT NULL`,
   },
 };
 
@@ -81,6 +83,7 @@ export class StorageReconcileService {
       FROM storage.objects o
       WHERE o.bucket_id = ${bucket}
         AND o.name > ${page.after ?? ''}
+        AND starts_with(o.name, ${page.prefix ?? ''})
         AND o.created_at < now() - ${olderThanHours}::float8 * interval '1 hour'
         AND NOT ${OWNERS[bucket].owned}
         AND NOT EXISTS (
@@ -98,9 +101,10 @@ export class StorageReconcileService {
 
   /** Rows whose object is absent from Storage's catalogue, in id order. */
   async missingObjects(bucket: Bucket, page: Page): Promise<MissingBytes[]> {
+    // Paged on the uuid itself, so the primary key orders it — not on its text.
     const rows = await this.prisma.$queryRaw<{ id: string; path: string }[]>`
-      SELECT r.id, r.path FROM (${OWNERS[bucket].rows}) r
-      WHERE r.id > ${page.after ?? ''}
+      SELECT r.id::text AS id, r.path FROM (${OWNERS[bucket].rows}) r
+      WHERE (${page.after ?? null}::uuid IS NULL OR r.id > ${page.after ?? null}::uuid)
         AND NOT EXISTS (
           SELECT 1 FROM storage.objects o WHERE o.bucket_id = ${bucket} AND o.name = r.path
         )
@@ -122,8 +126,9 @@ export class StorageReconcileService {
     page: Page,
   ): Promise<{ checked: number; last: string | null; problems: MissingBytes[] }> {
     const rows = await this.prisma.$queryRaw<{ id: string; path: string; sha256: string }[]>`
-      SELECT r.id, r.path, r.sha256 FROM (${OWNERS[bucket].rows}) r
-      WHERE r.sha256 IS NOT NULL AND r.id > ${page.after ?? ''}
+      SELECT r.id::text AS id, r.path, r.sha256 FROM (${OWNERS[bucket].rows}) r
+      WHERE r.sha256 IS NOT NULL
+        AND (${page.after ?? null}::uuid IS NULL OR r.id > ${page.after ?? null}::uuid)
       ORDER BY r.id
       LIMIT ${page.limit}`;
     const problems: MissingBytes[] = [];
@@ -173,13 +178,14 @@ export class StorageReconcileService {
     bucket: Bucket,
     olderThanHours: number,
     limit: number,
+    prefix?: string,
   ): Promise<{ reclaimed: OrphanObject[] }> {
     if (removalsHeld()) {
       throw new Error(
         'STORAGE_CLEANUP_HOLD is set: orphans are not reclaimed while a backup or restore runs.',
       );
     }
-    const orphans = await this.orphans(bucket, { limit }, olderThanHours);
+    const orphans = await this.orphans(bucket, { limit, prefix }, olderThanHours);
     if (orphans.length === 0) return { reclaimed: [] };
     const refs = orphans.map((o) => ({ bucket, path: o.path }));
     await this.intents.enqueueDeletes(this.prisma, refs, { reason: 'reconcile.orphan' });

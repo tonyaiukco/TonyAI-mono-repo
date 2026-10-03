@@ -55,7 +55,10 @@ let tenant: Tenant;
 let storage: StorageService;
 
 beforeAll(() => {
-  a = connect();
+  // Pooled: a service that wrote an intent on its root client instead of its
+  // transaction's must COMMIT that write and be found — not merely starve a
+  // one-connection client and fail for the wrong reason (`qa-auditor`).
+  a = connect(5);
   b = connect();
   observer = connect();
 });
@@ -119,6 +122,22 @@ async function evidenceObjects() {
 
 async function draft(data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {}) {
   return createRecord(a, tenant, data);
+}
+
+const IMPORT_HEADER =
+  'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
+
+/** An import the importer reads and then refuses row by row (a non-numeric value): the batch opens, no record is written. */
+function importCsv(): Express.Multer.File {
+  const buffer = Buffer.from(
+    `${IMPORT_HEADER}\n${tenant.subsidiaryId},,2026,monthly,January,Electricity,not-a-number,kWh,\n`,
+  );
+  return { originalname: 'import.csv', mimetype: 'text/csv', size: buffer.length, buffer } as Express.Multer.File;
+}
+
+function importer(client: PrismaService, store: StorageService = storage) {
+  const { records, intents: intentService } = lifecycleServices(client, store);
+  return new BulkUploadService(client, records, new AuditService(client), store, intentService);
 }
 
 /** Upload a real file to `recordIds` through the service; returns its row. */
@@ -367,6 +386,45 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
   });
 });
 
+describe('LP1-02 — the sweeper and an adoption, at the same moment', () => {
+  it('a sweep already removing an abandoned upload while its transaction adopts: the adoption is refused, no row points at removed bytes', async () => {
+    quiet();
+    const record = await draft();
+    const held = holdBefore(a, 'StorageIntent', 'deleteMany');
+    const upload = outcome(
+      lifecycleServices(held.client, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
+    );
+    await held.reached();
+    const [intent] = await intents();
+    await observer.$executeRaw`
+      UPDATE storage_intents
+      SET created_at = now() - ${UPLOAD_GRACE_SECONDS + 60}::int * interval '1 second'
+      WHERE id = ${intent.id}::uuid`;
+    // The sweep abandons the intent, claims it, finds no owner — and is held
+    // at the Storage call, the moment the adoption runs.
+    const sweepStorage = localStorage();
+    const send = sweepStorage.remove.bind(sweepStorage);
+    const atRemove = deferred();
+    const gate = deferred();
+    vi.spyOn(sweepStorage, 'remove').mockImplementation(async (bucket, paths) => {
+      atRemove.resolve();
+      await gate.promise;
+      return send(bucket, paths);
+    });
+    const sweep = sweeper(b, sweepStorage).sweep();
+    await atRemove.promise;
+    held.release();
+    const result = await upload;
+    gate.resolve();
+    await sweep;
+
+    expect(result).toBeInstanceOf(UploadExpiredError);
+    expect(await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
+    expect(await evidenceObjects()).toEqual([]);
+    expect(await intents()).toEqual([]);
+  });
+});
+
 describe('LP1-02 — deleting evidence, failed at each boundary', () => {
   it('detaching the last link while Storage fails: the file is gone and audited, its bytes wait as an intent, a sweep removes them', async () => {
     quiet();
@@ -533,6 +591,33 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
     expect(await evidenceObjects()).toHaveLength(3);
   });
 
+  it('the bound holds under a plan that rescans the claim — 2 of 5, not 5 (`qa-auditor`)', async () => {
+    quiet();
+    const due = await dueDeletes(5);
+    const stale = Array.from({ length: 5 }, (_, i) => `${tenant.subsidiaryId}/stale-${i}.pdf`);
+    for (const path of stale) {
+      await sweeper(observer).beginUpload({ bucket: EVIDENCE_BUCKET, path }, { reason: 'test' });
+    }
+    await observer.$executeRaw`
+      UPDATE storage_intents
+      SET created_at = now() - ${UPLOAD_GRACE_SECONDS + 60}::int * interval '1 second'
+      WHERE kind = 'upload' AND starts_with(object_path, ${`${tenant.subsidiaryId}/stale-`})`;
+    // The plan that made `WHERE id IN (SELECT … LIMIT n)` take n more per rescan.
+    const forced = connect();
+    try {
+      for (const setting of ['enable_material', 'enable_hashagg', 'enable_sort', 'enable_hashjoin', 'enable_mergejoin']) {
+        await forced.$executeRawUnsafe(`SET ${setting} = off`);
+      }
+      const report = await sweeper(forced).sweep(2);
+      expect(report.abandoned).toBe(2);
+      expect(report.removed).toBe(2);
+    } finally {
+      await forced.$disconnect();
+    }
+    expect((await evidenceObjects()).map((o) => o.path).filter((p) => due.includes(p))).toHaveLength(3);
+    expect((await intents()).filter((i) => i.kind === 'upload')).toHaveLength(3);
+  });
+
   it('a failing removal backs off exponentially, never gives up, and is reported as stuck', async () => {
     quiet();
     const errors = vi.mocked(Logger.prototype.error);
@@ -614,6 +699,19 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
     }
   });
 
+  it('an import source a batch owns is kept too, whatever an intent says — the guard asks the right table', async () => {
+    quiet();
+    const report = await importer(a).import(tenant.users.dataEntry, importCsv(), { dryRun: false });
+    const batch = await observer.importBatch.findUniqueOrThrow({ where: { id: report.batchId! } });
+    await sweeper().enqueueDeletes(observer, [{ bucket: IMPORT_SOURCES_BUCKET, path: batch.storagePath! }], {
+      reason: 'test',
+      organisationId: tenant.organisationId,
+    });
+
+    expect((await sweeper().sweep()).kept).toBe(1);
+    expect(sha256(await storage.download(IMPORT_SOURCES_BUCKET, batch.storagePath!))).toBe(batch.sha256);
+  });
+
   it('never removes an orphan — an object no row owns and no intent names', async () => {
     const path = `${tenant.subsidiaryId}/orphan.pdf`;
     await storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4\n'), 'application/pdf');
@@ -659,6 +757,31 @@ describe('LP1-02 — reconciliation: both directions', () => {
     );
   });
 
+  it('does not count an import source its batch owns as an orphan — nor reclaim it', async () => {
+    quiet();
+    const report = await importer(a).import(tenant.users.dataEntry, importCsv(), { dryRun: false });
+    const batch = await observer.importBatch.findUniqueOrThrow({ where: { id: report.batchId! } });
+    expect((await reconcile().orphans(IMPORT_SOURCES_BUCKET, ALL)).map((o) => o.path)).not.toContain(batch.storagePath);
+    await reconcile().reclaimOrphans(IMPORT_SOURCES_BUCKET, 0, 100_000, tenantPrefixes(tenant)['import-sources']);
+    expect(sha256(await storage.download(IMPORT_SOURCES_BUCKET, batch.storagePath!))).toBe(batch.sha256);
+  });
+
+  it('pages its checks by id: each page starts after the last', async () => {
+    const record = await draft();
+    await uploaded([record.id]);
+    await uploaded([record.id]);
+    const seen: string[] = [];
+    let after: string | undefined;
+    for (let page = 0; page < 3; page += 1) {
+      const result = await reconcile().verifyHashes(EVIDENCE_BUCKET, { limit: 1, after });
+      expect(result.checked).toBe(1);
+      after = result.last!;
+      seen.push(after);
+    }
+    expect(new Set(seen).size).toBe(3);
+    expect([...seen].sort()).toEqual(seen);
+  });
+
   it('does not count an in-flight upload as an orphan', async () => {
     const path = `${tenant.subsidiaryId}/in-flight.pdf`;
     await sweeper().beginUpload({ bucket: EVIDENCE_BUCKET, path }, { reason: 'evidence.upload' });
@@ -690,15 +813,15 @@ describe('LP1-02 — reconciliation: both directions', () => {
     await storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4\n'), 'application/pdf');
 
     // A minute old, against a one-hour threshold: kept.
-    expect((await reconcile().reclaimOrphans(EVIDENCE_BUCKET, 1, 1000)).reclaimed.map((o) => o.path)).not.toContain(path);
+    expect((await reconcile().reclaimOrphans(EVIDENCE_BUCKET, 1, 1000, tenantPrefixes(tenant).evidence)).reclaimed.map((o) => o.path)).not.toContain(path);
     expect(await objectExists(observer, EVIDENCE_BUCKET, path)).toBe(true);
 
     vi.stubEnv('STORAGE_CLEANUP_HOLD', '1');
-    await expect(reconcile().reclaimOrphans(EVIDENCE_BUCKET, 0, 1000)).rejects.toThrow(/STORAGE_CLEANUP_HOLD/);
+    await expect(reconcile().reclaimOrphans(EVIDENCE_BUCKET, 0, 1000, tenantPrefixes(tenant).evidence)).rejects.toThrow(/STORAGE_CLEANUP_HOLD/);
     expect(await objectExists(observer, EVIDENCE_BUCKET, path)).toBe(true);
     vi.unstubAllEnvs();
 
-    const { reclaimed } = await reconcile().reclaimOrphans(EVIDENCE_BUCKET, 0, 1000);
+    const { reclaimed } = await reconcile().reclaimOrphans(EVIDENCE_BUCKET, 0, 1000, tenantPrefixes(tenant).evidence);
     expect(reclaimed.map((o) => o.path)).toContain(path);
     expect(await objectExists(observer, EVIDENCE_BUCKET, path)).toBe(false);
     expect(await intents()).toEqual([]);
@@ -782,21 +905,7 @@ describe('LP1-02 — concurrent approval cannot silently lose evidence (real Sto
 });
 
 describe('LP1-02 — an applied import\'s source file, failed at each boundary', () => {
-  const HEADER =
-    'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
-
-  function importer(client: PrismaService, store: StorageService = storage) {
-    const { records, intents: intentService } = lifecycleServices(client, store);
-    return new BulkUploadService(client, records, new AuditService(client), store, intentService);
-  }
-
-  /** One row the importer reads and then refuses on its own (a non-numeric value): the batch opens, no record is written. */
-  function csv(): Express.Multer.File {
-    const buffer = Buffer.from(
-      `${HEADER}\n${tenant.subsidiaryId},,2026,monthly,January,Electricity,not-a-number,kWh,\n`,
-    );
-    return { originalname: 'import.csv', mimetype: 'text/csv', size: buffer.length, buffer } as Express.Multer.File;
-  }
+  const csv = importCsv;
 
   async function sources() {
     return (await tenantObjects(observer, tenant)).filter((o) => o.bucket === IMPORT_SOURCES_BUCKET);
