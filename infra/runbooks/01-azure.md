@@ -46,7 +46,8 @@ against restoration. Never give the deployer access to foundation state.
 
 ## 1.3 Protect GitHub and create/resume the dedicated OIDC identity
 
-Before federation: verify the GitHub plan actually enforces `staging` environment
+Complete [runbook 03’s one-time GitHub/main/JIT setup](03-deploy.md#one-time-owner-setup)
+before this step. Before federation: verify the GitHub plan actually enforces `staging` environment
 required reviewers, no self-approval/bypass, deployment branches limited to main,
 and protected workflow/source review. A displayed setting without enforcement
 is insufficient. If unavailable, keep owner-only deployment and stop before
@@ -61,10 +62,13 @@ python3 infra/scripts/configure_oidc.py --subscription "$AZURE_SUBSCRIPTION_ID" 
 The helper first requires `--repo` to equal the foundation `githubRepository`
 tag. With an owner-authorized `gh` session on github.com, it reads the existing
 staging environment and its branch policies: required reviewers, prevented
-self-review and exactly one `main` branch rule are mandatory. Missing/unreadable
-environments or policies stop before Graph mutations; it never creates an
-environment. The flag attests actual plan enforcement and no bypass, which
-configuration readback alone cannot prove. Retain sanitized configuration and
+self-review, `can_admins_bypass: false` and exactly one `main` branch rule are
+mandatory. It also checks the active no-bypass main ruleset, GitHub Actions
+required checks, JIT runner mode and approval of all outside collaborators.
+Missing/unreadable settings stop before Graph mutations; it never creates an
+environment or changes repository policy. The flag attests actual plan enforcement
+and independently reviewed fresh-host JIT isolation, which API configuration
+readback alone cannot prove. Retain sanitized configuration and
 actual denied/approved deployment evidence.
 
 Expected: dedicated app/SP IDs, trusted owner lists, no passwords/certificates,

@@ -14,7 +14,7 @@ def verify(repo, sha, read=None):
     if read is None:
         read = lambda path: json.loads(command(['gh', 'api', '--hostname', 'github.com', path]))
     evidence = {}
-    for workflow in ('ci.yml', 'e2e.yml'):
+    for workflow in ('ci.yml', 'e2e.yml', 'integration.yml'):
         result = read(f'repos/{repo}/actions/workflows/{workflow}/runs?head_sha={sha}&branch=main&per_page=100')
         runs = [r for r in result.get('workflow_runs', []) if
                 r.get('head_sha') == sha and r.get('head_branch') == 'main'
@@ -34,4 +34,4 @@ if __name__ == '__main__':
             raise SafeFailure('Release workflows run from main only.')
         print(json.dumps(verify(os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_SHA'])))
     except Exception:
-        sys.exit('FAIL: exact-candidate CI/E2E release checks refused; no cloud login attempted.')
+        sys.exit('FAIL: exact-candidate CI/E2E/integration release checks refused; no cloud login attempted.')

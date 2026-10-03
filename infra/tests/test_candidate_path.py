@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import candidate
 from release_checks import verify
@@ -62,7 +62,7 @@ class CandidateTests(unittest.TestCase):
     def test_exact_candidate_checks_refuse_foreign_failed_or_stale_runs(self):
         run = {'head_sha': 'a'*40, 'head_branch': 'main', 'head_repository': {'full_name':'owner/repo'},
                'event':'workflow_dispatch', 'run_number': 1, 'id': 10, 'status':'completed', 'conclusion':'success'}
-        self.assertEqual(len(verify('owner/repo', 'a'*40, lambda _: {'workflow_runs':[run]})), 2)
+        self.assertEqual(len(verify('owner/repo', 'a'*40, lambda _: {'workflow_runs':[run]})), 3)
         for field, value in [('head_sha','b'*40), ('head_branch','feature'), ('event','pull_request'),
                              ('head_repository',{'full_name':'foreign/repo'}), ('status','in_progress'), ('conclusion','failure')]:
             bad = {**run, field:value}
@@ -84,18 +84,42 @@ class CandidateTests(unittest.TestCase):
                 self.assertFalse(Path(plan).parent.exists())
                 self.assertFalse(any(arg.startswith('-var-file') for arg in calls[2]))
             with patch('terraform_run.subprocess.run') as run:
-                run.return_value.returncode = 1
+                run.side_effect = [Mock(returncode=0), Mock(returncode=1), Mock(returncode=0)]
                 with self.assertRaises(SafeFailure): invoke('application', backend, release, 'approved-apply')
+                self.assertEqual(len(run.call_args_list), 2)
+                self.assertIn('plan', run.call_args_list[1].args[0])
                 self.assertFalse(any('apply' in call.args[0] for call in run.call_args_list))
+            foundation = json.loads((ROOT/'infra/config/foundation.example.json').read_text())
+            foundation['config'].update(subscription_id=config()['subscription_id'], tenant_id=config()['tenant_id'],
+                owner_object_id=config()['owner_object_id'], deployer_object_id=config()['application_object_id'],
+                release_sha='a'*40, repository='owner/repo', registry_name='registry', vault_name='vault')
+            from foundation_contract import validate_foundation
+            validate_foundation(foundation)
+            release.write_text(json.dumps(foundation))
             with patch('terraform_run.subprocess.run') as run, self.assertRaises(SafeFailure):
                 invoke('foundation', backend, release, 'approved-apply')
             run.assert_not_called()
 
     def test_rls_demo_guard_refuses_remote_before_fetch(self):
-        for url in ['https://example.supabase.co', 'http://localhost.evil.test', 'http://localhost@evil.test',
+        for url in ['https://project.invalid', 'http://localhost.evil.test', 'http://localhost@evil.test',
                     'file:///tmp/test', 'http://127.0.0.1:54321/path', 'http://localhost:54321?host=evil']:
             result = subprocess.run(['node', 'scripts/rls-probes.mjs'], cwd=ROOT, capture_output=True, text=True,
                                     env={**os.environ, 'E2E_SUPABASE_URL':url,
                                          'E2E_SUPABASE_ANON_KEY':'synthetic', 'E2E_SUPABASE_SERVICE_KEY':'synthetic'})
             self.assertEqual(result.returncode, 2)
             self.assertIn('cloud targets are refused', result.stderr)
+
+    def test_integration_is_independently_required_at_exact_sha(self):
+        good = {'head_sha': 'a'*40, 'head_branch': 'main', 'head_repository': {'full_name': 'owner/repo'},
+                'event': 'workflow_dispatch', 'run_number': 1, 'id': 10, 'status': 'completed', 'conclusion': 'success'}
+        for bad in ([], [{**good, 'head_sha': 'b'*40}], [{**good, 'conclusion': 'failure'}],
+                    [good, {**good, 'run_number': 2, 'status': 'in_progress', 'conclusion': None}]):
+            def read(path):
+                return {'workflow_runs': bad if '/integration.yml/' in path else [good]}
+            with self.subTest(bad=bad), self.assertRaises(SafeFailure):
+                verify('owner/repo', 'a'*40, read)
+
+    def test_node_smoke_contract_boundaries(self):
+        result = subprocess.run(['node', '--test', 'infra/tests/smoke-contract.test.mjs'],
+                                cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

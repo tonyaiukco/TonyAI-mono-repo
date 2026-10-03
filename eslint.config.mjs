@@ -31,7 +31,7 @@ const IGNORES = [
   '**/.claude/worktrees/**',
   '**/.codex/worktrees/**',
   '**/.worktrees/**',
-  '**/worktrees/**',
+  'worktrees/**',
   'packages/db/generated/**',
   'coverage/**',
   'playwright-report/**',

@@ -1,6 +1,7 @@
 """Exact-ID fixture cleanup and owner smoke orchestration, with no network access."""
 import copy
 import json
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -69,9 +70,11 @@ class CloudSmokeTests(unittest.TestCase):
                      'api_origin':'https://tonyai-staging-api.real.germanywestcentral.azurecontainerapps.io',
                      'web_origin':'https://tonyai-staging-web.real.germanywestcentral.azurecontainerapps.io'}
         database = 'postgresql://postgres.abcdefghijklmnopqrst:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt'
-        for failure in ('none','fixture','browser','cleanup','readback'):
+        for failure in ('none','fixture','browser','cleanup','readback','created-id','created-email'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 journal = Path(directory)/'journal.json'
+                ambient = {name:'ambient-'+name for name in ('GITHUB_TOKEN','AZURE_CLIENT_SECRET','DATABASE_URL','DIRECT_URL','SERVICE_KEY','SERVICE_ROLE','PASSWORD','UNCLASSIFIED_CREDENTIAL','NODE_OPTIONS')}
+                stack.enter_context(patch.dict(os.environ, ambient))
                 for name in ('bind','check_inputs'):
                     stack.enter_context(patch('cloud_smoke.'+name))
                 readback = stack.enter_context(patch('cloud_smoke.verify'))
@@ -82,7 +85,7 @@ class CloudSmokeTests(unittest.TestCase):
                     # Durable ID intent must precede every POST; password is not persisted.
                     self.assertTrue(journal.exists())
                     self.assertNotIn('password',journal.read_text())
-                    return {'id':body['id'], 'email':body['email']}
+                    return {'id':'foreign' if failure=='created-id' else body['id'], 'email':'foreign' if failure=='created-email' else body['email']}
                 stack.enter_context(patch('cloud_smoke.auth_call',side_effect=auth))
                 clean = stack.enter_context(patch('cloud_smoke.cleanup'))
                 if failure == 'cleanup': clean.side_effect = SafeFailure('cleanup')
@@ -93,6 +96,7 @@ class CloudSmokeTests(unittest.TestCase):
                         self.assertEqual(env['DATABASE_URL'],database)
                         if failure == 'fixture': raise SafeFailure('fixture')
                     else:
+                        self.assertFalse(set(ambient) & set(env))
                         self.assertNotIn('DATABASE_URL',env)
                         self.assertNotIn('backend-synthetic',env.values())
                         if failure == 'browser': raise SafeFailure('browser')
@@ -103,4 +107,26 @@ class CloudSmokeTests(unittest.TestCase):
                     with self.assertRaises(SafeFailure): run(candidate,contract,journal)
                 clean.assert_called_once()
                 self.assertEqual(Path(str(journal)+'.passed.json').exists(),failure=='none')
+                if failure in ('created-id','created-email'): self.assertEqual(calls,[])
                 if failure == 'fixture': self.assertEqual(calls,['smoke-fixtures.mjs'])
+
+    def test_cleanup_only_checks_journal_candidate_and_every_target_binding(self):
+        import tempfile
+        from cloud_smoke import run
+        from test_prepare_release import fixture
+        candidate, contract = fixture()
+        for defect in ('none', 'candidate', 'sourceSha', 'projectRef', 'web', 'api'):
+            target = target_for(candidate)
+            journal = {'candidate': candidate, 'target': target}
+            if defect=='candidate': journal['candidate'] = {**candidate, 'source_sha':'b'*40}
+            elif defect!='none': target[defect] = 'foreign'
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as d:
+                path = Path(d)/'journal.json'; path.write_text(json.dumps(journal))
+                with patch('cloud_smoke.bind'), patch('cloud_smoke.secret', return_value='synthetic'), patch('cloud_smoke.child'), patch('cloud_smoke.cleanup') as cleanup:
+                    if defect=='none':
+                        run(candidate, contract, path, cleanup_only=True)
+                        cleanup.assert_called_once_with(target, 'synthetic')
+                    else:
+                        with self.assertRaises(SafeFailure): run(candidate, contract, path, cleanup_only=True)
+                        cleanup.assert_not_called()
+                self.assertFalse(Path(str(path)+'.passed.json').exists())

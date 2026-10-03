@@ -92,20 +92,67 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
 
 ### One-time owner setup
 
-- Finish runbooks 00–02 and the first owner-created application deployment. Apply
-  `apps_ready` grants and bind the existing OIDC app to `environment:staging` as
-  runbook 01 requires. Never grant the workflow foundation, Key Vault data-plane,
-  migration or backend-firewall administration permissions.
-- Keep the `staging` environment required reviewers, prevent-self-review and
-  **main-only** branch policy. Attest admin bypass is disabled (not readable via
-  REST). The approval is a deployment security boundary: runtime DB credentials
-  still have DB-owner authority until LP1-03.
-- Configure a dedicated GitHub-hosted runner labelled `tonyai-staging-eu`, in an
-  EU region with a static public IPv4, for the two staging workflows. Allow that
-  exact `/32` through the existing state-backend bootstrap configuration. Do not
-  open the firewall to all GitHub IPs or let the deploy job edit it. The workflows
-  intentionally stay pending if the runner is absent; no runner is provisioned
-  by this PR. Scope runner access to this repository's protected release jobs.
+- Before **any first dispatch** (which can otherwise auto-create an unprotected
+  environment) or federation, create and protect `staging`. Require a second
+  human reviewer, prevent self-review, disable administrator bypass
+  (`can_admins_bypass: false`), and allow exactly the `main` branch, no tags.
+  A solo owner cannot approve their own run in this configuration. Do not use an
+  admin bypass; recruit an independent reviewer before enabling deployment.
+- Create the active `tonyai-main-release` repository ruleset from the committed
+  public template. It requires reviewed PRs, current `build`, `docker-build`
+  and `rls-probe` checks from GitHub Actions, and prohibits deletion/force-push.
+  Its bypass list is empty, including administrators and automation. Do not make
+  path-filtered Infrastructure/Integration or manual E2E required PR checks;
+  integration and E2E are separate exact-SHA **release** gates.
+
+  ```bash
+  gh api --method POST repos/tonyaiukco/TonyAI-mono-repo/rulesets --input infra/config/main-ruleset.json
+  ```
+
+  Inspect existing rulesets first and update the matching ID instead of creating
+  a duplicate. Owner-run `github_environment.py` and `configure_oidc.py` refuse
+  missing/inactive/permissive rulesets, missing API fields and unreadable settings.
+- This public, **User-owned** repository uses **ephemeral JIT runners only**.
+  Persistent self-hosted runners are forbidden, even if labelled for staging.
+  Provision a fresh isolated EU host for each job, register it with GitHub's
+  just-in-time configuration and label `tonyai-staging-eu`, allow one job, then
+  destroy the host and disk on success, failure, cancellation or timeout. Never
+  reuse a host, home directory, Docker state, PATH tools or Terraform cache from
+  a prior job. The external owner-operated provisioner needs its own independent
+  review; this PR does not create or attest a working provisioner.
+- Configure all fork PR runs to require approval from **all outside
+  collaborators**, including returning contributors. Set the repository variable
+  `STAGING_RUNNER_MODE=ephemeral-jit` only after reviewing the provisioner.
+  Both protected jobs require that repository variable before they can run.
+  `verify_environment` reads and checks both settings before federation; a label
+  or this variable alone does **not** prove ephemeral host isolation. Never
+  approve untrusted fork code for a firewall-allowlisted release host.
+- JIT hosts need stable EU NAT egress. Allow only its exact `/32` in the existing
+  state-backend bootstrap configuration. No all-GitHub-IP firewall opening and
+  no firewall administration by the deploy job. A persistent NAT gateway is not
+  a persistent runner. No runner/cloud resource is provisioned by this PR.
+  GitHub-hosted larger static-IP runners and workflow-restricted runner groups
+  require an organization on Team/Enterprise; they are unavailable to this
+  personal repository. An organization migration with a group restricted to
+  `candidate.yml` and `deploy-staging.yml` at `refs/heads/main` is a future
+  alternative requiring a reviewed change to the JIT-only preflight.
+- Using the owner's GitHub administrator session (not the workflow token), run
+  the read-only preflight below before federation and again before each release.
+  The token must be able to read environment protections, rulesets including
+  bypass actors, Actions variables and fork approval settings. An unavailable
+  setting is a failure, never permission to continue.
+
+  ```bash
+  python3 infra/scripts/github_environment.py --repo tonyaiukco/TonyAI-mono-repo
+  ```
+
+  Preserve this result plus independent provisioner/teardown review as owner
+  evidence. If policy drifts, stop releases and remove federation until restored.
+- Finish runbooks 00–02 and the first owner-created application deployment. Only
+  after the prerequisites above, apply `apps_ready` grants and bind the existing
+  OIDC app to `environment:staging` as runbook 01 requires. Never grant workflows
+  foundation, Key Vault data-plane, migration or firewall administration rights.
+  API runtime credentials still have DB-owner authority until LP1-03.
 - Set public environment variables: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
   `AZURE_SUBSCRIPTION_ID`, `STAGING_PREFIX`, `STAGING_ACA_DEFAULT_DOMAIN`,
   `STAGING_ACR_NAME`, `STAGING_RESOURCE_GROUP`, `STAGING_SUPABASE_PROJECT_REF`,
@@ -116,9 +163,12 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
 
 ### Candidate → migration → approval → deployment
 
-1. Merge with owner approval, then select a clean **main SHA**. Run full E2E on
-   this SHA (`gh workflow run e2e.yml --ref main`); manual flow-changing PR runs
-   remain required by D22. CI and E2E must both be successful on the exact SHA.
+1. Merge with owner approval, then select a clean **main SHA**. Dispatch both `gh workflow run e2e.yml --ref main` and
+   `gh workflow run integration.yml --ref main`. Verify their `headSha` equals
+   the selected SHA; `main` can move between commands. Manual flow-changing PR
+   E2E runs remain required by D22. CI, full E2E and the real-PostgreSQL Integration
+   suite must all succeed on this SHA. Integration proves lifecycle concurrency,
+   rollback and audit atomicity (F10); unit tests do not replace it.
    A newer pending/failed run supersedes an earlier green run. Nightly evidence
    at another SHA cannot qualify this candidate.
 2. Dispatch `candidate.yml` on main. Its protected staging job uses OIDC, builds
@@ -126,7 +176,14 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
    retrieves these build-result digests, scans the exact web digest, and uploads
    `staging-candidate-<sha>` / `candidate.json`. It records the lockfile hash and
    every migration name/content hash. **This is build/scan evidence, not smoke.**
-3. Download the candidate artifact from that successful run. Prepare the normal
+3. Download the candidate artifact from that successful run into a fresh directory:
+
+   ```bash
+   gh run download '<candidate-run-id>' --repo tonyaiukco/TonyAI-mono-repo --name 'staging-candidate-<full-sha>' --dir .infra-local/staging/candidate-download
+   ```
+
+   Use `.infra-local/staging/candidate-download/candidate.json` as the candidate
+   below (or copy it to the referenced immutable evidence path). Prepare the normal
    application release manifest from section 3.1, using the exact two digests,
    source SHA, target project, a new `release_id`, and exact secret version IDs.
    From the candidate's clean checkout run:
@@ -143,17 +200,39 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
 5. Dispatch `deploy-staging.yml` on the **same main SHA**, supplying the successful
    candidate **run ID** and reviewed public release JSON. If main has advanced,
    build a new candidate; this workflow does not accept arbitrary checkout refs.
-   Before approval, compare the manifest, candidate artifact, CI/E2E runs,
+   The unprotected `validate` job has no OIDC permission and publishes the
+   normalized manifest and its SHA-256 in the run's step summary **before** the
+   protected deployment job requests approval. The deployment job name includes
+   that hash. Open this summary from the workflow run; compare every field,
+   especially `vault_name`, `resource_group`, `release_id` and both secret version
+   IDs, with the independently selected release. Before approval, compare the
+   manifest hash, candidate artifact, CI/E2E/integration runs,
    migration/secret checks, schema rollback plan and backend runner IP. The job
    independently reads the candidate run's repository/branch/SHA/event/result,
    checks the immutable artifact archive hash, refuses unknown entries, and
-   binds all provenance to the release and checkout **before Azure login**.
+   binds all provenance to the release and checkout, and re-derives the approved
+   manifest hash **before Azure login**.
 6. The protected job plans the application root into a private temporary file
-   and applies that exact plan without replanning. Plan files are deleted and
+   and applies that exact plan without replanning. Approval authorizes the visible
+   manifest; it does **not** claim the reviewer inspected a Terraform plan. A
+   plan cannot be produced here before OIDC/state access. Plan files are deleted and
    never uploaded. State stays in the Entra-authenticated application backend.
    Independent ARM readback checks ready revisions, digests, secret versions,
    managed identities and HTTPS origins. A failed readback stays failed; inspect
    convergence and use `--verify-only`, never imperative Azure app mutation.
+
+The repository is public: workflow summaries, logs and candidate artifacts are
+public metadata, including resource/identity names, subscription IDs and secret
+**version IDs**. Never place secret values in them. The saved plan is not uploaded;
+Terraform's textual plan is still visible in the job log.
+
+If a job times out during apply, confirm the runner/process is terminated and no
+other writer holds the application state before recovering. From a trusted owner
+host initialize the same application backend with the same config; inspect the
+reported lock ID and run `terraform -chdir=infra/terraform/application force-unlock
+<lock-id>` interactively only after confirming it is stale. Never blindly break a
+live Azure lease. Review state and ARM readback before a new plan/apply; a timeout
+is an unknown outcome, not rollback or success. Do not download state into the PR.
 
 ### Qualify the actual deployed images
 
@@ -223,3 +302,7 @@ plus root lint/typecheck/build/test. CI's `docker-build` now **loads and starts*
 the actual linux/amd64 images against its isolated local Supabase stack and runs
 startup/login/download/export smoke. Those localhost-bound web images are never
 promoted to staging; staging's own digests require the owner-run smoke above.
+
+Runner prerequisites: [GitHub runner security](https://docs.github.com/en/actions/reference/security/secure-use),
+[larger runner availability](https://docs.github.com/en/actions/how-tos/manage-runners/larger-runners/use-larger-runners),
+and [fork approval API](https://docs.github.com/en/rest/actions/permissions#get-fork-pr-contributor-approval-permissions-for-a-repository).

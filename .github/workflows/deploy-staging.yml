@@ -1,4 +1,5 @@
 name: Staging application deployment (smoke pending)
+run-name: Staging candidate ${{ inputs.candidate_run_id }} — manifest review then deployment
 on:
   workflow_dispatch:
     inputs:
@@ -16,8 +17,34 @@ concurrency:
   group: staging-application
   cancel-in-progress: false
 jobs:
-  deploy:
+  validate:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      release_sha256: ${{ steps.manifest.outputs.release_sha256 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Require exact-candidate CI, integration and full E2E
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 infra/scripts/release_checks.py
+      - name: Publish normalized manifest and hash for the reviewer
+        id: manifest
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_JSON: ${{ inputs.release_json }}
+        run: python3 infra/scripts/prepare_release.py --preview
+  deploy:
+    needs: validate
+    name: Deploy manifest ${{ needs.validate.outputs.release_sha256 }}
+    if: github.ref == 'refs/heads/main' && vars.STAGING_RUNNER_MODE == 'ephemeral-jit'
     runs-on: tonyai-staging-eu
     environment: staging
     timeout-minutes: 20
@@ -29,7 +56,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - name: Require exact-candidate CI and full E2E
+      - name: Require exact-candidate CI, integration and full E2E
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 infra/scripts/release_checks.py
@@ -38,6 +65,7 @@ jobs:
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_JSON: ${{ inputs.release_json }}
+          APPROVED_RELEASE_SHA256: ${{ needs.validate.outputs.release_sha256 }}
           BACKEND_JSON: ${{ vars.STAGING_BACKEND_JSON }}
           AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
@@ -46,7 +74,7 @@ jobs:
         with:
           terraform_version: 1.13.3
           terraform_wrapper: false
-      - uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}

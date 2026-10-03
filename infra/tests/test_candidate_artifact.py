@@ -44,3 +44,25 @@ class ArtifactTests(unittest.TestCase):
                 if kind == 'none': self.assertEqual(download('owner/repo','a'*40,'1',read),{'proof':'built'})
                 else:
                     with self.assertRaises(SafeFailure): download('owner/repo','a'*40,'1',read)
+
+    def test_archive_count_compressed_length_entries_and_expansion_are_independent(self):
+        for defect in ('count', 'list', 'length', 'entries', 'expanded'):
+            run, artifact, archive = self.fixture()
+            if defect in ('length', 'entries', 'expanded'):
+                stream = io.BytesIO()
+                with zipfile.ZipFile(stream, 'w', compression=zipfile.ZIP_DEFLATED) as target:
+                    value = json.dumps({'proof': 'x'*300_000 if defect=='expanded' else 'built'})
+                    target.writestr('candidate.json', value)
+                    if defect=='entries': target.writestr('unexpected.txt', 'extra')
+                archive = stream.getvalue()
+                # Leading self-extracting ZIP padding leave a readable archive but exceed the network bound.
+                if defect=='length': archive = b'x'*1_000_001 + archive
+                artifact['digest'] = 'sha256:'+hashlib.sha256(archive).hexdigest()
+            def read(path, binary=False):
+                if binary: return archive
+                if '/artifacts?' in path:
+                    return {'total_count': 2 if defect=='count' else 1,
+                            'artifacts': [artifact, artifact] if defect=='list' else [artifact]}
+                return run
+            with self.subTest(defect=defect), self.assertRaises(SafeFailure):
+                download('owner/repo', 'a'*40, '1', read)

@@ -18,7 +18,7 @@ import cloud_ops as ops
 import release_secrets
 from foundation_contract import validate_foundation
 
-ENV = {'name':'staging', 'protection_rules':[{'type':'required_reviewers', 'prevent_self_review':True,
+ENV = {'name':'staging', 'can_admins_bypass':False, 'protection_rules':[{'type':'required_reviewers', 'prevent_self_review':True,
        'reviewers':[{'type':'User','reviewer':{'id':123}}]}],
        'deployment_branch_policy':{'protected_branches':False,'custom_branch_policies':True}}
 POLICY = {'total_count':1,'branch_policies':[{'name':'main','type':'branch'}]}
@@ -27,7 +27,9 @@ POLICY = {'total_count':1,'branch_policies':[{'name':'main','type':'branch'}]}
 class OidcEnvironmentTests(unittest.TestCase):
     def test_exact_environment_and_policy(self):
         with patch('github_environment.command', side_effect=[json.dumps(ENV),json.dumps(POLICY)]) as command:
-            verify_environment('owner/repo')
+            with patch('github_environment.verify_repository') as repository:
+                verify_environment('owner/repo')
+                repository.assert_called_once()
         self.assertEqual(command.call_count,2)
         self.assertTrue(all('--hostname' in c.args[0] and 'github.com' in c.args[0] for c in command.call_args_list))
         self.assertIn('repos/owner/repo/environments/staging', command.call_args_list[0].args[0])
@@ -36,14 +38,15 @@ class OidcEnvironmentTests(unittest.TestCase):
         variants=[]
         for field,value in [('reviewers',[]),('prevent_self_review',False)]:
             env=copy.deepcopy(ENV);env['protection_rules'][0][field]=value;variants.append((env,POLICY))
-        variants.extend([({**ENV,'protection_rules':[]},POLICY),
+        variants.extend([({**ENV, 'can_admins_bypass':True}, POLICY),
+                         ({k:v for k,v in ENV.items() if k!='can_admins_bypass'}, POLICY),({**ENV,'protection_rules':[]},POLICY),
                          ({**ENV,'deployment_branch_policy':None},POLICY),
                          ({**ENV,'deployment_branch_policy':{'protected_branches':True,'custom_branch_policies':False}},POLICY),
                          (ENV,{'total_count':2,'branch_policies':POLICY['branch_policies']}),
                          (ENV,{'total_count':1,'branch_policies':[{'name':'*','type':'branch'}]}),
                          (ENV,{'total_count':1,'branch_policies':[{'name':'main','type':'tag'}]})])
         for env,policy in variants:
-            with self.subTest(env=env,policy=policy), patch('github_environment.command', side_effect=[json.dumps(env),json.dumps(policy)]):
+            with self.subTest(env=env,policy=policy), patch('github_environment.verify_repository'), patch('github_environment.command', side_effect=[json.dumps(env),json.dumps(policy)]):
                 with self.assertRaises(SafeFailure): verify_environment('owner/repo')
 
     def test_repository_mismatch_or_failed_environment_lookup_precedes_all_graph_mutations(self):

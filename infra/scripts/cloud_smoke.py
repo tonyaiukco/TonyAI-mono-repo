@@ -110,7 +110,7 @@ def run(candidate, inputs, journal_path, cleanup_only=False):
         env = {**os.environ, 'SMOKE_TARGET_JSON': json.dumps(target)}
         child('smoke-fixtures.mjs', {**env, 'DATABASE_URL': database})
         # The browser child never receives the DB URL or backend credential.
-        browser_env = {k: v for k, v in env.items() if not any(word in k for word in ('SECRET', 'TOKEN', 'PASSWORD', 'DATABASE', 'DIRECT_URL', 'SERVICE_KEY', 'SERVICE_ROLE'))}
+        browser_env = {k: v for k, v in env.items() if k in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PLAYWRIGHT_BROWSERS_PATH', 'SMOKE_TARGET_JSON')}
         browser_env.update(SMOKE_PUBLIC_KEY=public, SMOKE_PASSWORD_1=passwords[0], SMOKE_PASSWORD_2=passwords[1])
         child('image-smoke.mjs', browser_env)
         verify(inputs)  # Refuse qualification if another deploy raced the smoke.
