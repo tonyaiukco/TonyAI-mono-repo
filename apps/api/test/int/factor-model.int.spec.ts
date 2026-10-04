@@ -536,6 +536,84 @@ describe('the factor library is append-only, for the owner too', () => {
   });
 });
 
+describe("the factor library's record (factor_release_events)", () => {
+  type Event = { event: string; table_name: string | null; row_count: number | null; db_role: string; actor: string | null; release_status: string; why: string | null };
+  const eventsOf = (tx: Prisma.TransactionClient, releaseId: string) =>
+    tx.$queryRawUnsafe<Event[]>(
+      `SELECT event, table_name, row_count, db_role, actor, release_status, detail->>'withdrawal_reason' AS why
+         FROM factor_release_events WHERE release_id = '${releaseId}' ORDER BY occurred_at`,
+    );
+  const load = (releaseId: string, ordinal: number) => [
+    `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status) VALUES ('${releaseId}', 'TonyAI test fixture', 'Int record test', 'int-${releaseId}', ${ordinal}, 'fixture')`,
+    `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit, multiplier, calorific_basis, basis)
+     SELECT gen_random_uuid(), '${releaseId}', 'Natural Gas', 'natural_gas', g, 2031, 2031, 'cubic_metres', 'kWh', 1, 'gross', 'x' FROM unnest(ARRAY['UK', 'TR', 'EU']) g`,
+  ];
+  const nextOrdinal = async (tx: Prisma.TransactionClient) =>
+    Number(
+      (await tx.$queryRawUnsafe<{ next: number }[]>(
+        `SELECT COALESCE(max(ordinal), 0) + 1 AS next FROM factor_releases WHERE publisher = 'TonyAI test fixture'`,
+      ))[0].next,
+    );
+
+  it('records a load and its rows, a withdrawal, and a fixture deletion — who, with the stated actor, in order', async () => {
+    const releaseId = randomUUID();
+    const events = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL tonyai.actor = 'TonyAI ops'`);
+      for (const sql of load(releaseId, await nextOrdinal(tx))) await tx.$executeRawUnsafe(sql);
+      await tx.$executeRawUnsafe(`DELETE FROM unit_conversions WHERE release_id = '${releaseId}'`);
+      await tx.$executeRawUnsafe(`DELETE FROM factor_releases WHERE id = '${releaseId}'`);
+      return eventsOf(tx, releaseId);
+    });
+    expect(events.map((e) => [e.event, e.table_name, e.row_count])).toEqual([
+      ['loaded', null, null],
+      ['rows_added', 'unit_conversions', 3],
+      ['rows_deleted', 'unit_conversions', 3],
+      ['deleted', null, null],
+    ]);
+    expect(events.every((e) => e.actor === 'TonyAI ops' && e.db_role === 'postgres' && e.release_status === 'fixture')).toBe(true);
+  });
+
+  it('names the service role when PostgREST loads, and records why a release was withdrawn', async () => {
+    const releaseId = randomUUID();
+    const events = await withRollback(owner, async (tx) => {
+      const ordinal = await nextOrdinal(tx);
+      await tx.$executeRawUnsafe('SET LOCAL ROLE service_role');
+      for (const sql of load(releaseId, ordinal)) await tx.$executeRawUnsafe(sql);
+      await tx.$executeRawUnsafe(
+        `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'TonyAI ops', withdrawal_reason = 'int test' WHERE id = '${releaseId}'`,
+      );
+      await tx.$executeRawUnsafe('RESET ROLE');
+      return eventsOf(tx, releaseId);
+    });
+    expect(events.map((e) => [e.event, e.db_role, e.actor])).toEqual([
+      ['loaded', 'service_role', null],
+      ['rows_added', 'service_role', null],
+      ['withdrawn', 'service_role', null],
+    ]);
+    expect(events[2]).toMatchObject({ release_status: 'withdrawn', why: 'int test' });
+  });
+
+  it('is written by its triggers alone: the service role cannot add to it, and nobody can change it', async () => {
+    const forged = await failure(
+      withRollback(owner, async (tx) => {
+        await tx.$executeRawUnsafe('SET LOCAL ROLE service_role');
+        await tx.$executeRawUnsafe(
+          `INSERT INTO factor_release_events (id, release_id, publisher, edition, release_status, event, db_role)
+           VALUES (gen_random_uuid(), gen_random_uuid(), 'x', 'x', 'x', 'loaded', 'x')`,
+        );
+      }),
+    );
+    expect(sqlstateOf(forged)).toBe('42501');
+    for (const sql of [
+      `UPDATE factor_release_events SET actor = 'rewritten'`,
+      'DELETE FROM factor_release_events',
+      'TRUNCATE factor_release_events',
+    ]) {
+      expect(sqlstateOf(await failure(withRollback(owner, (tx) => tx.$executeRawUnsafe(sql)))), sql).toBe('TA010');
+    }
+  });
+});
+
 describe('the CHECK constraints refuse what the registry alone would hide', () => {
   // Rolled back. The publisher registry is lifted inside the transaction so an
   // authoritative release can exist at all — otherwise it masks every

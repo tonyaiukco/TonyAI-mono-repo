@@ -549,6 +549,29 @@ model EmissionFactor {
   @@map("emission_factors")
 }
 
+// The factor library's own record (LP3-03): every load, withdrawal and fixture
+// deletion, written by database triggers for every writer — the seed, the e2e
+// suite, LP4-02's loader, an operator — since no release is written through
+// the API. Global, not per tenant (unlike `audit_log`); append-only; no client
+// role reads it; the runtime reads only.
+model FactorReleaseEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  releaseId     String   @map("release_id") @db.Uuid // no FK: a deleted fixture release keeps its record
+  publisher     String
+  edition       String
+  releaseStatus String   @map("release_status") // the release's status at the event
+  event         String // loaded | rows_added | withdrawn | rows_deleted | deleted
+  tableName     String?  @map("table_name") // rows_added / rows_deleted: which table
+  rowCount      Int?     @map("row_count")
+  detail        Json? // withdrawn: who, when, why
+  dbRole        String   @map("db_role") // the database role that wrote it
+  actor         String? // `tonyai.actor`, when the writer stated one (a firm or role)
+  occurredAt    DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  @@index([releaseId, occurredAt])
+  @@map("factor_release_events")
+}
+
 // A sourced step between unit families (metered m³ → kWh) for one fuel,
 // country and year. A definitional step (MWh → kWh, tonnes → kg) is code, not a
 // row.

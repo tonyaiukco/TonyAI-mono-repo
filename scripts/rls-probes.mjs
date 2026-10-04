@@ -765,6 +765,24 @@ async function main() {
       withheld.map((r) => r.error ?? `readable (${r.total})`).join(' | '),
     );
 
+    // The library's record (factor_release_events): no client reads it, and
+    // not even the service role writes it — its triggers alone do.
+    const recordReads = await Promise.all([count('factor_release_events'), count('factor_release_events', { token })]);
+    const forgedEvent = await fetch(`${URL_}/rest/v1/factor_release_events`, {
+      method: 'POST',
+      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        id: '99999999-0000-0000-0000-00000000fe01', release_id: '99999999-0000-0000-0000-00000000fe02',
+        publisher: 'x', edition: 'x', release_status: 'x', event: 'loaded', db_role: 'x',
+      }),
+    });
+    check(
+      "factor_release_events: no client reads the library's record, and the service role cannot forge an entry (42501)",
+      recordReads.every((r) => r.error && /42501|permission denied/i.test(r.error)) &&
+        !forgedEvent.ok && /42501/.test(await forgedEvent.text()),
+      `anon=${recordReads[0].error ?? recordReads[0].total}, entry=${recordReads[1].error ?? recordReads[1].total}, service insert=${forgedEvent.status}`,
+    );
+
     const [release] = await svcRead('factor_releases?select=id,title,status&status=eq.placeholder&limit=1');
     const [factor] = await svcRead(`emission_factors?select=id,factor_value&release_id=eq.${release?.id}&limit=1`);
     const [conversion] = await svcRead('unit_conversions?select=id,multiplier&limit=1');

@@ -128,6 +128,8 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   emission_factors: ['SELECT'],
   factor_releases: ['SELECT'],
   unit_conversions: ['SELECT'],
+  // The library's record: written by its own triggers only.
+  factor_release_events: ['SELECT'],
   // + UPDATE on (role, updated_at) only — see RUNTIME_COLUMN_UPDATES.
   profiles: ['SELECT'],
   user_subsidiary_access: ['SELECT', 'INSERT', 'DELETE'],
@@ -453,6 +455,16 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
       { table, trigger: `${table}_before_truncate`, fn: 'factor_tables_before_truncate', type: BEFORE | ON.truncate },
     ];
   }),
+  // The library's record: AFTER triggers, SECURITY DEFINER so the table needs
+  // no INSERT grant; and the record's own append-only guards.
+  { table: 'factor_releases', trigger: 'factor_releases_record_event', fn: 'factor_releases_record_event', type: ROW | ON.insert | ON.update | ON.delete, definer: true },
+  ...['emission_factors', 'unit_conversions'].flatMap((table) => [
+    { table, trigger: `${table}_record_insert`, fn: 'factor_rows_record_event', type: ON.insert, definer: true },
+    { table, trigger: `${table}_record_delete`, fn: 'factor_rows_record_event', type: ON.delete, definer: true },
+  ]),
+  { table: 'factor_release_events', trigger: 'factor_release_events_before_update', fn: 'factor_release_events_refuse', type: ROW | BEFORE | ON.update },
+  { table: 'factor_release_events', trigger: 'factor_release_events_before_delete', fn: 'factor_release_events_refuse', type: ROW | BEFORE | ON.delete },
+  { table: 'factor_release_events', trigger: 'factor_release_events_before_truncate', fn: 'factor_tables_before_truncate', type: BEFORE | ON.truncate },
 ]);
 
 /**
@@ -471,6 +483,8 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['emission_factors', 'emission_factors_gas_coverage_check', 'a074aa7da19f92fe950c538451581817'],
   ['emission_factors', 'emission_factors_scope2_method_check', '491d417be371753abd66161e71bfd365'],
   ['emission_factors', 'emission_factors_scope_check', 'baf79c7460165f52d4d03548c8049f8e'],
+  ['factor_release_events', 'factor_release_events_event_check', '251ece6a1f65e0f7e32ea3ef8c503240'],
+  ['factor_release_events', 'factor_release_events_rows_check', '1501bbfca3f7df329a4bc8fe3eab8dda'],
   ['factor_releases', 'factor_releases_authoritative_provenance_check', '07c31e476a2f5a64d9b7bf843eb69ce1'],
   ['factor_releases', 'factor_releases_fixture_publisher_check', 'f732d504c73b4902273df4dd596bb839'],
   ['factor_releases', 'factor_releases_gwp_set_check', 'f6e24213b9fca85d3a461e21251bc870'],
@@ -514,7 +528,7 @@ export function expectedTriggerFunctionBodies(dir = MIGRATIONS_DIR) {
 const md5 = (text) => createHash('md5').update(text, 'utf8').digest('hex');
 
 /** The tables the integrity triggers guard: nothing else may hook into them. */
-const GUARDED_TABLES = Object.freeze(['activity_records', 'factor_releases', 'emission_factors', 'unit_conversions']);
+const GUARDED_TABLES = Object.freeze(['activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events']);
 
 /** Every integrity trigger and CHECK, present, in force and unaltered. */
 export async function checkIntegrityTriggers(query, expectedBodies = expectedTriggerFunctionBodies()) {
@@ -572,9 +586,9 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
     if (!found.unconditional || !found.allColumns) {
       problems.push(`trigger ${want.trigger} on ${want.table} is narrowed (a WHEN condition or an UPDATE OF column list)`);
     }
-    if (found.definer || found.language !== 'plpgsql' || JSON.stringify(found.config) !== JSON.stringify(['search_path=""'])) {
+    if (found.definer !== Boolean(want.definer) || found.language !== 'plpgsql' || JSON.stringify(found.config) !== JSON.stringify(['search_path=""'])) {
       problems.push(
-        `function public.${found.fn}() is not a SECURITY INVOKER plpgsql function pinned to search_path '' ` +
+        `function public.${found.fn}() is not a SECURITY ${want.definer ? 'DEFINER' : 'INVOKER'} plpgsql function pinned to search_path '' ` +
           `(definer ${found.definer}, ${found.language}, config ${JSON.stringify(found.config)})`,
       );
     }

@@ -1,6 +1,8 @@
-import type { ReportData } from './report-data';
+import type { ReportData, ReportFactorRow } from './report-data';
+import { recordActivityTypesFor } from '@tonyai/shared-types';
 import {
   NOT_CALCULATED,
+  activityTypeLabel,
   esc,
   pdfLedgerHeadRow,
   pdfLedgerRow,
@@ -21,6 +23,35 @@ const STATUS_LABEL: Record<string, { text: string; color: string }> = {
   draft: { text: 'Draft — records pending review', color: '#2563eb' },
   contains_incomplete_data: { text: 'Contains incomplete data', color: '#d97706' },
 };
+
+/** "Fuel (Diesel)" for a typed factor, the category alone otherwise. */
+function categoryWithActivityLabel(f: ReportFactorRow): string {
+  const activity = f.activityType ? activityTypeLabel({ category: f.category, activityType: f.activityType }) : '';
+  // An implicit category's own type adds nothing ("Electricity (Grid electricity)").
+  return activity && recordActivityTypesFor(f.category).length > 0 ? `${f.category} (${activity})` : f.category;
+}
+
+/**
+ * What the report may say about its factors — asked of every calculated
+ * figure's snapshot (`isAuthoritativeSnapshot`, the whole path), never stated
+ * as a fixed sentence (LP3-03, obligation 2). Before LP4-02 loads authoritative
+ * releases, every figure is a placeholder's and the note says so.
+ */
+function factorNote(data: ReportData): string {
+  if (data.calculatedRecords === 0) return 'No figure in this report is calculated from an emission factor.';
+  if (data.nonAuthoritativeRecords === 0) {
+    return 'Every figure is computed from committed activity records using authoritative emission-factor releases (see each factor’s release in the appendix).';
+  }
+  const n = data.nonAuthoritativeRecords;
+  const subject =
+    n === data.calculatedRecords
+      ? 'Every calculated figure is'
+      : `${n} of ${data.calculatedRecords} calculated figures ${n === 1 ? 'is' : 'are'}`;
+  return (
+    `${subject} computed from emission factors that are NOT authoritative — ` +
+    'prototype placeholders, not DEFRA/DESNZ or Türkiye values. Each factor’s standing is in the appendix.'
+  );
+}
 
 export function buildReportHtml(data: ReportData): string {
   const s = STATUS_LABEL[data.status];
@@ -46,11 +77,11 @@ export function buildReportHtml(data: ReportData): string {
 
   const factorRows = data.factors
     .map(
-      (f) => `<tr><td>${esc(f.category)}</td><td>${esc(f.geographyCode)}</td>
+      (f) => `<tr><td>${esc(categoryWithActivityLabel(f))}</td><td>${esc(f.geographyCode)}</td>
       <td class="num">${f.factorValue} ${esc(f.factorUnit)}</td><td>${esc(f.methodology)}</td>
-      <td>${esc(f.source)}</td><td>${esc(f.version)}</td></tr>${
+      <td>${esc(f.source)}</td><td>${esc(f.release)} (${esc(f.version)})</td><td>${esc(f.standing)}</td></tr>${
         f.conversionBasis
-          ? `<tr><td colspan="6" class="note">Unit conversion applied before this factor: ${esc(f.conversionBasis)}</td></tr>`
+          ? `<tr><td colspan="7" class="note">Unit conversion applied before this factor: ${esc(f.conversionBasis)}</td></tr>`
           : ''
       }`,
     )
@@ -159,7 +190,7 @@ export function buildReportHtml(data: ReportData): string {
         } listed under &ldquo;Withdrawn from this inventory&rdquo; below with the reason recorded at the time.</div>`
       : ''
   }
-  <p class="note">Scope 3 is out of scope for Phase 1. Figures are computed from committed activity records using prototype demo emission factors — not authoritative DEFRA/AIB values.</p>
+  <p class="note">Scope 3 is out of scope for Phase 1. ${factorNote(data)}</p>
 
   <h2>Emissions by category</h2>
   <table><thead><tr><th>Category</th><th>Scope</th><th class="num">tCO₂e</th><th class="num">% of total</th><th class="num">Records</th></tr></thead>
@@ -194,7 +225,7 @@ export function buildReportHtml(data: ReportData): string {
     data.includeMethodologyNotes
       ? `<h2>Methodology & emission factors</h2>
   <p class="note">Every calculation stores an immutable snapshot of the factor it used (value, source, version) and of any unit conversion applied before it, so each figure in the ledger can be recomputed from this report; historic results never change. Boundary: operational control. Aligned with ISO 14064-1 / GHG Protocol.</p>
-  <table><thead><tr><th>Category</th><th>Geography</th><th class="num">Factor</th><th>Methodology</th><th>Source</th><th>Version</th></tr></thead>
+  <table><thead><tr><th>Category</th><th>Geography</th><th class="num">Factor</th><th>Methodology</th><th>Source</th><th>Release</th><th>Standing</th></tr></thead>
   <tbody>${factorRows}</tbody></table>`
       : ''
   }

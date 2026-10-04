@@ -1,12 +1,18 @@
 import { ForbiddenException, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import type {
+  ActivityCalculationSnapshot,
+  FactorStatus,
   ReportExportType,
   ReportMetaDTO,
   ReportStatus,
 } from '@tonyai/shared-types';
 import {
+  FACTOR_STATUS_RANK,
   isAnomalyEvaluated,
+  isAuthoritativeSnapshot,
+  isCalculated,
+  isProvenanceSnapshot,
   PENDING_REVIEW_STATUSES,
   REPORT_TEMPLATES,
 } from '@tonyai/shared-types';
@@ -14,6 +20,7 @@ import puppeteer, { type Browser } from 'puppeteer';
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  activityTypeLabel,
   excelLedgerHeader,
   excelLedgerRow,
   excelWithdrawnHeader,
@@ -65,6 +72,20 @@ export type ReportMeta = ReportMetaDTO;
 type ReportEvidenceLink = {
   evidence: { id: string; fileName: string; _count: { links: number } };
 };
+
+/**
+ * A factor path's standing in words: authoritative only when every link is
+ * (`isAuthoritativeSnapshot`); otherwise the weakest link's status — a
+ * placeholder conversion under an authoritative factor is not authoritative.
+ */
+function factorStanding(snapshot: ActivityCalculationSnapshot): string {
+  if (isAuthoritativeSnapshot(snapshot)) return 'Authoritative';
+  if (!isProvenanceSnapshot(snapshot)) return 'Not authoritative (written before factor releases)';
+  const weakest = [snapshot.factorRelease.status, snapshot.conversion?.release.status]
+    .filter((s): s is FactorStatus => s !== undefined)
+    .sort((a, b) => FACTOR_STATUS_RANK[a] - FACTOR_STATUS_RANK[b])[0];
+  return `Not authoritative (${weakest}${snapshot.factorRelease.status === weakest ? '' : ' conversion'})`;
+}
 
 @Injectable()
 export class ReportsService implements OnModuleDestroy {
@@ -293,6 +314,7 @@ export class ReportsService implements OnModuleDestroy {
         locationId: r.locationId,
         locationName: withRelations.location?.name ?? null,
         category: r.category,
+        activityType: r.activityType ?? null,
         periodValue: r.periodValue,
         reportingPeriod: r.reportingPeriod,
         activityValue: r.activityValue,
@@ -345,12 +367,28 @@ export class ReportsService implements OnModuleDestroy {
     };
 
     // Deduplicate the immutable factor snapshots by factorId (audit appendix).
+    // Each factor's standing is the whole path's (`isAuthoritativeSnapshot`:
+    // factor AND conversion), never the factor's status alone — a figure is
+    // only as authoritative as its weakest link (LP3-03, obligation 2).
     const factorById = new Map<string, ReportFactorRow>();
+    let calculatedRecords = 0;
+    let nonAuthoritativeRecords = 0;
     for (const r of records) {
+      const snapshot = r.calculation as unknown as ActivityCalculationSnapshot;
+      if (isCalculated(snapshot)) {
+        calculatedRecords += 1;
+        if (!isAuthoritativeSnapshot(snapshot)) nonAuthoritativeRecords += 1;
+      }
       const calc = (r.calculation ?? {}) as Snapshot;
       if (calc.factorId && !factorById.has(calc.factorId)) {
+        const provenance = isProvenanceSnapshot(snapshot) ? snapshot : null;
         factorById.set(calc.factorId, {
           category: r.category,
+          activityType: provenance?.activityType ?? null,
+          release: provenance
+            ? `${provenance.factorRelease.publisher} ${provenance.factorRelease.edition}`
+            : 'Pre-release prototype library',
+          standing: factorStanding(snapshot),
           geographyCode: calc.geographyCode ?? '',
           factorValue: Number(calc.factorValue ?? 0),
           factorUnit: calc.factorUnit ?? '',
@@ -414,6 +452,8 @@ export class ReportsService implements OnModuleDestroy {
       withdrawn,
       withdrawnTotals,
       factors: [...factorById.values()],
+      calculatedRecords,
+      nonAuthoritativeRecords,
       evidenceSummary,
       evidenceFileTotal: recordsPerFile.size,
     };
@@ -498,9 +538,15 @@ export class ReportsService implements OnModuleDestroy {
 
     // Sheet 4 — Factors Used (immutable snapshots, audit traceability)
     const s4 = wb.addWorksheet('Factors Used');
-    s4.addRow(['Category', 'Geography', 'Factor value', 'Factor unit', 'Methodology', 'Source', 'Version']);
+    // The three LP3-03 columns are appended, never inserted (this file's rule
+    // for every artifact a reader may parse by position).
+    s4.addRow(['Category', 'Geography', 'Factor value', 'Factor unit', 'Methodology', 'Source', 'Version', 'Activity type', 'Release', 'Standing']);
     for (const f of data.factors) {
-      s4.addRow([f.category, f.geographyCode, f.factorValue, f.factorUnit, f.methodology, f.source, f.version]);
+      s4.addRow([
+        f.category, f.geographyCode, f.factorValue, f.factorUnit, f.methodology, f.source, f.version,
+        f.activityType ? activityTypeLabel({ category: f.category, activityType: f.activityType }) : '',
+        f.release, f.standing,
+      ]);
     }
 
     const buffer = await wb.xlsx.writeBuffer();

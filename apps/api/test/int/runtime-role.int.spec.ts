@@ -195,6 +195,12 @@ describe('the runtime role is refused', () => {
        SELECT gen_random_uuid(), id, 'Natural Gas', 'natural_gas', 'UK', 2031, 2031, 'cubic_metres', 'kWh', 1, 'gross', 'x' FROM factor_releases LIMIT 1`,
     ],
     ['rewriting a unit conversion', 'UPDATE unit_conversions SET multiplier = 1 WHERE false'],
+    [
+      "forging the factor library's record",
+      `INSERT INTO factor_release_events (id, release_id, publisher, edition, release_status, event, db_role)
+       VALUES (gen_random_uuid(), gen_random_uuid(), 'x', 'x', 'x', 'loaded', 'x')`,
+    ],
+    ["erasing the factor library's record", 'DELETE FROM factor_release_events WHERE false'],
     ['truncating the factor library', 'TRUNCATE factor_releases CASCADE'],
     ['assuming a client role', 'SET LOCAL ROLE authenticated'],
     ['assuming the owner', 'SET LOCAL ROLE postgres'],

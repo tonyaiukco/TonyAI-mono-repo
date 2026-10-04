@@ -17,6 +17,7 @@ export interface IntegrityTrigger {
   trigger: string;
   fn: string;
   type: number;
+  definer?: boolean;
 }
 export declare const INTEGRITY_TRIGGERS: readonly IntegrityTrigger[];
 export declare const INTEGRITY_CHECKS: readonly (readonly [table: string, name: string, definitionMd5: string])[];

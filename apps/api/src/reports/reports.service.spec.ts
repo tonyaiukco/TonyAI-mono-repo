@@ -1264,6 +1264,8 @@ describe('ReportsService', () => {
         'period_value', 'activity_value', 'activity_unit', 'tco2e', 'status',
         'evidence_files', 'anomaly_flag', 'voided_activity_value',
         'voided_tco2e', 'voided_at_utc', 'void_reason', 'voided_by',
+        // LP3-03, appended after the disclosure so no column moved.
+        'activity_type',
       ]);
     });
 
@@ -1298,7 +1300,7 @@ describe('ReportsService', () => {
       // catches a marker gained or lost when the columns move: the fixture is
       // comma-free on purpose, so a plain split is exact here.
       const width = lines[0].split(',').length;
-      expect(width).toBe(16);
+      expect(width).toBe(17);
       for (const line of lines.slice(1)) {
         expect(line.split(',')).toHaveLength(width);
       }
@@ -1309,7 +1311,7 @@ describe('ReportsService', () => {
       expect(await excelHeader('Raw Activity Data')).toEqual([
         'Subsidiary', 'Reporting entity', 'Category', 'Reporting period',
         'Period', 'Activity value', 'Unit', 'tCO₂e', 'Status',
-        'Evidence files', 'Anomaly flag',
+        'Evidence files', 'Anomaly flag', 'Activity type',
       ]);
     });
 
@@ -1318,7 +1320,7 @@ describe('ReportsService', () => {
       expect(await excelHeader('Withdrawn Records')).toEqual([
         'Subsidiary', 'Reporting entity', 'Category', 'Reporting period',
         'Period', 'Activity value', 'Unit', 'tCO₂e removed',
-        'Withdrawn (UTC)', 'Reason', 'Withdrawn by (user id)',
+        'Withdrawn (UTC)', 'Reason', 'Withdrawn by (user id)', 'Activity type',
       ]);
     });
 
@@ -1676,6 +1678,7 @@ describe('report column descriptors', () => {
   const ledgerRow: ReportLedgerRow = {
     subsidiaryName: 'Energy', locationId: null, locationName: null,
     category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
+    activityType: null,
     activityValue: 1000, activityUnit: 'kWh', tCo2e: 0.44, status: 'approved',
     evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
     anomalyBaselinePriorCount: 3,
@@ -1935,6 +1938,7 @@ describe('no column can opt out of CSV neutralisation', () => {
   const base: ReportLedgerRow = {
     subsidiaryName: 'Energy', locationId: null, locationName: null,
     category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
+    activityType: null,
     activityValue: 1000, activityUnit: 'kWh', tCo2e: 0.44, status: 'approved',
     evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
     anomalyBaselinePriorCount: 3,
@@ -1997,5 +2001,86 @@ describe('no column can opt out of CSV neutralisation', () => {
     expect(parsed).toHaveLength(2);
     expect(parsed[1]).toHaveLength(csvHeader().split(',').length);
     for (const cell of parsed[1]) expect(executable(cell)).toBe(false);
+  });
+});
+
+
+describe('ReportsService — activity types and factor standing (LP3-03)', () => {
+  let prisma: PrismaMock;
+  let service: ReportsService;
+  const placeholderRelease = { id: 'rel-p', publisher: 'TonyAI prototype', title: 't', edition: '2026.1', ordinal: 202601, status: 'placeholder', sourceUrl: null, licence: null, publishedAt: null, gwpSet: null };
+  const authoritativeRelease = { ...placeholderRelease, id: 'rel-a', publisher: 'DESNZ', edition: '2026', ordinal: 1, status: 'authoritative' };
+  const v2 = (overrides: Record<string, unknown>) => ({
+    tCo2e: 0.0268, factorId: 'f-diesel', factorValue: 2.6841, factorUnit: 'kgCO2e/litre', methodology: 'standard-factor (diesel)',
+    source: 'demo', version: '2026.1', geographyCode: 'UK', snapshotSchema: 2, activityType: 'diesel', gas: 'CO2e',
+    gasCoverage: 'all_ghg', calorificBasis: 'not_applicable', scope2Method: 'not_applicable', dataYear: 2026, yearPolicy: 'exact',
+    factorRelease: placeholderRelease, conversion: null, ...overrides,
+  });
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    service = new ReportsService(
+      prisma as unknown as PrismaService,
+      { summary: vi.fn().mockResolvedValue(SUMMARY) } as unknown as EmissionsService,
+      auditMock(),
+    );
+  });
+
+  it('names a typed record\'s activity in every format — last in the CSV and Excel, inside Category in the PDF', async () => {
+    const diesel = makeRecord({ id: 'rec-d', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', calculation: v2({}) });
+    stubRecords(prisma, [diesel, makeRecord({ id: 'rec-e' })]);
+    const csv = (await service.generateCsv(admin, q)).trim().split('\n');
+    expect(csv[1].split(',').at(-1)).toBe('diesel');
+    expect(csv[2].split(',').at(-1)).toBe('');
+    const html = buildReportHtml(await service.assemble(admin, q));
+    expect(html).toContain('Fuel (Diesel)');
+  });
+
+  it('states each factor\'s standing by the whole path, and the report\'s factor note by its figures', async () => {
+    stubRecords(prisma, [
+      makeRecord({ id: 'r1', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', calculation: v2({}) }),
+      makeRecord({
+        id: 'r2', category: 'Natural Gas', periodValue: 'February',
+        calculation: v2({ factorId: 'f-gas', activityType: 'natural_gas', factorRelease: authoritativeRelease,
+          conversion: { id: 'c', fromUnit: 'cubic_metres', toUnit: 'kWh', multiplier: 11.36, calorificBasis: 'gross', referenceConditions: null, basis: 'b', dataYear: 2026, release: placeholderRelease } }),
+      }),
+      makeRecord({ id: 'r3', periodValue: 'March', calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity', factorRelease: authoritativeRelease }) }),
+      makeRecord({ id: 'r4', periodValue: 'April' }),
+    ]);
+    const data = await service.assemble(admin, q);
+    const standing = data.factors.map((f) => [f.category, f.standing, f.release, f.activityType]);
+    expect(standing).toEqual([
+      ['Fuel', 'Not authoritative (placeholder)', 'TonyAI prototype 2026.1', 'diesel'],
+      // An authoritative factor behind a placeholder conversion is not authoritative.
+      ['Natural Gas', 'Not authoritative (placeholder conversion)', 'DESNZ 2026', 'natural_gas'],
+      ['Electricity', 'Authoritative', 'DESNZ 2026', 'grid_electricity'],
+      // The fixture's default record: a snapshot written before releases.
+      ['Electricity', 'Not authoritative (written before factor releases)', 'Pre-release prototype library', null],
+    ]);
+    expect([data.calculatedRecords, data.nonAuthoritativeRecords]).toEqual([4, 3]);
+    const html = buildReportHtml(data);
+    expect(html).toContain('3 of 4 calculated figures are computed from emission factors that are NOT authoritative');
+    expect(html).not.toContain('prototype demo emission factors');
+  });
+
+  it('calls a snapshot written before releases not authoritative, and says so when every figure is', async () => {
+    stubRecords(prisma, [makeRecord()]);
+    const data = await service.assemble(admin, q);
+    expect(data.factors[0]).toMatchObject({ standing: 'Not authoritative (written before factor releases)', release: 'Pre-release prototype library', activityType: null });
+    expect(buildReportHtml(data)).toContain('Every calculated figure is computed from emission factors that are NOT authoritative');
+  });
+
+  it('says every figure is authoritative only when every path is', async () => {
+    stubRecords(prisma, [makeRecord({ calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity', factorRelease: authoritativeRelease }) })]);
+    expect(buildReportHtml(await service.assemble(admin, q))).toContain('using authoritative emission-factor releases');
+  });
+
+  it('lists the factor appendix\'s activity, release and standing last on its Excel sheet', async () => {
+    stubRecords(prisma, [makeRecord({ id: 'r1', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', calculation: v2({}) })]);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+    const sheet = wb.getWorksheet('Factors Used')!;
+    expect((sheet.getRow(1).values as unknown[]).slice(-3)).toEqual(['Activity type', 'Release', 'Standing']);
+    expect((sheet.getRow(2).values as unknown[]).slice(-3)).toEqual(['Diesel', 'TonyAI prototype 2026.1', 'Not authoritative (placeholder)']);
   });
 });

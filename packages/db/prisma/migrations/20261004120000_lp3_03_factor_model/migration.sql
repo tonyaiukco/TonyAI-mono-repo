@@ -28,6 +28,11 @@
 --   TA010  a factor table's append-only rule was broken
 --   TA011  a release was loaded out of order, or already withdrawn
 --   TA012  a factor or conversion row does not fit its release
+-- 7. `factor_release_events`: every load, withdrawal and fixture deletion of
+--    the library, recorded by the database itself for every writer (PR A's
+--    obligation 11; owner decision 2026-10-04 — a global, append-only record,
+--    since `audit_log` is per tenant and releases are written by the seed and
+--    loaders, never through the API).
 -- Every trigger is ENABLE ALWAYS: it fires in replica mode too (a restore with
 -- `session_replication_role = replica` skips ordinary triggers), and
 -- `runtime-role.mjs check` verifies each exists in that state.
@@ -81,6 +86,25 @@ CREATE TABLE "unit_conversions" (
 
     CONSTRAINT "unit_conversions_pkey" PRIMARY KEY ("id")
 );
+
+CREATE TABLE "factor_release_events" (
+    "id" UUID NOT NULL,
+    "release_id" UUID NOT NULL,
+    "publisher" TEXT NOT NULL,
+    "edition" TEXT NOT NULL,
+    "release_status" TEXT NOT NULL,
+    "event" TEXT NOT NULL,
+    "table_name" TEXT,
+    "row_count" INTEGER,
+    "detail" JSONB,
+    "db_role" TEXT NOT NULL,
+    "actor" TEXT,
+    "occurred_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "factor_release_events_pkey" PRIMARY KEY ("id")
+);
+
+CREATE INDEX "factor_release_events_release_id_occurred_at_idx" ON "factor_release_events"("release_id", "occurred_at");
 
 CREATE UNIQUE INDEX "factor_releases_publisher_ordinal_key" ON "factor_releases"("publisher", "ordinal");
 CREATE UNIQUE INDEX "factor_releases_publisher_edition_key" ON "factor_releases"("publisher", "edition");
@@ -652,6 +676,150 @@ REVOKE ALL ON FUNCTION
 FROM PUBLIC;
 
 -- ---------------------------------------------------------------------------
+-- 5b. The library's own record: factor_release_events
+-- ---------------------------------------------------------------------------
+-- Every load (a release, then its rows), withdrawal and fixture deletion,
+-- written by AFTER triggers for every writer — the seed, the e2e suite's
+-- service-role client, LP4-02's loader, an operator's SQL. No release is ever
+-- written through the API, so an API-side audit row could not see one.
+--
+-- Not `audit_log`: that is per tenant (organisation, actor profile, the trail
+-- viewer's vocabulary), and the library is global.
+--
+-- Who: the database role (`SET ROLE` when there is one, else the login —
+-- `service_role` for PostgREST, `postgres` for the seed) and, when the writer
+-- states one, `tonyai.actor` (`SET LOCAL tonyai.actor = '<firm or role>'`; a
+-- firm or role, never a person, as with `reviewed_by`). When: the database
+-- clock. The functions are SECURITY DEFINER so the table needs no INSERT grant
+-- for anyone: only these triggers write it, and nothing may change it.
+ALTER TABLE "factor_release_events"
+  ADD CONSTRAINT "factor_release_events_event_check"
+    CHECK ("event" IN ('loaded', 'rows_added', 'withdrawn', 'rows_deleted', 'deleted')),
+  ADD CONSTRAINT "factor_release_events_rows_check"
+    CHECK (("event" IN ('rows_added', 'rows_deleted')) = ("table_name" IS NOT NULL AND "row_count" IS NOT NULL));
+
+CREATE FUNCTION "public"."factor_release_events_actor_role"() RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path = ''
+AS $fn$
+  SELECT CASE WHEN pg_catalog.current_setting('role') <> 'none'
+              THEN pg_catalog.current_setting('role')
+              ELSE session_user::text END
+$fn$;
+
+CREATE FUNCTION "public"."factor_releases_record_event"() RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  r record;
+BEGIN
+  IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF;
+  INSERT INTO "public"."factor_release_events"
+    ("id", "release_id", "publisher", "edition", "release_status", "event", "detail", "db_role", "actor", "occurred_at")
+  VALUES (
+    gen_random_uuid(), r."id", r."publisher", r."edition", r."status",
+    CASE TG_OP WHEN 'INSERT' THEN 'loaded' WHEN 'UPDATE' THEN 'withdrawn' ELSE 'deleted' END,
+    CASE WHEN TG_OP = 'UPDATE' THEN pg_catalog.jsonb_build_object(
+      'withdrawn_at', NEW."withdrawn_at", 'withdrawn_by', NEW."withdrawn_by", 'withdrawal_reason', NEW."withdrawal_reason") END,
+    "public"."factor_release_events_actor_role"(),
+    NULLIF(pg_catalog.current_setting('tonyai.actor', true), ''),
+    -- The wall clock, not the transaction's start: a load's events order.
+    pg_catalog.clock_timestamp()
+  );
+  RETURN NULL;
+END
+$fn$;
+
+-- One row per release a statement touched, with the count: a load of 400
+-- factors is one event, not 400.
+CREATE FUNCTION "public"."factor_rows_record_event"() RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO "public"."factor_release_events"
+      ("id", "release_id", "publisher", "edition", "release_status", "event", "table_name", "row_count", "db_role", "actor", "occurred_at")
+    SELECT gen_random_uuid(), r."id", r."publisher", r."edition", r."status", 'rows_added', TG_TABLE_NAME, n."rows",
+           "public"."factor_release_events_actor_role"(), NULLIF(pg_catalog.current_setting('tonyai.actor', true), ''),
+           pg_catalog.clock_timestamp()
+      FROM (SELECT "release_id", pg_catalog.count(*)::int AS "rows" FROM new_rows GROUP BY "release_id") n
+      JOIN "public"."factor_releases" r ON r."id" = n."release_id";
+  ELSE
+    INSERT INTO "public"."factor_release_events"
+      ("id", "release_id", "publisher", "edition", "release_status", "event", "table_name", "row_count", "db_role", "actor", "occurred_at")
+    SELECT gen_random_uuid(), r."id", r."publisher", r."edition", r."status", 'rows_deleted', TG_TABLE_NAME, o."rows",
+           "public"."factor_release_events_actor_role"(), NULLIF(pg_catalog.current_setting('tonyai.actor', true), ''),
+           pg_catalog.clock_timestamp()
+      FROM (SELECT "release_id", pg_catalog.count(*)::int AS "rows" FROM old_rows GROUP BY "release_id") o
+      JOIN "public"."factor_releases" r ON r."id" = o."release_id";
+  END IF;
+  RETURN NULL;
+END
+$fn$;
+
+-- The record is itself append-only, for every role.
+CREATE FUNCTION "public"."factor_release_events_refuse"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $fn$
+BEGIN
+  RAISE EXCEPTION USING
+    ERRCODE = 'TA010',
+    MESSAGE = 'factor_release_events is append-only: the library''s record never changes';
+END
+$fn$;
+
+CREATE TRIGGER "factor_releases_record_event" AFTER INSERT OR UPDATE OR DELETE ON "factor_releases"
+  FOR EACH ROW EXECUTE FUNCTION "public"."factor_releases_record_event"();
+CREATE TRIGGER "emission_factors_record_insert" AFTER INSERT ON "emission_factors"
+  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION "public"."factor_rows_record_event"();
+CREATE TRIGGER "emission_factors_record_delete" AFTER DELETE ON "emission_factors"
+  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION "public"."factor_rows_record_event"();
+CREATE TRIGGER "unit_conversions_record_insert" AFTER INSERT ON "unit_conversions"
+  REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION "public"."factor_rows_record_event"();
+CREATE TRIGGER "unit_conversions_record_delete" AFTER DELETE ON "unit_conversions"
+  REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION "public"."factor_rows_record_event"();
+CREATE TRIGGER "factor_release_events_before_update" BEFORE UPDATE ON "factor_release_events"
+  FOR EACH ROW EXECUTE FUNCTION "public"."factor_release_events_refuse"();
+CREATE TRIGGER "factor_release_events_before_delete" BEFORE DELETE ON "factor_release_events"
+  FOR EACH ROW EXECUTE FUNCTION "public"."factor_release_events_refuse"();
+CREATE TRIGGER "factor_release_events_before_truncate" BEFORE TRUNCATE ON "factor_release_events"
+  FOR EACH STATEMENT EXECUTE FUNCTION "public"."factor_tables_before_truncate"();
+
+ALTER TABLE "factor_releases" ENABLE ALWAYS TRIGGER "factor_releases_record_event";
+ALTER TABLE "emission_factors" ENABLE ALWAYS TRIGGER "emission_factors_record_insert";
+ALTER TABLE "emission_factors" ENABLE ALWAYS TRIGGER "emission_factors_record_delete";
+ALTER TABLE "unit_conversions" ENABLE ALWAYS TRIGGER "unit_conversions_record_insert";
+ALTER TABLE "unit_conversions" ENABLE ALWAYS TRIGGER "unit_conversions_record_delete";
+ALTER TABLE "factor_release_events" ENABLE ALWAYS TRIGGER "factor_release_events_before_update";
+ALTER TABLE "factor_release_events" ENABLE ALWAYS TRIGGER "factor_release_events_before_delete";
+ALTER TABLE "factor_release_events" ENABLE ALWAYS TRIGGER "factor_release_events_before_truncate";
+
+REVOKE ALL ON FUNCTION
+  "public"."factor_release_events_actor_role"(),
+  "public"."factor_releases_record_event"(),
+  "public"."factor_rows_record_event"(),
+  "public"."factor_release_events_refuse"()
+FROM PUBLIC;
+
+-- The releases this migration moved the pre-LP3-03 rows under were created
+-- before the record existed: record them now, as loaded by this migration.
+INSERT INTO "factor_release_events"
+  ("id", "release_id", "publisher", "edition", "release_status", "event", "table_name", "row_count", "db_role", "actor")
+SELECT gen_random_uuid(), r."id", r."publisher", r."edition", r."status", e."event", e."table_name", e."row_count",
+       current_user, 'LP3-03 migration (pre-release rows)'
+  FROM "factor_releases" r
+  CROSS JOIN LATERAL (
+    VALUES ('loaded', NULL::text, NULL::int),
+           ('rows_added', 'emission_factors', (SELECT count(*)::int FROM "emission_factors" f WHERE f."release_id" = r."id"))
+  ) AS e("event", "table_name", "row_count");
+
+-- ---------------------------------------------------------------------------
 -- 6. Row Level Security and grants
 -- ---------------------------------------------------------------------------
 
@@ -664,6 +832,8 @@ FROM PUBLIC;
 -- policies and `accessibleSubsidiaryIds`, not this policy.)
 ALTER TABLE "factor_releases" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "unit_conversions" ENABLE ROW LEVEL SECURITY;
+-- No policy at all: no client role reads or writes the library's record.
+ALTER TABLE "factor_release_events" ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "factor_releases_select_authenticated"
   ON "factor_releases" FOR SELECT TO "authenticated" USING ( true );
@@ -679,7 +849,7 @@ BEGIN
   -- From nothing: anon reads none of the factor library, and `authenticated`
   -- loses the write verbs it held on `emission_factors` since postgrest_grants
   -- (refused by RLS until now, and by privilege from here on).
-  REVOKE ALL ON "factor_releases", "unit_conversions", "emission_factors" FROM anon, authenticated;
+  REVOKE ALL ON "factor_releases", "unit_conversions", "emission_factors", "factor_release_events" FROM anon, authenticated;
   GRANT SELECT ON "emission_factors", "unit_conversions" TO authenticated;
   -- `reviewed_by`, `withdrawn_by` and `notes` are withheld: every tenant can
   -- read this table, and those name the people and firms behind a release.
@@ -691,9 +861,11 @@ BEGIN
   -- table-level ones it inherits by default privilege it has no use for here.
   -- (TRUNCATE is refused by trigger too; this is the second lock.)
   REVOKE TRUNCATE, TRIGGER, REFERENCES ON "factor_releases", "unit_conversions", "emission_factors" FROM service_role;
+  -- The record is written by its triggers alone; the service role may read it.
+  REVOKE INSERT, UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES ON "factor_release_events" FROM service_role;
 END
 $$;
 
 -- The API reads the library and never writes it (`runtime-role.mjs`'s
 -- RUNTIME_TABLE_PRIVILEGES lists the same).
-GRANT SELECT ON "factor_releases", "unit_conversions" TO "tonyai_runtime";
+GRANT SELECT ON "factor_releases", "unit_conversions", "factor_release_events" TO "tonyai_runtime";

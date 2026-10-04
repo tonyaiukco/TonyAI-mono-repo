@@ -91,7 +91,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
   const bodies = new Map(INTEGRITY_TRIGGERS.map((t) => [t.fn, `\nBEGIN /* ${t.fn} */ END\n`]));
   const allTriggers = INTEGRITY_TRIGGERS.map((t) => ({
     table: t.table, trigger: t.trigger, enabled: 'A', type: t.type, unconditional: true, allColumns: true,
-    fnSchema: 'public', fn: t.fn, bodyMd5: md5(bodies.get(t.fn)), definer: false, config: ['search_path=""'], language: 'plpgsql',
+    fnSchema: 'public', fn: t.fn, bodyMd5: md5(bodies.get(t.fn)), definer: Boolean(t.definer), config: ['search_path=""'], language: 'plpgsql',
   }));
   const allChecks = INTEGRITY_CHECKS.map(([table, name, definitionMd5]) => ({ table, name, validated: true, definitionMd5 }));
   const fake = (triggers, constraints, rules = []) => async (sql) =>
@@ -104,8 +104,14 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     expect(await check(allTriggers)).toEqual([]);
   });
 
-  it('covers K5, the slot rule and all four events on all three factor tables', () => {
-    expect(INTEGRITY_TRIGGERS).toHaveLength(2 + 3 * 4);
+  it('covers K5, the slot rule, all four events on all three factor tables, and the library\'s record', () => {
+    // + the record: one release trigger, insert/delete on factors and
+    // conversions, and the record's own three append-only guards.
+    expect(INTEGRITY_TRIGGERS).toHaveLength(2 + 3 * 4 + 1 + 2 * 2 + 3);
+    expect(INTEGRITY_TRIGGERS.filter((t) => t.definer).map((t) => t.trigger).sort()).toEqual([
+      'emission_factors_record_delete', 'emission_factors_record_insert', 'factor_releases_record_event',
+      'unit_conversions_record_delete', 'unit_conversions_record_insert',
+    ]);
     expect(INTEGRITY_TRIGGERS.map((t) => t.trigger)).toContain('activity_records_snapshot_immutable');
     expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === 'unit_conversions_before_truncate')).toMatchObject({
       fn: 'factor_tables_before_truncate',
@@ -164,6 +170,10 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     expect(await check(tweak('emission_factors_before_update', { fnSchema: 'evil' }))).toEqual([
       'trigger emission_factors_before_update on emission_factors runs evil.factor_rows_before_update, not public.factor_rows_before_update',
     ]);
+  });
+
+  it('reports a record trigger turned SECURITY INVOKER — it would need an INSERT grant anyone could use', async () => {
+    expect(await check(tweak('factor_releases_record_event', { definer: false }))).toHaveLength(1);
   });
 
   it('reports a trigger whose function no migration defines, instead of failing', async () => {
