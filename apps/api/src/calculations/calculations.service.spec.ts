@@ -343,7 +343,11 @@ describe('normalize (calculation_logic.md §2)', () => {
     // The UK statutory therm as an exact quotient — 29.30711 to seven figures.
     expect(normalize(1, 'therms', ANY_CATEGORY, null)).toMatchObject({ normalizedUnit: 'kWh', conversionFactor: 105_505_585.257348 / 3_600_000 });
     expect(normalize(1, 'therms', ANY_CATEGORY, null).conversionFactor).toBeCloseTo(29.30711, 5);
-    expect(normalize(1, 'therms', ANY_CATEGORY, null).conversionBasis).toMatch(/UK statutory/);
+    // Cites the instrument that defines it (the Weights and Measures Act 1985
+    // does not), and the exact result — the text is frozen into snapshots.
+    expect(normalize(1, 'therms', ANY_CATEGORY, null).conversionBasis).toBe(
+      'definitional — 1 therm = 105.505585257348 MJ (UK: Units of Measurement Regulations 1995, SI 1995/1804, Schedule) ÷ 3.6 MJ/kWh = 29.30710701593 kWh (exact)',
+    );
     expect(normalize(1, 'us_gallons', ANY_CATEGORY, null)).toMatchObject({ normalizedUnit: 'litres', conversionFactor: 3.785411784 });
     expect(normalize(1, 'uk_gallons', ANY_CATEGORY, null)).toMatchObject({ normalizedUnit: 'litres', conversionFactor: 4.54609 });
     expect(normalize(3.6, 'gj', ANY_CATEGORY, null).normalizedValue).toBeCloseTo(1000, 9);

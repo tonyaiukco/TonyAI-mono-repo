@@ -16,6 +16,7 @@ import {
   checkIntegrityTriggers,
   expectedTriggerFunctionBodies,
   factorLibraryReport,
+  checkTenantInvariants,
 } from './runtime-role.mjs';
 
 // The database half — that PostgreSQL accepts the verifier and the privileges
@@ -229,6 +230,12 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
       "function public.factor_release_events_actor_role() differs from its migration's definition",
     ]);
     expect(await check(allTriggers, allChecks, [], bodies, allHelpers.map((h) => ({ ...h, definer: true })))).toHaveLength(1);
+    // Same body, other language or search_path: still a different function.
+    for (const changed of [{ language: 'plpgsql' }, { config: [] }, { config: ['search_path=public'] }]) {
+      expect(await check(allTriggers, allChecks, [], bodies, allHelpers.map((h) => ({ ...h, ...changed }))), JSON.stringify(changed)).toEqual([
+        "function public.factor_release_events_actor_role() differs from its migration's definition",
+      ]);
+    }
     expect(await check(allTriggers, allChecks, [], bodies, [])).toEqual(['function public.factor_release_events_actor_role() is missing']);
   });
 
@@ -250,6 +257,18 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     expect(await check(allTriggers, checks)).toEqual([
       'CHECK emission_factors_gas_check on emission_factors is NOT VALID',
       'CHECK factor_releases_publisher_check on factor_releases is missing',
+    ]);
+  });
+});
+
+describe('checkTenantInvariants — what a restore skips', () => {
+  const fake = (n, slots) => async (sql) => (sql.includes('bool_or') ? [{ slots }] : [{ n }]);
+
+  it('reports a grant across organisations and a slot holding both kinds of record', async () => {
+    expect(await checkTenantInvariants(fake(0, 0))).toEqual([]);
+    expect(await checkTenantInvariants(fake(1, 2))).toEqual([
+      '1 user_subsidiary_access row(s) cross an organisation or point at nothing',
+      '2 activity_records slot(s) hold typed records and an untyped one',
     ]);
   });
 });

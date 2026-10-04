@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
+  INTEGRITY_CHECKS,
+  INTEGRITY_TRIGGERS,
   RUNTIME_ROLE,
   checkIntegrityTriggers,
   checkRuntimeRole,
@@ -143,6 +145,18 @@ describe('the runtime role', () => {
 describe('the factor model is in force on this database (LP3-03)', () => {
   it('holds every integrity trigger, ENABLE ALWAYS, on its events, with its migration\'s function body; every key CHECK', async () => {
     expect(await checkIntegrityTriggers((sql: string) => runtime.$queryRawUnsafe(sql))).toEqual([]);
+  });
+
+  it('pins every CHECK on a guarded table — a new or renamed one cannot go unwatched', async () => {
+    const guarded = [...new Set(INTEGRITY_TRIGGERS.map((t) => t.table))];
+    const rows = await owner.$queryRawUnsafe<{ key: string }[]>(
+      `SELECT c.conrelid::regclass::text || '.' || c.conname AS key
+         FROM pg_constraint c
+        WHERE c.contype = 'c' AND c.conrelid::regclass::text IN (${guarded.map((t) => `'${t}'`).join(', ')})`,
+    );
+    const pinned = new Set(INTEGRITY_CHECKS.map(([table, name]) => `${table}.${name}`));
+    expect(rows.map((r) => r.key).filter((k) => !pinned.has(k))).toEqual([]);
+    expect(rows.length).toBe(INTEGRITY_CHECKS.length);
   });
 
   it('reports the seed\'s placeholder releases as notices, and no unspecified row under an authoritative release', async () => {

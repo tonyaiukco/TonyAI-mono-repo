@@ -2069,10 +2069,13 @@ describe('ReportsService — activity types and factor standing (LP3-03)', () =>
     stubRecords(prisma, [makeRecord({ id: 'r1', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', calculation: v2({}) })]);
     const html = buildReportHtml(await service.assemble(admin, q));
     expect(html).toContain('<td>TonyAI prototype 2026.1 (2026.1)</td><td>Not authoritative (placeholder)</td>');
+    // The appendix row names the activity too (Category, then Geography).
+    expect(html).toContain('<tr><td>Fuel (Diesel)</td><td>UK</td>');
     expect(html).toContain('Each factor’s standing is in the appendix.');
     // An implicit category's own activity adds nothing to the label.
     stubRecords(prisma, [makeRecord({ calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity' }) })]);
-    expect(buildReportHtml(await service.assemble(admin, q))).toMatch(/<tr><td>Electricity<\/td>/);
+    // The appendix row (Category, then Geography) — not the summary table's.
+    expect(buildReportHtml(await service.assemble(admin, q))).toMatch(/<tr><td>Electricity<\/td><td>UK<\/td>/);
     // No calculated figure at all.
     stubRecords(prisma, [makeRecord({ calculation: { reasonCode: 'no_emission_factor', reason: 'r', snapshotSchema: 1 } })]);
     expect(buildReportHtml(await service.assemble(admin, q))).toContain('No figure in this report is calculated from an emission factor.');
@@ -2129,14 +2132,52 @@ describe('ReportsService — activity types and factor standing (LP3-03)', () =>
       { id: 'rel-a', withdrawnAt: new Date('2027-03-01T10:00:00Z'), withdrawalReason: 'Erratum: superseded by 2026.2' },
     ]);
     const data = await service.assemble(admin, q);
-    expect(data.factors[0].standing).toBe('Withdrawn on 2027-03-01 — not authoritative: Erratum: superseded by 2026.2');
+    expect(data.factors[0].standing).toBe('Factor release DESNZ 2026 withdrawn on 2027-03-01 — not authoritative: Erratum: superseded by 2026.2');
     expect(data.records[0].factorStanding?.code).toBe('withdrawn');
     expect(data.nonAuthoritativeRecords).toBe(1);
     expect(prisma.factorRelease.findMany).toHaveBeenCalledWith({
       where: { id: { in: ['rel-a'] }, status: 'withdrawn' },
       select: { id: true, withdrawnAt: true, withdrawalReason: true },
     });
-    expect(buildReportHtml(data)).not.toContain('using authoritative emission-factor releases');
+    const html = buildReportHtml(data);
+    expect(html).not.toContain('using authoritative emission-factor releases');
+    // Stated as of now, and never recalculated — in the note and the appendix.
+    expect(html.split('Standing is assessed when this report is generated.').length - 1).toBe(2);
+  });
+
+  it('codes a fixture path as fixture, and looks up the releases of withdrawn (voided) records too', async () => {
+    const fixtureRelease = { ...placeholderRelease, id: 'rel-f', publisher: 'TonyAI test fixture', edition: '0000-E2E', ordinal: 1, status: 'fixture' };
+    const voidedOnAuthoritative = makeRecord({
+      id: 'rec-v', periodValue: 'March', status: 'voided', voidReason: 'Entered twice.', voidedAt: new Date('2026-04-01T00:00:00Z'), voidedBy: 'u-1',
+      calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity', factorRelease: { ...authoritativeRelease, id: 'rel-v' } }),
+    });
+    stubRecords(prisma, [makeRecord({ calculation: v2({ factorRelease: fixtureRelease }) }), voidedOnAuthoritative]);
+    prisma.factorRelease.findMany.mockResolvedValue([{ id: 'rel-v', withdrawnAt: new Date('2027-01-05T00:00:00Z'), withdrawalReason: 'Erratum' }]);
+    const data = await service.assemble(admin, q);
+    expect(data.records[0].factorStanding).toEqual({ code: 'fixture', text: 'Not authoritative (fixture)' });
+    expect(prisma.factorRelease.findMany.mock.calls[0][0].where.id.in).toEqual(expect.arrayContaining(['rel-f', 'rel-v']));
+    expect(data.withdrawn[0].factorStanding).toMatchObject({ code: 'withdrawn', text: expect.stringContaining('Factor release DESNZ 2026 withdrawn on 2027-01-05') });
+  });
+
+  it('names the conversion\'s release when only the conversion\'s was withdrawn — not the factor\'s the Release column shows', async () => {
+    const conversionRelease = { ...authoritativeRelease, id: 'rel-c', publisher: 'DESNZ', edition: '2026-gas' };
+    stubRecords(prisma, [
+      makeRecord({
+        category: 'Natural Gas', activityUnit: 'cubic_metres',
+        calculation: v2({
+          factorId: 'f-gas', activityType: 'natural_gas', factorRelease: authoritativeRelease,
+          conversion: { id: 'c', fromUnit: 'cubic_metres', toUnit: 'kWh', multiplier: 11.2, calorificBasis: 'gross', referenceConditions: 'r', basis: 'b', dataYear: 2026, release: conversionRelease },
+        }),
+      }),
+    ]);
+    prisma.factorRelease.findMany.mockResolvedValue([{ id: 'rel-c', withdrawnAt: new Date('2027-05-02T00:00:00Z'), withdrawalReason: 'Wrong reference conditions' }]);
+    const data = await service.assemble(admin, q);
+    expect(data.factors[0]).toMatchObject({
+      release: expect.stringContaining('DESNZ 2026'),
+      standing: 'Conversion release DESNZ 2026-gas withdrawn on 2027-05-02 — not authoritative: Wrong reference conditions',
+    });
+    expect(data.records[0].factorStanding?.code).toBe('withdrawn');
+    expect(data.nonAuthoritativeRecords).toBe(1);
   });
 
   it('lists one appendix line per PATH — the same factor reached directly and through a conversion — and names the weak link', async () => {

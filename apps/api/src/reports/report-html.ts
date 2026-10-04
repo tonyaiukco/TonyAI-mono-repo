@@ -37,6 +37,14 @@ function categoryWithActivityLabel(f: ReportFactorRow): string {
  * as a fixed sentence (LP3-03, obligation 2). Before LP4-02 loads authoritative
  * releases, every figure is a placeholder's and the note says so.
  */
+/**
+ * Standing is stated now; the figure is not recalculated (historic
+ * calculations are immutable) — a correction is a restatement.
+ */
+const STANDING_AS_OF =
+  'Standing is assessed when this report is generated. A figure whose release has since been withdrawn is shown, and counted in the totals, ' +
+  'exactly as it was calculated and approved — this report does not recalculate it; correcting it is a separate, reviewed restatement.';
+
 function factorNote(data: ReportData): string {
   if (data.calculatedRecords === 0) return 'No figure in this report is calculated from an emission factor.';
   // The appendix is optional (`includeMethodologyNotes`): point at it only
@@ -54,7 +62,7 @@ function factorNote(data: ReportData): string {
   // through a non-authoritative conversion, or on a release withdrawn since.
   return (
     `${subject} computed from emission factors or unit conversions that are NOT authoritative — ` +
-    `prototype placeholders or withdrawn releases, not current DEFRA/DESNZ or Türkiye values.${where}`
+    `prototype placeholders or withdrawn releases, not current DEFRA/DESNZ or Türkiye values. ${STANDING_AS_OF}${where}`
   );
 }
 
@@ -229,7 +237,7 @@ export function buildReportHtml(data: ReportData): string {
   ${
     data.includeMethodologyNotes
       ? `<h2>Methodology & emission factors</h2>
-  <p class="note">Every calculation stores an immutable snapshot of the factor it used (value, source, version) and of any unit conversion applied before it, so each figure in the ledger can be recomputed from this report; historic results never change. Boundary: operational control. Aligned with ISO 14064-1 / GHG Protocol.</p>
+  <p class="note">Every calculation stores an immutable snapshot of the factor it used (value, source, version) and of any unit conversion applied before it, so each figure in the ledger can be recomputed from this report; historic results never change. ${STANDING_AS_OF} Boundary: operational control. Aligned with ISO 14064-1 / GHG Protocol.</p>
   <table><thead><tr><th>Category</th><th>Geography</th><th class="num">Factor</th><th>Methodology</th><th>Source</th><th>Release</th><th>Standing</th></tr></thead>
   <tbody>${factorRows}</tbody></table>`
       : ''

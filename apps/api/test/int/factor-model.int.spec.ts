@@ -8,7 +8,7 @@ import { NoEmissionFactorError } from '../../src/calculations/errors';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { backendPid, connect, connectOwner, createRecord, createTenant, deferred, settledOrBlocked, withRollback, type Tenant } from './db';
 import { INT_FACTOR_POLICY, lifecycleServices } from './services';
-import { factorLibraryReport } from '../../../../packages/db/scripts/runtime-role.mjs';
+import { checkTenantInvariants, factorLibraryReport } from '../../../../packages/db/scripts/runtime-role.mjs';
 
 /**
  * LP3-03 PR B against real PostgreSQL: the K5 snapshot trigger, the slot-kind
@@ -118,10 +118,14 @@ describe('K5 — a snapshot that has left draft never changes', () => {
     );
     const rec = await createRecord(owner, tenant, { ...nextSlot(), locationId: siteA.id, status: ActivityRecordStatus.approved });
     expect(sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: rec.id }, data: { locationId: siteB.id } })))).toBe('TA001');
-    // Nor detach it by a direct edit: only the foreign key's own action may.
-    for (const client of [runtime, owner]) {
-      expect(sqlstateOf(await failure(client.activityRecord.update({ where: { id: rec.id }, data: { locationId: null } })))).toBe('TA001');
-    }
+    // Nor detach it by a direct edit: only the foreign key's own action may —
+    // which PostgreSQL runs as the table's owner, so the owner (trusted; it
+    // could disable the trigger) is the one role that can do it directly.
+    expect(sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: rec.id }, data: { locationId: null } })))).toBe('TA001');
+    await withRollback(owner, (tx) => tx.activityRecord.update({ where: { id: rec.id }, data: { locationId: null } }));
+    // Deleting the site as the runtime role: its ON DELETE SET NULL runs as the owner.
+    await withRollback(runtime, (tx) => tx.location.delete({ where: { id: siteA.id } }));
+    expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } })).locationId).toBe(siteA.id);
     await owner.location.delete({ where: { id: siteA.id } });
     expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } })).locationId).toBeNull();
     await owner.location.delete({ where: { id: siteB.id } });
@@ -216,12 +220,58 @@ describe('K5 — a committed record is never deleted on its own', () => {
     }
     const approved = await createRecord(owner, tenant, { ...nextSlot(), status: ActivityRecordStatus.approved });
     await withRollback(owner, (tx) => tx.activityRecord.delete({ where: { id: approved.id } }));
-    // A foreign-key cascade runs the guard at depth 2: deleting the
+    // A foreign-key cascade runs as the table's owner: deleting the
     // subsidiary — here as the runtime role, rolled back — takes its
     // committed records too.
     await withRollback(runtime, (tx) => tx.subsidiary.delete({ where: { id: tenant.subsidiaryId } }));
     expect(await owner.activityRecord.count({ where: { id: approved.id } })).toBe(1);
   });
+});
+
+describe('K5 — trigger depth is no proof of a cascade, and an id never changes', () => {
+  // A trigger on a temporary table of the caller's own raises
+  // pg_trigger_depth() — every role holds TEMP. The guards test the owner.
+  const fromOwnTrigger = async (tx: Prisma.TransactionClient, statement: string, id: string) => {
+    await tx.$executeRawUnsafe('CREATE TEMP TABLE int_spoof (id uuid) ON COMMIT DROP');
+    await tx.$executeRawUnsafe(
+      `CREATE FUNCTION pg_temp.int_spoof() RETURNS trigger LANGUAGE plpgsql AS $f$BEGIN ${statement}; RETURN NEW; END$f$`,
+    );
+    await tx.$executeRawUnsafe('CREATE TRIGGER int_spoof AFTER INSERT ON int_spoof FOR EACH ROW EXECUTE FUNCTION pg_temp.int_spoof()');
+    await tx.$executeRawUnsafe(`INSERT INTO int_spoof VALUES ('${id}')`);
+  };
+
+  it.each([
+    ['deleting', 'DELETE FROM public.activity_records WHERE id = NEW.id'],
+    ['detaching the site of', 'UPDATE public.activity_records SET location_id = NULL WHERE id = NEW.id'],
+  ])('refuses %s a committed record from inside a trigger of the caller\'s own — runtime role and service role', async (_, statement) => {
+    const site = await owner.location.create({ data: { subsidiaryId: tenant.subsidiaryId, name: `Int-test depth site ${randomUUID().slice(0, 6)}`, geographyCode: 'UK' } });
+    const rec = await createRecord(owner, tenant, { ...nextSlot(), locationId: site.id, status: ActivityRecordStatus.approved });
+    try {
+      expect(sqlstateOf(await failure(withRollback(runtime, (tx) => fromOwnTrigger(tx, statement, rec.id))))).toBe('TA001');
+      const asService = await failure(
+        withRollback(owner, async (tx) => {
+          await tx.$executeRawUnsafe('SET LOCAL ROLE service_role');
+          await fromOwnTrigger(tx, statement, rec.id);
+        }),
+      );
+      expect(sqlstateOf(asService)).toBe('TA001');
+      expect(await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } })).toMatchObject({ locationId: site.id });
+    } finally {
+      await owner.activityRecord.delete({ where: { id: rec.id } });
+      await owner.location.delete({ where: { id: site.id } });
+    }
+  });
+
+  it.each([ActivityRecordStatus.draft, ActivityRecordStatus.approved, ActivityRecordStatus.voided])(
+    'refuses changing the id of a %s record — to the runtime role and the owner',
+    async (status) => {
+      const rec = await createRecord(owner, tenant, { ...nextSlot(), status });
+      for (const client of [runtime, owner]) {
+        const e = await failure(client.$executeRawUnsafe(`UPDATE activity_records SET id = gen_random_uuid() WHERE id = '${rec.id}'`));
+        expect(sqlstateOf(e)).toBe('TA001');
+      }
+    },
+  );
 });
 
 describe('a slot holds typed records or one untyped record, never both', () => {
@@ -717,18 +767,20 @@ describe("the factor library's record (factor_release_events)", () => {
     const factorRow = `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year, data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
       VALUES (gen_random_uuid(), '${releaseId}', 'Fuel', 'gas_oil', 'CO2e', 'all_ghg', 'UK', 2031, 2031, 1, 'not_applicable', 'not_applicable', 2.5, 'kgCO2e/L', 'litres', 'x', 'x', 'int-${releaseId}', now())`;
     const [release, conversions] = load(releaseId, 0);
-    for (const rows of [conversions, factorRow]) {
-      const e = await failure(
-        owner.$transaction(
-          async (tx) => {
-            await tx.$executeRawUnsafe(release.replace(/, 0, 'fixture'\)/, `, ${await nextOrdinal(tx)}, 'fixture')`));
-            await tx.$executeRawUnsafe(rows);
-          },
-          { isolationLevel: 'RepeatableRead' },
-        ),
-      );
-      expect(sqlstateOf(e), rows.slice(0, 30)).toBe('TA012');
-      expect(String((e as Error).message)).toMatch(/READ COMMITTED/);
+    for (const isolationLevel of ['RepeatableRead', 'Serializable'] as const) {
+      for (const rows of [conversions, factorRow]) {
+        const e = await failure(
+          owner.$transaction(
+            async (tx) => {
+              await tx.$executeRawUnsafe(release.replace(/, 0, 'fixture'\)/, `, ${await nextOrdinal(tx)}, 'fixture')`));
+              await tx.$executeRawUnsafe(rows);
+            },
+            { isolationLevel },
+          ),
+        );
+        expect(sqlstateOf(e), `${isolationLevel} ${rows.slice(0, 30)}`).toBe('TA012');
+        expect(String((e as Error).message)).toMatch(/READ COMMITTED/);
+      }
     }
   });
 
@@ -745,6 +797,49 @@ describe("the factor library's record (factor_release_events)", () => {
       return (await factorLibraryReport((sql: string) => tx.$queryRawUnsafe(sql))).problems;
     });
     expect(problems.some((p: string) => /unit_conversions row\(s\) but factor_release_events records/.test(p))).toBe(true);
+  });
+
+  it('reports recorded rows the library no longer holds (a delete past its triggers)', async () => {
+    const releaseId = randomUUID();
+    const problems = await withRollback(owner, async (tx) => {
+      for (const sql of load(releaseId, await nextOrdinal(tx))) await tx.$executeRawUnsafe(sql);
+      await tx.$executeRawUnsafe('ALTER TABLE unit_conversions DISABLE TRIGGER unit_conversions_record_delete');
+      await tx.$executeRawUnsafe(`DELETE FROM unit_conversions WHERE release_id = '${releaseId}'`);
+      return (await factorLibraryReport((sql: string) => tx.$queryRawUnsafe(sql))).problems;
+    });
+    expect(problems).toContain(`release ${releaseId} holds 0 unit_conversions row(s) but factor_release_events records 3`);
+  });
+
+  it("records the release's own status on every event — a placeholder load as placeholder", async () => {
+    const releaseId = randomUUID();
+    const events = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(
+        `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, notes)
+         SELECT '${releaseId}', publisher, title, '2099.1', 209901, 'placeholder', notes
+           FROM factor_releases WHERE publisher = 'TonyAI prototype' AND edition = '2026.1'`,
+      );
+      await tx.$executeRawUnsafe(load(releaseId, 0)[1].replaceAll('2031', '2099'));
+      return eventsOf(tx, releaseId);
+    });
+    expect(events.map((e) => [e.event, e.release_status])).toEqual([
+      ['loaded', 'placeholder'],
+      ['rows_added', 'placeholder'],
+    ]);
+  });
+
+  it('stamps a row with the time it was loaded, whatever the writer says', async () => {
+    const releaseId = randomUUID();
+    const stamped = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(load(releaseId, await nextOrdinal(tx))[0]);
+      await tx.$executeRawUnsafe(
+        `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit, multiplier, calorific_basis, basis, created_at)
+         VALUES (gen_random_uuid(), '${releaseId}', 'Natural Gas', 'natural_gas', 'UK', 2031, 2031, 'cubic_metres', 'kWh', 1, 'gross', 'x', '2000-01-01')`,
+      );
+      return tx.$queryRawUnsafe<{ fresh: boolean }[]>(
+        `SELECT bool_and(created_at > now() - interval '1 hour') AS fresh FROM unit_conversions WHERE release_id = '${releaseId}'`,
+      );
+    });
+    expect(stamped[0].fresh).toBe(true);
   });
 
   it('is written by its triggers alone: the service role cannot add to it, and nobody can change it', async () => {
@@ -766,6 +861,11 @@ describe("the factor library's record (factor_release_events)", () => {
       'REINDEX TABLE emission_factors',
       'REINDEX TABLE activity_records',
       'CLUSTER audit_log USING audit_log_pkey',
+      // Neither table has a TRUNCATE trigger: the revoke is the only barrier
+      // to wiping the records past their row guards, or the audit trail.
+      'TRUNCATE activity_records CASCADE',
+      'TRUNCATE audit_log',
+      'TRUNCATE subsidiaries CASCADE',
     ]) {
       const e = await failure(
         withRollback(owner, async (tx) => {
@@ -791,6 +891,55 @@ describe("the factor library's record (factor_release_events)", () => {
       );
       expect(sqlstateOf(e), sql).toBe('TA010');
     }
+  });
+
+  describe('a restore (replica mode) loads what a dump holds — and the change guards still hold', () => {
+    it('lets the owner load rows, events and a mixed slot as a dump holds them; refuses every change; the check finds the slot', async () => {
+      const releaseId = randomUUID();
+      const typedSlot = nextSlot();
+      const outcome = await withRollback(owner, async (tx) => {
+        const refused = async (sql: string) => {
+          await tx.$executeRawUnsafe('SAVEPOINT probe');
+          try {
+            await tx.$executeRawUnsafe(sql);
+            return null;
+          } catch (e) {
+            return sqlstateOf(e);
+          } finally {
+            await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT probe');
+          }
+        };
+        await tx.$executeRawUnsafe(load(releaseId, await nextOrdinal(tx))[0]);
+        await tx.$executeRawUnsafe(
+          `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'TonyAI ops', withdrawal_reason = 'int restore' WHERE id = '${releaseId}'`,
+        );
+        await tx.$executeRawUnsafe('SET LOCAL session_replication_role = replica');
+        // A dump's rows of a since-withdrawn release, and its events: loaded.
+        await tx.$executeRawUnsafe(load(releaseId, 0)[1]);
+        const before = (await eventsOf(tx, releaseId)).length;
+        await tx.$executeRawUnsafe(
+          `INSERT INTO factor_release_events (id, release_id, publisher, edition, release_status, event, table_name, row_count, db_role)
+           VALUES (gen_random_uuid(), '${releaseId}', 'TonyAI test fixture', 'int-${releaseId}', 'withdrawn', 'rows_added', 'unit_conversions', 3, 'postgres')`,
+        );
+        // A slot holding both kinds, as a dump of a broken database would.
+        await createRecord(tx as unknown as PrismaService, tenant, { ...typedSlot, category: 'Fuel', scope: 1, activityUnit: 'litres' });
+        await createRecord(tx as unknown as PrismaService, tenant, { ...typedSlot, category: 'Fuel', scope: 1, activityUnit: 'litres', activityType: 'diesel' });
+        return {
+          rowsWrittenNoEvent: (await eventsOf(tx, releaseId)).length - before,
+          updateEvent: await refused(`UPDATE factor_release_events SET actor = 'x' WHERE release_id = '${releaseId}'`),
+          updateRow: await refused(`UPDATE unit_conversions SET basis = 'y' WHERE release_id = '${releaseId}'`),
+          deleteRow: await refused(`DELETE FROM emission_factors WHERE release_id = (SELECT id FROM factor_releases WHERE publisher = 'TonyAI prototype' AND edition = '2026.1')`),
+          invariants: await checkTenantInvariants((sql: string) => tx.$queryRawUnsafe(sql)),
+        };
+      });
+      expect(outcome).toEqual({
+        rowsWrittenNoEvent: 1,
+        updateEvent: 'TA010',
+        updateRow: 'TA010',
+        deleteRow: 'TA010',
+        invariants: ['1 activity_records slot(s) hold typed records and an untyped one'],
+      });
+    });
   });
 });
 

@@ -426,7 +426,21 @@ export async function checkTenantInvariants(query) {
          OR p.organisation_id IS DISTINCT FROM usa.organisation_id
          OR s.organisation_id IS DISTINCT FROM usa.organisation_id`,
   );
-  return n > 0 ? [`${n} user_subsidiary_access row(s) cross an organisation or point at nothing`] : [];
+  // The slot rule (`activity_records_slot_kind`) steps aside for a restore's
+  // inserts: a slot holding typed records and an untyped one counts a fuel
+  // twice.
+  const [{ slots }] = await query(
+    `SELECT count(*)::int AS slots FROM (
+       SELECT 1 FROM activity_records
+        WHERE status <> 'voided'
+        GROUP BY subsidiary_id, location_id, reporting_year, reporting_period, period_value, category
+       HAVING bool_or(activity_type IS NULL) AND bool_or(activity_type IS NOT NULL)
+     ) mixed`,
+  );
+  return [
+    ...(n > 0 ? [`${n} user_subsidiary_access row(s) cross an organisation or point at nothing`] : []),
+    ...(slots > 0 ? [`${slots} activity_records slot(s) hold typed records and an untyped one`] : []),
+  ];
 }
 
 /**

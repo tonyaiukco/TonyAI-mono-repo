@@ -305,6 +305,32 @@ export async function lockPeriod(
  *  shared database. `supabaseEnv()` reads whatever the local env files say. */
 const LOCAL_SUPABASE_HOSTS = ['127.0.0.1', 'localhost'];
 
+/**
+ * The owner connection's guard: a postgres URL on a loopback host with no
+ * connection parameter at all — Prisma honours `?host=` over the URL's host,
+ * so a hostname check alone would pass a redirected connection. Local and CI
+ * owner URLs (`supabase status`) carry none.
+ */
+function assertLocalDatabase(url: string): void {
+  let parsed: URL | null;
+  try {
+    parsed = new URL(url);
+  } catch {
+    parsed = null;
+  }
+  if (
+    !parsed ||
+    !['postgresql:', 'postgres:'].includes(parsed.protocol) ||
+    !LOCAL_SUPABASE_HOSTS.includes(parsed.hostname) ||
+    [...parsed.searchParams.keys()].length > 0
+  ) {
+    throw new Error(
+      'Refusing to run E2E teardown as the database owner against a URL that is not a plain local database ' +
+        '(a postgres URL on 127.0.0.1/localhost with no connection parameters).',
+    );
+  }
+}
+
 function assertLocalTarget(url: string): void {
   // The HOSTNAME, parsed — not a prefix match on the string. A prefix regex
   // reads the userinfo as the host: `http://localhost:54321@evil.example.com`
@@ -338,7 +364,7 @@ function assertLocalTarget(url: string): void {
 async function deleteRecordsAsOwner(where: Record<string, unknown>): Promise<string | null> {
   const ownerUrl = process.env.E2E_OWNER_DATABASE_URL;
   if (!ownerUrl) return 'E2E_OWNER_DATABASE_URL not set (see playwright.config.ts env loader).';
-  assertLocalTarget(ownerUrl);
+  assertLocalDatabase(ownerUrl);
   // The generated client the seed and the RLS probes use, resolved by path:
   // the e2e suite does not depend on @tonyai/db.
   const { PrismaClient } = createRequire(__filename)('../packages/db/generated/client');

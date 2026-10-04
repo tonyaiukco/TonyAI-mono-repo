@@ -14,6 +14,10 @@ const migrations = resolve(__dirname, '../../../../packages/db/prisma/migrations
 const dir = readdirSync(migrations).find((d) => d.endsWith('_lp3_03_factor_model'));
 const sql = readFileSync(join(migrations, dir ?? 'missing', 'migration.sql'), 'utf8');
 
+/** The guarded table's owner, as the triggers look it up. */
+const OWNER = '(SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID)';
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 function functionBody(name: string): string {
   const start = sql.indexOf(`CREATE FUNCTION "public"."${name}"()`);
   if (start < 0) throw new Error(`no function ${name}`);
@@ -37,9 +41,32 @@ describe('the activity_records integrity triggers', () => {
       expect(body).toContain(`NEW."${column}" IS DISTINCT FROM OLD."${column}"`);
     }
     // A direct edit may not detach a site either: only the foreign key's
-    // ON DELETE SET NULL, which fires K5 as a nested trigger.
-    expect(body).toContain('NEW."location_id" IS NOT NULL OR pg_catalog.pg_trigger_depth() < 2');
-    expect(body).not.toMatch(/SECURITY DEFINER|SELECT /);
+    // ON DELETE SET NULL, which PostgreSQL runs as the table's owner.
+    expect(body).toContain(`NEW."location_id" IS NOT NULL OR current_user <> ${OWNER}`);
+    // The owner lookup is its one query; no SECURITY DEFINER.
+    expect(body.match(/SELECT /g)).toHaveLength(1);
+    expect(body).not.toContain('SECURITY DEFINER');
+  });
+
+  it('K5 freezes the id in every status, before it looks at the status at all', () => {
+    const body = functionBody('activity_records_snapshot_immutable');
+    const id = body.indexOf('IF NEW."id" IS DISTINCT FROM OLD."id" THEN');
+    expect(id).toBeGreaterThan(-1);
+    expect(id).toBeLessThan(body.indexOf('OLD."status" NOT IN'));
+  });
+
+  it('never trusts pg_trigger_depth(), which any role can raise with a temp-table trigger — only the owner, as a cascade runs', () => {
+    for (const name of ['activity_records_snapshot_immutable', 'activity_records_committed_delete', 'activity_records_slot_kind']) {
+      expect(functionBody(name), name).not.toContain('pg_trigger_depth');
+    }
+    const del = functionBody('activity_records_committed_delete');
+    expect(del).toMatch(new RegExp(`OLD\\."status" NOT IN \\('draft', 'rejected'\\)\\s+AND current_user <> ${escape(OWNER)} THEN`));
+  });
+
+  it('the slot rule steps aside only for a restore\'s inserts (replica mode, the owner\'s alone)', () => {
+    const body = functionBody('activity_records_slot_kind');
+    expect(body).toContain(`IF TG_OP = 'INSERT' AND pg_catalog.current_setting('session_replication_role') = 'replica' THEN\n    RETURN NEW;`);
+    expect(body.match(/session_replication_role/g)).toHaveLength(1);
   });
 
   it("K5 allows exactly the review lifecycle's status changes — the API's gates, and nothing a rewind needs", () => {

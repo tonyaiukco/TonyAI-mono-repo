@@ -993,7 +993,7 @@ async function main() {
         problems.length ? problems.join('; ') : 'as intended',
       );
       const broken = await checkTenantInvariants(query);
-      check('no grant crosses an organisation in the data (a restore skips the keys)', broken.length === 0, broken.join('; ') || 'none');
+      check('no grant crosses an organisation and no slot mixes typed and untyped records in the data (a restore skips the keys and the slot rule)', broken.length === 0, broken.join('; ') || 'none');
       const triggers = await checkIntegrityTriggers(query);
       check(
         'the integrity triggers (K5 snapshot, slot kind, append-only factor library) and CHECKs are present and ENABLE ALWAYS',

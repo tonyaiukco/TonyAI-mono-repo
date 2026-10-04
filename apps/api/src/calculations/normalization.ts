@@ -67,15 +67,17 @@ const UNIT_RULES: Record<string, UnitRule> = {
   // --- Energy base unit: kWh ---
   kwh: { target: 'kWh', multiplier: 1, basis: 'identity' },
   mwh: { target: 'kWh', multiplier: 1000, basis: 'definitional — 1 MWh = 1,000 kWh (exact)' },
-  // The UK statutory therm (Weights and Measures Act 1985, Schedule 1):
-  // 105,505,585.257348 J — the one UK gas billing converts with — divided by
-  // the 3.6 MJ of a kWh, as an exact quotient (29.3071070…). Not the US therm
-  // (29.3001 kWh). The basis text is frozen into every therms snapshot, so it
-  // cites the definition, not a rounding of it.
+  // The UK statutory therm (Units of Measurement Regulations 1995, SI 1995/1804,
+  // regs 3(3) and 4(d) and the Schedule): 105.505585257348 MJ — the value UK
+  // law converts therms of gas supply with — divided by the 3.6 MJ of a kWh,
+  // a terminating quotient (29.30710701593 kWh). Not the US therm (29.3001 kWh).
+  // The basis text is frozen into every therms snapshot, so it cites the
+  // instrument that defines the value, and the exact result.
   therms: {
     target: 'kWh',
     multiplier: 105_505_585.257348 / 3_600_000,
-    basis: 'definitional — 1 therm (UK statutory, Weights and Measures Act 1985) = 105,505,585.257348 J = 29.3071070 kWh (exact quotient)',
+    basis:
+      'definitional — 1 therm = 105.505585257348 MJ (UK: Units of Measurement Regulations 1995, SI 1995/1804, Schedule) ÷ 3.6 MJ/kWh = 29.30710701593 kWh (exact)',
   },
   gj: { target: 'kWh', multiplier: 1000 / 3.6, basis: 'definitional — 1 GJ = 1,000/3.6 kWh (exact)' },
 

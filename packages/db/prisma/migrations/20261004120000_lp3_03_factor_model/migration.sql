@@ -35,7 +35,12 @@
 --    loaders, never through the API).
 -- Every trigger is ENABLE ALWAYS: it fires in replica mode too (a restore with
 -- `session_replication_role = replica` skips ordinary triggers), and
--- `runtime-role.mjs check` verifies each exists in that state.
+-- `runtime-role.mjs check` verifies each exists in that state. In replica mode
+-- (which only the owner may set) the insert-time rules step aside so a
+-- data-only restore can load what a dump holds — the library's load rules,
+-- its record's writers and the slot rule; the update, delete and truncate
+-- guards never do. `runtime-role.mjs check`, run through the owner, scans the
+-- restored data for what those rules would have refused.
 
 -- The statements below take ACCESS EXCLUSIVE locks on tables the API reads on
 -- every request. Queued behind a long transaction, they would stall every
@@ -352,14 +357,23 @@ CREATE UNIQUE INDEX "activity_records_reporting_entity_period_category_key"
 -- lock's lock and unlock), so no writer can walk a committed record back
 -- through review to rewrite it, and `draft` stays a create-time status.
 -- `location_id` may only
--- become NULL, and only inside its foreign key's ON DELETE SET NULL (a nested
--- trigger, depth > 1), never by a direct edit. The status lists are pinned to
--- the API by parity tests. OLD/NEW only — no query, no SECURITY DEFINER.
+-- become NULL, and only inside its foreign key's ON DELETE SET NULL, never by
+-- a direct edit: a referential action runs as the referencing table's owner,
+-- so the test is the owner — never `pg_trigger_depth()`, which any role can
+-- raise with a trigger on a temporary table of its own. An id never changes,
+-- in any status: a committed record's id cannot be handed to a forged copy.
+-- The status lists are pinned to the API by parity tests. OLD/NEW and the
+-- table's owner only; no SECURITY DEFINER.
 CREATE FUNCTION "public"."activity_records_snapshot_immutable"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
 AS $fn$
 BEGIN
+  IF NEW."id" IS DISTINCT FROM OLD."id" THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA001',
+      MESSAGE = format('activity record %s cannot change its id', OLD."id");
+  END IF;
   IF OLD."status" NOT IN ('draft', 'rejected') AND (
        NEW."calculation" IS DISTINCT FROM OLD."calculation"
     OR NEW."activity_type" IS DISTINCT FROM OLD."activity_type"
@@ -372,7 +386,7 @@ BEGIN
     OR NEW."period_value" IS DISTINCT FROM OLD."period_value"
     OR NEW."subsidiary_id" IS DISTINCT FROM OLD."subsidiary_id"
     OR (NEW."location_id" IS DISTINCT FROM OLD."location_id"
-        AND (NEW."location_id" IS NOT NULL OR pg_catalog.pg_trigger_depth() < 2))
+        AND (NEW."location_id" IS NOT NULL OR current_user <> (SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID)))
   ) THEN
     RAISE EXCEPTION USING
       ERRCODE = 'TA001',
@@ -402,16 +416,18 @@ ALTER TABLE "activity_records" ENABLE ALWAYS TRIGGER "activity_records_snapshot_
 -- K5's other half: a committed record cannot be rewritten by deleting it and
 -- inserting a forged copy under the same id. Only a draft or rejected record
 -- is deleted by a statement (the API's own rule); a committed one goes only
--- with its subsidiary or organisation (a foreign-key cascade, which runs this
--- at depth > 1) or by the table's owner — the same trusted role that could
--- disable the trigger, used by test teardown on local and CI databases.
+-- as the table's owner — a foreign-key cascade (its subsidiary's or
+-- organisation's deletion), which PostgreSQL runs as the referencing table's
+-- owner, or the owner itself: the same trusted role that could disable the
+-- trigger, used by test teardown on local and CI databases. Never
+-- `pg_trigger_depth()`: any role can raise it with a trigger on a temporary
+-- table of its own.
 CREATE FUNCTION "public"."activity_records_committed_delete"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
 AS $fn$
 BEGIN
   IF OLD."status" NOT IN ('draft', 'rejected')
-     AND pg_catalog.pg_trigger_depth() < 2
      AND current_user <> (SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID) THEN
     RAISE EXCEPTION USING
       ERRCODE = 'TA001',
@@ -441,6 +457,12 @@ SET search_path = ''
 AS $fn$
 BEGIN
   IF NEW."status" = 'voided' THEN
+    RETURN NEW;
+  END IF;
+  -- A data-only restore (replica mode, the owner's alone) loads what the dump
+  -- holds: one advisory lock per slot would exhaust the lock table on a large
+  -- inventory. `runtime-role.mjs check` scans the restored slots instead.
+  IF TG_OP = 'INSERT' AND pg_catalog.current_setting('session_replication_role') = 'replica' THEN
     RETURN NEW;
   END IF;
   IF TG_OP = 'UPDATE'
@@ -854,9 +876,11 @@ BEGIN
 END
 $fn$;
 
--- The record is itself append-only, for every role: no UPDATE or DELETE, and
--- no INSERT but its writers' (a nested trigger, depth > 1) — not even the
--- owner's, short of disabling the guard (which the runtime-role check
+-- The record is itself append-only, for every role: no UPDATE or DELETE. No
+-- other role holds INSERT on it; for the owner this guard refuses a direct
+-- INSERT by accident (outside a nested trigger, depth > 1) — an accident
+-- guard, not a bound on the owner, who could raise the depth with a trigger of
+-- its own as it could disable the guard (which the runtime-role check
 -- reports). A data-only restore (replica) re-inserts it.
 CREATE FUNCTION "public"."factor_release_events_before_insert"() RETURNS trigger
 LANGUAGE plpgsql

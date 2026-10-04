@@ -88,24 +88,36 @@ function authoritativeNow(snapshot: ActivityCalculationSnapshot, withdrawals: Ma
 }
 
 /**
- * A factor path's standing in words: authoritative only when every link is
- * (`isAuthoritativeSnapshot`) and no link has been withdrawn since; otherwise
- * the withdrawal, or the weakest link's status — a placeholder conversion
- * under an authoritative factor is not authoritative.
+ * A factor path's standing in words, as of the report's generation:
+ * authoritative only when every link is (`isAuthoritativeSnapshot`) and no
+ * link's release has been withdrawn since; otherwise the withdrawn release —
+ * named, since it may be the conversion's rather than the factor's that the
+ * appendix's Release column shows — or the weakest link's status: a
+ * placeholder conversion under an authoritative factor is not authoritative.
  */
 function factorStanding(
   snapshot: ActivityCalculationSnapshot,
   withdrawals: Map<string, ReleaseWithdrawal>,
 ): { code: FactorStandingCode; text: string } {
-  const withdrawn = pathReleaseIds(snapshot).map((id) => withdrawals.get(id)).find((w) => w !== undefined);
-  if (withdrawn) {
-    const on = withdrawn.at ? ` on ${withdrawn.at.toISOString().slice(0, 10)}` : '';
-    return { code: 'withdrawn', text: `Withdrawn${on} — not authoritative${withdrawn.reason ? `: ${withdrawn.reason}` : ''}` };
-  }
-  if (isAuthoritativeSnapshot(snapshot)) return { code: 'authoritative', text: 'Authoritative' };
   if (!isProvenanceSnapshot(snapshot)) {
     return { code: 'pre_release', text: 'Not authoritative (written before factor releases)' };
   }
+  const links = [
+    { link: 'Factor', release: snapshot.factorRelease },
+    ...(snapshot.conversion ? [{ link: 'Conversion', release: snapshot.conversion.release }] : []),
+  ];
+  for (const { link, release } of links) {
+    const withdrawn = withdrawals.get(release.id);
+    if (!withdrawn) continue;
+    // "Release withdrawn", never bare "Withdrawn": the ledger already uses
+    // that word for a record taken out of the inventory.
+    const on = withdrawn.at ? ` on ${withdrawn.at.toISOString().slice(0, 10)}` : '';
+    return {
+      code: 'withdrawn',
+      text: `${link} release ${release.publisher} ${release.edition} withdrawn${on} — not authoritative${withdrawn.reason ? `: ${withdrawn.reason}` : ''}`,
+    };
+  }
+  if (isAuthoritativeSnapshot(snapshot)) return { code: 'authoritative', text: 'Authoritative' };
   const weakest = [snapshot.factorRelease.status, snapshot.conversion?.release.status]
     .filter((s): s is FactorStatus => s !== undefined)
     .sort((a, b) => FACTOR_STATUS_RANK[a] - FACTOR_STATUS_RANK[b])[0];

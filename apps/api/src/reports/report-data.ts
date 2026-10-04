@@ -1,6 +1,7 @@
 import type {
   ActivityRecordStatus,
   EmissionsSummary,
+  FactorStatus,
   ReportStatus,
   ReportTemplate,
 } from '@tonyai/shared-types';
@@ -126,10 +127,14 @@ export interface ReportWithdrawnRow extends Omit<ReportLedgerRow, 'status'> {
   voidedBy: string | null;
 }
 
-/** One deduplicated factor snapshot (audit traceability core, FR §3.5/§5). */
-/** `authoritative`, or why not: the weakest link's status, a withdrawal since, or a pre-release snapshot. */
-export type FactorStandingCode = 'authoritative' | 'placeholder' | 'fixture' | 'withdrawn' | 'pre_release';
+/**
+ * A factor path's standing as of the report's generation: `authoritative`, or
+ * why not — the weakest link's status, a release withdrawn since, or a
+ * snapshot written before factor releases (`pre_release`).
+ */
+export type FactorStandingCode = FactorStatus | 'pre_release';
 
+/** One deduplicated factor path (audit traceability core, FR §3.5/§5). */
 export interface ReportFactorRow {
   category: string;
   /** The activity the factor prices (`diesel`, `grid_electricity`, or

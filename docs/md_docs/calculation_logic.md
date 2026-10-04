@@ -19,14 +19,14 @@ Every factor is quoted per **one base unit** of its family: kWh (energy), litres
 ### 2.1 Natural Gas (base units `kWh` and `cubic_metres`)
 Energy, base unit `kWh`:
 - `kwh`: identity
-- `therms` → `kwh`: × `105,505,585.257348 / 3,600,000` (= 29.3071070…, exact) — the UK statutory therm (Weights and Measures Act 1985), the one UK gas billing converts with. Not the US therm (29.3001 kWh).
+- `therms` → `kwh`: × `105,505,585.257348 / 3,600,000` (= 29.30710701593, exact) — the UK statutory therm (Units of Measurement Regulations 1995, SI 1995/1804, regs 3(3) and 4(d) and the Schedule: 105.505585257348 MJ), the value UK law converts therms of gas supply with. Not the US therm (29.3001 kWh).
 - `gj` → `kwh`: × `1000/3.6` (exact)
 
 A fuel's energy quantity carries a **calorific basis**: billed kWh are on gross (higher) calorific value, so a factor applied directly to them must be a gross-CV factor (`directCalorificBasisFor`).
 
 Metered volume, base unit `cubic_metres`: a meter reading stays a volume. It becomes kWh only through a **sourced conversion row** for natural gas in the record's country and year, on the same calorific basis as the factor it reaches; with none loaded the calculation is refused (`no_conversion`), never estimated. A conversion is never borrowed from another country — with one exception, stated next.
 
-> **Placeholder (owner decision K4, 2026-10-04).** The prototype's `11.36` kWh per m³ — carried over from the original demo spec, with **no citation and no stated reference conditions**; its gross calorific basis is a reconstruction (~40.0 MJ/m³ with the UK volume correction 1.02264), not a stated fact — is now a labelled **placeholder** `unit_conversions` row of the seed's demo release, one per seeded geography (UK, TR, EU) for 2026. **It is a UK-shaped number filed under TR and EU too** — the placeholder's one exception to "never borrowed": Türkiye's reference gross calorific value would put a sourced row several per cent lower. The rows are per geography so that each country's sourced row can replace its own. It is used only where the API runs with `ALLOW_PLACEHOLDER_FACTORS=true` (local development, CI) and refused everywhere else. Each affected snapshot records it in `conversion` (with its release), `conversionFactor` and `conversionBasis`. A sourced conversion replaces it when LP4-02 loads authoritative releases.
+> **Placeholder (owner decision K4, 2026-10-04).** The prototype's `11.36` kWh per m³ — carried over from the original demo spec, with **no citation and no stated reference conditions**; its gross calorific basis is a reconstruction (~40.0 MJ/m³ with the UK volume correction 1.02264), not a stated fact — is now a labelled **placeholder** `unit_conversions` row of the seed's demo release, one per seeded geography (UK, TR, EU) for 2026. **It is a UK-shaped number filed under TR and EU too** — the placeholder's one exception to "never borrowed": Türkiye's sourced value, stated at its own reference conditions, will differ. The rows are per geography so that each country's sourced row can replace its own. It is used only where the API runs with `ALLOW_PLACEHOLDER_FACTORS=true` (local development, CI) and refused everywhere else. Each affected snapshot records it in `conversion` (with its release), `conversionFactor` and `conversionBasis`. A sourced conversion replaces it when LP4-02 loads authoritative releases.
 
 > **Standard and normal cubic metres (`Sm3` / `Nm3`) are deliberately NOT converted.** They are different physical quantities from metered cubic metres (and from each other: 15 °C vs 0 °C), and this repository holds no sourced calorific value for them. The units are recognised and refused by name — in code and in the shared unit vocabulary, so a sourced conversion row alone does not lift the block; lifting it is a contract change with that row (LP4-02). Re-entering a standard volume as metered m³ would overstate it.
 
@@ -40,7 +40,7 @@ Metered volume, base unit `cubic_metres`: a meter reading stays a volume. It bec
 
 ### 2.4 Category specific rules
 - Travel stays in `passenger_kilometres` or `kilometres` (identity).
-- Mass is quoted per `kg`: `tonnes` → `kg` × `1000` (exact). Refrigerant leakage is entered in kg. A publisher's per-tonne value (DESNZ quotes waste and materials per tonne) is loaded per kg by exact decimal division, keeping the published value and unit in the row's methodology — never by floating-point arithmetic (0.20705/1000 is 0.00020705000000000002 in binary floating point).
+- Mass is quoted per `kg`: `tonnes` → `kg` × `1000` (exact). Refrigerant leakage is entered in kg. A publisher's per-tonne value (DESNZ quotes waste and materials per tonne) must be loaded per kg by exact decimal division (LP4-02; no loader exists yet), keeping the published value and unit in the row's methodology — never by floating-point arithmetic (0.20705/1000 is 0.00020705000000000002 in binary floating point).
 - Water stays in `cubic_metres` and is recorded without a factor (no factor is loaded for it): the reading is kept exactly as entered and no figure is produced.
 
 ---
