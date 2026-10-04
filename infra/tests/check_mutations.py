@@ -43,7 +43,7 @@ MUTANTS = [
     ('cleanup API binding removed', 'cloud_smoke.py', "target.get('api') != candidate['api_origin'] + '/api/v1'", 'False'),
     ('created Auth ID check removed', 'cloud_smoke.py', "created.get('id') != tenant['userId']", 'False'),
     ('created Auth email check removed', 'cloud_smoke.py', "created.get('email') != tenant['email']", 'False'),
-    ('browser process isolation removed', 'cloud_smoke.py', "browser_env = {k: v for k, v in env.items() if k in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PLAYWRIGHT_BROWSERS_PATH', 'SMOKE_TARGET_JSON')}", 'browser_env = dict(env)'),
+    ('child process isolation removed', 'cloud_smoke.py', "env = {k: v for k, v in os.environ.items() if k in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PLAYWRIGHT_BROWSERS_PATH')}", 'env = dict(os.environ)'),
     ('two tenant requirement removed', 'smoke-contract.mjs', 'target.tenants.length !== 2', 'false'),
     ('local API origin check removed', 'smoke-contract.mjs', "target.api !== 'http://localhost:3001/api/v1'", 'false'),
     ('integration release gate removed', 'release_checks.py', "('ci.yml', 'e2e.yml', 'integration.yml')", "('ci.yml', 'e2e.yml')"),
