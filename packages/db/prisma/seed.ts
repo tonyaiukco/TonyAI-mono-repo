@@ -16,7 +16,6 @@ import {
   CALCULATION_GAS,
   MONTH_NAMES,
   factorActivityTypeFor,
-  recordActivityTypesFor,
   resolveFactorPath,
   scope2MethodFor,
   yearPolicyOf,
@@ -26,11 +25,11 @@ import {
 import {
   DEMO_YEAR,
   PRIOR_YEAR,
-  SEED_ACTIVITY_TYPES,
   SEED_CONVERSIONS,
   SEED_FACTORS,
   SEED_RELEASES,
 } from './factor-library';
+import { assertLocalSeedTarget, seedActivityType } from './seed-guards';
 
 /** The status every activity record the seed writes is created with. Read by
  *  `findOrCreateRecord` AND by the rolling-baseline guard below, so the two
@@ -51,34 +50,14 @@ function rollingBaseline(priors: number[]): number | null {
 // owner, so the fallback keeps that path unchanged.
 const SEED_DATABASE_URL = process.env.DIRECT_URL || process.env.DATABASE_URL;
 
-/**
- * The seed writes the PLACEHOLDER factor library and demo tenants, so it runs
- * against a plainly local database only (LP3-03, obligation 3: placeholder
- * rows come from the seed, locally — staging and production are never
- * seeded). A loopback host, and no `host`/`hostaddr` parameter redirecting the
- * connection elsewhere. An accident guard, not a proof of locality.
- */
-function assertLocalSeedTarget(raw: string | undefined): void {
-  let url: URL;
-  try {
-    url = new URL(raw ?? '');
-  } catch {
-    throw new Error('The seed needs DIRECT_URL (or DATABASE_URL) naming a local database.');
-  }
-  const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname.toLowerCase());
-  const redirected = [...url.searchParams.keys()].some((k) => ['host', 'hostaddr'].includes(k.toLowerCase()));
-  if (!loopback || redirected) {
-    throw new Error(
-      `Refusing to seed ${url.hostname}: the seed loads placeholder factors and demo data, and runs ` +
-        'against a local database only. A deployed environment is never seeded.',
-    );
-  }
-}
-assertLocalSeedTarget(SEED_DATABASE_URL);
+assertLocalSeedTarget(SEED_DATABASE_URL, 'DIRECT_URL / DATABASE_URL');
 
 const prisma = new PrismaClient({ datasourceUrl: SEED_DATABASE_URL });
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? 'http://127.0.0.1:54321';
+// The demo auth users (with their documented password) and buckets go to this
+// project: local only, like the database.
+assertLocalSeedTarget(SUPABASE_URL, 'SUPABASE_URL');
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SERVICE_ROLE) {
@@ -193,19 +172,6 @@ function monthlyActivity(spec: ActivitySpec, month: number): number {
   const spike =
     spec.anomaly && spec.anomaly.month === month ? spec.anomaly.multiplier : 1;
   return Math.round(seasonal * spike);
-}
-
-/**
- * The activity type a seeded record of `category` names: its typed category's
- * seed type, or none for an implicit category. A typed category the seed has
- * no type for is a defect in the seed, refused here rather than written as an
- * untyped (legacy-only) record.
- */
-function seedActivityType(category: string): string | null {
-  if (recordActivityTypesFor(category).length === 0) return null;
-  const type = SEED_ACTIVITY_TYPES[category];
-  if (!type) throw new Error(`The seed names no activity type for ${category}, a typed category`);
-  return type;
 }
 
 /**

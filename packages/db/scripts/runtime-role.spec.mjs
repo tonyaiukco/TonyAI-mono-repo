@@ -90,11 +90,14 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
   const md5 = (t) => createHash('md5').update(t, 'utf8').digest('hex');
   const bodies = new Map(INTEGRITY_TRIGGERS.map((t) => [t.fn, `\nBEGIN /* ${t.fn} */ END\n`]));
   const allTriggers = INTEGRITY_TRIGGERS.map((t) => ({
-    table: t.table, trigger: t.trigger, enabled: 'A', type: t.type, fnSchema: 'public', fn: t.fn, bodyMd5: md5(bodies.get(t.fn)),
+    table: t.table, trigger: t.trigger, enabled: 'A', type: t.type, unconditional: true, allColumns: true,
+    fnSchema: 'public', fn: t.fn, bodyMd5: md5(bodies.get(t.fn)), definer: false, config: ['search_path=""'], language: 'plpgsql',
   }));
-  const allChecks = INTEGRITY_CHECKS.map(([table, name]) => ({ table, name, validated: true }));
-  const fake = (triggers, constraints) => async (sql) => (sql.includes('pg_trigger') ? triggers : constraints);
-  const check = (triggers, constraints = allChecks) => checkIntegrityTriggers(fake(triggers, constraints), bodies);
+  const allChecks = INTEGRITY_CHECKS.map(([table, name, definitionMd5]) => ({ table, name, validated: true, definitionMd5 }));
+  const fake = (triggers, constraints, rules = []) => async (sql) =>
+    sql.includes('pg_trigger') ? triggers : sql.includes('pg_rewrite') ? rules : constraints;
+  const check = (triggers, constraints = allChecks, rules = [], bodyMap = bodies) =>
+    checkIntegrityTriggers(fake(triggers, constraints, rules), bodyMap);
   const tweak = (name, change) => allTriggers.map((t) => (t.trigger === name ? { ...t, ...change } : t));
 
   it('passes when every trigger is ENABLE ALWAYS, on its events, running its own unaltered function', async () => {
@@ -145,13 +148,53 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     ]);
   });
 
+  it('reports a trigger narrowed by WHEN or UPDATE OF — K5 off without disabling it', async () => {
+    expect(await check(tweak('activity_records_snapshot_immutable', { unconditional: false }))).toEqual([
+      'trigger activity_records_snapshot_immutable on activity_records is narrowed (a WHEN condition or an UPDATE OF column list)',
+    ]);
+    expect(await check(tweak('activity_records_snapshot_immutable', { allColumns: false }))).toHaveLength(1);
+  });
+
+  it('reports a function made SECURITY DEFINER, given another search_path or language, or moved to another schema', async () => {
+    for (const change of [{ definer: true }, { config: ['search_path=evil, pg_catalog'] }, { config: [] }, { language: 'sql' }]) {
+      const problems = await check(tweak('emission_factors_before_update', change));
+      expect(problems.length, JSON.stringify(change)).toBeGreaterThan(0);
+      expect(problems.every((p) => p.startsWith('function public.factor_rows_before_update()'))).toBe(true);
+    }
+    expect(await check(tweak('emission_factors_before_update', { fnSchema: 'evil' }))).toEqual([
+      'trigger emission_factors_before_update on emission_factors runs evil.factor_rows_before_update, not public.factor_rows_before_update',
+    ]);
+  });
+
+  it('reports a trigger whose function no migration defines, instead of failing', async () => {
+    const partial = new Map([...bodies].filter(([fn]) => fn !== 'activity_records_slot_kind'));
+    expect(await check(allTriggers, allChecks, [], partial)).toEqual(['no migration defines public.activity_records_slot_kind()']);
+  });
+
+  it('reports anything else hooked into a guarded table — a later trigger, a rule', async () => {
+    const extra = { ...allTriggers[0], trigger: 'zz_undo', fn: 'zz_undo' };
+    expect(await check([...allTriggers, extra])).toEqual(['unexpected trigger zz_undo on activity_records']);
+    expect(await check(allTriggers, allChecks, [{ table: 'emission_factors', rule: 'keep_old' }])).toEqual([
+      'unexpected rule keep_old on emission_factors',
+    ]);
+    // A trigger on another table is not this check's business.
+    expect(await check([...allTriggers, { ...extra, table: 'organisations' }])).toEqual([]);
+  });
+
+  it('reports a CHECK whose definition changed under its own name (CHECK (true))', async () => {
+    const checks = allChecks.map((c) => (c.name === 'factor_releases_publisher_check' ? { ...c, definitionMd5: md5('CHECK (true)') } : c));
+    expect(await check(allTriggers, checks)).toEqual([
+      "CHECK factor_releases_publisher_check on factor_releases differs from its migration's definition",
+    ]);
+  });
+
   it('reports a dropped or NOT VALID check', async () => {
     const checks = allChecks
       .filter((c) => c.name !== 'factor_releases_publisher_check')
       .map((c) => (c.name === 'emission_factors_gas_check' ? { ...c, validated: false } : c));
     expect(await check(allTriggers, checks)).toEqual([
-      'CHECK factor_releases_publisher_check on factor_releases is missing',
       'CHECK emission_factors_gas_check on emission_factors is NOT VALID',
+      'CHECK factor_releases_publisher_check on factor_releases is missing',
     ]);
   });
 });

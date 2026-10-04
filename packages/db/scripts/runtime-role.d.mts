@@ -19,7 +19,7 @@ export interface IntegrityTrigger {
   type: number;
 }
 export declare const INTEGRITY_TRIGGERS: readonly IntegrityTrigger[];
-export declare const INTEGRITY_CHECKS: readonly (readonly [table: string, name: string])[];
+export declare const INTEGRITY_CHECKS: readonly (readonly [table: string, name: string, definitionMd5: string])[];
 export declare function expectedTriggerFunctionBodies(dir?: string): Map<string, string>;
 export declare function checkIntegrityTriggers(query: Query, expectedBodies?: Map<string, string>): Promise<string[]>;
 export declare function factorLibraryReport(query: Query): Promise<{ problems: string[]; notices: string[] }>;

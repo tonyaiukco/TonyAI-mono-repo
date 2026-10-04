@@ -991,13 +991,23 @@ describe('CalculationsService.listFactors', () => {
 
   it('passes optional filters through to Prisma and maps to detail DTOs with their release', async () => {
     const release = makeRelease({ status: 'placeholder', edition: '2026.1', ordinal: 202601 });
-    prisma.emissionFactor.findMany.mockResolvedValue([makeFactor({ id: 'f1', release })]);
+    // Every dimension off its default, so a mapping that dropped one fails.
+    prisma.emissionFactor.findMany.mockResolvedValue([
+      makeFactor({ id: 'f1', release, gas: 'CO2', gasCoverage: null, scope2Method: 'market', calorificBasis: 'net', dataYear: 2023 }),
+    ]);
 
     const result = await service.listFactors({ category: 'Electricity', geographyCode: 'TR', year: 2024 });
 
     expect(prisma.emissionFactor.findMany).toHaveBeenCalledWith({
       where: { category: 'Electricity', geographyCode: 'TR', reportingYear: 2024 },
-      include: { release: true },
+      include: {
+        release: {
+          select: {
+            id: true, publisher: true, title: true, edition: true, ordinal: true, status: true,
+            sourceUrl: true, licence: true, publishedAt: true, gwpSet: true,
+          },
+        },
+      },
       // By release ordinal, never by the `version` label.
       orderBy: [
         { category: 'asc' },
@@ -1012,9 +1022,11 @@ describe('CalculationsService.listFactors', () => {
     expect(result[0]).toMatchObject({
       id: 'f1',
       activityType: 'grid_electricity',
-      gas: 'CO2e',
-      gasCoverage: 'all_ghg',
-      scope2Method: 'location',
+      gas: 'CO2',
+      gasCoverage: null,
+      scope2Method: 'market',
+      calorificBasis: 'net',
+      dataYear: 2023,
       release: { id: release.id, status: 'placeholder', edition: '2026.1', ordinal: 202601 },
     });
     expect(typeof result[0].createdAt).toBe('string');
@@ -1030,7 +1042,7 @@ describe('CalculationsService.listFactors', () => {
 
     expect(prisma.emissionFactor.findMany).toHaveBeenCalledWith({
       where: { category: undefined, geographyCode: undefined, reportingYear: undefined },
-      include: { release: true },
+      include: { release: { select: expect.not.objectContaining({ reviewedBy: true }) } },
       orderBy: expect.any(Array),
     });
   });
@@ -1246,6 +1258,17 @@ describe('CalculationsService.compute — LP3-03 factor paths', () => {
       ),
     );
     expectCalculated(await service(true).compute(electricityUK));
+  });
+
+  it('lets any other failure of the diagnostic pass surface — it swallows only the cap', async () => {
+    useFactor(prisma, null);
+    const boom = new Error('connection reset');
+    prisma.emissionFactor.findMany
+      .mockImplementationOnce(async () => [])
+      .mockImplementationOnce(async () => {
+        throw boom;
+      });
+    await expect(service(false).compute(electricityUK)).rejects.toBe(boom);
   });
 
   it('refuses a billed kWh of gas against net-only factors (calorific_basis_mismatch)', async () => {

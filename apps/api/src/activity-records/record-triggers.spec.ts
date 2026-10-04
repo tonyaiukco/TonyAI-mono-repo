@@ -42,13 +42,29 @@ describe('the activity_records integrity triggers', () => {
     expect(body).not.toMatch(/SECURITY DEFINER|SELECT /);
   });
 
-  it('K5 lets a record re-enter an editable status only the way the API sends it — rejected from review, never draft', () => {
+  it("K5 allows exactly the review lifecycle's status changes — the API's gates, and nothing a rewind needs", () => {
     const body = functionBody('activity_records_snapshot_immutable');
-    const rewind = /NEW\."status" IN \(([^)]*)\)\s*AND NOT \(NEW\."status" = 'rejected' AND OLD\."status" IN \(([^)]*)\)\)/.exec(body);
-    const list = (m: string | undefined) => [...(m ?? '').matchAll(/'([a-z_]+)'/g)].map((x) => x[1]).sort();
-    expect(list(rewind?.[1])).toEqual([...EDITABLE_STATUSES].sort());
-    // The API's reject gate: only a submitted or under_review record.
-    expect(list(rewind?.[2])).toEqual(['submitted', 'under_review']);
+    const list = /= ANY \(ARRAY\[([^\]]*)\]\)/.exec(body)?.[1] ?? '';
+    const allowed = [...list.matchAll(/'([a-z_]+>[a-z_]+)'/g)].map((m) => m[1]).sort();
+    // Each from the service's own gate: submit (draft | rejected), startReview
+    // (submitted), approve and reject (submitted | under_review), void
+    // (approved), and the period lock's bulk lock and unlock.
+    expect(allowed).toEqual(
+      [
+        'draft>submitted', 'rejected>submitted',
+        'submitted>under_review',
+        'submitted>approved', 'under_review>approved',
+        'submitted>rejected', 'under_review>rejected',
+        'approved>voided', 'approved>locked', 'locked>approved',
+      ].sort(),
+    );
+    // Nothing enters draft after creation; every way back to an editable
+    // status passes through review's rejection.
+    expect(allowed.filter((t) => t.endsWith('>draft'))).toEqual([]);
+    expect(allowed.filter((t) => [...EDITABLE_STATUSES].some((e) => t.endsWith(`>${e}`)))).toEqual([
+      'submitted>rejected',
+      'under_review>rejected',
+    ]);
   });
 
   it('raise the SQLSTATEs the service maps to 409', () => {

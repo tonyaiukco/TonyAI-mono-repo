@@ -70,7 +70,23 @@ function ranked<T extends { release: FactorRelease }>(row: T): T & { release: Fa
   return { ...row, release: { ...row.release, status: row.release.status as FactorStatus } };
 }
 
-function releaseSnapshot(release: FactorRelease): FactorReleaseSnapshot {
+/** The release columns a `FactorReleaseSnapshot` carries — never reviewer, withdrawer or notes. */
+const RELEASE_SNAPSHOT_SELECT = {
+  id: true,
+  publisher: true,
+  title: true,
+  edition: true,
+  ordinal: true,
+  status: true,
+  sourceUrl: true,
+  licence: true,
+  publishedAt: true,
+  gwpSet: true,
+} as const;
+
+function releaseSnapshot(
+  release: Pick<FactorRelease, keyof typeof RELEASE_SNAPSHOT_SELECT>,
+): FactorReleaseSnapshot {
   return {
     id: release.id,
     publisher: release.publisher,
@@ -144,7 +160,9 @@ export class CalculationsService {
         geographyCode: filter.geographyCode,
         reportingYear: filter.year,
       },
-      include: { release: true },
+      // Only the snapshot's columns: the release's people and notes never
+      // leave the database on this path, by construction.
+      include: { release: { select: RELEASE_SNAPSHOT_SELECT } },
       orderBy: [
         { category: 'asc' },
         { activityType: 'asc' },

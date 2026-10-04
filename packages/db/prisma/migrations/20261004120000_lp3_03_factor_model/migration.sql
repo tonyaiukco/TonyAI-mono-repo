@@ -323,9 +323,11 @@ CREATE UNIQUE INDEX "activity_records_reporting_entity_period_category_key"
 -- service-role client. It tests OLD's status, so a status-only transition
 -- (submit, approve, the period lock's bulk lock/unlock, void) and the anomaly
 -- fields pass, and a record cannot be moved back to draft and edited in one
--- statement. Nor in two: a record re-enters an editable status only the way
--- the API sends it there — `rejected` from `submitted` or `under_review` — and
--- never `draft`, which is a create-time status only. `location_id` may only
+-- statement. Nor in several: every status change must be one the API's
+-- lifecycle makes (submit, start review, approve, reject, void, the period
+-- lock's lock and unlock), so no writer can walk a committed record back
+-- through review to rewrite it, and `draft` stays a create-time status.
+-- `location_id` may only
 -- become NULL, and only inside its foreign key's ON DELETE SET NULL (a nested
 -- trigger, depth > 1), never by a direct edit. The status lists are pinned to
 -- the API by parity tests. OLD/NEW only — no query, no SECURITY DEFINER.
@@ -353,11 +355,16 @@ BEGIN
       MESSAGE = format('activity record %s is %s: its calculation and the inputs it was computed from cannot change', OLD."id", OLD."status");
   END IF;
   IF NEW."status" IS DISTINCT FROM OLD."status"
-     AND NEW."status" IN ('draft', 'rejected')
-     AND NOT (NEW."status" = 'rejected' AND OLD."status" IN ('submitted', 'under_review')) THEN
+     AND NOT ((OLD."status"::text || '>' || NEW."status"::text) = ANY (ARRAY[
+       'draft>submitted', 'rejected>submitted',
+       'submitted>under_review',
+       'submitted>approved', 'under_review>approved',
+       'submitted>rejected', 'under_review>rejected',
+       'approved>voided', 'approved>locked', 'locked>approved'
+     ])) THEN
     RAISE EXCEPTION USING
       ERRCODE = 'TA001',
-      MESSAGE = format('activity record %s cannot move from %s to %s: a record becomes editable again only by being rejected in review', OLD."id", OLD."status", NEW."status");
+      MESSAGE = format('activity record %s cannot move from %s to %s: not a step of the review lifecycle', OLD."id", OLD."status", NEW."status");
   END IF;
   RETURN NEW;
 END
@@ -472,6 +479,10 @@ LANGUAGE plpgsql
 SET search_path = ''
 AS $fn$
 BEGIN
+  -- Exclusive against the row triggers' shared lock: no row joins a release
+  -- while it is being withdrawn.
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtext('tonyai.factor_release'), pg_catalog.hashtext(OLD."id"::text));
   IF OLD."status" = 'withdrawn'
      OR NEW."status" <> 'withdrawn'
      OR (pg_catalog.to_jsonb(NEW) - ARRAY['status', 'withdrawn_at', 'withdrawn_by', 'withdrawal_reason'])
@@ -505,8 +516,10 @@ $fn$;
 -- A factor or conversion joins a live release only, and `unspecified` (the
 -- legacy untyped record's lookup) never under an authoritative one — the
 -- release's status cannot later become authoritative, so checking at insert
--- is enough. The release row is share-locked, so a withdrawal cannot land
--- between this check and the insert. A factor's `version` is its release's
+-- is enough. A shared advisory lock on the release — the withdrawal trigger
+-- takes it exclusively — keeps a withdrawal from landing between this check
+-- and the insert, without asking the loader for UPDATE on releases (which a
+-- row lock would, and which would let it withdraw them). A factor's `version` is its release's
 -- edition: the label `GET /factors` shows and the one a snapshot records.
 CREATE FUNCTION "public"."factor_rows_before_insert"() RETURNS trigger
 LANGUAGE plpgsql
@@ -516,8 +529,10 @@ DECLARE
   release_status text;
   release_edition text;
 BEGIN
+  PERFORM pg_catalog.pg_advisory_xact_lock_shared(
+    pg_catalog.hashtext('tonyai.factor_release'), pg_catalog.hashtext(NEW."release_id"::text));
   SELECT r."status", r."edition" INTO release_status, release_edition
-    FROM "public"."factor_releases" r WHERE r."id" = NEW."release_id" FOR SHARE;
+    FROM "public"."factor_releases" r WHERE r."id" = NEW."release_id";
   -- Nested, not `AND`: PL/pgSQL evaluates an expression whole, and a
   -- conversion row has no `version` column to read.
   IF TG_TABLE_NAME = 'emission_factors' THEN

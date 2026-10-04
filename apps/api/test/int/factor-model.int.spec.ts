@@ -8,6 +8,7 @@ import { NoEmissionFactorError } from '../../src/calculations/errors';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { backendPid, connect, connectOwner, createRecord, createTenant, deferred, settledOrBlocked, withRollback, type Tenant } from './db';
 import { INT_FACTOR_POLICY, lifecycleServices } from './services';
+import { factorLibraryReport } from '../../../../packages/db/scripts/runtime-role.mjs';
 
 /**
  * LP3-03 PR B against real PostgreSQL: the K5 snapshot trigger, the slot-kind
@@ -127,29 +128,57 @@ describe('K5 — a snapshot that has left draft never changes', () => {
   });
 });
 
-describe('K5 — a committed record becomes editable again only by review', () => {
-  it.each([
-    [ActivityRecordStatus.approved, ActivityRecordStatus.draft],
-    [ActivityRecordStatus.locked, ActivityRecordStatus.rejected],
-    [ActivityRecordStatus.voided, ActivityRecordStatus.draft],
-    [ActivityRecordStatus.submitted, ActivityRecordStatus.draft],
-  ])('refuses %s → %s, for the runtime role and the owner — the first half of a two-step rewrite', async (from, to) => {
+describe('K5 — a status changes only by a step of the review lifecycle', () => {
+  const STATUSES = Object.values(ActivityRecordStatus);
+  // The API's gates: submit, startReview, approve, reject, void, and the
+  // period lock's bulk lock and unlock (record-triggers.spec pins the list).
+  const ALLOWED = new Set([
+    'draft>submitted', 'rejected>submitted', 'submitted>under_review',
+    'submitted>approved', 'under_review>approved', 'submitted>rejected', 'under_review>rejected',
+    'approved>voided', 'approved>locked', 'locked>approved',
+  ]);
+  const pairs = STATUSES.flatMap((from) => STATUSES.filter((to) => to !== from).map((to) => [from, to] as const));
+
+  it.each(pairs)('%s → %s', async (from, to) => {
     const rec = await createRecord(owner, tenant, { ...nextSlot(), status: from });
-    for (const client of [runtime, owner]) {
-      expect(sqlstateOf(await failure(client.activityRecord.update({ where: { id: rec.id }, data: { status: to } })))).toBe('TA001');
-    }
+    const outcome = await failure(runtime.activityRecord.update({ where: { id: rec.id }, data: { status: to } }));
+    if (ALLOWED.has(`${from}>${to}`)) expect(outcome).toBeNull();
+    else expect(sqlstateOf(outcome)).toBe('TA001');
   });
 
-  it('tests OLD, not NEW: "back to draft and rewrite" in ONE statement is refused too', async () => {
-    const rec = await createRecord(owner, tenant, { ...nextSlot(), status: ActivityRecordStatus.approved });
+  it('tests OLD, not NEW: rejecting and rewriting in ONE statement is refused', async () => {
+    // submitted → rejected is a lifecycle step; the rewrite in the same
+    // statement is not, because the record was submitted when it began.
+    const rec = await createRecord(owner, tenant, { ...nextSlot(), status: ActivityRecordStatus.submitted });
     for (const client of [runtime, owner]) {
       const e = await failure(
         client.activityRecord.update({
           where: { id: rec.id },
-          data: { status: ActivityRecordStatus.draft, activityValue: 1, calculation: { tCo2e: 0, factorId: 'forged' } },
+          data: { status: ActivityRecordStatus.rejected, activityValue: 1, calculation: { tCo2e: 0, factorId: 'forged' } },
         }),
       );
       expect(sqlstateOf(e)).toBe('TA001');
+    }
+  });
+
+  it('refuses the whole walk: approved → submitted → rejected → edit → submitted → approved', async () => {
+    const rec = await createRecord(owner, tenant, { ...nextSlot(), status: ActivityRecordStatus.approved });
+    expect(
+      sqlstateOf(await failure(owner.activityRecord.update({ where: { id: rec.id }, data: { status: ActivityRecordStatus.submitted } }))),
+    ).toBe('TA001');
+    const after = await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } });
+    expect(after.status).toBe(ActivityRecordStatus.approved);
+    expect(after.activityValue).toBe(rec.activityValue);
+  });
+
+  it('lets every lifecycle step through, status only', async () => {
+    const rec = await createRecord(owner, tenant, { ...nextSlot(), status: ActivityRecordStatus.draft });
+    for (const status of [
+      ActivityRecordStatus.submitted, ActivityRecordStatus.under_review, ActivityRecordStatus.rejected,
+      ActivityRecordStatus.submitted, ActivityRecordStatus.approved, ActivityRecordStatus.locked,
+      ActivityRecordStatus.approved, ActivityRecordStatus.voided,
+    ]) {
+      await runtime.activityRecord.update({ where: { id: rec.id }, data: { status } });
     }
   });
 
@@ -291,13 +320,15 @@ describe('a slot holds typed records or one untyped record, never both', () => {
       activityValue: 10,
       activityUnit: 'litres',
     };
+    // Its own slots: Q3 for the diesel record, Q2 holding an untyped one.
+    await createRecord(owner, tenant, { reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q2', ...fuel });
     const created = await records.create(tenant.users.dataEntry, { ...dto, periodValue: 'Q3', activityType: 'diesel' });
     // gas oil has no placeholder factor: the PATCH is refused by the engine,
     // and the column must not move.
     expect(await failure(records.update(tenant.users.dataEntry, created.id, { activityType: 'gas_oil' }))).toMatchObject({ code: 'no_factor' });
     expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: created.id } })).activityType).toBe('diesel');
-    // Moving it into Q4, which holds an untyped Fuel record (above): 409.
-    expect(await failure(records.update(tenant.users.dataEntry, created.id, { periodValue: 'Q4' }))).toBeInstanceOf(
+    // Moving it into Q2, which holds an untyped Fuel record: 409.
+    expect(await failure(records.update(tenant.users.dataEntry, created.id, { periodValue: 'Q2' }))).toBeInstanceOf(
       ActivityTypeSlotConflictError,
     );
   });
@@ -377,6 +408,67 @@ describe('the factor library is append-only, for the owner too', () => {
     expect(sqlstateOf(added)).toBe('TA012');
   });
 
+  it('reports an unspecified row under an authoritative release that got past the triggers (a restore)', async () => {
+    const problems = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('ALTER TABLE emission_factors DISABLE TRIGGER emission_factors_before_insert');
+      await tx.$executeRawUnsafe('ALTER TABLE factor_releases DROP CONSTRAINT factor_releases_publisher_check');
+      const releaseId = randomUUID();
+      await tx.$executeRawUnsafe(
+        `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, source_url, licence, published_at, reviewed_by, reviewed_at)
+         VALUES ('${releaseId}', 'DESNZ', 'Conversion factors', '2026', 1, 'authoritative', 'https://www.gov.uk/x', 'OGL v3.0', '2026-06-10', 'Reviewer firm', '2026-06-20')`,
+      );
+      await tx.$executeRawUnsafe(
+        `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year, data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+         VALUES (gen_random_uuid(), '${releaseId}', 'Fuel', 'unspecified', 'CO2e', 'all_ghg', 'UK', 2031, 2031, 1, 'not_applicable', 'not_applicable', 2.5, 'kgCO2e/L', 'litres', 'x', 'x', '2026', now())`,
+      );
+      return (await factorLibraryReport((sql: string) => tx.$queryRawUnsafe(sql))).problems;
+    });
+    expect(problems).toEqual(['1 factor/conversion row(s) with an unspecified activity type under an authoritative release']);
+  });
+
+  it('makes a withdrawal wait for a load into the same release, and the reverse', async () => {
+    const [{ next }] = await owner.$queryRawUnsafe<{ next: number }[]>(
+      `SELECT COALESCE(max(ordinal), 0) + 1 AS next FROM factor_releases WHERE publisher = 'TonyAI test fixture'`,
+    );
+    const release = await owner.factorRelease.create({
+      data: { publisher: 'TonyAI test fixture', title: 'Int lock test', edition: `int-${randomUUID()}`, ordinal: Number(next), status: 'fixture' },
+    });
+    const a = connectOwner(1);
+    const b = connectOwner(1);
+    const observer = connectOwner(1);
+    class Rollback extends Error {}
+    try {
+      const loaded = deferred();
+      const commit = deferred();
+      const txA = a.$transaction(async (tx) => {
+        await tx.unitConversion.create({
+          data: {
+            releaseId: release.id, category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'UK', reportingYear: 2031,
+            dataYear: 2031, fromUnit: 'cubic_metres', toUnit: 'kWh', multiplier: 10, calorificBasis: 'gross', basis: 'int test',
+          },
+        });
+        loaded.resolve();
+        await commit.promise;
+      });
+      await loaded.promise;
+      const pidB = await backendPid(b);
+      const withdrawB = b.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'TonyAI test', withdrawal_reason = 'int lock test', withdrawn_at = now() WHERE id = '${release.id}'`,
+        );
+        throw new Rollback();
+      });
+      expect(await settledOrBlocked(withdrawB, pidB, observer)).toBe('blocked');
+      commit.resolve();
+      await txA;
+      expect(await failure(withdrawB)).toBeInstanceOf(Rollback);
+    } finally {
+      await owner.unitConversion.deleteMany({ where: { releaseId: release.id } });
+      await owner.factorRelease.delete({ where: { id: release.id } });
+      await Promise.all([a.$disconnect(), b.$disconnect(), observer.$disconnect()]);
+    }
+  });
+
   it("stamps a withdrawal with the database's clock — never a backdated one", async () => {
     const { releaseId } = await seededFactor();
     const withdrawnAt = await withRollback(owner, async (tx) => {
@@ -411,6 +503,8 @@ describe('the factor library is append-only, for the owner too', () => {
     const states = async (...sql: string[]) =>
       sqlstateOf(await failure(withRollback(owner, async (tx) => { for (const s of sql) await tx.$executeRawUnsafe(s); })));
     expect(await states(insert('TonyAI test fixture', 900_005, 'fixture'), insert('TonyAI test fixture', 900_003, 'fixture'))).toBe('TA011');
+    // An equal ordinal is not an erratum either.
+    expect(await states(insert('TonyAI test fixture', 900_005, 'fixture'), insert('TonyAI test fixture', 900_005, 'fixture'))).toBe('TA011');
     expect(await states(insert('TonyAI test fixture', 900_007, 'withdrawn'))).toBe('TA011');
     // A look-alike of a registered name is not a second publisher.
     expect(await states(insert('TonyAI prototype ', 999_999, 'placeholder'))).toBe('23514');
@@ -472,7 +566,18 @@ describe('the CHECK constraints refuse what the registry alone would hide', () =
     };
     return `INSERT INTO unit_conversions (${Object.keys(row).join(', ')}) VALUES (${Object.values(row).join(', ')})`;
   };
+  it('refuses a fully sourced authoritative release from an unregistered publisher — the registry itself', async () => {
+    const e = await failure(withRollback(owner, (tx) => tx.$executeRawUnsafe(release({}))));
+    expect(sqlstateOf(e)).toBe('23514');
+    expect(String((e as Error).message)).toContain('factor_releases_publisher_check');
+  });
+
   const cases: Array<[string, string]> = [
+    [release({ published_at: 'NULL' }), 'factor_releases_authoritative_provenance_check'],
+    [release({ reviewed_at: 'NULL' }), 'factor_releases_authoritative_provenance_check'],
+    [release({ source_url: `'https://www.gov.uk/' || repeat('x', 2000)` }), 'factor_releases_source_url_check'],
+    [release({ withdrawn_by: `'Someone'` }), 'factor_releases_withdrawal_check'],
+    [release({ publisher: `'TonyAI test fixture'` }), 'factor_releases_fixture_publisher_check'],
     [release({ source_url: 'NULL' }), 'factor_releases_authoritative_provenance_check'],
     [release({ licence: 'NULL' }), 'factor_releases_authoritative_provenance_check'],
     [release({ reviewed_by: 'NULL' }), 'factor_releases_authoritative_provenance_check'],
@@ -499,6 +604,8 @@ describe('the CHECK constraints refuse what the registry alone would hide', () =
     [factor({ calorific_basis: `'GROSS'` }), 'emission_factors_calorific_basis_check'],
     [factor({ activity_type: `'gas oil'` }), 'emission_factors_activity_type_check'],
     [conversion({ multiplier: '0' }), 'unit_conversions_multiplier_check'],
+    [conversion({ multiplier: `'Infinity'` }), 'unit_conversions_multiplier_check'],
+    [conversion({ activity_type: `'natural gas'` }), 'unit_conversions_activity_type_check'],
     [conversion({ to_unit: `'cubic_metres'` }), 'unit_conversions_units_check'],
     [conversion({ basis: `''` }), 'unit_conversions_text_check'],
     [conversion({ calorific_basis: `'higher'` }), 'unit_conversions_calorific_basis_check'],

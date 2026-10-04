@@ -455,31 +455,38 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   }),
 ]);
 
-/** The CHECK constraints the factor model's guarantees rest on. */
+/**
+ * The CHECK constraints the factor model's guarantees rest on, each with the
+ * md5 of its `pg_get_constraintdef` on a database migrated from this
+ * repository — so `CHECK (true)` under the same name is a finding, not a pass.
+ * A migration that changes one updates its hash here (`runtime-role.int.spec`
+ * fails until it does).
+ */
 export const INTEGRITY_CHECKS = Object.freeze([
-  ['factor_releases', 'factor_releases_status_check'],
-  ['factor_releases', 'factor_releases_publisher_check'],
-  ['factor_releases', 'factor_releases_placeholder_publisher_check'],
-  ['factor_releases', 'factor_releases_fixture_publisher_check'],
-  ['factor_releases', 'factor_releases_ordinal_check'],
-  ['factor_releases', 'factor_releases_authoritative_provenance_check'],
-  ['factor_releases', 'factor_releases_review_after_publication_check'],
-  ['factor_releases', 'factor_releases_withdrawal_check'],
-  ['factor_releases', 'factor_releases_source_url_check'],
-  ['factor_releases', 'factor_releases_text_check'],
-  ['emission_factors', 'emission_factors_activity_type_check'],
-  ['emission_factors', 'emission_factors_gas_check'],
-  ['emission_factors', 'emission_factors_gas_coverage_check'],
-  ['emission_factors', 'emission_factors_scope2_method_check'],
-  ['emission_factors', 'emission_factors_scope_check'],
-  ['emission_factors', 'emission_factors_calorific_basis_check'],
-  ['emission_factors', 'emission_factors_factor_value_check'],
-  ['unit_conversions', 'unit_conversions_activity_type_check'],
-  ['unit_conversions', 'unit_conversions_calorific_basis_check'],
-  ['unit_conversions', 'unit_conversions_multiplier_check'],
-  ['unit_conversions', 'unit_conversions_units_check'],
-  ['unit_conversions', 'unit_conversions_text_check'],
-  ['activity_records', 'activity_records_activity_type_check'],
+  ['activity_records', 'activity_records_activity_type_check', '209bc4e708c65029678d21cb1c434ea6'],
+  ['emission_factors', 'emission_factors_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
+  ['emission_factors', 'emission_factors_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
+  ['emission_factors', 'emission_factors_factor_value_check', '9fd4bc38d56fd6f39cda5c362d62ca79'],
+  ['emission_factors', 'emission_factors_gas_check', '98099ec2264bdb41bb798716f68f2471'],
+  ['emission_factors', 'emission_factors_gas_coverage_check', 'a074aa7da19f92fe950c538451581817'],
+  ['emission_factors', 'emission_factors_scope2_method_check', '491d417be371753abd66161e71bfd365'],
+  ['emission_factors', 'emission_factors_scope_check', 'baf79c7460165f52d4d03548c8049f8e'],
+  ['factor_releases', 'factor_releases_authoritative_provenance_check', '07c31e476a2f5a64d9b7bf843eb69ce1'],
+  ['factor_releases', 'factor_releases_fixture_publisher_check', 'f732d504c73b4902273df4dd596bb839'],
+  ['factor_releases', 'factor_releases_gwp_set_check', 'f6e24213b9fca85d3a461e21251bc870'],
+  ['factor_releases', 'factor_releases_ordinal_check', '6580fa22ba83139e4fd215ea6bc16a65'],
+  ['factor_releases', 'factor_releases_placeholder_publisher_check', '8e38e4580950d19e9acc916fd2a67bce'],
+  ['factor_releases', 'factor_releases_publisher_check', '436f2593daab905bce8207daac167c44'],
+  ['factor_releases', 'factor_releases_review_after_publication_check', '353156c1deb3822c89c3e2f11821ec78'],
+  ['factor_releases', 'factor_releases_source_url_check', '21eb1a772e5e1387ef77a535984e21b3'],
+  ['factor_releases', 'factor_releases_status_check', 'fd922ea1cc055a55f0e91a96f486f183'],
+  ['factor_releases', 'factor_releases_text_check', 'd23326d88a280c94d486b236f0c12e0b'],
+  ['factor_releases', 'factor_releases_withdrawal_check', '4430a3652b1631e86ce68f076eae32a4'],
+  ['unit_conversions', 'unit_conversions_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
+  ['unit_conversions', 'unit_conversions_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
+  ['unit_conversions', 'unit_conversions_multiplier_check', 'b44055800a17e765590df1c5c881b412'],
+  ['unit_conversions', 'unit_conversions_text_check', '8d2e1321b2663ba9997f792676f25afc'],
+  ['unit_conversions', 'unit_conversions_units_check', 'beeb2e7d9604ac1218b01390e2f1e6cb'],
 ]);
 
 const MIGRATIONS_DIR = fileURLToPath(new URL('../prisma/migrations/', import.meta.url));
@@ -506,26 +513,50 @@ export function expectedTriggerFunctionBodies(dir = MIGRATIONS_DIR) {
 
 const md5 = (text) => createHash('md5').update(text, 'utf8').digest('hex');
 
+/** The tables the integrity triggers guard: nothing else may hook into them. */
+const GUARDED_TABLES = Object.freeze(['activity_records', 'factor_releases', 'emission_factors', 'unit_conversions']);
+
 /** Every integrity trigger and CHECK, present, in force and unaltered. */
 export async function checkIntegrityTriggers(query, expectedBodies = expectedTriggerFunctionBodies()) {
   const triggers = await query(
     `SELECT c.relname AS "table", t.tgname AS "trigger", t.tgenabled AS "enabled", t.tgtype::int AS "type",
-            pn.nspname AS "fnSchema", p.proname AS "fn", md5(p.prosrc) AS "bodyMd5"
+            t.tgqual IS NULL AS "unconditional", cardinality(t.tgattr::int2[]) = 0 AS "allColumns",
+            pn.nspname AS "fnSchema", p.proname AS "fn", md5(p.prosrc) AS "bodyMd5",
+            p.prosecdef AS "definer", COALESCE(p.proconfig, '{}') AS "config", l.lanname AS "language"
        FROM pg_trigger t
        JOIN pg_class c ON c.oid = t.tgrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
        JOIN pg_proc p ON p.oid = t.tgfoid
        JOIN pg_namespace pn ON pn.oid = p.pronamespace
+       JOIN pg_language l ON l.oid = p.prolang
       WHERE n.nspname = 'public' AND NOT t.tgisinternal`,
   );
   const constraints = await query(
-    `SELECT c.relname AS "table", k.conname AS "name", k.convalidated AS "validated"
+    `SELECT c.relname AS "table", k.conname AS "name", k.convalidated AS "validated",
+            md5(pg_get_constraintdef(k.oid)) AS "definitionMd5"
        FROM pg_constraint k
        JOIN pg_class c ON c.oid = k.conrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND k.contype = 'c'`,
   );
+  const rules = await query(
+    `SELECT c.relname AS "table", r.rulename AS "rule"
+       FROM pg_rewrite r
+       JOIN pg_class c ON c.oid = r.ev_class
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND r.ev_type <> '1'`,
+  );
   const problems = [];
+  // Anything else hooked into a guarded table could undo what the integrity
+  // triggers check (a later BEFORE trigger rewriting NEW, a DO INSTEAD rule).
+  for (const t of triggers) {
+    if (GUARDED_TABLES.includes(t.table) && !INTEGRITY_TRIGGERS.some((w) => w.table === t.table && w.trigger === t.trigger)) {
+      problems.push(`unexpected trigger ${t.trigger} on ${t.table}`);
+    }
+  }
+  for (const r of rules) {
+    if (GUARDED_TABLES.includes(r.table)) problems.push(`unexpected rule ${r.rule} on ${r.table}`);
+  }
   for (const want of INTEGRITY_TRIGGERS) {
     const found = triggers.find((t) => t.table === want.table && t.trigger === want.trigger);
     if (!found) {
@@ -538,6 +569,15 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
     if (found.type !== want.type) {
       problems.push(`trigger ${want.trigger} on ${want.table} fires on the wrong events (tgtype ${found.type}, expected ${want.type})`);
     }
+    if (!found.unconditional || !found.allColumns) {
+      problems.push(`trigger ${want.trigger} on ${want.table} is narrowed (a WHEN condition or an UPDATE OF column list)`);
+    }
+    if (found.definer || found.language !== 'plpgsql' || JSON.stringify(found.config) !== JSON.stringify(['search_path=""'])) {
+      problems.push(
+        `function public.${found.fn}() is not a SECURITY INVOKER plpgsql function pinned to search_path '' ` +
+          `(definer ${found.definer}, ${found.language}, config ${JSON.stringify(found.config)})`,
+      );
+    }
     if (found.fnSchema !== 'public' || found.fn !== want.fn) {
       problems.push(`trigger ${want.trigger} on ${want.table} runs ${found.fnSchema}.${found.fn}, not public.${want.fn}`);
     } else if (!expectedBodies.has(want.fn)) {
@@ -546,10 +586,11 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
       problems.push(`function public.${want.fn}() differs from its migration's definition`);
     }
   }
-  for (const [table, name] of INTEGRITY_CHECKS) {
+  for (const [table, name, definitionMd5] of INTEGRITY_CHECKS) {
     const found = constraints.find((c) => c.table === table && c.name === name);
     if (!found) problems.push(`CHECK ${name} on ${table} is missing`);
     else if (!found.validated) problems.push(`CHECK ${name} on ${table} is NOT VALID`);
+    else if (found.definitionMd5 !== definitionMd5) problems.push(`CHECK ${name} on ${table} differs from its migration's definition`);
   }
   return problems;
 }
