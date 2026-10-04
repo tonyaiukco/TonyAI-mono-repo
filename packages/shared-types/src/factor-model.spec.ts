@@ -887,6 +887,25 @@ describe('resolveFactorPath', () => {
     ]);
   });
 
+  it('uses a conversion only from the base unit of the record’s own family', () => {
+    const perKwh = factor('kwh', 'kWh', 'gross');
+    // An Sm³ → kWh step cannot price a metered m³ reading: that would skip the
+    // volume correction.
+    const fromSm3 = conversion('sm3-kwh', 'standard_cubic_metres', 'kWh', 'gross');
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [perKwh], [fromSm3]))).toBe('no_conversion');
+  });
+
+  it('ranks a path by its weakest link even where placeholders are allowed', () => {
+    // Authoritative factor + placeholder step ranks as a placeholder, so it
+    // ties with a placeholder direct factor — and direct wins the tie.
+    const demoDirect = factor('demo-sm3', 'standard_cubic_metres', 'not_applicable', 'placeholder', 'Prototype');
+    const realKwh = factor('real-kwh', 'kWh', 'gross');
+    const demoStep = conversion('demo-step', 'standard_cubic_metres', 'kWh', 'gross', 'placeholder');
+    expect(
+      picked(resolve('Natural Gas', 'standard_cubic_metres', [realKwh, demoDirect], [demoStep], true)),
+    ).toEqual(['demo-sm3', null]);
+  });
+
   it('never uses a withdrawn link', () => {
     const realKwh = factor('real-kwh', 'kWh', 'gross');
     const withdrawnStep = conversion('old-step', 'cubic_metres', 'kWh', 'gross', 'withdrawn');
@@ -930,7 +949,15 @@ describe('validateFactorReleaseImport — review round 1', () => {
   const NUL = String.fromCharCode(0);
 
   it('reports a malformed file instead of throwing', () => {
-    for (const bad of [null, 42, [], {}, { release: {}, factors: null, conversions: [] }]) {
+    for (const bad of [
+      null,
+      42,
+      [],
+      {},
+      { release: {}, factors: null, conversions: [] },
+      { release: {}, factors: [], conversions: null },
+      { release: null, factors: [], conversions: [] },
+    ]) {
       expect(validateFactorReleaseImport(bad)).toEqual([
         { path: '', message: expect.stringContaining('release, factors[] and conversions[]') },
       ]);
@@ -1098,6 +1125,15 @@ describe('validateFactorReleaseImport — review round 1', () => {
     expect(issuesAt(release({ meta: { gwpSet: null }, factors: [grid] }))).toEqual([]);
     expect(
       issuesAt(release({ meta: { gwpSet: null }, factors: [grid, factorRow()] })),
+    ).toContain('release.gwpSet');
+    // A CH4 or N2O row is GWP-weighted whatever its total claims.
+    expect(
+      issuesAt(
+        release({
+          meta: { gwpSet: null },
+          factors: [factorRow({ gasCoverage: 'co2_only' }), factorRow({ gas: 'CH4', gasCoverage: null, factorValue: 0.1 })],
+        }),
+      ),
     ).toContain('release.gwpSet');
   });
 
