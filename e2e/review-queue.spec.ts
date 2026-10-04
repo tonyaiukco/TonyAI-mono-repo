@@ -45,9 +45,16 @@ test('a submitted record reaches the queue and approving clears it', async ({
     activityValue: 7400,
   });
 
-  // The OTHER super_admin reviews it: nobody approves a record they created
-  // (D01), and the API refuses the creator's Approve with a 403.
-  await login(page, APPROVER_EMAIL);
+  // The creator can inspect their submitted record, but cannot approve it.
+  await login(page, ADMIN_EMAIL);
+  await page.goto('/review');
+  await page.locator('table tbody tr', { hasText: 'TonyAI Trading' })
+    .filter({ hasText: 'Q4 2026' }).click();
+  await expect(page.getByText('You cannot approve a record you entered.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  // A different super_admin still has the approval action.
+  await switchUser(page, APPROVER_EMAIL);
   await page.goto('/review');
   await expect(page.getByRole('heading', { name: 'Review Queue' })).toBeVisible();
 

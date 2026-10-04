@@ -12,6 +12,7 @@ import {
   ENTRY_EMAIL,
   getAccessToken,
   login,
+  switchUser,
   selectSubsidiary,
   serviceReadRecords,
   SUB,
@@ -237,6 +238,19 @@ test('a draft you cannot send has no checkbox, and the row says why', async ({
     await page.locator('[data-testid="drafts-select-all"]').click();
     await expect(mineBox).toBeChecked();
     await expect(page.locator('[data-testid="drafts-submit-bar"]')).toBeVisible();
+
+    // The admin override permits edits/evidence, but never another author's submit.
+    await switchUser(page, ADMIN_EMAIL);
+    await page.goto('/data-entry');
+    await selectSubsidiary(page, OPTION);
+    await expect(row('Q1', E2E_BULK_CATEGORY)).toContainText(/entered by someone else/i);
+    await expect(list.getByRole('checkbox', {
+      name: new RegExp(`Select Q1 ${E2E_YEAR} ${E2E_BULK_CATEGORY}`),
+    })).toHaveCount(0);
+    await row('Q1', E2E_BULK_CATEGORY).click();
+    await expect(page.getByText(`Editing draft ${mine.slice(0, 8)}` , { exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Save draft', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Submit for review', exact: true })).toHaveCount(0);
 
     // Nothing moved: this test only looked.
     const rows = await serviceReadRecords(request, `id=in.("${theirs}","${needsInvoice}")`);

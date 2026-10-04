@@ -1,5 +1,7 @@
 "use client";
 
+import { canApproveRecord } from "@/lib/record-lifecycle-view";
+
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -107,7 +109,7 @@ export default function ReviewPage() {
    * offering a button that always fails is worse than not offering it.
    */
   const canReview = user?.role === "super_admin" || user?.role === "consultant";
-  const canApprove = user?.role === "super_admin";
+  const canApprove = canApproveRecord(user, selected);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -227,7 +229,7 @@ export default function ReviewPage() {
             : "Record rejected — the reason is now visible to the submitter",
       );
     } catch (e) {
-      // 409 is the period lock, 400 a state-machine violation: both mean the
+      // 409 includes locks and concurrent changes; 400 is a state-machine refusal. Both mean the
       // queue this page is showing is stale, so reload rather than leave the
       // reviewer clicking a row that can no longer move.
       toast.error((e as Error).message);
@@ -294,16 +296,8 @@ export default function ReviewPage() {
                     Reviewing is done by a consultant or a super_admin
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    {/* Precise: this is not hidden data. A data_entry user can
-                        see these same records on Emissions — what they cannot do
-                        is decide them.
-                        (An earlier version of this comment claimed "nobody may
-                        approve their own work". That is false for super_admin,
-                        who may create, submit and approve one record; four eyes
-                        is a property of the consultant seat only. The actor
-                        columns added alongside this now SURFACE that — the same
-                        name on "Entered by" and "Reviewed by" — rather than
-                        preventing it.) */}
+                    {/* Visibility is tenant-scoped; role and distinct authorship
+                        decide which review actions are offered. */}
                     This is not hidden data — records you can already see on the
                     Emissions page are the same ones being decided here. Your role
                     is <span className="font-mono">{user.role}</span>.
@@ -349,14 +343,8 @@ export default function ReviewPage() {
                         <TableHead className="text-right">Activity</TableHead>
                         <TableHead className="text-right">tCO₂e</TableHead>
                         <TableHead>Status</TableHead>
-                        {/* "Entered by", not "Submitted by": this renders
-                            `createdBy`, the DRAFT AUTHOR. Nothing records who
-                            pressed Submit, and the two can differ — the author
-                            gate applies only to a RESUBMIT, so a colleague's
-                            first submit of someone else's draft is allowed.
-                            The column beside it IS headed "Waiting" now,
-                            because the record carries a real `submittedAt`;
-                            WHO submitted is still not recorded, only WHEN. */}
+                        {/* The author submits drafts and rejected records; this
+                            column identifies that author, while Waiting uses submittedAt. */}
                         <TableHead>Entered by</TableHead>
                         <TableHead>Waiting</TableHead>
                       </TableRow>
@@ -767,7 +755,12 @@ export default function ReviewPage() {
                   </Button>
                 )}
               </div>
-              {canReview && !canApprove && (
+              {user?.role === "super_admin" && selected.createdBy === user.id && (
+                <p className="text-xs text-muted-foreground">
+                  You cannot approve a record you entered.
+                </p>
+              )}
+              {user?.role === "consultant" && (
                 <p className="text-xs text-muted-foreground">
                   Approval is reserved for a super_admin — as a consultant you can
                   take a record into review or send it back.

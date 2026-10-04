@@ -42,7 +42,7 @@ export function attachBlockReason(
   locks: LockedPeriod[],
 ): string | null {
   if (!mayAuthorRecords(user)) return 'Your role cannot attach evidence.';
-  if (!authoredBy(row, user)) return 'Entered by someone else.';
+  if (user.role !== 'super_admin' && !authoredBy(row, user)) return 'Entered by someone else.';
   if (!EVIDENCE_EDITABLE.has(row.status)) return `Already ${row.status.replace(/_/g, ' ')}.`;
   if (isPeriodLockedFor(row, locks)) return `${row.periodValue} ${row.reportingYear} is locked.`;
   return null;
