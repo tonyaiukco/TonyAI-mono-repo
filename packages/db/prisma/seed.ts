@@ -16,6 +16,7 @@ import {
   CALCULATION_GAS,
   MONTH_NAMES,
   factorActivityTypeFor,
+  recordActivityTypesFor,
   resolveFactorPath,
   scope2MethodFor,
   yearPolicyOf,
@@ -25,6 +26,7 @@ import {
 import {
   DEMO_YEAR,
   PRIOR_YEAR,
+  SEED_ACTIVITY_TYPES,
   SEED_CONVERSIONS,
   SEED_FACTORS,
   SEED_RELEASES,
@@ -47,7 +49,34 @@ function rollingBaseline(priors: number[]): number | null {
 // only the OWNER may (LP1-03): DIRECT_URL. DATABASE_URL is the least-privileged
 // runtime role wherever the two differ; CI's supabase-stack sets both to the
 // owner, so the fallback keeps that path unchanged.
-const prisma = new PrismaClient({ datasourceUrl: process.env.DIRECT_URL || process.env.DATABASE_URL });
+const SEED_DATABASE_URL = process.env.DIRECT_URL || process.env.DATABASE_URL;
+
+/**
+ * The seed writes the PLACEHOLDER factor library and demo tenants, so it runs
+ * against a plainly local database only (LP3-03, obligation 3: placeholder
+ * rows come from the seed, locally — staging and production are never
+ * seeded). A loopback host, and no `host`/`hostaddr` parameter redirecting the
+ * connection elsewhere. An accident guard, not a proof of locality.
+ */
+function assertLocalSeedTarget(raw: string | undefined): void {
+  let url: URL;
+  try {
+    url = new URL(raw ?? '');
+  } catch {
+    throw new Error('The seed needs DIRECT_URL (or DATABASE_URL) naming a local database.');
+  }
+  const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname.toLowerCase());
+  const redirected = [...url.searchParams.keys()].some((k) => ['host', 'hostaddr'].includes(k.toLowerCase()));
+  if (!loopback || redirected) {
+    throw new Error(
+      `Refusing to seed ${url.hostname}: the seed loads placeholder factors and demo data, and runs ` +
+        'against a local database only. A deployed environment is never seeded.',
+    );
+  }
+}
+assertLocalSeedTarget(SEED_DATABASE_URL);
+
+const prisma = new PrismaClient({ datasourceUrl: SEED_DATABASE_URL });
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? 'http://127.0.0.1:54321';
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -167,8 +196,21 @@ function monthlyActivity(spec: ActivitySpec, month: number): number {
 }
 
 /**
- * The factor a seeded record of `category` — no activity type, entered in
- * `unit` — is priced by, through `resolveFactorPath`: the one selection rule
+ * The activity type a seeded record of `category` names: its typed category's
+ * seed type, or none for an implicit category. A typed category the seed has
+ * no type for is a defect in the seed, refused here rather than written as an
+ * untyped (legacy-only) record.
+ */
+function seedActivityType(category: string): string | null {
+  if (recordActivityTypesFor(category).length === 0) return null;
+  const type = SEED_ACTIVITY_TYPES[category];
+  if (!type) throw new Error(`The seed names no activity type for ${category}, a typed category`);
+  return type;
+}
+
+/**
+ * The factor a seeded record of `category` — its seed activity type, entered
+ * in `unit` — is priced by, through `resolveFactorPath`: the one selection rule
  * the calculation engine applies, so seeded snapshots match runtime output.
  * The seed is a local tool, so placeholders are allowed. No factor → null (the
  * caller skips the series); any other refusal is a defect in the library.
@@ -181,7 +223,7 @@ async function resolveFactor(
 ) {
   const lookup = {
     category,
-    activityType: factorActivityTypeFor(category, null),
+    activityType: factorActivityTypeFor(category, seedActivityType(category)),
     geographyCode,
     reportingYear,
     release: { status: { not: 'withdrawn' } },
@@ -492,6 +534,10 @@ async function findOrCreateRecord(
   const record = await prisma.activityRecord.create({
     data: {
       ...data,
+      // Found above by its slot alone, so a database seeded before LP3-03 keeps
+      // its untyped records; a fresh one gets typed ones (the slot-kind rule
+      // refuses a mix).
+      activityType: seedActivityType(data.category),
       // The snapshot is modelled here as a plain object; Prisma's Json input
       // type is a narrower union that an index signature does not satisfy.
       // Asserted rather than re-typed: the shape is the calc engine's, not the

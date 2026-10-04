@@ -2,8 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
   RUNTIME_ROLE,
+  checkIntegrityTriggers,
   checkRuntimeRole,
   checkTenantInvariants,
+  factorLibraryReport,
   runtimeRoleExposures,
 } from '../../../../packages/db/scripts/runtime-role.mjs';
 import { connect, connectOwner, createTenant, withRollback } from './db';
@@ -135,6 +137,18 @@ describe('the runtime role', () => {
       tx.auditLog.create({ data: { userId: id, action: 'create', entity: 'subsidiary' } }),
     );
     expect(inserted.id).toBeTruthy();
+  });
+});
+
+describe('the factor model is in force on this database (LP3-03)', () => {
+  it('holds every integrity trigger, ENABLE ALWAYS, on its events, with its migration\'s function body; every key CHECK', async () => {
+    expect(await checkIntegrityTriggers((sql: string) => runtime.$queryRawUnsafe(sql))).toEqual([]);
+  });
+
+  it('reports the seed\'s placeholder releases as notices, and no unspecified row under an authoritative release', async () => {
+    const report = await factorLibraryReport((sql: string) => runtime.$queryRawUnsafe(sql));
+    expect(report.problems).toEqual([]);
+    expect(report.notices.some((n: string) => n.startsWith('placeholder release TonyAI prototype 2026.1'))).toBe(true);
   });
 });
 

@@ -35,7 +35,8 @@
  * `ALTER ROLE … PASSWORD '…'`, which statement logs and pg_stat_statements keep.
  */
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const RUNTIME_ROLE = 'tonyai_runtime';
 
@@ -426,40 +427,95 @@ export async function checkTenantInvariants(query) {
 }
 
 /**
- * The integrity triggers the LP3-03 migration installs, each of which must
- * exist and be ENABLE ALWAYS (`tgenabled = 'A'`) — firing in replica mode too,
- * so a restore cannot slip past them. A trigger disabled or dropped by hand is
- * a silent hole: the snapshot of an approved record becomes editable, or a
- * loaded factor rewritable.
+ * The integrity triggers the LP3-03 migration installs: each must exist, be
+ * ENABLE ALWAYS (`tgenabled = 'A'`, firing in replica mode too, so a restore
+ * cannot slip past it), fire on exactly its events, and run its own function
+ * with exactly the body the migrations define. A trigger disabled, dropped,
+ * re-created on fewer events or pointed at an emptied function is a silent
+ * hole: the snapshot of an approved record becomes editable, or a loaded
+ * factor rewritable.
+ *
+ * `type` is `pg_trigger.tgtype`: ROW 1, BEFORE 2, INSERT 4, DELETE 8,
+ * UPDATE 16, TRUNCATE 32.
  */
+const ROW = 1;
+const BEFORE = 2;
+const ON = { insert: 4, delete: 8, update: 16, truncate: 32 };
 export const INTEGRITY_TRIGGERS = Object.freeze([
-  ['activity_records', 'activity_records_snapshot_immutable'],
-  ['activity_records', 'activity_records_slot_kind'],
-  ...['factor_releases', 'emission_factors', 'unit_conversions'].flatMap((table) =>
-    ['insert', 'update', 'delete', 'truncate'].map((event) => [table, `${table}_before_${event}`]),
-  ),
+  { table: 'activity_records', trigger: 'activity_records_snapshot_immutable', fn: 'activity_records_snapshot_immutable', type: ROW | BEFORE | ON.update },
+  { table: 'activity_records', trigger: 'activity_records_slot_kind', fn: 'activity_records_slot_kind', type: ROW | BEFORE | ON.insert | ON.update },
+  ...['factor_releases', 'emission_factors', 'unit_conversions'].flatMap((table) => {
+    const rows = table === 'factor_releases' ? 'factor_releases' : 'factor_rows';
+    return [
+      { table, trigger: `${table}_before_insert`, fn: `${rows}_before_insert`, type: ROW | BEFORE | ON.insert },
+      { table, trigger: `${table}_before_update`, fn: `${rows}_before_update`, type: ROW | BEFORE | ON.update },
+      { table, trigger: `${table}_before_delete`, fn: `${rows}_before_delete`, type: ROW | BEFORE | ON.delete },
+      { table, trigger: `${table}_before_truncate`, fn: 'factor_tables_before_truncate', type: BEFORE | ON.truncate },
+    ];
+  }),
 ]);
 
 /** The CHECK constraints the factor model's guarantees rest on. */
 export const INTEGRITY_CHECKS = Object.freeze([
   ['factor_releases', 'factor_releases_status_check'],
   ['factor_releases', 'factor_releases_publisher_check'],
+  ['factor_releases', 'factor_releases_placeholder_publisher_check'],
+  ['factor_releases', 'factor_releases_fixture_publisher_check'],
+  ['factor_releases', 'factor_releases_ordinal_check'],
   ['factor_releases', 'factor_releases_authoritative_provenance_check'],
+  ['factor_releases', 'factor_releases_review_after_publication_check'],
   ['factor_releases', 'factor_releases_withdrawal_check'],
+  ['factor_releases', 'factor_releases_source_url_check'],
+  ['factor_releases', 'factor_releases_text_check'],
+  ['emission_factors', 'emission_factors_activity_type_check'],
   ['emission_factors', 'emission_factors_gas_check'],
+  ['emission_factors', 'emission_factors_gas_coverage_check'],
   ['emission_factors', 'emission_factors_scope2_method_check'],
+  ['emission_factors', 'emission_factors_scope_check'],
   ['emission_factors', 'emission_factors_calorific_basis_check'],
+  ['emission_factors', 'emission_factors_factor_value_check'],
+  ['unit_conversions', 'unit_conversions_activity_type_check'],
   ['unit_conversions', 'unit_conversions_calorific_basis_check'],
+  ['unit_conversions', 'unit_conversions_multiplier_check'],
+  ['unit_conversions', 'unit_conversions_units_check'],
+  ['unit_conversions', 'unit_conversions_text_check'],
   ['activity_records', 'activity_records_activity_type_check'],
 ]);
 
-/** Every integrity trigger and CHECK, present and in force. */
-export async function checkIntegrityTriggers(query) {
+const MIGRATIONS_DIR = fileURLToPath(new URL('../prisma/migrations/', import.meta.url));
+
+/**
+ * Each trigger function's body as the LAST migration that (re)defines it has
+ * it — what `pg_proc.prosrc` must equal, byte for byte.
+ */
+export function expectedTriggerFunctionBodies(dir = MIGRATIONS_DIR) {
+  const bodies = new Map();
+  const names = new Set(INTEGRITY_TRIGGERS.map((t) => t.fn));
+  for (const migration of readdirSync(dir).filter((d) => /^\d/.test(d)).sort()) {
+    let sql;
+    try {
+      sql = readFileSync(`${dir}/${migration}/migration.sql`, 'utf8');
+    } catch {
+      continue;
+    }
+    const definition = /CREATE (?:OR REPLACE )?FUNCTION "public"\."([a-z_]+)"\(\)[\s\S]*?AS \$fn\$([\s\S]*?)\$fn\$;/g;
+    for (const [, name, body] of sql.matchAll(definition)) if (names.has(name)) bodies.set(name, body);
+  }
+  return bodies;
+}
+
+const md5 = (text) => createHash('md5').update(text, 'utf8').digest('hex');
+
+/** Every integrity trigger and CHECK, present, in force and unaltered. */
+export async function checkIntegrityTriggers(query, expectedBodies = expectedTriggerFunctionBodies()) {
   const triggers = await query(
-    `SELECT c.relname AS "table", t.tgname AS "trigger", t.tgenabled AS "enabled"
+    `SELECT c.relname AS "table", t.tgname AS "trigger", t.tgenabled AS "enabled", t.tgtype::int AS "type",
+            pn.nspname AS "fnSchema", p.proname AS "fn", md5(p.prosrc) AS "bodyMd5"
        FROM pg_trigger t
        JOIN pg_class c ON c.oid = t.tgrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_proc p ON p.oid = t.tgfoid
+       JOIN pg_namespace pn ON pn.oid = p.pronamespace
       WHERE n.nspname = 'public' AND NOT t.tgisinternal`,
   );
   const constraints = await query(
@@ -470,10 +526,25 @@ export async function checkIntegrityTriggers(query) {
       WHERE n.nspname = 'public' AND k.contype = 'c'`,
   );
   const problems = [];
-  for (const [table, name] of INTEGRITY_TRIGGERS) {
-    const found = triggers.find((t) => t.table === table && t.trigger === name);
-    if (!found) problems.push(`trigger ${name} on ${table} is missing`);
-    else if (found.enabled !== 'A') problems.push(`trigger ${name} on ${table} is not ENABLE ALWAYS (tgenabled = '${found.enabled}')`);
+  for (const want of INTEGRITY_TRIGGERS) {
+    const found = triggers.find((t) => t.table === want.table && t.trigger === want.trigger);
+    if (!found) {
+      problems.push(`trigger ${want.trigger} on ${want.table} is missing`);
+      continue;
+    }
+    if (found.enabled !== 'A') {
+      problems.push(`trigger ${want.trigger} on ${want.table} is not ENABLE ALWAYS (tgenabled = '${found.enabled}')`);
+    }
+    if (found.type !== want.type) {
+      problems.push(`trigger ${want.trigger} on ${want.table} fires on the wrong events (tgtype ${found.type}, expected ${want.type})`);
+    }
+    if (found.fnSchema !== 'public' || found.fn !== want.fn) {
+      problems.push(`trigger ${want.trigger} on ${want.table} runs ${found.fnSchema}.${found.fn}, not public.${want.fn}`);
+    } else if (!expectedBodies.has(want.fn)) {
+      problems.push(`no migration defines public.${want.fn}()`);
+    } else if (found.bodyMd5 !== md5(expectedBodies.get(want.fn))) {
+      problems.push(`function public.${want.fn}() differs from its migration's definition`);
+    }
   }
   for (const [table, name] of INTEGRITY_CHECKS) {
     const found = constraints.find((c) => c.table === table && c.name === name);

@@ -24,6 +24,15 @@ import {
 export const DEMO_YEAR = 2026;
 export const PRIOR_YEAR = DEMO_YEAR - 1;
 
+/**
+ * The activity type the seed's demo records of a typed category are entered
+ * with: a NEW record of Fuel, Mobile Combustion or Refrigerants names one
+ * (LP3-03), and the seed writes new records. Only Fuel is seeded, priced by
+ * the `diesel` rows below; `unspecified` stays for records written before
+ * LP3-03 (owner decision K-b).
+ */
+export const SEED_ACTIVITY_TYPES: Readonly<Record<string, string>> = { Fuel: 'diesel' };
+
 // ---------------------------------------------------------------------------
 // Releases
 // ---------------------------------------------------------------------------
@@ -41,7 +50,8 @@ export const PLACEHOLDER_RELEASE_TITLE =
 export const PLACEHOLDER_RELEASE_NOTES =
   'Unsourced prototype values. Calculated only where the API runs with ' +
   'ALLOW_PLACEHOLDER_FACTORS=true (local development, CI); refused everywhere ' +
-  'else (LP3-03, owner decision K3).';
+  'else (LP3-03, owner decision K3). Their dimensions (gas coverage, data ' +
+  'year, calorific basis) are assumed, not sourced.';
 
 /**
  * A demo edition's ordinal, derived from the edition (2026.1 → 202601) — the

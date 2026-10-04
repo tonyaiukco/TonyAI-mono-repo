@@ -12,6 +12,17 @@ export declare const RUNTIME_STORAGE_PRIVILEGES: Readonly<Record<string, readonl
 export declare function checkRuntimeRole(query: Query): Promise<string[]>;
 export declare function runtimeRoleExposures(query: Query): Promise<string[]>;
 export declare function checkTenantInvariants(query: Query): Promise<string[]>;
+export interface IntegrityTrigger {
+  table: string;
+  trigger: string;
+  fn: string;
+  type: number;
+}
+export declare const INTEGRITY_TRIGGERS: readonly IntegrityTrigger[];
+export declare const INTEGRITY_CHECKS: readonly (readonly [table: string, name: string])[];
+export declare function expectedTriggerFunctionBodies(dir?: string): Map<string, string>;
+export declare function checkIntegrityTriggers(query: Query, expectedBodies?: Map<string, string>): Promise<string[]>;
+export declare function factorLibraryReport(query: Query): Promise<{ problems: string[]; notices: string[] }>;
 export declare function provisionLocalRuntimeLogin(
   client: { $executeRawUnsafe(sql: string): Promise<unknown> },
   ownerUrl: string,

@@ -857,8 +857,10 @@ describe('CalculationsService.compute', () => {
     expect(prisma.emissionFactor.findMany).not.toHaveBeenCalled();
   });
 
-  it('throws BadRequest when the normalized unit mismatches the factor unit', async () => {
-    // Factor expects litres, but input normalises to kWh.
+  it('refuses a unit the category does not have before any factor is looked up', async () => {
+    // (Once "the normalised unit mismatches the factor unit"; since LP3-03 a
+    // factor in another family is simply no path, and kWh on Fuel is refused
+    // first as `unit_not_for_category`.)
     useFactor(prisma, 
       makeFactor({ category: 'Fuel', normalizedUnit: 'litres', factorValue: 2.6841, scope: 1 }),
     );
@@ -987,23 +989,38 @@ describe('CalculationsService.listFactors', () => {
     service = new CalculationsService(prisma as unknown as PrismaService, ALLOW_PLACEHOLDERS);
   });
 
-  it('passes optional filters through to Prisma and maps to DTOs', async () => {
-    prisma.emissionFactor.findMany.mockResolvedValue([makeFactor({ id: 'f1' })]);
+  it('passes optional filters through to Prisma and maps to detail DTOs with their release', async () => {
+    const release = makeRelease({ status: 'placeholder', edition: '2026.1', ordinal: 202601 });
+    prisma.emissionFactor.findMany.mockResolvedValue([makeFactor({ id: 'f1', release })]);
 
     const result = await service.listFactors({ category: 'Electricity', geographyCode: 'TR', year: 2024 });
 
     expect(prisma.emissionFactor.findMany).toHaveBeenCalledWith({
       where: { category: 'Electricity', geographyCode: 'TR', reportingYear: 2024 },
+      include: { release: true },
+      // By release ordinal, never by the `version` label.
       orderBy: [
         { category: 'asc' },
+        { activityType: 'asc' },
         { geographyCode: 'asc' },
         { reportingYear: 'desc' },
-        { version: 'desc' },
+        { release: { publisher: 'asc' } },
+        { release: { ordinal: 'desc' } },
       ],
     });
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe('f1');
+    expect(result[0]).toMatchObject({
+      id: 'f1',
+      activityType: 'grid_electricity',
+      gas: 'CO2e',
+      gasCoverage: 'all_ghg',
+      scope2Method: 'location',
+      release: { id: release.id, status: 'placeholder', edition: '2026.1', ordinal: 202601 },
+    });
     expect(typeof result[0].createdAt).toBe('string');
+    // A release's people and notes stay off the wire.
+    expect(result[0].release).not.toHaveProperty('reviewedBy');
+    expect(result[0].release).not.toHaveProperty('notes');
   });
 
   it('omits undefined filters (lists all)', async () => {
@@ -1013,6 +1030,7 @@ describe('CalculationsService.listFactors', () => {
 
     expect(prisma.emissionFactor.findMany).toHaveBeenCalledWith({
       where: { category: undefined, geographyCode: undefined, reportingYear: undefined },
+      include: { release: true },
       orderBy: expect.any(Array),
     });
   });
@@ -1191,6 +1209,43 @@ describe('CalculationsService.compute — LP3-03 factor paths', () => {
       ),
     );
     await expect(service(true).compute(electricityUK)).rejects.toMatchObject({ code: 'ambiguous_factor' });
+  });
+
+  it("keeps the 404 when only the diagnostic pass over non-authoritative rows exceeds the cap", async () => {
+    useFactor(
+      prisma,
+      ...Array.from({ length: FACTOR_CANDIDATE_CAP + 1 }, (_, i) =>
+        makeFactor({ geographyCode: 'UK', reportingYear: 2026, release: makeRelease({ ordinal: i + 1 }) }),
+      ),
+    );
+    await expect(service(false).compute(electricityUK)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('reads conversions only from the base unit of the record\'s family, and caps them too', async () => {
+    useFactor(prisma, makeFactor({ category: 'Natural Gas', scope: 1, geographyCode: 'UK', reportingYear: 2026 }));
+    prisma.library.conversions = Array.from({ length: FACTOR_CANDIDATE_CAP + 1 }, (_, i) =>
+      makeConversion({ geographyCode: 'UK', reportingYear: 2026, dataYear: 2026, release: makeRelease({ ordinal: i + 1 }) }),
+    );
+    await expect(
+      service(true).compute({ category: 'Natural Gas', geographyCode: 'UK', reportingYear: 2026, value: 1, unit: 'm3' }),
+    ).rejects.toMatchObject({ code: 'ambiguous_factor', status: 409 });
+    expect(prisma.unitConversion.findMany.mock.calls[0][0].where).toMatchObject({
+      category: 'Natural Gas',
+      activityType: 'natural_gas',
+      geographyCode: 'UK',
+      reportingYear: 2026,
+      fromUnit: 'cubic_metres',
+    });
+  });
+
+  it('accepts exactly the cap — the refusal is above it, not at it', async () => {
+    useFactor(
+      prisma,
+      ...Array.from({ length: FACTOR_CANDIDATE_CAP }, (_, i) =>
+        makeFactor({ geographyCode: 'UK', reportingYear: 2026, release: makeRelease({ ordinal: i + 1 }) }),
+      ),
+    );
+    expectCalculated(await service(true).compute(electricityUK));
   });
 
   it('refuses a billed kWh of gas against net-only factors (calorific_basis_mismatch)', async () => {

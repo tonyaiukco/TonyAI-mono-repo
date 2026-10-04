@@ -36,8 +36,19 @@ describe('the activity_records integrity triggers', () => {
     ]) {
       expect(body).toContain(`NEW."${column}" IS DISTINCT FROM OLD."${column}"`);
     }
-    expect(body).toContain('(NEW."location_id" IS DISTINCT FROM OLD."location_id" AND NEW."location_id" IS NOT NULL)');
+    // A direct edit may not detach a site either: only the foreign key's
+    // ON DELETE SET NULL, which fires K5 as a nested trigger.
+    expect(body).toContain('NEW."location_id" IS NOT NULL OR pg_catalog.pg_trigger_depth() < 2');
     expect(body).not.toMatch(/SECURITY DEFINER|SELECT /);
+  });
+
+  it('K5 lets a record re-enter an editable status only the way the API sends it — rejected from review, never draft', () => {
+    const body = functionBody('activity_records_snapshot_immutable');
+    const rewind = /NEW\."status" IN \(([^)]*)\)\s*AND NOT \(NEW\."status" = 'rejected' AND OLD\."status" IN \(([^)]*)\)\)/.exec(body);
+    const list = (m: string | undefined) => [...(m ?? '').matchAll(/'([a-z_]+)'/g)].map((x) => x[1]).sort();
+    expect(list(rewind?.[1])).toEqual([...EDITABLE_STATUSES].sort());
+    // The API's reject gate: only a submitted or under_review record.
+    expect(list(rewind?.[2])).toEqual(['submitted', 'under_review']);
   });
 
   it('raise the SQLSTATEs the service maps to 409', () => {
@@ -55,5 +66,10 @@ describe('the activity_records integrity triggers', () => {
     const body = functionBody('activity_records_slot_kind');
     const compared = [...body.matchAll(/r\."([a-z_]+)" (?:=|IS NOT DISTINCT FROM) NEW\."\1"/g)].map((m) => m[1]);
     expect(compared).toEqual(columns.slice(0, 6));
+    // The early return — "same slot, same kind, nothing to check" — must test
+    // the same six columns, or an update moving a row to another slot would
+    // skip the check.
+    const early = [...body.matchAll(/NEW\."([a-z_]+)" (?:=|IS NOT DISTINCT FROM) OLD\."\1"/g)].map((m) => m[1]);
+    expect(early).toEqual(columns.slice(0, 6));
   });
 });

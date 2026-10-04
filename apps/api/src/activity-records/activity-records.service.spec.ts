@@ -3570,6 +3570,34 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
     );
   });
 
+  it('saves a PATCHed activity type, so the column, slot and pool follow the recomputed snapshot', async () => {
+    const { prisma, calc, service } = build(1);
+    arrangeUpdate(prisma, { category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', scope: 1 });
+    await service.update(dataEntry(), 'rec-t', { activityType: 'gas_oil' });
+    expect(calc.compute).toHaveBeenCalledWith(expect.objectContaining({ activityType: 'gas_oil' }), expect.anything());
+    expect(prisma.activityRecord.update.mock.calls[0][0].data.activityType).toBe('gas_oil');
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toMatchObject({ activityType: 'gas_oil' });
+  });
+
+  it('answers the slot-kind trigger (TA002) on an update with a 409 too', async () => {
+    const { prisma, service } = build(1);
+    arrangeUpdate(prisma, { category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', scope: 1 });
+    prisma.activityRecord.update.mockRejectedValue(triggerError('TA002'));
+    await expect(service.update(dataEntry(), 'rec-t', { periodValue: 'Annual' })).rejects.toBeInstanceOf(
+      ActivityTypeSlotConflictError,
+    );
+  });
+
+  it("re-derives the submit gate's anomaly verdict against the record's own activity type", async () => {
+    const { prisma, service } = build(1);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-s', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', status: ActivityRecordStatus.draft }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-s', status: data.status }));
+    await service.submit(dataEntry(), 'rec-s');
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toMatchObject({ category: 'Fuel', activityType: 'diesel' });
+  });
+
   it('answers the snapshot trigger (TA001) on an update with a 409, not a 500', async () => {
     const { prisma, service } = build(2);
     arrangeUpdate(prisma, {});

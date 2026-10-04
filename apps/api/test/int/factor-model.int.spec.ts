@@ -52,9 +52,12 @@ function sqlstateOf(e: unknown): string | null {
 }
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-let month = 0;
-/** A fresh monthly slot of the tenant, so no two records here share one. */
-const nextSlot = () => ({ reportingYear: 2026, reportingPeriod: 'monthly', periodValue: MONTHS[month++ % 12] });
+let slot = 0;
+/** A fresh monthly slot of the tenant, so no two records here share one (a year back every twelve). */
+const nextSlot = () => {
+  const i = slot++;
+  return { reportingYear: 2026 - Math.floor(i / 12), reportingPeriod: 'monthly', periodValue: MONTHS[i % 12] };
+};
 
 describe('K5 — a snapshot that has left draft never changes', () => {
   it.each([
@@ -72,6 +75,10 @@ describe('K5 — a snapshot that has left draft never changes', () => {
         { category: 'Natural Gas' },
         { activityType: 'diesel' },
         { reportingYear: 2025 },
+        { scope: 1 },
+        { reportingPeriod: 'quarterly' },
+        { periodValue: 'December' },
+        { subsidiary: { connect: { id: foreign.subsidiaryId } } },
       ] as Prisma.ActivityRecordUpdateInput[]) {
         const e = await failure(client.activityRecord.update({ where: { id: rec.id }, data }));
         expect(sqlstateOf(e), JSON.stringify(data)).toBe('TA001');
@@ -110,9 +117,47 @@ describe('K5 — a snapshot that has left draft never changes', () => {
     );
     const rec = await createRecord(owner, tenant, { ...nextSlot(), locationId: siteA.id, status: ActivityRecordStatus.approved });
     expect(sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: rec.id }, data: { locationId: siteB.id } })))).toBe('TA001');
+    // Nor detach it by a direct edit: only the foreign key's own action may.
+    for (const client of [runtime, owner]) {
+      expect(sqlstateOf(await failure(client.activityRecord.update({ where: { id: rec.id }, data: { locationId: null } })))).toBe('TA001');
+    }
     await owner.location.delete({ where: { id: siteA.id } });
     expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } })).locationId).toBeNull();
     await owner.location.delete({ where: { id: siteB.id } });
+  });
+});
+
+describe('K5 — a committed record becomes editable again only by review', () => {
+  it.each([
+    [ActivityRecordStatus.approved, ActivityRecordStatus.draft],
+    [ActivityRecordStatus.locked, ActivityRecordStatus.rejected],
+    [ActivityRecordStatus.voided, ActivityRecordStatus.draft],
+    [ActivityRecordStatus.submitted, ActivityRecordStatus.draft],
+  ])('refuses %s → %s, for the runtime role and the owner — the first half of a two-step rewrite', async (from, to) => {
+    const rec = await createRecord(owner, tenant, { ...nextSlot(), status: from });
+    for (const client of [runtime, owner]) {
+      expect(sqlstateOf(await failure(client.activityRecord.update({ where: { id: rec.id }, data: { status: to } })))).toBe('TA001');
+    }
+  });
+
+  it('tests OLD, not NEW: "back to draft and rewrite" in ONE statement is refused too', async () => {
+    const rec = await createRecord(owner, tenant, { ...nextSlot(), status: ActivityRecordStatus.approved });
+    for (const client of [runtime, owner]) {
+      const e = await failure(
+        client.activityRecord.update({
+          where: { id: rec.id },
+          data: { status: ActivityRecordStatus.draft, activityValue: 1, calculation: { tCo2e: 0, factorId: 'forged' } },
+        }),
+      );
+      expect(sqlstateOf(e)).toBe('TA001');
+    }
+  });
+
+  it('lets review send a submitted or under_review record back as rejected', async () => {
+    for (const from of [ActivityRecordStatus.submitted, ActivityRecordStatus.under_review]) {
+      const rec = await createRecord(owner, tenant, { ...nextSlot(), status: from });
+      await runtime.activityRecord.update({ where: { id: rec.id }, data: { status: ActivityRecordStatus.rejected } });
+    }
   });
 });
 
@@ -133,7 +178,45 @@ describe('a slot holds typed records or one untyped record, never both', () => {
     // Moving an untyped record INTO the slot is the same refusal.
     const elsewhere = await createRecord(owner, tenant, { ...nextSlot(), ...fuel });
     expect(
-      sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: elsewhere.id }, data: { periodValue: typedFirst.periodValue } }))),
+      sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: elsewhere.id }, data: { reportingYear: typedFirst.reportingYear, periodValue: typedFirst.periodValue } }))),
+    ).toBe('TA002');
+  });
+
+  it.each([
+    ['its year', (target: ReturnType<typeof nextSlot>) => ({ reportingYear: target.reportingYear })],
+    ['its location (a site record re-filed at company level)', () => ({ locationId: null })],
+    ['its category', () => ({ category: 'Fuel' })],
+  ])('refuses moving a typed record into an untyped slot by %s', async (_how, move) => {
+    const target = nextSlot();
+    await createRecord(owner, tenant, { ...target, ...fuel });
+    const site = await owner.location.create({ data: { subsidiaryId: tenant.subsidiaryId, name: `Int-test slot site ${randomUUID().slice(0, 6)}`, geographyCode: 'UK' } });
+    try {
+      // Same period as the target; it differs by exactly the column being moved.
+      const differs = move(target) as Record<string, unknown>;
+      const typed = await createRecord(owner, tenant, {
+        ...target,
+        ...fuel,
+        activityType: 'diesel',
+        ...('reportingYear' in differs ? { reportingYear: target.reportingYear - 10 } : {}),
+        ...('locationId' in differs ? { locationId: site.id } : {}),
+        ...('category' in differs ? { category: 'Mobile Combustion' } : {}),
+      });
+      expect(sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: typed.id }, data: differs })))).toBe('TA002');
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { locationId: site.id } });
+      await owner.location.delete({ where: { id: site.id } });
+    }
+  });
+
+  it('refuses a record changing kind in place, and un-voiding into a mixed slot', async () => {
+    const slot = nextSlot();
+    await createRecord(owner, tenant, { ...slot, ...fuel, activityType: 'diesel' });
+    const gasOil = await createRecord(owner, tenant, { ...slot, ...fuel, activityType: 'gas_oil' });
+    // gas oil → untyped would leave diesel beside an untyped record.
+    expect(sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: gasOil.id }, data: { activityType: null } })))).toBe('TA002');
+    const voided = await createRecord(owner, tenant, { ...slot, ...fuel, status: ActivityRecordStatus.voided });
+    expect(
+      sqlstateOf(await failure(owner.activityRecord.update({ where: { id: voided.id }, data: { status: ActivityRecordStatus.submitted } }))),
     ).toBe('TA002');
   });
 
@@ -178,14 +261,16 @@ describe('a slot holds typed records or one untyped record, never both', () => {
   });
 
   it('is answered by the record service with a 409 that names the problem', async () => {
-    const slot = nextSlot();
+    // 2026, where the placeholder library prices diesel, so the service gets as
+    // far as the write; quarterly, a slot no other spec here uses.
+    const slot = { reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q4' };
     await createRecord(owner, tenant, { ...slot, ...fuel });
     const { records } = lifecycleServices(runtime);
     const e = await failure(
       records.create(tenant.users.dataEntry, {
         subsidiaryId: tenant.subsidiaryId,
         reportingYear: 2026,
-        reportingPeriod: 'monthly',
+        reportingPeriod: 'quarterly',
         periodValue: slot.periodValue,
         category: 'Fuel',
         activityType: 'diesel',
@@ -194,6 +279,27 @@ describe('a slot holds typed records or one untyped record, never both', () => {
       }),
     );
     expect(e).toBeInstanceOf(ActivityTypeSlotConflictError);
+  });
+
+  it('saves a PATCHed type, and answers an update into a mixed slot with the same 409', async () => {
+    const { records } = lifecycleServices(runtime);
+    const dto = {
+      subsidiaryId: tenant.subsidiaryId,
+      reportingYear: 2026,
+      reportingPeriod: 'quarterly' as const,
+      category: 'Fuel' as const,
+      activityValue: 10,
+      activityUnit: 'litres',
+    };
+    const created = await records.create(tenant.users.dataEntry, { ...dto, periodValue: 'Q3', activityType: 'diesel' });
+    // gas oil has no placeholder factor: the PATCH is refused by the engine,
+    // and the column must not move.
+    expect(await failure(records.update(tenant.users.dataEntry, created.id, { activityType: 'gas_oil' }))).toMatchObject({ code: 'no_factor' });
+    expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: created.id } })).activityType).toBe('diesel');
+    // Moving it into Q4, which holds an untyped Fuel record (above): 409.
+    expect(await failure(records.update(tenant.users.dataEntry, created.id, { periodValue: 'Q4' }))).toBeInstanceOf(
+      ActivityTypeSlotConflictError,
+    );
   });
 });
 
@@ -249,6 +355,55 @@ describe('the factor library is append-only, for the owner too', () => {
     expect(sqlstateOf(reverted)).toBe('TA010');
   });
 
+  it('refuses rewriting a withdrawal, and adding rows to a withdrawn release', async () => {
+    const { releaseId } = await seededFactor();
+    const withdraw = `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'TonyAI test', withdrawal_reason = 'int test', withdrawn_at = now() WHERE id = '${releaseId}'`;
+    const rewrite = await failure(
+      withRollback(owner, async (tx) => {
+        await tx.$executeRawUnsafe(withdraw);
+        await tx.$executeRawUnsafe(`UPDATE factor_releases SET withdrawal_reason = 'rewritten' WHERE id = '${releaseId}'`);
+      }),
+    );
+    expect(sqlstateOf(rewrite)).toBe('TA010');
+    const added = await failure(
+      withRollback(owner, async (tx) => {
+        await tx.$executeRawUnsafe(withdraw);
+        await tx.$executeRawUnsafe(
+          `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit, multiplier, calorific_basis, basis)
+           VALUES (gen_random_uuid(), '${releaseId}', 'Natural Gas', 'natural_gas', 'UK', 2031, 2031, 'cubic_metres', 'kWh', 1, 'gross', 'x')`,
+        );
+      }),
+    );
+    expect(sqlstateOf(added)).toBe('TA012');
+  });
+
+  it("stamps a withdrawal with the database's clock — never a backdated one", async () => {
+    const { releaseId } = await seededFactor();
+    const withdrawnAt = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(
+        `UPDATE factor_releases SET status = 'withdrawn', withdrawn_at = '2001-01-01', withdrawn_by = 'TonyAI test', withdrawal_reason = 'int test' WHERE id = '${releaseId}'`,
+      );
+      const [row] = await tx.$queryRawUnsafe<{ at: Date; now: Date }[]>(
+        `SELECT withdrawn_at AS at, now() AS now FROM factor_releases WHERE id = '${releaseId}'`,
+      );
+      return row;
+    });
+    expect(withdrawnAt.at.getTime()).toBe(withdrawnAt.now.getTime());
+  });
+
+  it("refuses a factor whose version is not its release's edition (TA012)", async () => {
+    const { releaseId } = await seededFactor();
+    const e = await failure(
+      withRollback(owner, (tx) =>
+        tx.$executeRawUnsafe(
+          `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year, data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+           VALUES (gen_random_uuid(), '${releaseId}', 'Fuel', 'gas_oil', 'CO2e', 'all_ghg', 'UK', 2031, 2031, 1, 'not_applicable', 'not_applicable', 2.5, 'kgCO2e/L', 'litres', 'x', 'x', 'not-the-edition', now())`,
+        ),
+      ),
+    );
+    expect(sqlstateOf(e)).toBe('TA012');
+  });
+
   it('refuses a release out of order or loaded as withdrawn (TA011), and an unregistered publisher or unsourced authority (CHECK)', async () => {
     const insert = (publisher: string, ordinal: number, status: string, extra = '') =>
       `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status${extra ? ', source_url, licence, published_at, reviewed_by, reviewed_at' : ''})
@@ -284,6 +439,84 @@ describe('the factor library is append-only, for the owner too', () => {
       }),
     );
     expect(sqlstateOf(e)).toBe('TA012');
+  });
+});
+
+describe('the CHECK constraints refuse what the registry alone would hide', () => {
+  // Rolled back. The publisher registry is lifted inside the transaction so an
+  // authoritative release can exist at all — otherwise it masks every
+  // provenance rule behind it, which is the state LP4-02 will open.
+  const release = (cols: Record<string, string>) => {
+    const row: Record<string, string> = {
+      id: `'${randomUUID()}'`, publisher: `'DESNZ'`, title: `'Conversion factors'`, edition: `'e-${randomUUID().slice(0, 8)}'`,
+      ordinal: '1', status: `'authoritative'`, source_url: `'https://www.gov.uk/x'`, licence: `'OGL v3.0'`,
+      published_at: `'2026-06-10'`, reviewed_by: `'Reviewer firm'`, reviewed_at: `'2026-06-20'`, ...cols,
+    };
+    return `INSERT INTO factor_releases (${Object.keys(row).join(', ')}) VALUES (${Object.values(row).join(', ')})`;
+  };
+  const factor = (cols: Record<string, string>) => {
+    const row: Record<string, string> = {
+      id: 'gen_random_uuid()', release_id: `(SELECT id FROM factor_releases WHERE publisher = 'TonyAI prototype' AND edition = '2026.1')`,
+      category: `'Fuel'`, activity_type: `'gas_oil'`, gas: `'CO2e'`, gas_coverage: `'all_ghg'`, geography_code: `'UK'`,
+      reporting_year: '2031', data_year: '2031', scope: '1', scope2_method: `'not_applicable'`, calorific_basis: `'not_applicable'`,
+      factor_value: '2.5', factor_unit: `'kgCO2e/L'`, normalized_unit: `'litres'`, methodology: `'x'`, source: `'x'`, version: `'2026.1'`,
+      updated_at: 'now()', ...cols,
+    };
+    return `INSERT INTO emission_factors (${Object.keys(row).join(', ')}) VALUES (${Object.values(row).join(', ')})`;
+  };
+  const conversion = (cols: Record<string, string>) => {
+    const row: Record<string, string> = {
+      id: 'gen_random_uuid()', release_id: `(SELECT id FROM factor_releases WHERE publisher = 'TonyAI prototype' AND edition = '2026.1')`,
+      category: `'Natural Gas'`, activity_type: `'natural_gas'`, geography_code: `'UK'`, reporting_year: '2031', data_year: '2031',
+      from_unit: `'cubic_metres'`, to_unit: `'kWh'`, multiplier: '10', calorific_basis: `'gross'`, basis: `'x'`, ...cols,
+    };
+    return `INSERT INTO unit_conversions (${Object.keys(row).join(', ')}) VALUES (${Object.values(row).join(', ')})`;
+  };
+  const cases: Array<[string, string]> = [
+    [release({ source_url: 'NULL' }), 'factor_releases_authoritative_provenance_check'],
+    [release({ licence: 'NULL' }), 'factor_releases_authoritative_provenance_check'],
+    [release({ reviewed_by: 'NULL' }), 'factor_releases_authoritative_provenance_check'],
+    [release({ reviewed_at: `'2026-06-01'` }), 'factor_releases_review_after_publication_check'],
+    [release({ source_url: `'http://www.gov.uk/x'` }), 'factor_releases_source_url_check'],
+    [release({ source_url: `'https://www.gov.uk@evil.example/x'` }), 'factor_releases_source_url_check'],
+    [release({ title: `'Trailing space '` }), 'factor_releases_text_check'],
+    [release({ title: `'Zero' || chr(8203) || 'width'` }), 'factor_releases_text_check'],
+    [release({ ordinal: '0' }), 'factor_releases_ordinal_check'],
+    [release({ gwp_set: `'AR3'` }), 'factor_releases_gwp_set_check'],
+    [release({ status: `'Authoritative'` }), 'factor_releases_status_check'],
+    // (Only the internal fixture publisher's releases may be fixtures, and only
+    // the prototype's placeholders.)
+    [release({ status: `'fixture'` }), 'factor_releases_fixture_publisher_check'],
+    [release({ status: `'placeholder'` }), 'factor_releases_placeholder_publisher_check'],
+    [factor({ factor_value: '-1' }), 'emission_factors_factor_value_check'],
+    [factor({ factor_value: `'NaN'` }), 'emission_factors_factor_value_check'],
+    [factor({ factor_value: `'Infinity'` }), 'emission_factors_factor_value_check'],
+    [factor({ gas: `'CO2x'`, gas_coverage: 'NULL' }), 'emission_factors_gas_check'],
+    [factor({ gas: `'CO2'` }), 'emission_factors_gas_coverage_check'],
+    [factor({ gas_coverage: 'NULL' }), 'emission_factors_gas_coverage_check'],
+    [factor({ scope: '2' }), 'emission_factors_scope2_method_check'],
+    [factor({ scope: '4' }), 'emission_factors_scope_check'],
+    [factor({ calorific_basis: `'GROSS'` }), 'emission_factors_calorific_basis_check'],
+    [factor({ activity_type: `'gas oil'` }), 'emission_factors_activity_type_check'],
+    [conversion({ multiplier: '0' }), 'unit_conversions_multiplier_check'],
+    [conversion({ to_unit: `'cubic_metres'` }), 'unit_conversions_units_check'],
+    [conversion({ basis: `''` }), 'unit_conversions_text_check'],
+    [conversion({ calorific_basis: `'higher'` }), 'unit_conversions_calorific_basis_check'],
+  ];
+  it.each(cases)('%s → %s', async (sql, constraint) => {
+    const e = await failure(
+      withRollback(owner, async (tx) => {
+        await tx.$executeRawUnsafe('ALTER TABLE factor_releases DROP CONSTRAINT factor_releases_publisher_check');
+        await tx.$executeRawUnsafe(sql);
+      }),
+    );
+    expect(sqlstateOf(e)).toBe('23514');
+    expect(String((e as Error).message)).toContain(constraint);
+  });
+
+  it('refuses a malformed activity type on a record', async () => {
+    const e = await failure(createRecord(owner, tenant, { ...nextSlot(), category: 'Fuel', scope: 1, activityType: 'die sel' }));
+    expect(String((e as Error).message)).toContain('activity_records_activity_type_check');
   });
 });
 

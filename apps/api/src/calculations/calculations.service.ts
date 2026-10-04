@@ -27,6 +27,7 @@ import type {
   CalculationResultV2,
   Category,
   CoverageKey,
+  EmissionFactorDetailDTO,
   EmissionFactorDTO,
   FactorGasCoverage,
   FactorReleaseSnapshot,
@@ -123,26 +124,46 @@ export class CalculationsService {
     };
   }
 
-  /** List factors, optionally filtered. Reference data — not tenant-scoped. */
+  /**
+   * List factors, optionally filtered. Reference data — not tenant-scoped.
+   *
+   * Each with its LP3-03 dimensions and its release (`EmissionFactorDetailDTO`,
+   * which extends the old DTO): without them a placeholder reads like an
+   * authoritative factor, a withdrawn one like a live one, and the `diesel`
+   * and `unspecified` Fuel rows like one row listed twice. Ordered by release
+   * ordinal, never by the `version` label.
+   */
   async listFactors(filter: {
     category?: string;
     geographyCode?: string;
     year?: number;
-  }): Promise<EmissionFactorDTO[]> {
+  }): Promise<EmissionFactorDetailDTO[]> {
     const factors = await this.prisma.emissionFactor.findMany({
       where: {
         category: filter.category,
         geographyCode: filter.geographyCode,
         reportingYear: filter.year,
       },
+      include: { release: true },
       orderBy: [
         { category: 'asc' },
+        { activityType: 'asc' },
         { geographyCode: 'asc' },
         { reportingYear: 'desc' },
-        { version: 'desc' },
+        { release: { publisher: 'asc' } },
+        { release: { ordinal: 'desc' } },
       ],
     });
-    return factors.map((f) => this.toFactorDTO(f));
+    return factors.map((f) => ({
+      ...this.toFactorDTO(f),
+      activityType: f.activityType,
+      gas: f.gas as EmissionFactorDetailDTO['gas'],
+      gasCoverage: f.gasCoverage as EmissionFactorDetailDTO['gasCoverage'],
+      calorificBasis: f.calorificBasis as EmissionFactorDetailDTO['calorificBasis'],
+      scope2Method: f.scope2Method as EmissionFactorDetailDTO['scope2Method'],
+      dataYear: f.dataYear,
+      release: releaseSnapshot(f.release),
+    }));
   }
 
   /**
@@ -214,8 +235,15 @@ export class CalculationsService {
     };
     const result = await run(allowPlaceholders ? LIVE_STATUSES : ['authoritative']);
     if (result.ok || allowPlaceholders) return result;
-    const why = await run(LIVE_STATUSES);
-    return why.ok ? result : why;
+    // Diagnostic only. A library that is defective among its non-authoritative
+    // rows (over the cap) must not turn this lookup's 404 into a 409.
+    try {
+      const why = await run(LIVE_STATUSES);
+      return why.ok ? result : why;
+    } catch (e) {
+      if (e instanceof FactorLibraryConflictError) return result;
+      throw e;
+    }
   }
 
   /** The lookup, in words. The activity is named only when the record named one. */

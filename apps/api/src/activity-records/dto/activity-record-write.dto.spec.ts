@@ -387,3 +387,18 @@ describe('import provenance is not a caller field', () => {
     expect(errors.map((e) => e.property)).toContain('importBatchId');
   });
 });
+
+describe.each(DTOS)('%s — activityType (LP3-03)', (_name, Dto) => {
+  it('accepts a token, null and its absence', () => {
+    for (const activityType of ['diesel', 'R-410A', 'gas_oil', 'x'.repeat(32), null, undefined]) {
+      expect(parse(Dto, { activityType }).errors, String(activityType)).toHaveLength(0);
+    }
+  });
+
+  it('refuses a malformed or overlong token before any service quotes it back', () => {
+    for (const activityType of ['die sel', 'diesel;', '', 'x'.repeat(33), 'dïesel', 'R 410A']) {
+      expect(constraintsOn(Dto, { activityType }, 'activityType'), activityType).toContain('matches');
+    }
+    expect(constraintsOn(Dto, { activityType: 7 }, 'activityType')).toContain('isString');
+  });
+});

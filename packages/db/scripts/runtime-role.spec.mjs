@@ -10,6 +10,7 @@ import {
   INTEGRITY_CHECKS,
   INTEGRITY_TRIGGERS,
   checkIntegrityTriggers,
+  expectedTriggerFunctionBodies,
   factorLibraryReport,
 } from './runtime-role.mjs';
 
@@ -86,18 +87,33 @@ describe('runtime URLs and passwords', () => {
 });
 
 describe('checkIntegrityTriggers (LP3-03)', () => {
-  const allTriggers = INTEGRITY_TRIGGERS.map(([table, trigger]) => ({ table, trigger, enabled: 'A' }));
+  const md5 = (t) => createHash('md5').update(t, 'utf8').digest('hex');
+  const bodies = new Map(INTEGRITY_TRIGGERS.map((t) => [t.fn, `\nBEGIN /* ${t.fn} */ END\n`]));
+  const allTriggers = INTEGRITY_TRIGGERS.map((t) => ({
+    table: t.table, trigger: t.trigger, enabled: 'A', type: t.type, fnSchema: 'public', fn: t.fn, bodyMd5: md5(bodies.get(t.fn)),
+  }));
   const allChecks = INTEGRITY_CHECKS.map(([table, name]) => ({ table, name, validated: true }));
   const fake = (triggers, constraints) => async (sql) => (sql.includes('pg_trigger') ? triggers : constraints);
+  const check = (triggers, constraints = allChecks) => checkIntegrityTriggers(fake(triggers, constraints), bodies);
+  const tweak = (name, change) => allTriggers.map((t) => (t.trigger === name ? { ...t, ...change } : t));
 
-  it('passes when every trigger is ENABLE ALWAYS and every CHECK is valid', async () => {
-    expect(await checkIntegrityTriggers(fake(allTriggers, allChecks))).toEqual([]);
+  it('passes when every trigger is ENABLE ALWAYS, on its events, running its own unaltered function', async () => {
+    expect(await check(allTriggers)).toEqual([]);
   });
 
   it('covers K5, the slot rule and all four events on all three factor tables', () => {
     expect(INTEGRITY_TRIGGERS).toHaveLength(2 + 3 * 4);
-    expect(INTEGRITY_TRIGGERS.map(([, t]) => t)).toContain('activity_records_snapshot_immutable');
-    expect(INTEGRITY_TRIGGERS.map(([, t]) => t)).toContain('unit_conversions_before_truncate');
+    expect(INTEGRITY_TRIGGERS.map((t) => t.trigger)).toContain('activity_records_snapshot_immutable');
+    expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === 'unit_conversions_before_truncate')).toMatchObject({
+      fn: 'factor_tables_before_truncate',
+      type: 2 | 32,
+    });
+  });
+
+  it('finds every trigger function in the migrations, as the database must hold it', () => {
+    const real = expectedTriggerFunctionBodies();
+    expect([...real.keys()].sort()).toEqual([...new Set(INTEGRITY_TRIGGERS.map((t) => t.fn))].sort());
+    expect(real.get('activity_records_snapshot_immutable')).toContain("ERRCODE = 'TA001'");
   });
 
   it('reports a missing trigger, one merely ENABLEd (skipped in replica mode), and a disabled one', async () => {
@@ -110,11 +126,22 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
             ? { ...t, enabled: 'D' }
             : t,
       );
-    const problems = await checkIntegrityTriggers(fake(triggers, allChecks));
-    expect(problems).toEqual([
+    expect(await check(triggers)).toEqual([
       "trigger activity_records_snapshot_immutable on activity_records is not ENABLE ALWAYS (tgenabled = 'O')",
       'trigger activity_records_slot_kind on activity_records is missing',
       "trigger emission_factors_before_update on emission_factors is not ENABLE ALWAYS (tgenabled = 'D')",
+    ]);
+  });
+
+  it('reports a trigger re-created on fewer events, pointed elsewhere, or running an emptied function', async () => {
+    expect(await check(tweak('activity_records_slot_kind', { type: 2 | 1 | 4 }))).toEqual([
+      'trigger activity_records_slot_kind on activity_records fires on the wrong events (tgtype 7, expected 23)',
+    ]);
+    expect(await check(tweak('emission_factors_before_delete', { fn: 'factor_rows_before_insert' }))).toEqual([
+      'trigger emission_factors_before_delete on emission_factors runs public.factor_rows_before_insert, not public.factor_rows_before_delete',
+    ]);
+    expect(await check(tweak('activity_records_snapshot_immutable', { bodyMd5: md5('\nBEGIN RETURN NEW; END\n') }))).toEqual([
+      'function public.activity_records_snapshot_immutable() differs from its migration\'s definition',
     ]);
   });
 
@@ -122,7 +149,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     const checks = allChecks
       .filter((c) => c.name !== 'factor_releases_publisher_check')
       .map((c) => (c.name === 'emission_factors_gas_check' ? { ...c, validated: false } : c));
-    expect(await checkIntegrityTriggers(fake(allTriggers, checks))).toEqual([
+    expect(await check(allTriggers, checks)).toEqual([
       'CHECK factor_releases_publisher_check on factor_releases is missing',
       'CHECK emission_factors_gas_check on emission_factors is NOT VALID',
     ]);

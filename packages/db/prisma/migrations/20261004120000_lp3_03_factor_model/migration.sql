@@ -138,7 +138,7 @@ SELECT gen_random_uuid(),
        v."version",
        split_part(v."version", '.', 1)::int * 100 + split_part(v."version", '.', 2)::int,
        'placeholder',
-       'Unsourced prototype values. Calculated only where the API runs with ALLOW_PLACEHOLDER_FACTORS=true (local development, CI); refused everywhere else (LP3-03, owner decision K3).'
+       'Unsourced prototype values. Calculated only where the API runs with ALLOW_PLACEHOLDER_FACTORS=true (local development, CI); refused everywhere else (LP3-03, owner decision K3). Their dimensions (gas coverage, data year, calorific basis) are assumed, not sourced.'
   FROM (SELECT DISTINCT "version" FROM "emission_factors" WHERE "version" NOT LIKE '0000-%') v;
 
 INSERT INTO "factor_releases" ("id", "publisher", "title", "edition", "ordinal", "status", "notes")
@@ -264,10 +264,11 @@ ALTER TABLE "emission_factors"
     CHECK ("activity_type" ~ '^[A-Za-z0-9_-]{1,32}$'),
   ADD CONSTRAINT "emission_factors_gas_check"
     CHECK ("gas" IN ('CO2e', 'CO2', 'CH4', 'N2O', 'CO2_biogenic')),
-  -- Coverage describes a CO2e total; a per-gas row carries none.
+  -- Coverage describes a CO2e total; a per-gas row carries none. `IS NOT
+  -- NULL` is spelled out: `NULL IN (…)` is NULL, which a CHECK lets through.
   ADD CONSTRAINT "emission_factors_gas_coverage_check"
     CHECK (CASE WHEN "gas" = 'CO2e'
-                THEN "gas_coverage" IN ('all_ghg', 'co2_only')
+                THEN "gas_coverage" IS NOT NULL AND "gas_coverage" IN ('all_ghg', 'co2_only')
                 ELSE "gas_coverage" IS NULL
            END),
   ADD CONSTRAINT "emission_factors_calorific_basis_check"
@@ -322,10 +323,12 @@ CREATE UNIQUE INDEX "activity_records_reporting_entity_period_category_key"
 -- service-role client. It tests OLD's status, so a status-only transition
 -- (submit, approve, the period lock's bulk lock/unlock, void) and the anomaly
 -- fields pass, and a record cannot be moved back to draft and edited in one
--- statement. `location_id` may only become NULL: that is its foreign key's
--- ON DELETE SET NULL, not an edit. The status list is pinned to
--- EDITABLE_STATUSES by a parity test. OLD/NEW only — no query, no SECURITY
--- DEFINER.
+-- statement. Nor in two: a record re-enters an editable status only the way
+-- the API sends it there — `rejected` from `submitted` or `under_review` — and
+-- never `draft`, which is a create-time status only. `location_id` may only
+-- become NULL, and only inside its foreign key's ON DELETE SET NULL (a nested
+-- trigger, depth > 1), never by a direct edit. The status lists are pinned to
+-- the API by parity tests. OLD/NEW only — no query, no SECURITY DEFINER.
 CREATE FUNCTION "public"."activity_records_snapshot_immutable"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
@@ -342,11 +345,19 @@ BEGIN
     OR NEW."reporting_period" IS DISTINCT FROM OLD."reporting_period"
     OR NEW."period_value" IS DISTINCT FROM OLD."period_value"
     OR NEW."subsidiary_id" IS DISTINCT FROM OLD."subsidiary_id"
-    OR (NEW."location_id" IS DISTINCT FROM OLD."location_id" AND NEW."location_id" IS NOT NULL)
+    OR (NEW."location_id" IS DISTINCT FROM OLD."location_id"
+        AND (NEW."location_id" IS NOT NULL OR pg_catalog.pg_trigger_depth() < 2))
   ) THEN
     RAISE EXCEPTION USING
       ERRCODE = 'TA001',
       MESSAGE = format('activity record %s is %s: its calculation and the inputs it was computed from cannot change', OLD."id", OLD."status");
+  END IF;
+  IF NEW."status" IS DISTINCT FROM OLD."status"
+     AND NEW."status" IN ('draft', 'rejected')
+     AND NOT (NEW."status" = 'rejected' AND OLD."status" IN ('submitted', 'under_review')) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA001',
+      MESSAGE = format('activity record %s cannot move from %s to %s: a record becomes editable again only by being rejected in review', OLD."id", OLD."status", NEW."status");
   END IF;
   RETURN NEW;
 END
@@ -452,9 +463,10 @@ END
 $fn$;
 
 -- The one change a release accepts: withdrawal — its status to `withdrawn`
--- with who, when and why (the CHECK above requires all three), every other
--- column unchanged. Compared as JSON minus those four columns, so a column a
--- later migration adds is frozen too.
+-- with who and why (the CHECK above requires them), every other column
+-- unchanged. Compared as JSON minus those four columns, so a column a later
+-- migration adds is frozen too. `withdrawn_at` is the database's clock, never
+-- the caller's: a withdrawal cannot be backdated.
 CREATE FUNCTION "public"."factor_releases_before_update"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
@@ -469,6 +481,7 @@ BEGIN
       ERRCODE = 'TA010',
       MESSAGE = format('factor release %s is append-only: the one change it accepts is its withdrawal', OLD."id");
   END IF;
+  NEW."withdrawn_at" := pg_catalog.now();
   RETURN NEW;
 END
 $fn$;
@@ -492,15 +505,28 @@ $fn$;
 -- A factor or conversion joins a live release only, and `unspecified` (the
 -- legacy untyped record's lookup) never under an authoritative one — the
 -- release's status cannot later become authoritative, so checking at insert
--- is enough.
+-- is enough. The release row is share-locked, so a withdrawal cannot land
+-- between this check and the insert. A factor's `version` is its release's
+-- edition: the label `GET /factors` shows and the one a snapshot records.
 CREATE FUNCTION "public"."factor_rows_before_insert"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
 AS $fn$
 DECLARE
   release_status text;
+  release_edition text;
 BEGIN
-  SELECT r."status" INTO release_status FROM "public"."factor_releases" r WHERE r."id" = NEW."release_id";
+  SELECT r."status", r."edition" INTO release_status, release_edition
+    FROM "public"."factor_releases" r WHERE r."id" = NEW."release_id" FOR SHARE;
+  -- Nested, not `AND`: PL/pgSQL evaluates an expression whole, and a
+  -- conversion row has no `version` column to read.
+  IF TG_TABLE_NAME = 'emission_factors' THEN
+    IF NEW."version" IS DISTINCT FROM release_edition THEN
+      RAISE EXCEPTION USING
+        ERRCODE = 'TA012',
+        MESSAGE = format('a factor''s version must be its release''s edition (%s)', release_edition);
+    END IF;
+  END IF;
   IF release_status = 'withdrawn' THEN
     RAISE EXCEPTION USING
       ERRCODE = 'TA012',
@@ -646,6 +672,10 @@ BEGIN
     "id", "publisher", "title", "edition", "ordinal", "status", "source_url", "licence",
     "published_at", "gwp_set", "reviewed_at", "withdrawn_at", "withdrawal_reason", "created_at"
   ) ON "factor_releases" TO authenticated;
+  -- The service role keeps the row verbs the seed's and e2e's loads use; the
+  -- table-level ones it inherits by default privilege it has no use for here.
+  -- (TRUNCATE is refused by trigger too; this is the second lock.)
+  REVOKE TRUNCATE, TRIGGER, REFERENCES ON "factor_releases", "unit_conversions", "emission_factors" FROM service_role;
 END
 $$;
 

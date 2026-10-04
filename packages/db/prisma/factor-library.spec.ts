@@ -21,9 +21,11 @@ import {
   GWP_SETS,
   SCOPE2_METHODS,
   UNSPECIFIED_ACTIVITY_TYPE,
+  directCalorificBasisFor,
   identityKey,
   recordActivityTypesFor,
   resolveFactorPath,
+  scope2MethodFor,
   unitDimensionOf,
   type Category,
   type FactorStatus,
@@ -103,6 +105,21 @@ describe('the migration and schema agree with the contract', () => {
     expect(block).toContain(`ELSE '${UNSPECIFIED_ACTIVITY_TYPE}'`);
   });
 
+  it('backfills the calorific basis and the Scope 2 method as the contract derives them', () => {
+    // Gross exactly for a fuel-combustion category quoted per kWh
+    // (`directCalorificBasisFor`); location-based exactly for Scope 2
+    // (`scope2MethodFor`) — or the seed would add a second, differently keyed
+    // row beside each backfilled one.
+    const basis = /"calorific_basis" = CASE\s*WHEN f\."category" IN \(([^)]*)\)\s*AND f\."normalized_unit" = 'kWh' THEN 'gross'/.exec(migration);
+    const fuelCategories = [...(basis?.[1] ?? '').matchAll(/'([^']*)'/g)].map((m) => m[1]);
+    for (const category of Object.keys(CATEGORY_SCOPE_MAP)) {
+      expect(fuelCategories.includes(category), category).toBe(directCalorificBasisFor(category, 'kWh') === 'gross');
+      expect(directCalorificBasisFor(category, 'litres'), category).toBe('not_applicable');
+      expect(scope2MethodFor(category) !== 'not_applicable', category).toBe(CATEGORY_SCOPE_MAP[category as Category] === 2);
+    }
+    expect(migration).toContain(`"scope2_method" = CASE WHEN f."scope" = 2 THEN 'location' ELSE 'not_applicable' END`);
+  });
+
   it('keeps the activity-type token shape of the API DTO on records, factors and conversions', () => {
     const shape = `'^[A-Za-z0-9_-]{1,32}$'`;
     expect(migration.split(`"activity_type" ~ ${shape}`)).toHaveLength(4);
@@ -180,6 +197,10 @@ describe('the seed library', () => {
       });
     }
     expect(NATURAL_GAS_M3_BASIS).toContain('NOT a sourced factor');
+    // The literal, not the constant compared with itself: K4 moves the
+    // prototype's number into a row, it does not change it.
+    expect(NATURAL_GAS_M3_MULTIPLIER).toBe(11.36);
+    expect(SEED_FACTORS.every((f) => f.gasCoverage === 'all_ghg' && f.gas === 'CO2e')).toBe(true);
   });
 
   it('resolves a metered m³ Natural Gas record through the placeholder conversion, and refuses it without placeholders', () => {

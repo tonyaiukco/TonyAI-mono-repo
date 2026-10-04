@@ -50,9 +50,8 @@ export function isPlainlyLocalUrl(raw: string): boolean {
 
 /**
  * The policy for this environment, or an error naming why the flag may not
- * be on here: it is refused against a database or Supabase project that is
- * not plainly local, and against an unset `DATABASE_URL` (nothing then shows
- * the database is local).
+ * be on here: it is refused unless BOTH `DATABASE_URL` and `SUPABASE_URL` are
+ * set and plainly local (an unset one shows nothing about where it points).
  */
 export function factorPolicyFrom(env: Readonly<Record<string, string | undefined>>): FactorPolicy {
   const allowPlaceholders = parseAllowPlaceholders(env[ALLOW_PLACEHOLDER_FACTORS]);
@@ -64,8 +63,10 @@ export function factorPolicyFrom(env: Readonly<Record<string, string | undefined
           'Placeholder factors are for local development and CI only (LP3-03, K3); remove the flag.',
       );
     }
+    // Required as well as local: an HS256 deployment with a database sidecar on
+    // localhost would otherwise pass on the database URL alone.
     const supabase = env.SUPABASE_URL;
-    if (supabase !== undefined && supabase !== '' && !isPlainlyLocalUrl(supabase)) {
+    if (!supabase || !isPlainlyLocalUrl(supabase)) {
       throw new Error(
         `${ALLOW_PLACEHOLDER_FACTORS}=true is refused: SUPABASE_URL is not a local project. ` +
           'Placeholder factors are for local development and CI only (LP3-03, K3); remove the flag.',

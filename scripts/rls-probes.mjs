@@ -795,13 +795,17 @@ async function main() {
 
       for (const table of FACTOR_TABLES) {
         const { id, patch } = rows[table];
+        // Refused by PRIVILEGE (42501) — the body is deliberately incomplete, so
+        // a NOT NULL refusal must not be mistaken for the grant holding.
+        const denied = async (res) => !res.ok && /42501/.test(await res.text());
         const inserted = await write(ANON, adminToken, 'POST', table, '', { ...patch, id: '99999999-0000-0000-0000-00000000fa01' });
         const patched = await write(ANON, adminToken, 'PATCH', table, `?id=eq.${id}`, patch);
         const deleted = await write(ANON, adminToken, 'DELETE', table, `?id=eq.${id}`);
         const [ghost] = await svcRead(`${table}?select=id&id=eq.99999999-0000-0000-0000-00000000fa01`);
+        const refusedAll = (await denied(inserted)) && (await denied(patched)) && (await denied(deleted));
         check(
-          `${table}: an authenticated client cannot insert, update or delete`,
-          !inserted.ok && !patched.ok && !deleted.ok && ghost === undefined && (await unchanged(table)),
+          `${table}: an authenticated client cannot insert, update or delete (42501)`,
+          refusedAll && ghost === undefined && (await unchanged(table)),
           `insert=${inserted.status}, update=${patched.status}, delete=${deleted.status}`,
         );
 

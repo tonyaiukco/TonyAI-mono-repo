@@ -166,7 +166,9 @@ export function recordTriggerCode(e: unknown): 'TA001' | 'TA002' | null {
     return code === 'TA001' || code === 'TA002' ? code : null;
   }
   if (e instanceof Prisma.PrismaClientUnknownRequestError) {
-    const match = /\bcode: "(TA00[12])"/.exec(e.message);
+    // Anchored on the engine's own framing, so text inside the message —
+    // never caller-controlled today — cannot be read as a code.
+    const match = /PostgresError \{ code: "(TA00[12])"/.exec(e.message);
     return match ? (match[1] as 'TA001' | 'TA002') : null;
   }
   return null;

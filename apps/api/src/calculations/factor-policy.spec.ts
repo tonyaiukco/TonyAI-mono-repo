@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ALLOW_PLACEHOLDER_FACTORS,
   factorPolicyFrom,
@@ -9,6 +9,7 @@ import {
 } from './factor-policy';
 
 const LOCAL_DB = 'postgresql://tonyai_runtime:pw@127.0.0.1:54322/postgres';
+const LOCAL_SUPABASE = 'http://127.0.0.1:54321';
 
 describe('parseAllowPlaceholders — only the exact string `true` is on (K3)', () => {
   it.each([
@@ -65,16 +66,9 @@ describe('factorPolicyFrom', () => {
     expect(Object.isFrozen(policy)).toBe(true);
   });
 
-  it('is on for a local database and a local (or unset) Supabase project', () => {
-    expect(factorPolicyFrom({ [ALLOW_PLACEHOLDER_FACTORS]: 'true', DATABASE_URL: LOCAL_DB })).toEqual({
-      allowPlaceholders: true,
-    });
+  it('is on for a local database and a local Supabase project', () => {
     expect(
-      factorPolicyFrom({
-        [ALLOW_PLACEHOLDER_FACTORS]: 'true',
-        DATABASE_URL: LOCAL_DB,
-        SUPABASE_URL: 'http://127.0.0.1:54321',
-      }),
+      factorPolicyFrom({ [ALLOW_PLACEHOLDER_FACTORS]: 'true', DATABASE_URL: LOCAL_DB, SUPABASE_URL: LOCAL_SUPABASE }),
     ).toEqual({ allowPlaceholders: true });
   });
 
@@ -85,20 +79,36 @@ describe('factorPolicyFrom', () => {
       undefined,
       '',
     ]) {
-      expect(() => factorPolicyFrom({ [ALLOW_PLACEHOLDER_FACTORS]: 'true', DATABASE_URL })).toThrow(
+      expect(() => factorPolicyFrom({ [ALLOW_PLACEHOLDER_FACTORS]: 'true', DATABASE_URL, SUPABASE_URL: LOCAL_SUPABASE })).toThrow(
         /ALLOW_PLACEHOLDER_FACTORS=true is refused: DATABASE_URL/,
       );
     }
   });
 
-  it('refuses the flag against a remote Supabase project', () => {
-    expect(() =>
-      factorPolicyFrom({
-        [ALLOW_PLACEHOLDER_FACTORS]: 'true',
-        DATABASE_URL: LOCAL_DB,
-        SUPABASE_URL: 'https://abc.supabase.co',
-      }),
-    ).toThrow(/SUPABASE_URL is not a local project/);
+  it('refuses the flag against a remote, or an unnamed, Supabase project', () => {
+    for (const SUPABASE_URL of ['https://abc.supabase.co', undefined, '']) {
+      expect(() =>
+        factorPolicyFrom({ [ALLOW_PLACEHOLDER_FACTORS]: 'true', DATABASE_URL: LOCAL_DB, SUPABASE_URL }),
+      ).toThrow(/SUPABASE_URL is not a local project/);
+    }
+  });
+});
+
+describe('bootFactorPolicy — read once, at boot', () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    process.env = { ...saved };
+    vi.resetModules();
+  });
+
+  it('answers every later call with the first answer, whatever the environment says since', async () => {
+    vi.resetModules();
+    process.env = { ...saved, ALLOW_PLACEHOLDER_FACTORS: 'false', DATABASE_URL: LOCAL_DB, SUPABASE_URL: LOCAL_SUPABASE };
+    const { bootFactorPolicy } = await import('./factor-policy');
+    const first = bootFactorPolicy();
+    process.env.ALLOW_PLACEHOLDER_FACTORS = 'true';
+    expect(bootFactorPolicy()).toBe(first);
+    expect(first).toEqual({ allowPlaceholders: false });
   });
 });
 
@@ -116,10 +126,14 @@ describe('the flag stays out of deployed configuration', () => {
     });
   }
 
-  it('is not named anywhere under infra/', () => {
-    const offenders = filesUnder(join(repoRoot, 'infra')).filter((file) =>
-      readFileSync(file, 'utf8').includes(ALLOW_PLACEHOLDER_FACTORS),
-    );
+  it('is not named under infra/, in an image definition or in a deployment workflow', () => {
+    const deployed = [
+      ...filesUnder(join(repoRoot, 'infra')),
+      ...['apps/api/Dockerfile', 'apps/web/Dockerfile', '.github/workflows/candidate.yml', '.github/workflows/deploy-staging.yml'].map(
+        (f) => join(repoRoot, f),
+      ),
+    ];
+    const offenders = deployed.filter((file) => readFileSync(file, 'utf8').includes(ALLOW_PLACEHOLDER_FACTORS));
     expect(offenders.map((f) => relative(repoRoot, f))).toEqual([]);
   });
 });

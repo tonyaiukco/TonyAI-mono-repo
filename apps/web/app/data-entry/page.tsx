@@ -59,6 +59,7 @@ import { PreviousSubmissions } from "@/components/data-entry/previous-submission
 import {
   ACTIVITY_UNITS,
   appliesUnitConversion,
+  CATEGORY_ACTIVITY_TYPES,
   CATEGORIES,
   GEOGRAPHY_LABELS,
   DEFAULT_REPORTING_YEAR,
@@ -73,6 +74,7 @@ import {
   REPORTING_YEARS,
   unitSymbol,
   unitsForCategory,
+  UNSPECIFIED_ACTIVITY_TYPE,
   WHOLE_COMPANY_ENTITY_LABEL,
 } from "@/lib/types";
 import { isPeriodLockedFor } from "@/lib/bulk-submit-view";
@@ -1212,8 +1214,10 @@ function DataEntryPageInner() {
                         <p className="mt-2 text-xs text-muted-foreground">
                           m³ is converted to kWh by the factor library&rsquo;s
                           placeholder conversion, &times;11.36 — a prototype
-                          assumption with no cited source and no stated reference
-                          conditions, refused wherever placeholder factors are. A
+                          assumption with no cited source, no stated calorific basis
+                          (gross is reconstructed, not stated) and no stated
+                          reference conditions, refused wherever placeholder
+                          factors are. A
                           sourced conversion replaces it with the authoritative
                           factor library.
                         </p>
@@ -1569,7 +1573,7 @@ function PreviewCard({
                 value={`${numberFmt.format(preview.normalizedValue)} ${unitSymbol(preview.normalizedUnit)}`}
               />
               {isProvenanceSnapshot(preview) && (
-                <Row label="Activity" value={preview.activityType} />
+                <Row label="Activity" value={activityLabel(preview.category, preview.activityType)} />
               )}
               <Row label="Methodology" value={preview.methodology} />
               <Row
@@ -1605,6 +1609,19 @@ function PreviewCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * An activity type as people read it ("Diesel", "Grid electricity"), from the
+ * category's own list; `unspecified` is the lookup of a record entered before
+ * fuels were tracked.
+ */
+function activityLabel(category: string, activityType: string): string {
+  if (activityType === UNSPECIFIED_ACTIVITY_TYPE) return "Not specified (entered before fuels were tracked)";
+  return (
+    CATEGORY_ACTIVITY_TYPES[category as Category]?.types.find((t) => t.value === activityType)?.label ??
+    activityType
   );
 }
 
