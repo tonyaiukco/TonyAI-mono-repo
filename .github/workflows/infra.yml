@@ -26,7 +26,7 @@ jobs:
       - name: Install the pinned workflow parser
         run: |
           python3 -m venv "$RUNNER_TEMP/infra-tests"
-          "$RUNNER_TEMP/infra-tests/bin/python" -m pip install --require-hashes -r infra/tests/requirements.txt
+          "$RUNNER_TEMP/infra-tests/bin/python" -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
           echo "$RUNNER_TEMP/infra-tests/bin" >> "$GITHUB_PATH"
       - name: Infrastructure unit and failure-path tests
         run: python3 -m unittest discover -s infra/tests -v

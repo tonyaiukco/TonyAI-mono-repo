@@ -117,3 +117,43 @@ override_resource {
   target          = azapi_resource.join_role
   values          = { output = { properties = { principalId = "00000000-0000-0000-0000-000000000004", defaultDomain = "example.germanywestcentral.azurecontainerapps.io", loginServer = "tonyaistaging.azurecr.io" } }, id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000099" }
 }
+
+run "scheduled_verification_operator_contract" {
+  command = plan
+  variables {
+    config = {
+      subscription_id       = "00000000-0000-0000-0000-000000000001"
+      tenant_id             = "00000000-0000-0000-0000-000000000002"
+      environment           = "staging"
+      resource_group        = "tonyai-staging"
+      prefix                = "tonyai"
+      registry_name         = "tonyaistaging"
+      vault_name            = "tonyai-staging-kv"
+      repository            = "owner/repo"
+      release_sha           = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      owner_object_id       = "00000000-0000-0000-0000-000000000003"
+      deployer_object_id    = "00000000-0000-0000-0000-000000000005"
+      runtime_secrets_ready = true
+      apps_ready            = true
+      monitoring = {
+        operator_name           = "Test Operator", operator_email = "operator@example.invalid"
+        api_digest              = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        supabase_project_ref    = "abcdefghijklmnopqrst"
+        database_secret_version = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        backend_secret_version  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  }
+  assert {
+    condition     = azapi_resource.storage_verify["enabled"].body.properties.configuration.scheduleTriggerConfig.cronExpression == "0 2 * * *" && azapi_resource.storage_verify["enabled"].body.properties.configuration.replicaRetryLimit == 0 && azapi_resource.storage_verify["enabled"].body.properties.template.containers[0].command[1] == "dist/health-storage-verify.cli.js"
+    error_message = "Daily read-only verification must use the bounded private-output wrapper."
+  }
+  assert {
+    condition     = azapi_resource.operator["enabled"].body.properties.emailReceivers[0].emailAddress == "operator@example.invalid" && azapi_resource.storage_verify_alert["enabled"].body.properties.enabled && strcontains(azapi_resource.storage_verify_alert["enabled"].body.properties.criteria.allOf[0].query, "completed == 0 or failures > 0")
+    error_message = "Verification failures and missing results must alert the named operator."
+  }
+  assert {
+    condition     = alltrue([for secret in azapi_resource.storage_verify["enabled"].body.properties.configuration.secrets : !can(secret.value) && strcontains(secret.keyVaultUrl, "/secrets/")])
+    error_message = "Job secrets must be exact Key Vault references, never values."
+  }
+}

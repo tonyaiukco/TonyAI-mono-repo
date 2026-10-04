@@ -11,13 +11,15 @@ variables {
     default_domain  = "example.germanywestcentral.azurecontainerapps.io"
   }
   release = {
-    source_sha              = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    release_id              = "r001"
-    supabase_project_ref    = "abcdefghijklmnopqrst"
-    api_digest              = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    web_digest              = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    database_secret_version = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    backend_secret_version  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    release_id                     = "r001"
+    supabase_project_ref           = "abcdefghijklmnopqrst"
+    api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    storage_cleanup_hold           = false
+    storage_sweep_interval_seconds = 300
   }
 }
 run "application_security_contract" {
@@ -58,14 +60,28 @@ run "mutable_image_rejected" {
   command = plan
   variables {
     release = {
-      source_sha              = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      release_id              = "r001"
-      supabase_project_ref    = "abcdefghijklmnopqrst"
-      api_digest              = "latest"
-      web_digest              = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-      database_secret_version = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      backend_secret_version  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "latest"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
     }
   }
   expect_failures = [var.release]
+}
+
+run "readiness_and_storage_settings" {
+  command = plan
+  assert {
+    condition     = { for probe in azapi_resource.app["api"].body.properties.template.containers[0].probes : probe.type => probe.httpGet.path } == { Startup = "/api/v1/health", Liveness = "/api/v1/health", Readiness = "/api/v1/health/ready" }
+    error_message = "Only readiness may depend on DB and Storage."
+  }
+  assert {
+    condition     = { for item in azapi_resource.app["api"].body.properties.template.containers[0].env : item.name => try(item.value, "") }["STORAGE_CLEANUP_HOLD"] == "0" && { for item in azapi_resource.app["api"].body.properties.template.containers[0].env : item.name => try(item.value, "") }["STORAGE_SWEEP_INTERVAL_SECONDS"] == "300"
+    error_message = "Storage settings must remain plain release inputs."
+  }
 }

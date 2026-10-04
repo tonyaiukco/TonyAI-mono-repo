@@ -31,6 +31,7 @@ invalidate least-privilege claims despite correct template assignments.
 
 ```bash
 curl --fail --silent --show-error "$API_ORIGIN/api/v1/health"
+curl --fail --silent --show-error --max-time 5 "$API_ORIGIN/api/v1/health/ready"
 curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' "$WEB_ORIGIN/login"
 curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' "$API_ORIGIN/api/v1/subsidiaries"
 curl --silent --show-error -D - -o /dev/null -X OPTIONS "$API_ORIGIN/api/v1/subsidiaries" -H "Origin: $WEB_ORIGIN" -H 'Access-Control-Request-Method: GET'
@@ -83,6 +84,9 @@ python3 infra/scripts/cloud_ops.py buckets --vault "$VAULT_NAME" --project-ref "
 
 Run [rotation/recovery](05-rotation.md) when credentials change or a vault is recovered.
 
+See [LP2-03 operational acceptance](06-operations.md) for bounded dependency loss,
+synthetic flows, named-operator alerts, rotation and rollback rehearsal.
+
 Only mark LP2-01 DONE after its actual foundation/recreation evidence closes.
 The pending cloud containment work, exact-image startup/login/export smoke
 (LP2-02), authenticated flow, DB-loss readiness and rollback rehearsal (LP2-03)
@@ -109,8 +113,34 @@ A failed readback means deployment state is uncertain, not a successful rollback
 Supabase database backups exclude Storage file bytes. Protect `evidence` **and**
 `import-sources` separately, including object key, size and SHA-256 inventory,
 and retain bucket policies, Auth settings, identities/RBAC, image digests and
-secure secret recovery/rotation procedures. Freeze evidence reclamation during
-backup/restore reconciliation so restored references retain their objects.
+secure secret recovery/rotation procedures. Use this order for backup/restore; the hold is per process:
+
+1. Stop tenant writes for a consistent backup/restore window. Create a new release
+   manifest with `release.storage_cleanup_hold=true`; deploy it through runbook 03.
+   Verify `STORAGE_CLEANUP_HOLD=1` on **every API process/active revision** and any
+   manually running sweeper. A new revision alone is insufficient while old replicas
+   are draining: wait until no old unheld process remains. Set the hold before backup
+   begins and keep it throughout DB and both-bucket restoration.
+2. In the private shell running the matching API image/tool, also run
+   `export STORAGE_CLEANUP_HOLD=1`. After the DB and bytes are restored, run:
+   `node dist/storage/reconcile.cli.js --forget-uploads --allow-remote`.
+   Save its report privately. Restored upload intents can otherwise delete bytes
+   committed in the discarded history after the hold lifts.
+3. With that shell hold still set, run
+   `node dist/storage/reconcile.cli.js --verify --allow-remote` and retain the report.
+   Exit 1 requires investigation; exit 2 means the check failed. Any `truncated:true`
+   makes coverage incomplete, even on exit 0; do not claim a complete restore.
+4. Read both reports, reconcile every missing/hash-mismatched file and record owner
+   sign-off. Only then deploy a new manifest with `storage_cleanup_hold=false`
+   using owner-run `deploy-apps.sh --ack-clear-storage-hold` (plus backend/inputs),
+   verify all processes, clear the shell hold, and resume writes. Never reclaim
+   orphans as part of the restore procedure.
+
+`storage_sweep_interval_seconds` is a required plain release setting (1–86400;
+normally 300). Both it and `storage_cleanup_hold` must be explicit, including in
+older manifests selected for rollback.
+The scheduled verification job always keeps its own hold set; it never removes
+objects and never replaces the private post-restore report review.
 
 The owner must set RPO/RTO and backup retention; LP5-03 proves restoration into an
 isolated environment: database/audit counts, immutable factor snapshots, links,

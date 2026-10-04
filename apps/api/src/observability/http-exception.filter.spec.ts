@@ -1,18 +1,21 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { BadRequestException, HttpStatus } from '@nestjs/common';
 import { HttpExceptionFilter } from './http-exception.filter';
+import { captureException } from './sentry';
+vi.mock('./sentry', () => ({ captureException: vi.fn() }));
+afterEach(() => vi.clearAllMocks());
 
 /**
  * CI runs typecheck + build + `pnpm test` only — E2E is deliberately out of the
  * turbo pipeline until Phase 2. So anything covered by E2E alone has no CI
  * gate, and deleting the 413 branch passed every unit test.
  */
-function run(exception: unknown) {
+function run(exception: unknown, url = '/api/v1/subsidiaries') {
   const json = vi.fn();
   const status = vi.fn().mockReturnValue({ json });
   const host = {
     switchToHttp: () => ({
-      getRequest: () => ({ method: 'POST', url: '/api/v1/subsidiaries' }),
+      getRequest: () => ({ method: 'POST', url }),
       getResponse: () => ({ status, headersSent: false }),
     }),
   };
@@ -49,4 +52,11 @@ describe('HttpExceptionFilter — oversized bodies', () => {
     const { status } = run(new BadRequestException('nope'));
     expect(status).toHaveBeenCalledWith(HttpStatus.BAD_REQUEST);
   });
+});
+
+ it('removes query data from error logs and Sentry path tags', () => {
+  const error = new Error('Synthetic failure');
+  const { logger } = run(error, '/api/v1/evidence?subsidiaryId=private-marker');
+  expect(JSON.stringify(logger.event.mock.calls)).not.toContain('private-marker');
+  expect(captureException).toHaveBeenCalledWith(error, expect.objectContaining({ path: '/api/v1/evidence' }));
 });

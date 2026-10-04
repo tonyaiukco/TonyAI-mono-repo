@@ -10,11 +10,21 @@ work_dir=$(mktemp -d)
 api_id=''
 web_id=''
 cleanup() {
+  result=$?
+  if [[ "$result" -ne 0 ]]; then
+    echo '::group::CI-only image smoke diagnostics'
+    # Only this loopback fixture stack: never use this script for tenant data.
+    [[ -z "$api_id" ]] || docker logs --tail 100 "$api_id" 2>&1 || true
+    [[ -z "$web_id" ]] || docker logs --tail 100 "$web_id" 2>&1 || true
+    echo '::endgroup::'
+  fi
   [[ -z "$web_id" ]] || docker rm -f "$web_id" >/dev/null
   [[ -z "$api_id" ]] || docker rm -f "$api_id" >/dev/null
   rm -rf "$work_dir"
+  exit "$result"
 }
 trap cleanup EXIT
+echo 'Smoke: start API and web images'
 # Linux host networking gives both images the same loopback-only CI services.
 export PORT=3001 WEB_ORIGIN=http://localhost:3000 ALLOW_INSECURE_LOCAL_AUTH=true
 api_id=$(docker run -d --network host --shm-size=1g --init \
@@ -22,7 +32,8 @@ api_id=$(docker run -d --network host --shm-size=1g --init \
   -e SUPABASE_SERVICE_ROLE_KEY -e SUPABASE_JWT_SECRET -e SUPABASE_JWT_SCHEME \
   -e ALLOW_INSECURE_LOCAL_AUTH "$API_IMAGE")
 web_id=$(docker run -d --network host "$WEB_IMAGE")
-for url in http://localhost:3001/api/v1/health http://localhost:3000/login; do
+echo 'Smoke: liveness, readiness and login'
+for url in http://localhost:3001/api/v1/health http://localhost:3001/api/v1/health/ready http://localhost:3000/login; do
   ready=false
   for attempt in {1..60}; do
     if curl --fail --silent --output /dev/null "$url"; then ready=true; break; fi
@@ -33,6 +44,7 @@ done
 # Inspect immutable local image IDs, not tags, in the evidence.
 docker inspect --format '{{.Image}}' "$api_id" "$web_id"
 docker cp "$web_id:/app/apps/web/.next/static" "$work_dir/static"
+echo 'Smoke: browser asset secret scan'
 python3 infra/scripts/scan_browser_assets.py "$work_dir/static"
 export SMOKE_PUBLIC_KEY="$NEXT_PUBLIC_SUPABASE_ANON_KEY"
 export SMOKE_PASSWORD_1='TonyAI!2026'
@@ -56,4 +68,5 @@ try {
 }
 JS
 )
+echo 'Smoke: authenticated browser and API exports'
 node infra/scripts/image-smoke.mjs

@@ -134,3 +134,37 @@ jobs:
           API_IMAGE: tonyai-api:ci
           WEB_IMAGE: tonyai-web:ci
         run: bash infra/scripts/local-image-smoke.sh
+
+  migration-diff:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: tonyai_shadow
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:ci-only@127.0.0.1:5432/postgres
+      DIRECT_URL: postgresql://postgres:ci-only@127.0.0.1:5432/postgres
+      MIGRATION_SHADOW_URL: postgresql://postgres:ci-only@127.0.0.1:5432/tonyai_shadow
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install pinned Prisma
+        run: pnpm install --frozen-lockfile
+      - name: Create policy target roles in disposable CI cluster
+        run: >-
+          docker exec ${{ job.services.postgres.id }} psql -U postgres -d postgres
+          -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;'
+      - name: Replay migrations and compare schema with exit-code drift gate
+        run: python3 infra/scripts/check_migration_diff.py
+      - name: Prove the raw-index guard against rolled-back shadow mutations
+        run: python3 infra/tests/check_migration_index.py

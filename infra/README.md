@@ -19,6 +19,7 @@ state, plan files, logs, repository files or chat.
 4. [Build immutable images, migrate, deploy one release](runbooks/03-deploy.md).
 5. [Collect live acceptance and fresh-recreation evidence](runbooks/04-verify.md).
 6. [Rotate, roll back or recover state/vault](runbooks/05-rotation.md).
+7. [Prove readiness, alert delivery and staging acceptance](runbooks/06-operations.md).
 
 ## Authoritative writers
 
@@ -26,6 +27,7 @@ state, plan files, logs, repository files or chat.
 |---|---|---|
 | Backend group/account, firewall, containers, recovery/lock and backend RBAC | `bootstrap_backend.py` | Owner only; no Terraform state needed |
 | Azure resource group, registry, logs, environment, diagnostics, vault, managed identities, Azure role assignments | `terraform/foundation` | Owner; `foundation` blob container only |
+| Scheduled verification job and operator alert delivery | `terraform/foundation` optional `config.monitoring` | Owner only; pinned runtime image/secret references, no deployer grant |
 | Entra app/SP/federation and RG `githubClientId`/`githubPrincipalId` recovery markers | Reviewed `configure_oidc.py` | Owner Graph access; these two tag fields are explicitly excluded from Terraform ownership |
 | Both Container Apps, revisions, ingress, image digests, secret references | `terraform/application`, through `deploy-apps.sh` | First create by owner; then app-scoped deployer and `application` blob container |
 | Supabase project, Auth/signing keys, buckets | `supabase_setup.py`, journaled Management API calls | Owner management token entered with hidden input |
@@ -48,6 +50,9 @@ existing resources or state; inspect provider read behavior and ownership first.
 ## Offline validation
 
 ```bash
+python3 -m venv /private/tmp/tonyai-infra-venv
+source /private/tmp/tonyai-infra-venv/bin/activate
+python3 -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
 python3 -m unittest discover -s infra/tests -v
 python3 infra/tests/check_mutations.py
 python3 infra/scripts/check_terraform_policy.py
@@ -71,7 +76,8 @@ secret resolution or health. Infrastructure CI has no cloud credentials and neve
 applies resources. D22 keeps per-PR E2E nongating; full release-candidate E2E and
 flow-changing manual runs remain required elsewhere.
 
-See [provider/state security review](terraform/README.md). API health currently
-proves process liveness only; DB readiness is LP2-03. The included CA under
+See [provider/state security review](terraform/README.md). API `/health` is process liveness after Nest startup; `/health/ready` checks
+bounded DB connectivity and both private Storage buckets. `/health/synthetic`
+requires a real authenticated profile. Full lifecycle acceptance remains owner-run. The included CA under
 `infra/certs/` remains in the API Docker context; other infra files and all
 Terraform/owner artifacts are excluded.

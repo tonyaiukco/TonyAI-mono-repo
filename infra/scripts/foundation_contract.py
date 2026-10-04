@@ -10,7 +10,7 @@ def validate_foundation(inputs):
     config = inputs['config']
     required = {'subscription_id','tenant_id','environment','prefix','resource_group','registry_name',
                 'vault_name','repository','release_sha','owner_object_id'}
-    optional = {'deployer_object_id','runtime_secrets_ready','apps_ready'}
+    optional = {'deployer_object_id','runtime_secrets_ready','apps_ready','monitoring'}
     if not required <= set(config) or set(config) - required - optional:
         raise SafeFailure('Unknown foundation fields; secret values are prohibited.')
     if config['environment'] not in ('staging','production'):
@@ -34,4 +34,14 @@ def validate_foundation(inputs):
         raise SafeFailure('Readiness switches must be booleans.')
     if config.get('apps_ready') and not deployer:
         raise SafeFailure('App grants require the verified deployment principal.')
+    monitoring = config.get('monitoring')
+    if monitoring is not None:
+        patterns = {'operator_name': r'[A-Za-z][A-Za-z0-9 ._-]{1,79}',
+                    'operator_email': r'[^@ <>]+@[^@ <>]+\.[^@ <>]+',
+                    'api_digest': r'sha256:[a-f0-9]{64}', 'supabase_project_ref': r'[a-z]{20}',
+                    'database_secret_version': r'[a-f0-9]{32}', 'backend_secret_version': r'[a-f0-9]{32}'}
+        if (not config.get('runtime_secrets_ready') or not isinstance(monitoring, dict)
+                or set(monitoring) != set(patterns)
+                or any(not isinstance(monitoring[k], str) or not re.fullmatch(p, monitoring[k]) for k,p in patterns.items())):
+            raise SafeFailure('Monitoring needs named operator, immutable release references and runtime grants.')
     return config
