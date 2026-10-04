@@ -967,6 +967,59 @@ describe('resolveFactorPath', () => {
     ).toEqual(['demo-sm3', null]);
   });
 
+  it('picks the newest conversion of one publisher, and refuses two publishers', () => {
+    const gross = factor('kwh', 'kWh', 'gross');
+    const v1 = { ...conversion('step-v1', 'cubic_metres', 'kWh', 'gross'), release: rel('authoritative', 1, 'Q') };
+    const v2 = { ...conversion('step-v2', 'cubic_metres', 'kWh', 'gross'), release: rel('authoritative', 2, 'Q') };
+    // After an erratum the superseded calorific value must not price anything.
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [gross], [v1, v2]))).toEqual(['kwh', 'step-v2']);
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [gross], [v2, v1]))).toEqual(['kwh', 'step-v2']);
+    const other = { ...conversion('step-r', 'cubic_metres', 'kWh', 'gross'), release: rel('authoritative', 1, 'R') };
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [gross], [v2, other]))).toBe('ambiguous_factor');
+  });
+
+  it('picks the newest factor when two editions share one conversion', () => {
+    const f1 = factor('kwh-v1', 'kWh', 'gross', 'authoritative', 'P', 1);
+    const f2 = factor('kwh-v2', 'kWh', 'gross', 'authoritative', 'P', 2);
+    const step = conversion('step', 'cubic_metres', 'kWh', 'gross');
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [f1, f2], [step]))).toEqual(['kwh-v2', 'step']);
+  });
+
+  it('names the most actionable cause when several paths fail', () => {
+    const perKwh = factor('kwh', 'kWh', 'gross');
+    const perSm3 = factor('sm3', 'standard_cubic_metres', 'not_applicable');
+    // One path exists but is not authoritative; the other lacks a step.
+    const demoStep = conversion('demo-step', 'cubic_metres', 'kWh', 'gross', 'placeholder');
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [perKwh, perSm3], [demoStep]))).toBe('placeholder_refused');
+    // One path has a step on the wrong basis; the other has none.
+    const netStep = conversion('net-step', 'cubic_metres', 'kWh', 'net');
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [perKwh, perSm3], [netStep]))).toBe('no_conversion');
+  });
+
+  it('counts only live factors when it names the cause', () => {
+    const withdrawnNet = factor('old-net', 'kWh', 'net', 'withdrawn');
+    expect(picked(resolve('Natural Gas', 'kWh', [withdrawnNet]))).toBe('no_factor');
+    const oddNet = factor('odd-net', 'kWh', 'net', 'toString' as FactorStatus);
+    expect(picked(resolve('Natural Gas', 'kWh', [oddNet]))).toBe('no_factor');
+    const oddStatus = { release: { status: 'toString' as FactorStatus, ordinal: 1, publisher: 'P' } };
+    expect(selectByRelease([oddStatus], { allowPlaceholders: true })).toEqual({ ok: false, reason: 'none' });
+  });
+
+  it('reaches only a base-unit factor, through a step to exactly its unit', () => {
+    const perMwh = factor('mwh', 'MWh', 'gross');
+    expect(
+      picked(resolve('Natural Gas', 'cubic_metres', [perMwh], [conversion('m3-mwh', 'cubic_metres', 'MWh', 'gross')])),
+    ).toBe('no_factor');
+    const perKwh = factor('kwh', 'kWh', 'gross');
+    expect(
+      picked(
+        resolve('Natural Gas', 'cubic_metres', [perKwh], [
+          conversion('m3-sm3', 'cubic_metres', 'standard_cubic_metres', 'gross'),
+        ]),
+      ),
+    ).toBe('no_conversion');
+  });
+
   it('never uses a withdrawn link', () => {
     const realKwh = factor('real-kwh', 'kWh', 'gross');
     const withdrawnStep = conversion('old-step', 'cubic_metres', 'kWh', 'gross', 'withdrawn');
@@ -1026,6 +1079,9 @@ describe('validateFactorReleaseImport — review round 1', () => {
       ]);
     }
     expect(issuesAt({ ...release(), factors: [null as unknown as FactorImportRow] })).toContain('factors[0]');
+    expect(
+      issuesAt({ ...release(), conversions: [null as unknown as UnitConversionImportRow] }),
+    ).toContain('conversions[0]');
   });
 
   it('checks value types, not just meanings', () => {
@@ -1068,6 +1124,21 @@ describe('validateFactorReleaseImport — review round 1', () => {
     expect(
       issuesAt(release({ meta: { licence: 'x'.repeat(FACTOR_IMPORT_TEXT_LIMITS.licence + 1) } })),
     ).toContain('release.licence');
+    expect(issuesAt(release({ meta: { licence: 'x'.repeat(FACTOR_IMPORT_TEXT_LIMITS.licence) } }))).toEqual([]);
+    expect(FACTOR_IMPORT_TEXT_LIMITS).toEqual({
+      publisher: 200,
+      title: 500,
+      edition: 100,
+      licence: 500,
+      notes: 2000,
+      reviewedBy: 200,
+      sourceUrl: 2000,
+      factorUnit: 32,
+      methodology: 1000,
+      source: 1000,
+      basis: 2000,
+      referenceConditions: 200,
+    });
     expect(issuesAt(release({ meta: { publisher: ' DESNZ' } }))).toContain('release.publisher');
     // Default-ignorable and surrogate code points: a Hangul filler, a
     // combining grapheme joiner, a soft hyphen, a lone surrogate.
@@ -1084,6 +1155,27 @@ describe('validateFactorReleaseImport — review round 1', () => {
     expect(issuesAt(release({ meta: { notes: `note${RLO}` } }))).toContain('release.notes');
     expect(issuesAt(release({ meta: { reviewedBy: `Reviewer${ZWSP}` } }))).toContain('release.reviewedBy');
     expect(issuesAt(release({ meta: { title: 'Café' } }))).toContain('release.title');
+  });
+
+  it('treats an omitted provenance key as missing, and every key as required', () => {
+    const omitted = release();
+    const meta = { ...omitted.release } as Record<string, unknown>;
+    delete meta.licence;
+    delete meta.reviewedBy;
+    const issues = validateFactorReleaseImport({ ...omitted, release: meta });
+    for (const field of ['licence', 'reviewedBy']) {
+      expect(issues).toContainEqual({
+        path: `release.${field}`,
+        message: 'is required for an authoritative release',
+      });
+    }
+    // A placeholder may leave a field null, but not drop the key.
+    const placeholder = release({ meta: { status: 'placeholder' } });
+    const notesGone = { ...placeholder.release } as Record<string, unknown>;
+    delete notesGone.notes;
+    expect(validateFactorReleaseImport({ ...placeholder, release: notesGone }).map((i) => i.path)).toContain(
+      'release.notes',
+    );
   });
 
   it('requires a review no earlier than the publication, as a real date', () => {
@@ -1184,6 +1276,18 @@ describe('validateFactorReleaseImport — review round 1', () => {
         }),
       ),
     ).toContain('factors[1].gas');
+    for (const gas of ['CH4', 'N2O']) {
+      expect(
+        issuesAt(
+          release({ factors: [factorRow({ gasCoverage: 'co2_only' }), factorRow({ gas, gasCoverage: null, factorValue: 0.1 })] }),
+        ),
+        gas,
+      ).toContain('factors[1].gas');
+    }
+    // A share equal to the whole is allowed (a fuel whose total is all CO2).
+    expect(
+      issuesAt(release({ factors: [factorRow(), factorRow({ gas: 'CO2', gasCoverage: null, factorValue: 1 })] })),
+    ).toEqual([]);
     // Biogenic CO2 sits outside the total and may exceed it.
     expect(
       issuesAt(release({ factors: [factorRow(), factorRow({ gas: 'CO2_biogenic', gasCoverage: null, factorValue: 5 })] })),

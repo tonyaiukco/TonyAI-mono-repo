@@ -2171,6 +2171,9 @@ export function resolveFactorPath<
   let basisMismatch = false;
   let missingConversion = false;
   for (const factor of input.factors) {
+    // A withdrawn or unknown-status factor is no factor: it must not turn the
+    // refusal into a conversion or basis problem.
+    if (!isLiveStatus(factor.release.status)) continue;
     if (factor.gas !== CALCULATION_GAS || factor.scope2Method !== method) continue;
     if (factor.normalizedUnit === base) {
       if (factor.calorificBasis === directBasis) {
@@ -2479,7 +2482,8 @@ export function validateFactorReleaseImport(input: unknown): FactorImportIssue[]
     // a loaded release never changes but to withdrawn, so neither can be
     // added afterwards.
     for (const field of ['sourceUrl', 'licence', 'publishedAt', 'reviewedBy', 'reviewedAt'] as const) {
-      if (release[field] === null) fail(`release.${field}`, 'is required for an authoritative release');
+      // `== null`: an omitted key is as missing as a null one.
+      if (release[field] == null) fail(`release.${field}`, 'is required for an authoritative release');
     }
   }
   if (factors.length === 0 && conversions.length === 0) {
