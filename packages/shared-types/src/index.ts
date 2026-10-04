@@ -90,6 +90,64 @@ export type Category = typeof CATEGORIES[number];
 // ---------------------------------------------------------------------------
 
 /**
+ * A family of units that convert into each other by DEFINITION — exact
+ * constants that never change and need no source (1 MWh = 1,000 kWh, 1 UK
+ * gallon = 4.54609 L, 1 t = 1,000 kg).
+ *
+ * Crossing families is never a constant (LP3-03): a metered cubic metre of
+ * natural gas becomes kWh through a calorific value that depends on the gas,
+ * the country and the year, and a standard cubic metre is not a metered one.
+ * Those steps are sourced, versioned `unit_conversions` rows carried into the
+ * snapshot; where no row covers a record, the calculation is refused
+ * (`no_conversion`), never approximated.
+ */
+export const UNIT_DIMENSIONS = [
+  'energy',
+  /** Liquid fuel as bought: litres, gallons. */
+  'fuel_volume',
+  /** A volume as a meter reads it, at actual conditions (gas or water). */
+  'metered_volume',
+  /** A gas volume corrected to stated reference conditions (Sm³). */
+  'standard_volume',
+  'distance',
+  'passenger_distance',
+  'mass',
+] as const;
+
+export type UnitDimension = (typeof UNIT_DIMENSIONS)[number];
+
+/**
+ * The one unit of each family a factor may be quoted per. A factor's value is
+ * kg CO₂e per ONE of these — never per MWh or per gallon — so a definitional
+ * step in code is all that ever stands between a record's unit and its
+ * factor's, and a factor quoted per MWh cannot be read as one quoted per kWh.
+ * A publisher's other units are converted at import and the derivation is
+ * recorded in the row's `methodology`.
+ */
+export const DIMENSION_BASE_UNIT: Readonly<Record<UnitDimension, string>> = {
+  energy: 'kWh',
+  fuel_volume: 'litres',
+  metered_volume: 'cubic_metres',
+  standard_volume: 'standard_cubic_metres',
+  distance: 'kilometres',
+  passenger_distance: 'passenger_kilometres',
+  mass: 'kg',
+};
+
+/**
+ * The reference conditions of a standard cubic metre (ISO 13443), and the only
+ * ones `standard_cubic_metres` means. A publisher's "per cubic metre"
+ * combustion factor is never per METERED m³ — it derives from a calorific
+ * value at stated conditions — so it is loaded per `standard_cubic_metres`
+ * only when the publisher states exactly these; a metered reading reaches it
+ * only through a sourced volume correction. A factor per NORMAL m³ (0 °C) is a
+ * different quantity — about 5.5% more gas per m³ — and waits for a unit
+ * family of its own; loaded as Sm³ it would overstate. Every conversion step
+ * to or from `standard_cubic_metres` must state these conditions verbatim.
+ */
+export const STANDARD_REFERENCE_CONDITIONS = '15 °C, 101.325 kPa (ISO 13443)';
+
+/**
  * Every unit a user may submit activity data in.
  *
  * One list, because there were three: the engine's conversion rules, the
@@ -113,14 +171,23 @@ export interface ActivityUnitSpec {
    * the places where a value and its unit are shown together.
    */
   symbol: string;
-  target: 'kWh' | 'litres' | 'kilometres' | 'passenger_kilometres' | 'tonnes';
+  /**
+   * The unit the pre-LP3-03 engine normalised to — kept, unchanged, because
+   * `appliesUnitConversion` and the Data Entry conversion note key on it.
+   * `cubic_metres → kWh` here is the natural-gas path only. Which conversion a
+   * calculation ACTUALLY applied is in its snapshot (`conversion` on a
+   * `CalculationResultV2`), and that is what a screen should show.
+   */
+  target: 'kWh' | 'litres' | 'kilometres' | 'passenger_kilometres' | 'tonnes' | 'kg';
+  /** The definitional family the unit belongs to (see `UNIT_DIMENSIONS`). */
+  dimension: UnitDimension;
   /** Present when the unit is selectable but not yet calculable. */
   blocked?: string;
 }
 
 export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
-  { value: 'kWh', label: 'kWh (electricity / gas)', symbol: 'kWh', target: 'kWh' },
-  { value: 'MWh', label: 'MWh (electricity)', symbol: 'MWh', target: 'kWh' },
+  { value: 'kWh', label: 'kWh (electricity / gas)', symbol: 'kWh', target: 'kWh', dimension: 'energy' },
+  { value: 'MWh', label: 'MWh (electricity)', symbol: 'MWh', target: 'kWh', dimension: 'energy' },
   {
     value: 'cubic_metres',
     // No parenthetical: the same token is offered for Natural Gas and for Water,
@@ -130,6 +197,7 @@ export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
     label: 'Cubic metres — m³',
     symbol: 'm³',
     target: 'kWh',
+    dimension: 'metered_volume',
   },
   {
     // Round-1 DE-3/EM-1 asked for Sm³ alongside m³. It is listed rather than
@@ -141,22 +209,27 @@ export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
     label: 'Standard cubic metres — Sm³ (natural gas)',
     symbol: 'Sm³',
     target: 'kWh',
+    dimension: 'standard_volume',
     blocked:
       'Standard cubic metres need a sourced calorific value to become kWh, and this prototype does not have one yet — it arrives with the Phase-4 factor library. Enter the volume in m³, or the energy in kWh.',
   },
-  { value: 'therms', label: 'Therms (natural gas)', symbol: 'therms', target: 'kWh' },
-  { value: 'gj', label: 'GJ (natural gas)', symbol: 'GJ', target: 'kWh' },
-  { value: 'litres', label: 'Litres (liquid fuel)', symbol: 'L', target: 'litres' },
-  { value: 'uk_gallons', label: 'UK gallons (liquid fuel)', symbol: 'UK gal', target: 'litres' },
-  { value: 'us_gallons', label: 'US gallons (liquid fuel)', symbol: 'US gal', target: 'litres' },
-  { value: 'kilometres', label: 'Kilometres', symbol: 'km', target: 'kilometres' },
+  { value: 'therms', label: 'Therms (natural gas)', symbol: 'therms', target: 'kWh', dimension: 'energy' },
+  { value: 'gj', label: 'GJ (natural gas)', symbol: 'GJ', target: 'kWh', dimension: 'energy' },
+  { value: 'litres', label: 'Litres (liquid fuel)', symbol: 'L', target: 'litres', dimension: 'fuel_volume' },
+  { value: 'uk_gallons', label: 'UK gallons (liquid fuel)', symbol: 'UK gal', target: 'litres', dimension: 'fuel_volume' },
+  { value: 'us_gallons', label: 'US gallons (liquid fuel)', symbol: 'US gal', target: 'litres', dimension: 'fuel_volume' },
+  { value: 'kilometres', label: 'Kilometres', symbol: 'km', target: 'kilometres', dimension: 'distance' },
   {
     value: 'passenger_kilometres',
     label: 'Passenger-km',
     symbol: 'p-km',
     target: 'passenger_kilometres',
+    dimension: 'passenger_distance',
   },
-  { value: 'tonnes', label: 'Tonnes', symbol: 't', target: 'tonnes' },
+  { value: 'tonnes', label: 'Tonnes', symbol: 't', target: 'tonnes', dimension: 'mass' },
+  // Refrigerant leakage is a mass (LP3-03): a refrigerant's factor is its GWP,
+  // quoted per kilogram of that gas.
+  { value: 'kg', label: 'Kilograms — kg', symbol: 'kg', target: 'kg', dimension: 'mass' },
 ] as const;
 
 /**
@@ -165,8 +238,10 @@ export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
  * Without this the only guard is the unit FAMILY check in the calc service, so
  * litres on Electricity is refused (litres vs kWh) while `therms` on Electricity
  * or `MWh` on Natural Gas sail straight through and produce a number — a silent
- * wrong figure rather than an error. Categories absent from this map have no
- * seeded factor yet, so they are unconstrained until they do.
+ * wrong figure rather than an error. The categories absent from this map are
+ * the Scope 3 ones, outside the pilot: their unit is unconstrained, and the
+ * factor import refuses their factors until they get an entry here (the e2e
+ * suite's Waste fixture factor is written directly, not imported).
  */
 export const CATEGORY_UNITS: Partial<Record<Category, readonly string[]>> = {
   Electricity: ['kWh', 'MWh'],
@@ -182,6 +257,12 @@ export const CATEGORY_UNITS: Partial<Record<Category, readonly string[]>> = {
     'gj',
   ],
   Fuel: ['litres', 'uk_gallons', 'us_gallons'],
+  // Fuel-based first (LP3-03, T4): the fuel a fleet bought — litres of liquid
+  // fuel, kilograms of CNG. Distance-based activity (km by vehicle class)
+  // needs its own activity types and waits for the holding's source list (D05).
+  'Mobile Combustion': ['litres', 'uk_gallons', 'us_gallons', 'kg'],
+  // Leakage is reported as a mass of refrigerant, priced by that gas's GWP.
+  Refrigerants: ['kg'],
   // Water is billed in cubic metres and has no factor yet, so nothing is
   // normalised or calculated from it (see UncalculatedSnapshot). Pinning the
   // unit anyway keeps the invoice figure comparable across locations — left
@@ -231,6 +312,175 @@ export function appliesUnitConversion(unit: string, category: string): boolean {
   const spec = ACTIVITY_UNITS.find((u) => u.value === unit);
   if (!spec || spec.blocked) return false;
   return spec.value !== spec.target;
+}
+
+// ---------------------------------------------------------------------------
+// Activity types (LP3-03; owner decision K1 = A1, 2026-10-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * WHAT was burned, bought or leaked within a category — diesel or petrol under
+ * Mobile Combustion, R-410A or R-32 under Refrigerants.
+ *
+ * The category alone cannot price these: each fuel and each gas has its own
+ * factor, so a record says which one it is and the factor library is keyed on
+ * the same token. It is also part of a record's identity — the raw unique index
+ * on `activity_records` ends `…, category, activity_type` — so diesel and
+ * petrol for one site and month are two records, not one pre-summed figure.
+ * Two meters of the SAME fuel at one site are summed on entry (K1).
+ *
+ * `value` is a storage token that records and factors key on, so it is never
+ * renamed: a new fuel is a new entry. These lists are the structural starter
+ * set; LP4-02 completes them from the holding's source list (D05) and the
+ * releases it loads. Labels are English here; LP3-01's catalogues translate.
+ */
+export interface ActivityTypeSpec {
+  value: string;
+  label: string;
+}
+
+/**
+ * The activity types a category's records and factors may name. Two kinds:
+ *
+ * - **implicit** (`implicit` set) — one activity covers the whole category:
+ *   grid electricity, mains natural gas. A record stores NO activity type and
+ *   the API refuses one: a typed and an untyped record would be different keys
+ *   to the unique index, i.e. two "different" records for one meter. Its
+ *   factors carry the implicit value.
+ * - **typed** (no `implicit`) — a NEW record must name one of `types`
+ *   (`activity_type_required` otherwise): an untyped and a typed record are
+ *   different keys to the unique index, so one site and month could count the
+ *   same fuel twice. A record with none is one written before LP3-03; it
+ *   resolves to `UNSPECIFIED_ACTIVITY_TYPE`, which only a non-authoritative
+ *   release may carry (`validateFactorReleaseImport`), so recalculating it is
+ *   priced by a labelled placeholder where placeholders are allowed and
+ *   refused everywhere else. A slot holds typed records or one untyped legacy
+ *   record, never both.
+ *
+ * A category absent from the map (Scope 3, outside the pilot) takes no
+ * activity type either and resolves to `UNSPECIFIED_ACTIVITY_TYPE`. No factor
+ * of it can be imported at any status until it has an entry here and in
+ * `CATEGORY_UNITS`.
+ */
+export interface CategoryActivityTypes {
+  types: readonly ActivityTypeSpec[];
+  implicit?: string;
+}
+
+/** What a record that names no activity resolves to in a typed category. */
+export const UNSPECIFIED_ACTIVITY_TYPE = 'unspecified';
+
+export const CATEGORY_ACTIVITY_TYPES: Partial<
+  Record<Category, CategoryActivityTypes>
+> = {
+  Electricity: {
+    implicit: 'grid_electricity',
+    types: [{ value: 'grid_electricity', label: 'Grid electricity' }],
+  },
+  'Natural Gas': {
+    implicit: 'natural_gas',
+    types: [{ value: 'natural_gas', label: 'Natural gas' }],
+  },
+  Water: {
+    implicit: 'water_supply',
+    types: [{ value: 'water_supply', label: 'Water supply' }],
+  },
+  // Stationary combustion of fuels other than mains gas.
+  //
+  // `diesel` and `petrol` (here and under Mobile Combustion) mean the road
+  // fuel as retailed in the record's geography — the average biofuel blend —
+  // so every release maps them to that row and never to a 100%-mineral one;
+  // `diesel_mineral` / `petrol_mineral` are reserved for that, if a source
+  // ever needs it. `gas_oil` is the UK's off-road "red diesel"; `burning_oil`
+  // is kerosene, which UK sites usually call heating oil (a literal Turkish
+  // rendering of "gas oil" reads as kerosene — LP3-01's translators beware).
+  Fuel: {
+    types: [
+      { value: 'diesel', label: 'Diesel' },
+      { value: 'gas_oil', label: 'Gas oil (red diesel)' },
+      { value: 'fuel_oil', label: 'Fuel oil' },
+      { value: 'burning_oil', label: 'Burning oil (kerosene, heating oil)' },
+      { value: 'lpg', label: 'LPG' },
+    ],
+  },
+  'Mobile Combustion': {
+    types: [
+      { value: 'diesel', label: 'Diesel' },
+      { value: 'petrol', label: 'Petrol' },
+      { value: 'lpg', label: 'LPG' },
+      { value: 'cng', label: 'CNG' },
+    ],
+  },
+  // ASHRAE designations, written exactly so; an import canonicalises aliases
+  // (R410A, HFC-134a) to them. HCFCs such as R-22 are absent on purpose: the
+  // GHG Protocol treats Montreal Protocol gases as optional and reported
+  // separately, outside the scopes. R-1234yf (fleet air conditioning) is an
+  // HFO, outside the Kyoto basket too; it is listed so a fleet's leakage can be
+  // recorded, and a release prices it only with a numeric GWP it states (AR5
+  // gives "<1"), never one chosen at load.
+  Refrigerants: {
+    types: [
+      { value: 'R-32', label: 'R-32' },
+      { value: 'R-134a', label: 'R-134a' },
+      { value: 'R-404A', label: 'R-404A' },
+      { value: 'R-407C', label: 'R-407C' },
+      { value: 'R-407F', label: 'R-407F' },
+      { value: 'R-410A', label: 'R-410A' },
+      { value: 'R-448A', label: 'R-448A' },
+      { value: 'R-449A', label: 'R-449A' },
+      { value: 'R-1234yf', label: 'R-1234yf' },
+    ],
+  },
+};
+
+/**
+ * The activity types a RECORD of this category may name — empty for an
+ * implicit or unmapped category, whose records name none.
+ */
+export function recordActivityTypesFor(
+  category: string,
+): readonly ActivityTypeSpec[] {
+  const spec = categoryActivityTypes(category);
+  return spec && !spec.implicit ? spec.types : [];
+}
+
+/**
+ * The map's entry for a category — an OWN entry only. The helpers below see
+ * caller-supplied categories before validation does, and `'constructor'` or
+ * `'__proto__'` would otherwise reach an inherited property and throw.
+ */
+function categoryActivityTypes(category: string): CategoryActivityTypes | undefined {
+  return Object.prototype.hasOwnProperty.call(CATEGORY_ACTIVITY_TYPES, category)
+    ? CATEGORY_ACTIVITY_TYPES[category as Category]
+    : undefined;
+}
+
+/**
+ * May a record of this category carry this activity type? No activity type is
+ * always acceptable at this layer (see `CategoryActivityTypes`); a named one
+ * must belong to a typed category's list.
+ */
+export function isRecordActivityTypeAllowed(
+  category: string,
+  activityType: string | null | undefined,
+): boolean {
+  if (activityType === null || activityType === undefined) return true;
+  return recordActivityTypesFor(category).some((t) => t.value === activityType);
+}
+
+/**
+ * The activity type the factor lookup uses for a record: its own, else its
+ * category's implicit one, else `UNSPECIFIED_ACTIVITY_TYPE`.
+ */
+export function factorActivityTypeFor(
+  category: string,
+  recordActivityType: string | null | undefined,
+): string {
+  return (
+    recordActivityType ??
+    categoryActivityTypes(category)?.implicit ??
+    UNSPECIFIED_ACTIVITY_TYPE
+  );
 }
 
 
@@ -1166,6 +1416,13 @@ export interface EmissionFactorDTO {
 /** Body of POST /api/v1/calculations/preview. */
 export interface CalculationInput {
   category: string;
+  /**
+   * The record's activity type, so a preview prices the same fuel or gas the
+   * saved record will (see `CreateActivityRecordInput.activityType`). Do not
+   * send it before LP3-03's schema change lands: until then the API refuses
+   * it as an unknown property.
+   */
+  activityType?: string | null;
   geographyCode: string;
   reportingYear: number;
   value: number;
@@ -1267,11 +1524,17 @@ export type UncalculatedReasonCode = 'no_emission_factor';
 
 /**
  * What an activity record's immutable `calculation` column can hold. A record
- * either has a full factor-backed result, or an explicit statement that no
- * figure was produced.
+ * either has a full factor-backed result — the untagged pre-LP3-03 shape, or
+ * the provenance-carrying `CalculationResultV2` every new calculation writes —
+ * or an explicit statement that no figure was produced.
+ *
+ * Historic snapshots are never rewritten (LP3-03): a reader handles all three.
+ * `CalculationResultV2` extends `CalculationResult`, so every existing reader
+ * of the flat fields keeps working on both.
  */
 export type ActivityCalculationSnapshot =
   | CalculationResult
+  | CalculationResultV2
   | UncalculatedSnapshot;
 
 /**
@@ -1320,6 +1583,1085 @@ export function isUncalculated(
     !!snapshot &&
     typeof (snapshot as UncalculatedSnapshot).reasonCode === 'string'
   );
+}
+
+// ---------------------------------------------------------------------------
+// Factor model (LP3-03) — releases, dimensions, provenance, coverage
+// ---------------------------------------------------------------------------
+//
+// The contract the engine (LP3-03's schema PR), the factor import (LP4-02) and
+// the coverage report (LP3-04) share. Structural only: it holds no factor
+// value, and nothing here may ever supply one.
+
+/**
+ * Where a release stands. A release — one publication, loaded whole — carries
+ * the status, and its factors and conversions inherit it.
+ *
+ * - `authoritative` — loaded from a cited publication with its provenance
+ *   (LP4-02). The only status production calculates from.
+ * - `placeholder` — not sourced: the prototype demo values. Calculated only
+ *   where the API runs with `ALLOW_PLACEHOLDER_FACTORS=true` (local dev, CI),
+ *   named as such in every snapshot, and refused everywhere else (owner
+ *   decision K3, 2026-10-04).
+ * - `fixture` — written by a test run; ranked below placeholder and allowed
+ *   wherever placeholders are.
+ * - `withdrawn` — never resolves, but stays, because snapshots point at it.
+ *   Withdrawing is the one change a loaded release accepts: an erratum is a
+ *   NEW release with the next ordinal, never an edit.
+ */
+export const FACTOR_STATUSES = [
+  'authoritative',
+  'placeholder',
+  'fixture',
+  'withdrawn',
+] as const;
+
+export type FactorStatus = (typeof FACTOR_STATUSES)[number];
+
+/**
+ * Resolution rank. Among the candidates a calculation may use, the highest
+ * rank wins before anything else is compared: an authoritative factor beats a
+ * placeholder whatever their editions or ordinals say.
+ */
+export const FACTOR_STATUS_RANK: Readonly<Record<FactorStatus, number>> = {
+  authoritative: 3,
+  placeholder: 2,
+  fixture: 1,
+  withdrawn: 0,
+};
+
+/**
+ * The calorific-value basis an energy quantity is stated on. Gross (higher)
+ * counts the latent heat of the water formed; net (lower) does not — about 10%
+ * apart for natural gas, so a factor and the quantity it multiplies must be on
+ * the same one. `not_applicable` for anything not an energy quantity of a fuel
+ * (a litre of diesel, a kWh of grid electricity, a kg of refrigerant).
+ */
+export const CALORIFIC_BASES = ['gross', 'net', 'not_applicable'] as const;
+
+export type CalorificBasis = (typeof CALORIFIC_BASES)[number];
+
+/**
+ * The basis a BILLED fuel-energy quantity is on, and so the basis of any factor
+ * applied to it: UK suppliers bill gas in kWh on gross calorific value (DESNZ
+ * directs kWh-from-bills users to its Gross CV factors), and Turkish
+ * natural-gas bills convert Sm³ to energy on the upper (gross) calorific value.
+ */
+export const BILLED_ENERGY_CALORIFIC_BASIS: CalorificBasis = 'gross';
+
+/** The categories whose energy quantities carry a calorific basis. */
+const FUEL_COMBUSTION_CATEGORIES: readonly string[] = ['Natural Gas', 'Fuel', 'Mobile Combustion'];
+
+/**
+ * Scope 2 accounting method (GHG Protocol Scope 2 Guidance). `not_applicable`
+ * for every Scope 1 and Scope 3 factor.
+ */
+export const SCOPE2_METHODS = ['location', 'market', 'not_applicable'] as const;
+
+export type Scope2Method = (typeof SCOPE2_METHODS)[number];
+
+/**
+ * The method the pilot calculates Scope 2 with: location-based only (D08), as
+ * ISO 14064-1 permits. A market-based row is stored but never resolved.
+ *
+ * Note for any GHG Protocol claim: its Scope 2 Guidance asks for BOTH methods
+ * wherever contractual instruments exist (the UK has REGOs, Türkiye YEK-G),
+ * and without certificates the market-based figure falls back through
+ * supplier rate, residual mix and grid average rather than dropping out —
+ * an owner decision before a report claims GHG Protocol conformance.
+ */
+export const PILOT_SCOPE2_METHOD: Scope2Method = 'location';
+
+/** The Scope 2 method a calculation in this category resolves with. */
+export function scope2MethodFor(category: string): Scope2Method {
+  return CATEGORY_SCOPE_MAP[category as Category] === 2
+    ? PILOT_SCOPE2_METHOD
+    : 'not_applicable';
+}
+
+/**
+ * Which gas's contribution a factor value covers. Every value is kg CO₂e per
+ * one `DIMENSION_BASE_UNIT` of activity, weighted with its release's
+ * `gwpSet`. `CO2e` is the total — the only row a calculation multiplies — and
+ * what it includes is its `gasCoverage`. Per-gas rows are kept for disclosure
+ * and never summed into a figure.
+ *
+ * `CO2_biogenic` is the CO₂ from the biomass share of a fuel (the biofuel in
+ * retail diesel). The GHG Protocol and ISO 14064-1 report it separately,
+ * outside the scopes, so it is never part of a `CO2e` total.
+ */
+export const FACTOR_GASES = ['CO2e', 'CO2', 'CH4', 'N2O', 'CO2_biogenic'] as const;
+
+export type FactorGas = (typeof FACTOR_GASES)[number];
+
+/** The gas row every calculation uses. */
+export const CALCULATION_GAS = 'CO2e' satisfies FactorGas;
+
+/**
+ * What a `CO2e` total includes. `all_ghg`: every greenhouse gas the activity
+ * emits as the publisher accounts for it (CO₂, CH₄ and N₂O for a fuel; the gas
+ * itself for a refrigerant). `co2_only`: CO₂ alone — a grid factor computed
+ * with the CDM tool, an AIB residual mix — so CH₄ and N₂O are excluded, and a
+ * report says so. Set on a `CO2e` row only; per-gas rows carry null.
+ */
+export const FACTOR_GAS_COVERAGES = ['all_ghg', 'co2_only'] as const;
+
+export type FactorGasCoverage = (typeof FACTOR_GAS_COVERAGES)[number];
+
+/**
+ * The IPCC Assessment Report a release's global-warming potentials come from —
+ * 100-year GWPs; AR5 means its values without climate-carbon feedbacks, the
+ * convention of the UNFCCC transparency framework. One set per inventory year
+ * (D09), recorded on the release; a release whose totals are all `co2_only`
+ * needs none, since CO₂'s GWP is 1 in every set.
+ */
+export const GWP_SETS = ['AR4', 'AR5', 'AR6'] as const;
+
+export type GwpSet = (typeof GWP_SETS)[number];
+
+/**
+ * A release as a snapshot embeds it: who published what, which edition, and
+ * whether it may be relied on.
+ *
+ * `ordinal` — never `edition` — orders one publisher's releases: an integer
+ * the release file states and the load checks is greater than every ordinal
+ * that publisher already has, so an erratum always outranks what it corrects
+ * and re-importing an old edition cannot. An edition is a label: as text,
+ * '2024.2' sorts after '2024.10' (F01). Both (publisher, ordinal) and
+ * (publisher, edition) are unique.
+ */
+export interface FactorReleaseSnapshot {
+  id: string;
+  /** The publishing body, e.g. the UK's DESNZ. */
+  publisher: string;
+  /** The publication cited, as the publisher titles it. */
+  title: string;
+  /** The publisher's own version label. Displayed, never compared. */
+  edition: string;
+  ordinal: number;
+  status: FactorStatus;
+  sourceUrl: string | null;
+  licence: string | null;
+  /** ISO date (YYYY-MM-DD) of publication. */
+  publishedAt: string | null;
+  gwpSet: GwpSet | null;
+}
+
+/** A release as the API lists it. */
+export interface FactorReleaseDTO extends FactorReleaseSnapshot {
+  /**
+   * Who checked the load against the publication (D24): the reviewing firm
+   * or role, never a person's name — every tenant can read this row (KVKK).
+   * Required, with `reviewedAt`, before a release may be authoritative.
+   */
+  reviewedBy: string | null;
+  /** ISO date (YYYY-MM-DD) of that review. */
+  reviewedAt: string | null;
+  notes: string | null;
+  /**
+   * Set together when the release is withdrawn (an erratum superseded it, or
+   * it was loaded in error) — the one change a loaded release accepts. The
+   * withdrawer is a firm or role, as with `reviewedBy`.
+   */
+  withdrawnAt: string | null;
+  withdrawnBy: string | null;
+  withdrawalReason: string | null;
+  createdAt: string;
+}
+
+/**
+ * A factor with its LP3-03 dimensions and its release, as `GET
+ * /api/v1/factors` returns it once LP3-03's schema change lands. Extends
+ * `EmissionFactorDTO`, so a reader typed on that keeps working.
+ */
+export interface EmissionFactorDetailDTO extends EmissionFactorDTO {
+  activityType: string;
+  gas: FactorGas;
+  /** What a `CO2e` row's total includes; null on a per-gas row. */
+  gasCoverage: FactorGasCoverage | null;
+  calorificBasis: CalorificBasis;
+  scope2Method: Scope2Method;
+  /**
+   * The factor year as the publisher labels it (DESNZ's "2026 conversion
+   * factors" → 2026) — not the vintage of the statistics underneath. Equal to
+   * `reportingYear` unless the release declares a fallback for that year
+   * (D07); "latest available" is never a fallback.
+   */
+  dataYear: number;
+  release: FactorReleaseSnapshot;
+}
+
+/**
+ * The fields that make a factor distinct: the unique key of
+ * `emission_factors`. Rows differing in any one are different factors; rows
+ * agreeing on all are one factor loaded twice, which is refused.
+ * `normalizedUnit` belongs to it because one publication can quote the same
+ * fuel per kWh and per m³.
+ */
+export const FACTOR_IDENTITY_FIELDS = [
+  'releaseId',
+  'category',
+  'activityType',
+  'gas',
+  'geographyCode',
+  'reportingYear',
+  'scope2Method',
+  'calorificBasis',
+  'normalizedUnit',
+] as const;
+
+/** The unique key of `unit_conversions`, on the same terms. */
+export const CONVERSION_IDENTITY_FIELDS = [
+  'releaseId',
+  'category',
+  'activityType',
+  'geographyCode',
+  'reportingYear',
+  'fromUnit',
+  'toUnit',
+  'calorificBasis',
+] as const;
+
+/** One comparable string for a row's identity under `fields`. */
+export function identityKey<F extends string>(
+  row: Readonly<Partial<Record<F, unknown>>>,
+  fields: readonly F[],
+): string {
+  return JSON.stringify(fields.map((field) => row[field] ?? null));
+}
+
+/** How the factor's data year relates to the activity's year (D07). */
+export type YearPolicy = 'exact' | 'declared_fallback';
+
+export function yearPolicyOf(reportingYear: number, dataYear: number): YearPolicy {
+  return reportingYear === dataYear ? 'exact' : 'declared_fallback';
+}
+
+/**
+ * A sourced conversion as a snapshot embeds it — a step between unit families
+ * (metered m³ → kWh) that depends on the fuel, the country and the year.
+ */
+export interface UnitConversionSnapshot {
+  id: string;
+  fromUnit: string;
+  toUnit: string;
+  multiplier: number;
+  calorificBasis: CalorificBasis;
+  /** Temperature and pressure a gas volume is referred to, when one is. */
+  referenceConditions: string | null;
+  /** How the multiplier is derived, in the publisher's terms. */
+  basis: string;
+  dataYear: number;
+  release: FactorReleaseSnapshot;
+}
+
+/**
+ * The snapshot every calculation writes from LP3-03's engine on: the v1 fields,
+ * unchanged in meaning, plus where every number came from.
+ *
+ * The v1 fields stay because every reader reads them: `source` is the factor
+ * row's citation, `version` its release's edition, `conversionFactor` the whole
+ * multiplier from input to normalised unit (definitional and sourced steps
+ * together) and `conversionBasis` how it was reached.
+ *
+ * `snapshotSchema` numbers one sequence across the union: 1 is the
+ * `UncalculatedSnapshot` (WP17), 2 this. The untagged pre-LP3-03 shape stays
+ * readable as it is; no historic row is ever rewritten.
+ */
+export interface CalculationResultV2 extends CalculationResult {
+  snapshotSchema: 2;
+  /** The activity type the factor was resolved for (`factorActivityTypeFor`). */
+  activityType: string;
+  gas: typeof CALCULATION_GAS;
+  /** What the total includes — a report discloses a `co2_only` factor. */
+  gasCoverage: FactorGasCoverage;
+  calorificBasis: CalorificBasis;
+  scope2Method: Scope2Method;
+  dataYear: number;
+  yearPolicy: YearPolicy;
+  factorRelease: FactorReleaseSnapshot;
+  /**
+   * The sourced conversion applied, or null when none was needed. A
+   * definitional step (MWh → kWh) is not a conversion row; it shows in
+   * `conversionFactor` alone.
+   */
+  conversion: UnitConversionSnapshot | null;
+}
+
+/** True when the snapshot is a factor-backed figure that carries provenance. */
+export function isProvenanceSnapshot(
+  snapshot: ActivityCalculationSnapshot | null | undefined,
+): snapshot is CalculationResultV2 {
+  return (
+    isCalculated(snapshot) &&
+    (snapshot as CalculationResultV2).snapshotSchema === 2
+  );
+}
+
+/**
+ * True only when every number in the snapshot came from an authoritative
+ * release — the factor's and, when one was applied, the conversion's. A
+ * snapshot written before LP3-03 is never authoritative: its factors were the
+ * prototype's. Every report and screen that labels a placeholder asks this,
+ * never the factor's status alone, because a path is only as authoritative as
+ * its weakest link.
+ */
+export function isAuthoritativeSnapshot(
+  snapshot: ActivityCalculationSnapshot | null | undefined,
+): boolean {
+  return (
+    isProvenanceSnapshot(snapshot) &&
+    snapshot.factorRelease.status === 'authoritative' &&
+    (snapshot.conversion === null ||
+      snapshot.conversion.release.status === 'authoritative')
+  );
+}
+
+/**
+ * Why the engine refused to calculate. Machine-readable, so a screen, the bulk
+ * importer and LP3-04's coverage report can branch without parsing prose;
+ * LP3-01's error-code registry adopts them. A refusal is never a guess: no
+ * fallback to another year, geography, fuel or basis exists.
+ *
+ * The bulk importer keeps reporting every coverage refusal as `no_factor`,
+ * with the sentence saying which — its issue codes are an exhaustive map on
+ * the web, and adding one is a contract change of its own.
+ */
+export const CALCULATION_REFUSAL_CODES = [
+  /** The unit is not one the engine knows. */
+  'unit_unknown',
+  /** The unit is known but cannot be calculated (Sm³, Nm³ today). */
+  'unit_blocked',
+  /** The unit is not one this category is measured in. */
+  'unit_not_for_category',
+  /** The record names an activity type its category does not have. */
+  'activity_type_not_for_category',
+  /** A new record in a typed category names no activity type. */
+  'activity_type_required',
+  /** No factor covers this category, activity, geography and year. */
+  'no_factor',
+  /** Only non-authoritative factors cover it, and they are not allowed here. */
+  'placeholder_refused',
+  /** Two releases claim the same key at the same rank — a library conflict. */
+  'ambiguous_factor',
+  /** The resolved factor's scope is not its category's — a library defect. */
+  'factor_scope_mismatch',
+  /** The unit needs a sourced conversion and none covers it. */
+  'no_conversion',
+  /** A conversion exists, but on a different calorific basis than the factor. */
+  'calorific_basis_mismatch',
+] as const;
+
+export type CalculationRefusalCode = (typeof CALCULATION_REFUSAL_CODES)[number];
+
+/**
+ * The HTTP status of each refusal: 400 for what the caller sent, 404 for a
+ * coverage gap (as `NoEmissionFactorError` has always been), 409 for a factor
+ * library that contradicts itself.
+ */
+export const CALCULATION_REFUSAL_STATUS: Readonly<
+  Record<CalculationRefusalCode, 400 | 404 | 409>
+> = {
+  unit_unknown: 400,
+  unit_blocked: 400,
+  unit_not_for_category: 400,
+  activity_type_not_for_category: 400,
+  activity_type_required: 400,
+  no_factor: 404,
+  placeholder_refused: 404,
+  ambiguous_factor: 409,
+  factor_scope_mismatch: 409,
+  no_conversion: 404,
+  calorific_basis_mismatch: 404,
+};
+
+/** The exact lookup a refusal is about — what LP3-04 lists as missing. */
+export interface CoverageKey {
+  category: string;
+  activityType: string;
+  geographyCode: string;
+  reportingYear: number;
+  unit: string;
+}
+
+/** The body of a refused calculation (preview, create, update). */
+export interface CalculationRefusalBody {
+  statusCode: 400 | 404 | 409;
+  error?: string;
+  message: string;
+  code: CalculationRefusalCode;
+  coverage?: CoverageKey;
+}
+
+/** Anything resolution ranks: a factor or a conversion, with its release. */
+export interface ReleaseRanked {
+  release: Pick<FactorReleaseSnapshot, 'publisher' | 'ordinal' | 'status'>;
+}
+
+export type ReleaseSelection<T> =
+  | { ok: true; selected: T }
+  | { ok: false; reason: 'none' | 'placeholder_refused' | 'ambiguous' };
+
+/**
+ * Choose ONE of the candidates that match a lookup exactly — the rule the
+ * engine, the seed and the coverage report all apply, so they cannot drift.
+ *
+ * 1. A withdrawn release never resolves.
+ * 2. Without `allowPlaceholders`, only authoritative candidates count; when
+ *    only non-authoritative ones matched, the answer is `placeholder_refused`,
+ *    not `none` — the gap is a missing load, not a missing methodology.
+ * 3. The highest `FACTOR_STATUS_RANK` wins.
+ * 4. Within it there must be one publisher: two publishers for one key is a
+ *    conflict a person settles (`ambiguous`), never a silent pick.
+ * 5. The highest ordinal wins; a tie is `ambiguous`.
+ */
+function maxOf(values: readonly number[]): number {
+  let max = -Infinity;
+  for (const value of values) if (value > max) max = value;
+  return max;
+}
+
+export function selectByRelease<T extends ReleaseRanked>(
+  candidates: readonly T[],
+  options: { allowPlaceholders: boolean },
+): ReleaseSelection<T> {
+  // Only statuses this contract knows: an unknown one ('Authoritative', a
+  // typo) is never ranked, whatever `allowPlaceholders` says.
+  const known = candidates.filter((c) =>
+    Object.prototype.hasOwnProperty.call(FACTOR_STATUS_RANK, c.release.status),
+  );
+  const live = known.filter((c) => c.release.status !== 'withdrawn');
+  const permitted = options.allowPlaceholders
+    ? live
+    : live.filter((c) => c.release.status === 'authoritative');
+  if (permitted.length === 0) {
+    return { ok: false, reason: live.length > 0 ? 'placeholder_refused' : 'none' };
+  }
+  // Loops, not `Math.max(...list)`: a spread of a very long list overflows
+  // the call stack.
+  const topRank = maxOf(permitted.map((c) => FACTOR_STATUS_RANK[c.release.status]));
+  const top = permitted.filter(
+    (c) => FACTOR_STATUS_RANK[c.release.status] === topRank,
+  );
+  if (new Set(top.map((c) => c.release.publisher)).size > 1) {
+    return { ok: false, reason: 'ambiguous' };
+  }
+  const topOrdinal = maxOf(top.map((c) => c.release.ordinal));
+  const winners = top.filter((c) => c.release.ordinal === topOrdinal);
+  return winners.length === 1
+    ? { ok: true, selected: winners[0] }
+    : { ok: false, reason: 'ambiguous' };
+}
+
+/**
+ * The single-step sourced conversions a record's unit family may take to
+ * reach a factor quoted in another family, in order of preference. A family
+ * absent here (a kWh, a litre, a kg) reaches only a factor in its own family.
+ */
+export const CONVERSION_TARGETS: Readonly<
+  Partial<Record<UnitDimension, readonly UnitDimension[]>>
+> = {
+  metered_volume: ['energy', 'standard_volume'],
+  standard_volume: ['energy'],
+};
+
+/**
+ * The calorific basis a factor applied DIRECTLY to a record's quantity must
+ * be on: a fuel's energy is billed gross (`BILLED_ENERGY_CALORIFIC_BASIS`);
+ * anything else has none.
+ */
+export function directCalorificBasisFor(category: string, inputUnit: string): CalorificBasis {
+  return FUEL_COMBUSTION_CATEGORIES.includes(category) &&
+    unitDimensionOf(inputUnit) === 'energy'
+    ? BILLED_ENERGY_CALORIFIC_BASIS
+    : 'not_applicable';
+}
+
+/**
+ * A factor row as path resolution needs it. `gas` and `scope2Method` are
+ * checked here as well as in the caller's query: only the `CO2e` row of the
+ * category's own Scope 2 method (`scope2MethodFor`) ever prices a record, so
+ * a market-based row passed in by mistake is ignored, never chosen.
+ */
+export interface FactorPathCandidate extends ReleaseRanked {
+  gas: string;
+  scope2Method: string;
+  normalizedUnit: string;
+  calorificBasis: string;
+}
+
+/** A conversion row as path resolution needs it. */
+export interface ConversionPathCandidate extends ReleaseRanked {
+  fromUnit: string;
+  toUnit: string;
+  calorificBasis: string;
+}
+
+export type FactorPathResolution<F, C> =
+  | { ok: true; factor: F; conversion: C | null }
+  | {
+      ok: false;
+      code: Extract<
+        CalculationRefusalCode,
+        | 'unit_unknown'
+        | 'no_factor'
+        | 'placeholder_refused'
+        | 'ambiguous_factor'
+        | 'no_conversion'
+        | 'calorific_basis_mismatch'
+      >;
+    };
+
+function isLiveStatus(status: string): boolean {
+  return (
+    Object.prototype.hasOwnProperty.call(FACTOR_STATUS_RANK, status) &&
+    status !== 'withdrawn'
+  );
+}
+
+/**
+ * Which factor — and which sourced conversion, if any — prices a record. The
+ * one rule the engine, the seed and LP3-04's coverage report share.
+ *
+ * `factors` are every `CO2e` row of the lookup (category, activity type,
+ * geography, reporting year, Scope 2 method) in ANY unit and basis;
+ * `conversions` every conversion row of the same lookup from the base unit of
+ * the record's family. A path is a factor in the record's own family on its
+ * direct basis (`directCalorificBasisFor`), or a factor in a
+ * `CONVERSION_TARGETS` family reached by one conversion on the factor's own
+ * basis. Then, in order:
+ *
+ * 1. A path is as authoritative as its weakest link: without
+ *    `allowPlaceholders`, factor AND conversion must be authoritative.
+ * 2. The highest-ranked paths win, across every path — an authoritative
+ *    converted path beats a placeholder direct one.
+ * 3. Among those, a direct path beats a converted one, an earlier
+ *    `CONVERSION_TARGETS` family a later one, and — into energy — a factor on
+ *    `BILLED_ENERGY_CALORIFIC_BASIS` one on the other basis (a release holding
+ *    both is consistent, not ambiguous).
+ * 4. The factor is then chosen by `selectByRelease`, and its conversion the
+ *    same way; a conflict is `ambiguous_factor`, never a silent pick.
+ *
+ * A refusal names its cause: no factor at all; only non-authoritative paths
+ * (`placeholder_refused`); a factor that needs a conversion nobody loaded
+ * (`no_conversion`); or only factors/conversions on the other calorific basis.
+ */
+export function resolveFactorPath<
+  F extends FactorPathCandidate,
+  C extends ConversionPathCandidate,
+>(input: {
+  category: string;
+  inputUnit: string;
+  factors: readonly F[];
+  conversions: readonly C[];
+  allowPlaceholders: boolean;
+}): FactorPathResolution<F, C> {
+  const refuse = (
+    code: Extract<FactorPathResolution<F, C>, { ok: false }>['code'],
+  ): FactorPathResolution<F, C> => ({ ok: false, code });
+  const dimension = unitDimensionOf(input.inputUnit);
+  if (dimension === undefined) return refuse('unit_unknown');
+  const base = DIMENSION_BASE_UNIT[dimension];
+  const directBasis = directCalorificBasisFor(input.category, input.inputUnit);
+  const targets = CONVERSION_TARGETS[dimension] ?? [];
+  const method = scope2MethodFor(input.category);
+
+  type Path = { factor: F; conversion: C | null; preference: number };
+  const paths: Path[] = [];
+  let basisMismatch = false;
+  let missingConversion = false;
+  for (const factor of input.factors) {
+    // A withdrawn or unknown-status factor is no factor: it must not turn the
+    // refusal into a conversion or basis problem.
+    if (!isLiveStatus(factor.release.status)) continue;
+    if (factor.gas !== CALCULATION_GAS || factor.scope2Method !== method) continue;
+    if (factor.normalizedUnit === base) {
+      if (factor.calorificBasis === directBasis) {
+        paths.push({ factor, conversion: null, preference: 0 });
+      } else {
+        basisMismatch = true;
+      }
+      continue;
+    }
+    const target = unitDimensionOf(factor.normalizedUnit);
+    const order = target === undefined ? -1 : targets.indexOf(target);
+    if (order < 0 || DIMENSION_BASE_UNIT[target!] !== factor.normalizedUnit) continue;
+    // A withdrawn or unknown-status step counts as no step: the gap LP3-04
+    // reports is a missing conversion, not a missing factor.
+    const steps = input.conversions.filter(
+      (c) =>
+        c.fromUnit === base &&
+        c.toUnit === factor.normalizedUnit &&
+        isLiveStatus(c.release.status),
+    );
+    const onBasis = steps.filter((c) => c.calorificBasis === factor.calorificBasis);
+    if (onBasis.length === 0) {
+      if (steps.length > 0) basisMismatch = true;
+      else missingConversion = true;
+      continue;
+    }
+    // Direct is 0; each conversion family takes two slots, the billed basis
+    // first.
+    const offBasis = target === 'energy' && factor.calorificBasis !== BILLED_ENERGY_CALORIFIC_BASIS;
+    for (const conversion of onBasis) {
+      paths.push({ factor, conversion, preference: 2 * (order + 1) + (offBasis ? 1 : 0) });
+    }
+  }
+
+  // Factors and conversions were filtered to live ones as the paths were built.
+  const live = paths;
+  const permitted = input.allowPlaceholders
+    ? live
+    : live.filter(
+        (p) =>
+          p.factor.release.status === 'authoritative' &&
+          (p.conversion === null || p.conversion.release.status === 'authoritative'),
+      );
+  if (permitted.length === 0) {
+    if (live.length > 0) return refuse('placeholder_refused');
+    if (missingConversion) return refuse('no_conversion');
+    if (basisMismatch) return refuse('calorific_basis_mismatch');
+    return refuse('no_factor');
+  }
+
+  const rankOf = (p: Path) =>
+    Math.min(
+      FACTOR_STATUS_RANK[p.factor.release.status],
+      p.conversion ? FACTOR_STATUS_RANK[p.conversion.release.status] : Infinity,
+    );
+  const topRank = maxOf(permitted.map(rankOf));
+  const top = permitted.filter((p) => rankOf(p) === topRank);
+  const bestPreference = -maxOf(top.map((p) => -p.preference));
+  const chosen = top.filter((p) => p.preference === bestPreference);
+
+  const factorPick = selectByRelease([...new Set(chosen.map((p) => p.factor))], {
+    allowPlaceholders: input.allowPlaceholders,
+  });
+  if (!factorPick.ok) return refuse('ambiguous_factor');
+  const factor = factorPick.selected;
+  const forFactor = chosen.filter((p) => p.factor === factor);
+  if (forFactor[0].conversion === null) return { ok: true, factor, conversion: null };
+  const conversionPick = selectByRelease(
+    forFactor.map((p) => p.conversion as C),
+    { allowPlaceholders: input.allowPlaceholders },
+  );
+  return conversionPick.ok
+    ? { ok: true, factor, conversion: conversionPick.selected }
+    : refuse('ambiguous_factor');
+}
+
+/**
+ * The import contract (LP4-02 loads authoritative releases through it). A
+ * release file arrives untyped, so `validateFactorReleaseImport` checks every
+ * value's type as well as its meaning and reports — never throws — and nothing
+ * is written while any issue stands.
+ */
+export interface FactorReleaseImport {
+  release: {
+    publisher: string;
+    title: string;
+    edition: string;
+    ordinal: number;
+    status: string;
+    sourceUrl: string | null;
+    licence: string | null;
+    publishedAt: string | null;
+    gwpSet: string | null;
+    reviewedBy: string | null;
+    reviewedAt: string | null;
+    notes: string | null;
+  };
+  factors: readonly FactorImportRow[];
+  conversions: readonly UnitConversionImportRow[];
+}
+
+export interface FactorImportRow {
+  category: string;
+  activityType: string;
+  gas: string;
+  /** On a `CO2e` row, what its total includes; null on a per-gas row. */
+  gasCoverage: string | null;
+  geographyCode: string;
+  reportingYear: number;
+  dataYear: number;
+  scope: number;
+  /** kg CO₂e (of `gas`) per ONE `normalizedUnit`. */
+  factorValue: number;
+  /**
+   * Always `factorUnitFor(normalizedUnit)`, e.g. "kgCO2e/kWh". The publisher's
+   * own quote ("tCO2/TJ") and the arithmetic from it belong in `methodology`.
+   */
+  factorUnit: string;
+  /** The base unit of its family (`DIMENSION_BASE_UNIT`) the value is per. */
+  normalizedUnit: string;
+  calorificBasis: string;
+  scope2Method: string;
+  methodology: string;
+  /** Where in the publication this row comes from (sheet, table, row). */
+  source: string;
+}
+
+export interface UnitConversionImportRow {
+  category: string;
+  activityType: string;
+  geographyCode: string;
+  reportingYear: number;
+  dataYear: number;
+  /** A base unit (`DIMENSION_BASE_UNIT`) — a definitional step runs in code first. */
+  fromUnit: string;
+  /** A base unit of another family. */
+  toUnit: string;
+  multiplier: number;
+  calorificBasis: string;
+  referenceConditions: string | null;
+  basis: string;
+}
+
+export interface FactorImportIssue {
+  /** Where, e.g. `release.sourceUrl` or `factors[12].gas`. */
+  path: string;
+  message: string;
+}
+
+/** How a factor's unit is written: kg CO₂e per one base unit. */
+export function factorUnitFor(normalizedUnit: string): string {
+  return `kgCO2e/${unitSymbol(normalizedUnit)}`;
+}
+
+/**
+ * Length caps for imported text. Release fields are copied into every
+ * snapshot that cites the release and printed in reports, so one oversized
+ * field would bloat every record priced from it.
+ */
+export const FACTOR_IMPORT_TEXT_LIMITS = {
+  publisher: 200,
+  title: 500,
+  edition: 100,
+  licence: 500,
+  notes: 2000,
+  reviewedBy: 200,
+  sourceUrl: 2000,
+  factorUnit: 32,
+  methodology: 1000,
+  source: 1000,
+  basis: 2000,
+  referenceConditions: 200,
+} as const;
+
+/** Statuses a release can be loaded with — `withdrawn` is reached, not loaded. */
+const LOADABLE_STATUSES: readonly string[] = ['authoritative', 'placeholder', 'fixture'];
+
+/**
+ * Control, formatting, surrogate and default-ignorable characters (bidi
+ * overrides, zero-width marks, NUL, a lone surrogate, a Hangul filler, a
+ * combining grapheme joiner). An invisible difference in a publisher's name
+ * would rank as a SECOND publisher — turning its keys ambiguous and escaping
+ * the per-publisher ordinal rule; a bidi override reorders a report.
+ * (Look-alike letters from other scripts need a publisher registry — PR B.)
+ */
+const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}\p{Cs}\p{Default_Ignorable_Code_Point}]/u;
+
+/**
+ * An https URL with a host and nothing before it: no `user@` part, which
+ * would make `https://www.gov.uk@evil.example/` a link to evil.example, and
+ * no backslash, which browsers read as a slash.
+ */
+const PROVENANCE_URL = /^https:\/\/[^\s/?#@\\]+(?:[/?#][^\s\\]*)?$/;
+
+/** The definitional family of a unit token, or undefined for an unknown one. */
+export function unitDimensionOf(unit: unknown): UnitDimension | undefined {
+  return ACTIVITY_UNITS.find((u) => u.value === unit)?.dimension;
+}
+
+function isBaseUnit(unit: unknown): boolean {
+  const dimension = unitDimensionOf(unit);
+  return dimension !== undefined && DIMENSION_BASE_UNIT[dimension] === unit;
+}
+
+function isIsoDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
+}
+
+function isText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isYear(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 1990 && (value as number) <= 2100;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isOneOf(value: unknown, list: readonly string[]): value is string {
+  return typeof value === 'string' && list.includes(value);
+}
+
+/** Why a text value is unacceptable, or null when it is clean. */
+function textIssue(value: unknown, max: number): string | null {
+  if (!isText(value)) return 'is required';
+  if (value !== value.trim()) return 'has leading or trailing white space';
+  if (value.length > max) return `is longer than ${max} characters`;
+  if (CONTROL_OR_FORMAT.test(value)) return 'contains a control or invisible formatting character';
+  if (value !== value.normalize('NFC')) return 'is not in Unicode NFC form';
+  return null;
+}
+
+/**
+ * The activity types a factor or conversion of this category may carry under a
+ * release of this status: the category's own (its implicit one included), and
+ * `UNSPECIFIED_ACTIVITY_TYPE` only in a non-authoritative release.
+ */
+function factorActivityTypesFor(category: string, status: string | null): string[] {
+  const own = (categoryActivityTypes(category)?.types ?? []).map((t) => t.value);
+  return status === 'authoritative' ? own : [...own, UNSPECIFIED_ACTIVITY_TYPE];
+}
+
+/**
+ * Every reason this release may not be loaded — empty when it may. Checks what
+ * the database cannot: types and vocabulary, the provenance and review an
+ * authoritative release must carry, the scope, basis, unit and gas rules, and
+ * duplicates within the file.
+ */
+export function validateFactorReleaseImport(input: unknown): FactorImportIssue[] {
+  const issues: FactorImportIssue[] = [];
+  const fail = (path: string, message: string) => issues.push({ path, message });
+  if (
+    !isObject(input) ||
+    !isObject(input.release) ||
+    !Array.isArray(input.factors) ||
+    !Array.isArray(input.conversions)
+  ) {
+    return [{ path: '', message: 'must be an object with release, factors[] and conversions[]' }];
+  }
+  const release = input.release;
+  const factors: unknown[] = input.factors;
+  const conversions: unknown[] = input.conversions;
+  // Echoed into messages only once it is known to be one of ours.
+  const status = isOneOf(release.status, LOADABLE_STATUSES) ? release.status : null;
+  const authoritative = status === 'authoritative';
+  const limits = FACTOR_IMPORT_TEXT_LIMITS;
+
+  for (const field of ['publisher', 'title', 'edition'] as const) {
+    const problem = textIssue(release[field], limits[field]);
+    if (problem) fail(`release.${field}`, problem);
+  }
+  for (const field of ['licence', 'notes', 'reviewedBy', 'sourceUrl'] as const) {
+    if (release[field] === null) continue;
+    const problem = textIssue(release[field], limits[field]);
+    if (problem) fail(`release.${field}`, problem);
+  }
+  if (!Number.isInteger(release.ordinal) || (release.ordinal as number) < 1) {
+    fail('release.ordinal', 'must be a positive integer');
+  }
+  if (status === null) {
+    fail('release.status', `must be one of ${LOADABLE_STATUSES.join(', ')}`);
+  }
+  if (release.gwpSet !== null && !isOneOf(release.gwpSet, GWP_SETS)) {
+    fail('release.gwpSet', `must be one of ${GWP_SETS.join(', ')}`);
+  }
+  for (const field of ['publishedAt', 'reviewedAt'] as const) {
+    if (release[field] !== null && !isIsoDate(release[field])) {
+      fail(`release.${field}`, 'must be an ISO date (YYYY-MM-DD)');
+    }
+  }
+  if (isIsoDate(release.publishedAt) && isIsoDate(release.reviewedAt) && release.reviewedAt < release.publishedAt) {
+    fail('release.reviewedAt', 'is earlier than the publication it reviews');
+  }
+  if (release.sourceUrl !== null && !(typeof release.sourceUrl === 'string' && PROVENANCE_URL.test(release.sourceUrl))) {
+    fail('release.sourceUrl', 'must be an https URL with a host and no user part');
+  }
+  if (authoritative) {
+    // Provenance and review are what make a release authoritative (F01, D24);
+    // a loaded release never changes but to withdrawn, so neither can be
+    // added afterwards.
+    for (const field of ['sourceUrl', 'licence', 'publishedAt', 'reviewedBy', 'reviewedAt'] as const) {
+      // `== null`: an omitted key is as missing as a null one.
+      if (release[field] == null) fail(`release.${field}`, 'is required for an authoritative release');
+    }
+  }
+  if (factors.length === 0 && conversions.length === 0) {
+    fail('release', 'holds no factor and no conversion');
+  }
+
+  const seenFactors = new Set<string>();
+  const totals = new Map<string, { value: number; coverage: unknown }>();
+  const perGas: { group: string; path: string; gas: string; value: number }[] = [];
+  let needsGwp = false;
+  factors.forEach((row, i) => {
+    const at = (field: string) => `factors[${i}].${field}`;
+    if (!isObject(row)) {
+      fail(`factors[${i}]`, 'is not an object');
+      return;
+    }
+    const category = row.category;
+    if (!isOneOf(category, CATEGORIES)) {
+      fail(at('category'), 'is not a category');
+      return;
+    }
+    if (!isOneOf(row.activityType, factorActivityTypesFor(category, status))) {
+      fail(
+        at('activityType'),
+        authoritative && row.activityType === UNSPECIFIED_ACTIVITY_TYPE
+          ? `is reserved for non-authoritative releases`
+          : `is not an activity type of ${category}`,
+      );
+    }
+    const gas = isOneOf(row.gas, FACTOR_GASES) ? row.gas : null;
+    if (gas === null) fail(at('gas'), `must be one of ${FACTOR_GASES.join(', ')}`);
+    if (!isOneOf(row.geographyCode, GEOGRAPHY_CODES)) fail(at('geographyCode'), 'is not a geography code');
+    if (!isYear(row.reportingYear)) fail(at('reportingYear'), 'is not a year');
+    if (!isYear(row.dataYear)) fail(at('dataYear'), 'is not a year');
+    else if (isYear(row.reportingYear) && row.dataYear > row.reportingYear) {
+      fail(at('dataYear'), 'is later than the reporting year it is declared for');
+    }
+    const scope = CATEGORY_SCOPE_MAP[category as Category];
+    if (row.scope !== scope) fail(at('scope'), `must be ${scope} for ${category}`);
+    const value = typeof row.factorValue === 'number' && Number.isFinite(row.factorValue) && row.factorValue >= 0
+      ? row.factorValue
+      : null;
+    if (value === null) fail(at('factorValue'), 'must be a finite, non-negative number');
+    for (const field of ['methodology', 'source'] as const) {
+      const problem = textIssue(row[field], limits[field]);
+      if (problem) fail(at(field), problem);
+    }
+    const unit = row.normalizedUnit;
+    const dimension = unitDimensionOf(unit);
+    if (!CATEGORY_UNITS[category as Category]?.includes(unit as string)) {
+      fail(at('normalizedUnit'), `is not a unit ${category} is measured in`);
+    } else if (!isBaseUnit(unit)) {
+      fail(at('normalizedUnit'), `must be the base unit of its family (${DIMENSION_BASE_UNIT[dimension!]})`);
+    } else if (FUEL_COMBUSTION_CATEGORIES.includes(category) && dimension === 'metered_volume') {
+      // A publisher's per-m³ combustion factor comes from a calorific value
+      // per STANDARD m³; read as per metered m³ it would skip the volume
+      // correction and understate every reading.
+      fail(
+        at('normalizedUnit'),
+        'a combustion factor per cubic metre is not per metered m³ — load it per standard_cubic_metres only if the publisher states 15 °C and 101.325 kPa; a per-Nm³ (0 °C) factor needs its own unit',
+      );
+    } else if (row.factorUnit !== factorUnitFor(unit as string)) {
+      fail(at('factorUnit'), `must be ${factorUnitFor(unit as string)}`);
+    }
+    const needsBasis = FUEL_COMBUSTION_CATEGORIES.includes(category) && dimension === 'energy';
+    if (needsBasis ? !isOneOf(row.calorificBasis, ['gross', 'net']) : row.calorificBasis !== 'not_applicable') {
+      fail(at('calorificBasis'), needsBasis ? 'must be gross or net for a fuel quoted per unit of energy' : 'must be not_applicable');
+    }
+    const isScope2 = scope === 2;
+    if (isScope2 ? !isOneOf(row.scope2Method, ['location', 'market']) : row.scope2Method !== 'not_applicable') {
+      fail(at('scope2Method'), isScope2 ? 'must be location or market' : 'must be not_applicable');
+    }
+    if (gas === CALCULATION_GAS) {
+      if (!isOneOf(row.gasCoverage, FACTOR_GAS_COVERAGES)) {
+        fail(at('gasCoverage'), `must be one of ${FACTOR_GAS_COVERAGES.join(', ')} on a ${CALCULATION_GAS} row`);
+      } else if (category === 'Refrigerants' && row.gasCoverage !== 'all_ghg') {
+        fail(at('gasCoverage'), 'must be all_ghg for a refrigerant — its total is the gas itself');
+      }
+      if (row.gasCoverage !== 'co2_only') needsGwp = true;
+    } else if (gas !== null) {
+      if (row.gasCoverage !== null) fail(at('gasCoverage'), 'must be null on a per-gas row');
+      if (category === 'Refrigerants') fail(at('gas'), `a refrigerant is quoted as one ${CALCULATION_GAS} total`);
+      if (gas === 'CH4' || gas === 'N2O') needsGwp = true;
+    }
+    const key = identityKey({ ...row, releaseId: null }, FACTOR_IDENTITY_FIELDS);
+    if (seenFactors.has(key)) fail(at('gas'), 'duplicates an earlier factor row');
+    seenFactors.add(key);
+    // A calculation multiplies the CO2e row only, so a per-gas breakdown with
+    // no total beside it would be disclosed but never priced.
+    const group = identityKey({ ...row, releaseId: null, gas: null }, FACTOR_IDENTITY_FIELDS);
+    if (gas === CALCULATION_GAS && value !== null) totals.set(group, { value, coverage: row.gasCoverage });
+    else if (gas !== null && gas !== CALCULATION_GAS && value !== null) perGas.push({ group, path: at('gas'), gas, value });
+  });
+  for (const { group, path, gas, value } of perGas) {
+    const total = totals.get(group);
+    if (!total) {
+      fail(path, `has no ${CALCULATION_GAS} total beside it`);
+    } else if (total.coverage === 'co2_only' && (gas === 'CH4' || gas === 'N2O')) {
+      fail(path, `contradicts a ${CALCULATION_GAS} total that covers CO2 only`);
+    } else if (gas !== 'CO2_biogenic' && value > total.value) {
+      // Biogenic CO2 sits outside the total and may exceed it; a share of the
+      // total may not.
+      fail(path, `exceeds the ${CALCULATION_GAS} total it is part of`);
+    }
+  }
+  if (authoritative && needsGwp && release.gwpSet === null) {
+    fail('release.gwpSet', 'is required for an authoritative release that weights any gas other than CO2');
+  }
+
+  const seenConversions = new Set<string>();
+  conversions.forEach((row, i) => {
+    const at = (field: string) => `conversions[${i}].${field}`;
+    if (!isObject(row)) {
+      fail(`conversions[${i}]`, 'is not an object');
+      return;
+    }
+    const category = row.category;
+    if (!isOneOf(category, CATEGORIES)) {
+      fail(at('category'), 'is not a category');
+      return;
+    }
+    if (!isOneOf(row.activityType, factorActivityTypesFor(category, status))) {
+      fail(
+        at('activityType'),
+        authoritative && row.activityType === UNSPECIFIED_ACTIVITY_TYPE
+          ? 'is reserved for non-authoritative releases'
+          : `is not an activity type of ${category}`,
+      );
+    }
+    if (!isOneOf(row.geographyCode, GEOGRAPHY_CODES)) fail(at('geographyCode'), 'is not a geography code');
+    if (!isYear(row.reportingYear)) fail(at('reportingYear'), 'is not a year');
+    if (!isYear(row.dataYear)) fail(at('dataYear'), 'is not a year');
+    else if (isYear(row.reportingYear) && row.dataYear > row.reportingYear) {
+      fail(at('dataYear'), 'is later than the reporting year it is declared for');
+    }
+    for (const field of ['fromUnit', 'toUnit'] as const) {
+      if (!CATEGORY_UNITS[category as Category]?.includes(row[field] as string)) {
+        fail(at(field), `is not a unit ${category} is measured in`);
+      } else if (!isBaseUnit(row[field])) {
+        fail(at(field), 'must be the base unit of its family — definitional steps run in code');
+      }
+    }
+    const from = unitDimensionOf(row.fromUnit);
+    const to = unitDimensionOf(row.toUnit);
+    // A step inside one family is a definition, kept in code; only a step
+    // across families depends on the fuel, the country and the year.
+    if (from !== undefined && from === to) {
+      fail(at('toUnit'), 'is in the same unit family as fromUnit — that conversion is definitional, not sourced');
+    }
+    if (!(typeof row.multiplier === 'number' && Number.isFinite(row.multiplier) && row.multiplier > 0)) {
+      fail(at('multiplier'), 'must be a finite, positive number');
+    }
+    const energy = from === 'energy' || to === 'energy';
+    if (energy ? !isOneOf(row.calorificBasis, ['gross', 'net']) : row.calorificBasis !== 'not_applicable') {
+      fail(at('calorificBasis'), energy ? 'must be gross or net for a step to or from energy' : 'must be not_applicable');
+    }
+    const gasVolume = (d: UnitDimension | undefined) => d === 'metered_volume' || d === 'standard_volume';
+    if (gasVolume(from) || gasVolume(to)) {
+      const problem = textIssue(row.referenceConditions, limits.referenceConditions);
+      if (problem) {
+        fail(at('referenceConditions'), problem === 'is required' ? 'is required for a volume step' : problem);
+      } else if (
+        (from === 'standard_volume' || to === 'standard_volume') &&
+        row.referenceConditions !== STANDARD_REFERENCE_CONDITIONS
+      ) {
+        // A step stated at other conditions (0 °C "normal" m³) is not a step
+        // to or from a standard cubic metre.
+        fail(at('referenceConditions'), `must be ${STANDARD_REFERENCE_CONDITIONS} for a step to or from standard_cubic_metres`);
+      }
+    } else if (row.referenceConditions !== null) {
+      const problem = textIssue(row.referenceConditions, limits.referenceConditions);
+      if (problem) fail(at('referenceConditions'), problem);
+    }
+    const problem = textIssue(row.basis, limits.basis);
+    if (problem) fail(at('basis'), problem);
+    const key = identityKey({ ...row, releaseId: null }, CONVERSION_IDENTITY_FIELDS);
+    if (seenConversions.has(key)) fail(at('toUnit'), 'duplicates an earlier conversion row');
+    seenConversions.add(key);
+  });
+
+  return issues;
 }
 
 // ---------------------------------------------------------------------------
@@ -1384,6 +2726,17 @@ export interface ActivityRecordDTO {
   reportingPeriod: ReportingPeriod;
   periodValue: string;
   category: Category;
+  /**
+   * Which fuel, gas or activity within the category (LP3-03, K1 = A1; see
+   * `CATEGORY_ACTIVITY_TYPES`). Null for an implicit category and for every
+   * record written before LP3-03. Part of the record's identity: the unique
+   * index ends `category, activity_type`.
+   *
+   * Optional in this type only so that fixtures written before LP3-03 still
+   * compile: the API returns it on every record once LP3-03's schema change
+   * lands, and a reader treats `undefined` as null.
+   */
+  activityType?: string | null;
   scope: number;
   status: ActivityRecordStatus;
   activityValue: number;
@@ -1542,6 +2895,12 @@ export interface CreateActivityRecordInput {
   reportingPeriod: ReportingPeriod;
   periodValue: string;
   category: Category;
+  /**
+   * See `ActivityRecordDTO.activityType` — one of `recordActivityTypesFor(category)`,
+   * or null. Do not send it before LP3-03's schema change lands: until then
+   * the API refuses it as an unknown property.
+   */
+  activityType?: string | null;
   activityValue: number;
   activityUnit: string;
   input?: Record<string, unknown> | null;

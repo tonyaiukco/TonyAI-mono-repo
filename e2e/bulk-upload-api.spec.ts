@@ -305,7 +305,8 @@ test('the row-level refusals arrive with the codes the contract names', async ({
     // on the insert, which is why the importer checks it itself.
     { ...LANE, activityValue: 13 },
     { ...LANE, periodValue: 'Q4', activityValue: 'N/A' },
-    { ...LANE, periodValue: 'Q4', category: 'Refrigerants', activityValue: 5, activityUnit: 'tonnes' },
+    // Refrigerants in its one unit (kg, LP3-03): a coverage gap, not a unit error.
+    { ...LANE, periodValue: 'Q4', category: 'Refrigerants', activityValue: 5, activityUnit: 'kg' },
     // The same category and unit as row 2, one year earlier. The factor
     // library is year-scoped with no fallback, and the fixture covers
     // `E2E_YEAR` alone — so this row can only be refused if the importer reads

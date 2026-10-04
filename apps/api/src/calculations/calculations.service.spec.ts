@@ -3,6 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { NoEmissionFactorError } from './errors';
 import type { EmissionFactor } from '@tonyai/db';
 import {
+  ACTIVITY_UNITS,
   isCalculated,
   type ActivityCalculationSnapshot,
   type CalculationResult,
@@ -68,6 +69,23 @@ function makeFactor(overrides: Partial<EmissionFactor> = {}): EmissionFactor {
 }
 
 describe('normalize (calculation_logic.md §2)', () => {
+  it('passes a refrigerant mass (kg) through unchanged (LP3-03)', () => {
+    // A refrigerant factor is quoted per kg of gas; any multiplier here would
+    // scale every leakage figure by it.
+    expect(normalize(5, 'kg')).toEqual({
+      normalizedValue: 5,
+      normalizedUnit: 'kg',
+      conversionApplied: false,
+    });
+  });
+
+  it('normalises every calculable vocabulary unit to the target the contract states', () => {
+    for (const unit of ACTIVITY_UNITS) {
+      if (unit.blocked) continue;
+      expect(normalize(1, unit.value).normalizedUnit, unit.value).toBe(unit.target);
+    }
+  });
+
   it('passes through the electricity base unit (kWh) with no conversion', () => {
     expect(normalize(1000, 'kWh')).toEqual({
       normalizedValue: 1000,

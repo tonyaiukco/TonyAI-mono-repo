@@ -130,13 +130,29 @@ describe('the data migration mirrors storedUnit', () => {
     }
   });
 
+  // Units added to the vocabulary AFTER the migration ran, each needing no
+  // data migration of its own because no stored row can carry any spelling of
+  // it. `kg` (LP3-03): the engine did not know it, so every write naming it
+  // was refused by `IsActivityUnit` — and Refrigerants, the one category that
+  // takes it, had no factor, so no Refrigerants row was ever stored at all.
+  const ADDED_AFTER_CANONICALISATION = ['kg'];
+
   it('every alias the engine knows, and every vocabulary value, is in the SQL', () => {
     const keys = new Set(pairs.map((p) => p.key));
     for (const spelling of Object.keys(UNIT_ALIAS_SPELLINGS)) {
       expect(keys.has(cleanUnitToken(spelling))).toBe(true);
     }
     for (const { value } of ACTIVITY_UNITS) {
+      if (ADDED_AFTER_CANONICALISATION.includes(value)) continue;
       expect(keys.has(value.toLowerCase())).toBe(true);
+    }
+  });
+
+  it('exempts only units the migration never saw, and nothing it did', () => {
+    const keys = new Set(pairs.map((p) => p.key));
+    for (const value of ADDED_AFTER_CANONICALISATION) {
+      expect(ACTIVITY_UNITS.some((u) => u.value === value)).toBe(true);
+      expect(keys.has(value.toLowerCase())).toBe(false);
     }
   });
 
