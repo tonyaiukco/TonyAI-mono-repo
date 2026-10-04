@@ -249,6 +249,36 @@ describe('factor identity — the contract tells every dimension apart', () => {
     },
   );
 
+  it('pins the identity to exactly these dimensions', () => {
+    // The table above is generated from the constant, so a field dropped from
+    // it would drop its own test too; this list is written out by hand.
+    expect([...FACTOR_IDENTITY_FIELDS].sort()).toEqual(
+      [
+        'activityType',
+        'calorificBasis',
+        'category',
+        'gas',
+        'geographyCode',
+        'normalizedUnit',
+        'releaseId',
+        'reportingYear',
+        'scope2Method',
+      ].sort(),
+    );
+    expect([...CONVERSION_IDENTITY_FIELDS].sort()).toEqual(
+      [
+        'activityType',
+        'calorificBasis',
+        'category',
+        'fromUnit',
+        'geographyCode',
+        'releaseId',
+        'reportingYear',
+        'toUnit',
+      ].sort(),
+    );
+  });
+
   it('the same values are the same factor', () => {
     expect(identityKey({ ...base }, FACTOR_IDENTITY_FIELDS)).toBe(
       identityKey(base, FACTOR_IDENTITY_FIELDS),
