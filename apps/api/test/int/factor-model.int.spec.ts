@@ -190,6 +190,40 @@ describe('K5 — a status changes only by a step of the review lifecycle', () =>
   });
 });
 
+describe('K5 — a committed record is never deleted on its own', () => {
+  it.each([
+    ActivityRecordStatus.submitted,
+    ActivityRecordStatus.under_review,
+    ActivityRecordStatus.approved,
+    ActivityRecordStatus.locked,
+    ActivityRecordStatus.voided,
+  ])('refuses deleting a %s record to the runtime role and the service role — no delete-and-reinsert rewrite', async (status) => {
+    const rec = await createRecord(owner, tenant, { ...nextSlot(), status });
+    expect(sqlstateOf(await failure(runtime.activityRecord.delete({ where: { id: rec.id } })))).toBe('TA001');
+    const asService = await failure(
+      withRollback(owner, async (tx) => {
+        await tx.$executeRawUnsafe('SET LOCAL ROLE service_role');
+        await tx.$executeRawUnsafe(`DELETE FROM activity_records WHERE id = '${rec.id}'`);
+      }),
+    );
+    expect(sqlstateOf(asService)).toBe('TA001');
+  });
+
+  it('lets a draft or rejected record go, the owner (teardown) delete any, and a subsidiary take its records with it', async () => {
+    for (const status of [ActivityRecordStatus.draft, ActivityRecordStatus.rejected]) {
+      const rec = await createRecord(owner, tenant, { ...nextSlot(), status });
+      await runtime.activityRecord.delete({ where: { id: rec.id } });
+    }
+    const approved = await createRecord(owner, tenant, { ...nextSlot(), status: ActivityRecordStatus.approved });
+    await withRollback(owner, (tx) => tx.activityRecord.delete({ where: { id: approved.id } }));
+    // A foreign-key cascade runs the guard at depth 2: deleting the
+    // subsidiary — here as the runtime role, rolled back — takes its
+    // committed records too.
+    await withRollback(runtime, (tx) => tx.subsidiary.delete({ where: { id: tenant.subsidiaryId } }));
+    expect(await owner.activityRecord.count({ where: { id: approved.id } })).toBe(1);
+  });
+});
+
 describe('a slot holds typed records or one untyped record, never both', () => {
   const fuel = { category: 'Fuel', scope: 1, activityUnit: 'litres' };
 
@@ -412,6 +446,8 @@ describe('the factor library is append-only, for the owner too', () => {
     const problems = await withRollback(owner, async (tx) => {
       await tx.$executeRawUnsafe('ALTER TABLE emission_factors DISABLE TRIGGER emission_factors_before_insert');
       await tx.$executeRawUnsafe('ALTER TABLE factor_releases DROP CONSTRAINT factor_releases_publisher_check');
+      // An authoritative load names who made it.
+      await tx.$executeRawUnsafe(`SET LOCAL tonyai.actor = 'Reviewer firm'`);
       const releaseId = randomUUID();
       await tx.$executeRawUnsafe(
         `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, source_url, licence, published_at, reviewed_by, reviewed_at)
@@ -522,6 +558,7 @@ describe('the factor library is append-only, for the owner too', () => {
         // Only inside this rolled-back transaction: lift the registry so an
         // authoritative release can exist, to reach the row trigger behind it.
         await tx.$executeRawUnsafe('ALTER TABLE factor_releases DROP CONSTRAINT factor_releases_publisher_check');
+        await tx.$executeRawUnsafe(`SET LOCAL tonyai.actor = 'Reviewer firm'`);
         await tx.$executeRawUnsafe(
           `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, source_url, licence, published_at, reviewed_by, reviewed_at)
            VALUES ('${releaseId}', 'DESNZ', 'Conversion factors', '2026', 1, 'authoritative', 'https://www.gov.uk/x', 'OGL v3.0', '2026-06-10', 'Reviewer firm', '2026-06-20')`,
@@ -537,11 +574,18 @@ describe('the factor library is append-only, for the owner too', () => {
 });
 
 describe("the factor library's record (factor_release_events)", () => {
-  type Event = { event: string; table_name: string | null; row_count: number | null; db_role: string; actor: string | null; release_status: string; why: string | null };
+  type Event = {
+    event: string; table_name: string | null; row_count: number | null; db_role: string; actor: string | null; release_status: string;
+    why: string | null; by: string | null; at: string | null; withdrawn_at: string | null; us: string;
+  };
   const eventsOf = (tx: Prisma.TransactionClient, releaseId: string) =>
     tx.$queryRawUnsafe<Event[]>(
-      `SELECT event, table_name, row_count, db_role, actor, release_status, detail->>'withdrawal_reason' AS why
-         FROM factor_release_events WHERE release_id = '${releaseId}' ORDER BY occurred_at`,
+      `SELECT e.event, e.table_name, e.row_count, e.db_role, e.actor, e.release_status,
+              -- In microseconds, as stored: a JS Date keeps milliseconds only.
+              (extract(epoch FROM e.occurred_at) * 1000000)::bigint::text AS us,
+              e.detail->>'withdrawal_reason' AS why, e.detail->>'withdrawn_by' AS by, e.detail->>'withdrawn_at' AS at,
+              (SELECT to_jsonb(r.withdrawn_at) #>> '{}' FROM factor_releases r WHERE r.id = e.release_id) AS withdrawn_at
+         FROM factor_release_events e WHERE e.release_id = '${releaseId}' ORDER BY e.occurred_at`,
     );
   const load = (releaseId: string, ordinal: number) => [
     `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status) VALUES ('${releaseId}', 'TonyAI test fixture', 'Int record test', 'int-${releaseId}', ${ordinal}, 'fixture')`,
@@ -571,6 +615,28 @@ describe("the factor library's record (factor_release_events)", () => {
       ['deleted', null, null],
     ]);
     expect(events.every((e) => e.actor === 'TonyAI ops' && e.db_role === 'postgres' && e.release_status === 'fixture')).toBe(true);
+    // The wall clock, not the transaction's start: one transaction's events
+    // still order strictly.
+    const times = events.map((e) => BigInt(e.us));
+    expect(times.every((t, i) => i === 0 || t > times[i - 1]), times.join(' ')).toBe(true);
+  });
+
+  it('records rows added to emission_factors as it does conversions', async () => {
+    const releaseId = randomUUID();
+    const events = await withRollback(owner, async (tx) => {
+      const [release] = load(releaseId, await nextOrdinal(tx));
+      await tx.$executeRawUnsafe(release);
+      await tx.$executeRawUnsafe(
+        `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year, data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+         SELECT gen_random_uuid(), '${releaseId}', 'Fuel', 'gas_oil', 'CO2e', 'all_ghg', g, 2031, 2031, 1, 'not_applicable', 'not_applicable', 2.5, 'kgCO2e/L', 'litres', 'x', 'x', 'int-${releaseId}', now()
+           FROM unnest(ARRAY['UK', 'TR']) g`,
+      );
+      return eventsOf(tx, releaseId);
+    });
+    expect(events.map((e) => [e.event, e.table_name, e.row_count])).toEqual([
+      ['loaded', null, null],
+      ['rows_added', 'emission_factors', 2],
+    ]);
   });
 
   it('names the service role when PostgREST loads, and records why a release was withdrawn', async () => {
@@ -590,7 +656,95 @@ describe("the factor library's record (factor_release_events)", () => {
       ['rows_added', 'service_role', null],
       ['withdrawn', 'service_role', null],
     ]);
-    expect(events[2]).toMatchObject({ release_status: 'withdrawn', why: 'int test' });
+    expect(events[2]).toMatchObject({ release_status: 'withdrawn', why: 'int test', by: 'TonyAI ops' });
+    // The withdrawal's own time, as the release now holds it.
+    expect(events[2].at).not.toBeNull();
+    expect(events[2].at).toBe(events[2].withdrawn_at);
+  });
+
+  it('refuses a direct INSERT even to the owner — only its own triggers write it', async () => {
+    const e = await failure(
+      withRollback(owner, (tx) =>
+        tx.$executeRawUnsafe(
+          `INSERT INTO factor_release_events (id, release_id, publisher, edition, release_status, event, db_role)
+           VALUES (gen_random_uuid(), gen_random_uuid(), 'x', 'x', 'x', 'loaded', 'x')`,
+        ),
+      ),
+    );
+    expect(sqlstateOf(e)).toBe('TA010');
+  });
+
+  it('keeps the stated actor clean text, and requires one for an authoritative load', async () => {
+    const releaseId = randomUUID();
+    const dirty = await failure(
+      withRollback(owner, async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL tonyai.actor = ' padded'`);
+        for (const sql of load(releaseId, await nextOrdinal(tx))) await tx.$executeRawUnsafe(sql);
+      }),
+    );
+    expect(String((dirty as Error).message)).toContain('factor_release_events_actor_check');
+    const authoritative = `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, source_url, licence, published_at, reviewed_by, reviewed_at)
+      VALUES ('${randomUUID()}', 'DESNZ', 'Conversion factors', '2026', 1, 'authoritative', 'https://www.gov.uk/x', 'OGL v3.0', '2026-06-10', 'Reviewer firm', '2026-06-20')`;
+    const unnamed = await failure(
+      withRollback(owner, async (tx) => {
+        await tx.$executeRawUnsafe('ALTER TABLE factor_releases DROP CONSTRAINT factor_releases_publisher_check');
+        await tx.$executeRawUnsafe(authoritative);
+      }),
+    );
+    expect(sqlstateOf(unnamed)).toBe('TA011');
+    await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('ALTER TABLE factor_releases DROP CONSTRAINT factor_releases_publisher_check');
+      await tx.$executeRawUnsafe(`SET LOCAL tonyai.actor = 'Reviewer firm'`);
+      await tx.$executeRawUnsafe(authoritative);
+    });
+  });
+
+  it('refuses a statement that would drop a rows event — a release deleted beside its rows', async () => {
+    const releaseId = randomUUID();
+    const e = await failure(
+      withRollback(owner, async (tx) => {
+        for (const sql of load(releaseId, await nextOrdinal(tx))) await tx.$executeRawUnsafe(sql);
+        await tx.$executeRawUnsafe(
+          `WITH d AS (DELETE FROM factor_releases WHERE id = '${releaseId}') DELETE FROM unit_conversions WHERE release_id = '${releaseId}'`,
+        );
+      }),
+    );
+    expect(sqlstateOf(e)).toBe('TA010');
+  });
+
+  it('refuses a load under REPEATABLE READ, which could not see a concurrent withdrawal — factors and conversions alike', async () => {
+    const releaseId = randomUUID();
+    const factorRow = `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year, data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+      VALUES (gen_random_uuid(), '${releaseId}', 'Fuel', 'gas_oil', 'CO2e', 'all_ghg', 'UK', 2031, 2031, 1, 'not_applicable', 'not_applicable', 2.5, 'kgCO2e/L', 'litres', 'x', 'x', 'int-${releaseId}', now())`;
+    const [release, conversions] = load(releaseId, 0);
+    for (const rows of [conversions, factorRow]) {
+      const e = await failure(
+        owner.$transaction(
+          async (tx) => {
+            await tx.$executeRawUnsafe(release.replace(/, 0, 'fixture'\)/, `, ${await nextOrdinal(tx)}, 'fixture')`));
+            await tx.$executeRawUnsafe(rows);
+          },
+          { isolationLevel: 'RepeatableRead' },
+        ),
+      );
+      expect(sqlstateOf(e), rows.slice(0, 30)).toBe('TA012');
+      expect(String((e as Error).message)).toMatch(/READ COMMITTED/);
+    }
+  });
+
+  it('reports rows the record never saw added (a load past its triggers)', async () => {
+    const problems = await withRollback(owner, async (tx) => {
+      const [{ id }] = await tx.$queryRawUnsafe<{ id: string }[]>(
+        `SELECT id FROM factor_releases WHERE publisher = 'TonyAI prototype' AND edition = '2026.1'`,
+      );
+      await tx.$executeRawUnsafe('ALTER TABLE unit_conversions DISABLE TRIGGER unit_conversions_record_insert');
+      await tx.$executeRawUnsafe(
+        `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit, multiplier, calorific_basis, basis)
+         VALUES (gen_random_uuid(), '${id}', 'Natural Gas', 'natural_gas', 'UK', 2032, 2032, 'cubic_metres', 'kWh', 1, 'gross', 'x')`,
+      );
+      return (await factorLibraryReport((sql: string) => tx.$queryRawUnsafe(sql))).problems;
+    });
+    expect(problems.some((p: string) => /unit_conversions row\(s\) but factor_release_events records/.test(p))).toBe(true);
   });
 
   it('is written by its triggers alone: the service role cannot add to it, and nobody can change it', async () => {
@@ -604,12 +758,38 @@ describe("the factor library's record (factor_release_events)", () => {
       }),
     );
     expect(sqlstateOf(forged)).toBe('42501');
+    // Nor lock the record (it holds SELECT alone there), or run the owner's
+    // maintenance on the library or the records K5 guards (MAINTAIN revoked).
     for (const sql of [
-      `UPDATE factor_release_events SET actor = 'rewritten'`,
-      'DELETE FROM factor_release_events',
+      'LOCK TABLE factor_release_events IN ACCESS EXCLUSIVE MODE',
+      'REINDEX TABLE factor_releases',
+      'REINDEX TABLE emission_factors',
+      'REINDEX TABLE activity_records',
+      'CLUSTER audit_log USING audit_log_pkey',
+    ]) {
+      const e = await failure(
+        withRollback(owner, async (tx) => {
+          await tx.$executeRawUnsafe('SET LOCAL ROLE service_role');
+          await tx.$executeRawUnsafe(sql);
+        }),
+      );
+      expect(sqlstateOf(e), sql).toBe('42501');
+    }
+    // On rows that exist — a row trigger never fires on none.
+    const releaseId = randomUUID();
+    for (const sql of [
+      `UPDATE factor_release_events SET actor = 'rewritten' WHERE release_id = '${releaseId}'`,
+      `DELETE FROM factor_release_events WHERE release_id = '${releaseId}'`,
       'TRUNCATE factor_release_events',
     ]) {
-      expect(sqlstateOf(await failure(withRollback(owner, (tx) => tx.$executeRawUnsafe(sql)))), sql).toBe('TA010');
+      const e = await failure(
+        withRollback(owner, async (tx) => {
+          for (const step of load(releaseId, await nextOrdinal(tx))) await tx.$executeRawUnsafe(step);
+          expect((await eventsOf(tx, releaseId)).length).toBe(2);
+          await tx.$executeRawUnsafe(sql);
+        }),
+      );
+      expect(sqlstateOf(e), sql).toBe('TA010');
     }
   });
 });

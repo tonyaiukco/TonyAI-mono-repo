@@ -170,6 +170,11 @@ export class CalculationsService {
         { reportingYear: 'desc' },
         { release: { publisher: 'asc' } },
         { release: { ordinal: 'desc' } },
+        // The rest of the identity, so rows within a release list in one order.
+        { gas: 'asc' },
+        { scope2Method: 'asc' },
+        { calorificBasis: 'asc' },
+        { normalizedUnit: 'asc' },
       ],
     });
     return factors.map((f) => ({

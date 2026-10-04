@@ -21,6 +21,9 @@ function loadE2EEnv(): void {
   process.env.E2E_SUPABASE_URL ??= readVar('apps/web/.env.local', 'NEXT_PUBLIC_SUPABASE_URL');
   process.env.E2E_SUPABASE_ANON_KEY ??= readVar('apps/web/.env.local', 'NEXT_PUBLIC_SUPABASE_ANON_KEY');
   process.env.E2E_SUPABASE_SERVICE_KEY ??= readVar('apps/api/.env', 'SUPABASE_SERVICE_ROLE_KEY');
+  // The database owner, for the one teardown the service role may not do:
+  // deleting committed activity records (K5's delete guard, LP3-03).
+  process.env.E2E_OWNER_DATABASE_URL ??= process.env.DIRECT_URL ?? readVar('apps/api/.env', 'DIRECT_URL');
 }
 loadE2EEnv();
 

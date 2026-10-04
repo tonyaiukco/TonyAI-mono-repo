@@ -39,17 +39,22 @@ function categoryWithActivityLabel(f: ReportFactorRow): string {
  */
 function factorNote(data: ReportData): string {
   if (data.calculatedRecords === 0) return 'No figure in this report is calculated from an emission factor.';
+  // The appendix is optional (`includeMethodologyNotes`): point at it only
+  // when it is there.
+  const where = data.includeMethodologyNotes ? ' Each factor’s standing is in the appendix.' : '';
   if (data.nonAuthoritativeRecords === 0) {
-    return 'Every figure is computed from committed activity records using authoritative emission-factor releases (see each factor’s release in the appendix).';
+    return `Every figure is computed from committed activity records using authoritative emission-factor releases.${where}`;
   }
   const n = data.nonAuthoritativeRecords;
   const subject =
     n === data.calculatedRecords
       ? 'Every calculated figure is'
       : `${n} of ${data.calculatedRecords} calculated figures ${n === 1 ? 'is' : 'are'}`;
+  // "Factor paths": a figure can rest on an authoritative factor reached
+  // through a non-authoritative conversion, or on a release withdrawn since.
   return (
-    `${subject} computed from emission factors that are NOT authoritative — ` +
-    'prototype placeholders, not DEFRA/DESNZ or Türkiye values. Each factor’s standing is in the appendix.'
+    `${subject} computed from emission factors or unit conversions that are NOT authoritative — ` +
+    `prototype placeholders or withdrawn releases, not current DEFRA/DESNZ or Türkiye values.${where}`
   );
 }
 

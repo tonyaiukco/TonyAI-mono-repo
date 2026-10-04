@@ -340,7 +340,10 @@ describe('normalize (calculation_logic.md §2)', () => {
   });
 
   it('uses the exact definitional constants, not rounded ones (LP3-03)', () => {
-    expect(normalize(1, 'therms', ANY_CATEGORY, null)).toMatchObject({ normalizedUnit: 'kWh', conversionFactor: 29.30711 });
+    // The UK statutory therm as an exact quotient — 29.30711 to seven figures.
+    expect(normalize(1, 'therms', ANY_CATEGORY, null)).toMatchObject({ normalizedUnit: 'kWh', conversionFactor: 105_505_585.257348 / 3_600_000 });
+    expect(normalize(1, 'therms', ANY_CATEGORY, null).conversionFactor).toBeCloseTo(29.30711, 5);
+    expect(normalize(1, 'therms', ANY_CATEGORY, null).conversionBasis).toMatch(/UK statutory/);
     expect(normalize(1, 'us_gallons', ANY_CATEGORY, null)).toMatchObject({ normalizedUnit: 'litres', conversionFactor: 3.785411784 });
     expect(normalize(1, 'uk_gallons', ANY_CATEGORY, null)).toMatchObject({ normalizedUnit: 'litres', conversionFactor: 4.54609 });
     expect(normalize(3.6, 'gj', ANY_CATEGORY, null).normalizedValue).toBeCloseTo(1000, 9);
@@ -1016,6 +1019,10 @@ describe('CalculationsService.listFactors', () => {
         { reportingYear: 'desc' },
         { release: { publisher: 'asc' } },
         { release: { ordinal: 'desc' } },
+        { gas: 'asc' },
+        { scope2Method: 'asc' },
+        { calorificBasis: 'asc' },
+        { normalizedUnit: 'asc' },
       ],
     });
     expect(result).toHaveLength(1);

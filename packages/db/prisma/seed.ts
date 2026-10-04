@@ -303,6 +303,9 @@ async function seedFactorLibrary(): Promise<void> {
     return id;
   };
 
+  // Missing rows go in with ONE statement per table, so the library's record
+  // (factor_release_events) shows one load per release, not one per row.
+  const missingFactors: Prisma.EmissionFactorUncheckedCreateInput[] = [];
   for (const { edition, ...factor } of SEED_FACTORS) {
     const data = { ...factor, releaseId: releaseIdOf(edition) };
     const stored = await prisma.emissionFactor.findUnique({
@@ -328,10 +331,12 @@ async function seedFactorLibrary(): Promise<void> {
         ['scope', 'factorValue', 'factorUnit', 'methodology', 'source', 'version', 'gasCoverage', 'dataYear'],
       );
     } else {
-      await prisma.emissionFactor.create({ data });
+      missingFactors.push(data);
     }
   }
+  if (missingFactors.length > 0) await prisma.emissionFactor.createMany({ data: missingFactors });
 
+  const missingConversions: Prisma.UnitConversionUncheckedCreateInput[] = [];
   for (const { edition, ...conversion } of SEED_CONVERSIONS) {
     const data = { ...conversion, releaseId: releaseIdOf(edition) };
     const stored = await prisma.unitConversion.findUnique({
@@ -356,9 +361,10 @@ async function seedFactorLibrary(): Promise<void> {
         ['multiplier', 'referenceConditions', 'basis', 'dataYear'],
       );
     } else {
-      await prisma.unitConversion.create({ data });
+      missingConversions.push(data);
     }
   }
+  if (missingConversions.length > 0) await prisma.unitConversion.createMany({ data: missingConversions });
 }
 
 // --- Demo evidence ---------------------------------------------------------

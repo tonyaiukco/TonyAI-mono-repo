@@ -493,10 +493,6 @@ export const _numericParity: [UndeclaredNumeric] extends [never]
   ? true
   : UndeclaredNumeric = true;
 
-/**
- * The header, and the only one: withdrawn records share this table rather than
- * getting a second file, because one header row keeps the export parseable.
- */
 /** An activity type as people read it ("Diesel"); '' for a record without one. */
 export function activityTypeLabel(r: Pick<ReportRowBase, 'category' | 'activityType'>): string {
   if (!r.activityType) return '';
@@ -530,15 +526,35 @@ export const TRAILING_COLUMNS = [
     csv: { label: 'activity_type', cell: (r: ReportRowBase) => r.activityType ?? '' },
     excel: { label: 'Activity type', cell: (r: ReportRowBase) => activityTypeLabel(r) },
   },
-] as const;
+  {
+    // Whether a reader may rely on the figure — the whole path's standing
+    // (`isAuthoritativeSnapshot`) as it stands NOW, a later withdrawal
+    // included; empty for a record with no figure. The token here, the
+    // sentence on the Excel sheet.
+    key: 'factor_standing',
+    csv: { label: 'factor_standing', cell: (r: ReportRowBase) => r.factorStanding?.code ?? '' },
+    excel: { label: 'Factor standing', cell: (r: ReportRowBase) => r.factorStanding?.text ?? '' },
+  },
+  // Text, always: a trailing column is identifying, never summable, so it is
+  // never marked on a withdrawn row — a number here would print a withdrawn
+  // row's real value where the body columns print WITHDRAWN.
+] as const satisfies readonly {
+  key: string;
+  csv: { label: string; cell: (r: ReportRowBase) => string };
+  excel: { label: string; cell: (r: ReportRowBase) => string };
+}[];
 
+/**
+ * The header, and the only one: withdrawn records share this table rather than
+ * getting a second file, because one header row keeps the export parseable.
+ */
 export function csvHeader(): string {
   return [
     ...BODY_COLUMNS.filter((c) => c.csv).map((c) => c.csv!.label),
     ...DISCLOSURE_COLUMNS.map((d) => d.label),
     ...TRAILING_COLUMNS.map((c) => c.csv.label),
   ]
-    // Identity for all fifteen labels, which is the point: they are module
+    // Identity for every label, which is the point: they are module
     // literals today, and the golden that pins them fails with a message
     // asking you to update a literal — so a sixteenth column with a hostile
     // label could be waved through by editing both sides. The header is a row.

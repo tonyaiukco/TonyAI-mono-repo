@@ -399,6 +399,33 @@ CREATE TRIGGER "activity_records_snapshot_immutable"
   FOR EACH ROW EXECUTE FUNCTION "public"."activity_records_snapshot_immutable"();
 ALTER TABLE "activity_records" ENABLE ALWAYS TRIGGER "activity_records_snapshot_immutable";
 
+-- K5's other half: a committed record cannot be rewritten by deleting it and
+-- inserting a forged copy under the same id. Only a draft or rejected record
+-- is deleted by a statement (the API's own rule); a committed one goes only
+-- with its subsidiary or organisation (a foreign-key cascade, which runs this
+-- at depth > 1) or by the table's owner — the same trusted role that could
+-- disable the trigger, used by test teardown on local and CI databases.
+CREATE FUNCTION "public"."activity_records_committed_delete"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $fn$
+BEGIN
+  IF OLD."status" NOT IN ('draft', 'rejected')
+     AND pg_catalog.pg_trigger_depth() < 2
+     AND current_user <> (SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA001',
+      MESSAGE = format('activity record %s is %s: a committed record is never deleted on its own', OLD."id", OLD."status");
+  END IF;
+  RETURN OLD;
+END
+$fn$;
+
+CREATE TRIGGER "activity_records_committed_delete"
+  BEFORE DELETE ON "activity_records"
+  FOR EACH ROW EXECUTE FUNCTION "public"."activity_records_committed_delete"();
+ALTER TABLE "activity_records" ENABLE ALWAYS TRIGGER "activity_records_committed_delete";
+
 -- A slot (the first six key columns) holds typed records — one per activity
 -- type — or ONE untyped record, never both: an untyped Fuel record beside a
 -- diesel one would count the same fuel twice. The unique index cannot say it
@@ -473,6 +500,13 @@ LANGUAGE plpgsql
 SET search_path = ''
 AS $fn$
 BEGIN
+  -- A data-only restore (session_replication_role = replica, a setting only
+  -- the owner can use — the same trust as disabling a trigger) re-inserts
+  -- what was already accepted, withdrawn releases included: the load-time
+  -- rules and the record's writers stand aside; every change-guard does not.
+  IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
+    RETURN NEW;
+  END IF;
   IF NEW."status" = 'withdrawn' THEN
     RAISE EXCEPTION USING
       ERRCODE = 'TA011',
@@ -553,10 +587,28 @@ DECLARE
   release_status text;
   release_edition text;
 BEGIN
+  IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
+    RETURN NEW;
+  END IF;
+  -- The status read below must see a withdrawal committed while this
+  -- statement waited on the lock; a REPEATABLE READ or SERIALIZABLE snapshot
+  -- would not.
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA012',
+      MESSAGE = 'load factor-library rows under READ COMMITTED: a stricter isolation level cannot see a concurrent withdrawal';
+  END IF;
   PERFORM pg_catalog.pg_advisory_xact_lock_shared(
     pg_catalog.hashtext('tonyai.factor_release'), pg_catalog.hashtext(NEW."release_id"::text));
   SELECT r."status", r."edition" INTO release_status, release_edition
     FROM "public"."factor_releases" r WHERE r."id" = NEW."release_id";
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA012',
+      MESSAGE = format('release %s does not exist', NEW."release_id");
+  END IF;
+  -- When the row joined the library: the database's clock, never the loader's.
+  NEW."created_at" := pg_catalog.now();
   -- Nested, not `AND`: PL/pgSQL evaluates an expression whole, and a
   -- conversion row has no `version` column to read.
   IF TG_TABLE_NAME = 'emission_factors' THEN
@@ -665,6 +717,7 @@ ALTER TABLE "unit_conversions" ENABLE ALWAYS TRIGGER "unit_conversions_before_tr
 -- runtime-role check reads a clean list.
 REVOKE ALL ON FUNCTION
   "public"."activity_records_snapshot_immutable"(),
+  "public"."activity_records_committed_delete"(),
   "public"."activity_records_slot_kind"(),
   "public"."factor_releases_before_insert"(),
   "public"."factor_releases_before_update"(),
@@ -695,6 +748,12 @@ FROM PUBLIC;
 ALTER TABLE "factor_release_events"
   ADD CONSTRAINT "factor_release_events_event_check"
     CHECK ("event" IN ('loaded', 'rows_added', 'withdrawn', 'rows_deleted', 'deleted')),
+  -- `actor` is STATED by the writer, never verified: bounded clean text like
+  -- the release's own reviewer field, so a reader can print it safely.
+  ADD CONSTRAINT "factor_release_events_actor_check"
+    CHECK ("actor" IS NULL OR ("actor" IS NFC NORMALIZED AND char_length("actor") BETWEEN 1 AND 200
+      AND "actor" !~ '^[[:space:]]|[[:space:]]$|[[:cntrl:]]|[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB\U000E0000-\U000E0FFF]')),
+  ADD CONSTRAINT "factor_release_events_db_role_check" CHECK (char_length("db_role") BETWEEN 1 AND 63),
   ADD CONSTRAINT "factor_release_events_rows_check"
     CHECK (("event" IN ('rows_added', 'rows_deleted')) = ("table_name" IS NOT NULL AND "row_count" IS NOT NULL));
 
@@ -716,7 +775,20 @@ AS $fn$
 DECLARE
   r record;
 BEGIN
+  -- A data-only restore carries its own record; writing it again would
+  -- attribute every restored load to the restoring role.
+  IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
+    RETURN NULL;
+  END IF;
   IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF;
+  -- An authoritative release names who loaded it (a firm or role), not only
+  -- the database role.
+  IF TG_OP = 'INSERT' AND r."status" = 'authoritative'
+     AND NULLIF(pg_catalog.current_setting('tonyai.actor', true), '') IS NULL THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA011',
+      MESSAGE = 'load an authoritative release with tonyai.actor set (SET LOCAL tonyai.actor = ''<firm or role>'')';
+  END IF;
   INSERT INTO "public"."factor_release_events"
     ("id", "release_id", "publisher", "edition", "release_status", "event", "detail", "db_role", "actor", "occurred_at")
   VALUES (
@@ -740,7 +812,18 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $fn$
+DECLARE
+  touched int;
+  recorded int;
 BEGIN
+  IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
+    RETURN NULL;
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    SELECT pg_catalog.count(DISTINCT "release_id")::int INTO touched FROM new_rows;
+  ELSE
+    SELECT pg_catalog.count(DISTINCT "release_id")::int INTO touched FROM old_rows;
+  END IF;
   IF TG_OP = 'INSERT' THEN
     INSERT INTO "public"."factor_release_events"
       ("id", "release_id", "publisher", "edition", "release_status", "event", "table_name", "row_count", "db_role", "actor", "occurred_at")
@@ -758,11 +841,38 @@ BEGIN
       FROM (SELECT "release_id", pg_catalog.count(*)::int AS "rows" FROM old_rows GROUP BY "release_id") o
       JOIN "public"."factor_releases" r ON r."id" = o."release_id";
   END IF;
+  -- Every release the statement touched has its event, or the statement
+  -- fails: a release deleted in the same statement (a data-modifying CTE)
+  -- would otherwise drop its rows' event silently.
+  GET DIAGNOSTICS recorded = ROW_COUNT;
+  IF recorded <> touched THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA010',
+      MESSAGE = format('%s rows of %s release(s) changed but %s could be recorded: delete a release''s rows before the release', TG_TABLE_NAME, touched, recorded);
+  END IF;
   RETURN NULL;
 END
 $fn$;
 
--- The record is itself append-only, for every role.
+-- The record is itself append-only, for every role: no UPDATE or DELETE, and
+-- no INSERT but its writers' (a nested trigger, depth > 1) — not even the
+-- owner's, short of disabling the guard (which the runtime-role check
+-- reports). A data-only restore (replica) re-inserts it.
+CREATE FUNCTION "public"."factor_release_events_before_insert"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $fn$
+BEGIN
+  IF pg_catalog.pg_trigger_depth() < 2
+     AND pg_catalog.current_setting('session_replication_role') <> 'replica' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA010',
+      MESSAGE = 'factor_release_events is written by the factor library''s own triggers only';
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+
 CREATE FUNCTION "public"."factor_release_events_refuse"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
@@ -801,6 +911,7 @@ ALTER TABLE "factor_release_events" ENABLE ALWAYS TRIGGER "factor_release_events
 ALTER TABLE "factor_release_events" ENABLE ALWAYS TRIGGER "factor_release_events_before_truncate";
 
 REVOKE ALL ON FUNCTION
+  "public"."factor_release_events_before_insert"(),
   "public"."factor_release_events_actor_role"(),
   "public"."factor_releases_record_event"(),
   "public"."factor_rows_record_event"(),
@@ -818,6 +929,10 @@ SELECT gen_random_uuid(), r."id", r."publisher", r."edition", r."status", e."eve
     VALUES ('loaded', NULL::text, NULL::int),
            ('rows_added', 'emission_factors', (SELECT count(*)::int FROM "emission_factors" f WHERE f."release_id" = r."id"))
   ) AS e("event", "table_name", "row_count");
+
+CREATE TRIGGER "factor_release_events_before_insert" BEFORE INSERT ON "factor_release_events"
+  FOR EACH ROW EXECUTE FUNCTION "public"."factor_release_events_before_insert"();
+ALTER TABLE "factor_release_events" ENABLE ALWAYS TRIGGER "factor_release_events_before_insert";
 
 -- ---------------------------------------------------------------------------
 -- 6. Row Level Security and grants
@@ -863,9 +978,20 @@ BEGIN
   REVOKE TRUNCATE, TRIGGER, REFERENCES ON "factor_releases", "unit_conversions", "emission_factors" FROM service_role;
   -- The record is written by its triggers alone; the service role may read it.
   REVOKE INSERT, UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES ON "factor_release_events" FROM service_role;
+  -- Nor may it attach a trigger to the records K5 guards, or truncate them or
+  -- the audit trail (default privileges handed it every table verb).
+  REVOKE TRUNCATE, TRIGGER, REFERENCES ON "activity_records", "audit_log" FROM service_role;
+  -- MAINTAIN (PostgreSQL 17) would let it VACUUM FULL, CLUSTER or REINDEX
+  -- them: maintenance under an exclusive lock, which is the owner's. (It keeps
+  -- LOCK TABLE wherever it keeps UPDATE or DELETE; a lock blocks, never rewrites.)
+  IF pg_catalog.current_setting('server_version_num')::int >= 170000 THEN
+    EXECUTE 'REVOKE MAINTAIN ON "factor_releases", "unit_conversions", "emission_factors", "factor_release_events", "activity_records", "audit_log" FROM service_role';
+  END IF;
 END
 $$;
 
 -- The API reads the library and never writes it (`runtime-role.mjs`'s
 -- RUNTIME_TABLE_PRIVILEGES lists the same).
-GRANT SELECT ON "factor_releases", "unit_conversions", "factor_release_events" TO "tonyai_runtime";
+-- `factor_release_events` is not granted: nothing in the API reads it yet,
+-- and the grant arrives with its first reader.
+GRANT SELECT ON "factor_releases", "unit_conversions" TO "tonyai_runtime";

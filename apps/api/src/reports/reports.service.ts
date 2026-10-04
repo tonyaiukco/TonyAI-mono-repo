@@ -31,6 +31,7 @@ import {
   csvWithdrawnRow,
 } from './report-columns';
 import type {
+  FactorStandingCode,
   ReportData,
   ReportEvidenceRow,
   ReportFactorRow,
@@ -73,18 +74,45 @@ type ReportEvidenceLink = {
   evidence: { id: string; fileName: string; _count: { links: number } };
 };
 
+type ReleaseWithdrawal = { at: Date | null; reason: string | null };
+
+/** The releases a provenance snapshot rests on: its factor's, and its conversion's if any. */
+function pathReleaseIds(snapshot: ActivityCalculationSnapshot): string[] {
+  if (!isProvenanceSnapshot(snapshot)) return [];
+  return [snapshot.factorRelease.id, ...(snapshot.conversion ? [snapshot.conversion.release.id] : [])];
+}
+
+/** Authoritative when calculated, and still: no link's release has been withdrawn since. */
+function authoritativeNow(snapshot: ActivityCalculationSnapshot, withdrawals: Map<string, ReleaseWithdrawal>): boolean {
+  return isAuthoritativeSnapshot(snapshot) && !pathReleaseIds(snapshot).some((id) => withdrawals.has(id));
+}
+
 /**
  * A factor path's standing in words: authoritative only when every link is
- * (`isAuthoritativeSnapshot`); otherwise the weakest link's status — a
- * placeholder conversion under an authoritative factor is not authoritative.
+ * (`isAuthoritativeSnapshot`) and no link has been withdrawn since; otherwise
+ * the withdrawal, or the weakest link's status — a placeholder conversion
+ * under an authoritative factor is not authoritative.
  */
-function factorStanding(snapshot: ActivityCalculationSnapshot): string {
-  if (isAuthoritativeSnapshot(snapshot)) return 'Authoritative';
-  if (!isProvenanceSnapshot(snapshot)) return 'Not authoritative (written before factor releases)';
+function factorStanding(
+  snapshot: ActivityCalculationSnapshot,
+  withdrawals: Map<string, ReleaseWithdrawal>,
+): { code: FactorStandingCode; text: string } {
+  const withdrawn = pathReleaseIds(snapshot).map((id) => withdrawals.get(id)).find((w) => w !== undefined);
+  if (withdrawn) {
+    const on = withdrawn.at ? ` on ${withdrawn.at.toISOString().slice(0, 10)}` : '';
+    return { code: 'withdrawn', text: `Withdrawn${on} — not authoritative${withdrawn.reason ? `: ${withdrawn.reason}` : ''}` };
+  }
+  if (isAuthoritativeSnapshot(snapshot)) return { code: 'authoritative', text: 'Authoritative' };
+  if (!isProvenanceSnapshot(snapshot)) {
+    return { code: 'pre_release', text: 'Not authoritative (written before factor releases)' };
+  }
   const weakest = [snapshot.factorRelease.status, snapshot.conversion?.release.status]
     .filter((s): s is FactorStatus => s !== undefined)
     .sort((a, b) => FACTOR_STATUS_RANK[a] - FACTOR_STATUS_RANK[b])[0];
-  return `Not authoritative (${weakest}${snapshot.factorRelease.status === weakest ? '' : ' conversion'})`;
+  return {
+    code: weakest === 'fixture' ? 'fixture' : weakest === 'withdrawn' ? 'withdrawn' : 'placeholder',
+    text: `Not authoritative (${weakest}${snapshot.factorRelease.status === weakest ? '' : ' conversion'})`,
+  };
 }
 
 @Injectable()
@@ -300,6 +328,29 @@ export class ReportsService implements OnModuleDestroy {
       geographyCode?: string;
     };
 
+    // The releases these figures rest on, as they stand NOW: a snapshot
+    // freezes its release's status when it was calculated, but a release can
+    // be withdrawn later (an erratum), and a filed report must not call a
+    // figure authoritative once its source has been withdrawn.
+    const releaseIds = new Set<string>();
+    for (const r of [...records, ...voided]) {
+      const snapshot = r.calculation as unknown as ActivityCalculationSnapshot;
+      if (isProvenanceSnapshot(snapshot)) {
+        releaseIds.add(snapshot.factorRelease.id);
+        if (snapshot.conversion) releaseIds.add(snapshot.conversion.release.id);
+      }
+    }
+    const withdrawals = new Map<string, ReleaseWithdrawal>(
+      releaseIds.size === 0
+        ? []
+        : (
+            await this.prisma.factorRelease.findMany({
+              where: { id: { in: [...releaseIds] }, status: 'withdrawn' },
+              select: { id: true, withdrawnAt: true, withdrawalReason: true },
+            })
+          ).map((w) => [w.id, { at: w.withdrawnAt, reason: w.withdrawalReason }]),
+    );
+
     // One mapper for both tables: a withdrawn figure is disclosed beside the
     // same identifying columns the ledger uses, so the reader can tell which of
     // two entries for one month was the one that left.
@@ -315,6 +366,9 @@ export class ReportsService implements OnModuleDestroy {
         locationName: withRelations.location?.name ?? null,
         category: r.category,
         activityType: r.activityType ?? null,
+        factorStanding: isCalculated(r.calculation as unknown as ActivityCalculationSnapshot)
+          ? factorStanding(r.calculation as unknown as ActivityCalculationSnapshot, withdrawals)
+          : null,
         periodValue: r.periodValue,
         reportingPeriod: r.reportingPeriod,
         activityValue: r.activityValue,
@@ -366,29 +420,32 @@ export class ReportsService implements OnModuleDestroy {
       uncalculatedCount: withdrawn.filter((r) => r.tCo2e === null).length,
     };
 
-    // Deduplicate the immutable factor snapshots by factorId (audit appendix).
-    // Each factor's standing is the whole path's (`isAuthoritativeSnapshot`:
-    // factor AND conversion), never the factor's status alone — a figure is
-    // only as authoritative as its weakest link (LP3-03, obligation 2).
-    const factorById = new Map<string, ReportFactorRow>();
+    // Deduplicate the immutable factor snapshots by PATH — factor and
+    // conversion — for the audit appendix: one factor reached directly and
+    // through a conversion is two lines, each with its own standing. A path's
+    // standing is the whole path's (`isAuthoritativeSnapshot`: factor AND
+    // conversion), never the factor's status alone — a figure is only as
+    // authoritative as its weakest link (LP3-03, obligation 2).
+    const factorByPath = new Map<string, ReportFactorRow>();
     let calculatedRecords = 0;
     let nonAuthoritativeRecords = 0;
     for (const r of records) {
       const snapshot = r.calculation as unknown as ActivityCalculationSnapshot;
       if (isCalculated(snapshot)) {
         calculatedRecords += 1;
-        if (!isAuthoritativeSnapshot(snapshot)) nonAuthoritativeRecords += 1;
+        if (!authoritativeNow(snapshot, withdrawals)) nonAuthoritativeRecords += 1;
       }
       const calc = (r.calculation ?? {}) as Snapshot;
-      if (calc.factorId && !factorById.has(calc.factorId)) {
-        const provenance = isProvenanceSnapshot(snapshot) ? snapshot : null;
-        factorById.set(calc.factorId, {
+      const provenance = isProvenanceSnapshot(snapshot) ? snapshot : null;
+      const pathKey = `${calc.factorId}|${provenance?.conversion?.id ?? ''}`;
+      if (calc.factorId && !factorByPath.has(pathKey)) {
+        factorByPath.set(pathKey, {
           category: r.category,
           activityType: provenance?.activityType ?? null,
           release: provenance
             ? `${provenance.factorRelease.publisher} ${provenance.factorRelease.edition}`
             : 'Pre-release prototype library',
-          standing: factorStanding(snapshot),
+          standing: factorStanding(snapshot, withdrawals).text,
           geographyCode: calc.geographyCode ?? '',
           factorValue: Number(calc.factorValue ?? 0),
           factorUnit: calc.factorUnit ?? '',
@@ -451,7 +508,7 @@ export class ReportsService implements OnModuleDestroy {
       records: ledger,
       withdrawn,
       withdrawnTotals,
-      factors: [...factorById.values()],
+      factors: [...factorByPath.values()],
       calculatedRecords,
       nonAuthoritativeRecords,
       evidenceSummary,

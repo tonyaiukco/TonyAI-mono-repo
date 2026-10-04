@@ -20,10 +20,11 @@ export interface IntegrityTrigger {
   definer?: boolean;
 }
 export declare const INTEGRITY_TRIGGERS: readonly IntegrityTrigger[];
+export declare const INTEGRITY_HELPERS: readonly { fn: string; language: string }[];
 export declare const INTEGRITY_CHECKS: readonly (readonly [table: string, name: string, definitionMd5: string])[];
 export declare function expectedTriggerFunctionBodies(dir?: string): Map<string, string>;
 export declare function checkIntegrityTriggers(query: Query, expectedBodies?: Map<string, string>): Promise<string[]>;
-export declare function factorLibraryReport(query: Query): Promise<{ problems: string[]; notices: string[] }>;
+export declare function factorLibraryReport(query: Query): Promise<{ problems: string[]; notices: string[]; skipped: string[] }>;
 export declare function provisionLocalRuntimeLogin(
   client: { $executeRawUnsafe(sql: string): Promise<unknown> },
   ownerUrl: string,

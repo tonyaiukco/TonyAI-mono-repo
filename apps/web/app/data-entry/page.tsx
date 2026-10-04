@@ -1588,7 +1588,7 @@ function PreviewCard({
                 value={
                   isAuthoritativeSnapshot(preview)
                     ? "Authoritative"
-                    : "Placeholder — not an authoritative factor"
+                    : "Placeholder — not authoritative (factor or conversion)"
                 }
               />
               {geographyCode && (

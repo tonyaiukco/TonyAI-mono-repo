@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
@@ -327,6 +328,32 @@ function assertLocalTarget(url: string): void {
 }
 
 /**
+ * Delete activity records through the database OWNER — the one role K5's
+ * delete guard (LP3-03) lets remove a committed record on its own; the
+ * service role and the API's runtime role are refused, so a committed figure
+ * cannot be deleted and re-inserted rewritten. The owner connection is
+ * DIRECT_URL (`E2E_OWNER_DATABASE_URL`), local or CI only, checked like every
+ * other teardown target. Returns the failure rather than throwing it, like `del`.
+ */
+async function deleteRecordsAsOwner(where: Record<string, unknown>): Promise<string | null> {
+  const ownerUrl = process.env.E2E_OWNER_DATABASE_URL;
+  if (!ownerUrl) return 'E2E_OWNER_DATABASE_URL not set (see playwright.config.ts env loader).';
+  assertLocalTarget(ownerUrl);
+  // The generated client the seed and the RLS probes use, resolved by path:
+  // the e2e suite does not depend on @tonyai/db.
+  const { PrismaClient } = createRequire(__filename)('../packages/db/generated/client');
+  const prisma = new PrismaClient({ datasourceUrl: ownerUrl });
+  try {
+    await prisma.activityRecord.deleteMany({ where });
+    return null;
+  } catch (e) {
+    return `activity_records owner delete failed — ${(e as Error).message}`;
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+/**
  * Delete via PostgREST and RETURN the failure rather than throwing it, so the
  * caller can run every delete before reporting (see `reportCleanup`).
  *
@@ -540,7 +567,7 @@ export async function cleanupQuarterly(request: APIRequestContext): Promise<void
   const batches = await importBatchIdsFor(request, scope);
   reportCleanup([
     await del(request, `${url}/rest/v1/period_locks?${scope}`, headers),
-    await del(request, `${url}/rest/v1/activity_records?${scope}`, headers),
+    await deleteRecordsAsOwner({ reportingPeriod: E2E_PERIOD, reportingYear: E2E_YEAR }),
     ...(await removeUnlinkedEvidence(request, files)),
     ...(await removeEmptiedImportBatches(request, batches)),
   ]);
@@ -778,8 +805,9 @@ export async function seedE2EFactor(request: APIRequestContext): Promise<void> {
     // is kg (LP3-03); the rows are entered in tonnes and normalised ×1000
     // first. 0.007 per kg is the 7 per tonne the suite always used, so
     // 12 t -> 12,000 kg -> 84 kg -> 0.084 t still keeps both the definitional
-    // step and the factor multiply observable, and is orders of magnitude below
-    // any published waste factor, so it cannot be mistaken for a sourced value.
+    // step and the factor multiply observable. Its magnitude is no safeguard —
+    // 7 kg per tonne is close to real composting factors — the labelling is: a
+    // `fixture` release, and a source and methodology that say so.
     factor_value: 0.007,
     // Display-only — printed verbatim into the record drawer and the PDF
     // appendix; `normalized_unit` is the one the calculator matches on.
@@ -997,7 +1025,6 @@ export async function deleteRecordsAsService(
   assertLocalTarget(url);
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
-  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
   const list = ids.map((id) => `"${id}"`).join(',');
   // The files are read BEFORE the records go, as in `cleanupQuarterly`: the
   // records' LINKS cascade, and afterwards nothing says which files they held.
@@ -1011,7 +1038,7 @@ export async function deleteRecordsAsService(
   );
   const batches = await importBatchIdsFor(request, `id=in.(${list})`);
   reportCleanup([
-    await del(request, `${url}/rest/v1/activity_records?id=in.(${list})`, headers),
+    await deleteRecordsAsOwner({ id: { in: ids } }),
     ...(await removeUnlinkedEvidence(request, files)),
     ...(await removeEmptiedImportBatches(request, batches)),
   ]);

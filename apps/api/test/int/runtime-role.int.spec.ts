@@ -146,9 +146,18 @@ describe('the factor model is in force on this database (LP3-03)', () => {
   });
 
   it('reports the seed\'s placeholder releases as notices, and no unspecified row under an authoritative release', async () => {
+    const report = await factorLibraryReport((sql: string) => owner.$queryRawUnsafe(sql));
+    expect(report.problems).toEqual([]);
+    expect(report.skipped).toEqual([]);
+    expect(report.notices.some((n: string) => n.startsWith('placeholder release TonyAI prototype 2026.1'))).toBe(true);
+  });
+
+  it('cannot reconcile the library\'s record as the runtime role, which may not read it — and says so', async () => {
     const report = await factorLibraryReport((sql: string) => runtime.$queryRawUnsafe(sql));
     expect(report.problems).toEqual([]);
-    expect(report.notices.some((n: string) => n.startsWith('placeholder release TonyAI prototype 2026.1'))).toBe(true);
+    expect(report.skipped).toEqual([
+      "the library's record was not reconciled: tonyai_runtime cannot read factor_release_events — run this check through the owner (DIRECT_URL)",
+    ]);
   });
 });
 
@@ -201,6 +210,7 @@ describe('the runtime role is refused', () => {
        VALUES (gen_random_uuid(), gen_random_uuid(), 'x', 'x', 'x', 'loaded', 'x')`,
     ],
     ["erasing the factor library's record", 'DELETE FROM factor_release_events WHERE false'],
+    ["reading the factor library's record (no reader yet)", 'SELECT 1 FROM factor_release_events LIMIT 1'],
     ['truncating the factor library', 'TRUNCATE factor_releases CASCADE'],
     ['assuming a client role', 'SET LOCAL ROLE authenticated'],
     ['assuming the owner', 'SET LOCAL ROLE postgres'],

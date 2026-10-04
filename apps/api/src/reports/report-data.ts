@@ -51,6 +51,11 @@ export interface ReportLedgerRow {
    *  part of the record's identity: diesel and gas oil of one site and month
    *  are two records, and without it their rows read as one entered twice. */
   activityType: string | null;
+  /** Whether a reader may rely on the figure (LP3-03): the whole factor
+   *  path's standing — `isAuthoritativeSnapshot`, and no release withdrawn
+   *  since — as a machine code and a sentence; null for a record with no
+   *  figure. */
+  factorStanding: { code: FactorStandingCode; text: string } | null;
   periodValue: string;
   reportingPeriod: string;
   activityValue: number;
@@ -122,6 +127,9 @@ export interface ReportWithdrawnRow extends Omit<ReportLedgerRow, 'status'> {
 }
 
 /** One deduplicated factor snapshot (audit traceability core, FR §3.5/§5). */
+/** `authoritative`, or why not: the weakest link's status, a withdrawal since, or a pre-release snapshot. */
+export type FactorStandingCode = 'authoritative' | 'placeholder' | 'fixture' | 'withdrawn' | 'pre_release';
+
 export interface ReportFactorRow {
   category: string;
   /** The activity the factor prices (`diesel`, `grid_electricity`, or

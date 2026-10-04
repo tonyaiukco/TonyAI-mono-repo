@@ -1000,8 +1000,20 @@ async function main() {
         triggers.length === 0,
         triggers.join('; ') || 'all in force',
       );
-      const library = await factorLibraryReport(query);
-      check('no unspecified activity type under an authoritative release', library.problems.length === 0, library.problems.join('; ') || 'none');
+      // The library's record is the owner's to read (the runtime role holds no
+      // grant on it): reconcile it through DIRECT_URL where there is one.
+      const owner = process.env.DIRECT_URL ? new PrismaClient({ datasourceUrl: process.env.DIRECT_URL }) : prisma;
+      let library;
+      try {
+        library = await factorLibraryReport((sql) => owner.$queryRawUnsafe(sql));
+      } finally {
+        if (owner !== prisma) await owner.$disconnect();
+      }
+      check(
+        'no unspecified activity type under an authoritative release; every library row recorded in factor_release_events',
+        library.problems.length === 0 && library.skipped.length === 0,
+        [...library.problems, ...library.skipped].join('; ') || 'none',
+      );
       // Not a failure locally — the seed's placeholder library is expected here.
       for (const n of library.notices) console.log(`  ⚠️  the factor library holds a ${n}`);
       // Not a failure: what every role inherits from PUBLIC through the platform.

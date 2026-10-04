@@ -1,4 +1,7 @@
 import { createHash, createHmac, pbkdf2Sync } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   RUNTIME_ROLE,
@@ -8,6 +11,7 @@ import {
   scramVerifier,
   urlUser,
   INTEGRITY_CHECKS,
+  INTEGRITY_HELPERS,
   INTEGRITY_TRIGGERS,
   checkIntegrityTriggers,
   expectedTriggerFunctionBodies,
@@ -93,11 +97,17 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     table: t.table, trigger: t.trigger, enabled: 'A', type: t.type, unconditional: true, allColumns: true,
     fnSchema: 'public', fn: t.fn, bodyMd5: md5(bodies.get(t.fn)), definer: Boolean(t.definer), config: ['search_path=""'], language: 'plpgsql',
   }));
-  const allChecks = INTEGRITY_CHECKS.map(([table, name, definitionMd5]) => ({ table, name, validated: true, definitionMd5 }));
-  const fake = (triggers, constraints, rules = []) => async (sql) =>
-    sql.includes('pg_trigger') ? triggers : sql.includes('pg_rewrite') ? rules : constraints;
-  const check = (triggers, constraints = allChecks, rules = [], bodyMap = bodies) =>
-    checkIntegrityTriggers(fake(triggers, constraints, rules), bodyMap);
+  const allChecks = INTEGRITY_CHECKS.map(([table, name, definitionMd5]) => ({
+    table, name, validated: true, definitionMd5, definition: 'CHECK (...)',
+  }));
+  for (const h of INTEGRITY_HELPERS) bodies.set(h.fn, `\n  SELECT /* ${h.fn} */ 1\n`);
+  const allHelpers = INTEGRITY_HELPERS.map((h) => ({
+    fn: h.fn, bodyMd5: md5(bodies.get(h.fn)), definer: false, config: ['search_path=""'], language: h.language,
+  }));
+  const fake = (triggers, constraints, rules = [], helpers = allHelpers) => async (sql) =>
+    sql.includes('pg_rewrite') ? rules : sql.includes('proname IN') ? helpers : sql.includes('pg_trigger') ? triggers : constraints;
+  const check = (triggers, constraints = allChecks, rules = [], bodyMap = bodies, helpers = allHelpers) =>
+    checkIntegrityTriggers(fake(triggers, constraints, rules, helpers), bodyMap);
   const tweak = (name, change) => allTriggers.map((t) => (t.trigger === name ? { ...t, ...change } : t));
 
   it('passes when every trigger is ENABLE ALWAYS, on its events, running its own unaltered function', async () => {
@@ -107,7 +117,9 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
   it('covers K5, the slot rule, all four events on all three factor tables, and the library\'s record', () => {
     // + the record: one release trigger, insert/delete on factors and
     // conversions, and the record's own three append-only guards.
-    expect(INTEGRITY_TRIGGERS).toHaveLength(2 + 3 * 4 + 1 + 2 * 2 + 3);
+    // K5, its delete guard and the slot rule; four guards on each factor
+    // table; the record's writers; the record's four guards.
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4);
     expect(INTEGRITY_TRIGGERS.filter((t) => t.definer).map((t) => t.trigger).sort()).toEqual([
       'emission_factors_record_delete', 'emission_factors_record_insert', 'factor_releases_record_event',
       'unit_conversions_record_delete', 'unit_conversions_record_insert',
@@ -121,7 +133,9 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
 
   it('finds every trigger function in the migrations, as the database must hold it', () => {
     const real = expectedTriggerFunctionBodies();
-    expect([...real.keys()].sort()).toEqual([...new Set(INTEGRITY_TRIGGERS.map((t) => t.fn))].sort());
+    expect([...real.keys()].sort()).toEqual(
+      [...new Set([...INTEGRITY_TRIGGERS.map((t) => t.fn), ...INTEGRITY_HELPERS.map((h) => h.fn)])].sort(),
+    );
     expect(real.get('activity_records_snapshot_immutable')).toContain("ERRCODE = 'TA001'");
   });
 
@@ -191,11 +205,42 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     expect(await check([...allTriggers, { ...extra, table: 'organisations' }])).toEqual([]);
   });
 
+  it('watches for rules and stray triggers on every guarded table, not just one', async () => {
+    const guarded = [...new Set(INTEGRITY_TRIGGERS.map((t) => t.table))].sort();
+    expect(guarded).toEqual(['activity_records', 'emission_factors', 'factor_release_events', 'factor_releases', 'unit_conversions']);
+    for (const table of guarded) {
+      expect(await check(allTriggers, allChecks, [{ table, rule: 'r' }])).toEqual([`unexpected rule r on ${table}`]);
+      const stray = { ...allTriggers.find((t) => t.table === table), trigger: 'zz_undo', fn: 'zz_undo' };
+      expect(await check([...allTriggers, stray])).toEqual([`unexpected trigger zz_undo on ${table}`]);
+    }
+    expect(await check(allTriggers, allChecks, [{ table: 'organisations', rule: 'r' }])).toEqual([]);
+  });
+
   it('reports a CHECK whose definition changed under its own name (CHECK (true))', async () => {
     const checks = allChecks.map((c) => (c.name === 'factor_releases_publisher_check' ? { ...c, definitionMd5: md5('CHECK (true)') } : c));
     expect(await check(allTriggers, checks)).toEqual([
-      "CHECK factor_releases_publisher_check on factor_releases differs from its migration's definition",
+      `CHECK factor_releases_publisher_check on factor_releases differs from its migration's definition (md5 ${md5('CHECK (true)')}: CHECK (...))`,
     ]);
+  });
+
+  it('reports a replaced helper — what a trigger records changes as surely as with the trigger', async () => {
+    const tampered = allHelpers.map((h) => ({ ...h, bodyMd5: md5("SELECT 'service_role'") }));
+    expect(await check(allTriggers, allChecks, [], bodies, tampered)).toEqual([
+      "function public.factor_release_events_actor_role() differs from its migration's definition",
+    ]);
+    expect(await check(allTriggers, allChecks, [], bodies, allHelpers.map((h) => ({ ...h, definer: true })))).toHaveLength(1);
+    expect(await check(allTriggers, allChecks, [], bodies, [])).toEqual(['function public.factor_release_events_actor_role() is missing']);
+  });
+
+  it('refuses to read a migration that redefines a guarded function in a form it cannot parse — loudly', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lp303-'));
+    mkdirSync(join(dir, '20990101000000_redefine'));
+    writeFileSync(
+      join(dir, '20990101000000_redefine', 'migration.sql'),
+      'CREATE OR REPLACE FUNCTION public.activity_records_slot_kind() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;',
+    );
+    expect(() => expectedTriggerFunctionBodies(dir)).toThrow(/cannot read/);
+    rmSync(dir, { recursive: true });
   });
 
   it('reports a dropped or NOT VALID check', async () => {
@@ -210,7 +255,19 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
 });
 
 describe('factorLibraryReport (LP3-03)', () => {
-  const fake = (n, releases) => async (sql) => (sql.includes('AS n') ? [{ n }] : releases);
+  const fake = (n, releases, unrecorded = [], readable = true) => async (sql) =>
+    sql.includes('has_table_privilege')
+      ? [{ readable, who: 'tonyai_runtime' }]
+      : sql.includes('WITH held') ? unrecorded : sql.includes('AS n') ? [{ n }] : releases;
+
+  it('fails on rows the record never saw added — a load that bypassed its triggers', async () => {
+    const report = await factorLibraryReport(
+      fake(0, [], [{ releaseId: 'rel-1', tableName: 'unit_conversions', held: 3, recorded: 0 }]),
+    );
+    expect(report.problems).toEqual([
+      'release rel-1 holds 3 unit_conversions row(s) but factor_release_events records 0',
+    ]);
+  });
 
   it('lists every non-authoritative release as a notice, never a problem', async () => {
     const report = await factorLibraryReport(
@@ -219,7 +276,21 @@ describe('factorLibraryReport (LP3-03)', () => {
     expect(report).toEqual({
       problems: [],
       notices: ['placeholder release TonyAI prototype 2026.1 (12 factor(s), 3 conversion(s))'],
+      skipped: [],
     });
+  });
+
+  it('fails on recorded rows the library no longer holds — a delete that bypassed its triggers', async () => {
+    const report = await factorLibraryReport(fake(0, [], [{ releaseId: 'rel-1', tableName: 'emission_factors', held: 0, recorded: 2 }]));
+    expect(report.problems).toEqual(['release rel-1 holds 0 emission_factors row(s) but factor_release_events records 2']);
+  });
+
+  it('says so — and still checks the rest — when the connection cannot read the record (the runtime role)', async () => {
+    const report = await factorLibraryReport(fake(2, [], [{ releaseId: 'never', tableName: 'x', held: 1, recorded: 0 }], false));
+    expect(report.problems).toEqual(['2 factor/conversion row(s) with an unspecified activity type under an authoritative release']);
+    expect(report.skipped).toEqual([
+      "the library's record was not reconciled: tonyai_runtime cannot read factor_release_events — run this check through the owner (DIRECT_URL)",
+    ]);
   });
 
   it('fails on an unspecified activity type under an authoritative release', async () => {

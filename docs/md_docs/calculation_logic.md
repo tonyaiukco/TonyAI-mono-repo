@@ -19,16 +19,16 @@ Every factor is quoted per **one base unit** of its family: kWh (energy), litres
 ### 2.1 Natural Gas (base units `kWh` and `cubic_metres`)
 Energy, base unit `kWh`:
 - `kwh`: identity
-- `therms` → `kwh`: × `29.30711` — the EC therm (Directive 80/181/EEC: 105,505,585.257 J) ÷ 3.6 MJ, to seven significant figures. Not the US therm (29.3001 kWh).
+- `therms` → `kwh`: × `105,505,585.257348 / 3,600,000` (= 29.3071070…, exact) — the UK statutory therm (Weights and Measures Act 1985), the one UK gas billing converts with. Not the US therm (29.3001 kWh).
 - `gj` → `kwh`: × `1000/3.6` (exact)
 
 A fuel's energy quantity carries a **calorific basis**: billed kWh are on gross (higher) calorific value, so a factor applied directly to them must be a gross-CV factor (`directCalorificBasisFor`).
 
-Metered volume, base unit `cubic_metres`: a meter reading stays a volume. It becomes kWh only through a **sourced conversion row** for natural gas in the record's country and year, on the same calorific basis as the factor it reaches; with none loaded the calculation is refused (`no_conversion`), never estimated.
+Metered volume, base unit `cubic_metres`: a meter reading stays a volume. It becomes kWh only through a **sourced conversion row** for natural gas in the record's country and year, on the same calorific basis as the factor it reaches; with none loaded the calculation is refused (`no_conversion`), never estimated. A conversion is never borrowed from another country — with one exception, stated next.
 
-> **Placeholder (owner decision K4, 2026-10-04).** The prototype's `11.36` kWh per m³ — carried over from the original demo spec, with **no citation and no stated reference conditions**; its gross calorific basis is a reconstruction (~40.0 MJ/m³ with the UK volume correction 1.02264), not a stated fact — is now a labelled **placeholder** `unit_conversions` row of the seed's demo release, one per seeded geography (UK, TR, EU) for 2026. It is used only where the API runs with `ALLOW_PLACEHOLDER_FACTORS=true` (local development, CI) and refused everywhere else. Each affected snapshot records it in `conversion` (with its release), `conversionFactor` and `conversionBasis`. A sourced conversion replaces it when LP4-02 loads authoritative releases.
+> **Placeholder (owner decision K4, 2026-10-04).** The prototype's `11.36` kWh per m³ — carried over from the original demo spec, with **no citation and no stated reference conditions**; its gross calorific basis is a reconstruction (~40.0 MJ/m³ with the UK volume correction 1.02264), not a stated fact — is now a labelled **placeholder** `unit_conversions` row of the seed's demo release, one per seeded geography (UK, TR, EU) for 2026. **It is a UK-shaped number filed under TR and EU too** — the placeholder's one exception to "never borrowed": Türkiye's reference gross calorific value would put a sourced row several per cent lower. The rows are per geography so that each country's sourced row can replace its own. It is used only where the API runs with `ALLOW_PLACEHOLDER_FACTORS=true` (local development, CI) and refused everywhere else. Each affected snapshot records it in `conversion` (with its release), `conversionFactor` and `conversionBasis`. A sourced conversion replaces it when LP4-02 loads authoritative releases.
 
-> **Standard and normal cubic metres (`Sm3` / `Nm3`) are deliberately NOT converted.** They are different physical quantities from metered cubic metres (and from each other: 15 °C vs 0 °C), and this repository holds no sourced calorific value for them. The units are recognised and refused by name until a sourced conversion row exists.
+> **Standard and normal cubic metres (`Sm3` / `Nm3`) are deliberately NOT converted.** They are different physical quantities from metered cubic metres (and from each other: 15 °C vs 0 °C), and this repository holds no sourced calorific value for them. The units are recognised and refused by name — in code and in the shared unit vocabulary, so a sourced conversion row alone does not lift the block; lifting it is a contract change with that row (LP4-02). Re-entering a standard volume as metered m³ would overstate it.
 
 ### 2.2 Liquid fuel (base unit `litres`)
 - `litres`: identity
@@ -40,7 +40,7 @@ Metered volume, base unit `cubic_metres`: a meter reading stays a volume. It bec
 
 ### 2.4 Category specific rules
 - Travel stays in `passenger_kilometres` or `kilometres` (identity).
-- Mass is quoted per `kg`: `tonnes` → `kg` × `1000` (exact). Refrigerant leakage is entered in kg; waste may be entered in tonnes and is priced per kg.
+- Mass is quoted per `kg`: `tonnes` → `kg` × `1000` (exact). Refrigerant leakage is entered in kg. A publisher's per-tonne value (DESNZ quotes waste and materials per tonne) is loaded per kg by exact decimal division, keeping the published value and unit in the row's methodology — never by floating-point arithmetic (0.20705/1000 is 0.00020705000000000002 in binary floating point).
 - Water stays in `cubic_metres` and is recorded without a factor (no factor is loaded for it): the reading is kept exactly as entered and no figure is produced.
 
 ---
@@ -50,7 +50,7 @@ Metered volume, base unit `cubic_metres`: a meter reading stays a volume. It bec
 The system must retrieve factors based on the `geographyCode` of the selected reporting entity, normally inherited from the selected subsidiary or organisation.
 
 ### 3.1 Scope 1: Direct Combustion
-Scope 1 fuel factors may use standard factor libraries unless organisation specific or country specific factors are configured.
+Scope 1 fuel factors come from a factor release for the record's country (organisation-specific factors are not supported: factor rows carry no organisation).
 
 #### Demo Factors
 - **Natural Gas:** `0.1829 kgCo2e / kwh`
@@ -64,9 +64,9 @@ Factors represent `kgCo2e per kwh` of electricity consumed.
 - **United Kingdom (`UK`)**: `0.2071`
 - **Turkey (`TR`)**: `0.4400`
 - **European Union Residual Mix Demo (`EU`)**: `0.2310`
-- **United Kingdom, prior year (`UK`, 2025)**: `0.2123` — a versioning-demo placeholder, not from any publication: it exists only so the factor library holds a second reporting year to resolve against.
+- **United Kingdom, prior year (`UK`, 2025)**: `0.2123` — a versioning-demo placeholder, uncited and never verified against any edition: it exists only so the factor library holds a second reporting year to resolve against.
 
-> These are the prototype's **placeholder** values (the seed's `TonyAI prototype` release). The EU residual-mix figure is a market-based quantity; it is resolved as location-based until LP4-02 relabels or replaces it (owner decision K-a, 2026-10-04). The Diesel value prices both records written before fuels were typed (`unspecified`) and new `diesel` records (owner decision K-b).
+> These are the prototype's **placeholder** values (the seed's `TonyAI prototype` release); the seed loads Natural Gas, Diesel and the electricity values only — Petrol and the §3.3 travel factors are listed for reference and price nothing. The EU residual-mix figure is a market-based quantity; it is resolved as location-based until LP4-02 relabels or replaces it (owner decision K-a, 2026-10-04). The Diesel value prices both records written before fuels were typed (`unspecified`) and new `diesel` records (owner decision K-b).
 
 ### 3.3 Scope 3: Travel and Logistics
 #### Demo Factors
