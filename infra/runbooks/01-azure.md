@@ -52,8 +52,9 @@ required reviewers, no self-approval/bypass, deployment branches limited to main
 and protected workflow/source review. A displayed setting without enforcement
 is insufficient. If unavailable, keep owner-only deployment and stop before
 federation. The environment subject does not itself restrict branches. A deployer
-can replace API code and obtain the shared database-owner password despite having
-no direct vault role, until LP1-03 separates the runtime role.
+can replace API code and obtain its runtime credential despite having no direct
+vault role. It must never reach the owner credential; keep that secret outside
+workloads and remove historical owner-backed runtime versions via runbook 05.
 
 ```bash
 python3 infra/scripts/configure_oidc.py --subscription "$AZURE_SUBSCRIPTION_ID" --group "$RESOURCE_GROUP" --repo '<owner/repo>' --environment-protection-verified

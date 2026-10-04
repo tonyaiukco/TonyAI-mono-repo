@@ -20,8 +20,7 @@ services:
     environment:
       PORT: "3001"
       WEB_ORIGIN: "http://localhost:3000"
-      DATABASE_URL: "postgresql://postgres:postgres@host.docker.internal:54322/postgres"
-      DIRECT_URL: "postgresql://postgres:postgres@host.docker.internal:54322/postgres"
+      DATABASE_URL: "${CONTAINER_DATABASE_URL:?run via pnpm docker:up}"
       SUPABASE_URL: "http://host.docker.internal:54321"
       SUPABASE_JWT_SECRET: "${SUPABASE_JWT_SECRET:?run via pnpm docker:up}"
       # hs256 | jwks | auto — see apps/api/.env.example. Local dev keeps `auto`

@@ -27,8 +27,8 @@ Copy the candidate's source SHA and both digests to the new release manifest;
 verify its project and origins against the foundation contract. Release files
 are immutable evidence: keep each version privately and create a new file and
 `release_id` for later changes. Do not infer a selected image from a mutable ACR
-tag or a newer candidate. For the initial release also fill the two exact Key
-Vault version IDs from runbook 02. Never put the secret values into this file.
+tag or a newer candidate. For the initial release fill the backend version from runbook 02 and the
+prepared runtime version from runbook 05. Never put the secret values into this file.
 Every manifest must explicitly include `storage_cleanup_hold` (boolean) and
 `storage_sweep_interval_seconds` (integer 1–86400, normally 300); legacy manifests
 with either field missing are rejected. For first creation set the hold to `true`.
@@ -50,20 +50,23 @@ pnpm db:generate
 python3 infra/scripts/cloud_ops.py migrate --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --inputs .infra-local/staging/release-r001.json --direct-secret-version '<selected-direct-url-version>'
 ```
 
-Expected: `prisma migrate deploy` then `prisma migrate status` succeed using
-the explicitly selected session URL and the repo's Supabase CA. For initial setup,
-select `versions.direct_url_version` from the journal; after rotation use its
-recorded replacement version. The runtime version comes from the release manifest.
-Both URLs currently share database-owner credentials; deploy access equals
-database-owner access until LP1-03 introduces a separate runtime role. Both rotate
-together. The helper is owner-run, but its DB authority is also available to the API.
-Both URLs are validated before
-Prisma starts. The child receives credentials through its environment; output is
-captured/suppressed and errors never print URLs. Do not run on a shared shell host.
-A failure requires owner inspection of migration history and a forward recovery
-plan; don't re-run until the partially applied state is understood.
+Before LP1-03, perform the hosted owner privilege checks in runbook 05. Expected:
+`prisma migrate deploy` then `prisma migrate status` succeed using only the
+explicitly selected owner session URL and the repository CA. For initial setup,
+select `versions.direct_url_version` from the journal; after owner rotation use
+its recorded replacement. The migration child receives that URL as both
+`DATABASE_URL` and `DIRECT_URL` for Prisma's schema configuration; neither value
+is passed to application containers. No runtime secret is read by this operation.
+The owner URL is validated before Prisma starts; output is captured/suppressed
+and errors never print URLs. Do not run on a shared shell host. A failure requires
+owner inspection of migration history and forward recovery before retrying.
+After migration, finish runtime login activation in runbook 05 before proceeding.
 
 ## 3.3 Verify exact secret versions and apply the application root
+
+The owner has completed runbook 05's initial role handoff. Runtime URL verification
+rejects owner usernames. Fixture provisioning separately reads the selected
+`direct-url`; neither the app under test nor the browser gets it.
 
 ```bash
 python3 infra/scripts/release_secrets.py verify --inputs .infra-local/staging/release-r001.json
@@ -171,7 +174,7 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
   after the prerequisites above, apply `apps_ready` grants and bind the existing
   OIDC app to `environment:staging` as runbook 01 requires. Never grant workflows
   foundation, Key Vault data-plane, migration or firewall administration rights.
-  API runtime credentials still have DB-owner authority until LP1-03.
+  API runtime credentials use the restricted runtime role; the owner credential is never passed to application workloads.
 - Set public environment variables: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
   `AZURE_SUBSCRIPTION_ID`, `STAGING_PREFIX`, `STAGING_ACA_DEFAULT_DOMAIN`,
   `STAGING_ACR_NAME`, `STAGING_RESOURCE_GROUP`, `STAGING_SUPABASE_PROJECT_REF`,
@@ -263,7 +266,7 @@ pnpm install --frozen-lockfile
 pnpm db:generate
 pnpm --filter @tonyai/shared-types build
 pnpm exec playwright install chromium
-python3 infra/scripts/cloud_smoke.py --candidate .infra-local/staging/candidate-download/candidate.json --inputs .infra-local/staging/release-r001.json --journal .infra-local/staging/smoke-r001.json
+python3 infra/scripts/cloud_smoke.py --candidate .infra-local/staging/candidate-download/candidate.json --inputs .infra-local/staging/release-r001.json --journal .infra-local/staging/smoke-r001.json --direct-secret-version '<selected-direct-url-version>'
 ```
 
 The public browser key is entered at a hidden prompt. Exact Key Vault backend

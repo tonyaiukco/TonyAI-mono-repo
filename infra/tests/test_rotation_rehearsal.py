@@ -44,3 +44,30 @@ class RotationRehearsalTests(unittest.TestCase):
             stale['release']['backend_secret_version'] = deployed['release']['backend_secret_version']
             with self.assertRaises(SafeFailure), contextlib.redirect_stdout(transcript):
                 verify_apps(selected, lambda *args: app('api' if args[-1].endswith('-api') else 'web', stale))
+
+    def test_initial_runtime_store_needs_no_existing_release_or_runtime_version(self):
+        from test_security_failures import GOOD_URL, PROJECT
+        foundation = {'config': {**{k: v for k, v in inputs()['foundation'].items() if k != 'default_domain'},
+                      'repository': 'tonyaiukco/TonyAI-mono-repo', 'release_sha': 'a'*40,
+                      'owner_object_id': '00000000-0000-0000-0000-000000000003'}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'foundation.json'
+            path.write_text(json.dumps(foundation))
+            for defect in ('none', 'owner', 'foreign-project', 'invalid-foundation', 'mixed-inputs'):
+                vault = Mock()
+                vault.put.return_value = 'https://vault.vault.azure.net/secrets/database-url/'+'c'*32
+                value = GOOD_URL.replace('tonyai_runtime.', 'postgres.') if defect == 'owner' else GOOD_URL
+                project = 'z'*20 if defect == 'foreign-project' else PROJECT
+                args = ['release_secrets.py', 'store', '--foundation', str(path), '--project-ref', project, '--name', 'database-url']
+                if defect == 'mixed-inputs': args += ['--inputs', 'missing.json']
+                path.write_text(json.dumps({'invalid': True} if defect == 'invalid-foundation' else foundation))
+                transcript = io.StringIO()
+                with self.subTest(defect=defect), patch('release_secrets.Vault', return_value=vault), patch('release_secrets.clean_environment'), patch('release_secrets.getpass.getpass', return_value=value), patch('release_secrets.sys.stdin.isatty', return_value=True), patch('sys.argv', args), contextlib.redirect_stdout(transcript):
+                    if defect == 'none':
+                        main()
+                        vault.put.assert_called_once_with('database-url', GOOD_URL, {'project': PROJECT})
+                        vault.get.assert_not_called()
+                    else:
+                        with self.assertRaises(SafeFailure): main()
+                        vault.put.assert_not_called()
+                self.assertNotIn(value, transcript.getvalue())

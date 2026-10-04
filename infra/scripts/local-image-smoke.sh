@@ -5,7 +5,7 @@ set +x
 [[ "${CI:-}" == true ]]
 : "${API_IMAGE:?}" "${WEB_IMAGE:?}" "${SUPABASE_URL:?}"
 case "$SUPABASE_URL" in http://localhost:54321|http://127.0.0.1:54321) ;; *) exit 2 ;; esac
-case "$DATABASE_URL" in postgresql://postgres:postgres@127.0.0.1:54322/postgres|postgresql://postgres:postgres@localhost:54322/postgres) ;; *) exit 2 ;; esac
+case "${DIRECT_URL:?}" in postgresql://postgres:postgres@127.0.0.1:54322/postgres|postgresql://postgres:postgres@localhost:54322/postgres) ;; *) exit 2 ;; esac
 work_dir=$(mktemp -d)
 api_id=''
 web_id=''
@@ -24,11 +24,15 @@ cleanup() {
   exit "$result"
 }
 trap cleanup EXIT
+# Provision the existing CI stack, never seed/reset/start it here.
+source infra/scripts/local-runtime-env.sh
+prepare_local_runtime
+unset DIRECT_URL RUNTIME_DB_PASSWORD
 echo 'Smoke: start API and web images'
 # Linux host networking gives both images the same loopback-only CI services.
 export PORT=3001 WEB_ORIGIN=http://localhost:3000 ALLOW_INSECURE_LOCAL_AUTH=true
 api_id=$(docker run -d --network host --shm-size=1g --init \
-  -e PORT -e WEB_ORIGIN -e DATABASE_URL -e DIRECT_URL -e SUPABASE_URL \
+  -e PORT -e WEB_ORIGIN -e DATABASE_URL -e SUPABASE_URL \
   -e SUPABASE_SERVICE_ROLE_KEY -e SUPABASE_JWT_SECRET -e SUPABASE_JWT_SCHEME \
   -e ALLOW_INSECURE_LOCAL_AUTH "$API_IMAGE")
 web_id=$(docker run -d --network host "$WEB_IMAGE")

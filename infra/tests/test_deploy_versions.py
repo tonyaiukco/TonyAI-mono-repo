@@ -28,7 +28,7 @@ def app(kind, contract):
     secrets = [{'name':name,'identity':identity,'keyVaultUrl':'https://vault.vault.azure.net/secrets/'+name+'/'+r[field]}
                for name,field in [('database-url','database_secret_version'),('supabase-service-role-key','backend_secret_version')]] if kind=='api' else []
     return {'properties': {
-        'template': {'containers':[{'env': [{'name': 'STORAGE_CLEANUP_HOLD', 'value': '1' if r.get('storage_cleanup_hold') else '0'}, {'name': 'STORAGE_SWEEP_INTERVAL_SECONDS', 'value': str(r.get('storage_sweep_interval_seconds', 300))}], 'probes': [{'type': t, 'httpGet': {'path': '/api/v1/health/ready' if t == 'Readiness' else '/api/v1/health'}} for t in ('Startup', 'Liveness', 'Readiness')], 'image':'registry.azurecr.io/tonyai/'+kind+'@'+r[kind+'_digest']}]},
+        'template': {'containers':[{'env': [{'name': 'STORAGE_CLEANUP_HOLD', 'value': '1' if r.get('storage_cleanup_hold') else '0'}, {'name': 'STORAGE_SWEEP_INTERVAL_SECONDS', 'value': str(r.get('storage_sweep_interval_seconds', 300))}, {'name': 'DATABASE_URL', 'secretRef': 'database-url'}], 'probes': [{'type': t, 'httpGet': {'path': '/api/v1/health/ready' if t == 'Readiness' else '/api/v1/health'}} for t in ('Startup', 'Liveness', 'Readiness')], 'image':'registry.azurecr.io/tonyai/'+kind+'@'+r[kind+'_digest']}]},
         'configuration': {'ingress': {'allowInsecure':False,'fqdn':'tonyai-staging-'+kind+'.'+f['default_domain']},'secrets':secrets},
         'latestReadyRevisionName':'tonyai-staging-'+kind+'--'+r['release_id']}}
 
@@ -36,9 +36,12 @@ def app(kind, contract):
 class DeploymentVersionTests(unittest.TestCase):
     def test_every_individual_reference_image_identity_origin_and_ready_revision(self):
         contract = inputs()
-        for defect in ('none','api-image','web-image','database-version','backend-version','identity','origin','http','not-ready','web-secret','hold','interval','readiness','liveness','startup'):
+        for defect in ('none','api-image','web-image','database-version','backend-version','identity','origin','http','not-ready','web-secret','hold','interval','readiness','liveness','startup','owner-env','owner-ref','inline-owner'):
             state = {kind:app(kind,contract) for kind in ('api','web')}
             api = state['api']['properties']; web = state['web']['properties']
+            if defect == 'owner-env': api['template']['containers'][0]['env'].append({'name':'DIRECT_URL','secretRef':'direct-url'})
+            if defect == 'owner-ref': api['template']['containers'][0]['env'][2]['secretRef'] = 'direct-url'
+            if defect == 'inline-owner': api['template']['containers'][0]['env'][2] = {'name':'DATABASE_URL','value':'postgresql://postgres:synthetic@host/postgres'}
             if defect == 'hold': api['template']['containers'][0]['env'][0]['value'] = '1'
             if defect == 'interval': api['template']['containers'][0]['env'][1]['value'] = '600'
             if defect == 'startup': api['template']['containers'][0]['probes'][0]['httpGet']['path'] = '/api/v1/health/ready'

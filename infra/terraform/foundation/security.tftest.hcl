@@ -38,7 +38,7 @@ run "foundation_security_contract" {
   }
   assert {
     condition     = alltrue([for key, grant in azapi_resource.grant : !startswith(key, "app-") || can(regex("/Microsoft.App/containerApps/tonyai-staging-(api|web)$", grant.parent_id))]) && !contains(keys(azapi_resource.grant), "secret-direct-url")
-    error_message = "App deployer scopes must stay on the two apps; direct-url has no runtime grant, but both URLs share database-owner privileges until LP1-03."
+    error_message = "App deployer scopes must stay on the two apps; direct-url must have no runtime grant; the owner credential never reaches workloads."
   }
   assert {
     condition = toset([for name, grant in azapi_resource.grant : "${name}|${grant.body.properties.principalId}|${grant.parent_id}|${grant.body.properties.roleDefinitionId}"]) == toset([
@@ -151,6 +151,10 @@ run "scheduled_verification_operator_contract" {
   assert {
     condition     = azapi_resource.operator["enabled"].body.properties.emailReceivers[0].emailAddress == "operator@example.invalid" && azapi_resource.storage_verify_alert["enabled"].body.properties.enabled && strcontains(azapi_resource.storage_verify_alert["enabled"].body.properties.criteria.allOf[0].query, "completed == 0 or failures > 0")
     error_message = "Verification failures and missing results must alert the named operator."
+  }
+  assert {
+    condition     = toset([for secret in azapi_resource.storage_verify["enabled"].body.properties.configuration.secrets : secret.name]) == toset(["database-url", "supabase-service-role-key"]) && !contains([for item in azapi_resource.storage_verify["enabled"].body.properties.template.containers[0].env : item.name], "DIRECT_URL") && { for item in azapi_resource.storage_verify["enabled"].body.properties.template.containers[0].env : item.name => try(item.secretRef, "") }["DATABASE_URL"] == "database-url"
+    error_message = "Storage verification must receive only the runtime database credential, never the owner."
   }
   assert {
     condition     = alltrue([for secret in azapi_resource.storage_verify["enabled"].body.properties.configuration.secrets : !can(secret.value) && strcontains(secret.keyVaultUrl, "/secrets/")])

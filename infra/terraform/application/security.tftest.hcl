@@ -48,7 +48,7 @@ run "runtime_auth_and_origin_pins" {
     error_message = "Cloud JWKS scheme and exact CORS origin must be pinned."
   }
   assert {
-    condition     = alltrue([for item in azapi_resource.app["api"].body.properties.template.containers[0].env : !contains(["ALLOW_INSECURE_LOCAL_AUTH", "SUPABASE_JWT_SECRET"], item.name)]) && { for item in azapi_resource.app["api"].body.properties.template.containers[0].env : item.name => try(item.secretRef, "") }["DIRECT_URL"] == "database-url"
+    condition     = alltrue([for item in azapi_resource.app["api"].body.properties.template.containers[0].env : !contains(["ALLOW_INSECURE_LOCAL_AUTH", "SUPABASE_JWT_SECRET"], item.name)]) && !contains([for item in azapi_resource.app["api"].body.properties.template.containers[0].env : item.name], "DIRECT_URL") && { for item in azapi_resource.app["api"].body.properties.template.containers[0].env : item.name => try(item.secretRef, "") }["DATABASE_URL"] == "database-url"
     error_message = "No local auth bypass or migration credential may reach runtime."
   }
   assert {

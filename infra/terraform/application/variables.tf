@@ -43,7 +43,6 @@ locals {
     { name = "LOG_FORMAT", value = "json" }, { name = "SUPABASE_URL", value = local.supabase_url },
     { name = "SUPABASE_JWT_SCHEME", value = "jwks" }, { name = "WEB_ORIGIN", value = local.web_origin },
     { name = "DATABASE_URL", secretRef = "database-url" },
-    { name = "DIRECT_URL", secretRef = "database-url" },
     { name = "SUPABASE_SERVICE_ROLE_KEY", secretRef = "supabase-service-role-key" }
   ]
   web_env = [

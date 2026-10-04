@@ -19,7 +19,7 @@ from scan_browser_assets import scan
 
 PROJECT = 'abcdefghijklmnopqrst'
 BASE = 'https://' + PROJECT + '.supabase.co/storage/v1'
-GOOD_URL = f'postgresql://postgres.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert={CONTAINER_CA}&pgbouncer=true'
+GOOD_URL = f'postgresql://tonyai_runtime.{PROJECT}:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&sslaccept=strict&sslcert={CONTAINER_CA}&pgbouncer=true'
 AUTH = {'disable_signup': True, 'saml_enabled': False, 'external': {'email': True, 'phone': False, 'anonymous_users': False, 'github': False}}
 
 
@@ -102,12 +102,12 @@ class GuardTests(unittest.TestCase):
                 with self.assertRaises(SafeFailure): ops.runtime_secret_id('vault',PROJECT,'a'*32)
 
     def test_migrate_refuses_invalid_secret_before_any_prisma_command(self):
-        for position in (0, 1):
-            secrets = [GOOD_URL, GOOD_URL.replace(':6543', ':5432')]
-            secrets[position] = secrets[position].replace('sslaccept=strict', 'sslaccept=accept_invalid_certs')
-            with patch.object(ops, 'secret', side_effect=secrets), patch.object(ops, 'command') as command:
+        direct = GOOD_URL.replace('tonyai_runtime.', 'postgres.').replace(':6543', ':5432')
+        for url in (direct.replace('sslaccept=strict', 'sslaccept=accept_invalid_certs'),
+                    direct.replace('postgres.', 'tonyai_runtime.'), direct + '&host=evil.invalid'):
+            with patch.object(ops, 'secret', return_value=url), patch.object(ops, 'command') as command:
                 with self.assertRaises(SafeFailure):
-                    ops.migrate('test-vault', PROJECT, 'a'*32, 'b'*32)
+                    ops.migrate('test-vault', PROJECT, 'b'*32)
                 command.assert_not_called()
 
     def test_bucket_readback_must_not_trust_write_acknowledgement(self):

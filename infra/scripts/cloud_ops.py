@@ -54,12 +54,10 @@ def runtime_secret_id(vault, project, version):
     return identity
 
 
-def migrate(vault, project, runtime_version, direct_version):
-    runtime = secret(vault, 'database-url', runtime_version)
+def migrate(vault, project, direct_version):
     direct = secret(vault, 'direct-url', direct_version)
-    validate_pooler(runtime, project, 6543)
     validate_pooler(direct, project, 5432)
-    env = {**os.environ, 'DATABASE_URL': local_ca_url(runtime), 'DIRECT_URL': local_ca_url(direct)}
+    env = {**os.environ, 'DATABASE_URL': local_ca_url(direct), 'DIRECT_URL': local_ca_url(direct)}
     # Only deploy the committed migration chain. No reset, migrate dev or seed.
     command(['pnpm', 'db:deploy'], env)
     command(['pnpm', '--filter', '@tonyai/db', 'exec', 'prisma', 'migrate', 'status'], env)
@@ -165,7 +163,7 @@ def main():
         migration_release(inputs, args.vault, args.project_ref)
         if not re.fullmatch(r'[a-f0-9]{32}', args.direct_secret_version or ''):
             raise SafeFailure('Migrations require the selected --direct-secret-version.')
-        migrate(args.vault, args.project_ref, inputs['release']['database_secret_version'], args.direct_secret_version)
+        migrate(args.vault, args.project_ref, args.direct_secret_version)
         return
     release = args.source_sha or ''
     if (not re.fullmatch(r'[a-f0-9]{40}', release)

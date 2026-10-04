@@ -88,7 +88,7 @@ MUTANTS = [
     ('redirect handler removed', 'cloud_ops.py', 'build_opener(NoRedirect)', 'build_opener()'),
     ('public readback check removed', 'cloud_ops.py', "actual.get('public') is not False or ", ''),
     ('migration URL validation skipped', 'cloud_ops.py',
-     '    validate_pooler(runtime, project, 6543)\n    validate_pooler(direct, project, 5432)\n', ''),
+     '    validate_pooler(direct, project, 5432)\n', ''),
     ('signed bytes comparison removed', 'cloud_ops.py',
      'if require_success(request(base + signed)) != payload:', 'if False:'),
     ('cleanup prefix emptied', 'cloud_ops.py', "{'prefixes': [path]}", "{'prefixes': []}"),
@@ -134,7 +134,7 @@ def main():
             # New provenance tests read the actual migration/lockfile inputs; the
             # local-only guard test executes its copied script, never the original.
             root = INFRA.parent
-            for relative in ('pnpm-lock.yaml', 'scripts/rls-probes.mjs'):
+            for relative in ('pnpm-lock.yaml', 'scripts/rls-probes.mjs', 'scripts/compose-dev.sh', 'packages/db/scripts/runtime-role.mjs'):
                 destination = target.parent / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(root / relative, destination)

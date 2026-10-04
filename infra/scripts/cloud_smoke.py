@@ -101,7 +101,7 @@ def validate_cleanup_target(target, candidate, release):
         raise SafeFailure('Cleanup tenants must have disjoint identifiers.')
 
 
-def run(candidate, inputs, journal_path, cleanup_only=False):
+def run(candidate, inputs, journal_path, cleanup_only=False, direct_secret_version=None):
     bind(candidate, inputs, inputs['release']['source_sha'])
     f, r = inputs['foundation'], inputs['release']
     if cleanup_only:
@@ -113,6 +113,10 @@ def run(candidate, inputs, journal_path, cleanup_only=False):
         key = secret(f['vault_name'], 'supabase-service-role-key', r['backend_secret_version'])
         cleanup(target, key)
         return
+    if not re.fullmatch(r'[a-f0-9]{32}', direct_secret_version or ''):
+        raise SafeFailure('Fixture provisioning requires an exact --direct-secret-version.')
+    database = secret(f['vault_name'], 'direct-url', direct_secret_version)
+    validate_pooler(database, r['supabase_project_ref'], 5432)
     key = secret(f['vault_name'], 'supabase-service-role-key', r['backend_secret_version'])
     verify(inputs)  # No fixture writes until exact running images/revisions match.
     public = getpass.getpass('Staging public browser key: ')
@@ -132,10 +136,9 @@ def run(candidate, inputs, journal_path, cleanup_only=False):
                 'email_confirm': True, 'app_metadata': {'lp2_smoke': tenant['organisationId']}})
             if created.get('id') != tenant['userId'] or created.get('email') != tenant['email']:
                 raise SafeFailure('Created identity differs from recorded intent.')
-        database = secret(f['vault_name'], 'database-url', r['database_secret_version'])
-        validate_pooler(database, r['supabase_project_ref'], 6543)
-        env = {**os.environ, 'SMOKE_TARGET_JSON': json.dumps(target)}
-        child('smoke-fixtures.mjs', {**env, 'DATABASE_URL': database})
+        env = {k: v for k, v in os.environ.items() if k in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PLAYWRIGHT_BROWSERS_PATH')}
+        env['SMOKE_TARGET_JSON'] = json.dumps(target)
+        child('smoke-fixtures.mjs', {**env, 'DIRECT_URL': database})
         # The browser child never receives the DB URL or backend credential.
         browser_env = {k: v for k, v in env.items() if k in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PLAYWRIGHT_BROWSERS_PATH', 'SMOKE_TARGET_JSON')}
         browser_env.update(SMOKE_PUBLIC_KEY=public, SMOKE_PASSWORD_1=passwords[0], SMOKE_PASSWORD_2=passwords[1])
@@ -156,8 +159,9 @@ if __name__ == '__main__':
     parser.add_argument('--inputs', required=True)
     parser.add_argument('--journal', required=True)
     parser.add_argument('--cleanup-only', action='store_true')
+    parser.add_argument('--direct-secret-version', help='Exact owner session URL version, required except for cleanup-only.')
     args = parser.parse_args()
     try:
-        run(json.loads(Path(args.candidate).read_text()), json.loads(Path(args.inputs).read_text()), args.journal, args.cleanup_only)
+        run(json.loads(Path(args.candidate).read_text()), json.loads(Path(args.inputs).read_text()), args.journal, args.cleanup_only, args.direct_secret_version)
     except (Exception, KeyboardInterrupt):
         sys.exit('FAIL: cloud smoke/cleanup incomplete. Keep the ID journal and run --cleanup-only; details withheld.')

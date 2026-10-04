@@ -27,17 +27,15 @@ Enter the token at the hidden prompt. The helper:
    Both keys must pass live probes against this exact project before any transfer.
    Only the backend key enters Key Vault. Pooler host comes from the Management API.
    Its literal `[YOUR-PASSWORD]` marker is normalized only for host discovery;
-   the stored URLs use the bootstrap password read privately from Key Vault.
-5. Stores `database-url` (transaction 6543) and `direct-url` (session 5432), with
-   Frankfurt/project binding, `/postgres`, strict CA verification, and an allowlist
-   of query parameters. API's runtime DIRECT_URL is deliberately the runtime URL;
-   only the owner reads the separate migration secret. **Both URLs currently use
-   the same `postgres.<ref>` role and password: deploy access equals database-owner
-   access until LP1-03 supplies a separate least-privilege runtime role.** Rotate
-   both URLs together. After both writes, the journal checkpoints exact versions
-   and the helper disables that bootstrap password version. On interruption it
-   reuses the checkpointed URLs and repeats the disable without reading the
-   disabled password or making replacement URLs.
+   the stored owner URL uses the bootstrap password read privately from Key Vault.
+5. Stores only owner `direct-url` (session 5432, `postgres.<ref>`), with
+   Frankfurt/project binding, `/postgres`, strict CA verification and an allowlist
+   of query parameters. It never writes an owner credential to `database-url`.
+   The journal checkpoints `direct_url_version` before disabling the bootstrap
+   password version. On interruption it reuses that exact owner URL and repeats
+   the disable without reading the disabled password or making replacement URLs.
+   This disables a vault copy, not the owner's database password. Runtime login
+   setup and independent rotation are in runbook 05.
 6. Reconciles both private buckets (`evidence`, `import-sources`), limits/MIME types
    and readback. Disables signup/anonymous/phone/SAML/passkeys/unused providers,
    pins site URL and redirects to exactly `WEB_ORIGIN` and `WEB_ORIGIN/login`.
@@ -58,15 +56,19 @@ Do not delete `project_pending` or `signing_before_ids` simply to retry. If the
 journal is lost, stop automatic creation/adoption and reconstruct IDs/ownership
 from provider evidence. No automated project/key deletion is implemented.
 
-Restore public project variables using runbook 00. Copy journal
-`versions.database_url_version` and `versions.backend_secret_version` into the
-release's `database_secret_version`/`backend_secret_version`. Then set foundation
-`runtime_secrets_ready=true` and run its plan/apply again. Only API gets Secrets
-User on `database-url` and `supabase-service-role-key` at individual-secret scopes.
-The disabled bootstrap version and `direct-url` have no API/web/deployer read
-grant; this does not isolate database authority because the enabled runtime URL
-contains the same database-owner password. Disabling the bootstrap copy reduces
-retained enabled copies; it does not revoke or reduce runtime privileges.
+Restore public project variables using runbook 00. Keep foundation
+`runtime_secrets_ready=false` until the runtime handoff in runbooks 03/05 is complete.
+Record `versions.direct_url_version` for owner migrations and fixtures and
+`versions.backend_secret_version` for the release. Runbook 05 prepares the
+runtime secret/version, applies the migration prerequisites, and activates the
+runtime login before any application deployment or workload vault grant.
+Only then set `runtime_secrets_ready=true` and run foundation plan/apply again.
+API identity gets Secrets User on `database-url` and `supabase-service-role-key`
+at individual-secret scopes. `direct-url` and the disabled bootstrap copy have
+no API/web/deployer read grant. A journal from the old shared-owner setup may
+still contain `database_url_version`: do not deploy that version; replace it via
+runbook 05 and disable every old owner-backed `database-url` version before
+runtime secret access is granted (the grant covers all versions of that name).
 
 ```bash
 python3 infra/scripts/cloud_ops.py probe-storage --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --source-sha '<reviewed-helper-full-sha>' --secret-version '<selected-backend-secret-version>'

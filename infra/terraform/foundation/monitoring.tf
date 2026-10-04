@@ -32,7 +32,6 @@ resource "azapi_resource" "storage_verify" {
       resources = { cpu = 0.5, memory = "1Gi" }
       env = [
         { name = "DATABASE_URL", secretRef = "database-url" },
-        { name = "DIRECT_URL", secretRef = "database-url" },
         { name = "SUPABASE_SERVICE_ROLE_KEY", secretRef = "supabase-service-role-key" },
         { name = "SUPABASE_URL", value = "https://${each.value.supabase_project_ref}.supabase.co" },
         { name = "STORAGE_CLEANUP_HOLD", value = "1" },

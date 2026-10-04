@@ -38,9 +38,10 @@ One account per environment, two state containers, no workspaces as an isolation
 boundary, no application remote-state data source. The deployer receives no
 foundation-state access and cannot create arbitrary apps/jobs or change RBAC.
 The owner exports a small public contract (resource names/domain/tenant) for the
-application root. Until LP1-03 separates the runtime DB role, deploy access equals
-database-owner access: both pooler URLs carry the same owner password and code
-replacing the API can read it. Rotate both URLs together. Enforced GitHub environment protections are required.
+application root. `database-url` is the runtime role and `direct-url` is owner-only for migrations
+and controlled fixture provisioning. Bootstrap writes only `direct-url`; runbook
+05 activates runtime login before workload access. Rotate the credentials
+independently and disable historical owner-backed runtime versions. Enforced GitHub environment protections are required.
 
 Bicep is retired from the active tree. Its reviewed baseline remains in Git at
 `40ed0f9` (#139); there is no second Azure writer to apply. As no Bicep deployment

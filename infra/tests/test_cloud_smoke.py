@@ -69,7 +69,7 @@ class CloudSmokeTests(unittest.TestCase):
         candidate = {'source_sha':'a'*40, 'supabase_project_ref':'abcdefghijklmnopqrst',
                      'api_origin':'https://tonyai-staging-api.real.germanywestcentral.azurecontainerapps.io',
                      'web_origin':'https://tonyai-staging-web.real.germanywestcentral.azurecontainerapps.io'}
-        database = 'postgresql://postgres.abcdefghijklmnopqrst:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt'
+        database = 'postgresql://postgres.abcdefghijklmnopqrst:synthetic@aws-0-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt'
         for failure in ('none','fixture','browser','cleanup','readback','created-id','created-email'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 journal = Path(directory)/'journal.json'
@@ -80,7 +80,7 @@ class CloudSmokeTests(unittest.TestCase):
                 readback = stack.enter_context(patch('cloud_smoke.verify'))
                 if failure == 'readback': readback.side_effect = [None, SafeFailure('readback')]
                 stack.enter_context(patch('cloud_smoke.getpass.getpass', return_value='sb_publishable_synthetic'))
-                stack.enter_context(patch('cloud_smoke.secret', side_effect=lambda vault,name,version: database if name=='database-url' else 'backend-synthetic'))
+                stack.enter_context(patch('cloud_smoke.secret', side_effect=lambda vault,name,version: database if name=='direct-url' else 'backend-synthetic'))
                 def auth(base,key,method,path,body=None):
                     # Durable ID intent must precede every POST; password is not persisted.
                     self.assertTrue(journal.exists())
@@ -93,7 +93,10 @@ class CloudSmokeTests(unittest.TestCase):
                 def child(script,env):
                     calls.append(script)
                     if script == 'smoke-fixtures.mjs':
-                        self.assertEqual(env['DATABASE_URL'],database)
+                        self.assertEqual(env['DIRECT_URL'],database)
+                        self.assertNotIn('DATABASE_URL',env)
+                        self.assertNotIn('NODE_OPTIONS',env)
+                        self.assertNotIn('backend-synthetic',env.values())
                         if failure == 'fixture': raise SafeFailure('fixture')
                     else:
                         self.assertFalse(set(ambient) & set(env))
@@ -102,9 +105,9 @@ class CloudSmokeTests(unittest.TestCase):
                         if failure == 'browser': raise SafeFailure('browser')
                 stack.enter_context(patch('cloud_smoke.child',side_effect=child))
                 stack.enter_context(redirect_stdout(io.StringIO()))
-                if failure == 'none': run(candidate,contract,journal)
+                if failure == 'none': run(candidate,contract,journal,direct_secret_version='c'*32)
                 else:
-                    with self.assertRaises(SafeFailure): run(candidate,contract,journal)
+                    with self.assertRaises(SafeFailure): run(candidate,contract,journal,direct_secret_version='c'*32)
                 clean.assert_called_once()
                 self.assertEqual(Path(str(journal)+'.passed.json').exists(),failure=='none')
                 if failure in ('created-id','created-email'): self.assertEqual(calls,[])

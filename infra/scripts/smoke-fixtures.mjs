@@ -10,7 +10,7 @@ export function fixtureDatabaseUrl(target, url) {
   // Validate the actual connection even when this helper is invoked directly.
   // Reuse the strict project/pooler/TLS allowlist; input/output remain pipes.
   const checked = spawnSync('python3', ['-c',
-    'import sys; from pooler import validate_pooler, local_ca_url; u=sys.stdin.read(); validate_pooler(u,sys.argv[1],6543); sys.stdout.write(local_ca_url(u))',
+    'import sys; from pooler import validate_pooler, local_ca_url; u=sys.stdin.read(); validate_pooler(u,sys.argv[1],5432); sys.stdout.write(local_ca_url(u))',
     target.projectRef], { input: url, encoding: 'utf8',
     cwd: fileURLToPath(new URL('.', import.meta.url)) });
   if (checked.status !== 0) throw new Error('Fixture database does not match staging');
@@ -20,7 +20,7 @@ export function fixtureDatabaseUrl(target, url) {
 export async function provision(target) {
   validateSmoke(target);
   if (target.mode !== 'staging') throw new Error('Staging fixtures only');
-  const prisma = new PrismaClient({ datasourceUrl: fixtureDatabaseUrl(target, process.env.DATABASE_URL ?? ''), log: [] });
+  const prisma = new PrismaClient({ datasourceUrl: fixtureDatabaseUrl(target, process.env.DIRECT_URL ?? ''), log: [] });
   try {
     // Single transaction: an interrupted prepare leaves all or none of these rows.
     await prisma.$transaction(async (tx) => {

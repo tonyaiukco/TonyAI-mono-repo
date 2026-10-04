@@ -19,9 +19,10 @@ Expected: Germany West Central; ACR Basic/admin false; Key Vault RBAC/purge
 protection true; API's two **references** with API identity; no web secrets.
 Inspect the secret-level role assignments in the portal as well: API has Secrets
 User on the two runtime secrets only; `direct-url` has no API/web/deployer grant.
-**These are Key Vault grant boundaries, not separate DB roles. Both URLs share
-database-owner credentials: deploy access equals database-owner access until
-LP1-03 delivers the least-privilege runtime role. Both URLs rotate together.**
+Confirm the selected `database-url` uses `tonyai_runtime.<project-ref>` and the
+owner `direct-url` is absent from every API/job environment and secret reference.
+Run runbook 05's deployed `runtime-role.mjs check` and attach its full output,
+including PUBLIC warnings. Keep pg_net disabled unless a feature needs it.
 Verify the journaled `bootstrap-db-password` version is disabled using secret
 version metadata only. Record the scope/role/principal IDs, never call a secret command with `--show-values`.
 Audit inherited subscription/group assignments too; an inherited broad role can

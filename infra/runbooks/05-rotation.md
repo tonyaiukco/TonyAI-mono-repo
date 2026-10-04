@@ -9,50 +9,150 @@ Every selected manifest must explicitly carry `storage_cleanup_hold` and
 rollback manifest. Clearing an on/unknown hold requires owner-run
 `--ack-clear-storage-hold` only after the runbook 04 reports have been reviewed.
 
-## Rotate backend key or DB URLs
+## Initial LP1-03 runtime handoff (owner-run, before G2)
 
-Create/rotate the credential in the secure Supabase provider session under an
-owner-reviewed maintenance plan. For a new backend key, keep the old provider key
-enabled through verification if the provider supports overlap. Copy the last
-**deployed** manifest to `release-r002.json`, set a new `release_id` (`r002`), and
-retain both current image digests. New values are entered only at hidden prompts:
+Keep application traffic and `runtime_secrets_ready` off during first setup.
+Runbook 02 stores only owner `direct-url` (`postgres.<project-ref>`, session 5432).
+The application `database-url` must use `tonyai_runtime.<project-ref>` on
+transaction port 6543, with its own random password. Never reuse the owner password.
+The API and scheduled storage-verify job get only `database-url` and the backend
+Storage key. `storage:reconcile` needs only the runtime role. `direct-url` reaches
+only the owner migration process and explicitly selected synthetic-fixture child;
+it is never a workload secret or an application environment variable.
+
+1. Before applying LP1-03, connect as the hosted owner using the selected
+   `direct-url` connection details in a private psql session. Pass host, port,
+   database and user as nonsecret arguments; use `-W` for the owner password
+   prompt, never a password-bearing connection URI in argv. Use libpq
+   `PGSSLMODE=verify-full` and `PGSSLROOTCERT` pointing at the repository CA
+   (`infra/certs/prod-ca-2021.crt`). Prisma's `sslaccept`/`sslcert` query keys are
+   not libpq options. Do not capture terminal input or enable shell tracing.
+   Confirm the hosted `postgres` retains CREATEROLE and BYPASSRLS and can grant
+   USAGE on `storage` and SELECT on `storage.objects`:
+
+   ```sql
+   SELECT current_user, rolcreaterole, rolbypassrls
+   FROM pg_roles WHERE rolname = current_user;
+   SELECT has_schema_privilege(current_user, 'storage', 'USAGE WITH GRANT OPTION') AS storage_usage_grant,
+          has_table_privilege(current_user, 'storage.objects', 'SELECT WITH GRANT OPTION') AS storage_select_grant;
+   ```
+
+   All four booleans must be true. Stop and resolve with the platform owner if
+   any are false; do not weaken the migration or grant wider runtime privileges.
+2. Generate a unique random runtime password in the owner's password manager.
+   Prepare the runtime transaction URL with username `tonyai_runtime.<project-ref>`
+   and the strict TLS parameters from the root `.env.example`. Store it using
+   the initial-storage command below (hidden input). This
+   validates URL structure, not a login: the role does not exist until migration.
+
+   ```bash
+   python3 infra/scripts/release_secrets.py store --foundation .infra-local/staging/foundation.json --project-ref "$SUPABASE_PROJECT_REF" --name database-url
+   ```
+
+   This initial-storage path validates the foundation and project without needing
+   a release manifest or an existing runtime version. Put the returned version ID and runbook 02's backend version in the initial
+   release manifest. This allows a complete immutable manifest before migration;
+   the migration helper does not read or connect through the runtime URL.
+3. Apply the reviewed migration chain using runbook 03 §3.2 and the explicit
+   owner secret version. Reconnect the private owner psql session over `direct-url`.
+   Use the same saved runtime password at both hidden prompts:
+
+   ```text
+   \password tonyai_runtime
+   ALTER ROLE tonyai_runtime LOGIN;
+   ```
+
+   **Never use `ALTER ROLE … PASSWORD '…'` with a cleartext password.** Supabase
+   statement logs and `pg_stat_statements` can retain it. psql's `\password`
+   computes the verifier on the client. Do not run the loopback-only local
+   provisioning helper against staging, including through a forwarded port.
+4. Keep **pg_net disabled** in Dashboard → Database → Extensions unless a feature
+   explicitly needs it. The runtime check reports PUBLIC exposures, including
+   any outbound HTTP queue and Storage SECURITY DEFINER helpers; retain and
+   review every warning. An unexpected exposure requires operator review.
+5. For an existing shared-owner installation, close traffic and disable all old
+   owner-backed `database-url` vault versions before granting runtime access.
+   Rotate the owner password too: old workloads may have held it. Follow both
+   independent procedures below; disabling a vault version alone does not revoke
+   its database password. For new setup, no owner-backed runtime version exists.
+6. Verify the selected runtime version (`release_secrets.py verify`), then enable
+   foundation `runtime_secrets_ready`, deploy via runbook 03, and update the
+   scheduled storage-verify job via runbook 06. In the private owner shell, load
+   that exact runtime URL into `DATABASE_URL` without echoing it, using the local
+   absolute CA path for `sslcert` when running outside the container. Run:
+
+   ```bash
+   node packages/db/scripts/runtime-role.mjs check
+   ```
+
+   This is `DATABASE_URL=<staging runtime url> node packages/db/scripts/runtime-role.mjs check`
+   with the value supplied privately, not typed into shell history. It must print
+   **"privileges as intended"**. Attach the full stdout **and stderr**, including
+   all PUBLIC warnings, with the source SHA, deployed release and secret version
+   IDs (never values). Repeat after restoration or grant changes. LP1-03 is DONE
+   only after this staging evidence and the required security review close.
+
+## Rotate the runtime credential
+
+Use a maintenance window: a password reset invalidates the old login for new
+connections, so old revisions cannot recover by restarting. Generate a fresh
+random runtime password in the owner's password manager. Through owner psql over
+`direct-url`, use `\password tonyai_runtime` and then `ALTER ROLE tonyai_runtime LOGIN;`.
+Enter the new runtime transaction URL only at the hidden prompt:
 
 ```bash
-python3 infra/scripts/release_secrets.py store --inputs .infra-local/staging/release-r002.json --name supabase-service-role-key
-# For a database password change, update BOTH pooler URLs:
 python3 infra/scripts/release_secrets.py store --inputs .infra-local/staging/release-r002.json --name database-url
+```
+
+Copy the last deployed manifest to a new immutable release ID, retaining both
+image digests, cleanup hold, sweep interval and backend version; select the new
+runtime version. The owner `direct-url` stays unchanged. Verify and deploy via
+the common commands below, update the scheduled verification job to the same
+runtime version, rerun the privilege check including warnings, readiness,
+authenticated login/exports and storage reconciliation. Only after verification
+disable superseded runtime vault versions. Rollback uses current credentials;
+an interrupted rotation may require a second password reset and new version.
+
+## Rotate the owner credential
+
+In the secure Supabase provider session, rotate the hosted `postgres` password
+under an owner-reviewed maintenance plan. Store only the new session URL:
+
+```bash
 python3 infra/scripts/release_secrets.py store --inputs .infra-local/staging/release-r002.json --name direct-url
 ```
 
-Each prints only a validated Key Vault version ID. The strict URL checks reject
-foreign projects/regions, wrong ports, unknown query keys, insecure TLS and wrong
-CA paths. Opaque backend keys also require a successful live exact-project probe
-before storage. Copy the new runtime/backend version IDs into the new manifest.
-Record the direct URL version alongside this release for future migrations; the
-migration helper requires that explicit version and never reads latest. A
-legacy JWT/anon-key rotation also changes compiled browser configuration:
-rebuild the web for the same target and qualified source commit, select that web
-digest, and **retain the deployed API digest** unless explicitly promoting an API
-release. Do not copy the build's API candidate over an intentional API rollback.
+Record its exact version for future migrations and smoke fixture provisioning.
+Verify a fresh owner psql connection and the prerequisite queries above, then
+retire the old owner vault versions. The runtime password, `database-url`, API
+revisions and scheduled job stay unchanged. No application deployment or seed is
+needed for owner-only rotation. If the provider reset revokes the old password
+immediately, pause owner jobs until verification; preserve enough information
+for a second reset after interruption. Never rerun initial setup to rotate keys.
+
+## Rotate the backend key and deploy selected versions
+
+For a backend-key change, retain the old provider key through verification if the
+provider supports overlap. Copy the deployed manifest into a new immutable release
+ID, retaining its digests and operational settings. Use hidden entry:
 
 ```bash
+python3 infra/scripts/release_secrets.py store --inputs .infra-local/staging/release-r002.json --name supabase-service-role-key
 python3 infra/scripts/release_secrets.py verify --inputs .infra-local/staging/release-r002.json
 bash infra/scripts/deploy-apps.sh --backend .infra-local/staging/backend.json --inputs .infra-local/staging/release-r002.json
 ```
 
-Key-only rotation does not apply migrations. Verify new database connections through
-the authenticated runtime flow; any migration change requires a separately reviewed
-source-bound release under runbook 03. The new release ID creates fresh revisions, even when only secret versions
-change. Verify authenticated requests/new DB connections, both bucket probes,
-login and the browser build before revoking the old provider key or disabling old
-vault versions. Update the owner-managed scheduled verification job to the selected digest and new
-secret versions through runbook 06 before retiring the old versions. Record
-references and results only. If a DB password reset revokes
-the old credential immediately, use a maintenance window: old revisions cannot
-recover by restarting. Restore service with consistent new transaction/session
-URLs and the new manifest; a second reset may be required after an interrupted
-rotation. Initial Supabase setup is not the rotation path and must not overwrite
-the new URLs with the original bootstrap password.
+Each store prints only a validated Key Vault version ID; copy it into the new
+manifest before verification. Strict URL checks reject wrong roles, projects,
+regions, ports, query keys, TLS settings and CA paths. Backend keys require a live
+exact-project probe. New release IDs create fresh revisions even with unchanged
+images. Verify login, authenticated requests/new DB connections, both bucket
+probes and the browser build; update the scheduled job through runbook 06 before
+revoking old provider keys or disabling vault versions. Key-only rotation applies
+no migrations. A legacy JWT/anon-key rotation changes compiled browser inputs:
+rebuild the same qualified web source for the target/public key, select its digest,
+and retain the deployed API digest unless explicitly promoting an API release.
+Record references and results only.
 
 ## Roll back images
 
