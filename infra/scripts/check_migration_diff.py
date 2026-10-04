@@ -28,14 +28,26 @@ BEGIN
       AND idx.relname = 'activity_records_reporting_entity_period_category_key'
       AND i.indisunique AND i.indisvalid AND i.indisready AND i.indislive
       AND i.indimmediate AND i.indnullsnotdistinct AND am.amname = 'btree'
-      AND i.indnkeyatts = 6 AND i.indnatts = 6 AND i.indexprs IS NULL
-      AND ARRAY(SELECT a.attname::text
-                FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
-                JOIN pg_catalog.pg_attribute a ON a.attrelid = tbl.oid AND a.attnum = k.attnum
-                ORDER BY k.ord) = ARRAY['subsidiary_id', 'location_id', 'reporting_year',
-                                       'reporting_period', 'period_value', 'category']
+      AND i.indexprs IS NULL
       AND pg_catalog.pg_get_expr(i.indpred, i.indrelid) = '(status <> ''voided''::"ActivityRecordStatus")'
-      AND pg_catalog.pg_get_indexdef(i.indexrelid) = 'CREATE UNIQUE INDEX activity_records_reporting_entity_period_category_key ON public.activity_records USING btree (subsidiary_id, location_id, reporting_year, reporting_period, period_value, category) NULLS NOT DISTINCT WHERE (status <> ''voided''::"ActivityRecordStatus")'
+      AND (
+        -- Transitional six-column branch: remove after LP3-03 PR B merges.
+        (i.indnkeyatts = 6 AND i.indnatts = 6
+         AND ARRAY(SELECT a.attname::text
+                   FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+                   JOIN pg_catalog.pg_attribute a ON a.attrelid = tbl.oid AND a.attnum = k.attnum
+                   ORDER BY k.ord) = ARRAY['subsidiary_id', 'location_id', 'reporting_year',
+                                          'reporting_period', 'period_value', 'category']
+         AND pg_catalog.pg_get_indexdef(i.indexrelid) = 'CREATE UNIQUE INDEX activity_records_reporting_entity_period_category_key ON public.activity_records USING btree (subsidiary_id, location_id, reporting_year, reporting_period, period_value, category) NULLS NOT DISTINCT WHERE (status <> ''voided''::"ActivityRecordStatus")')
+        OR
+        (i.indnkeyatts = 7 AND i.indnatts = 7
+         AND ARRAY(SELECT a.attname::text
+                   FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+                   JOIN pg_catalog.pg_attribute a ON a.attrelid = tbl.oid AND a.attnum = k.attnum
+                   ORDER BY k.ord) = ARRAY['subsidiary_id', 'location_id', 'reporting_year',
+                                          'reporting_period', 'period_value', 'category', 'activity_type']
+         AND pg_catalog.pg_get_indexdef(i.indexrelid) = 'CREATE UNIQUE INDEX activity_records_reporting_entity_period_category_key ON public.activity_records USING btree (subsidiary_id, location_id, reporting_year, reporting_period, period_value, category, activity_type) NULLS NOT DISTINCT WHERE (status <> ''voided''::"ActivityRecordStatus")')
+      )
   ) THEN
     RAISE EXCEPTION 'Required live-record unique index contract is missing or changed';
   END IF;
