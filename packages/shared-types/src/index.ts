@@ -2208,11 +2208,8 @@ export function resolveFactorPath<
     }
   }
 
-  const live = paths.filter(
-    (p) =>
-      isLiveStatus(p.factor.release.status) &&
-      (p.conversion === null || isLiveStatus(p.conversion.release.status)),
-  );
+  // Factors and conversions were filtered to live ones as the paths were built.
+  const live = paths;
   const permitted = input.allowPlaceholders
     ? live
     : live.filter(
