@@ -34,6 +34,15 @@ def app(kind, contract):
 
 
 class DeploymentVersionTests(unittest.TestCase):
+    def test_arm_null_value_beside_runtime_secret_reference_is_allowed(self):
+        contract = inputs()
+        def read(*args):
+            result = app('api' if args[-1].endswith('-api') else 'web', contract)
+            for item in result['properties']['template']['containers'][0]['env']:
+                if item['name'] == 'DATABASE_URL': item['value'] = None
+            return result
+        with contextlib.redirect_stdout(io.StringIO()): verify(contract, read)
+
     def test_every_individual_reference_image_identity_origin_and_ready_revision(self):
         contract = inputs()
         for defect in ('none','api-image','web-image','database-version','backend-version','identity','origin','http','not-ready','web-secret','hold','interval','readiness','liveness','startup','owner-env','owner-ref','inline-owner'):

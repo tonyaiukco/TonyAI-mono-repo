@@ -142,12 +142,12 @@ def migration_release(inputs, vault, project):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['migrate', 'buckets', 'probe-storage', 'runtime-secret-id'])
+    parser.add_argument('operation', choices=['migrate', 'buckets', 'probe-storage', 'runtime-secret-id', 'owner-psql'])
     parser.add_argument('--vault', required=True)
     parser.add_argument('--project-ref', required=True)
     parser.add_argument('--source-sha', help='Reviewed helper source SHA for non-migration operations.')
     parser.add_argument('--secret-version', help='Exact selected version for non-migration operations.')
-    parser.add_argument('--direct-secret-version', help='Exact session URL version for migrations.')
+    parser.add_argument('--direct-secret-version', help='Exact owner session URL version for migrations or owner-psql.')
     parser.add_argument('--inputs', help='Required for migrations: selected application release manifest.')
     args = parser.parse_args()
     if not re.fullmatch(r'[a-z]{20}', args.project_ref):
@@ -170,6 +170,12 @@ def main():
             or command(['git', 'rev-parse', 'HEAD']) != release
             or command(['git', 'status', '--porcelain'])):
         raise SafeFailure('Supply --source-sha for the reviewed clean helper checkout before cloud operations.')
+    if args.operation == 'owner-psql':
+        if not re.fullmatch(r'[a-f0-9]{32}', args.direct_secret_version or ''):
+            raise SafeFailure('Owner psql requires an exact --direct-secret-version.')
+        from owner_psql import owner_psql
+        owner_psql(secret(args.vault, 'direct-url', args.direct_secret_version), args.project_ref)
+        return
     if not re.fullmatch(r'[a-f0-9]{32}', args.secret_version or ''):
         raise SafeFailure('Supply an exact --secret-version from the selected release or setup journal.')
     if args.operation == 'runtime-secret-id':

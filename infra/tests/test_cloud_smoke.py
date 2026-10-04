@@ -144,3 +144,29 @@ class CloudSmokeTests(unittest.TestCase):
                         secret.assert_not_called()
                     child.assert_not_called()
                 self.assertFalse(Path(str(path)+'.passed.json').exists())
+
+    def test_fixture_requires_exact_owner_version_before_any_secret_read(self):
+        from cloud_smoke import run
+        from test_prepare_release import fixture
+        candidate, contract = fixture()
+        from test_security_failures import GOOD_URL
+        owner = GOOD_URL.replace('tonyai_runtime.', 'postgres.').replace(':6543/', ':5432/')
+        for version in (None, 'bad'):
+            with self.subTest(version=version), patch('cloud_smoke.bind'), patch('cloud_smoke.secret', return_value=owner) as secret, patch('cloud_smoke.verify', side_effect=SafeFailure('unreachable verification')) as verify:
+                with self.assertRaises(SafeFailure):
+                    run(candidate, contract, 'unused.json', direct_secret_version=version)
+                secret.assert_not_called()
+                verify.assert_not_called()
+
+    def test_fixture_refuses_runtime_url_before_verify_prompt_or_auth(self):
+        from cloud_smoke import run
+        from test_prepare_release import fixture
+        from test_security_failures import GOOD_URL
+        candidate, contract = fixture()
+        with patch('cloud_smoke.bind'), patch('cloud_smoke.secret', return_value=GOOD_URL) as secret, patch('cloud_smoke.verify', side_effect=SafeFailure('unreachable verification')) as verify, patch('cloud_smoke.getpass.getpass') as prompt, patch('cloud_smoke.auth_call') as auth:
+            with self.assertRaises(SafeFailure):
+                run(candidate, contract, 'unused.json', direct_secret_version='c'*32)
+            secret.assert_called_once_with(contract['foundation']['vault_name'], 'direct-url', 'c'*32)
+            verify.assert_not_called()
+            prompt.assert_not_called()
+            auth.assert_not_called()

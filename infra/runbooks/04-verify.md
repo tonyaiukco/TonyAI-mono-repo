@@ -24,7 +24,9 @@ owner `direct-url` is absent from every API/job environment and secret reference
 Run runbook 05's deployed `runtime-role.mjs check` and attach its full output,
 including PUBLIC warnings. Keep pg_net disabled unless a feature needs it.
 Verify the journaled `bootstrap-db-password` version is disabled using secret
-version metadata only. Record the scope/role/principal IDs, never call a secret command with `--show-values`.
+version metadata only. Record the scope/role/principal IDs, never call a secret command with `--show-values`. The reviewed `owner-psql`
+helper is the exception for private use of an exact owner version in a child
+environment; it never displays the value.
 Audit inherited subscription/group assignments too; an inherited broad role can
 invalidate least-privilege claims despite correct template assignments.
 

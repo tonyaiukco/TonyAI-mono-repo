@@ -23,7 +23,8 @@ def verify(inputs, read=az):
             raise SafeFailure('Deployed image differs from selected release.')
         if kind == 'api':
             env = {item['name']: item for item in container.get('env', [])}
-            if (env.get('DATABASE_URL') != {'name': 'DATABASE_URL', 'secretRef': 'database-url'}
+            if (env.get('DATABASE_URL', {}).get('secretRef') != 'database-url'
+                    or env.get('DATABASE_URL', {}).get('value')
                     or 'DIRECT_URL' in env):
                 raise SafeFailure('API must receive only the runtime database reference.')
             expected_settings = {'STORAGE_CLEANUP_HOLD': '1' if release['storage_cleanup_hold'] else '0',

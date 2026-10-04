@@ -50,7 +50,7 @@ pnpm db:generate
 python3 infra/scripts/cloud_ops.py migrate --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --inputs .infra-local/staging/release-r001.json --direct-secret-version '<selected-direct-url-version>'
 ```
 
-Before LP1-03, perform the hosted owner privilege checks in runbook 05. Expected:
+Before applying the LP1-03 migration, perform the hosted owner privilege checks in runbook 05. Expected:
 `prisma migrate deploy` then `prisma migrate status` succeed using only the
 explicitly selected owner session URL and the repository CA. For initial setup,
 select `versions.direct_url_version` from the journal; after owner rotation use

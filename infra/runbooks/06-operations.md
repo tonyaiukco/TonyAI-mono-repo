@@ -126,12 +126,16 @@ old references, store new versions, retain deployed image digests, verify exact
 versions, deploy a new revision, update the scheduled job, then run readiness,
 synthetic login and both bucket checks. Only then revoke old provider keys and
 disable old Vault versions. Prove revoked credentials fail using a private
-provider probe. Exercise an interruption after storing but before deployment:
-old release remains selected; resume with the same new version IDs. DB passwords
-without overlap require a write-free maintenance window and forward recovery.
+provider probe. Exercise an interruption after storing/validating the new URL but **before**
+changing the PostgreSQL password: the old release and password remain usable;
+resume with the same selected new version IDs. Once `\password` has run, old
+revisions may fail to reconnect even before deployment: keep the write-free
+maintenance window and recover forward. Follow runbook 05's ordered runtime
+rotation, including immediate identity/privilege proof and explicit refusal of
+the old password through Supavisor before disabling old versions.
 Offline tests exercise release selection/readback; provider rotation and receipt
 remain owner-run. LP1-03's runtime and migration credentials must rotate according
-to their separate roles once that separation lands.
+to their separate roles.
 
 ## Migration compatibility, rollback and full staging journey
 

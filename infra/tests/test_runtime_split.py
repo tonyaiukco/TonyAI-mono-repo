@@ -25,7 +25,7 @@ class RuntimeSplitTests(unittest.TestCase):
             with self.subTest(port=port), self.assertRaises(SafeFailure):
                 validate_pooler(url, PROJECT, port)
 
-    def test_compose_provisions_random_login_and_passes_no_owner_to_docker(self):
+    def test_compose_reuses_host_runtime_login_and_passes_no_owner_to_docker(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name in ['scripts/compose-dev.sh', 'infra/scripts/local-runtime-env.sh',
@@ -33,7 +33,7 @@ class RuntimeSplitTests(unittest.TestCase):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(ROOT / name, target)
-            for name, contents in [('apps/api/.env', 'DIRECT_URL=postgresql://postgres:owner-only@127.0.0.1:54322/postgres\n'),
+            for name, contents in [('apps/api/.env', 'DIRECT_URL=postgresql://postgres:owner-only@127.0.0.1:54322/postgres\nDATABASE_URL=postgresql://tonyai_runtime:existing%25%2F%23@localhost:54322/postgres\n'),
                                    ('apps/web/.env.local', 'NEXT_PUBLIC_SUPABASE_ANON_KEY=synthetic\n')]:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,12 +56,12 @@ else:
             docker = binary / 'docker'
             docker.write_text('''#!/usr/bin/env python3
 import json, os, sys
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 assert 'DIRECT_URL' not in os.environ and 'RUNTIME_DB_PASSWORD' not in os.environ
 u=urlparse(os.environ['CONTAINER_DATABASE_URL'])
 assert u.username == 'tonyai_runtime' and u.hostname == 'host.docker.internal'
 with open(os.environ['CAPTURE'], 'a') as f:
-    f.write(json.dumps({'docker': sys.argv[1:], 'password': u.password})+'\\n')
+    f.write(json.dumps({'docker': sys.argv[1:], 'password': unquote(u.password)})+'\\n')
 ''')
             node.chmod(0o755)
             docker.chmod(0o755)
@@ -77,13 +77,30 @@ with open(os.environ['CAPTURE'], 'a') as f:
             self.assertEqual(len(rows), 5)  # down must not provision
             self.assertEqual(rows[0]['password'], rows[1]['password'])
             self.assertEqual(rows[2]['password'], rows[3]['password'])
-            self.assertNotEqual(rows[0]['password'], rows[2]['password'])
-            self.assertRegex(rows[0]['password'], r'^[a-f0-9]{64}$')
+            self.assertEqual(rows[0]['password'], 'existing%/#')
+            self.assertEqual(rows[0]['password'], rows[2]['password'])
+            self.assertIn('existing%25%2F%23', (root / 'apps/api/.env').read_text())
+            generated = []
+            env.pop('DATABASE_URL', None)
+            for existing in ('', '', 'postgresql://postgres:owner-only@localhost:54322/postgres',
+                             'postgresql://tonyai_runtime:do-not-reuse@remote.invalid/postgres',
+                             'postgresql://tonyai_runtime:do-not-reuse@localhost/postgres?host=remote.invalid',
+                             'postgresql://tonyai_runtime:bad%ZZ@localhost/postgres'):
+                (root / 'apps/api/.env').write_text('DIRECT_URL=postgresql://postgres:owner-only@127.0.0.1:54322/postgres\nDATABASE_URL='+existing+'\n')
+                result = subprocess.run(['bash', 'scripts/compose-dev.sh', 'up'], cwd=root,
+                                        env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                latest = [json.loads(line) for line in capture.read_text().splitlines()][-2:]
+                self.assertRegex(latest[0]['password'], r'^[a-f0-9]{64}$')
+                self.assertEqual(latest[0]['password'], latest[1]['password'])
+                self.assertNotIn(latest[0]['password'], result.stdout+result.stderr)
+                generated.append(latest[0]['password'])
+            self.assertEqual(len(set(generated)), len(generated))
             result = subprocess.run(['bash', 'scripts/compose-dev.sh', 'up'], cwd=root,
                                     env={**env, 'FAIL_PROVISION': '1'}, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn('owner-only', result.stdout+result.stderr)
-            self.assertEqual(len(capture.read_text().splitlines()), 6)  # no Docker after failure
+            self.assertEqual(len(capture.read_text().splitlines()), 18)  # no Docker after failure
 
     def test_image_launcher_gives_docker_only_runtime_url(self):
         with tempfile.TemporaryDirectory() as directory:

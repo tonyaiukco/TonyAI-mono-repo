@@ -53,13 +53,16 @@ class RotationRehearsalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'foundation.json'
             path.write_text(json.dumps(foundation))
-            for defect in ('none', 'owner', 'foreign-project', 'invalid-foundation', 'mixed-inputs'):
+            for defect in ('none', 'owner', 'foreign-project', 'invalid-foundation', 'mixed-inputs', 'wrong-name'):
                 vault = Mock()
                 vault.put.return_value = 'https://vault.vault.azure.net/secrets/database-url/'+'c'*32
                 value = GOOD_URL.replace('tonyai_runtime.', 'postgres.') if defect == 'owner' else GOOD_URL
                 project = 'z'*20 if defect == 'foreign-project' else PROJECT
                 args = ['release_secrets.py', 'store', '--foundation', str(path), '--project-ref', project, '--name', 'database-url']
                 if defect == 'mixed-inputs': args += ['--inputs', 'missing.json']
+                if defect == 'wrong-name':
+                    args[-1] = 'direct-url'
+                    value = GOOD_URL.replace('tonyai_runtime.', 'postgres.').replace(':6543/', ':5432/')
                 path.write_text(json.dumps({'invalid': True} if defect == 'invalid-foundation' else foundation))
                 transcript = io.StringIO()
                 with self.subTest(defect=defect), patch('release_secrets.Vault', return_value=vault), patch('release_secrets.clean_environment'), patch('release_secrets.getpass.getpass', return_value=value), patch('release_secrets.sys.stdin.isatty', return_value=True), patch('sys.argv', args), contextlib.redirect_stdout(transcript):
@@ -71,3 +74,24 @@ class RotationRehearsalTests(unittest.TestCase):
                         with self.assertRaises(SafeFailure): main()
                         vault.put.assert_not_called()
                 self.assertNotIn(value, transcript.getvalue())
+
+    def test_owner_store_rejects_runtime_credentials_and_stray_project_argument(self):
+        from test_security_failures import GOOD_URL, PROJECT
+        owner = GOOD_URL.replace('tonyai_runtime.', 'postgres.').replace(':6543/', ':5432/')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'release.json'
+            path.write_text(json.dumps(inputs()))
+            for value, extra, valid in [(owner, [], True), (GOOD_URL, [], False),
+                                        (owner.replace(':5432/', ':6543/'), [], False),
+                                        (owner.replace('postgres.', 'tonyai_runtime.'), [], False),
+                                        (owner, ['--project-ref', PROJECT], False)]:
+                argv = ['release_secrets.py', 'store', '--inputs', str(path), '--name', 'direct-url', *extra]
+                vault = Mock()
+                vault.put.return_value = 'https://vault.vault.azure.net/secrets/direct-url/'+'d'*32
+                with self.subTest(value=value, extra=extra), patch('sys.argv', argv), patch('release_secrets.clean_environment'), patch('release_secrets.sys.stdin.isatty', return_value=True), patch('release_secrets.getpass.getpass', return_value=value), patch('release_secrets.Vault', return_value=vault), contextlib.redirect_stdout(io.StringIO()):
+                    if valid:
+                        main()
+                        vault.put.assert_called_once_with('direct-url', owner, {'project': PROJECT})
+                    else:
+                        with self.assertRaises(SafeFailure): main()
+                        vault.put.assert_not_called()

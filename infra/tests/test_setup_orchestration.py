@@ -78,7 +78,7 @@ class SetupTests(unittest.TestCase):
                 vault=stack.enter_context(patch('supabase_setup.Vault'))
                 project=stack.enter_context(patch('supabase_setup.ensure_project',return_value=REF))
                 api=stack.enter_context(patch('supabase_setup.json_request',return_value={'status':'ACTIVE_HEALTHY'}))
-                transfer=stack.enter_context(patch('supabase_setup.transfer_runtime',return_value=('public',{'database_url_version':'a'*32,'backend_secret_version':'b'*32})))
+                transfer=stack.enter_context(patch('supabase_setup.transfer_runtime',return_value=('public',{'direct_url_version':'a'*32,'backend_secret_version':'b'*32})))
                 signing=stack.enter_context(patch('supabase_setup.ensure_signing_key',return_value='kid'))
                 auth=stack.enter_context(patch('supabase_setup.configure_auth',side_effect=SafeFailure('Interrupted.')))
                 stack.enter_context(contextlib.redirect_stdout(io.StringIO()))

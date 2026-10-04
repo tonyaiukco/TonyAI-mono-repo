@@ -23,7 +23,9 @@ Preserve these project-specific traps:
   is reserved for migrations and controlled fixture provisioning, never workloads.
   Bootstrap writes only the owner URL; finish runbook 05's runtime handoff before
   granting workload access. Rotate credentials independently. Enforced staging environment and
-  branch protections are the trust boundary. Never inspect/print values.
+  branch protections are the trust boundary. Never display/print values. Owner helpers may resolve an exact vault version
+  directly into a child environment (`owner-psql`); this is not permission to
+  print or manually retrieve secrets.
 - GitHub's environment OIDC subject does not constrain the branch by itself.
   Verify enforced environment restrictions before establishing federation.
 - Current API health is liveness, not DB readiness. Image rollback is not schema

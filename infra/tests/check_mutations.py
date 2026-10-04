@@ -11,6 +11,17 @@ import tempfile
 
 INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
+    ('fixture exact owner version guard removed', 'cloud_smoke.py',
+     "    if not re.fullmatch(r'[a-f0-9]{32}', direct_secret_version or ''):\n        raise SafeFailure('Fixture provisioning requires an exact --direct-secret-version.')\n", ''),
+    ('fixture owner URL guard removed', 'cloud_smoke.py',
+     "    validate_pooler(database, r['supabase_project_ref'], 5432)\n", ''),
+    ('initial runtime-only name restriction removed', 'release_secrets.py',
+     " or args.name != 'database-url'", ''),
+    ('stray project accepted with release inputs', 'release_secrets.py',
+     'if not args.inputs or args.project_ref:', 'if not args.inputs:'),
+    ('owner secret URL validation removed', 'release_secrets.py',
+     "        validate_pooler(value, project, 6543 if args.name == 'database-url' else 5432)",
+     "        if args.name == 'database-url': validate_pooler(value, project, 6543)"),
     ('approval manifest omitted from summary', 'prepare_release.py', 'json.dumps(inputs, sort_keys=True, indent=2)', "'{}'"),
     ('cleanup Supabase host binding removed', 'cloud_smoke.py', "target.get('supabase') != 'https://' + release['supabase_project_ref'] + '.supabase.co'", 'False'),
     ('cleanup staging mode removed', 'cloud_smoke.py', "target.get('mode') != 'staging'", 'False'),
@@ -144,9 +155,23 @@ def main():
             targeted = {'prepare_release.py':'test_prepare_release.py', 'candidate_artifact.py':'test_candidate_artifact.py',
                         'cloud_smoke.py':'test_cloud_smoke.py', 'terraform_run.py':'test_candidate_path.py',
                         'release_checks.py':'test_candidate_path.py', 'smoke-contract.mjs':'test_candidate_path.py',
-                        'build-images.sh':'test_build_images.py'}
+                        'build-images.sh':'test_build_images.py',
+                        'release_secrets.py':'test_rotation_rehearsal.py',
+                        'cloud_ops.py':'test_security_failures.py'}
             if filename.startswith('.github/'): pattern = 'test_workflow_security.py'
             else: pattern = targeted.get(filename, pattern)
+            # Keep a full suite control above; run each mutant against its direct
+            # negative assertions so local launcher subprocesses do not dominate CI.
+            overrides = {
+                'rotation project binding removed': 'test_review_boundaries.py',
+                'migration project binding removed': 'test_secret_transfer.py',
+                'migration HEAD comparison alone removed': 'test_secret_transfer.py',
+                'helper HEAD comparison alone removed': 'test_review_boundaries.py',
+                'helper SHA guard removed': 'test_review_boundaries.py',
+                'bucket size readback removed': 'test_review_boundaries.py',
+                'bucket MIME readback removed': 'test_review_boundaries.py',
+            }
+            pattern = overrides.get(name, pattern)
             control = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(target / 'tests'), '-p', pattern],
                                      cwd=target.parent, capture_output=True)
             if control.returncode:
