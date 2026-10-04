@@ -998,22 +998,25 @@ BEGIN
   ) ON "factor_releases" TO authenticated;
   -- The record is written by its triggers alone; the service role may read it.
   REVOKE INSERT, UPDATE, DELETE ON "factor_release_events" FROM service_role;
-  -- Default privileges (postgrest_grants) handed the service role every table
-  -- verb. It keeps the row verbs (PostgREST, the seed's and e2e's loads); the
-  -- table-level ones go, on every table in the schema, now and by default. A
-  -- trigger it attached to any table a referential action reaches would run as
-  -- the owner — PostgreSQL runs those actions as the owner — and so past every
-  -- guard that trusts the owner; TRUNCATE would wipe the records or the audit
-  -- trail past their row guards; REFERENCES would let it hang a key on any
-  -- table. (`runtime-role.mjs` checks that no other role holds them.)
-  REVOKE TRUNCATE, TRIGGER, REFERENCES ON ALL TABLES IN SCHEMA "public" FROM service_role;
-  ALTER DEFAULT PRIVILEGES IN SCHEMA "public" REVOKE TRUNCATE, TRIGGER, REFERENCES ON TABLES FROM service_role;
+  -- Default privileges — Supabase's own on the `public` schema, and
+  -- postgrest_grants' — hand the API roles every table verb. They keep the row
+  -- verbs their grants and policies allow (PostgREST, the seed's and e2e's
+  -- loads); the table-level ones go, on every table in the schema, now and by
+  -- default. A trigger attached to any table a referential action reaches
+  -- would run as the owner — PostgreSQL runs those actions as the owner — and
+  -- so past every guard that trusts the owner; TRUNCATE would wipe the records
+  -- or the audit trail past their row guards; REFERENCES would let a role hang
+  -- a key on any table. (`runtime-role.mjs` checks that no other role holds
+  -- them.) A local `pnpm db:reset` recreates the schema without Supabase's
+  -- defaults; CI, staging and production keep them — hence all three roles.
+  REVOKE TRUNCATE, TRIGGER, REFERENCES ON ALL TABLES IN SCHEMA "public" FROM anon, authenticated, service_role;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA "public" REVOKE TRUNCATE, TRIGGER, REFERENCES ON TABLES FROM anon, authenticated, service_role;
   -- MAINTAIN (PostgreSQL 17) would let it VACUUM FULL, CLUSTER or REINDEX:
   -- maintenance under an exclusive lock, which is the owner's. (It keeps LOCK
   -- TABLE wherever it keeps UPDATE or DELETE; a lock blocks, never rewrites.)
   IF pg_catalog.current_setting('server_version_num')::int >= 170000 THEN
-    EXECUTE 'REVOKE MAINTAIN ON ALL TABLES IN SCHEMA "public" FROM service_role';
-    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA "public" REVOKE MAINTAIN ON TABLES FROM service_role';
+    EXECUTE 'REVOKE MAINTAIN ON ALL TABLES IN SCHEMA "public" FROM anon, authenticated, service_role';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA "public" REVOKE MAINTAIN ON TABLES FROM anon, authenticated, service_role';
   END IF;
 END
 $$;

@@ -285,6 +285,8 @@ describe('checkTableLevelGrants — only an owner holds the table-level verbs', 
     await checkTableLevelGrants(async (sql) => (seen.push(sql), []));
     for (const sql of seen) expect(sql).toContain("('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')");
     expect(seen.some((sql) => sql.includes("defaclnamespace = 'public'::regnamespace"))).toBe(true);
+    // Only the defaults of the role that owns our tables — not the platform's.
+    expect(seen.some((sql) => sql.includes("d.defaclrole = (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass)"))).toBe(true);
     expect(seen.some((sql) => sql.includes("n.nspname = 'public'"))).toBe(true);
   });
 });

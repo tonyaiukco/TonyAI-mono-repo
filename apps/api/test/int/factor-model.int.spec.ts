@@ -262,11 +262,13 @@ describe('K5 — trigger depth is no proof of a cascade, and an id never changes
     }
   });
 
-  it('refuses the service role a trigger on any table a cascade reaches — it would fire as the owner', async () => {
+  // Supabase's default privileges grant all three API roles every table verb
+  // on `public` (CI, staging, production; a local reset drops them).
+  it.each(['service_role', 'authenticated', 'anon'])('refuses %s a trigger on any table a cascade reaches — it would fire as the owner', async (role) => {
     for (const table of ['locations', 'subsidiaries', 'organisations', 'evidence', 'activity_record_evidence']) {
       const e = await failure(
         withRollback(owner, async (tx) => {
-          await tx.$executeRawUnsafe('SET LOCAL ROLE service_role');
+          await tx.$executeRawUnsafe(`SET LOCAL ROLE ${role}`);
           await tx.$executeRawUnsafe(`CREATE FUNCTION pg_temp.int_escalate() RETURNS trigger LANGUAGE plpgsql AS $f$BEGIN RETURN OLD; END$f$`);
           await tx.$executeRawUnsafe(`CREATE TRIGGER int_escalate BEFORE DELETE ON public.${table} FOR EACH ROW EXECUTE FUNCTION pg_temp.int_escalate()`);
         }),

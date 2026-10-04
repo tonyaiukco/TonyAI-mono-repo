@@ -449,7 +449,11 @@ export async function checkTenantInvariants(query) {
  * reaches runs as the owner — PostgreSQL runs those actions as the owner — so
  * past every guard that trusts it), TRUNCATE (past every row guard),
  * REFERENCES and MAINTAIN. Supabase's default privileges grant all four to
- * the service role; the LP3-03 migration takes them back.
+ * anon, authenticated and the service role; the LP3-03 migration takes them
+ * back. Default privileges are checked for the role that owns the schema's
+ * tables (the migrations' role): another creator's — Supabase's
+ * `supabase_admin` — are the platform's, no migration can change them, and
+ * no table of ours is created by it.
  */
 export async function checkTableLevelGrants(query) {
   const verbs = "('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')";
@@ -468,6 +472,7 @@ export async function checkTableLevelGrants(query) {
             pg_catalog.pg_get_userbyid(d.defaclrole) AS "creator", a.privilege_type AS "privilege"
        FROM pg_catalog.pg_default_acl d, LATERAL pg_catalog.aclexplode(d.defaclacl) a
       WHERE d.defaclnamespace = 'public'::regnamespace AND d.defaclobjtype = 'r'
+        AND d.defaclrole = (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass)
         AND a.privilege_type IN ${verbs} AND a.grantee <> d.defaclrole
       ORDER BY 1, 2, 3`,
   );
