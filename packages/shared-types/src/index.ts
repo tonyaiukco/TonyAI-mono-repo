@@ -135,12 +135,15 @@ export const DIMENSION_BASE_UNIT: Readonly<Record<UnitDimension, string>> = {
 };
 
 /**
- * The reference conditions of a standard cubic metre (ISO 13443). A
- * publisher's "per cubic metre" combustion factor is a STANDARD cubic metre —
- * it is derived from a calorific value stated per Sm³ — so it is loaded per
- * `standard_cubic_metres`, and a metered reading reaches it only through a
- * sourced volume-correction conversion. Normal cubic metres (0 °C) are a
- * different quantity and, when added, a family of their own.
+ * The reference conditions of a standard cubic metre (ISO 13443), and the only
+ * ones `standard_cubic_metres` means. A publisher's "per cubic metre"
+ * combustion factor is never per METERED m³ — it derives from a calorific
+ * value at stated conditions — so it is loaded per `standard_cubic_metres`
+ * only when the publisher states exactly these; a metered reading reaches it
+ * only through a sourced volume correction. A factor per NORMAL m³ (0 °C) is a
+ * different quantity — about 5.5% more gas per m³ — and waits for a unit
+ * family of its own; loaded as Sm³ it would overstate. Every conversion step
+ * to or from `standard_cubic_metres` must state these conditions verbatim.
  */
 export const STANDARD_REFERENCE_CONDITIONS = '15 °C, 101.325 kPa (ISO 13443)';
 
@@ -411,7 +414,10 @@ export const CATEGORY_ACTIVITY_TYPES: Partial<
   // ASHRAE designations, written exactly so; an import canonicalises aliases
   // (R410A, HFC-134a) to them. HCFCs such as R-22 are absent on purpose: the
   // GHG Protocol treats Montreal Protocol gases as optional and reported
-  // separately, outside the scopes.
+  // separately, outside the scopes. R-1234yf (fleet air conditioning) is an
+  // HFO, outside the Kyoto basket too; it is listed so a fleet's leakage can be
+  // recorded, and a release prices it only with a numeric GWP it states (AR5
+  // gives "<1"), never one chosen at load.
   Refrigerants: {
     types: [
       { value: 'R-32', label: 'R-32' },
@@ -1893,6 +1899,25 @@ export function isProvenanceSnapshot(
 }
 
 /**
+ * True only when every number in the snapshot came from an authoritative
+ * release — the factor's and, when one was applied, the conversion's. A
+ * snapshot written before LP3-03 is never authoritative: its factors were the
+ * prototype's. Every report and screen that labels a placeholder asks this,
+ * never the factor's status alone, because a path is only as authoritative as
+ * its weakest link.
+ */
+export function isAuthoritativeSnapshot(
+  snapshot: ActivityCalculationSnapshot | null | undefined,
+): boolean {
+  return (
+    isProvenanceSnapshot(snapshot) &&
+    snapshot.factorRelease.status === 'authoritative' &&
+    (snapshot.conversion === null ||
+      snapshot.conversion.release.status === 'authoritative')
+  );
+}
+
+/**
  * Why the engine refused to calculate. Machine-readable, so a screen, the bulk
  * importer and LP3-04's coverage report can branch without parsing prose;
  * LP3-01's error-code registry adopts them. A refusal is never a guess: no
@@ -2147,8 +2172,13 @@ export function resolveFactorPath<
     const target = unitDimensionOf(factor.normalizedUnit);
     const order = target === undefined ? -1 : targets.indexOf(target);
     if (order < 0 || DIMENSION_BASE_UNIT[target!] !== factor.normalizedUnit) continue;
+    // A withdrawn or unknown-status step counts as no step: the gap LP3-04
+    // reports is a missing conversion, not a missing factor.
     const steps = input.conversions.filter(
-      (c) => c.fromUnit === base && c.toUnit === factor.normalizedUnit,
+      (c) =>
+        c.fromUnit === base &&
+        c.toUnit === factor.normalizedUnit &&
+        isLiveStatus(c.release.status),
     );
     const onBasis = steps.filter((c) => c.calorificBasis === factor.calorificBasis);
     if (onBasis.length === 0) {
@@ -2308,11 +2338,21 @@ export const FACTOR_IMPORT_TEXT_LIMITS = {
 const LOADABLE_STATUSES: readonly string[] = ['authoritative', 'placeholder', 'fixture'];
 
 /**
- * Control and invisible formatting characters (bidi overrides, zero-width
- * marks, NUL). A look-alike publisher name would rank as a SECOND publisher
- * and turn every key it covers ambiguous; a bidi override reorders a report.
+ * Control, formatting, surrogate and default-ignorable characters (bidi
+ * overrides, zero-width marks, NUL, a lone surrogate, a Hangul filler, a
+ * combining grapheme joiner). An invisible difference in a publisher's name
+ * would rank as a SECOND publisher — turning its keys ambiguous and escaping
+ * the per-publisher ordinal rule; a bidi override reorders a report.
+ * (Look-alike letters from other scripts need a publisher registry — PR B.)
  */
-const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
+const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}\p{Cs}\p{Default_Ignorable_Code_Point}]/u;
+
+/**
+ * An https URL with a host and nothing before it: no `user@` part, which
+ * would make `https://www.gov.uk@evil.example/` a link to evil.example, and
+ * no backslash, which browsers read as a slash.
+ */
+const PROVENANCE_URL = /^https:\/\/[^\s/?#@\\]+(?:[/?#][^\s\\]*)?$/;
 
 function unitDimensionOf(unit: unknown): UnitDimension | undefined {
   return ACTIVITY_UNITS.find((u) => u.value === unit)?.dimension;
@@ -2416,8 +2456,8 @@ export function validateFactorReleaseImport(input: unknown): FactorImportIssue[]
   if (isIsoDate(release.publishedAt) && isIsoDate(release.reviewedAt) && release.reviewedAt < release.publishedAt) {
     fail('release.reviewedAt', 'is earlier than the publication it reviews');
   }
-  if (release.sourceUrl !== null && !(typeof release.sourceUrl === 'string' && /^https:\/\/\S+$/.test(release.sourceUrl))) {
-    fail('release.sourceUrl', 'must be an https URL');
+  if (release.sourceUrl !== null && !(typeof release.sourceUrl === 'string' && PROVENANCE_URL.test(release.sourceUrl))) {
+    fail('release.sourceUrl', 'must be an https URL with a host and no user part');
   }
   if (authoritative) {
     // Provenance and review are what make a release authoritative (F01, D24);
@@ -2482,7 +2522,10 @@ export function validateFactorReleaseImport(input: unknown): FactorImportIssue[]
       // A publisher's per-m³ combustion factor comes from a calorific value
       // per STANDARD m³; read as per metered m³ it would skip the volume
       // correction and understate every reading.
-      fail(at('normalizedUnit'), 'a combustion factor per cubic metre is per standard cubic metre — load it per standard_cubic_metres');
+      fail(
+        at('normalizedUnit'),
+        'a combustion factor per cubic metre is not per metered m³ — load it per standard_cubic_metres only if the publisher states 15 °C and 101.325 kPa; a per-Nm³ (0 °C) factor needs its own unit',
+      );
     } else if (row.factorUnit !== factorUnitFor(unit as string)) {
       fail(at('factorUnit'), `must be ${factorUnitFor(unit as string)}`);
     }
@@ -2581,7 +2624,16 @@ export function validateFactorReleaseImport(input: unknown): FactorImportIssue[]
     const gasVolume = (d: UnitDimension | undefined) => d === 'metered_volume' || d === 'standard_volume';
     if (gasVolume(from) || gasVolume(to)) {
       const problem = textIssue(row.referenceConditions, limits.referenceConditions);
-      if (problem) fail(at('referenceConditions'), problem === 'is required' ? 'is required for a volume step' : problem);
+      if (problem) {
+        fail(at('referenceConditions'), problem === 'is required' ? 'is required for a volume step' : problem);
+      } else if (
+        (from === 'standard_volume' || to === 'standard_volume') &&
+        row.referenceConditions !== STANDARD_REFERENCE_CONDITIONS
+      ) {
+        // A step stated at other conditions (0 °C "normal" m³) is not a step
+        // to or from a standard cubic metre.
+        fail(at('referenceConditions'), `must be ${STANDARD_REFERENCE_CONDITIONS} for a step to or from standard_cubic_metres`);
+      }
     } else if (row.referenceConditions !== null) {
       const problem = textIssue(row.referenceConditions, limits.referenceConditions);
       if (problem) fail(at('referenceConditions'), problem);

@@ -17,6 +17,7 @@ import {
   FACTOR_IDENTITY_FIELDS,
   FACTOR_STATUSES,
   FACTOR_STATUS_RANK,
+  STANDARD_REFERENCE_CONDITIONS,
   UNIT_DIMENSIONS,
   UNSPECIFIED_ACTIVITY_TYPE,
   directCalorificBasisFor,
@@ -24,6 +25,7 @@ import {
   factorUnitFor,
   resolveFactorPath,
   identityKey,
+  isAuthoritativeSnapshot,
   isCalculated,
   isProvenanceSnapshot,
   isRecordActivityTypeAllowed,
@@ -469,6 +471,34 @@ describe('snapshot v2', () => {
     expect(isProvenanceSnapshot(null)).toBe(false);
   });
 
+  it('calls a snapshot authoritative only when every link is', () => {
+    const real = { ...v2.factorRelease, status: 'authoritative' as const };
+    const step = {
+      id: 'c',
+      fromUnit: 'cubic_metres',
+      toUnit: 'kWh',
+      multiplier: 2,
+      calorificBasis: 'gross' as const,
+      referenceConditions: 'test',
+      basis: 'test',
+      dataYear: 2026,
+      release: real,
+    };
+    expect(isAuthoritativeSnapshot({ ...v2, factorRelease: real })).toBe(true);
+    expect(isAuthoritativeSnapshot({ ...v2, factorRelease: real, conversion: step })).toBe(true);
+    expect(
+      isAuthoritativeSnapshot({
+        ...v2,
+        factorRelease: real,
+        conversion: { ...step, release: { ...real, status: 'placeholder' } },
+      }),
+    ).toBe(false);
+    expect(isAuthoritativeSnapshot(v2)).toBe(false);
+    expect(isAuthoritativeSnapshot(v1)).toBe(false);
+    expect(isAuthoritativeSnapshot(uncalculated)).toBe(false);
+    expect(isAuthoritativeSnapshot(null)).toBe(false);
+  });
+
   it('needs a real figure as well as the tag', () => {
     expect(isProvenanceSnapshot({ ...v2, factorId: '' })).toBe(false);
     expect(isProvenanceSnapshot({ ...v2, tCo2e: Number.NaN })).toBe(false);
@@ -909,8 +939,13 @@ describe('resolveFactorPath', () => {
   it('never uses a withdrawn link', () => {
     const realKwh = factor('real-kwh', 'kWh', 'gross');
     const withdrawnStep = conversion('old-step', 'cubic_metres', 'kWh', 'gross', 'withdrawn');
+    // The gap is the conversion, so that is what a coverage report must say.
     expect(picked(resolve('Natural Gas', 'cubic_metres', [realKwh], [withdrawnStep], true))).toBe(
-      'no_factor',
+      'no_conversion',
+    );
+    const unknownStep = conversion('odd-step', 'cubic_metres', 'kWh', 'gross', 'Authoritative' as FactorStatus);
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [realKwh], [unknownStep], true))).toBe(
+      'no_conversion',
     );
   });
 
@@ -1006,6 +1041,18 @@ describe('validateFactorReleaseImport — review round 1', () => {
       issuesAt(release({ meta: { licence: 'x'.repeat(FACTOR_IMPORT_TEXT_LIMITS.licence + 1) } })),
     ).toContain('release.licence');
     expect(issuesAt(release({ meta: { publisher: ' DESNZ' } }))).toContain('release.publisher');
+    // Default-ignorable and surrogate code points: a Hangul filler, a
+    // combining grapheme joiner, a soft hyphen, a lone surrogate.
+    for (const code of [0x3164, 0x034f, 0x00ad, 0xd800]) {
+      expect(
+        issuesAt(release({ meta: { publisher: `DESNZ${String.fromCharCode(code)}` } })),
+        code.toString(16),
+      ).toContain('release.publisher');
+    }
+    // Turkish letters and an internal no-break space are text, not tricks.
+    expect(
+      issuesAt(release({ meta: { title: `Enerji ve Tabii Kaynaklar Bakanl${String.fromCharCode(0x131)}${String.fromCharCode(0xa0)}2026` } })),
+    ).toEqual([]);
     expect(issuesAt(release({ meta: { notes: `note${RLO}` } }))).toContain('release.notes');
     expect(issuesAt(release({ meta: { reviewedBy: `Reviewer${ZWSP}` } }))).toContain('release.reviewedBy');
     expect(issuesAt(release({ meta: { title: 'Café' } }))).toContain('release.title');
@@ -1153,6 +1200,21 @@ describe('validateFactorReleaseImport — review round 1', () => {
     ).toContain('conversions[0].referenceConditions');
   });
 
+  it('pins a standard cubic metre to ISO 13443 on every step that touches one', () => {
+    expect(STANDARD_REFERENCE_CONDITIONS).toBe('15 °C, 101.325 kPa (ISO 13443)');
+    // A "normal" m³ at 0 °C is about 5.5% more gas: loaded as Sm³ it overstates.
+    for (const over of [
+      { fromUnit: 'standard_cubic_metres', referenceConditions: '0 °C, 101.325 kPa' },
+      { toUnit: 'standard_cubic_metres', calorificBasis: 'not_applicable', referenceConditions: '0 °C, 101.325 kPa' },
+    ]) {
+      expect(issuesAt(release({ conversions: [conversionRow(over)] })), JSON.stringify(over)).toContain(
+        'conversions[0].referenceConditions',
+      );
+    }
+    // A metered → kWh step states its own conditions; nothing pins them.
+    expect(issuesAt(release({ conversions: [conversionRow({ referenceConditions: '0 °C, 101.325 kPa' })] }))).toEqual([]);
+  });
+
   it('keeps conversions between base units', () => {
     expect(
       issuesAt(release({ conversions: [conversionRow({ fromUnit: 'cubic_metres', toUnit: 'gj' })] })),
@@ -1260,6 +1322,18 @@ describe('validateFactorReleaseImport — every rule has a negative and a positi
 
   it('requires a full https URL and a full ISO date', () => {
     expect(issuesAt(release({ meta: { sourceUrl: 'https://' } }))).toContain('release.sourceUrl');
+    // A user part makes the host the part after `@`; a backslash reads as a slash.
+    for (const url of [
+      'https://www.gov.uk@evil.example/x',
+      'https://user:pw@www.gov.uk/x',
+      'https://evil.example\\@www.gov.uk/x',
+      'https://www.gov.uk\\x',
+    ]) {
+      expect(issuesAt(release({ meta: { sourceUrl: url } })), url).toContain('release.sourceUrl');
+    }
+    for (const url of ['https://www.gov.uk', 'https://www.gov.uk/x?y=1#z', 'https://example.invalid/@handle']) {
+      expect(issuesAt(release({ meta: { sourceUrl: url } })), url).toEqual([]);
+    }
     expect(issuesAt(release({ meta: { publishedAt: '2026-06' } }))).toContain('release.publishedAt');
   });
 
@@ -1413,8 +1487,12 @@ describe('validateFactorReleaseImport — every rule has a negative and a positi
       issuesAt(
         release({
           conversions: [
-            conversionRow({ toUnit: 'standard_cubic_metres', calorificBasis: 'not_applicable' }),
-            conversionRow({ fromUnit: 'standard_cubic_metres' }),
+            conversionRow({
+              toUnit: 'standard_cubic_metres',
+              calorificBasis: 'not_applicable',
+              referenceConditions: STANDARD_REFERENCE_CONDITIONS,
+            }),
+            conversionRow({ fromUnit: 'standard_cubic_metres', referenceConditions: STANDARD_REFERENCE_CONDITIONS }),
           ],
         }),
       ),
