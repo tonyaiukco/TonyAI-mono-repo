@@ -9,12 +9,19 @@ import {
   CATEGORY_SCOPE_MAP,
   CATEGORY_UNITS,
   CONVERSION_IDENTITY_FIELDS,
+  CONVERSION_TARGETS,
+  DIMENSION_BASE_UNIT,
+  FACTOR_GASES,
+  FACTOR_IMPORT_TEXT_LIMITS,
   FACTOR_IDENTITY_FIELDS,
   FACTOR_STATUSES,
   FACTOR_STATUS_RANK,
   UNIT_DIMENSIONS,
   UNSPECIFIED_ACTIVITY_TYPE,
+  directCalorificBasisFor,
   factorActivityTypeFor,
+  factorUnitFor,
+  resolveFactorPath,
   identityKey,
   isCalculated,
   isProvenanceSnapshot,
@@ -26,6 +33,8 @@ import {
   yearPolicyOf,
   type CalculationResult,
   type CalculationResultV2,
+  type ConversionPathCandidate,
+  type FactorPathCandidate,
   type Category,
   type FactorImportRow,
   type FactorReleaseImport,
@@ -47,8 +56,8 @@ const TEST_RELEASE: FactorReleaseImport['release'] = {
   licence: 'Test licence',
   publishedAt: '2026-06-01',
   gwpSet: 'AR5',
-  reviewedBy: null,
-  reviewedAt: null,
+  reviewedBy: 'Structural test reviewer (role)',
+  reviewedAt: '2026-06-15',
   notes: null,
 };
 
@@ -57,6 +66,7 @@ function factorRow(over: Partial<FactorImportRow> = {}): FactorImportRow {
     category: 'Natural Gas',
     activityType: 'natural_gas',
     gas: 'CO2e',
+    gasCoverage: 'all_ghg',
     geographyCode: 'UK',
     reportingYear: 2026,
     dataYear: 2026,
@@ -133,10 +143,12 @@ describe('units for the factor model (LP3-03)', () => {
   });
 
   it('measures mobile combustion in fuel volumes only (fuel-based, T4)', () => {
+    // Litres of liquid fuel, kilograms of CNG — never a distance yet.
     expect(CATEGORY_UNITS['Mobile Combustion']).toEqual([
       'litres',
       'uk_gallons',
       'us_gallons',
+      'kg',
     ]);
   });
 
@@ -411,6 +423,7 @@ describe('snapshot v2', () => {
     snapshotSchema: 2,
     activityType: 'natural_gas',
     gas: CALCULATION_GAS,
+    gasCoverage: 'all_ghg',
     calorificBasis: 'gross',
     scope2Method: 'not_applicable',
     dataYear: 2026,
@@ -478,7 +491,7 @@ describe('validateFactorReleaseImport', () => {
         release({
           factors: [
             factorRow(),
-            factorRow({ gas: 'CH4' }),
+            factorRow({ gas: 'CH4', gasCoverage: null, factorValue: 0.1 }),
             factorRow({
               category: 'Electricity',
               activityType: 'grid_electricity',
@@ -497,7 +510,7 @@ describe('validateFactorReleaseImport', () => {
               category: 'Mobile Combustion',
               activityType: 'diesel',
               normalizedUnit: 'litres',
-              factorUnit: 'kgCO2e/litre',
+              factorUnit: 'kgCO2e/L',
               calorificBasis: 'not_applicable',
             }),
           ],
@@ -509,7 +522,16 @@ describe('validateFactorReleaseImport', () => {
 
   it('requires an authoritative release to carry its provenance', () => {
     const paths = issuesAt(
-      release({ meta: { sourceUrl: null, licence: null, publishedAt: null, gwpSet: null } }),
+      release({
+        meta: {
+          sourceUrl: null,
+          licence: null,
+          publishedAt: null,
+          gwpSet: null,
+          reviewedBy: null,
+          reviewedAt: null,
+        },
+      }),
     );
     expect(paths).toEqual(
       expect.arrayContaining([
@@ -517,6 +539,8 @@ describe('validateFactorReleaseImport', () => {
         'release.licence',
         'release.publishedAt',
         'release.gwpSet',
+        'release.reviewedBy',
+        'release.reviewedAt',
       ]),
     );
   });
@@ -525,7 +549,15 @@ describe('validateFactorReleaseImport', () => {
     expect(
       issuesAt(
         release({
-          meta: { status: 'placeholder', sourceUrl: null, licence: null, publishedAt: null, gwpSet: null },
+          meta: {
+            status: 'placeholder',
+            sourceUrl: null,
+            licence: null,
+            publishedAt: null,
+            gwpSet: null,
+            reviewedBy: null,
+            reviewedAt: null,
+          },
         }),
       ),
     ).toEqual([]);
@@ -551,6 +583,7 @@ describe('validateFactorReleaseImport', () => {
       category: 'Fuel',
       activityType: UNSPECIFIED_ACTIVITY_TYPE,
       normalizedUnit: 'litres',
+      factorUnit: 'kgCO2e/L',
       calorificBasis: 'not_applicable',
     });
     expect(issuesAt(release({ factors: [row] }))).toContain('factors[0].activityType');
@@ -629,14 +662,18 @@ describe('validateFactorReleaseImport', () => {
     expect(issuesAt(release({ factors: [factorRow(), factorRow()] }))).toContain('factors[1].gas');
   });
 
-  it('accepts the same fuel per kWh and per m³, and on both bases', () => {
+  it('accepts the same fuel per kWh and per Sm³, and on both bases', () => {
     expect(
       issuesAt(
         release({
           factors: [
             factorRow(),
             factorRow({ calorificBasis: 'net' }),
-            factorRow({ normalizedUnit: 'cubic_metres', calorificBasis: 'not_applicable', factorUnit: 'kgCO2e/m3' }),
+            factorRow({
+              normalizedUnit: 'standard_cubic_metres',
+              calorificBasis: 'not_applicable',
+              factorUnit: 'kgCO2e/Sm³',
+            }),
           ],
         }),
       ),
@@ -644,7 +681,9 @@ describe('validateFactorReleaseImport', () => {
   });
 
   it('refuses a per-gas breakdown with no CO2e total beside it', () => {
-    expect(issuesAt(release({ factors: [factorRow({ gas: 'N2O' })] }))).toContain('factors[0].gas');
+    expect(
+      issuesAt(release({ factors: [factorRow({ gas: 'N2O', gasCoverage: null })] })),
+    ).toContain('factors[0].gas');
   });
 
   it('refuses a definitional step disguised as a sourced conversion', () => {
@@ -689,5 +728,382 @@ describe('the pilot categories can be expressed end to end', () => {
       expect(CATEGORY_UNITS[category]?.length, category).toBeGreaterThan(0);
       expect(CATEGORY_ACTIVITY_TYPES[category]?.types.length, category).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('review round 1 — units and identities', () => {
+  it('names one base unit per family, each a unit of that family', () => {
+    for (const [dimension, unit] of Object.entries(DIMENSION_BASE_UNIT)) {
+      expect(ACTIVITY_UNITS.find((u) => u.value === unit)?.dimension, dimension).toBe(dimension);
+    }
+  });
+
+  it('writes a factor unit as kg CO2e per one base unit', () => {
+    expect(factorUnitFor('kWh')).toBe('kgCO2e/kWh');
+    expect(factorUnitFor('litres')).toBe('kgCO2e/L');
+    expect(factorUnitFor('standard_cubic_metres')).toBe('kgCO2e/Sm³');
+  });
+
+  it('keeps biogenic CO2 as its own, never-summed gas', () => {
+    expect(FACTOR_GASES).toContain('CO2_biogenic');
+  });
+
+  it('answers an inherited key as an unknown category, never by throwing', () => {
+    for (const key of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      expect(recordActivityTypesFor(key)).toEqual([]);
+      expect(isRecordActivityTypeAllowed(key, 'diesel')).toBe(false);
+      expect(factorActivityTypeFor(key, null)).toBe(UNSPECIFIED_ACTIVITY_TYPE);
+    }
+  });
+
+  it('refuses a new untyped record in a typed category with its own code', () => {
+    expect(CALCULATION_REFUSAL_CODES).toContain('activity_type_required');
+    expect(CALCULATION_REFUSAL_STATUS.activity_type_required).toBe(400);
+  });
+});
+
+describe('selectByRelease — unknown statuses', () => {
+  it('never ranks a status the contract does not know, even with placeholders allowed', () => {
+    const typo = { release: { status: 'Authoritative' as FactorStatus, ordinal: 9, publisher: 'P' } };
+    const real = { release: { status: 'placeholder' as FactorStatus, ordinal: 1, publisher: 'P' } };
+    expect(selectByRelease([typo, real], { allowPlaceholders: true })).toEqual({
+      ok: true,
+      selected: real,
+    });
+    expect(selectByRelease([typo], { allowPlaceholders: true })).toEqual({ ok: false, reason: 'none' });
+  });
+});
+
+describe('resolveFactorPath', () => {
+  type F = FactorPathCandidate & { id: string };
+  type C = ConversionPathCandidate & { id: string };
+  const rel = (status: FactorStatus, ordinal = 1, publisher = 'P') => ({ status, ordinal, publisher });
+  const factor = (id: string, normalizedUnit: string, calorificBasis: string, status: FactorStatus = 'authoritative', publisher = 'P', ordinal = 1): F => ({
+    id,
+    normalizedUnit,
+    calorificBasis,
+    release: rel(status, ordinal, publisher),
+  });
+  const conversion = (id: string, fromUnit: string, toUnit: string, calorificBasis: string, status: FactorStatus = 'authoritative'): C => ({
+    id,
+    fromUnit,
+    toUnit,
+    calorificBasis,
+    release: rel(status),
+  });
+  const resolve = (
+    category: string,
+    inputUnit: string,
+    factors: F[],
+    conversions: C[] = [],
+    allowPlaceholders = false,
+  ) => resolveFactorPath({ category, inputUnit, factors, conversions, allowPlaceholders });
+  const picked = (r: ReturnType<typeof resolve>) =>
+    r.ok ? [r.factor.id, r.conversion?.id ?? null] : r.code;
+
+  it('prices billed gas energy with the gross factor, directly', () => {
+    const gross = factor('kwh-gross', 'kWh', 'gross');
+    const net = factor('kwh-net', 'kWh', 'net');
+    expect(picked(resolve('Natural Gas', 'kWh', [net, gross]))).toEqual(['kwh-gross', null]);
+    // A definitional step (MWh → kWh) needs no conversion row.
+    expect(picked(resolve('Natural Gas', 'MWh', [gross]))).toEqual(['kwh-gross', null]);
+    expect(directCalorificBasisFor('Natural Gas', 'kWh')).toBe('gross');
+    expect(directCalorificBasisFor('Electricity', 'kWh')).toBe('not_applicable');
+  });
+
+  it('refuses billed energy when only net factors exist', () => {
+    expect(picked(resolve('Natural Gas', 'kWh', [factor('kwh-net', 'kWh', 'net')]))).toBe(
+      'calorific_basis_mismatch',
+    );
+  });
+
+  it('prices electricity, which has no calorific basis', () => {
+    expect(
+      picked(resolve('Electricity', 'kWh', [factor('grid', 'kWh', 'not_applicable')])),
+    ).toEqual(['grid', null]);
+  });
+
+  it('reaches a per-kWh factor from metered m³ only through a conversion on its basis', () => {
+    const gross = factor('kwh-gross', 'kWh', 'gross');
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [gross]))).toBe('no_conversion');
+    expect(
+      picked(resolve('Natural Gas', 'cubic_metres', [gross], [conversion('m3-kwh-net', 'cubic_metres', 'kWh', 'net')])),
+    ).toBe('calorific_basis_mismatch');
+    expect(
+      picked(resolve('Natural Gas', 'cubic_metres', [gross], [conversion('m3-kwh', 'cubic_metres', 'kWh', 'gross')])),
+    ).toEqual(['kwh-gross', 'm3-kwh']);
+  });
+
+  it('prefers a direct factor to a converted one at the same rank', () => {
+    const perSm3 = factor('sm3', 'standard_cubic_metres', 'not_applicable');
+    const perKwh = factor('kwh', 'kWh', 'gross');
+    const step = conversion('sm3-kwh', 'standard_cubic_metres', 'kWh', 'gross');
+    expect(picked(resolve('Natural Gas', 'standard_cubic_metres', [perKwh, perSm3], [step]))).toEqual([
+      'sm3',
+      null,
+    ]);
+  });
+
+  it('prefers the earlier conversion family when two converted paths tie', () => {
+    expect(CONVERSION_TARGETS.metered_volume).toEqual(['energy', 'standard_volume']);
+    const perKwh = factor('kwh', 'kWh', 'gross');
+    const perSm3 = factor('sm3', 'standard_cubic_metres', 'not_applicable');
+    expect(
+      picked(
+        resolve(
+          'Natural Gas',
+          'cubic_metres',
+          [perSm3, perKwh],
+          [
+            conversion('m3-sm3', 'cubic_metres', 'standard_cubic_metres', 'not_applicable'),
+            conversion('m3-kwh', 'cubic_metres', 'kWh', 'gross'),
+          ],
+        ),
+      ),
+    ).toEqual(['kwh', 'm3-kwh']);
+  });
+
+  it('ranks across every path first — authoritative converted beats placeholder direct', () => {
+    const demoDirect = factor('demo-sm3', 'standard_cubic_metres', 'not_applicable', 'placeholder', 'Prototype');
+    const realKwh = factor('real-kwh', 'kWh', 'gross');
+    const realStep = conversion('real-step', 'standard_cubic_metres', 'kWh', 'gross');
+    expect(
+      picked(resolve('Natural Gas', 'standard_cubic_metres', [demoDirect, realKwh], [realStep], true)),
+    ).toEqual(['real-kwh', 'real-step']);
+  });
+
+  it('is only as authoritative as its weakest link', () => {
+    const realKwh = factor('real-kwh', 'kWh', 'gross');
+    const demoStep = conversion('demo-step', 'cubic_metres', 'kWh', 'gross', 'placeholder');
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [realKwh], [demoStep]))).toBe(
+      'placeholder_refused',
+    );
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [realKwh], [demoStep], true))).toEqual([
+      'real-kwh',
+      'demo-step',
+    ]);
+  });
+
+  it('never uses a withdrawn link', () => {
+    const realKwh = factor('real-kwh', 'kWh', 'gross');
+    const withdrawnStep = conversion('old-step', 'cubic_metres', 'kWh', 'gross', 'withdrawn');
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [realKwh], [withdrawnStep], true))).toBe(
+      'no_factor',
+    );
+  });
+
+  it('refuses two publishers instead of picking one', () => {
+    expect(
+      picked(
+        resolve('Electricity', 'kWh', [
+          factor('a', 'kWh', 'not_applicable', 'authoritative', 'A'),
+          factor('b', 'kWh', 'not_applicable', 'authoritative', 'B'),
+        ]),
+      ),
+    ).toBe('ambiguous_factor');
+  });
+
+  it('takes the newest release of one publisher', () => {
+    expect(
+      picked(
+        resolve('Electricity', 'kWh', [
+          factor('v2', 'kWh', 'not_applicable', 'authoritative', 'P', 2),
+          factor('v10', 'kWh', 'not_applicable', 'authoritative', 'P', 10),
+        ]),
+      ),
+    ).toEqual(['v10', null]);
+  });
+
+  it('has no path from a litre to a per-kWh factor, and none from an unknown unit', () => {
+    expect(picked(resolve('Fuel', 'litres', [factor('kwh', 'kWh', 'gross')]))).toBe('no_factor');
+    expect(picked(resolve('Fuel', 'furlongs', []))).toBe('unit_unknown');
+    expect(picked(resolve('Fuel', 'litres', []))).toBe('no_factor');
+  });
+});
+
+describe('validateFactorReleaseImport — review round 1', () => {
+  const RLO = String.fromCharCode(0x202e);
+  const ZWSP = String.fromCharCode(0x200b);
+  const NUL = String.fromCharCode(0);
+
+  it('reports a malformed file instead of throwing', () => {
+    for (const bad of [null, 42, [], {}, { release: {}, factors: null, conversions: [] }]) {
+      expect(validateFactorReleaseImport(bad)).toEqual([
+        { path: '', message: expect.stringContaining('release, factors[] and conversions[]') },
+      ]);
+    }
+    expect(issuesAt({ ...release(), factors: [null as unknown as FactorImportRow] })).toContain('factors[0]');
+  });
+
+  it('checks value types, not just meanings', () => {
+    expect(
+      issuesAt(release({ factors: [factorRow({ reportingYear: '2026' as unknown as number })] })),
+    ).toContain('factors[0].reportingYear');
+    expect(
+      issuesAt(release({ factors: [factorRow({ factorValue: '1' as unknown as number })] })),
+    ).toContain('factors[0].factorValue');
+    expect(
+      issuesAt(
+        release({
+          meta: { status: 'placeholder', sourceUrl: ['https://x'] as unknown as string },
+        }),
+      ),
+    ).toContain('release.sourceUrl');
+  });
+
+  it('never echoes an unrecognised status', () => {
+    const status = `${RLO}${'x'.repeat(10_000)}`;
+    const issues = validateFactorReleaseImport(
+      release({ meta: { status }, factors: [factorRow({ activityType: 'diesel' })] }),
+    );
+    expect(issues.map((i) => i.path)).toContain('release.status');
+    for (const { message } of issues) {
+      expect(message).not.toContain(RLO);
+      expect(message.length).toBeLessThan(200);
+    }
+  });
+
+  it('refuses invisible, control and oversized text', () => {
+    expect(issuesAt(release({ meta: { publisher: `DESNZ${ZWSP}` } }))).toContain('release.publisher');
+    expect(issuesAt(release({ meta: { title: `A ${RLO}title` } }))).toContain('release.title');
+    expect(issuesAt(release({ meta: { sourceUrl: `https://example.invalid/${RLO}x` } }))).toContain(
+      'release.sourceUrl',
+    );
+    expect(issuesAt(release({ factors: [factorRow({ source: `row${NUL}` })] }))).toContain(
+      'factors[0].source',
+    );
+    expect(
+      issuesAt(release({ meta: { licence: 'x'.repeat(FACTOR_IMPORT_TEXT_LIMITS.licence + 1) } })),
+    ).toContain('release.licence');
+    expect(issuesAt(release({ meta: { publisher: ' DESNZ' } }))).toContain('release.publisher');
+    expect(issuesAt(release({ meta: { title: 'Café' } }))).toContain('release.title');
+  });
+
+  it('requires a review no earlier than the publication, as a real date', () => {
+    expect(issuesAt(release({ meta: { reviewedAt: '2026-05-31' } }))).toContain('release.reviewedAt');
+    expect(issuesAt(release({ meta: { reviewedAt: 'not a date' } }))).toContain('release.reviewedAt');
+    expect(issuesAt(release({ meta: { reviewedAt: '2026-06-01' } }))).toEqual([]);
+  });
+
+  it('quotes every factor per its family base unit', () => {
+    expect(
+      issuesAt(release({ factors: [factorRow({ normalizedUnit: 'MWh', factorUnit: 'kgCO2e/MWh' })] })),
+    ).toContain('factors[0].normalizedUnit');
+    expect(
+      issuesAt(
+        release({
+          factors: [
+            factorRow({
+              category: 'Mobile Combustion',
+              activityType: 'diesel',
+              normalizedUnit: 'uk_gallons',
+              factorUnit: 'kgCO2e/UK gal',
+              calorificBasis: 'not_applicable',
+            }),
+          ],
+        }),
+      ),
+    ).toContain('factors[0].normalizedUnit');
+    expect(issuesAt(release({ factors: [factorRow({ factorUnit: 'tCO2/TJ' })] }))).toContain(
+      'factors[0].factorUnit',
+    );
+  });
+
+  it('reads a combustion factor per cubic metre as per STANDARD cubic metre', () => {
+    expect(
+      issuesAt(
+        release({
+          factors: [factorRow({ normalizedUnit: 'cubic_metres', factorUnit: 'kgCO2e/m³', calorificBasis: 'not_applicable' })],
+        }),
+      ),
+    ).toContain('factors[0].normalizedUnit');
+    // Water is no combustion: its meter volume is the activity itself.
+    expect(
+      issuesAt(
+        release({
+          meta: { status: 'placeholder' },
+          factors: [
+            factorRow({
+              category: 'Water',
+              activityType: 'water_supply',
+              scope: 3,
+              normalizedUnit: 'cubic_metres',
+              factorUnit: 'kgCO2e/m³',
+              calorificBasis: 'not_applicable',
+            }),
+          ],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('states what a CO2e total covers, and only on the total', () => {
+    expect(issuesAt(release({ factors: [factorRow({ gasCoverage: null })] }))).toContain(
+      'factors[0].gasCoverage',
+    );
+    expect(
+      issuesAt(release({ factors: [factorRow(), factorRow({ gas: 'CO2', gasCoverage: 'all_ghg', factorValue: 0.5 })] })),
+    ).toContain('factors[1].gasCoverage');
+    const refrigerant = {
+      category: 'Refrigerants',
+      activityType: 'R-410A',
+      normalizedUnit: 'kg',
+      factorUnit: 'kgCO2e/kg',
+      calorificBasis: 'not_applicable',
+    };
+    expect(issuesAt(release({ factors: [factorRow({ ...refrigerant, gasCoverage: 'co2_only' })] }))).toContain(
+      'factors[0].gasCoverage',
+    );
+    expect(
+      issuesAt(
+        release({
+          factors: [factorRow(refrigerant), factorRow({ ...refrigerant, gas: 'CH4', gasCoverage: null, factorValue: 0.1 })],
+        }),
+      ),
+    ).toContain('factors[1].gas');
+  });
+
+  it('keeps per-gas rows consistent with their total', () => {
+    expect(
+      issuesAt(release({ factors: [factorRow(), factorRow({ gas: 'CO2', gasCoverage: null, factorValue: 5 })] })),
+    ).toContain('factors[1].gas');
+    expect(
+      issuesAt(
+        release({
+          factors: [
+            factorRow({ gasCoverage: 'co2_only' }),
+            factorRow({ gas: 'N2O', gasCoverage: null, factorValue: 0.1 }),
+          ],
+        }),
+      ),
+    ).toContain('factors[1].gas');
+    // Biogenic CO2 sits outside the total and may exceed it.
+    expect(
+      issuesAt(release({ factors: [factorRow(), factorRow({ gas: 'CO2_biogenic', gasCoverage: null, factorValue: 5 })] })),
+    ).toEqual([]);
+  });
+
+  it('needs no GWP set for a release that covers CO2 alone', () => {
+    const grid = factorRow({
+      category: 'Electricity',
+      activityType: 'grid_electricity',
+      scope: 2,
+      scope2Method: 'location',
+      calorificBasis: 'not_applicable',
+      gasCoverage: 'co2_only',
+    });
+    expect(issuesAt(release({ meta: { gwpSet: null }, factors: [grid] }))).toEqual([]);
+    expect(
+      issuesAt(release({ meta: { gwpSet: null }, factors: [grid, factorRow()] })),
+    ).toContain('release.gwpSet');
+  });
+
+  it('keeps conversions between base units', () => {
+    expect(
+      issuesAt(release({ conversions: [conversionRow({ fromUnit: 'cubic_metres', toUnit: 'gj' })] })),
+    ).toContain('conversions[0].toUnit');
+    expect(
+      issuesAt(release({ conversions: [conversionRow({ referenceConditions: `15 °C${RLO}` })] })),
+    ).toContain('conversions[0].referenceConditions');
   });
 });
