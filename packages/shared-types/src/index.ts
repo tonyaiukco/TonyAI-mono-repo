@@ -236,8 +236,9 @@ export const ACTIVITY_UNITS: readonly ActivityUnitSpec[] = [
  * litres on Electricity is refused (litres vs kWh) while `therms` on Electricity
  * or `MWh` on Natural Gas sail straight through and produce a number — a silent
  * wrong figure rather than an error. The categories absent from this map are
- * the Scope 3 ones, outside the pilot; they are unconstrained until they get an
- * entry, and none can be calculated before then.
+ * the Scope 3 ones, outside the pilot: their unit is unconstrained, and the
+ * factor import refuses their factors until they get an entry here (the e2e
+ * suite's Waste fixture factor is written directly, not imported).
  */
 export const CATEGORY_UNITS: Partial<Record<Category, readonly string[]>> = {
   Electricity: ['kWh', 'MWh'],
@@ -354,8 +355,9 @@ export interface ActivityTypeSpec {
  *   record, never both.
  *
  * A category absent from the map (Scope 3, outside the pilot) takes no
- * activity type either and resolves to `UNSPECIFIED_ACTIVITY_TYPE`; it needs an
- * entry here before an authoritative factor can be loaded for it.
+ * activity type either and resolves to `UNSPECIFIED_ACTIVITY_TYPE`. No factor
+ * of it can be imported at any status until it has an entry here and in
+ * `CATEGORY_UNITS`.
  */
 export interface CategoryActivityTypes {
   types: readonly ActivityTypeSpec[];
@@ -1988,6 +1990,12 @@ export type ReleaseSelection<T> =
  *    conflict a person settles (`ambiguous`), never a silent pick.
  * 5. The highest ordinal wins; a tie is `ambiguous`.
  */
+function maxOf(values: readonly number[]): number {
+  let max = -Infinity;
+  for (const value of values) if (value > max) max = value;
+  return max;
+}
+
 export function selectByRelease<T extends ReleaseRanked>(
   candidates: readonly T[],
   options: { allowPlaceholders: boolean },
@@ -2004,16 +2012,16 @@ export function selectByRelease<T extends ReleaseRanked>(
   if (permitted.length === 0) {
     return { ok: false, reason: live.length > 0 ? 'placeholder_refused' : 'none' };
   }
-  const topRank = Math.max(
-    ...permitted.map((c) => FACTOR_STATUS_RANK[c.release.status]),
-  );
+  // Loops, not `Math.max(...list)`: a spread of a very long list overflows
+  // the call stack.
+  const topRank = maxOf(permitted.map((c) => FACTOR_STATUS_RANK[c.release.status]));
   const top = permitted.filter(
     (c) => FACTOR_STATUS_RANK[c.release.status] === topRank,
   );
   if (new Set(top.map((c) => c.release.publisher)).size > 1) {
     return { ok: false, reason: 'ambiguous' };
   }
-  const topOrdinal = Math.max(...top.map((c) => c.release.ordinal));
+  const topOrdinal = maxOf(top.map((c) => c.release.ordinal));
   const winners = top.filter((c) => c.release.ordinal === topOrdinal);
   return winners.length === 1
     ? { ok: true, selected: winners[0] }
@@ -2177,9 +2185,9 @@ export function resolveFactorPath<
       FACTOR_STATUS_RANK[p.factor.release.status],
       p.conversion ? FACTOR_STATUS_RANK[p.conversion.release.status] : Infinity,
     );
-  const topRank = Math.max(...permitted.map(rankOf));
+  const topRank = maxOf(permitted.map(rankOf));
   const top = permitted.filter((p) => rankOf(p) === topRank);
-  const bestPreference = Math.min(...top.map((p) => p.preference));
+  const bestPreference = -maxOf(top.map((p) => -p.preference));
   const chosen = top.filter((p) => p.preference === bestPreference);
 
   const factorPick = selectByRelease([...new Set(chosen.map((p) => p.factor))], {

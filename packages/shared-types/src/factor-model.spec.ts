@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ACTIVITY_UNITS,
+  BILLED_ENERGY_CALORIFIC_BASIS,
   CALCULATION_GAS,
   CALCULATION_REFUSAL_CODES,
   CALCULATION_REFUSAL_STATUS,
@@ -324,8 +325,10 @@ describe('selectByRelease', () => {
 
   it('orders by ordinal, never by edition text — 10 outranks 2 (F01)', () => {
     // As text, '2024.2' sorts after '2024.10'; the ordinal is what is compared.
-    const older = { ...candidate('authoritative', 2), edition: '2024.2' };
-    const newer = { ...candidate('authoritative', 10), edition: '2024.10' };
+    const older = candidate('authoritative', 2);
+    const newer = candidate('authoritative', 10);
+    Object.assign(older.release, { edition: '2024.2' });
+    Object.assign(newer.release, { edition: '2024.10' });
     expect(selectByRelease([older, newer], deny)).toEqual({ ok: true, selected: newer });
     expect(selectByRelease([newer, older], deny)).toEqual({ ok: true, selected: newer });
   });
@@ -1105,5 +1108,255 @@ describe('validateFactorReleaseImport — review round 1', () => {
     expect(
       issuesAt(release({ conversions: [conversionRow({ referenceConditions: `15 °C${RLO}` })] })),
     ).toContain('conversions[0].referenceConditions');
+  });
+});
+
+describe('review round 1 — pinned tables (qa-auditor)', () => {
+  it('bills fuel energy on the gross basis', () => {
+    expect(BILLED_ENERGY_CALORIFIC_BASIS).toBe('gross');
+  });
+
+  it('pins every refusal status', () => {
+    expect(CALCULATION_REFUSAL_STATUS).toEqual({
+      unit_unknown: 400,
+      unit_blocked: 400,
+      unit_not_for_category: 400,
+      activity_type_not_for_category: 400,
+      activity_type_required: 400,
+      no_factor: 404,
+      placeholder_refused: 404,
+      ambiguous_factor: 409,
+      factor_scope_mismatch: 409,
+      no_conversion: 404,
+      calorific_basis_mismatch: 404,
+    });
+  });
+
+  it('pins every unit to its family', () => {
+    expect(Object.fromEntries(ACTIVITY_UNITS.map((u) => [u.value, u.dimension]))).toEqual({
+      kWh: 'energy',
+      MWh: 'energy',
+      cubic_metres: 'metered_volume',
+      standard_cubic_metres: 'standard_volume',
+      therms: 'energy',
+      gj: 'energy',
+      litres: 'fuel_volume',
+      uk_gallons: 'fuel_volume',
+      us_gallons: 'fuel_volume',
+      kilometres: 'distance',
+      passenger_kilometres: 'passenger_distance',
+      tonnes: 'mass',
+      kg: 'mass',
+    });
+  });
+
+  it('pins the storage tokens — they are never renamed', () => {
+    expect(UNSPECIFIED_ACTIVITY_TYPE).toBe('unspecified');
+    expect(
+      Object.fromEntries(
+        Object.entries(CATEGORY_ACTIVITY_TYPES).map(([category, spec]) => [
+          category,
+          { implicit: spec!.implicit, values: spec!.types.map((t) => t.value) },
+        ]),
+      ),
+    ).toEqual({
+      Electricity: { implicit: 'grid_electricity', values: ['grid_electricity'] },
+      'Natural Gas': { implicit: 'natural_gas', values: ['natural_gas'] },
+      Water: { implicit: 'water_supply', values: ['water_supply'] },
+      Fuel: { implicit: undefined, values: ['diesel', 'gas_oil', 'fuel_oil', 'burning_oil', 'lpg'] },
+      'Mobile Combustion': { implicit: undefined, values: ['diesel', 'petrol', 'lpg', 'cng'] },
+      Refrigerants: {
+        implicit: undefined,
+        values: ['R-32', 'R-134a', 'R-404A', 'R-407C', 'R-407F', 'R-410A', 'R-448A', 'R-449A', 'R-1234yf'],
+      },
+    });
+  });
+
+  it('never accepts an empty activity type — it would be a second key for one meter', () => {
+    expect(isRecordActivityTypeAllowed('Electricity', '')).toBe(false);
+    expect(isRecordActivityTypeAllowed('Fuel', '')).toBe(false);
+  });
+
+  it('keys identity on values, not on a joined string that could collide', () => {
+    const a = { ...Object.fromEntries(FACTOR_IDENTITY_FIELDS.map((f) => [f, 'x'])), activityType: 'a|b', gas: 'c' };
+    const b = { ...a, activityType: 'a', gas: 'b|c' };
+    expect(identityKey(a, FACTOR_IDENTITY_FIELDS)).not.toBe(identityKey(b, FACTOR_IDENTITY_FIELDS));
+  });
+
+  it('survives a very long candidate list', () => {
+    const many = Array.from({ length: 300_000 }, (_, i) => ({
+      release: { status: 'authoritative' as FactorStatus, ordinal: i + 1, publisher: 'P' },
+    }));
+    const pick = selectByRelease(many, { allowPlaceholders: false });
+    expect(pick.ok && pick.selected.release.ordinal).toBe(300_000);
+  });
+});
+
+describe('validateFactorReleaseImport — every rule has a negative and a positive case (qa-auditor)', () => {
+  const clean = () => release({ conversions: [conversionRow()] });
+
+  it('starts from a clean release', () => {
+    expect(issuesAt(clean())).toEqual([]);
+  });
+
+  it('requires the release text, and real text', () => {
+    for (const field of ['publisher', 'title', 'edition'] as const) {
+      expect(issuesAt(release({ meta: { [field]: '' } })), field).toContain(`release.${field}`);
+      expect(issuesAt(release({ meta: { [field]: '   ' } })), field).toContain(`release.${field}`);
+    }
+  });
+
+  it('requires a full https URL and a full ISO date', () => {
+    expect(issuesAt(release({ meta: { sourceUrl: 'https://' } }))).toContain('release.sourceUrl');
+    expect(issuesAt(release({ meta: { publishedAt: '2026-06' } }))).toContain('release.publishedAt');
+  });
+
+  it('checks formats on non-authoritative releases too, but asks them for no provenance', () => {
+    const bare = { sourceUrl: null, licence: null, publishedAt: null, gwpSet: null, reviewedBy: null, reviewedAt: null };
+    for (const status of ['placeholder', 'fixture']) {
+      expect(issuesAt(release({ meta: { status, ...bare } })), status).toEqual([]);
+      expect(issuesAt(release({ meta: { status, gwpSet: 'SAR' } })), status).toContain('release.gwpSet');
+      expect(issuesAt(release({ meta: { status, publishedAt: '2026-13-01' } })), status).toContain(
+        'release.publishedAt',
+      );
+    }
+  });
+
+  it('lets a fixture release carry the unspecified activity type', () => {
+    expect(
+      issuesAt(
+        release({
+          meta: { status: 'fixture' },
+          factors: [
+            factorRow({
+              category: 'Fuel',
+              activityType: UNSPECIFIED_ACTIVITY_TYPE,
+              normalizedUnit: 'litres',
+              factorUnit: 'kgCO2e/L',
+              calorificBasis: 'not_applicable',
+            }),
+          ],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('bounds the years: integers from 1990 to 2100', () => {
+    for (const year of [1990, 2100]) {
+      expect(issuesAt(release({ factors: [factorRow({ reportingYear: year, dataYear: year })] }))).toEqual([]);
+    }
+    for (const year of [1989, 2101, 2026.5]) {
+      expect(issuesAt(release({ factors: [factorRow({ reportingYear: year })] })), String(year)).toContain(
+        'factors[0].reportingYear',
+      );
+    }
+  });
+
+  it('accepts a zero factor and refuses an infinite one', () => {
+    expect(issuesAt(release({ factors: [factorRow({ factorValue: 0 })] }))).toEqual([]);
+    expect(issuesAt(release({ factors: [factorRow({ factorValue: Infinity })] }))).toContain(
+      'factors[0].factorValue',
+    );
+  });
+
+  it('requires each row’s text fields', () => {
+    for (const field of ['methodology', 'source', 'factorUnit'] as const) {
+      expect(issuesAt(release({ factors: [factorRow({ [field]: '' })] })), field).toContain(`factors[0].${field}`);
+    }
+  });
+
+  it('loads a market-based Scope 2 row, which is stored though never resolved', () => {
+    expect(
+      issuesAt(
+        release({
+          factors: [
+            factorRow({
+              category: 'Electricity',
+              activityType: 'grid_electricity',
+              scope: 2,
+              scope2Method: 'market',
+              calorificBasis: 'not_applicable',
+            }),
+          ],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('refuses any factor of a category with no unit contract', () => {
+    expect(
+      issuesAt(
+        release({
+          meta: { status: 'fixture' },
+          factors: [
+            factorRow({
+              category: 'Waste',
+              activityType: UNSPECIFIED_ACTIVITY_TYPE,
+              scope: 3,
+              normalizedUnit: 'kg',
+              factorUnit: 'kgCO2e/kg',
+              calorificBasis: 'not_applicable',
+            }),
+          ],
+        }),
+      ),
+    ).toContain('factors[0].normalizedUnit');
+  });
+
+  it('groups a per-gas row with its own total only', () => {
+    const perGas = { gas: 'CH4', gasCoverage: null, factorValue: 0.1 };
+    expect(issuesAt(release({ factors: [factorRow(), factorRow(perGas)] }))).toEqual([]);
+    for (const other of [
+      { geographyCode: 'TR' },
+      { reportingYear: 2025, dataYear: 2025 },
+      { calorificBasis: 'net' },
+      { normalizedUnit: 'standard_cubic_metres', factorUnit: 'kgCO2e/Sm³', calorificBasis: 'not_applicable' },
+    ]) {
+      expect(
+        issuesAt(release({ factors: [factorRow(), factorRow({ ...perGas, ...other })] })),
+        JSON.stringify(other),
+      ).toContain('factors[1].gas');
+    }
+  });
+
+  it('checks every conversion rule', () => {
+    const cases: [Partial<UnitConversionImportRow>, string][] = [
+      [{ activityType: 'diesel' }, 'activityType'],
+      [{ geographyCode: 'FR' }, 'geographyCode'],
+      [{ dataYear: 2027 }, 'dataYear'],
+      [{ reportingYear: 1989 }, 'reportingYear'],
+      [{ category: 'Electricity', activityType: 'grid_electricity' }, 'fromUnit'],
+      [{ multiplier: Infinity }, 'multiplier'],
+      [{ multiplier: -1 }, 'multiplier'],
+      [{ basis: '' }, 'basis'],
+      [{ fromUnit: 'kWh', toUnit: 'cubic_metres', calorificBasis: 'not_applicable' }, 'calorificBasis'],
+      [{ toUnit: 'standard_cubic_metres', calorificBasis: 'gross' }, 'calorificBasis'],
+      [{ fromUnit: 'standard_cubic_metres', referenceConditions: null }, 'referenceConditions'],
+    ];
+    for (const [over, field] of cases) {
+      expect(issuesAt(release({ conversions: [conversionRow(over)] })), JSON.stringify(over)).toContain(
+        `conversions[0].${field}`,
+      );
+    }
+    // The positive controls for the two that are allowed.
+    expect(
+      issuesAt(
+        release({
+          conversions: [
+            conversionRow({ toUnit: 'standard_cubic_metres', calorificBasis: 'not_applicable' }),
+            conversionRow({ fromUnit: 'standard_cubic_metres' }),
+          ],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('keys duplicate conversions on basis and geography too', () => {
+    expect(
+      issuesAt(release({ conversions: [conversionRow(), conversionRow({ calorificBasis: 'net' })] })),
+    ).toEqual([]);
+    expect(
+      issuesAt(release({ conversions: [conversionRow(), conversionRow({ geographyCode: 'TR' })] })),
+    ).toEqual([]);
   });
 });
