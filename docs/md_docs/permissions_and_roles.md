@@ -180,8 +180,9 @@ engaged professional within the scope of that engagement, not publication.
 **Scope of the disclosure.** Work contact details of an identified individual
 acting in a professional capacity, within one tenant. Not private contact
 details, not visible across organisations (RLS `subsidiaries_select_scoped` is
-row-level and organisation-bounded; verified by the containment probes in
-`scripts/rls-probes.mjs`).
+row-level and organisation-bounded — its explicit-grant branch too since LP1-03,
+which also makes a cross-organisation grant impossible at the database; verified
+by the containment probes in `scripts/rls-probes.mjs`).
 
 **What follows from it:**
 - UI labels must say **"work contact"**, and placeholder text should steer users

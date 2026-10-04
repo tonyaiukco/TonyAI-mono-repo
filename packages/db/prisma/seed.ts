@@ -29,7 +29,11 @@ function rollingBaseline(priors: number[]): number | null {
     : null;
 }
 
-const prisma = new PrismaClient();
+// The seed writes organisations, profiles, grants and reference data, which
+// only the OWNER may (LP1-03): DIRECT_URL. DATABASE_URL is the least-privileged
+// runtime role wherever the two differ; CI's supabase-stack sets both to the
+// owner, so the fallback keeps that path unchanged.
+const prisma = new PrismaClient({ datasourceUrl: process.env.DIRECT_URL || process.env.DATABASE_URL });
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? 'http://127.0.0.1:54321';
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -588,7 +592,8 @@ async function main() {
     await prisma.userSubsidiaryAccess.upsert({
       where: { userId_subsidiaryId: { userId: entryId, subsidiaryId } },
       update: {},
-      create: { userId: entryId, subsidiaryId },
+      // Same organisation as the profile — the composite keys refuse anything else.
+      create: { userId: entryId, subsidiaryId, organisationId: ORG_ID },
     });
   }
 

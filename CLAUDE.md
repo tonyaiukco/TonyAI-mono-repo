@@ -32,7 +32,7 @@ in a **Turborepo** monorepo with shared types. Full picture in `README.md`; spec
 - **Prisma migrations vs raw SQL:** the `activity_records` uniqueness lives in a raw `NULLS NOT DISTINCT` index Prisma can't express — every `prisma migrate dev` generation sees it as drift and emits a spurious `DROP INDEX activity_records_reporting_entity_period_category_key`. **Always inspect generated migrations and delete that DROP** before applying.
 
 ## Security & data rules (non-negotiable)
-- **Tenant isolation is two-layer:** NestJS guard (primary, `accessibleSubsidiaryIds`) + Supabase **RLS** (defense-in-depth). Never weaken either. Never `FORCE` RLS (it would break the owner/Prisma path).
+- **Tenant isolation:** the NestJS guard + every service's `accessibleSubsidiaryIds` scoping is the ONLY filter on the API's queries (the API runs as `tonyai_runtime`, BYPASSRLS); Supabase **RLS** confines direct PostgREST clients; composite FKs keep grants same-organisation. Never weaken any. Never `FORCE` RLS. `DATABASE_URL` = runtime role, `DIRECT_URL` = owner (migrations, seed); a new table needs its runtime grant in the migration and an entry in `packages/db/scripts/runtime-role.mjs`. Roles and grants change only through `AccessAdminService`.
 - **RBAC:** only `super_admin` may create/update/delete subsidiaries; reads are tenant-scoped for everyone.
 - **`audit_log` is append-only:** write one row on every mutation; never add UPDATE/DELETE paths to it.
 - **Canonical `user_role`:** `super_admin | consultant | data_entry | executive_viewer` — keep web, shared-types and Prisma in sync.

@@ -64,9 +64,8 @@ const OWNERS: Record<Bucket, { owned: Prisma.Sql; rows: Prisma.Sql }> = {
  *    evidence going missing is an incident for a person.
  *
  * Every query is keyset-paged and bounded by `limit`. Storage's catalogue is
- * the `storage.objects` table in this same database, so the API's owner
- * connection can read it (a least-privilege runtime role — LP1-03 — needs
- * SELECT on it for this tool).
+ * the `storage.objects` table in this same database; the runtime role
+ * (`tonyai_runtime`, LP1-03) holds SELECT on it and BYPASSRLS for exactly this.
  */
 @Injectable()
 export class StorageReconcileService {

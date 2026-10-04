@@ -2640,6 +2640,11 @@ export const AUDIT_ENTITIES = [
   // and refusals, which create no batch, keep `activity_record` and a null id;
   // rows written before batches existed keep `activity_record` too.
   'import_batch',
+  // A role change (LP1-03's AccessAdminService); `entityId` is the profile.
+  'profile',
+  // A subsidiary granted to or withdrawn from a data_entry user; `entityId` is
+  // the profile, the subsidiary is in the diff.
+  'subsidiary_access',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

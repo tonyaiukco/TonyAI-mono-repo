@@ -111,7 +111,7 @@ const ACCESSIBLE_QUERY = {
   // the token.
   //
   // What this proves is the DB layer, which is NOT the layer WP22 changed: the
-  // API reads `profiles` as the owner, so RLS is defence-in-depth here. The
+  // API reads `profiles` as the runtime role (BYPASSRLS), so RLS is defence-in-depth here. The
   // containment argument for the API path is that actor ids come from records
   // already filtered by `accessibleSubsidiaryIds`.
   //
@@ -290,6 +290,207 @@ async function seedForeignSubsidiary() {
 async function cleanupForeignSubsidiary() {
   await svc('DELETE', `subsidiaries?id=eq.${FOREIGN_SUB_ID}`);
   await svc('DELETE', `organisations?id=eq.${FOREIGN_ORG}`);
+}
+
+// --- LP1-03: two organisations, all four roles, malformed grants ------------
+// A fixture of its own, independent of the seed: organisations X and Y, X with
+// two subsidiaries and Y with one, a record in each, and one user per role in
+// each organisation (temporary auth users, so every role signs in for real).
+// X's data_entry user is granted X1 only. Fixed ids and a fixed email prefix,
+// so a run killed half-way is cleaned up by the next one.
+const LP103 = {
+  orgX: '99999999-1003-4000-8000-00000000000a',
+  orgY: '99999999-1003-4000-8000-00000000000b',
+  subX1: '99999999-1003-4000-8000-0000000000a1',
+  subX2: '99999999-1003-4000-8000-0000000000a2',
+  subY1: '99999999-1003-4000-8000-0000000000b1',
+  recX1: '99999999-1003-4000-8000-000000000a11',
+  recX2: '99999999-1003-4000-8000-000000000a21',
+  recY1: '99999999-1003-4000-8000-000000000b11',
+  emailPrefix: 'lp103-probe-',
+};
+const LP103_ROLES = ['super_admin', 'consultant', 'data_entry', 'executive_viewer'];
+
+function authAdmin(method, path, body) {
+  return fetch(`${URL_}/auth/v1/admin/${path}`, {
+    method,
+    headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+async function lp103AuthUsers() {
+  const res = await authAdmin('GET', 'users?page=1&per_page=1000');
+  if (!res.ok) throw new Error(`listing auth users failed: ${res.status} ${await res.text()}`);
+  return (await res.json()).users.filter((u) => u.email?.startsWith(LP103.emailPrefix));
+}
+
+async function cleanupTwoOrganisations() {
+  const users = await lp103AuthUsers();
+  const ids = users.map((u) => u.id);
+  if (ids.length) {
+    await svc('DELETE', `user_subsidiary_access?user_id=in.(${ids.join(',')})`);
+    await svc('DELETE', `activity_records?subsidiary_id=in.(${LP103.subX1},${LP103.subX2},${LP103.subY1})`);
+    await svc('DELETE', `profiles?id=in.(${ids.join(',')})`);
+  }
+  await svc('DELETE', `activity_records?subsidiary_id=in.(${LP103.subX1},${LP103.subX2},${LP103.subY1})`);
+  await svc('DELETE', `organisations?id=in.(${LP103.orgX},${LP103.orgY})`);
+  for (const id of ids) await authAdmin('DELETE', `users/${id}`);
+}
+
+async function seedTwoOrganisations() {
+  const ok = async (res, what) => {
+    if (!res.ok) throw new Error(`${what} failed: ${res.status} ${await res.text()}`);
+  };
+  await ok(
+    await svc('POST', 'organisations', [
+      { id: LP103.orgX, legal_name: 'RLS probe org X', country: 'GB', geography_code: 'UK', updated_at: new Date().toISOString() },
+      { id: LP103.orgY, legal_name: 'RLS probe org Y', country: 'GB', geography_code: 'UK', updated_at: new Date().toISOString() },
+    ]),
+    'organisations',
+  );
+  await ok(
+    await svc('POST', 'subsidiaries', [
+      [LP103.subX1, LP103.orgX],
+      [LP103.subX2, LP103.orgX],
+      [LP103.subY1, LP103.orgY],
+    ].map(([id, org]) => ({ id, organisation_id: org, legal_name: `RLS probe ${id.slice(-2)}`, geography_code: 'UK', updated_at: new Date().toISOString() }))),
+    'subsidiaries',
+  );
+  const users = {};
+  for (const [org, tag] of [[LP103.orgX, 'x'], [LP103.orgY, 'y']]) {
+    for (const role of LP103_ROLES) {
+      const email = `${LP103.emailPrefix}${role.replace('_', '-')}-${tag}@tonyai.test`;
+      const res = await authAdmin('POST', 'users', { email, password: PASSWORD, email_confirm: true });
+      await ok(res, `auth user ${email}`);
+      const { id } = await res.json();
+      await ok(
+        await svc('POST', 'profiles', { id, email, full_name: `Probe ${role} ${tag}`, role, organisation_id: org, updated_at: new Date().toISOString() }),
+        `profile ${email}`,
+      );
+      users[`${role}:${tag}`] = { id, email };
+    }
+  }
+  await ok(
+    await svc('POST', 'user_subsidiary_access', {
+      user_id: users['data_entry:x'].id,
+      subsidiary_id: LP103.subX1,
+      organisation_id: LP103.orgX,
+    }),
+    'grant X1 to X data_entry',
+  );
+  const record = (id, sub) => ({
+    id, subsidiary_id: sub, reporting_year: 2019, reporting_period: 'monthly', period_value: 'January',
+    category: 'Electricity', scope: 2, activity_value: 1, activity_unit: 'kWh',
+    calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, created_by: users['super_admin:x'].id,
+    updated_at: new Date().toISOString(),
+  });
+  await ok(
+    await svc('POST', 'activity_records', [record(LP103.recX1, LP103.subX1), record(LP103.recX2, LP103.subX2), record(LP103.recY1, LP103.subY1)]),
+    'activity_records',
+  );
+  return users;
+}
+
+async function probeTwoOrganisations() {
+  console.log('▸ LP1-03 — two organisations, all four roles, malformed grants');
+  await cleanupTwoOrganisations();
+  try {
+    const users = await seedTwoOrganisations();
+    const tokens = {};
+    for (const [key, { email }] of Object.entries(users)) tokens[key] = await getToken(email);
+
+    // What each role may read, per organisation: the organisation-wide roles
+    // their whole organisation, data_entry only what it is granted.
+    const subs = `${LP103.subX1},${LP103.subX2},${LP103.subY1}`;
+    const expected = {
+      'super_admin:x': [LP103.subX1, LP103.subX2],
+      'consultant:x': [LP103.subX1, LP103.subX2],
+      'executive_viewer:x': [LP103.subX1, LP103.subX2],
+      'data_entry:x': [LP103.subX1],
+      'super_admin:y': [LP103.subY1],
+      'consultant:y': [LP103.subY1],
+      'executive_viewer:y': [LP103.subY1],
+      'data_entry:y': [],
+    };
+    for (const [key, visible] of Object.entries(expected)) {
+      const subsRes = await fetch(`${URL_}/rest/v1/subsidiaries?select=id&id=in.(${subs})`, {
+        headers: { apikey: ANON, Authorization: `Bearer ${tokens[key]}` },
+      });
+      const seen = (await subsRes.json()).map((r) => r.id).sort();
+      const recRes = await fetch(`${URL_}/rest/v1/activity_records?select=subsidiary_id&subsidiary_id=in.(${subs})`, {
+        headers: { apikey: ANON, Authorization: `Bearer ${tokens[key]}` },
+      });
+      const recs = (await recRes.json()).map((r) => r.subsidiary_id).sort();
+      const want = [...visible].sort();
+      check(
+        `two organisations: ${key.replace(':', ' of ')} reads exactly its own organisation's subsidiaries and records`,
+        JSON.stringify(seen) === JSON.stringify(want) && JSON.stringify(recs) === JSON.stringify(want),
+        `subsidiaries=${seen.length}, records=${recs.length}, expected=${want.length}`,
+      );
+    }
+
+    // Malformed grants, written with the service role — the most privileged
+    // PostgREST client, which RLS does not restrict. The composite foreign keys
+    // refuse every one (409, foreign-key violation).
+    const entryX = users['data_entry:x'].id;
+    const malformed = [
+      ['a grant of Y1 to X\'s data_entry user, labelled X', { user_id: entryX, subsidiary_id: LP103.subY1, organisation_id: LP103.orgX }],
+      ['a grant of Y1 to X\'s data_entry user, labelled Y', { user_id: entryX, subsidiary_id: LP103.subY1, organisation_id: LP103.orgY }],
+      ['a grant of a subsidiary that does not exist', { user_id: entryX, subsidiary_id: randomUUID(), organisation_id: LP103.orgX }],
+      ['a grant to a profile that does not exist', { user_id: randomUUID(), subsidiary_id: LP103.subX2, organisation_id: LP103.orgX }],
+    ];
+    for (const [label, row] of malformed) {
+      const res = await svc('POST', 'user_subsidiary_access', row);
+      check(`malformed grant refused by the database: ${label}`, res.status === 409, `status=${res.status}`);
+    }
+    const moved = await svc('PATCH', `profiles?id=eq.${entryX}`, { organisation_id: LP103.orgY });
+    check("a granted profile cannot be moved to another organisation (service role)", moved.status === 409, `status=${moved.status}`);
+
+    // Client roles write nothing here: no INSERT/UPDATE/DELETE policy exists on
+    // grants or profiles, so these are refused or match no row.
+    const asEntry = { apikey: ANON, Authorization: `Bearer ${tokens['data_entry:x']}`, 'Content-Type': 'application/json', Prefer: 'return=representation' };
+    const selfGrant = await fetch(`${URL_}/rest/v1/user_subsidiary_access`, {
+      method: 'POST',
+      headers: asEntry,
+      body: JSON.stringify({ user_id: entryX, subsidiary_id: LP103.subX2, organisation_id: LP103.orgX }),
+    });
+    const promote = await fetch(`${URL_}/rest/v1/profiles?id=eq.${entryX}`, {
+      method: 'PATCH',
+      headers: asEntry,
+      body: JSON.stringify({ role: 'super_admin' }),
+    });
+    const asAdmin = { ...asEntry, Authorization: `Bearer ${tokens['super_admin:x']}` };
+    const revoke = await fetch(`${URL_}/rest/v1/user_subsidiary_access?user_id=eq.${entryX}`, { method: 'DELETE', headers: asAdmin });
+    const after = await fetch(`${URL_}/rest/v1/user_subsidiary_access?select=subsidiary_id&user_id=eq.${entryX}`, {
+      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+    });
+    const grantsAfter = (await after.json()).map((r) => r.subsidiary_id);
+    const profileAfter = await (await fetch(`${URL_}/rest/v1/profiles?select=role,organisation_id&id=eq.${entryX}`, {
+      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+    })).json();
+    const promotedRows = promote.ok ? await promote.json() : [];
+    const revokedRows = revoke.ok ? await revoke.json() : [];
+    check(
+      'a data_entry user cannot grant itself a subsidiary through PostgREST',
+      !selfGrant.ok && JSON.stringify(grantsAfter) === JSON.stringify([LP103.subX1]),
+      `insert=${selfGrant.status}, grants now=${grantsAfter.length}`,
+    );
+    check(
+      'a data_entry user cannot promote itself through PostgREST',
+      promotedRows.length === 0 && profileAfter[0]?.role === 'data_entry' && profileAfter[0]?.organisation_id === LP103.orgX,
+      `patch=${promote.status}, rows=${promotedRows.length}, role now=${profileAfter[0]?.role}`,
+    );
+    check(
+      "a super_admin cannot change grants through PostgREST — only through the API's audited boundary",
+      revokedRows.length === 0 && grantsAfter.length === 1,
+      `delete=${revoke.status}, rows=${revokedRows.length}`,
+    );
+  } catch (e) {
+    check('LP1-03 two-organisation probe could run', false, e.message);
+  } finally {
+    await cleanupTwoOrganisations();
+  }
 }
 
 // --- run ---------------------------------------------------------------------
@@ -623,6 +824,9 @@ async function main() {
       `void_reason=${afterVoidRow.void_reason}`,
   );
 
+  // --- LP1-03: two organisations, every role, malformed grants -------------
+  await probeTwoOrganisations();
+
   // --- Every table must carry RLS ------------------------------------------
   // The grants migration hands client roles SELECT/INSERT/UPDATE/DELETE on all
   // tables, so a table shipped with RLS off is not "invisible until wired up" —
@@ -650,6 +854,37 @@ async function main() {
     );
   } catch (e) {
     check('RLS coverage check could run', false, e.message);
+  }
+
+  // --- The runtime role (LP1-03) ---------------------------------------------
+  // The API connects as `tonyai_runtime`, which bypasses RLS by design, so its
+  // privileges are part of the trust boundary: the same catalogue check the
+  // integration suite and an operator's `runtime-role.mjs check` run.
+  try {
+    const { createRequire } = await import('node:module');
+    const req = createRequire(import.meta.url);
+    const { PrismaClient } = req('../packages/db/generated/client');
+    const { checkRuntimeRole, checkTenantInvariants, runtimeRoleExposures } = await import(
+      '../packages/db/scripts/runtime-role.mjs'
+    );
+    const prisma = new PrismaClient();
+    const query = (sql) => prisma.$queryRawUnsafe(sql);
+    try {
+      const problems = await checkRuntimeRole(query);
+      check(
+        'the runtime role holds exactly its intended privileges (no DDL, append-only audit_log, no _prisma_migrations, BYPASSRLS, owns nothing)',
+        problems.length === 0,
+        problems.length ? problems.join('; ') : 'as intended',
+      );
+      const broken = await checkTenantInvariants(query);
+      check('no grant crosses an organisation in the data (a restore skips the keys)', broken.length === 0, broken.join('; ') || 'none');
+      // Not a failure: what every role inherits from PUBLIC through the platform.
+      for (const e of await runtimeRoleExposures(query)) console.log(`  ⚠️  the runtime role can also reach ${e}`);
+    } finally {
+      await prisma.$disconnect();
+    }
+  } catch (e) {
+    check('runtime role check could run', false, e.message);
   }
 
   console.log('');

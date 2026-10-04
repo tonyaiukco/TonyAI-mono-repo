@@ -83,6 +83,10 @@ model Profile {
   createdAt        DateTime               @default(now()) @map("created_at")
   updatedAt        DateTime               @updatedAt @map("updated_at")
 
+  // The target of `user_subsidiary_access`'s composite foreign key (LP1-03):
+  // `id` alone is already unique; the pair is what lets the database refuse a
+  // grant between a profile and a subsidiary of different organisations.
+  @@unique([id, organisationId])
   @@map("profiles")
 }
 
@@ -139,6 +143,8 @@ model Subsidiary {
   updatedAt        DateTime               @updatedAt @map("updated_at")
 
   @@index([organisationId])
+  // The target of `user_subsidiary_access`'s composite foreign key (LP1-03).
+  @@unique([id, organisationId])
   @@map("subsidiaries")
 }
 
@@ -439,14 +445,24 @@ model SubsidiaryDenominator {
   @@map("subsidiary_denominators")
 }
 
+// An explicit grant of one subsidiary to one profile — how a data_entry user
+// reaches data (the other roles see their whole organisation). Both foreign
+// keys are composite over `organisation_id` (LP1-03, F06), so a grant can only
+// join a profile and a subsidiary of the SAME organisation, whoever writes it —
+// the API, the seed, a service-role client or the owner (short of a replica-mode
+// restore, which skips the keys: `runtime-role.mjs check` scans for that) — and
+// a profile with no organisation can hold none. ON UPDATE NO ACTION: a profile or subsidiary
+// cannot change organisation while a grant still ties it to the old one.
 model UserSubsidiaryAccess {
-  userId       String     @map("user_id") @db.Uuid
-  subsidiaryId String     @map("subsidiary_id") @db.Uuid
-  profile      Profile    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subsidiary   Subsidiary @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
-  createdAt    DateTime   @default(now()) @map("created_at")
+  userId         String     @map("user_id") @db.Uuid
+  subsidiaryId   String     @map("subsidiary_id") @db.Uuid
+  organisationId String     @map("organisation_id") @db.Uuid
+  profile        Profile    @relation(fields: [userId, organisationId], references: [id, organisationId], onDelete: Cascade, onUpdate: NoAction)
+  subsidiary     Subsidiary @relation(fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Cascade, onUpdate: NoAction)
+  createdAt      DateTime   @default(now()) @map("created_at")
 
   @@id([userId, subsidiaryId])
+  @@index([subsidiaryId])
   @@map("user_subsidiary_access")
 }
 

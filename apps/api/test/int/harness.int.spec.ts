@@ -3,6 +3,7 @@ import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
   backendPid,
   connect,
+  connectOwner,
   countTenantRows,
   createRecord,
   createTenant,
@@ -34,17 +35,24 @@ afterAll(async () => {
 describe('withRollback', () => {
   it('leaves no row behind, though the row existed inside the transaction', async () => {
     const legalName = `Int-test rollback ${Date.now()}`;
-    const seen = await withRollback(a, async (tx) => {
-      const org = await tx.organisation.create({
-        data: { legalName, country: 'GB', geographyCode: 'UK' },
+    // Organisations are the owner's to create (the runtime role reads them).
+    const owner = connectOwner();
+    let seen: { id: string; insideTx: number; otherConnection: number };
+    try {
+      seen = await withRollback(owner, async (tx) => {
+        const org = await tx.organisation.create({
+          data: { legalName, country: 'GB', geographyCode: 'UK' },
+        });
+        return {
+          id: org.id,
+          insideTx: await tx.organisation.count({ where: { id: org.id } }),
+          // Another connection must not see an uncommitted row.
+          otherConnection: await observer.organisation.count({ where: { id: org.id } }),
+        };
       });
-      return {
-        id: org.id,
-        insideTx: await tx.organisation.count({ where: { id: org.id } }),
-        // Another connection must not see an uncommitted row.
-        otherConnection: await observer.organisation.count({ where: { id: org.id } }),
-      };
-    });
+    } finally {
+      await owner.$disconnect();
+    }
 
     expect(seen.insideTx).toBe(1);
     expect(seen.otherConnection).toBe(0);
@@ -63,7 +71,7 @@ describe('withRollback', () => {
 
 describe('createTenant', () => {
   it('cleanup() removes every row the tenant created, audit rows included', async () => {
-    const tenant = await createTenant(a);
+    const tenant = await createTenant();
     await createRecord(a, tenant);
     await a.auditLog.create({
       data: {
@@ -77,7 +85,8 @@ describe('createTenant', () => {
     expect(await countTenantRows(a, tenant)).toEqual({
       organisations: 1,
       subsidiaries: 1,
-      profiles: 3,
+      profiles: 4,
+      grants: 1,
       records: 1,
       audit: 1,
     });
@@ -88,6 +97,7 @@ describe('createTenant', () => {
       organisations: 0,
       subsidiaries: 0,
       profiles: 0,
+      grants: 0,
       records: 0,
       audit: 0,
     });
@@ -98,7 +108,7 @@ describe('interleaving', () => {
   let tenant: Tenant;
 
   beforeEach(async () => {
-    tenant = await createTenant(a);
+    tenant = await createTenant();
   });
 
   afterEach(async () => {

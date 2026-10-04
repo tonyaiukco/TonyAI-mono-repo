@@ -47,7 +47,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  tenant = await createTenant(prisma);
+  tenant = await createTenant();
 });
 
 afterEach(async () => {
