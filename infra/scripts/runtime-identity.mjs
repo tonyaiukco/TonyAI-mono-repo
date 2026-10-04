@@ -9,20 +9,23 @@ export const verifyRuntimeIdentity = async (query) => {
   return rows[0];
 };
 
-const main = async () => {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
-  const { PrismaClient } = await import('../../packages/db/generated/client/index.js');
-  const client = new PrismaClient({ datasourceUrl: process.env.DATABASE_URL, log: [] });
+export const run = async (env, makeClient, output = console.log) => {
+  if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
+  const client = await makeClient({ datasourceUrl: env.DATABASE_URL, log: [] });
+  let identity;
   try {
-    const identity = await verifyRuntimeIdentity((sql) => client.$queryRawUnsafe(sql));
-    console.log(`PASS: current_user=${identity.current_user}; session_user=${identity.session_user}`);
+    identity = await verifyRuntimeIdentity((sql) => client.$queryRawUnsafe(sql));
   } finally {
     await client.$disconnect();
   }
+  output(`PASS: current_user=${identity.current_user}; session_user=${identity.session_user}`);
 };
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  main().catch(() => {
+  run(process.env, async (options) => {
+    const { PrismaClient } = await import('../../packages/db/generated/client/index.js');
+    return new PrismaClient(options);
+  }).catch(() => {
     console.error('FAIL: runtime connection identity was not verified; credentials and driver details withheld.');
     process.exitCode = 1;
   });

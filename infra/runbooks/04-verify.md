@@ -21,8 +21,11 @@ Inspect the secret-level role assignments in the portal as well: API has Secrets
 User on the two runtime secrets only; `direct-url` has no API/web/deployer grant.
 Confirm the selected `database-url` uses `tonyai_runtime.<project-ref>` and the
 owner `direct-url` is absent from every API/job environment and secret reference.
-Run runbook 05's deployed `runtime-role.mjs check` and attach its full output,
-including PUBLIC warnings. Keep pg_net disabled unless a feature needs it.
+Run runbook 05's [Runtime connection and privilege evidence](05-rotation.md#runtime-connection-and-privilege-evidence)
+procedure: `runtime-identity.mjs && runtime-role.mjs check` using the same
+`DATABASE_URL`. Require both checks to pass and attach their full output,
+including PUBLIC warnings; the privilege check alone is insufficient evidence.
+Keep pg_net disabled unless a feature needs it.
 Verify the journaled `bootstrap-db-password` version is disabled using secret
 version metadata only. Record the scope/role/principal IDs, never call a secret command with `--show-values`. The reviewed `owner-psql`
 helper is the exception for private use of an exact owner version in a child

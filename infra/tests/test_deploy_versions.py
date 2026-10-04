@@ -45,12 +45,13 @@ class DeploymentVersionTests(unittest.TestCase):
 
     def test_every_individual_reference_image_identity_origin_and_ready_revision(self):
         contract = inputs()
-        for defect in ('none','api-image','web-image','database-version','backend-version','identity','origin','http','not-ready','web-secret','hold','interval','readiness','liveness','startup','owner-env','owner-ref','inline-owner'):
+        for defect in ('none','api-image','web-image','database-version','backend-version','identity','origin','http','not-ready','web-secret','hold','interval','readiness','liveness','startup','owner-env','owner-ref','inline-owner','ref-with-value'):
             state = {kind:app(kind,contract) for kind in ('api','web')}
             api = state['api']['properties']; web = state['web']['properties']
             if defect == 'owner-env': api['template']['containers'][0]['env'].append({'name':'DIRECT_URL','secretRef':'direct-url'})
             if defect == 'owner-ref': api['template']['containers'][0]['env'][2]['secretRef'] = 'direct-url'
             if defect == 'inline-owner': api['template']['containers'][0]['env'][2] = {'name':'DATABASE_URL','value':'postgresql://postgres:synthetic@host/postgres'}
+            if defect == 'ref-with-value': api['template']['containers'][0]['env'][2]['value'] = 'postgresql://postgres:synthetic@host/postgres'
             if defect == 'hold': api['template']['containers'][0]['env'][0]['value'] = '1'
             if defect == 'interval': api['template']['containers'][0]['env'][1]['value'] = '600'
             if defect == 'startup': api['template']['containers'][0]['probes'][0]['httpGet']['path'] = '/api/v1/health/ready'

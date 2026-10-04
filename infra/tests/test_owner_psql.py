@@ -1,7 +1,6 @@
 """Owner psql boundary tests: credentials stay out of arguments and inherited redirects."""
 import os
 from pathlib import Path
-import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -31,27 +30,36 @@ class OwnerPsqlTests(unittest.TestCase):
                         connect.assert_not_called()
 
     def test_psql_uses_only_validated_libpq_environment_and_no_startup_or_history(self):
-        ambient = {'PGHOST': 'evil.invalid', 'PGSERVICE': 'evil', 'PGOPTIONS': 'unsafe',
+        allowed = {'PATH': '/synthetic/bin', 'HOME': '/synthetic/home', 'TERM': 'xterm',
+                   'LANG': 'C', 'LC_ALL': 'C', 'LC_CTYPE': 'C'}
+        ambient = {**allowed, 'PGHOST': 'evil.invalid', 'PGSERVICE': 'evil', 'PGOPTIONS': 'unsafe',
                    'PGSSLROOTCERT': '/wrong', 'PSQL_HISTORY': '/tmp/unsafe-history', 'NODE_OPTIONS': 'unsafe'}
-        with patch.dict(os.environ, ambient), patch('owner_psql.sys.stdin.isatty', return_value=True), patch('owner_psql.sys.stdout.isatty', return_value=True), patch('owner_psql.subprocess.run', return_value=subprocess.CompletedProcess([], 0)) as run:
+        with patch.dict(os.environ, ambient, clear=True), patch('owner_psql.sys.stdin.isatty', return_value=True), patch('owner_psql.sys.stdout.isatty', return_value=True), patch('owner_psql.shutil.which', return_value='/synthetic/bin/psql') as which, patch('owner_psql.os.execvpe') as execute:
             owner_psql(OWNER_URL, PROJECT)
-        args, = run.call_args.args
-        env = run.call_args.kwargs['env']
+            self.assertEqual(dict(os.environ), ambient)
+        which.assert_called_once_with('psql')
+        execute.assert_called_once()
+        executable, args, env = execute.call_args.args
+        self.assertEqual(executable, 'psql')
         self.assertEqual(args, ['psql', '-X', '--no-password', '--set=ON_ERROR_STOP=1'])
         self.assertNotIn('synthetic', ' '.join(args))
-        self.assertEqual(env['PGPASSWORD'], 'synthetic%/#')
-        self.assertEqual(env['PGHOST'], 'aws-0-eu-central-1.pooler.supabase.com')
-        self.assertEqual(env['PGPORT'], '5432')
-        self.assertEqual(env['PGUSER'], 'postgres.'+PROJECT)
-        self.assertEqual(env['PGDATABASE'], 'postgres')
-        self.assertEqual(env['PGSSLMODE'], 'verify-full')
-        self.assertEqual(env['PGSSLROOTCERT'], str(ROOT / CA_RELATIVE_PATH))
-        self.assertEqual(env['PSQL_HISTORY'], os.devnull)
-        for name in ('PGSERVICE', 'PGOPTIONS', 'NODE_OPTIONS'): self.assertNotIn(name, env)
+        self.assertEqual(env, {**allowed, 'PGPASSWORD': 'synthetic%/#',
+                              'PGHOST': 'aws-0-eu-central-1.pooler.supabase.com',
+                              'PGPORT': '5432', 'PGUSER': 'postgres.'+PROJECT,
+                              'PGDATABASE': 'postgres', 'PGSSLMODE': 'verify-full',
+                              'PGSSLROOTCERT': str(ROOT / CA_RELATIVE_PATH),
+                              'PGCONNECT_TIMEOUT': '15', 'PSQL_HISTORY': os.devnull})
 
-    def test_wrong_role_noninteractive_and_failed_psql_are_refused(self):
-        for value, tty, returncode in [(GOOD_URL, True, 0), (OWNER_URL, False, 0), (OWNER_URL, True, 1)]:
-            with self.subTest(tty=tty, returncode=returncode), patch('owner_psql.sys.stdin.isatty', return_value=tty), patch('owner_psql.sys.stdout.isatty', return_value=tty), patch('owner_psql.subprocess.run', return_value=subprocess.CompletedProcess([], returncode)) as run:
+    def test_wrong_role_and_noninteractive_input_or_output_are_refused(self):
+        for value, stdin_tty, stdout_tty in [(GOOD_URL, True, True), (OWNER_URL, False, True),
+                                            (OWNER_URL, True, False), (OWNER_URL, False, False)]:
+            with self.subTest(stdin=stdin_tty, stdout=stdout_tty), patch('owner_psql.sys.stdin.isatty', return_value=stdin_tty), patch('owner_psql.sys.stdout.isatty', return_value=stdout_tty), patch('owner_psql.shutil.which', return_value='/synthetic/bin/psql'), patch('owner_psql.os.execvpe') as execute:
                 with self.assertRaises(SafeFailure) as failure: owner_psql(value, PROJECT)
                 self.assertNotIn('synthetic', str(failure.exception))
-                self.assertEqual(run.call_count, 1 if returncode else 0)
+                execute.assert_not_called()
+
+    def test_missing_psql_has_actionable_error_before_exec(self):
+        with patch('owner_psql.sys.stdin.isatty', return_value=True), patch('owner_psql.sys.stdout.isatty', return_value=True), patch('owner_psql.shutil.which', return_value=None), patch('owner_psql.os.execvpe') as execute:
+            with self.assertRaisesRegex(SafeFailure, 'psql is required on PATH.*Homebrew libpq'):
+                owner_psql(OWNER_URL, PROJECT)
+            execute.assert_not_called()
