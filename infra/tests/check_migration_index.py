@@ -24,6 +24,22 @@ def main():
     valid = ('CREATE UNIQUE INDEX ' + name + ' ON public.activity_records '
              '(subsidiary_id, location_id, reporting_year, reporting_period, period_value, category) '
              'NULLS NOT DISTINCT WHERE status <> \'voided\';')
+    valid_seven = valid.replace('category)', 'category, activity_type)')
+    def check_variant(create):
+        # IF NOT EXISTS also supports PR B's replay, which already has this column.
+        # Each connection owns a transaction; failure or explicit ROLLBACK leaves
+        # the original replayed schema intact. No migration files are edited.
+        setup = 'ALTER TABLE public.activity_records ADD COLUMN IF NOT EXISTS activity_type text;'
+        sql = INDEX_CONTRACT_SQL.replace('BEGIN READ ONLY;', 'BEGIN;\n' + setup + '\n' + drop + '\n' + create).replace('COMMIT;', 'ROLLBACK;')
+        return check(sql)
+
+    for label, create in [('six-column', valid), ('seven-column', valid_seven)]:
+        if check_variant(create).returncode:
+            sys.exit('FAIL: valid index variant must pass: ' + label)
+        if check(INDEX_CONTRACT_SQL).returncode:
+            sys.exit('FAIL: rollback did not preserve the control index: ' + label)
+        print('PASS: valid ' + label + ' index accepted; original index retained.', flush=True)
+
     variants = [
         ('missing index', ''),
         ('wrong index name', valid.replace(name, 'activity_records_wrong_key')),
@@ -40,12 +56,19 @@ def main():
         ('different sort order', valid.replace('reporting_year,', 'reporting_year DESC,')),
         ('wrong table', 'CREATE TABLE public.index_decoy (LIKE public.activity_records); ' + valid.replace('ON public.activity_records', 'ON public.index_decoy')),
         ('wrong schema', 'CREATE SCHEMA index_decoy; CREATE TABLE index_decoy.activity_records (LIKE public.activity_records); ' + valid.replace('ON public.activity_records', 'ON index_decoy.activity_records')),
+        ('seven-column activity_type not last', valid_seven.replace('category, activity_type', 'activity_type, category')),
+        ('activity_type replacing category', valid.replace('category)', 'activity_type)')),
+        ('seven-column replaced key', valid_seven.replace('location_id, ', 'id, ')),
+        ('seven-column eighth key', valid_seven.replace('activity_type)', 'activity_type, id)')),
+        ('seven-column NULLS DISTINCT', valid_seven.replace('NULLS NOT DISTINCT ', '')),
+        ('seven-column expression key', valid_seven.replace('activity_type)', 'lower(activity_type))')),
+        ('seven-column no predicate', valid_seven.replace(" WHERE status <> 'voided'", '')),
+        ('seven-column reversed predicate', valid_seven.replace("status <> 'voided'", "status = 'voided'")),
+        ('seven-column different predicate', valid_seven.replace("'voided'", "'rejected'")),
+        ('seven-column narrowed predicate', valid_seven.replace("status <> 'voided'", "status <> 'voided' AND status <> 'draft'")),
     ]
     for label, create in variants:
-        # Each connection owns a transaction; failure or explicit ROLLBACK leaves
-        # the original replayed schema intact. No migration files are edited.
-        sql = INDEX_CONTRACT_SQL.replace('BEGIN READ ONLY;', 'BEGIN;\n' + drop + '\n' + create).replace('COMMIT;', 'ROLLBACK;')
-        result = check(sql)
+        result = check_variant(create)
         if result.returncode == 0 or 'Required live-record unique index contract is missing or changed' not in result.stdout + result.stderr:
             sys.exit('FAIL: mutant survived or failed for an unrelated reason: ' + label)
         if check(INDEX_CONTRACT_SQL).returncode:

@@ -348,7 +348,7 @@ rotation and schema-compatible rollback remain unexecuted owner acceptance gates
 CI also replays the migration chain in a disposable shadow database and compares
 it with Prisma's schema. A separate read-only catalogue check proves the raw
 unique index's full definition (including NULLS NOT DISTINCT and the voided
-predicate) in that replayed database. Only after this succeeds can an empty diff
+predicate) in that replayed database; transitionally, it accepts exactly the six-column key or the seven-column key with `activity_type` last (remove the six-column branch after LP3-03 PR B merges). Only after this succeeds can an empty diff
 or the exact known representation DROP pass; the DROP is never applied. CI also
 proves the guard rejects missing/weakened indexes using rolled-back mutations.
 The schema diff itself covers only Prisma-visible differences;
