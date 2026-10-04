@@ -107,6 +107,8 @@ const UNIT_RULES: Record<string, UnitRule> = {
   passenger_kilometres: { target: 'passenger_kilometres', multiplier: 1, basis: 'identity' },
   kilometres: { target: 'kilometres', multiplier: 1, basis: 'identity' },
   tonnes: { target: 'tonnes', multiplier: 1, basis: 'identity' },
+  // Refrigerant leakage (LP3-03): a mass, priced per kg by the gas's GWP.
+  kg: { target: 'kg', multiplier: 1, basis: 'identity' },
 };
 
 /**
