@@ -29,13 +29,13 @@ class TransferTests(unittest.TestCase):
         with patch('supabase_setup.provision_buckets') as buckets, patch('supabase_keys.request', side_effect=[(200,b'[]'),(401,b''),(200,b'{}')]):
             public,versions=transfer_runtime(api,vault,REF,journal)
         self.assertEqual(public,key('anon'))
-        self.assertEqual(len(vault.put.call_args_list),3)
+        self.assertEqual(len(vault.put.call_args_list),2)
         for call in vault.put.call_args_list:
             name,value,tags=call.args
             self.assertEqual(tags,{'project':REF})
             if name.endswith('url'): validate_pooler(value,REF,6543 if name=='database-url' else 5432)
             else: self.assertEqual(value,key('service_role'))
-        self.assertEqual(set(versions),{'backend_secret_version','database_url_version','direct_url_version'})
+        self.assertEqual(set(versions),{'backend_secret_version','direct_url_version'})
         self.assertNotIn('synthetic',json.dumps(versions))
         buckets.assert_called_once_with('https://'+REF+'.supabase.co/storage/v1',key('service_role'))
 

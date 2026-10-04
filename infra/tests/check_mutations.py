@@ -11,6 +11,17 @@ import tempfile
 
 INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
+    ('fixture exact owner version guard removed', 'cloud_smoke.py',
+     "    if not re.fullmatch(r'[a-f0-9]{32}', direct_secret_version or ''):\n        raise SafeFailure('Fixture provisioning requires an exact --direct-secret-version.')\n", ''),
+    ('fixture owner URL guard removed', 'cloud_smoke.py',
+     "    validate_pooler(database, r['supabase_project_ref'], 5432)\n", ''),
+    ('initial runtime-only name restriction removed', 'release_secrets.py',
+     " or args.name != 'database-url'", ''),
+    ('stray project accepted with release inputs', 'release_secrets.py',
+     'if not args.inputs or args.project_ref:', 'if not args.inputs:'),
+    ('owner secret URL validation removed', 'release_secrets.py',
+     "        validate_pooler(value, project, 6543 if args.name == 'database-url' else 5432)",
+     "        if args.name == 'database-url': validate_pooler(value, project, 6543)"),
     ('approval manifest omitted from summary', 'prepare_release.py', 'json.dumps(inputs, sort_keys=True, indent=2)', "'{}'"),
     ('cleanup Supabase host binding removed', 'cloud_smoke.py', "target.get('supabase') != 'https://' + release['supabase_project_ref'] + '.supabase.co'", 'False'),
     ('cleanup staging mode removed', 'cloud_smoke.py', "target.get('mode') != 'staging'", 'False'),
@@ -43,7 +54,7 @@ MUTANTS = [
     ('cleanup API binding removed', 'cloud_smoke.py', "target.get('api') != candidate['api_origin'] + '/api/v1'", 'False'),
     ('created Auth ID check removed', 'cloud_smoke.py', "created.get('id') != tenant['userId']", 'False'),
     ('created Auth email check removed', 'cloud_smoke.py', "created.get('email') != tenant['email']", 'False'),
-    ('browser process isolation removed', 'cloud_smoke.py', "browser_env = {k: v for k, v in env.items() if k in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PLAYWRIGHT_BROWSERS_PATH', 'SMOKE_TARGET_JSON')}", 'browser_env = dict(env)'),
+    ('child process isolation removed', 'cloud_smoke.py', "env = {k: v for k, v in os.environ.items() if k in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PLAYWRIGHT_BROWSERS_PATH')}", 'env = dict(os.environ)'),
     ('two tenant requirement removed', 'smoke-contract.mjs', 'target.tenants.length !== 2', 'false'),
     ('local API origin check removed', 'smoke-contract.mjs', "target.api !== 'http://localhost:3001/api/v1'", 'false'),
     ('integration release gate removed', 'release_checks.py', "('ci.yml', 'e2e.yml', 'integration.yml')", "('ci.yml', 'e2e.yml')"),
@@ -88,7 +99,7 @@ MUTANTS = [
     ('redirect handler removed', 'cloud_ops.py', 'build_opener(NoRedirect)', 'build_opener()'),
     ('public readback check removed', 'cloud_ops.py', "actual.get('public') is not False or ", ''),
     ('migration URL validation skipped', 'cloud_ops.py',
-     '    validate_pooler(runtime, project, 6543)\n    validate_pooler(direct, project, 5432)\n', ''),
+     '    validate_pooler(direct, project, 5432)\n', ''),
     ('signed bytes comparison removed', 'cloud_ops.py',
      'if require_success(request(base + signed)) != payload:', 'if False:'),
     ('cleanup prefix emptied', 'cloud_ops.py', "{'prefixes': [path]}", "{'prefixes': []}"),
@@ -108,7 +119,7 @@ MUTANTS = [
     ('enabled version check removed', 'secure_transport.py',
      "                or record.get('attributes', {}).get('enabled') is not True", ''),
     ('rotation project binding removed', 'release_secrets.py',
-     "        validate_backend(value, release['supabase_project_ref'])", '        pass'),
+     "        validate_backend(value, project)", '        pass'),
     ('bucket size readback removed', 'cloud_ops.py', " or actual.get('file_size_limit') != limit", ''),
     ('bucket MIME readback removed', 'cloud_ops.py', "\n                or set(actual.get('allowed_mime_types') or []) != set(mime_types)", ''),
     ('owner deployer separation removed', 'foundation_contract.py', "if deployer == config['owner_object_id']:", 'if False:'),
@@ -134,7 +145,7 @@ def main():
             # New provenance tests read the actual migration/lockfile inputs; the
             # local-only guard test executes its copied script, never the original.
             root = INFRA.parent
-            for relative in ('pnpm-lock.yaml', 'scripts/rls-probes.mjs'):
+            for relative in ('pnpm-lock.yaml', 'scripts/rls-probes.mjs', 'scripts/compose-dev.sh', 'packages/db/scripts/runtime-role.mjs'):
                 destination = target.parent / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(root / relative, destination)
@@ -144,9 +155,23 @@ def main():
             targeted = {'prepare_release.py':'test_prepare_release.py', 'candidate_artifact.py':'test_candidate_artifact.py',
                         'cloud_smoke.py':'test_cloud_smoke.py', 'terraform_run.py':'test_candidate_path.py',
                         'release_checks.py':'test_candidate_path.py', 'smoke-contract.mjs':'test_candidate_path.py',
-                        'build-images.sh':'test_build_images.py'}
+                        'build-images.sh':'test_build_images.py',
+                        'release_secrets.py':'test_rotation_rehearsal.py',
+                        'cloud_ops.py':'test_security_failures.py'}
             if filename.startswith('.github/'): pattern = 'test_workflow_security.py'
             else: pattern = targeted.get(filename, pattern)
+            # Keep a full suite control above; run each mutant against its direct
+            # negative assertions so local launcher subprocesses do not dominate CI.
+            overrides = {
+                'rotation project binding removed': 'test_review_boundaries.py',
+                'migration project binding removed': 'test_secret_transfer.py',
+                'migration HEAD comparison alone removed': 'test_secret_transfer.py',
+                'helper HEAD comparison alone removed': 'test_review_boundaries.py',
+                'helper SHA guard removed': 'test_review_boundaries.py',
+                'bucket size readback removed': 'test_review_boundaries.py',
+                'bucket MIME readback removed': 'test_review_boundaries.py',
+            }
+            pattern = overrides.get(name, pattern)
             control = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(target / 'tests'), '-p', pattern],
                                      cwd=target.parent, capture_output=True)
             if control.returncode:

@@ -1,0 +1,65 @@
+"""Owner psql boundary tests: credentials stay out of arguments and inherited redirects."""
+import os
+from pathlib import Path
+import sys
+import unittest
+from unittest.mock import patch
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+import cloud_ops
+from owner_psql import owner_psql
+from pooler import ROOT, CA_RELATIVE_PATH, SafeFailure
+from test_security_failures import GOOD_URL, PROJECT
+
+OWNER_URL = GOOD_URL.replace('tonyai_runtime.', 'postgres.').replace(':6543/', ':5432/').replace('synthetic@', 'synthetic%25%2F%23@')
+
+
+class OwnerPsqlTests(unittest.TestCase):
+    def test_exact_version_and_clean_source_required_before_owner_secret_read(self):
+        base = ['cloud_ops', 'owner-psql', '--vault', 'vault', '--project-ref', PROJECT, '--source-sha', 'a'*40]
+        for version in (None, 'bad', 'b'*32):
+            for dirty in ('', 'dirty'):
+                argv = base + (['--direct-secret-version', version] if version else [])
+                with self.subTest(version=version, dirty=dirty), patch.object(sys, 'argv', argv), patch('cloud_ops.command', side_effect=['a'*40, dirty]), patch('cloud_ops.secret', return_value=OWNER_URL) as secret, patch('owner_psql.owner_psql') as connect:
+                    if version == 'b'*32 and not dirty:
+                        cloud_ops.main()
+                        secret.assert_called_once_with('vault', 'direct-url', version)
+                        connect.assert_called_once_with(OWNER_URL, PROJECT)
+                    else:
+                        with self.assertRaises(SafeFailure): cloud_ops.main()
+                        secret.assert_not_called()
+                        connect.assert_not_called()
+
+    def test_psql_uses_only_validated_libpq_environment_and_no_startup_or_history(self):
+        allowed = {'PATH': '/synthetic/bin', 'HOME': '/synthetic/home', 'TERM': 'xterm',
+                   'LANG': 'C', 'LC_ALL': 'C', 'LC_CTYPE': 'C'}
+        ambient = {**allowed, 'PGHOST': 'evil.invalid', 'PGSERVICE': 'evil', 'PGOPTIONS': 'unsafe',
+                   'PGSSLROOTCERT': '/wrong', 'PSQL_HISTORY': '/tmp/unsafe-history', 'NODE_OPTIONS': 'unsafe'}
+        with patch.dict(os.environ, ambient, clear=True), patch('owner_psql.sys.stdin.isatty', return_value=True), patch('owner_psql.sys.stdout.isatty', return_value=True), patch('owner_psql.shutil.which', return_value='/synthetic/bin/psql') as which, patch('owner_psql.os.execvpe') as execute:
+            owner_psql(OWNER_URL, PROJECT)
+            self.assertEqual(dict(os.environ), ambient)
+        which.assert_called_once_with('psql')
+        execute.assert_called_once()
+        executable, args, env = execute.call_args.args
+        self.assertEqual(executable, 'psql')
+        self.assertEqual(args, ['psql', '-X', '--no-password', '--set=ON_ERROR_STOP=1'])
+        self.assertNotIn('synthetic', ' '.join(args))
+        self.assertEqual(env, {**allowed, 'PGPASSWORD': 'synthetic%/#',
+                              'PGHOST': 'aws-0-eu-central-1.pooler.supabase.com',
+                              'PGPORT': '5432', 'PGUSER': 'postgres.'+PROJECT,
+                              'PGDATABASE': 'postgres', 'PGSSLMODE': 'verify-full',
+                              'PGSSLROOTCERT': str(ROOT / CA_RELATIVE_PATH),
+                              'PGCONNECT_TIMEOUT': '15', 'PSQL_HISTORY': os.devnull})
+
+    def test_wrong_role_and_noninteractive_input_or_output_are_refused(self):
+        for value, stdin_tty, stdout_tty in [(GOOD_URL, True, True), (OWNER_URL, False, True),
+                                            (OWNER_URL, True, False), (OWNER_URL, False, False)]:
+            with self.subTest(stdin=stdin_tty, stdout=stdout_tty), patch('owner_psql.sys.stdin.isatty', return_value=stdin_tty), patch('owner_psql.sys.stdout.isatty', return_value=stdout_tty), patch('owner_psql.shutil.which', return_value='/synthetic/bin/psql'), patch('owner_psql.os.execvpe') as execute:
+                with self.assertRaises(SafeFailure) as failure: owner_psql(value, PROJECT)
+                self.assertNotIn('synthetic', str(failure.exception))
+                execute.assert_not_called()
+
+    def test_missing_psql_has_actionable_error_before_exec(self):
+        with patch('owner_psql.sys.stdin.isatty', return_value=True), patch('owner_psql.sys.stdout.isatty', return_value=True), patch('owner_psql.shutil.which', return_value=None), patch('owner_psql.os.execvpe') as execute:
+            with self.assertRaisesRegex(SafeFailure, 'psql is required on PATH.*Homebrew libpq'):
+                owner_psql(OWNER_URL, PROJECT)
+            execute.assert_not_called()

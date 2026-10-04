@@ -28,9 +28,9 @@ test('lint ignores worktree copies while application files remain checked', asyn
 test('fixture executable validates its own actual DB connection before Prisma can write', async () => {
   const { fixtureDatabaseUrl } = await import('../scripts/smoke-fixtures.mjs');
   const target = fixture();
-  const url = `postgresql://postgres.${target.projectRef}:synthetic@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt`;
+  const url = `postgresql://postgres.${target.projectRef}:synthetic@aws-0-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=/app/infra/certs/prod-ca-2021.crt`;
   assert.match(fixtureDatabaseUrl(target, url), /sslcert=/);
-  for (const invalid of [url.replace(target.projectRef, 'z'.repeat(20)), url.replace('eu-central-1', 'us-east-1'),
+  for (const invalid of [url.replace('postgres.', 'tonyai_runtime.'), url.replace('5432', '6543'), url.replace(target.projectRef, 'z'.repeat(20)), url.replace('eu-central-1', 'us-east-1'),
     url.replace('sslaccept=strict', 'sslaccept=accept_invalid_certs'), url + '&host=evil.test', 'postgresql://localhost/production']) {
     assert.throws(() => fixtureDatabaseUrl(target, invalid));
   }

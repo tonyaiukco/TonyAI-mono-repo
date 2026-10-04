@@ -19,10 +19,13 @@ Preserve these project-specific traps:
 - Use Supavisor transaction mode for runtime, session mode for migrations. Cloud
   JWT scheme is `jwks`; omit the legacy secret and insecure-local bypass.
 - API and web identities are separate. Only API's two named secrets get data-plane
-  read grants. Both pooler URLs share the database-owner password until LP1-03
-  supplies a separate least-privilege runtime role, so deploy access equals
-  database-owner access; rotate both URLs together. Enforced staging environment and
-  branch protections are the trust boundary. Never inspect/print values.
+  read grants. `database-url` uses `tonyai_runtime.<project-ref>`; owner `direct-url`
+  is reserved for migrations and controlled fixture provisioning, never workloads.
+  Bootstrap writes only the owner URL; finish runbook 05's runtime handoff before
+  granting workload access. Rotate credentials independently. Enforced staging environment and
+  branch protections are the trust boundary. Never display/print values. Owner helpers may resolve an exact vault version
+  directly into a child environment (`owner-psql`); this is not permission to
+  print or manually retrieve secrets.
 - GitHub's environment OIDC subject does not constrain the branch by itself.
   Verify enforced environment restrictions before establishing federation.
 - Current API health is liveness, not DB readiness. Image rollback is not schema

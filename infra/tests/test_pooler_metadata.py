@@ -29,8 +29,8 @@ class ProviderPoolerTests(unittest.TestCase):
                 versions = transfer_urls(api, vault, REF, journal)
             except Exception as error:
                 self.fail('Provider placeholder transfer failed: ' + type(error).__name__)
-            self.assertEqual(set(versions), {'database_url_version', 'direct_url_version'})
-            self.assertEqual(vault.put.call_count, 2)
+            self.assertEqual(set(versions), {'direct_url_version'})
+            self.assertEqual(vault.put.call_count, 1)
             for call in vault.put.call_args_list:
                 name, value, tags = call.args
                 validate_pooler(value, REF, 6543 if name == 'database-url' else 5432)

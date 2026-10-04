@@ -18,13 +18,13 @@ def validate_pooler(value, project, port):
     if (set(query) - {'pgbouncer', 'sslmode', 'sslaccept', 'sslcert', 'connection_limit'}
             or parsed.scheme not in ('postgres', 'postgresql')
             or not re.fullmatch(r'aws-[0-9]+-eu-central-1\.pooler\.supabase\.com', parsed.hostname or '')
-            or parsed.port != port or not (parsed.username or '').endswith('.' + project)
+            or parsed.port != port or parsed.username != ('tonyai_runtime' if port == 6543 else 'postgres') + '.' + project
             or not parsed.password or parsed.path != '/postgres'
             or query.get('sslmode') != ['require'] or query.get('sslaccept') != ['strict']
             or query.get('sslcert') != [CONTAINER_CA]
             or 'sslrootcert' in query or parsed.fragment
             or (port == 6543 and query.get('pgbouncer') != ['true'])):
-        raise SafeFailure('Pooler URL must match Frankfurt, this project, mode, database and strict TLS contract.')
+        raise SafeFailure('Pooler URL must match Frankfurt, this project, exact runtime/owner role, mode, database and strict TLS contract.')
 
 
 def local_ca_url(value):

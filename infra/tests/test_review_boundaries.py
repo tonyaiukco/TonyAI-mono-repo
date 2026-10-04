@@ -138,7 +138,7 @@ class HelperGuardTests(unittest.TestCase):
                     with self.assertRaises(SafeFailure): ops.main()
                     migrate.assert_not_called()
                 with patch.object(sys,'argv',argv+['--direct-secret-version','c'*32]): ops.main()
-                migrate.assert_called_once_with('vault',REF,'a'*32,'c'*32)
+                migrate.assert_called_once_with('vault',REF,'c'*32)
             argv=['cloud_ops','buckets','--vault','vault','--project-ref',REF,'--source-sha','a'*40]
             with patch('cloud_ops.command',side_effect=lambda args: {('git','rev-parse','HEAD'):'a'*40, ('git','status','--porcelain'):''}[tuple(args)]), patch('cloud_ops.secret',return_value='synthetic') as secret, patch('cloud_ops.provision_buckets'):
                 with patch.object(sys,'argv',argv):
