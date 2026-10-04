@@ -108,7 +108,7 @@ MUTANTS = [
     ('enabled version check removed', 'secure_transport.py',
      "                or record.get('attributes', {}).get('enabled') is not True", ''),
     ('rotation project binding removed', 'release_secrets.py',
-     "        validate_backend(value, release['supabase_project_ref'])", '        pass'),
+     "        validate_backend(value, project)", '        pass'),
     ('bucket size readback removed', 'cloud_ops.py', " or actual.get('file_size_limit') != limit", ''),
     ('bucket MIME readback removed', 'cloud_ops.py', "\n                or set(actual.get('allowed_mime_types') or []) != set(mime_types)", ''),
     ('owner deployer separation removed', 'foundation_contract.py', "if deployer == config['owner_object_id']:", 'if False:'),
