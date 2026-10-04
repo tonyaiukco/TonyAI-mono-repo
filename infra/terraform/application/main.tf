@@ -33,7 +33,7 @@ resource "azapi_resource" "app" {
         resources = { cpu = each.value.cpu, memory = each.value.memory }
         probes = [for kind in ["Startup", "Liveness", "Readiness"] : {
           type             = kind
-          httpGet          = { path = each.value.path, port = each.value.port, scheme = "HTTP" }
+          httpGet          = { path = each.key == "api" && kind == "Readiness" ? "/api/v1/health/ready" : each.value.path, port = each.value.port, scheme = "HTTP" }
           periodSeconds    = kind == "Startup" ? 5 : 10
           timeoutSeconds   = 5
           failureThreshold = kind == "Startup" ? 60 : 3

@@ -336,7 +336,24 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local` so the containers us
 
 The versioned [staging foundation and owner-run runbooks](infra/README.md) configure Azure Germany West Central (Consumption Container Apps, ACR Basic, Key Vault references, managed identities, Log Analytics and GitHub OIDC) with an isolated Supabase Frankfurt project. Start with [session restoration](infra/runbooks/00-session.md), then follow the numbered steps for account setup, private buckets, migrations, environment-bound web builds and acceptance evidence. OIDC bootstrap binds the repository to foundation metadata, checks the existing staging environment’s reviewer/main-only policies, and verifies app/service-principal ownership and absence of password/certificate credentials before federation. Use [rotation and recovery](infra/runbooks/05-rotation.md) for credential changes. The `infra` CI job runs cloud-free regression/mutation tests, Terraform validation and mock-provider tests. Owner-run Entra-authenticated Blob bootstrap isolates foundation/application state; Terraform alone writes the Azure foundation and Container Apps, while resumable Supabase API helpers transfer secret values directly into Key Vault. Builds, migrations and secret values stay outside Terraform. Both pooler URLs currently share database-owner credentials, so deploy access equals database-owner access until LP1-03 separates the runtime role; rotate both URLs together. Deployments, rotations and rollback share versioned manifests containing image digests and exact secret versions. Cloud validation and fresh-recreation evidence remain owner-run; LP2-01 is not DONE. The root [`.env.example`](.env.example) is a placeholder-only cloud reference; local setup continues to use the per-package examples.
 
-Cloud execution is performed by the project owner and remains required evidence: generated templates do not establish a working staging environment. Never run the local demo seed or demo-account RLS probes against cloud; the demo RLS harness now rejects non-loopback targets. [LP2-02 release instructions](infra/runbooks/03-deploy.md#34-lp2-02-release-sequence-d22d23) cover exact-SHA CI/full-E2E/PostgreSQL-integration gates, environment-bound candidate images, migration/lockfile fingerprints, protected staging OIDC workflows, saved-plan Terraform application and owner-run browser/export/API/PostgREST smoke with two dedicated synthetic tenants. Workflow deployment reads back image/secret identities but stays **smoke pending** until the exact deployed digests pass the owner-run check and exact-ID Auth cleanup. No cloud execution is implied by these tools. A fresh single-job JIT runner with EU static egress, a protected main ruleset and an independent staging reviewer are owner prerequisites; LP2-03 supplies dependency readiness and rollback rehearsal.
+Cloud execution is performed by the project owner and remains required evidence: generated templates do not establish a working staging environment. Never run the local demo seed or demo-account RLS probes against cloud; the demo RLS harness now rejects non-loopback targets. [LP2-02 release instructions](infra/runbooks/03-deploy.md#34-lp2-02-release-sequence-d22d23) cover exact-SHA CI/full-E2E/PostgreSQL-integration gates, environment-bound candidate images, migration/lockfile fingerprints, protected staging OIDC workflows, saved-plan Terraform application and owner-run browser/export/API/PostgREST smoke with two dedicated synthetic tenants. Workflow deployment reads back image/secret identities but stays **smoke pending** until the exact deployed digests pass the owner-run check and exact-ID Auth cleanup. No cloud execution is implied by these tools. A fresh single-job JIT runner with EU static egress, a protected main ruleset and an independent staging reviewer are owner prerequisites; [LP2-03 operations](infra/runbooks/06-operations.md) separates process liveness
+(`/api/v1/health`), bounded DB/private-Storage readiness (`/health/ready`) and an
+authenticated probe (`/health/synthetic`). The optional owner-managed daily
+Storage verification job alerts a named operator on problems or missing results;
+application manifests require explicit cleanup-hold/sweep settings, and clearing a
+live hold requires an owner acknowledgement after report review. API Sentry drops
+HTTP/fetch breadcrumbs, allows only method and queryless URL in event request data,
+and disables transaction telemetry regardless of the tracing environment setting. Cloud alert delivery,
+rotation and schema-compatible rollback remain unexecuted owner acceptance gates.
+CI also replays the migration chain in a disposable shadow database and compares
+it with Prisma's schema. A separate read-only catalogue check proves the raw
+unique index's full definition (including NULLS NOT DISTINCT and the voided
+predicate) in that replayed database. Only after this succeeds can an empty diff
+or the exact known representation DROP pass; the DROP is never applied. CI also
+proves the guard rejects missing/weakened indexes using rolled-back mutations.
+The schema diff itself covers only Prisma-visible differences;
+RLS policies, grants, CHECK constraints and triggers remain guarded by `rls-probe`
+and `test:int`.
 
 ---
 
@@ -369,11 +386,13 @@ Run from the repo root (Turborepo fans out to each package):
 
 ## API reference (current slice)
 
-Base URL: `http://localhost:3001/api/v1` · all routes (except `/health`) require `Authorization: Bearer <jwt>`.
+Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/health/ready`) require `Authorization: Bearer <jwt>`.
 
 | Method | Path | Description | Auth |
 | --- | --- | --- | --- |
-| `GET` | `/health` | Liveness check | public |
+| `GET` | `/health` | Process liveness | public |
+| `GET` | `/health/ready` | Bounded DB and private-Storage readiness | public |
+| `GET` | `/health/synthetic` | Authenticated dependency readiness | any |
 | `GET` | `/me` | Current user + role + `accessibleSubsidiaryIds` | any |
 | `GET` | `/subsidiaries` | List (tenant‑scoped). Includes the reporting contact (`designatedPerson` / `contactEmail` / `contactPhone`), which is **deliberately visible to every role in the tenant** — see `permissions_and_roles.md` §6.4 for the decision and its consequences | any |
 | `GET` | `/subsidiaries/:id` | Get one (404 if outside access set) | any |
@@ -505,12 +524,12 @@ The API emits **one structured JSON line per request** to stdout — the shape e
 ```
 
 - **Request ids** — an inbound `x-request-id` is honoured (so a load balancer's trace id stays stitched to our logs), otherwise one is minted. It is echoed in the response header (CORS‑exposed) and attached to every log line of that request via `AsyncLocalStorage`.
-- **Levels** — 4xx are expected business outcomes (a blocked submit gate, a 403) and log at `warn`; 5xx and unhandled throws log at `error` with a stack and go to stderr.
+- **Levels** — 4xx are expected business outcomes (a blocked submit gate, a 403) and log at `warn`; unexpected 5xx and unhandled throws log at `error` with a stack and go to stderr. Expected `/health/ready` 503 responses neither log request errors nor create Sentry events.
 - **A batch writes one line, not one per row** — the bulk importer and bulk submit map every failure they understand onto a row-level code in the response and log nothing for it. What they do NOT understand is folded into a single `error` line per request by `BatchFailureLog` (`apps/api/src/common/batch-failure-log.ts`): the count, the first ten rows or record ids plus a count of the rest, the **first** failure (class, driver code and a cleaned sample of its message) and **one** stack — a later failure of a different class is counted and named by row but not described; which rows failed is in the response. Logging each row instead measured 148,542 bytes of stderr for a 50-row file whose every row tripped the same driver error, which the 1,000-row cap puts near 3 MB for one request; the aggregate is bounded (ten refs, one 240-code-point sample, thirty 200-character stack lines). The sample and the stack pass through `sanitiseCallerText` — a Prisma parse failure quotes the character it choked on — the stack **line by line**, so its newlines survive the cleaning that would otherwise fold thirty frames into one run.
 - **`LOG_FORMAT`** — `pretty` (default in dev) or `json` (default in production).
 - **Storage sweeper** — each pass that finds work logs one line: `Storage sweep: removed N, failed N, kept N, abandoned N; waiting N delete(s), N upload(s), N stuck, oldest <ts>` (`info`; `error` when a removal failed or an intent named bytes a row owns; `warn` while `STORAGE_CLEANUP_HOLD` holds work back). An intent that has failed five times or more is **stuck**: logged at `error` and sent to Sentry once each time the stuck count changes. A row whose bytes are missing answers its download with a 404 ("This file's contents are missing from storage…"), logged at `error` and sent to Sentry — never a 500, never silent.
-- **Sentry** is opt‑in: without `SENTRY_DSN` / `NEXT_PUBLIC_SENTRY_DSN` the SDK is never initialised and every capture is a no‑op. `sendDefaultPii` is off by design — this product holds tenant emissions data.
-- **Uptime targets** once a staging URL exists: `GET /api/v1/health` (public) and `GET /login`.
+- **Sentry** is opt‑in: without `SENTRY_DSN` / `NEXT_PUBLIC_SENTRY_DSN` the SDK is never initialised and every capture is a no‑op. `sendDefaultPii` alone does not prevent request capture. The API disables incoming body buffering, excludes request headers/cookies/body/query data, applies a final request allowlist (method and queryless URL), strips query strings from path tags, and drops HTTP/fetch breadcrumbs. API transaction telemetry is forced off. The real-SDK multipart regression exercises an in-request 500 with a Bearer token, cookie, query and file bytes through `initSentry()` and inspects captured envelopes. Do not enable a DSN with real tenant data until these protections ship and pass review; follow runbook 06. These API guarantees do not establish web SDK privacy or sanitise arbitrary exception messages.
+- **Uptime targets** once a staging URL exists: `GET /api/v1/health/ready` (public dependency availability) and `GET /login`; use `/api/v1/health` only for process liveness and `/api/v1/health/synthetic` with a dedicated synthetic token for authenticated readiness.
 
 The web app has route (`error.tsx`), root (`global-error.tsx`) and 404 boundaries; client errors report to Sentry when a DSN is configured.
 

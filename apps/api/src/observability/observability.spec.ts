@@ -131,6 +131,13 @@ describe('LoggingInterceptor', () => {
     expect(events).toHaveLength(0);
   });
 
+  it.each(['/api/v1/health/ready', '/api/v1/health/ready?probe=synthetic'])('silences expected readiness 503 at %s', async (path) => {
+    const { logger, events } = createLogger();
+    const ctx = createContext({ method: 'GET', originalUrl: path }, { statusCode: 503 });
+    await lastValueFrom(new LoggingInterceptor(logger).intercept(ctx, handler({ status: 'Not ready' })));
+    expect(events).toEqual([]);
+  });
+
   it('omits userId on public routes and leaves failures to the filter', async () => {
     const { logger, events } = createLogger();
     const ctx = createContext({ method: 'POST', originalUrl: '/api/v1/x' }, { statusCode: 201 });

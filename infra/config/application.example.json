@@ -16,6 +16,8 @@
     "api_digest": "sha256:<64-lowercase-hex>",
     "web_digest": "sha256:<64-lowercase-hex>",
     "database_secret_version": "<32-lowercase-hex>",
-    "backend_secret_version": "<32-lowercase-hex>"
+    "backend_secret_version": "<32-lowercase-hex>",
+    "storage_cleanup_hold": true,
+    "storage_sweep_interval_seconds": 300
   }
 }

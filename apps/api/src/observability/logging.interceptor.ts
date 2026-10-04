@@ -11,7 +11,7 @@ import { JsonLogger } from './json-logger';
 import { currentRequestContext } from './request-context';
 
 /** Health checks fire every 30s per container — logging them is pure noise. */
-const SILENT_PATHS = new Set(['/api/v1/health']);
+const SILENT_PATHS = new Set(['/api/v1/health', '/api/v1/health/ready']);
 
 /**
  * One structured line per completed request: method, path, status, duration and
