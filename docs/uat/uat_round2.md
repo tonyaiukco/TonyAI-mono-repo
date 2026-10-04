@@ -262,19 +262,35 @@ The rule needs **three** prior committed periods. Fewer than three means the rul
 (`defaf4a`). [#145's verification](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/145)
 records **460/460** focused `parse-rows`, `xlsx-reader`, `bulk-upload.service` and
 `caller-text` tests passing on Node 22 at `f14c81f`, with #133's escape implementation
-and regression cases unchanged. Refusal before writes was verified through control flow and
-preflight tests; that evidence is **not a live database or browser UAT run**.
+and regression cases unchanged. Refusal before writes was verified through control flow
+and existing parser/preflight coverage; there is no dedicated apply-mode XLSX
+no-write service test in that evidence. It is **not a live database or browser UAT run**.
 The P/F cells below remain open for an operator's execution on the selected UAT
 release. Record its SHA, fixture variant, outcome and write-count evidence.
 
-Use a disposable local UAT tenant and a permitted importing user. Start from a
-valid template with unused reporting slots, so permissions, duplicate slots or
-factor coverage do not obscure the parser outcome. Keep the file below the row
-cap and all other headers/cells valid. Engineering should prepare equivalent
-workbooks using **inline strings** (`inlineStr` in the sheet XML) and **shared
-strings** (sheet index into `xl/sharedStrings.xml`); execute each case in both
-forms. Change the XML escape sequences themselves: merely typing `_x0000_` in
-Excel can escape the underscore and create the literal positive-control case.
+Use the **seeded organisation**, signed in as **`entry@tonyai.local`** or
+**`admin@tonyai.local`**. Do not use `review@tonyai.local`: that role cannot import,
+and its authorization refusal occurs before parsing and is audited. Run **§4.9
+last**, after the other UAT cases: XLSX-03/04 leave drafts occupying reporting
+slots. Save the evidence, then restore the disposable local dataset with
+**`pnpm db:reset`**; do not reset a shared session while another operator is using it.
+
+Go to **`/data-entry` → Bulk upload card → Download template**. Use valid rows
+with accessible entities and a fresh unused reporting slot for each successful
+import, so permissions, duplicate slots or factor coverage do not obscure the
+parser outcome. Keep all other headers/cells valid and stay below the row cap
+except in XLSX-07. **Pace uploads: the limit is 5 requests per minute per user,
+including dry runs.** Selecting a file triggers a dry run, and Import sends a
+second request. A **429 / “Too many import attempts…” is not a case result**:
+wait for the limit to reset and repeat that attempt before recording P/F.
+
+Engineering should prepare equivalent workbooks using **inline strings**
+(`inlineStr` in the sheet XML) and **shared strings** (sheet index into
+`xl/sharedStrings.xml`); execute each case in both forms. Change the XML escape
+sequences themselves: merely typing `_x0000_` in Excel can escape the underscore
+and create the literal positive-control case. **Write hexadecimal digits in
+uppercase**, keeping the marker lowercase `_x`, as Excel does: `_xD800_`, not
+`_xd800_`, which remains literal.
 The existing fixtures in `apps/api/src/bulk-upload/parse-rows.spec.ts` demonstrate
 both representations and the exact refusal wording. These are synthetic input
 fixtures, not authoritative emission-factor data.
@@ -282,20 +298,35 @@ fixtures, not authoritative emission-factor data.
 | TC | Steps | Expected | P/F |
 | --- | --- | --- | --- |
 | XLSX-01 | Put `before_x0000_after` in the first data row's `varianceReason`; upload through bulk import. | Whole file refused before import. Error names **row 2**, **varianceReason** and **U+0000**; no generic server error, silent replacement or partial successful rows. | |
-| XLSX-02 | Repeat with `_xD800_` (lone high surrogate), `_xDE00_` (lone low), then `_xDE00__xD83D_` (reversed pair). | Each whole file is refused, identifying row/column and **U+D800** or **U+DE00** respectively. | |
-| XLSX-03 | Put `meter swapped _xD83D__xDE00_` in `varianceReason`. Import the otherwise valid file, then inspect the stored `varianceReason` (preview does not expose it). | Valid pair is retained as **meter swapped 😀**. No replacement character, truncation or surrogate refusal. Acceptance remains subject to ordinary domain validation. | |
-| XLSX-04 | Put `_x005F_x0000_` in `varianceReason`. Import the otherwise valid file, then inspect the stored `varianceReason` (preview does not expose it). | The seven literal characters **`_x0000_`** are retained; they are not decoded twice into NUL or falsely refused. | |
+| XLSX-02 | Repeat with `_xD800_` (lone high surrogate), `_xDE00_` (lone low), then `_xDE00__xD83D_` (reversed pair). | Each whole file is refused, identifying row/column and **U+D800**, **U+DE00**, **U+DE00**, respectively; the reversed pair reports its first unpaired unit (the low surrogate). | |
+| XLSX-03 | Put `meter swapped _xD83D__xDE00_` in `varianceReason`. Import the otherwise valid file, then inspect `varianceReason` through `GET /api/v1/activity-records/:id` or a read-only DB query (preview does not expose it). | Valid pair is retained as **meter swapped 😀**. No replacement character, truncation or surrogate refusal. Acceptance remains subject to ordinary domain validation. | |
+| XLSX-04 | Put `_x005F_x0000_` in `varianceReason`. Import the otherwise valid file, then inspect `varianceReason` through `GET /api/v1/activity-records/:id` or a read-only DB query (preview does not expose it). | The seven literal characters **`_x0000_`** are retained; they are not decoded twice into NUL or falsely refused. | |
 | XLSX-05 | Add header `t_x0000_e`, with a value beneath it. | Header-specific refusal begins **`Unrecognised column(s): "t<U+0000>e"`**. It names the character safely; it does not become a data-cell or generic workbook error. | |
-| XLSX-06 | Submit a workbook with a valid first data row and a later XLSX-01/02 fault. Compare the tenant's rows and import-source objects before/after; repeat for XLSX-05. | Refusal happens before **any** write: zero new activity records/calculation snapshots, import batches, source objects/storage intents or audit rows, including for the earlier valid row. A malformed-file refusal is not an audited caller-authorization event. | |
+| XLSX-06 | Send an authenticated **direct apply** request: `POST /api/v1/bulk-upload/activity-records`, multipart `file` plus `dryRun=false`. Use a valid first data row and a later XLSX-01/02 fault; repeat with an XLSX-05 header fault. Compare the seeded organisation's rows and import-source objects before/after each request. | **HTTP 400** naming the actual later fault row/column/code point, or the header-specific refusal for XLSX-05, before **any** write: zero new activity records/calculation snapshots, import batches, source objects/storage intents or audit rows, including for the earlier valid row. A malformed-file refusal is not an audited caller-authorization event. | |
 | XLSX-07 | Combine an escaped bad cell with a 1,005-data-row workbook; separately combine an unlabelled value in row 2 with the bad cell in row 3. | Existing refusal order is preserved: **`The file has 1005 rows; the limit is 1000.`** wins in the first file; the unlabelled row-2 value wins in the second. Both refuse the whole file before writes. | |
 
-For XLSX-06, absence from the UI alone is insufficient: a test operator should
-compare exact tenant-scoped database/object counts in the disposable environment,
-or attach the existing preflight test assertions with the explicit unit-test
-limitation. Do not use production data or delete append-only audit rows to prepare
-this case. Keep the historical automated result separate from new manual P/F
-results; the LP1-04 completion proposal relies on the existing regression evidence
-and this catalogue update, not an invented live acceptance run.
+For XLSX-03/04, take `recordId` from the apply response's `accepted[]` and use it
+for the authenticated GET above. Inspect the decoded response string or stored
+value, not its UI rendering: compare the exact Unicode characters with the
+expected value. A visual glyph or JSON escape spelling alone does not prove fidelity.
+
+For XLSX-06, the UI **never offers Import for a refused file**; a dry run's lack
+of writes does not prove apply-mode refusal. Use an API client with the importing
+user's **Supabase access token in `Authorization: Bearer …`** (browser cookies
+alone are insufficient). Send `file` as the XLSX attachment and `dryRun` as the
+literal multipart value `false`; let the client set the multipart boundary.
+Keep tokens out of saved evidence. Require the expected parser/header **400**,
+not a 401, 403, 429 or unrelated validation error.
+
+A test operator must compare exact organisation-scoped database/object counts in
+the local environment, including every write surface listed in XLSX-06, during a
+quiet window with no concurrent writers. Attach the before/after counts and
+sanitized refusal response for each variant. If those observations are unavailable,
+leave the case unexecuted; existing unit assertions or absence from the UI cannot
+stand in for a manual PASS. Do not use production data or delete append-only audit
+rows to prepare this case. Keep the historical automated result separate from new
+manual P/F results; the LP1-04 completion proposal relies on the existing regression
+evidence and this catalogue update, not an invented live acceptance run.
 
 ---
 
@@ -373,6 +404,7 @@ Round-1 feedback and its routing are in
 | Withdrawal & re-attribution (§4.4, §4.5) | | | |
 | Report disclosure (§4.6) | | | |
 | Anomaly provenance (§4.7, §4.8) | | | |
+| XLSX escape fidelity and refusal before writes (§4.9) | | | |
 
 ---
 
