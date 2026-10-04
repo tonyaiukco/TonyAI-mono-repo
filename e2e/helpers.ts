@@ -737,13 +737,19 @@ export async function seedE2EFactor(request: APIRequestContext): Promise<void> {
   if (release && release.status !== 'fixture') {
     throw new Error(`The e2e fixture release exists with status ${String(release.status)} — reset the database.`);
   }
+  // Above every ordinal the publisher already has — the database refuses any
+  // other (an interrupted integration run can leave a fixture release of its
+  // own behind until the next `pnpm db:seed` sweeps it).
+  const [latest] = await get(
+    `factor_releases?select=ordinal&publisher=eq.${encodeURIComponent(E2E_FIXTURE_PUBLISHER)}&order=ordinal.desc&limit=1`,
+  );
   release ??= (
     await post('factor_releases', {
       id: randomUUID(),
       publisher: E2E_FIXTURE_PUBLISHER,
       title: 'End-to-end test fixture factors',
       edition: E2E_FACTOR_VERSION,
-      ordinal: 1,
+      ordinal: Number(latest?.ordinal ?? 0) + 1,
       status: 'fixture',
       notes: 'Written by the e2e suite and deleted by its teardown. Not a source.',
     })

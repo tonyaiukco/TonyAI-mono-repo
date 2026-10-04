@@ -1041,7 +1041,9 @@ describe('CalculationsService.compute — LP3-03 factor paths', () => {
 
   it('writes the v2 snapshot: release, activity type, gas coverage, basis, method, year policy', async () => {
     const release = authoritative();
-    useFactor(prisma, makeFactor({ geographyCode: 'UK', reportingYear: 2026, factorValue: 0.2, release }));
+    // The row's own `version` label differs from its release's edition, as a
+    // pre-LP3-03 row's can: the snapshot's `version` is the EDITION (contract).
+    useFactor(prisma, makeFactor({ geographyCode: 'UK', reportingYear: 2026, factorValue: 0.2, release, version: 'row-label' }));
     const result = (await service(false).compute(electricityUK)) as CalculationResultV2;
     expect(result).toMatchObject({
       snapshotSchema: 2,
