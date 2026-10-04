@@ -31,6 +31,7 @@ import type {
 import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
 import { blankToNull } from '../../common/blank-to-null';
 import { storableUnit } from '../../calculations/storable-unit';
+import { ACTIVITY_TYPE_SHAPE, ACTIVITY_TYPE_SHAPE_MESSAGE } from '../../calculations/activity-type';
 
 
 /**
@@ -80,6 +81,13 @@ export class CreateActivityRecordDto {
   @IsString()
   @IsIn(CATEGORIES as readonly string[])
   category!: Category;
+
+  // LP3-03: the fuel or gas of a typed category (Fuel, Mobile Combustion,
+  // Refrigerants); none for the others. Shape only here — see ACTIVITY_TYPE_SHAPE.
+  @IsOptional()
+  @IsString()
+  @Matches(ACTIVITY_TYPE_SHAPE, { message: ACTIVITY_TYPE_SHAPE_MESSAGE })
+  activityType?: string | null;
 
   @IsNumber()
   @Min(0)

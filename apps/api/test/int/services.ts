@@ -3,6 +3,7 @@ import { ActivityRecordsService } from '../../src/activity-records/activity-reco
 import { AuditService } from '../../src/audit/audit.service';
 import { CalculationsService } from '../../src/calculations/calculations.service';
 import { EvidenceService } from '../../src/evidence/evidence.service';
+import type { FactorPolicy } from '../../src/calculations/factor-policy';
 import { PeriodLocksService } from '../../src/period-locks/period-locks.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import type { StorageService } from '../../src/storage/storage.service';
@@ -29,6 +30,14 @@ export type StorageStub = ReturnType<typeof storageStub>;
  * calls, or a `StorageService` on the local Supabase Storage. The sweeper's
  * timer never starts: nothing here bootstraps an application.
  */
+/**
+ * The integration suite runs on a local database holding the seed's
+ * placeholder library, as CI's does: placeholders are allowed, as
+ * `ALLOW_PLACEHOLDER_FACTORS=true` allows them for the local API. Specs that
+ * prove the refusal construct their own policy.
+ */
+export const INT_FACTOR_POLICY: FactorPolicy = Object.freeze({ allowPlaceholders: true });
+
 export function lifecycleServices(
   prisma: PrismaService,
   storage: StorageStub | StorageService = storageStub(),
@@ -36,7 +45,7 @@ export function lifecycleServices(
   const audit = new AuditService(prisma);
   const intents = new StorageIntentsService(prisma, storage as unknown as StorageService);
   const evidence = new EvidenceService(prisma, storage as unknown as StorageService, audit, intents);
-  const records = new ActivityRecordsService(prisma, new CalculationsService(prisma), audit, evidence);
+  const records = new ActivityRecordsService(prisma, new CalculationsService(prisma, INT_FACTOR_POLICY), audit, evidence);
   const periodLocks = new PeriodLocksService(prisma, audit);
   return { records, evidence, periodLocks, storage, intents };
 }

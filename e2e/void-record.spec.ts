@@ -13,6 +13,7 @@ import {
   getAccessToken,
   login,
   switchUser,
+  e2eActivityTypeFor,
 } from './helpers';
 
 /**
@@ -229,6 +230,9 @@ test('the withdrawn figure stops counting, and its slot reopens', async ({
       reportingPeriod: E2E_PERIOD,
       periodValue: 'Q2',
       category: 'Fuel',
+      // The voided record's own fuel (createCommittedRecord's default): the
+      // slot freed by the void is the diesel one (LP3-03).
+      activityType: e2eActivityTypeFor('Fuel'),
       activityValue: 1_234,
       activityUnit: 'litres',
       varianceReason: null,

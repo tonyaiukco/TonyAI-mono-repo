@@ -62,11 +62,14 @@ import {
   CATEGORIES,
   GEOGRAPHY_LABELS,
   DEFAULT_REPORTING_YEAR,
+  isAuthoritativeSnapshot,
   isCalculated,
+  isProvenanceSnapshot,
   canonicalPeriodValue,
   isInvoiceTracked,
   mayAuthorRecords,
   PERIOD_VALUES,
+  recordActivityTypesFor,
   REPORTING_YEARS,
   unitSymbol,
   unitsForCategory,
@@ -156,6 +159,12 @@ function DataEntryPageInner() {
     useState<ReportingPeriod>("quarterly");
   const [periodValue, setPeriodValue] = useState("Q1");
   const [category, setCategory] = useState<Category>("Electricity");
+  // The fuel or gas of a typed category (Fuel, Mobile Combustion,
+  // Refrigerants — LP3-03); "" = none chosen. Never defaulted: a silently
+  // pre-selected diesel would price petrol as diesel.
+  const [activityType, setActivityType] = useState("");
+  const activityTypes = useMemo(() => recordActivityTypesFor(category), [category]);
+  const isTypedCategory = activityTypes.length > 0;
 
   // Primary calc inputs
   const [activityValue, setActivityValue] = useState("");
@@ -204,6 +213,8 @@ function DataEntryPageInner() {
     reportingPeriod: ReportingPeriod;
     periodValue: string;
     locationId: string;
+    /** The opened record's own activity type, null when it names none. */
+    activityType: string | null;
   } | null>(null);
   // What the deep link asked for, kept so the records effect below can act on it
   // once they arrive. A ref, not state: it must fire exactly once, and it is not
@@ -265,10 +276,21 @@ function DataEntryPageInner() {
   }, [editingId, editingTuple, locationId, availableLocations, records]);
 
   const numericValue = activityValue.trim() === "" ? NaN : Number(activityValue);
+  // Mirrors the API's `activity_type_required`: a typed category's record
+  // names its activity type — unless it is a record written before LP3-03,
+  // opened for editing and left untyped in its own category, the one untyped
+  // record such a category may hold.
+  const keepsLegacyUntyped =
+    !!editingId &&
+    editingTuple?.activityType === null &&
+    editingTuple.category === category &&
+    activityType === "";
+  const activityTypeChosen = !isTypedCategory || activityType !== "" || keepsLegacyUntyped;
   const hasValidInput =
     !!selectedSubsidiary &&
     !!category &&
     !!activityUnit &&
+    activityTypeChosen &&
     Number.isFinite(numericValue) &&
     numericValue > 0;
 
@@ -517,6 +539,7 @@ function DataEntryPageInner() {
       try {
         const result = await api.previewCalculation({
           category,
+          ...(isTypedCategory && activityType ? { activityType } : {}),
           geographyCode: effectiveGeography ?? selectedSubsidiary.geographyCode,
           reportingYear,
           value: numericValue,
@@ -527,12 +550,16 @@ function DataEntryPageInner() {
       } catch (e) {
         setPreview(null);
         if (e instanceof ApiError && e.status === 404) {
-          // Name the year that does work. DE-9 opened the list to 2015–2026
-          // while the prototype library still covers one year, so without this a
-          // tester picking 2018 sees a refusal that reads like a broken app
-          // rather than a boundary of the demo data.
+          // The API's own sentence: since LP3-03 a 404 says WHICH gap it is —
+          // no factor, a placeholder refused, a conversion not loaded — and a
+          // fixed "no factor" text would misreport the other two. Outside the
+          // one year the prototype library covers, also name the year that
+          // does work (DE-9 opened the list to 2015–2026), so a tester picking
+          // 2018 sees a boundary of the demo data, not a broken app.
           setPreviewError(
-            `No emission factor for this selection. This prototype's factor library currently covers ${DEFAULT_REPORTING_YEAR} — try that year, or a different category or geography.`,
+            reportingYear === DEFAULT_REPORTING_YEAR
+              ? e.message
+              : `${e.message} This prototype's factor library currently covers ${DEFAULT_REPORTING_YEAR}.`,
           );
         } else {
           // 400 (unit mismatch / unsupported unit) and anything else: show the
@@ -551,6 +578,7 @@ function DataEntryPageInner() {
   }, [
     hasValidInput,
     category,
+    activityType,
     reportingYear,
     numericValue,
     activityUnit,
@@ -609,6 +637,7 @@ function DataEntryPageInner() {
     setReportingPeriod(rec.reportingPeriod);
     setPeriodValue(rec.periodValue);
     setCategory(rec.category as Category);
+    setActivityType(rec.activityType ?? "");
     setActivityValue(String(rec.activityValue));
     setActivityUnit(rec.activityUnit);
     setContext((rec.input as ContextValues | null) ?? {});
@@ -688,6 +717,8 @@ function DataEntryPageInner() {
       reportingPeriod: rec.reportingPeriod,
       periodValue: rec.periodValue,
       locationId: rec.locationId ?? "",
+      // Not part of "moved off": changing the fuel edits the record in place.
+      activityType: rec.activityType ?? null,
     };
   }
 
@@ -715,6 +746,10 @@ function DataEntryPageInner() {
         reportingPeriod,
         periodValue,
         category,
+        // An implicit category clears any type (a Fuel draft re-filed as
+        // Electricity must not carry "diesel"); a typed one sends its choice,
+        // or nothing for a legacy untyped record left as it is.
+        ...(isTypedCategory ? (activityType ? { activityType } : {}) : { activityType: null }),
         activityValue: numericValue,
         activityUnit,
         varianceReason: variance,
@@ -728,6 +763,7 @@ function DataEntryPageInner() {
       reportingPeriod,
       periodValue,
       category,
+      activityType: isTypedCategory ? activityType : null,
       activityValue: numericValue,
       activityUnit,
       varianceReason: variance,
@@ -944,6 +980,9 @@ function DataEntryPageInner() {
                         const next = v as Category;
                         setCategory(next);
                         setContext({});
+                        // Each typed category has its own list; a type chosen
+                        // for Fuel means nothing for Refrigerants.
+                        setActivityType("");
                         // The unit list is category-scoped, so a unit that is
                         // not offered for the new category would otherwise stay
                         // selected and bind the Select to a value with no item —
@@ -967,6 +1006,31 @@ function DataEntryPageInner() {
                       </SelectContent>
                     </Select>
                   </Field>
+
+                  {isTypedCategory && (
+                    // Labelled "Fuel or gas", never with the word "category":
+                    // the e2e suite finds the Category field by that text.
+                    <Field label="Fuel or gas">
+                      <Select value={activityType} onValueChange={setActivityType}>
+                        <SelectTrigger aria-label="Fuel or gas">
+                          <SelectValue
+                            placeholder={
+                              keepsLegacyUntyped
+                                ? "Not specified (entered before fuels were tracked)"
+                                : "Choose one"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {activityTypes.map((t) => (
+                            <SelectItem key={t.value} value={t.value}>
+                              {t.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  )}
 
                   <Field label="Reporting year">
                     <Select
@@ -1138,17 +1202,20 @@ function DataEntryPageInner() {
                       activityUnit === "cubic_metres" &&
                       appliesUnitConversion(activityUnit, category)
                     ) {
-                      // The 11.36 in calculation_logic.md §2.1 has no citation,
-                      // no calorific basis and no stated reference conditions.
-                      // It has been converting silently; on a compliance product
-                      // the user is entitled to know the number rests on an
+                      // The 11.36 in calculation_logic.md §2.1 has no citation
+                      // and no stated reference conditions. Since LP3-03 it is a
+                      // labelled placeholder conversion row of the seed's
+                      // release (K4), not code; on a compliance product the user
+                      // is still entitled to know the number rests on an
                       // assumption.
                       return (
                         <p className="mt-2 text-xs text-muted-foreground">
-                          m³ is converted to kWh at &times;11.36 — a prototype
-                          assumption with no cited source, and no stated calorific
-                          basis or reference conditions. It will be replaced by a
-                          sourced factor in the Phase-4 factor library.
+                          m³ is converted to kWh by the factor library&rsquo;s
+                          placeholder conversion, &times;11.36 — a prototype
+                          assumption with no cited source and no stated reference
+                          conditions, refused wherever placeholder factors are. A
+                          sourced conversion replaces it with the authoritative
+                          factor library.
                         </p>
                       );
                     }
@@ -1501,10 +1568,24 @@ function PreviewCard({
                 label="Normalised input"
                 value={`${numberFmt.format(preview.normalizedValue)} ${unitSymbol(preview.normalizedUnit)}`}
               />
+              {isProvenanceSnapshot(preview) && (
+                <Row label="Activity" value={preview.activityType} />
+              )}
               <Row label="Methodology" value={preview.methodology} />
               <Row
                 label="Source"
                 value={`${preview.source} (${preview.version})`}
+              />
+              {/* Asked of the whole path, never the factor's status alone: a
+                  figure is only as authoritative as its weakest link — the
+                  conversion's release included (LP3-03). */}
+              <Row
+                label="Factor status"
+                value={
+                  isAuthoritativeSnapshot(preview)
+                    ? "Authoritative"
+                    : "Placeholder — not an authoritative factor"
+                }
               />
               {geographyCode && (
                 <Row label="Geography" value={geographyCode} />

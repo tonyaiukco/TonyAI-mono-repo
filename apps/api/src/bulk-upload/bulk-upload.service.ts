@@ -26,16 +26,18 @@ import {
   type BulkUploadReportDTO,
   type BulkUploadRowIssue,
   mayAuthorRecords,
+  recordActivityTypesFor,
 } from '@tonyai/shared-types';
 import {
   ActivityRecordsService,
 } from '../activity-records/activity-records.service';
 import {
   CreateRoleRefusedError,
+  ActivityTypeSlotConflictError,
   DuplicateActivityRecordError,
   PeriodLockedError,
 } from '../activity-records/errors';
-import { NoEmissionFactorError } from '../calculations/errors';
+import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -390,6 +392,26 @@ export class BulkUploadService {
       return;
     }
 
+    // LP3-03, owner decision (b) of 2026-10-04: a file cannot carry an
+    // activity type until LP4-02's contract change adds the column, so a row in
+    // a typed category (Fuel, Mobile Combustion, Refrigerants) is refused as the
+    // record service would refuse it (`activity_type_required`) — HERE, before
+    // the duplicate check, which would otherwise answer for it ("edit the
+    // existing record") about a row that could never be written.
+    const activityType = dto.activityType ?? null;
+    const types = recordActivityTypesFor(dto.category);
+    if (types.length > 0 && activityType === null) {
+      out.errors.push({
+        row,
+        column: this.asColumn('category'),
+        code: 'invalid',
+        message:
+          `A ${dto.category} record must name its activity type (${types.map((t) => t.value).join(', ')}), ` +
+          `and a bulk file cannot carry one yet. Enter ${dto.category} rows on Data Entry.`,
+      });
+      return;
+    }
+
     // The canonical spelling IS the slot's identity. When the value names no
     // period of this granularity the duplicate check is meaningless, so it is
     // skipped and the service raises the 400 it already raises for everyone.
@@ -402,6 +424,7 @@ export class BulkUploadService {
         dto.reportingPeriod,
         canonical,
         dto.category,
+        activityType,
       );
       if (context.seenInFile.has(key)) {
         out.errors.push({
@@ -686,6 +709,7 @@ export class BulkUploadService {
         reportingPeriod: true,
         periodValue: true,
         category: true,
+        activityType: true,
       },
       // The two `IN` lists are a cross-product: a 1,000-row file naming many
       // entities and many years matches far more (entity, year) combinations
@@ -704,6 +728,7 @@ export class BulkUploadService {
           r.reportingPeriod,
           r.periodValue,
           r.category,
+          r.activityType,
         ),
       ),
     );
@@ -979,7 +1004,9 @@ export class BulkUploadService {
   }
 
   /**
-   * The six columns of the `NULLS NOT DISTINCT` uniqueness index, in order.
+   * The seven columns of the `NULLS NOT DISTINCT` uniqueness index, in order
+   * — the activity type last (LP3-03), NULL as the empty segment, which no
+   * activity type can be.
    *
    * A formatter, deliberately: every segment must arrive in the spelling the
    * database stores, because that is what the index compares. Both feeds
@@ -996,6 +1023,7 @@ export class BulkUploadService {
     reportingPeriod: string,
     periodValue: string,
     category: string,
+    activityType: string | null,
   ): string {
     return [
       subsidiaryId,
@@ -1004,6 +1032,7 @@ export class BulkUploadService {
       reportingPeriod,
       periodValue,
       category,
+      activityType ?? '',
     ].join(KEY_SEPARATOR);
   }
 
@@ -1089,7 +1118,13 @@ export class BulkUploadService {
     // duplicate nor a lock falls through to `unexpected` and is logged as
     // one; any other `NotFoundException` is the record service saying the
     // row's entity is not this caller's to name.
-    if (error instanceof NoEmissionFactorError) {
+    // Every coverage refusal is a `NoEmissionFactorError`, whatever its code
+    // (`placeholder_refused`, `no_conversion`, …): the issue codes are an
+    // exhaustive map on the web, so the sentence says which. A factor library
+    // contradicting itself (`ambiguous_factor`, `factor_scope_mismatch`) is the
+    // same answer to the uploader — this row cannot be priced yet — and a known
+    // refusal, not an unexpected failure.
+    if (error instanceof NoEmissionFactorError || error instanceof FactorLibraryConflictError) {
       return { row, column: null, code: 'no_factor', message: error.message };
     }
     if (error instanceof NotFoundException) {
@@ -1101,7 +1136,7 @@ export class BulkUploadService {
           'The reporting entity on this row does not exist or is not yours.',
       };
     }
-    if (error instanceof DuplicateActivityRecordError) {
+    if (error instanceof DuplicateActivityRecordError || error instanceof ActivityTypeSlotConflictError) {
       return {
         row,
         column: null,

@@ -9,6 +9,7 @@ import {
   E2E_PERIOD,
   E2E_YEAR,
   SUB,
+  e2eActivityTypeFor,
 } from './helpers';
 
 /**
@@ -86,6 +87,8 @@ test('a cell reopens the single record that already exists there', async ({
       reportingPeriod: E2E_PERIOD,
       periodValue: 'Q3',
       category: 'Fuel',
+      // A new Fuel record names its fuel (LP3-03, activity_type_required).
+      activityType: e2eActivityTypeFor('Fuel'),
       activityValue: 640,
       activityUnit: 'litres',
       varianceReason: null,
@@ -151,6 +154,8 @@ test('moving the form off a loaded record stops targeting it', async ({
       reportingPeriod: E2E_PERIOD,
       periodValue: 'Q4',
       category: 'Fuel',
+      // A new Fuel record names its fuel (LP3-03, activity_type_required).
+      activityType: e2eActivityTypeFor('Fuel'),
       activityValue: 1234,
       activityUnit: 'litres',
       varianceReason: null,

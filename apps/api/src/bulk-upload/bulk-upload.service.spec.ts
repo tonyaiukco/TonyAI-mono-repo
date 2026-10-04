@@ -28,7 +28,7 @@ import {
   DuplicateActivityRecordError,
   PeriodLockedError,
 } from '../activity-records/errors';
-import { NoEmissionFactorError } from '../calculations/errors';
+import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { InaccessibleEntityError } from './errors';
 import { AuditService } from '../audit/audit.service';
 import { blockedUnitReason } from '../calculations/normalization';
@@ -2419,5 +2419,80 @@ describe('BulkUploadService — a location outside the tenant refuses the whole 
     await service.import(dataEntry(), csvFile([row()]), DRY);
 
     expect(prisma.location.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('BulkUploadService — activity types (LP3-03)', () => {
+  it('refuses a typed-category row as invalid, before the duplicate check and before any service call', async () => {
+    // Owner decision (b), 2026-10-04: a file carries no activity type until
+    // LP4-02, so a Fuel row could never be written. Reported for what it is —
+    // not as "another row already reports this slot", which the second row
+    // would otherwise be told.
+    const { records, service } = build();
+    const fuel = row({ category: 'Fuel', activityUnit: 'litres' });
+
+    const report = await service.import(dataEntry(), csvFile([fuel, fuel]), DRY);
+
+    expect(report.errors).toEqual([
+      expect.objectContaining({ row: 2, code: 'invalid', column: 'category' }),
+      expect.objectContaining({ row: 3, code: 'invalid', column: 'category' }),
+    ]);
+    expect(report.errors[0].message).toMatch(/must name its activity type/);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses Mobile Combustion and Refrigerants rows the same way', async () => {
+    const { service } = build();
+    const report = await service.import(
+      dataEntry(),
+      csvFile([
+        row({ category: 'Mobile Combustion', activityUnit: 'litres' }),
+        row({ category: 'Refrigerants', activityUnit: 'kg', periodValue: 'February' }),
+      ]),
+      DRY,
+    );
+    expect(report.errors.map((e) => e.code)).toEqual(['invalid', 'invalid']);
+  });
+
+  it('reads the stored slots with their activity type — the seventh key column', async () => {
+    const { prisma, records, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([
+      {
+        subsidiaryId: SUB_1,
+        locationId: null,
+        reportingYear: 2024,
+        reportingPeriod: 'monthly',
+        periodValue: 'January',
+        category: 'Electricity',
+        // A typed record in the slot is a different key from the file's
+        // untyped row; only the database's slot-kind rule relates the two.
+        activityType: 'grid_electricity',
+      },
+    ]);
+
+    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+
+    const [args] = prisma.activityRecord.findMany.mock.calls[0];
+    expect(args.select).toHaveProperty('activityType', true);
+    expect(report.errors).toEqual([]);
+    expect(records.previewCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports every coverage refusal, and a factor-library conflict, as no_factor with its own sentence', async () => {
+    const { records, service } = build();
+    records.previewCreate
+      .mockRejectedValueOnce(new NoEmissionFactorError('Only placeholder factors cover it.', { code: 'placeholder_refused' }))
+      .mockRejectedValueOnce(new FactorLibraryConflictError('ambiguous_factor', 'Two releases claim it.'));
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row(), row({ periodValue: 'February' })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      expect.objectContaining({ row: 2, code: 'no_factor', message: 'Only placeholder factors cover it.' }),
+      expect.objectContaining({ row: 3, code: 'no_factor', message: 'Two releases claim it.' }),
+    ]);
   });
 });

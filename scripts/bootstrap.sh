@@ -111,6 +111,11 @@ SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY}"
 # unpinned scheme, and ONLY together with a loopback SUPABASE_URL. Never set
 # this in a deployed environment — the API is meant to refuse to boot there.
 ALLOW_INSECURE_LOCAL_AUTH=true
+# Local development only (LP3-03, owner decision K3): calculate from the seed's
+# PLACEHOLDER factor library. Every factor here is a labelled prototype value;
+# without this the API refuses them (placeholder_refused). Refused at boot
+# unless DATABASE_URL and SUPABASE_URL are loopback. Never set it elsewhere.
+ALLOW_PLACEHOLDER_FACTORS=true
 EOF
 info "wrote apps/api/.env"
 

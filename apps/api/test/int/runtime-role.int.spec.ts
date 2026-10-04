@@ -162,6 +162,26 @@ describe('the runtime role is refused', () => {
     ['deleting a profile', 'DELETE FROM profiles WHERE id = gen_random_uuid()'],
     ['editing a grant in place', 'UPDATE user_subsidiary_access SET organisation_id = organisation_id WHERE false'],
     ['writing reference factors', 'DELETE FROM emission_factors WHERE false'],
+    // LP3-03: the factor library is read-only to the API — loaded on the owner
+    // connection by the seed and LP4-02's loader, never through the runtime.
+    [
+      'loading a factor release',
+      `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status) VALUES (gen_random_uuid(), 'TonyAI test fixture', 'x', 'x', 999999, 'fixture')`,
+    ],
+    ['withdrawing a factor release', `UPDATE factor_releases SET status = 'withdrawn' WHERE false`],
+    ['deleting a factor release', 'DELETE FROM factor_releases WHERE false'],
+    [
+      'loading a factor',
+      `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, geography_code, reporting_year, data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+       SELECT gen_random_uuid(), id, 'Waste', 'unspecified', 'CO2e', 'UK', 2026, 2026, 3, 'not_applicable', 'not_applicable', 1, 'x', 'kg', 'x', 'x', 'x', now() FROM factor_releases LIMIT 1`,
+    ],
+    [
+      'loading a unit conversion',
+      `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit, multiplier, calorific_basis, basis)
+       SELECT gen_random_uuid(), id, 'Natural Gas', 'natural_gas', 'UK', 2031, 2031, 'cubic_metres', 'kWh', 1, 'gross', 'x' FROM factor_releases LIMIT 1`,
+    ],
+    ['rewriting a unit conversion', 'UPDATE unit_conversions SET multiplier = 1 WHERE false'],
+    ['truncating the factor library', 'TRUNCATE factor_releases CASCADE'],
     ['assuming a client role', 'SET LOCAL ROLE authenticated'],
     ['assuming the owner', 'SET LOCAL ROLE postgres'],
     ['creating a role', 'CREATE ROLE lp1_03_probe'],

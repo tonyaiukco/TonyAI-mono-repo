@@ -5,6 +5,7 @@ import { RecordChangedError } from '../../src/activity-records/errors';
 import { ActivityRecordsService } from '../../src/activity-records/activity-records.service';
 import { AuditService } from '../../src/audit/audit.service';
 import { CalculationsService } from '../../src/calculations/calculations.service';
+import { INT_FACTOR_POLICY } from './services';
 import type { EvidenceService } from '../../src/evidence/evidence.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
@@ -37,7 +38,7 @@ function makeService(prisma: PrismaService): ActivityRecordsService {
   // startReview/approve never touch evidence.
   return new ActivityRecordsService(
     prisma,
-    new CalculationsService(prisma),
+    new CalculationsService(prisma, INT_FACTOR_POLICY),
     new AuditService(prisma),
     {} as EvidenceService,
   );

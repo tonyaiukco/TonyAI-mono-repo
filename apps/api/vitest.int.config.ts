@@ -30,6 +30,11 @@ process.env.INT_RUNTIME_DATABASE_URL = runtimeGiven
     ? runtimeUrlFrom(ownerUrl, randomRuntimePassword())
     : '';
 process.env.INT_PROVISION_RUNTIME_LOGIN = runtimeGiven ? '' : '1';
+// The database is local (global-setup refuses any other) and holds the seed's
+// placeholder factor library, so the application the suite boots calculates
+// from placeholders, as the local API does (LP3-03, K3). Specs proving the
+// refusal construct their own policy.
+process.env.ALLOW_PLACEHOLDER_FACTORS = 'true';
 
 // esbuild — Vitest's TypeScript transform — cannot emit decorator metadata,
 // so Nest's dependency injection finds no constructor types and injects

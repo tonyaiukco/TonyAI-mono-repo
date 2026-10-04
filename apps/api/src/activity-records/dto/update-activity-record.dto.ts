@@ -28,6 +28,7 @@ import type { Category, ReportingPeriod } from '@tonyai/shared-types';
 import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
 import { blankToNull } from '../../common/blank-to-null';
 import { storableUnit } from '../../calculations/storable-unit';
+import { ACTIVITY_TYPE_SHAPE, ACTIVITY_TYPE_SHAPE_MESSAGE } from '../../calculations/activity-type';
 
 
 /**
@@ -72,6 +73,15 @@ export class UpdateActivityRecordDto {
   @IsString()
   @IsIn(CATEGORIES as readonly string[])
   category?: Category;
+
+  // LP3-03: absent keeps the stored activity type, `null` clears it, a token
+  // sets it. Shape only here (ACTIVITY_TYPE_SHAPE); the service checks it
+  // against the EFFECTIVE category (`dto.category ?? existing`), so moving a
+  // diesel Fuel draft to Electricity without clearing the type is refused.
+  @IsOptional()
+  @IsString()
+  @Matches(ACTIVITY_TYPE_SHAPE, { message: ACTIVITY_TYPE_SHAPE_MESSAGE })
+  activityType?: string | null;
 
   @IsOptional()
   @IsNumber()

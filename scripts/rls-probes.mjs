@@ -725,6 +725,101 @@ async function main() {
     await svc('DELETE', `storage_intents?id=in.(${PROBE_INTENT},99999999-0000-0000-0000-00000000f002)`);
   }
 
+  // --- The factor library (LP3-03): reference data, append-only ------------
+  // Every authenticated user reads the library (no tenant predicate, by
+  // design); anon reads none of it; no client role writes it — and, because
+  // the append-only triggers fire for every role, neither can the service role
+  // rewrite or delete a loaded row. The runtime role's SELECT-only grant is
+  // part of the runtime-role check below; the integration suite runs its
+  // refused INSERT for real.
+  console.log('▸ factor library (read-only reference data, append-only)');
+  {
+    const FACTOR_TABLES = ['factor_releases', 'emission_factors', 'unit_conversions'];
+    const refused = (r) => (r.error ? /401|42501|permission denied/i.test(r.error) : r.total === 0);
+    const adminToken = await getToken(ADMIN_EMAIL);
+    const svcRead = async (path) =>
+      (await fetch(`${URL_}/rest/v1/${path}`, { headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` } })).json();
+
+    const anonCounts = await Promise.all(FACTOR_TABLES.map((t) => count(t)));
+    check(
+      'factor library: anon reads none of the three tables',
+      anonCounts.every(refused),
+      FACTOR_TABLES.map((t, i) => `${t}=${anonCounts[i].error ?? anonCounts[i].total}`).join(', '),
+    );
+
+    const entryCounts = await Promise.all(FACTOR_TABLES.map((t) => count(t, { token })));
+    check(
+      'factor library: an authenticated user reads every table (reference data, no tenant predicate)',
+      entryCounts.every((r) => !r.error && r.total > 0),
+      FACTOR_TABLES.map((t, i) => `${t}=${entryCounts[i].error ?? entryCounts[i].total}`).join(', '),
+    );
+
+    // Readable by every tenant, so the columns naming people and firms behind
+    // a release are withheld from the client role (column-level grant).
+    const withheld = await Promise.all(
+      ['reviewed_by', 'withdrawn_by', 'notes'].map((c) => count('factor_releases', { token, query: `select=${c}` })),
+    );
+    check(
+      'factor_releases: reviewed_by, withdrawn_by and notes are withheld from authenticated',
+      withheld.every((r) => r.error && /42501|permission denied/i.test(r.error)),
+      withheld.map((r) => r.error ?? `readable (${r.total})`).join(' | '),
+    );
+
+    const [release] = await svcRead('factor_releases?select=id,title,status&status=eq.placeholder&limit=1');
+    const [factor] = await svcRead(`emission_factors?select=id,factor_value&release_id=eq.${release?.id}&limit=1`);
+    const [conversion] = await svcRead('unit_conversions?select=id,multiplier&limit=1');
+    if (!release || !factor || !conversion) {
+      check('factor library: the seed loaded a release, a factor and a conversion to probe', false, 'missing');
+    } else {
+      const rows = {
+        factor_releases: { id: release.id, patch: { title: 'rls-probe' }, column: 'title', value: release.title },
+        emission_factors: { id: factor.id, patch: { factor_value: 0 }, column: 'factor_value', value: factor.factor_value },
+        unit_conversions: { id: conversion.id, patch: { multiplier: 1 }, column: 'multiplier', value: conversion.multiplier },
+      };
+      const write = (key, auth, method, table, query, body) =>
+        fetch(`${URL_}/rest/v1/${table}${query}`, {
+          method,
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${auth}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=representation',
+          },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+      const unchanged = async (table) => {
+        const { id, column, value } = rows[table];
+        const [row] = await svcRead(`${table}?select=${column}&id=eq.${id}`);
+        return row !== undefined && row[column] === value;
+      };
+
+      for (const table of FACTOR_TABLES) {
+        const { id, patch } = rows[table];
+        const inserted = await write(ANON, adminToken, 'POST', table, '', { ...patch, id: '99999999-0000-0000-0000-00000000fa01' });
+        const patched = await write(ANON, adminToken, 'PATCH', table, `?id=eq.${id}`, patch);
+        const deleted = await write(ANON, adminToken, 'DELETE', table, `?id=eq.${id}`);
+        const [ghost] = await svcRead(`${table}?select=id&id=eq.99999999-0000-0000-0000-00000000fa01`);
+        check(
+          `${table}: an authenticated client cannot insert, update or delete`,
+          !inserted.ok && !patched.ok && !deleted.ok && ghost === undefined && (await unchanged(table)),
+          `insert=${inserted.status}, update=${patched.status}, delete=${deleted.status}`,
+        );
+
+        // The service role holds every privilege and bypasses RLS: only the
+        // append-only triggers stand between it and a loaded row.
+        const svcPatched = await write(SERVICE, SERVICE, 'PATCH', table, `?id=eq.${id}`, patch);
+        const svcPatchBody = svcPatched.ok ? '' : await svcPatched.text();
+        const svcDeleted = await write(SERVICE, SERVICE, 'DELETE', table, `?id=eq.${id}`);
+        const svcDeleteBody = svcDeleted.ok ? '' : await svcDeleted.text();
+        check(
+          `${table}: append-only for the service role too (update and delete refused by trigger, TA010)`,
+          !svcPatched.ok && /TA010/.test(svcPatchBody) && !svcDeleted.ok && /TA010/.test(svcDeleteBody) && (await unchanged(table)),
+          `update=${svcPatched.status}, delete=${svcDeleted.status}`,
+        );
+      }
+    }
+  }
+
   // --- The consultant seat (WP7 PR 3) -------------------------------------
   // Added with the reviewer UI. The NestJS guard grants a consultant org-wide
   // READ and no writes; that is the primary layer, and this asserts the second
@@ -864,9 +959,8 @@ async function main() {
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
     const { PrismaClient } = req('../packages/db/generated/client');
-    const { checkRuntimeRole, checkTenantInvariants, runtimeRoleExposures } = await import(
-      '../packages/db/scripts/runtime-role.mjs'
-    );
+    const { checkRuntimeRole, checkTenantInvariants, checkIntegrityTriggers, factorLibraryReport, runtimeRoleExposures } =
+      await import('../packages/db/scripts/runtime-role.mjs');
     const prisma = new PrismaClient();
     const query = (sql) => prisma.$queryRawUnsafe(sql);
     try {
@@ -878,6 +972,16 @@ async function main() {
       );
       const broken = await checkTenantInvariants(query);
       check('no grant crosses an organisation in the data (a restore skips the keys)', broken.length === 0, broken.join('; ') || 'none');
+      const triggers = await checkIntegrityTriggers(query);
+      check(
+        'the integrity triggers (K5 snapshot, slot kind, append-only factor library) and CHECKs are present and ENABLE ALWAYS',
+        triggers.length === 0,
+        triggers.join('; ') || 'all in force',
+      );
+      const library = await factorLibraryReport(query);
+      check('no unspecified activity type under an authoritative release', library.problems.length === 0, library.problems.join('; ') || 'none');
+      // Not a failure locally — the seed's placeholder library is expected here.
+      for (const n of library.notices) console.log(`  ⚠️  the factor library holds a ${n}`);
       // Not a failure: what every role inherits from PUBLIC through the platform.
       for (const e of await runtimeRoleExposures(query)) console.log(`  ⚠️  the runtime role can also reach ${e}`);
     } finally {

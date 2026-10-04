@@ -139,6 +139,7 @@ async function main() {
       subsidiaryId: true,
       locationId: true,
       category: true,
+      activityType: true,
       reportingPeriod: true,
       reportingYear: true,
       periodValue: true,

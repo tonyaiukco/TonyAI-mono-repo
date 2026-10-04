@@ -7,6 +7,10 @@ import {
   runtimeUrlFrom,
   scramVerifier,
   urlUser,
+  INTEGRITY_CHECKS,
+  INTEGRITY_TRIGGERS,
+  checkIntegrityTriggers,
+  factorLibraryReport,
 } from './runtime-role.mjs';
 
 // The database half — that PostgreSQL accepts the verifier and the privileges
@@ -78,5 +82,70 @@ describe('runtime URLs and passwords', () => {
     const a = randomRuntimePassword();
     expect(a).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(randomRuntimePassword()).not.toBe(a);
+  });
+});
+
+describe('checkIntegrityTriggers (LP3-03)', () => {
+  const allTriggers = INTEGRITY_TRIGGERS.map(([table, trigger]) => ({ table, trigger, enabled: 'A' }));
+  const allChecks = INTEGRITY_CHECKS.map(([table, name]) => ({ table, name, validated: true }));
+  const fake = (triggers, constraints) => async (sql) => (sql.includes('pg_trigger') ? triggers : constraints);
+
+  it('passes when every trigger is ENABLE ALWAYS and every CHECK is valid', async () => {
+    expect(await checkIntegrityTriggers(fake(allTriggers, allChecks))).toEqual([]);
+  });
+
+  it('covers K5, the slot rule and all four events on all three factor tables', () => {
+    expect(INTEGRITY_TRIGGERS).toHaveLength(2 + 3 * 4);
+    expect(INTEGRITY_TRIGGERS.map(([, t]) => t)).toContain('activity_records_snapshot_immutable');
+    expect(INTEGRITY_TRIGGERS.map(([, t]) => t)).toContain('unit_conversions_before_truncate');
+  });
+
+  it('reports a missing trigger, one merely ENABLEd (skipped in replica mode), and a disabled one', async () => {
+    const triggers = allTriggers
+      .filter((t) => t.trigger !== 'activity_records_slot_kind')
+      .map((t) =>
+        t.trigger === 'activity_records_snapshot_immutable'
+          ? { ...t, enabled: 'O' }
+          : t.trigger === 'emission_factors_before_update'
+            ? { ...t, enabled: 'D' }
+            : t,
+      );
+    const problems = await checkIntegrityTriggers(fake(triggers, allChecks));
+    expect(problems).toEqual([
+      "trigger activity_records_snapshot_immutable on activity_records is not ENABLE ALWAYS (tgenabled = 'O')",
+      'trigger activity_records_slot_kind on activity_records is missing',
+      "trigger emission_factors_before_update on emission_factors is not ENABLE ALWAYS (tgenabled = 'D')",
+    ]);
+  });
+
+  it('reports a dropped or NOT VALID check', async () => {
+    const checks = allChecks
+      .filter((c) => c.name !== 'factor_releases_publisher_check')
+      .map((c) => (c.name === 'emission_factors_gas_check' ? { ...c, validated: false } : c));
+    expect(await checkIntegrityTriggers(fake(allTriggers, checks))).toEqual([
+      'CHECK factor_releases_publisher_check on factor_releases is missing',
+      'CHECK emission_factors_gas_check on emission_factors is NOT VALID',
+    ]);
+  });
+});
+
+describe('factorLibraryReport (LP3-03)', () => {
+  const fake = (n, releases) => async (sql) => (sql.includes('AS n') ? [{ n }] : releases);
+
+  it('lists every non-authoritative release as a notice, never a problem', async () => {
+    const report = await factorLibraryReport(
+      fake(0, [{ publisher: 'TonyAI prototype', edition: '2026.1', status: 'placeholder', factors: 12, conversions: 3 }]),
+    );
+    expect(report).toEqual({
+      problems: [],
+      notices: ['placeholder release TonyAI prototype 2026.1 (12 factor(s), 3 conversion(s))'],
+    });
+  });
+
+  it('fails on an unspecified activity type under an authoritative release', async () => {
+    const report = await factorLibraryReport(fake(2, []));
+    expect(report.problems).toEqual([
+      '2 factor/conversion row(s) with an unspecified activity type under an authoritative release',
+    ]);
   });
 });

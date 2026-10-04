@@ -96,7 +96,7 @@ const prisma = new PrismaClient();
  */
 const BASE_SQL = `
 WITH r AS (
-  SELECT id, subsidiary_id, location_id, category, reporting_period,
+  SELECT id, subsidiary_id, location_id, category, activity_type, reporting_period,
          reporting_year, period_value, status, anomaly_flag,
          reporting_year * 100 + COALESCE(CASE reporting_period
            WHEN 'monthly'   THEN array_position(ARRAY['January','February','March','April','May','June','July','August','September','October','November','December'], period_value) - 1
@@ -123,6 +123,7 @@ scored AS (
       WHERE b.subsidiary_id = c.subsidiary_id
         AND b.location_id IS NOT DISTINCT FROM c.location_id
         AND b.category = c.category
+        AND b.activity_type IS NOT DISTINCT FROM c.activity_type
         AND b.reporting_period = c.reporting_period
         AND b.key < c.key
         AND b.id <> c.id

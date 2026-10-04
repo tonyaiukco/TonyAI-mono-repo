@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { initSentry } from './observability/sentry';
 import { assertAuthConfig } from './auth/token-verifier';
+import { bootFactorPolicy } from './calculations/factor-policy';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
@@ -15,6 +16,9 @@ async function bootstrap() {
   // Refuse to start on an auth misconfiguration instead of 401-ing every
   // request with an indistinguishable "invalid token".
   assertAuthConfig();
+  // Likewise on a placeholder-factor flag set where it must not be (K3): read
+  // once, here, before any module can price a record.
+  const factorPolicy = bootFactorPolicy();
   const logger = new JsonLogger();
   const app = await NestFactory.create(AppModule, { logger });
   app.setGlobalPrefix('api/v1');
@@ -46,6 +50,14 @@ async function bootstrap() {
     port,
     prefix: '/api/v1',
     sentry: Boolean(process.env.SENTRY_DSN),
+  });
+  // Stated at every boot, so "placeholders are off here" is a log line an
+  // operator can point at rather than an absence of evidence (LP3-03, K3).
+  logger.event('info', 'factor_policy', {
+    allowPlaceholderFactors: factorPolicy.allowPlaceholders,
+    calculatesFrom: factorPolicy.allowPlaceholders
+      ? 'authoritative, placeholder and fixture releases'
+      : 'authoritative releases only',
   });
 }
 

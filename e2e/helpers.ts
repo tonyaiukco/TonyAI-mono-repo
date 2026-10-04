@@ -149,6 +149,23 @@ export async function getAccessToken(
 // bytes against the declared type, so a placeholder of another shape is refused.
 export const EVIDENCE_FIXTURE = resolve(__dirname, 'fixtures/sample-invoice.pdf');
 
+/**
+ * The activity type the suite gives a record of a typed category when a spec
+ * names none (LP3-03: a new Fuel, Mobile Combustion or Refrigerants record must
+ * name its fuel or gas). Diesel is the one typed factor the seed's placeholder
+ * library carries (`packages/db/prisma/factor-library.ts`).
+ */
+export const E2E_ACTIVITY_TYPE: Readonly<Record<string, string>> = {
+  Fuel: 'diesel',
+  'Mobile Combustion': 'diesel',
+  Refrigerants: 'R-410A',
+};
+
+/** The activity type a record of `category` is entered with, or null. */
+export function e2eActivityTypeFor(category: string): string | null {
+  return E2E_ACTIVITY_TYPE[category] ?? null;
+}
+
 interface CommittedRecordInput {
   subsidiaryId: string;
   /** Attribute the record to an operational location instead of the subsidiary
@@ -156,6 +173,8 @@ interface CommittedRecordInput {
    *  collide with a company-level one for the same category and period. */
   locationId?: string | null;
   category: string;
+  /** Defaults to `e2eActivityTypeFor(category)`; pass null for an implicit category. */
+  activityType?: string | null;
   periodValue: string;
   activityValue: number;
   activityUnit?: string;
@@ -184,6 +203,7 @@ export async function createCommittedRecord(
       reportingPeriod: input.reportingPeriod ?? E2E_PERIOD,
       periodValue: input.periodValue,
       category: input.category,
+      activityType: input.activityType !== undefined ? input.activityType : e2eActivityTypeFor(input.category),
       activityValue: input.activityValue,
       activityUnit: input.activityUnit ?? 'kWh',
       varianceReason: null,
@@ -668,95 +688,144 @@ export const E2E_BULK_UNIT = 'tonnes';
  * the first.
  */
 export const E2E_FACTOR_VERSION = '0000-E2E-FIXTURE';
+/** The closed registry's test-fixture publisher (= FIXTURE_PUBLISHER in
+ *  packages/db/prisma/factor-library.ts); the database refuses any other name. */
+export const E2E_FIXTURE_PUBLISHER = 'TonyAI test fixture';
 
 /**
- * A factor row for a non-evidence category, so a bulk submit has something to
- * submit.
+ * A fixture release holding one factor row per geography for a
+ * non-evidence category, so a bulk submit has something to submit.
  *
  * **This is not an emission factor.** Its value is arithmetically convenient
- * and cites no source, and every field says so — `source`, `methodology` and
- * `version` all name it as a test fixture. CLAUDE.md forbids inventing factor
+ * and cites no source, and every field says so — the release is `fixture`
+ * (ranked below any placeholder, calculated only where the API runs with
+ * `ALLOW_PLACEHOLDER_FACTORS=true`), and `source`, `methodology` and the
+ * edition all name it as a test fixture. CLAUDE.md forbids inventing factor
  * values precisely because a number that looks authoritative becomes one; the
- * defence here is not the number but the labelling, plus a version that cannot
+ * defence here is not the number but the labelling, plus a status that cannot
  * outrank a sourced factor and a teardown that removes it.
+ *
+ * Insert-if-absent, failing on divergence (LP3-03): the factor tables are
+ * append-only, so a row already present must be this one, never "merged".
  */
 export async function seedE2EFactor(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
   assertLocalTarget(url);
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
+  const headers = {
+    apikey: service,
+    Authorization: `Bearer ${service}`,
+    'Content-Type': 'application/json',
+    Prefer: 'return=representation',
+  };
+  const get = async (path: string) => {
+    const res = await request.get(`${url}/rest/v1/${path}`, { headers });
+    if (!res.ok()) throw new Error(`seedE2EFactor read failed: ${res.status()} ${await res.text()}`);
+    return (await res.json()) as Array<Record<string, unknown>>;
+  };
+  const post = async (table: string, data: unknown) => {
+    const res = await request.post(`${url}/rest/v1/${table}`, { headers, data });
+    if (!res.ok()) throw new Error(`seedE2EFactor failed (${table}): ${res.status()} ${await res.text()}`);
+    return (await res.json()) as Array<Record<string, unknown>>;
+  };
+
+  // Looked up first, never upserted: the release's insert trigger checks the
+  // ordinal before any ON CONFLICT clause could ignore a duplicate.
+  const releaseKey = `publisher=eq.${encodeURIComponent(E2E_FIXTURE_PUBLISHER)}&edition=eq.${encodeURIComponent(E2E_FACTOR_VERSION)}`;
+  let [release] = await get(`factor_releases?select=id,status&${releaseKey}`);
+  if (release && release.status !== 'fixture') {
+    throw new Error(`The e2e fixture release exists with status ${String(release.status)} — reset the database.`);
+  }
+  release ??= (
+    await post('factor_releases', {
+      id: randomUUID(),
+      publisher: E2E_FIXTURE_PUBLISHER,
+      title: 'End-to-end test fixture factors',
+      edition: E2E_FACTOR_VERSION,
+      ordinal: 1,
+      status: 'fixture',
+      notes: 'Written by the e2e suite and deleted by its teardown. Not a source.',
+    })
+  )[0];
+
   // `updated_at` is Prisma's `@updatedAt`, which Prisma fills in — the column
   // itself has no database default, unlike `created_at`. A raw PostgREST
   // insert bypasses Prisma entirely, so it has to be supplied here or the row
-  // is refused with a not-null violation. (The existing service-role
-  // precedent, `backdateCreatedAt`, is an UPDATE and never met this.)
+  // is refused with a not-null violation.
   const now = new Date().toISOString();
-  const rows = ['TR', 'UK', 'EU'].map((geographyCode) => ({
-    id: randomUUID(),
-    created_at: now,
-    updated_at: now,
+  const wanted = ['TR', 'UK', 'EU'].map((geographyCode) => ({
+    release_id: release.id,
     category: E2E_BULK_CATEGORY,
+    // Waste has no activity types: its lookup is `unspecified`, which only a
+    // non-authoritative release may carry.
+    activity_type: 'unspecified',
+    gas: 'CO2e',
+    gas_coverage: 'all_ghg',
     geography_code: geographyCode,
     reporting_year: E2E_YEAR,
+    data_year: E2E_YEAR,
     scope: 3,
-    // Not 1. `tonnes` normalises with an identity multiplier, so a factor of 1
-    // would make the whole chain an identity — `kgCo2e === activityValue` —
-    // and a regression that dropped either the normalisation or the factor
-    // multiply would compute the right answer anyway. 7 keeps the arithmetic
-    // trivial (12 t -> 84 kg -> 0.084 t) while leaving both steps observable,
-    // and is still orders of magnitude below any published waste factor, so it
-    // cannot be mistaken for a sourced value.
-    factor_value: 7,
-    // Singular denominator, following the library's own convention
-    // (`kgCO2e/litre`, `kgCO2e/kWh`). This string is display-only — it is
-    // printed verbatim into the record drawer and the PDF appendix, while
-    // `normalized_unit` is the one the calculator matches on.
-    factor_unit: 'kgCO2e/tonne',
-    normalized_unit: E2E_BULK_UNIT,
+    scope2_method: 'not_applicable',
+    calorific_basis: 'not_applicable',
+    // Per kg — a factor is quoted per ONE base unit of its family, and mass's
+    // is kg (LP3-03); the rows are entered in tonnes and normalised ×1000
+    // first. 0.007 per kg is the 7 per tonne the suite always used, so
+    // 12 t -> 12,000 kg -> 84 kg -> 0.084 t still keeps both the definitional
+    // step and the factor multiply observable, and is orders of magnitude below
+    // any published waste factor, so it cannot be mistaken for a sourced value.
+    factor_value: 0.007,
+    // Display-only — printed verbatim into the record drawer and the PDF
+    // appendix; `normalized_unit` is the one the calculator matches on.
+    factor_unit: 'kgCO2e/kg',
+    normalized_unit: 'kg',
     methodology: 'E2E fixture — not a methodology',
     source: 'E2E FIXTURE — not a real emission factor, not for reporting',
     version: E2E_FACTOR_VERSION,
   }));
-  // `on_conflict` is not optional here. PostgREST infers the conflict target
-  // from the PRIMARY KEY unless it is told otherwise, and every call generates
-  // a fresh `id` — so without this, `merge-duplicates` resolves on `id`, misses
-  // the (category, geography, year, version) unique index, and a row left by a
-  // run that died before teardown comes back as a 409. What has been covering
-  // that so far is `cleanupE2EFactors` running immediately before this in
-  // `globalSetup`, which is a different guarantee than the one the header
-  // claims.
-  const conflictTarget = 'category,geography_code,reporting_year,version';
-  const res = await request.post(
-    `${url}/rest/v1/emission_factors?on_conflict=${conflictTarget}`,
-    {
-      headers: {
-        apikey: service,
-        Authorization: `Bearer ${service}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=minimal,resolution=merge-duplicates',
-      },
-      data: rows,
-    },
+  const stored = await get(
+    `emission_factors?select=geography_code,factor_value,normalized_unit,factor_unit,scope&release_id=eq.${String(release.id)}`,
   );
-  if (!res.ok()) {
-    throw new Error(`seedE2EFactor failed: ${res.status()} ${await res.text()}`);
+  const missing = wanted.filter((w) => {
+    const row = stored.find((r) => r.geography_code === w.geography_code);
+    if (!row) return true;
+    if (row.factor_value !== w.factor_value || row.normalized_unit !== w.normalized_unit || row.scope !== w.scope) {
+      throw new Error(`The e2e fixture factor for ${w.geography_code} differs from the suite's — reset the database.`);
+    }
+    return false;
+  });
+  if (missing.length > 0) {
+    await post(
+      'emission_factors',
+      missing.map((row) => ({ ...row, id: randomUUID(), created_at: now, updated_at: now })),
+    );
   }
 }
 
-/** Remove the fixture factor. Keyed on the version sentinel, like the others. */
+/**
+ * Remove the fixture release and its factors — the one release the
+ * append-only triggers let anyone delete. Factors first: the release key
+ * RESTRICTs.
+ */
 export async function cleanupE2EFactors(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
   assertLocalTarget(url);
   const service = process.env.E2E_SUPABASE_SERVICE_KEY;
   if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
-  reportCleanup([
-    await del(
-      request,
-      `${url}/rest/v1/emission_factors?version=eq.${encodeURIComponent(E2E_FACTOR_VERSION)}`,
-      headers,
-    ),
-  ]);
+  const res = await request.get(
+    `${url}/rest/v1/factor_releases?select=id&status=eq.fixture&publisher=eq.${encodeURIComponent(E2E_FIXTURE_PUBLISHER)}&edition=eq.${encodeURIComponent(E2E_FACTOR_VERSION)}`,
+    { headers },
+  );
+  if (!res.ok()) throw new Error(`cleanupE2EFactors read failed: ${res.status()} ${await res.text()}`);
+  const releases = (await res.json()) as Array<{ id: string }>;
+  const results = [];
+  for (const { id } of releases) {
+    results.push(await del(request, `${url}/rest/v1/emission_factors?release_id=eq.${id}`, headers));
+    results.push(await del(request, `${url}/rest/v1/unit_conversions?release_id=eq.${id}`, headers));
+    results.push(await del(request, `${url}/rest/v1/factor_releases?id=eq.${id}`, headers));
+  }
+  reportCleanup(results);
 }
 
 /** One row of a bulk-upload file, in the importer's own column order. */

@@ -188,6 +188,12 @@ model ActivityRecord {
   // second spelling of one month is a second period.
   periodValue    String               @map("period_value")
   category       String // canonical category key, e.g. "Electricity"
+  // The fuel or gas a typed category's record is for (`recordActivityTypesFor`
+  // in @tonyai/shared-types: Fuel, Mobile Combustion, Refrigerants); NULL for
+  // an implicit category and for a record written before LP3-03. Part of the
+  // record's uniqueness slot (the raw index below), so diesel and petrol of one
+  // site and month are two records.
+  activityType   String?              @map("activity_type")
   scope          Int // derived from CATEGORY_SCOPE_MAP
   status         ActivityRecordStatus @default(draft)
   activityValue  Float                @map("activity_value")
@@ -258,11 +264,14 @@ model ActivityRecord {
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
 
-  // Uniqueness is enforced by a raw NULLS NOT DISTINCT unique index (see the
-  // record_location_linkage migration): one record per (subsidiary, location,
-  // year, period, periodValue, category) — NULL location_id (subsidiary-level)
+  // Uniqueness is enforced by a raw NULLS NOT DISTINCT unique index (last
+  // defined by the LP3-03 factor-model migration): one live record per
+  // (subsidiary, location, year, period, periodValue, category, activityType)
+  // — NULL location_id (subsidiary-level) and NULL activity_type (untyped)
   // rows are deduplicated too. Prisma's @@unique can't express NULLS NOT
-  // DISTINCT, so it lives in raw SQL like the RLS policies.
+  // DISTINCT, so it lives in raw SQL like the RLS policies. A slot holds typed
+  // records or one untyped record, never both: a trigger in the same
+  // migration, since the index cannot see it (NULL ≠ 'diesel').
   @@index([subsidiaryId])
   @@index([locationId])
   // The target of `activity_record_evidence`'s composite foreign key — `id`
@@ -468,26 +477,102 @@ model UserSubsidiaryAccess {
 
 // Emission factors are REFERENCE DATA, not tenant-scoped: every authenticated
 // user may read them (RLS SELECT policy has no tenant predicate). Writes stay on
-// the owner/service-role backend (seed). A calculation snapshots the factor it
-// used so historic results never change even if a newer version is added later.
+// the owner/service-role backend (seed, LP4-02's loader); the runtime role
+// reads only. A calculation snapshots the factor (and its release) it used, so
+// historic results never change when a newer release is loaded.
+//
+// LP3-03: a factor belongs to exactly one release, which carries its status
+// and provenance. All three factor tables are append-only in the database
+// (triggers in the LP3-03 migration): a release may only be withdrawn, a factor
+// or conversion never changes, and only a `fixture` release's rows may be
+// deleted. The vocabularies (status, gas, basis, method, publisher) are CHECK
+// constraints there, mirroring @tonyai/shared-types.
+model FactorRelease {
+  id               String    @id @default(uuid()) @db.Uuid
+  // A closed registry (CHECK): a look-alike name cannot become a second
+  // publisher. LP4-02 extends it with the real publishers.
+  publisher        String
+  title            String
+  edition          String // the publisher's label — displayed, never compared
+  ordinal          Int // orders one publisher's releases; each load exceeds the last
+  status           String // authoritative | placeholder | fixture | withdrawn
+  sourceUrl        String?   @map("source_url")
+  licence          String?
+  publishedAt      DateTime? @map("published_at") @db.Date
+  gwpSet           String?   @map("gwp_set")
+  // A firm or role, never a person: readable by every tenant through the API's
+  // snapshots; withheld from the `authenticated` client role with `notes`.
+  reviewedBy       String?   @map("reviewed_by")
+  reviewedAt       DateTime? @map("reviewed_at") @db.Date
+  notes            String?
+  withdrawnAt      DateTime? @map("withdrawn_at") @db.Timestamptz(6)
+  withdrawnBy      String?   @map("withdrawn_by")
+  withdrawalReason String?   @map("withdrawal_reason")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  factors     EmissionFactor[]
+  conversions UnitConversion[]
+
+  @@unique([publisher, ordinal])
+  @@unique([publisher, edition])
+  @@map("factor_releases")
+}
+
 model EmissionFactor {
   id             String   @id @default(uuid()) @db.Uuid
+  releaseId      String   @map("release_id") @db.Uuid
+  release        FactorRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   category       String // canonical category key, e.g. "Electricity", "Natural Gas"
+  // `factorActivityTypeFor`: the category's implicit type, a typed category's
+  // fuel or gas, or `unspecified` (non-authoritative releases only).
+  activityType   String   @map("activity_type")
+  gas            String // CO2e (the total a calculation multiplies) | CO2 | CH4 | N2O | CO2_biogenic
+  gasCoverage    String?  @map("gas_coverage") // all_ghg | co2_only on a CO2e row; NULL otherwise
   geographyCode  String   @map("geography_code") // UK | TR | EU
   reportingYear  Int      @map("reporting_year")
+  dataYear       Int      @map("data_year")
   scope          Int // 1 (direct) | 2 (purchased energy)
-  factorValue    Float    @map("factor_value") // kgCO2e per normalized unit
+  scope2Method   String   @map("scope2_method") // location | market | not_applicable
+  calorificBasis String   @map("calorific_basis") // gross | net | not_applicable
+  factorValue    Float    @map("factor_value") // kgCO2e per ONE normalized (base) unit
   factorUnit     String   @map("factor_unit") // e.g. "kgCO2e/kWh"
-  normalizedUnit String   @map("normalized_unit") // target unit after normalization, e.g. "kWh"
+  normalizedUnit String   @map("normalized_unit") // the base unit of its family, e.g. "kWh"
   methodology    String // e.g. "location-based"
   source         String // provenance, e.g. "DEFRA 2024 GHG Conversion Factors"
-  version        String // factor-library version, e.g. "2024.1"
+  version        String // the release's edition when loaded (pre-LP3-03 rows keep their own)
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  @@unique([category, geographyCode, reportingYear, version])
+  // FACTOR_IDENTITY_FIELDS (@tonyai/shared-types), in its order.
+  @@unique([releaseId, category, activityType, gas, geographyCode, reportingYear, scope2Method, calorificBasis, normalizedUnit], name: "identity", map: "emission_factors_identity_key")
   @@index([category, geographyCode, reportingYear])
   @@map("emission_factors")
+}
+
+// A sourced step between unit families (metered m³ → kWh) for one fuel,
+// country and year. A definitional step (MWh → kWh, tonnes → kg) is code, not a
+// row.
+model UnitConversion {
+  id                  String        @id @default(uuid()) @db.Uuid
+  releaseId           String        @map("release_id") @db.Uuid
+  release             FactorRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  category            String
+  activityType        String        @map("activity_type")
+  geographyCode       String        @map("geography_code")
+  reportingYear       Int           @map("reporting_year")
+  dataYear            Int           @map("data_year")
+  fromUnit            String        @map("from_unit") // a base unit (DIMENSION_BASE_UNIT)
+  toUnit              String        @map("to_unit") // a base unit of another family
+  multiplier          Float
+  calorificBasis      String        @map("calorific_basis")
+  referenceConditions String?       @map("reference_conditions")
+  basis               String
+  createdAt           DateTime      @default(now()) @map("created_at")
+
+  // CONVERSION_IDENTITY_FIELDS (@tonyai/shared-types), in its order.
+  @@unique([releaseId, category, activityType, geographyCode, reportingYear, fromUnit, toUnit, calorificBasis], name: "identity", map: "unit_conversions_identity_key")
+  @@index([category, geographyCode, reportingYear])
+  @@map("unit_conversions")
 }
 
 model AuditLog {

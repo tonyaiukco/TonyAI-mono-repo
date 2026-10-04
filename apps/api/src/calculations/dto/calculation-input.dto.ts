@@ -2,7 +2,9 @@ import {
   IsIn,
   IsInt,
   IsNumber,
+  IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -17,6 +19,7 @@ import type { Category, GeographyCode } from '@tonyai/shared-types';
 import { Transform } from 'class-transformer';
 import { IsActivityUnit } from '../is-activity-unit.decorator';
 import { storableUnit } from '../storable-unit';
+import { ACTIVITY_TYPE_SHAPE, ACTIVITY_TYPE_SHAPE_MESSAGE } from '../activity-type';
 
 /**
  * Body of POST /api/v1/calculations/preview.
@@ -47,6 +50,13 @@ export class CalculationInputDto {
   @IsString()
   @IsIn(CATEGORIES as readonly string[])
   category!: Category;
+
+  // LP3-03: the fuel or gas of a typed category (Fuel, Mobile Combustion,
+  // Refrigerants); none for the others. Shape only here — see ACTIVITY_TYPE_SHAPE.
+  @IsOptional()
+  @IsString()
+  @Matches(ACTIVITY_TYPE_SHAPE, { message: ACTIVITY_TYPE_SHAPE_MESSAGE })
+  activityType?: string | null;
 
   // GEOGRAPHY_CODES, never SELECTABLE_GEOGRAPHY_CODES: the selectable list
   // hides EU from pickers while keeping it valid at the API, in the factor

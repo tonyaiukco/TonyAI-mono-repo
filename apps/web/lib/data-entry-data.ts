@@ -66,7 +66,9 @@ export const categoryFieldGroups: Record<string, FieldGroup[]> = {
       name: 'Stationary Combustion',
       description: 'Fuel used for heating, generators, and other stationary equipment',
       fields: [
-        { id: 'fuel_type', name: 'fuel_type', type: 'select', label: 'Fuel Type', required: true, options: ['Natural Gas', 'Diesel', 'Heating Oil', 'LPG', 'Coal', 'Biomass'] },
+        // No "Fuel Type" here: the fuel is the record's activity type (LP3-03),
+        // chosen in the form's own "Fuel or gas" field and priced by it — a
+        // second, free-standing fuel list would disagree with it.
         { id: 'quantity', name: 'quantity', type: 'number', label: 'Quantity', placeholder: 'Enter amount', required: true },
         { id: 'quantity_unit', name: 'quantity_unit', type: 'select', label: 'Unit', required: true, options: ['Liters', 'Cubic Meters', 'Tonnes', 'kWh'] },
         { id: 'purpose', name: 'purpose', type: 'select', label: 'Purpose', required: true, options: ['Heating', 'Power Generation', 'Industrial Process', 'Other'] },

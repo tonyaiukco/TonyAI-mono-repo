@@ -121,7 +121,12 @@ const SIUD = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
  */
 export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   organisations: ['SELECT'],
+  // The factor library (LP3-03): reference data the API reads and never
+  // writes — releases and conversions are loaded by the seed and LP4-02's
+  // loader on the owner connection.
   emission_factors: ['SELECT'],
+  factor_releases: ['SELECT'],
+  unit_conversions: ['SELECT'],
   // + UPDATE on (role, updated_at) only — see RUNTIME_COLUMN_UPDATES.
   profiles: ['SELECT'],
   user_subsidiary_access: ['SELECT', 'INSERT', 'DELETE'],
@@ -421,6 +426,97 @@ export async function checkTenantInvariants(query) {
 }
 
 /**
+ * The integrity triggers the LP3-03 migration installs, each of which must
+ * exist and be ENABLE ALWAYS (`tgenabled = 'A'`) — firing in replica mode too,
+ * so a restore cannot slip past them. A trigger disabled or dropped by hand is
+ * a silent hole: the snapshot of an approved record becomes editable, or a
+ * loaded factor rewritable.
+ */
+export const INTEGRITY_TRIGGERS = Object.freeze([
+  ['activity_records', 'activity_records_snapshot_immutable'],
+  ['activity_records', 'activity_records_slot_kind'],
+  ...['factor_releases', 'emission_factors', 'unit_conversions'].flatMap((table) =>
+    ['insert', 'update', 'delete', 'truncate'].map((event) => [table, `${table}_before_${event}`]),
+  ),
+]);
+
+/** The CHECK constraints the factor model's guarantees rest on. */
+export const INTEGRITY_CHECKS = Object.freeze([
+  ['factor_releases', 'factor_releases_status_check'],
+  ['factor_releases', 'factor_releases_publisher_check'],
+  ['factor_releases', 'factor_releases_authoritative_provenance_check'],
+  ['factor_releases', 'factor_releases_withdrawal_check'],
+  ['emission_factors', 'emission_factors_gas_check'],
+  ['emission_factors', 'emission_factors_scope2_method_check'],
+  ['emission_factors', 'emission_factors_calorific_basis_check'],
+  ['unit_conversions', 'unit_conversions_calorific_basis_check'],
+  ['activity_records', 'activity_records_activity_type_check'],
+]);
+
+/** Every integrity trigger and CHECK, present and in force. */
+export async function checkIntegrityTriggers(query) {
+  const triggers = await query(
+    `SELECT c.relname AS "table", t.tgname AS "trigger", t.tgenabled AS "enabled"
+       FROM pg_trigger t
+       JOIN pg_class c ON c.oid = t.tgrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND NOT t.tgisinternal`,
+  );
+  const constraints = await query(
+    `SELECT c.relname AS "table", k.conname AS "name", k.convalidated AS "validated"
+       FROM pg_constraint k
+       JOIN pg_class c ON c.oid = k.conrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND k.contype = 'c'`,
+  );
+  const problems = [];
+  for (const [table, name] of INTEGRITY_TRIGGERS) {
+    const found = triggers.find((t) => t.table === table && t.trigger === name);
+    if (!found) problems.push(`trigger ${name} on ${table} is missing`);
+    else if (found.enabled !== 'A') problems.push(`trigger ${name} on ${table} is not ENABLE ALWAYS (tgenabled = '${found.enabled}')`);
+  }
+  for (const [table, name] of INTEGRITY_CHECKS) {
+    const found = constraints.find((c) => c.table === table && c.name === name);
+    if (!found) problems.push(`CHECK ${name} on ${table} is missing`);
+    else if (!found.validated) problems.push(`CHECK ${name} on ${table} is NOT VALID`);
+  }
+  return problems;
+}
+
+/**
+ * What the factor library holds that production must not calculate from, as
+ * data. `problems`: an `unspecified` activity type under an authoritative
+ * release (the insert trigger refuses it; a replica-mode restore would not).
+ * `notices`: every non-authoritative release present — expected locally and
+ * in CI, a finding on staging or production, where the seed never runs
+ * (owner decision K3).
+ */
+export async function factorLibraryReport(query) {
+  const [{ n }] = await query(
+    `SELECT (
+        (SELECT count(*) FROM emission_factors f JOIN factor_releases r ON r.id = f.release_id
+          WHERE r.status = 'authoritative' AND f.activity_type = 'unspecified')
+      + (SELECT count(*) FROM unit_conversions u JOIN factor_releases r ON r.id = u.release_id
+          WHERE r.status = 'authoritative' AND u.activity_type = 'unspecified')
+     )::int AS n`,
+  );
+  const releases = await query(
+    `SELECT r.publisher, r.edition, r.status,
+            (SELECT count(*) FROM emission_factors f WHERE f.release_id = r.id)::int AS factors,
+            (SELECT count(*) FROM unit_conversions u WHERE u.release_id = r.id)::int AS conversions
+       FROM factor_releases r
+      WHERE r.status IN ('placeholder', 'fixture')
+      ORDER BY r.publisher, r.ordinal`,
+  );
+  return {
+    problems: n > 0 ? [`${n} factor/conversion row(s) with an unspecified activity type under an authoritative release`] : [],
+    notices: releases.map(
+      (r) => `${r.status} release ${r.publisher} ${r.edition} (${r.factors} factor(s), ${r.conversions} conversion(s))`,
+    ),
+  };
+}
+
+/**
  * Gives the runtime role a login with `password`, through the owner connection
  * `client` (a PrismaClient). Loopback databases only; the server receives a
  * SCRAM verifier, never the password.
@@ -467,14 +563,24 @@ async function main() {
     const client = new PrismaClient({ datasourceUrl: url });
     let problems;
     let exposures;
+    let library;
     try {
       const query = (sql) => client.$queryRawUnsafe(sql);
-      problems = [...(await checkRuntimeRole(query)), ...(await checkTenantInvariants(query))];
+      library = await factorLibraryReport(query);
+      problems = [
+        ...(await checkRuntimeRole(query)),
+        ...(await checkTenantInvariants(query)),
+        ...(await checkIntegrityTriggers(query)),
+        ...library.problems,
+      ];
       exposures = await runtimeRoleExposures(query);
     } finally {
       await client.$disconnect();
     }
     for (const e of exposures) console.warn(`  ! ${RUNTIME_ROLE} can also reach ${e}`);
+    // Not a failure here — local and CI databases hold the seed's placeholder
+    // library on purpose. On staging or production each line is a finding.
+    for (const n of library.notices) console.warn(`  ! factor library holds a ${n}`);
     if (problems.length > 0) {
       console.error(`${RUNTIME_ROLE} on ${new URL(url).host}: ${problems.length} problem(s)`);
       for (const p of problems) console.error(`  - ${p}`);

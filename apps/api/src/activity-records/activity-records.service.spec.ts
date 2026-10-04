@@ -27,9 +27,14 @@ import {
   SubmitRoleRefusedError,
   VARIANCE_REFUSAL,
   VarianceReasonRequiredError,
+  ActivityTypeSlotConflictError,
+  SLOT_HOLDS_UNTYPED_MESSAGE,
+  SnapshotImmutableError,
+  recordTriggerCode,
 } from './errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { CalculationsService } from '../calculations/calculations.service';
+import { CalculationInputError } from '../calculations/errors';
 import type { RequestUser } from '../auth/auth.types';
 
 import { AuditService } from '../audit/audit.service';
@@ -140,7 +145,7 @@ let seq = 0;
  */
 const PERSISTED_KEYS = [
   'id', 'subsidiaryId', 'locationId', 'reportingYear', 'reportingPeriod',
-  'periodValue', 'category', 'scope', 'status', 'activityValue',
+  'periodValue', 'category', 'activityType', 'scope', 'status', 'activityValue',
   'activityUnit', 'input', 'calculation', 'createdBy', 'anomalyFlag',
   'anomalyBaselinePriorCount', 'anomalyBaselineTCo2e', 'varianceReason',
   'reviewedBy', 'reviewedAt', 'reviewNote', 'submittedAt', 'voidReason', 'voidedBy',
@@ -370,6 +375,8 @@ describe('ActivityRecordsService — create stores the calc snapshot', () => {
     expect(calc.compute).toHaveBeenCalledWith(
       {
         category: 'Electricity',
+        // An implicit category's record names no activity type (LP3-03).
+        activityType: null,
         geographyCode: 'TR',
         reportingYear: 2024,
         value: 45000,
@@ -3450,5 +3457,140 @@ describe('ActivityRecordsService — the lifecycle protocol (LP1-01)', () => {
     );
 
     await expect(service.approve(superAdmin(), 'rec-d')).rejects.toBeInstanceOf(RecordChangedError);
+  });
+});
+
+describe('ActivityRecordsService — activity type (LP3-03)', () => {
+  const FUEL_DTO = { ...CREATE_DTO, category: 'Fuel' as const, activityUnit: 'litres' };
+  const triggerError = (code: string) =>
+    new Prisma.PrismaClientUnknownRequestError(
+      `Error occurred during query execution: ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "refused", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
+      { clientVersion: '6.19.3' },
+    );
+
+  function arrangeCreate(prisma: ReturnType<typeof build>['prisma']) {
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }));
+    prisma.activityRecord.create.mockImplementation(({ data }: any) => makeRecord({ ...data, id: 'rec-new' }));
+  }
+
+  function arrangeUpdate(prisma: ReturnType<typeof build>['prisma'], existing: Partial<ActivityRecord>) {
+    prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1', geographyCode: 'TR' }));
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-t', status: ActivityRecordStatus.draft, createdBy: 'user-entry', ...existing }),
+    );
+    prisma.activityRecord.update.mockImplementation(({ data }: any) => ({
+      ...makeRecord({ id: 'rec-t', ...existing, ...data }),
+      _count: { evidenceLinks: 0 },
+      location: null,
+    }));
+  }
+
+  it('refuses a new record in a typed category that names no activity type — before any lookup or write', async () => {
+    const { prisma, calc, service } = build(1);
+    arrangeCreate(prisma);
+    await expect(service.create(dataEntry(), FUEL_DTO)).rejects.toMatchObject({
+      code: 'activity_type_required',
+      status: 400,
+    });
+    expect(calc.compute).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.create).not.toHaveBeenCalled();
+    // The bulk dry run asks the same question through previewCreate.
+    await expect(service.previewCreate(dataEntry(), FUEL_DTO)).rejects.toBeInstanceOf(CalculationInputError);
+  });
+
+  it('stores the named type, prices by it, and baselines it against its own series', async () => {
+    const { prisma, calc, service } = build(1);
+    arrangeCreate(prisma);
+    await service.create(dataEntry(), { ...FUEL_DTO, activityType: 'diesel' });
+    expect(calc.compute).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'Fuel', activityType: 'diesel' }),
+      { enforceCategoryUnit: true },
+    );
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.activityType).toBe('diesel');
+    expect(prisma.activityRecord.findMany.mock.calls[0][0].where).toMatchObject({ category: 'Fuel', activityType: 'diesel' });
+  });
+
+  it('pools an untyped record only with untyped ones — an explicit null, never a dropped key', async () => {
+    const { prisma, service } = build(2);
+    arrangeCreate(prisma);
+    await service.create(dataEntry(), CREATE_DTO);
+    const where = prisma.activityRecord.findMany.mock.calls[0][0].where;
+    // Prisma drops an `undefined` filter, which would pool diesel with petrol.
+    expect(where).toHaveProperty('activityType', null);
+    expect(prisma.activityRecord.create.mock.calls[0][0].data.activityType).toBeNull();
+  });
+
+  it('answers the slot-kind trigger (TA002) with a 409 that says which side the record is on', async () => {
+    const { prisma, service } = build(1);
+    arrangeCreate(prisma);
+    prisma.activityRecord.create.mockRejectedValue(triggerError('TA002'));
+    await expect(service.create(dataEntry(), { ...FUEL_DTO, activityType: 'diesel' })).rejects.toMatchObject({
+      status: 409,
+      message: SLOT_HOLDS_UNTYPED_MESSAGE,
+    });
+    await expect(service.create(dataEntry(), { ...FUEL_DTO, activityType: 'diesel' })).rejects.toBeInstanceOf(
+      ActivityTypeSlotConflictError,
+    );
+  });
+
+  it('lets a pre-LP3-03 untyped Fuel record be edited without naming a type', async () => {
+    const { prisma, calc, service } = build(1);
+    arrangeUpdate(prisma, { category: 'Fuel', activityType: null, activityUnit: 'litres', scope: 1 });
+    await service.update(dataEntry(), 'rec-t', { activityValue: 12 });
+    expect(calc.compute).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'Fuel', activityType: null }),
+      expect.anything(),
+    );
+    // An unrelated edit leaves the column alone.
+    expect(prisma.activityRecord.update.mock.calls[0][0].data).not.toHaveProperty('activityType');
+  });
+
+  it('requires a type when an edit moves a record INTO a typed category, or clears a typed one', async () => {
+    const moved = build(1);
+    arrangeUpdate(moved.prisma, { category: 'Electricity', activityType: null });
+    await expect(
+      moved.service.update(dataEntry(), 'rec-t', { category: 'Fuel', activityUnit: 'litres' }),
+    ).rejects.toMatchObject({ code: 'activity_type_required' });
+
+    const cleared = build(1);
+    arrangeUpdate(cleared.prisma, { category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', scope: 1 });
+    await expect(cleared.service.update(dataEntry(), 'rec-t', { activityType: null })).rejects.toMatchObject({
+      code: 'activity_type_required',
+    });
+    expect(cleared.prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('checks a kept type against the EFFECTIVE category, so the engine refuses diesel Electricity', async () => {
+    const { prisma, calc, service } = build(2);
+    arrangeUpdate(prisma, { category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', scope: 1 });
+    await service.update(dataEntry(), 'rec-t', { category: 'Electricity', activityUnit: 'kWh' });
+    expect(calc.compute).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'Electricity', activityType: 'diesel' }),
+      expect.anything(),
+    );
+  });
+
+  it('answers the snapshot trigger (TA001) on an update with a 409, not a 500', async () => {
+    const { prisma, service } = build(2);
+    arrangeUpdate(prisma, {});
+    prisma.activityRecord.update.mockRejectedValue(triggerError('TA001'));
+    await expect(service.update(dataEntry(), 'rec-t', { activityValue: 5 })).rejects.toBeInstanceOf(SnapshotImmutableError);
+  });
+});
+
+describe('recordTriggerCode', () => {
+  it('reads the SQLSTATE of an activity_records trigger from either Prisma error shape', () => {
+    const unknown = (code: string) =>
+      new Prisma.PrismaClientUnknownRequestError(`kind: QueryError(PostgresError { code: "${code}", message: "x" })`, {
+        clientVersion: '6',
+      });
+    expect(recordTriggerCode(unknown('TA001'))).toBe('TA001');
+    expect(recordTriggerCode(unknown('TA002'))).toBe('TA002');
+    // Another trigger's code, or a message merely mentioning one, is not this.
+    expect(recordTriggerCode(unknown('TA010'))).toBeNull();
+    expect(recordTriggerCode(new Prisma.PrismaClientUnknownRequestError('TA001 mentioned in passing', { clientVersion: '6' }))).toBeNull();
+    const raw = new Prisma.PrismaClientKnownRequestError('raw', { code: 'P2010', clientVersion: '6', meta: { code: 'TA002' } });
+    expect(recordTriggerCode(raw)).toBe('TA002');
+    expect(recordTriggerCode(new Error('code: "TA001"'))).toBeNull();
   });
 });
