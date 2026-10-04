@@ -1006,6 +1006,8 @@ describe('validateFactorReleaseImport — review round 1', () => {
       issuesAt(release({ meta: { licence: 'x'.repeat(FACTOR_IMPORT_TEXT_LIMITS.licence + 1) } })),
     ).toContain('release.licence');
     expect(issuesAt(release({ meta: { publisher: ' DESNZ' } }))).toContain('release.publisher');
+    expect(issuesAt(release({ meta: { notes: `note${RLO}` } }))).toContain('release.notes');
+    expect(issuesAt(release({ meta: { reviewedBy: `Reviewer${ZWSP}` } }))).toContain('release.reviewedBy');
     expect(issuesAt(release({ meta: { title: 'Café' } }))).toContain('release.title');
   });
 
@@ -1135,6 +1137,20 @@ describe('validateFactorReleaseImport — review round 1', () => {
         }),
       ),
     ).toContain('release.gwpSet');
+  });
+
+  it('checks optional reference conditions on a step with no gas volume', () => {
+    const density = {
+      category: 'Mobile Combustion',
+      activityType: 'cng',
+      fromUnit: 'litres',
+      toUnit: 'kg',
+      calorificBasis: 'not_applicable',
+    };
+    expect(issuesAt(release({ conversions: [conversionRow({ ...density, referenceConditions: null })] }))).toEqual([]);
+    expect(
+      issuesAt(release({ conversions: [conversionRow({ ...density, referenceConditions: `15 °C${RLO}` })] })),
+    ).toContain('conversions[0].referenceConditions');
   });
 
   it('keeps conversions between base units', () => {
@@ -1353,6 +1369,24 @@ describe('validateFactorReleaseImport — every rule has a negative and a positi
         JSON.stringify(other),
       ).toContain('factors[1].gas');
     }
+  });
+
+  it('groups by unit alone when nothing else differs', () => {
+    const mobile = {
+      category: 'Mobile Combustion',
+      activityType: 'diesel',
+      calorificBasis: 'not_applicable',
+    };
+    const perLitre = factorRow({ ...mobile, normalizedUnit: 'litres', factorUnit: 'kgCO2e/L' });
+    const ch4PerKg = factorRow({
+      ...mobile,
+      normalizedUnit: 'kg',
+      factorUnit: 'kgCO2e/kg',
+      gas: 'CH4',
+      gasCoverage: null,
+      factorValue: 0.1,
+    });
+    expect(issuesAt(release({ factors: [perLitre, ch4PerKg] }))).toContain('factors[1].gas');
   });
 
   it('checks every conversion rule', () => {
