@@ -261,8 +261,8 @@ The rule needs **three** prior committed periods. Fewer than three means the rul
 **Verified existing implementation**, not a new parser change: [#133](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/133)
 (`defaf4a`). [#145's verification](https://github.com/tonyaiukco/TonyAI-mono-repo/pull/145)
 records **460/460** focused `parse-rows`, `xlsx-reader`, `bulk-upload.service` and
-`caller-text` tests passing on Node 22 at `f14c81f`, with the implementation/specs
-from #133 unchanged. Refusal before writes was verified through control flow and
+`caller-text` tests passing on Node 22 at `f14c81f`, with #133's escape implementation
+and regression cases unchanged. Refusal before writes was verified through control flow and
 preflight tests; that evidence is **not a live database or browser UAT run**.
 The P/F cells below remain open for an operator's execution on the selected UAT
 release. Record its SHA, fixture variant, outcome and write-count evidence.
@@ -283,8 +283,8 @@ fixtures, not authoritative emission-factor data.
 | --- | --- | --- | --- |
 | XLSX-01 | Put `before_x0000_after` in the first data row's `varianceReason`; upload through bulk import. | Whole file refused before import. Error names **row 2**, **varianceReason** and **U+0000**; no generic server error, silent replacement or partial successful rows. | |
 | XLSX-02 | Repeat with `_xD800_` (lone high surrogate), `_xDE00_` (lone low), then `_xDE00__xD83D_` (reversed pair). | Each whole file is refused, identifying row/column and **U+D800** or **U+DE00** respectively. | |
-| XLSX-03 | Put `meter swapped _xD83D__xDE00_` in `varianceReason`. Preview the otherwise valid import. | Valid pair is retained as **meter swapped 😀**. No replacement character, truncation or surrogate refusal. Acceptance remains subject to ordinary domain validation. | |
-| XLSX-04 | Put `_x005F_x0000_` in `varianceReason`. Preview the otherwise valid import. | The seven literal characters **`_x0000_`** are retained; they are not decoded twice into NUL or falsely refused. | |
+| XLSX-03 | Put `meter swapped _xD83D__xDE00_` in `varianceReason`. Import the otherwise valid file, then inspect the stored `varianceReason` (preview does not expose it). | Valid pair is retained as **meter swapped 😀**. No replacement character, truncation or surrogate refusal. Acceptance remains subject to ordinary domain validation. | |
+| XLSX-04 | Put `_x005F_x0000_` in `varianceReason`. Import the otherwise valid file, then inspect the stored `varianceReason` (preview does not expose it). | The seven literal characters **`_x0000_`** are retained; they are not decoded twice into NUL or falsely refused. | |
 | XLSX-05 | Add header `t_x0000_e`, with a value beneath it. | Header-specific refusal begins **`Unrecognised column(s): "t<U+0000>e"`**. It names the character safely; it does not become a data-cell or generic workbook error. | |
 | XLSX-06 | Submit a workbook with a valid first data row and a later XLSX-01/02 fault. Compare the tenant's rows and import-source objects before/after; repeat for XLSX-05. | Refusal happens before **any** write: zero new activity records/calculation snapshots, import batches, source objects/storage intents or audit rows, including for the earlier valid row. A malformed-file refusal is not an audited caller-authorization event. | |
 | XLSX-07 | Combine an escaped bad cell with a 1,005-data-row workbook; separately combine an unlabelled value in row 2 with the bad cell in row 3. | Existing refusal order is preserved: **`The file has 1005 rows; the limit is 1000.`** wins in the first file; the unlabelled row-2 value wins in the second. Both refuse the whole file before writes. | |
