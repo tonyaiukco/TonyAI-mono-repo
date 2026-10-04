@@ -301,7 +301,7 @@ Both entry points use the same bulk-submit endpoint. It submits the records one 
 - a row gets a checkbox only when every gate the client can check passes. The list applies the server's gates in the server's order — role, status, authorship, period lock — plus the evidence rule: an evidence-required category with no file attached, so a draft whose invoice is attached qualifies. The anomaly verdict is left to the server, so a ticked draft can still come back refused, e.g. for a missing variance reason
 - a `draft` or `rejected` row that cannot be ticked shows a one-line reason instead, e.g. `Sent back by a reviewer — open it on its own, so the note gets read.`, `Entered by someone else.` or `Needs an evidence file.`; rows in other statuses rely on their status badge
 - no checkboxes appear until the current user has loaded
-- `Select all N` takes only the records the current user entered, up to 1,000. Only the author submits (decision D02), a `super_admin` included: the screen still lets a `super_admin` tick someone else's draft one at a time (its confirmation says how many were entered by someone else), and the submit now refuses each such row as `not_author` — removing the tick is an LP1-01 web follow-up
+- `Select all N` and individual checkboxes offer only the current user's own eligible drafts, up to 1,000 selected records. Submit is author-only (decision D02), including for `super_admin`; someone else's draft cannot be ticked or submitted.
 - a selection shows a bar with `N selected`, `Clear` and `Send N records for review`; a tick beyond 1,000 is refused with a notice
 
 #### Attaching One File to Several Records (Previous Submissions)
