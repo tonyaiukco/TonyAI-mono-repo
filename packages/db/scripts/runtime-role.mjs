@@ -444,6 +444,40 @@ export async function checkTenantInvariants(query) {
 }
 
 /**
+ * Table-level verbs no role but a table's owner may hold in `public`, now or
+ * by default privilege: TRIGGER (a trigger on any table a referential action
+ * reaches runs as the owner — PostgreSQL runs those actions as the owner — so
+ * past every guard that trusts it), TRUNCATE (past every row guard),
+ * REFERENCES and MAINTAIN. Supabase's default privileges grant all four to
+ * the service role; the LP3-03 migration takes them back.
+ */
+export async function checkTableLevelGrants(query) {
+  const verbs = "('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')";
+  const granted = await query(
+    `SELECT c.relname AS "table", CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee",
+            a.privilege_type AS "privilege"
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace,
+            LATERAL pg_catalog.aclexplode(c.relacl) a
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+        AND a.privilege_type IN ${verbs} AND a.grantee <> c.relowner
+      ORDER BY 1, 2, 3`,
+  );
+  const defaults = await query(
+    `SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee",
+            pg_catalog.pg_get_userbyid(d.defaclrole) AS "creator", a.privilege_type AS "privilege"
+       FROM pg_catalog.pg_default_acl d, LATERAL pg_catalog.aclexplode(d.defaclacl) a
+      WHERE d.defaclnamespace = 'public'::regnamespace AND d.defaclobjtype = 'r'
+        AND a.privilege_type IN ${verbs} AND a.grantee <> d.defaclrole
+      ORDER BY 1, 2, 3`,
+  );
+  return [
+    ...granted.map((g) => `${g.grantee} holds ${g.privilege} on public.${g.table} — only its owner may`),
+    ...defaults.map((d) => `${d.grantee} is granted ${d.privilege} on every new public table ${d.creator} creates — only its owner may hold it`),
+  ];
+}
+
+/**
  * The integrity triggers the LP3-03 migration installs: each must exist, be
  * ENABLE ALWAYS (`tgenabled = 'A'`, firing in replica mode too, so a restore
  * cannot slip past it), fire on exactly its events, and run its own function
@@ -809,6 +843,7 @@ async function main() {
       problems = [
         ...(await checkRuntimeRole(query)),
         ...(await checkTenantInvariants(query)),
+        ...(await checkTableLevelGrants(query)),
         ...(await checkIntegrityTriggers(query)),
         ...library.problems,
       ];

@@ -17,6 +17,7 @@ import {
   expectedTriggerFunctionBodies,
   factorLibraryReport,
   checkTenantInvariants,
+  checkTableLevelGrants,
 } from './runtime-role.mjs';
 
 // The database half — that PostgreSQL accepts the verifier and the privileges
@@ -258,6 +259,33 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
       'CHECK emission_factors_gas_check on emission_factors is NOT VALID',
       'CHECK factor_releases_publisher_check on factor_releases is missing',
     ]);
+  });
+});
+
+describe('checkTableLevelGrants — only an owner holds the table-level verbs', () => {
+  const fake = (granted, defaults) => async (sql) => (sql.includes('pg_default_acl') ? defaults : granted);
+
+  it('passes when nobody but the owners holds them', async () => {
+    expect(await checkTableLevelGrants(fake([], []))).toEqual([]);
+  });
+
+  it('names a grant on a table and a default grant on future tables', async () => {
+    expect(
+      await checkTableLevelGrants(
+        fake([{ table: 'locations', grantee: 'service_role', privilege: 'TRIGGER' }], [{ grantee: 'service_role', creator: 'postgres', privilege: 'TRUNCATE' }]),
+      ),
+    ).toEqual([
+      'service_role holds TRIGGER on public.locations — only its owner may',
+      'service_role is granted TRUNCATE on every new public table postgres creates — only its owner may hold it',
+    ]);
+  });
+
+  it('asks for exactly the four verbs, on tables and on the default privileges of public', async () => {
+    const seen = [];
+    await checkTableLevelGrants(async (sql) => (seen.push(sql), []));
+    for (const sql of seen) expect(sql).toContain("('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')");
+    expect(seen.some((sql) => sql.includes("defaclnamespace = 'public'::regnamespace"))).toBe(true);
+    expect(seen.some((sql) => sql.includes("n.nspname = 'public'"))).toBe(true);
   });
 });
 

@@ -981,7 +981,7 @@ async function main() {
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
     const { PrismaClient } = req('../packages/db/generated/client');
-    const { checkRuntimeRole, checkTenantInvariants, checkIntegrityTriggers, factorLibraryReport, runtimeRoleExposures } =
+    const { checkRuntimeRole, checkTenantInvariants, checkTableLevelGrants, checkIntegrityTriggers, factorLibraryReport, runtimeRoleExposures } =
       await import('../packages/db/scripts/runtime-role.mjs');
     const prisma = new PrismaClient();
     const query = (sql) => prisma.$queryRawUnsafe(sql);
@@ -994,6 +994,12 @@ async function main() {
       );
       const broken = await checkTenantInvariants(query);
       check('no grant crosses an organisation and no slot mixes typed and untyped records in the data (a restore skips the keys and the slot rule)', broken.length === 0, broken.join('; ') || 'none');
+      const tableVerbs = await checkTableLevelGrants(query);
+      check(
+        'no role but a table\'s owner holds TRIGGER, TRUNCATE, REFERENCES or MAINTAIN on a public table, now or by default (a trigger fires as the owner inside a cascade)',
+        tableVerbs.length === 0,
+        tableVerbs.join('; ') || 'none',
+      );
       const triggers = await checkIntegrityTriggers(query);
       check(
         'the integrity triggers (K5 snapshot, slot kind, append-only factor library) and CHECKs are present and ENABLE ALWAYS',

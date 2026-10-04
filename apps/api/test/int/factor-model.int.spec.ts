@@ -262,6 +262,19 @@ describe('K5 — trigger depth is no proof of a cascade, and an id never changes
     }
   });
 
+  it('refuses the service role a trigger on any table a cascade reaches — it would fire as the owner', async () => {
+    for (const table of ['locations', 'subsidiaries', 'organisations', 'evidence', 'activity_record_evidence']) {
+      const e = await failure(
+        withRollback(owner, async (tx) => {
+          await tx.$executeRawUnsafe('SET LOCAL ROLE service_role');
+          await tx.$executeRawUnsafe(`CREATE FUNCTION pg_temp.int_escalate() RETURNS trigger LANGUAGE plpgsql AS $f$BEGIN RETURN OLD; END$f$`);
+          await tx.$executeRawUnsafe(`CREATE TRIGGER int_escalate BEFORE DELETE ON public.${table} FOR EACH ROW EXECUTE FUNCTION pg_temp.int_escalate()`);
+        }),
+      );
+      expect(sqlstateOf(e), table).toBe('42501');
+    }
+  });
+
   it.each([ActivityRecordStatus.draft, ActivityRecordStatus.approved, ActivityRecordStatus.voided])(
     'refuses changing the id of a %s record — to the runtime role and the owner',
     async (status) => {

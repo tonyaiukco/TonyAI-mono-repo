@@ -6,6 +6,7 @@ import {
   RUNTIME_ROLE,
   checkIntegrityTriggers,
   checkRuntimeRole,
+  checkTableLevelGrants,
   checkTenantInvariants,
   factorLibraryReport,
   runtimeRoleExposures,
@@ -145,6 +146,10 @@ describe('the runtime role', () => {
 describe('the factor model is in force on this database (LP3-03)', () => {
   it('holds every integrity trigger, ENABLE ALWAYS, on its events, with its migration\'s function body; every key CHECK', async () => {
     expect(await checkIntegrityTriggers((sql: string) => runtime.$queryRawUnsafe(sql))).toEqual([]);
+  });
+
+  it('leaves the table-level verbs (TRIGGER, TRUNCATE, REFERENCES, MAINTAIN) to the owners alone, now and by default', async () => {
+    expect(await checkTableLevelGrants((sql: string) => owner.$queryRawUnsafe(sql))).toEqual([]);
   });
 
   it('pins every CHECK on a guarded table — a new or renamed one cannot go unwatched', async () => {
