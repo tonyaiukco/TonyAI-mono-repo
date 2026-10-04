@@ -32,6 +32,7 @@ import {
   recordActivityTypesFor,
   scope2MethodFor,
   selectByRelease,
+  unitDimensionOf,
   validateFactorReleaseImport,
   yearPolicyOf,
   type CalculationResult,
@@ -813,6 +814,8 @@ describe('resolveFactorPath', () => {
   const rel = (status: FactorStatus, ordinal = 1, publisher = 'P') => ({ status, ordinal, publisher });
   const factor = (id: string, normalizedUnit: string, calorificBasis: string, status: FactorStatus = 'authoritative', publisher = 'P', ordinal = 1): F => ({
     id,
+    gas: 'CO2e',
+    scope2Method: 'not_applicable',
     normalizedUnit,
     calorificBasis,
     release: rel(status, ordinal, publisher),
@@ -850,10 +853,38 @@ describe('resolveFactorPath', () => {
     );
   });
 
+  const grid = (id: string, scope2Method: string, ordinal = 1): F => ({
+    ...factor(id, 'kWh', 'not_applicable', 'authoritative', 'P', ordinal),
+    scope2Method,
+  });
+
   it('prices electricity, which has no calorific basis', () => {
+    expect(picked(resolve('Electricity', 'kWh', [grid('grid', 'location')]))).toEqual(['grid', null]);
+  });
+
+  it('never prices with a market-based row or a per-gas row, whatever its ordinal (D08)', () => {
     expect(
-      picked(resolve('Electricity', 'kWh', [factor('grid', 'kWh', 'not_applicable')])),
-    ).toEqual(['grid', null]);
+      picked(resolve('Electricity', 'kWh', [grid('location-5', 'location', 5), grid('market-6', 'market', 6)])),
+    ).toEqual(['location-5', null]);
+    expect(picked(resolve('Electricity', 'kWh', [grid('market-only', 'market')]))).toBe('no_factor');
+    expect(
+      picked(resolve('Natural Gas', 'kWh', [{ ...factor('ch4', 'kWh', 'gross'), gas: 'CH4' }])),
+    ).toBe('no_factor');
+  });
+
+  it('prefers the billed basis between two converted paths into energy', () => {
+    const gross = factor('kwh-gross', 'kWh', 'gross');
+    const net = factor('kwh-net', 'kWh', 'net');
+    const steps = [
+      conversion('m3-kwh-net', 'cubic_metres', 'kWh', 'net'),
+      conversion('m3-kwh-gross', 'cubic_metres', 'kWh', 'gross'),
+    ];
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [net, gross], steps))).toEqual([
+      'kwh-gross',
+      'm3-kwh-gross',
+    ]);
+    // With the net path alone, it is used — the basis is consistent end to end.
+    expect(picked(resolve('Natural Gas', 'cubic_metres', [net], steps))).toEqual(['kwh-net', 'm3-kwh-net']);
   });
 
   it('reaches a per-kWh factor from metered m³ only through a conversion on its basis', () => {
@@ -953,8 +984,8 @@ describe('resolveFactorPath', () => {
     expect(
       picked(
         resolve('Electricity', 'kWh', [
-          factor('a', 'kWh', 'not_applicable', 'authoritative', 'A'),
-          factor('b', 'kWh', 'not_applicable', 'authoritative', 'B'),
+          { ...factor('a', 'kWh', 'not_applicable', 'authoritative', 'A'), scope2Method: 'location' },
+          { ...factor('b', 'kWh', 'not_applicable', 'authoritative', 'B'), scope2Method: 'location' },
         ]),
       ),
     ).toBe('ambiguous_factor');
@@ -963,10 +994,7 @@ describe('resolveFactorPath', () => {
   it('takes the newest release of one publisher', () => {
     expect(
       picked(
-        resolve('Electricity', 'kWh', [
-          factor('v2', 'kWh', 'not_applicable', 'authoritative', 'P', 2),
-          factor('v10', 'kWh', 'not_applicable', 'authoritative', 'P', 10),
-        ]),
+        resolve('Electricity', 'kWh', [grid('v2', 'location', 2), grid('v10', 'location', 10)]),
       ),
     ).toEqual(['v10', null]);
   });
@@ -1244,6 +1272,12 @@ describe('review round 1 — pinned tables (qa-auditor)', () => {
       no_conversion: 404,
       calorific_basis_mismatch: 404,
     });
+  });
+
+  it('names each unit’s family, and none for an unknown token', () => {
+    expect(unitDimensionOf('MWh')).toBe('energy');
+    expect(unitDimensionOf('furlongs')).toBeUndefined();
+    expect(unitDimensionOf(undefined)).toBeUndefined();
   });
 
   it('pins every unit to its family', () => {

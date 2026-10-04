@@ -2077,8 +2077,15 @@ export function directCalorificBasisFor(category: string, inputUnit: string): Ca
     : 'not_applicable';
 }
 
-/** A factor row as path resolution needs it — the `CO2e` row of one lookup. */
+/**
+ * A factor row as path resolution needs it. `gas` and `scope2Method` are
+ * checked here as well as in the caller's query: only the `CO2e` row of the
+ * category's own Scope 2 method (`scope2MethodFor`) ever prices a record, so
+ * a market-based row passed in by mistake is ignored, never chosen.
+ */
 export interface FactorPathCandidate extends ReleaseRanked {
+  gas: string;
+  scope2Method: string;
   normalizedUnit: string;
   calorificBasis: string;
 }
@@ -2128,8 +2135,10 @@ function isLiveStatus(status: string): boolean {
  *    `allowPlaceholders`, factor AND conversion must be authoritative.
  * 2. The highest-ranked paths win, across every path — an authoritative
  *    converted path beats a placeholder direct one.
- * 3. Among those, a direct path beats a converted one, and an earlier
- *    `CONVERSION_TARGETS` family a later one.
+ * 3. Among those, a direct path beats a converted one, an earlier
+ *    `CONVERSION_TARGETS` family a later one, and — into energy — a factor on
+ *    `BILLED_ENERGY_CALORIFIC_BASIS` one on the other basis (a release holding
+ *    both is consistent, not ambiguous).
  * 4. The factor is then chosen by `selectByRelease`, and its conversion the
  *    same way; a conflict is `ambiguous_factor`, never a silent pick.
  *
@@ -2155,12 +2164,14 @@ export function resolveFactorPath<
   const base = DIMENSION_BASE_UNIT[dimension];
   const directBasis = directCalorificBasisFor(input.category, input.inputUnit);
   const targets = CONVERSION_TARGETS[dimension] ?? [];
+  const method = scope2MethodFor(input.category);
 
   type Path = { factor: F; conversion: C | null; preference: number };
   const paths: Path[] = [];
   let basisMismatch = false;
   let missingConversion = false;
   for (const factor of input.factors) {
+    if (factor.gas !== CALCULATION_GAS || factor.scope2Method !== method) continue;
     if (factor.normalizedUnit === base) {
       if (factor.calorificBasis === directBasis) {
         paths.push({ factor, conversion: null, preference: 0 });
@@ -2186,8 +2197,11 @@ export function resolveFactorPath<
       else missingConversion = true;
       continue;
     }
+    // Direct is 0; each conversion family takes two slots, the billed basis
+    // first.
+    const offBasis = target === 'energy' && factor.calorificBasis !== BILLED_ENERGY_CALORIFIC_BASIS;
     for (const conversion of onBasis) {
-      paths.push({ factor, conversion, preference: order + 1 });
+      paths.push({ factor, conversion, preference: 2 * (order + 1) + (offBasis ? 1 : 0) });
     }
   }
 
@@ -2354,7 +2368,8 @@ const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}\p{Cs}\p{Default_Ignorable_Code_Point}]/
  */
 const PROVENANCE_URL = /^https:\/\/[^\s/?#@\\]+(?:[/?#][^\s\\]*)?$/;
 
-function unitDimensionOf(unit: unknown): UnitDimension | undefined {
+/** The definitional family of a unit token, or undefined for an unknown one. */
+export function unitDimensionOf(unit: unknown): UnitDimension | undefined {
   return ACTIVITY_UNITS.find((u) => u.value === unit)?.dimension;
 }
 
