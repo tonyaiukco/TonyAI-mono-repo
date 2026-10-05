@@ -422,7 +422,13 @@ ALTER TABLE "activity_records" ENABLE ALWAYS TRIGGER "activity_records_snapshot_
 -- owner, or the owner itself: the same trusted role that could disable the
 -- trigger, used by test teardown on local and CI databases. Never
 -- `pg_trigger_depth()`: any role can raise it with a trigger on a temporary
--- table of its own.
+-- table of its own. Known gap, accepted with a date (owner, 2026-10-06; closed
+-- in LP4-01, before the first authoritative release): a role that may delete
+-- a subsidiary or a location — the API's role with SQL access, the service
+-- role through PostgREST — removes that subsidiary's committed records, or
+-- re-files a site's at company level, through the cascade, and could then
+-- re-insert a removed record altered. The API refuses to delete a subsidiary
+-- that holds records.
 CREATE FUNCTION "public"."activity_records_committed_delete"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
