@@ -25,8 +25,9 @@
 -- API can map them without parsing messages:
 --   TA001  a non-editable record's snapshot or inputs changed (K5)    → 409
 --   TA002  a slot would hold typed and untyped records together        → 409
+--   TA003  a record written under a stricter isolation level than READ COMMITTED (no API path does)
 --   TA010  a factor table's append-only rule was broken
---   TA011  a release was loaded out of order, or already withdrawn
+--   TA011  a release was loaded out of order, already withdrawn, or not under READ COMMITTED
 --   TA012  a factor or conversion row does not fit its release
 -- 7. `factor_release_events`: every load, withdrawal and fixture deletion of
 --    the library, recorded by the database itself for every writer (PR A's
@@ -476,6 +477,14 @@ BEGIN
      AND (NEW."activity_type" IS NULL) = (OLD."activity_type" IS NULL) THEN
     RETURN NEW;
   END IF;
+  -- The EXISTS below must see a record committed in this slot while this
+  -- statement waited on the slot's lock; a REPEATABLE READ or SERIALIZABLE
+  -- snapshot would not (the API writes under READ COMMITTED).
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA003',
+      MESSAGE = 'write activity records under READ COMMITTED: a stricter isolation level cannot see a record committed in the same slot meanwhile';
+  END IF;
   PERFORM pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtext('tonyai.activity_record_slot'),
     pg_catalog.hashtext(pg_catalog.concat_ws(
@@ -528,6 +537,14 @@ BEGIN
   -- rules and the record's writers stand aside; every change-guard does not.
   IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
     RETURN NEW;
+  END IF;
+  -- The ordinal and withdrawal reads below must see a release committed while
+  -- this statement waited on the publisher's lock; a REPEATABLE READ or
+  -- SERIALIZABLE snapshot would not.
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA011',
+      MESSAGE = 'load a factor release under READ COMMITTED: a stricter isolation level cannot see a concurrent load';
   END IF;
   IF NEW."status" = 'withdrawn' THEN
     RAISE EXCEPTION USING
@@ -735,8 +752,10 @@ ALTER TABLE "unit_conversions" ENABLE ALWAYS TRIGGER "unit_conversions_before_de
 ALTER TABLE "unit_conversions" ENABLE ALWAYS TRIGGER "unit_conversions_before_truncate";
 
 -- The trigger functions are not callable as functions (they return trigger),
--- but PostgreSQL grants EXECUTE to PUBLIC on creation; take it back so the
--- runtime-role check reads a clean list.
+-- but EXECUTE is what attaching one to a table requires. PostgreSQL grants it
+-- to PUBLIC on creation, and Supabase's default privileges to anon,
+-- authenticated and service_role (taken back with the client grants below);
+-- no role but the owner holds it, and `runtime-role.mjs` checks so.
 REVOKE ALL ON FUNCTION
   "public"."activity_records_snapshot_immutable"(),
   "public"."activity_records_committed_delete"(),
@@ -797,6 +816,13 @@ AS $fn$
 DECLARE
   r record;
 BEGIN
+  -- It writes as the owner, so it answers for one table only: attached to
+  -- any other, it would record whatever that table held.
+  IF TG_RELID <> 'public.factor_releases'::pg_catalog.regclass THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA010',
+      MESSAGE = 'factor_releases_record_event records public.factor_releases only';
+  END IF;
   -- A data-only restore carries its own record; writing it again would
   -- attribute every restored load to the restoring role.
   IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
@@ -838,6 +864,12 @@ DECLARE
   touched int;
   recorded int;
 BEGIN
+  -- It writes as the owner, so it answers for the two row tables only.
+  IF TG_RELID NOT IN ('public.emission_factors'::pg_catalog.regclass, 'public.unit_conversions'::pg_catalog.regclass) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA010',
+      MESSAGE = 'factor_rows_record_event records public.emission_factors and public.unit_conversions only';
+  END IF;
   IF pg_catalog.current_setting('session_replication_role') = 'replica' THEN
     RETURN NULL;
   END IF;
@@ -1010,6 +1042,27 @@ BEGIN
   -- them.) A local `pnpm db:reset` recreates the schema without Supabase's
   -- defaults; CI, staging and production keep them — hence all three roles.
   REVOKE TRUNCATE, TRIGGER, REFERENCES ON ALL TABLES IN SCHEMA "public" FROM anon, authenticated, service_role;
+  -- Nor may they run or attach this migration's functions (Supabase's default
+  -- privileges grant EXECUTE on every function postgres creates in `public`):
+  -- an event writer, SECURITY DEFINER, attached to a table of their own would
+  -- write forged rows into the library's record as the owner.
+  REVOKE ALL ON FUNCTION
+    "public"."activity_records_snapshot_immutable"(),
+    "public"."activity_records_committed_delete"(),
+    "public"."activity_records_slot_kind"(),
+    "public"."factor_releases_before_insert"(),
+    "public"."factor_releases_before_update"(),
+    "public"."factor_releases_before_delete"(),
+    "public"."factor_rows_before_insert"(),
+    "public"."factor_rows_before_update"(),
+    "public"."factor_rows_before_delete"(),
+    "public"."factor_tables_before_truncate"(),
+    "public"."factor_release_events_before_insert"(),
+    "public"."factor_release_events_actor_role"(),
+    "public"."factor_releases_record_event"(),
+    "public"."factor_rows_record_event"(),
+    "public"."factor_release_events_refuse"()
+  FROM anon, authenticated, service_role;
   ALTER DEFAULT PRIVILEGES IN SCHEMA "public" REVOKE TRUNCATE, TRIGGER, REFERENCES ON TABLES FROM anon, authenticated, service_role;
   -- MAINTAIN (PostgreSQL 17) would let it VACUUM FULL, CLUSTER or REINDEX:
   -- maintenance under an exclusive lock, which is the owner's. (It keeps LOCK

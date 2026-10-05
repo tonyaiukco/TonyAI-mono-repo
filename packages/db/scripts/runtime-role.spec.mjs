@@ -18,6 +18,7 @@ import {
   factorLibraryReport,
   checkTenantInvariants,
   checkTableLevelGrants,
+  checkFunctionExecutors,
 } from './runtime-role.mjs';
 
 // The database half — that PostgreSQL accepts the verifier and the privileges
@@ -259,6 +260,23 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
       'CHECK emission_factors_gas_check on emission_factors is NOT VALID',
       'CHECK factor_releases_publisher_check on factor_releases is missing',
     ]);
+  });
+});
+
+describe('checkFunctionExecutors — only the owner may attach the integrity functions', () => {
+  it('passes on none, and names each executor otherwise', async () => {
+    expect(await checkFunctionExecutors(async () => [])).toEqual([]);
+    expect(await checkFunctionExecutors(async () => [{ fn: 'factor_releases_record_event', grantee: 'anon' }])).toEqual([
+      'anon may EXECUTE public.factor_releases_record_event() — attach it to a table of its own; only its owner may',
+    ]);
+  });
+
+  it('asks about every integrity trigger function and helper, with the default ACL when none is set', async () => {
+    let sql = '';
+    await checkFunctionExecutors(async (q) => ((sql = q), []));
+    for (const fn of [...INTEGRITY_TRIGGERS.map((t) => t.fn), ...INTEGRITY_HELPERS.map((h) => h.fn)]) expect(sql).toContain(`'${fn}'`);
+    expect(sql).toContain("COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))");
+    expect(sql).toContain("a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner");
   });
 });
 

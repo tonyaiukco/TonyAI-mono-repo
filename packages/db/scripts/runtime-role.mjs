@@ -483,6 +483,27 @@ export async function checkTableLevelGrants(query) {
 }
 
 /**
+ * EXECUTE on the integrity functions — what attaching a trigger function to a
+ * table requires — for their owner alone. PostgreSQL grants it to PUBLIC on
+ * creation and Supabase's default privileges to anon, authenticated and the
+ * service role; a SECURITY DEFINER event writer attached to a table of the
+ * caller's own would write forged rows into the library's record as the owner.
+ */
+export async function checkFunctionExecutors(query) {
+  const names = [...new Set([...INTEGRITY_TRIGGERS.map((t) => t.fn), ...INTEGRITY_HELPERS.map((h) => h.fn)])];
+  const executors = await query(
+    `SELECT p.proname AS "fn", CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee"
+       FROM pg_catalog.pg_proc p
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace,
+            LATERAL pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+      WHERE n.nspname = 'public' AND p.proname IN (${names.map((n) => `'${n}'`).join(', ')})
+        AND a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner
+      ORDER BY 1, 2`,
+  );
+  return executors.map((e) => `${e.grantee} may EXECUTE public.${e.fn}() — attach it to a table of its own; only its owner may`);
+}
+
+/**
  * The integrity triggers the LP3-03 migration installs: each must exist, be
  * ENABLE ALWAYS (`tgenabled = 'A'`, firing in replica mode too, so a restore
  * cannot slip past it), fire on exactly its events, and run its own function
@@ -849,6 +870,7 @@ async function main() {
         ...(await checkRuntimeRole(query)),
         ...(await checkTenantInvariants(query)),
         ...(await checkTableLevelGrants(query)),
+        ...(await checkFunctionExecutors(query)),
         ...(await checkIntegrityTriggers(query)),
         ...library.problems,
       ];

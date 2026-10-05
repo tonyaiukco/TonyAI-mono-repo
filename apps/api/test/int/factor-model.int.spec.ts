@@ -290,6 +290,18 @@ describe('K5 — trigger depth is no proof of a cascade, and an id never changes
 });
 
 describe('a slot holds typed records or one untyped record, never both', () => {
+  it('refuses a record written under REPEATABLE READ or SERIALIZABLE, which could not see the slot\'s other kind (TA003)', async () => {
+    for (const isolationLevel of ['RepeatableRead', 'Serializable'] as const) {
+      const e = await failure(
+        owner.$transaction(
+          (tx) => createRecord(tx as unknown as PrismaService, tenant, { ...nextSlot(), category: 'Fuel', scope: 1, activityUnit: 'litres', activityType: 'diesel' }),
+          { isolationLevel },
+        ),
+      );
+      expect(sqlstateOf(e), isolationLevel).toBe('TA003');
+    }
+  });
+
   const fuel = { category: 'Fuel', scope: 1, activityUnit: 'litres' };
 
   it('refuses either order, for the runtime role and the owner, while two types share a slot', async () => {
@@ -777,25 +789,63 @@ describe("the factor library's record (factor_release_events)", () => {
     expect(sqlstateOf(e)).toBe('TA010');
   });
 
-  it('refuses a load under REPEATABLE READ, which could not see a concurrent withdrawal — factors and conversions alike', async () => {
+  it('refuses a load under REPEATABLE READ or SERIALIZABLE, which could not see a concurrent load or withdrawal — releases, factors and conversions', async () => {
+    const [{ id: seeded }] = await owner.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT id FROM factor_releases WHERE publisher = 'TonyAI prototype' AND edition = '2026.1'`,
+    );
     const releaseId = randomUUID();
-    const factorRow = `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year, data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
-      VALUES (gen_random_uuid(), '${releaseId}', 'Fuel', 'gas_oil', 'CO2e', 'all_ghg', 'UK', 2031, 2031, 1, 'not_applicable', 'not_applicable', 2.5, 'kgCO2e/L', 'litres', 'x', 'x', 'int-${releaseId}', now())`;
     const [release, conversions] = load(releaseId, 0);
+    const statements: [string, string][] = [
+      // The isolation level is the first thing each guard reads.
+      ['TA011', release],
+      ['TA012', conversions.replaceAll(releaseId, seeded)],
+      [
+        'TA012',
+        `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year, data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+         VALUES (gen_random_uuid(), '${seeded}', 'Fuel', 'gas_oil', 'CO2e', 'all_ghg', 'UK', 2031, 2031, 1, 'not_applicable', 'not_applicable', 2.5, 'kgCO2e/L', 'litres', 'x', 'x', '2026.1', now())`,
+      ],
+    ];
     for (const isolationLevel of ['RepeatableRead', 'Serializable'] as const) {
-      for (const rows of [conversions, factorRow]) {
-        const e = await failure(
-          owner.$transaction(
-            async (tx) => {
-              await tx.$executeRawUnsafe(release.replace(/, 0, 'fixture'\)/, `, ${await nextOrdinal(tx)}, 'fixture')`));
-              await tx.$executeRawUnsafe(rows);
-            },
-            { isolationLevel },
-          ),
-        );
-        expect(sqlstateOf(e), `${isolationLevel} ${rows.slice(0, 30)}`).toBe('TA012');
+      for (const [code, sql] of statements) {
+        const e = await failure(owner.$transaction((tx) => tx.$executeRawUnsafe(sql), { isolationLevel }));
+        expect(sqlstateOf(e), `${isolationLevel} ${sql.slice(0, 40)}`).toBe(code);
         expect(String((e as Error).message)).toMatch(/READ COMMITTED/);
       }
+    }
+  });
+
+  it('writes its record only for the tables it answers for — attached anywhere else, a writer refuses (it runs as the owner)', async () => {
+    const attached = [
+      ['factor_releases_record_event', 'AFTER INSERT ON pg_temp.int_forged FOR EACH ROW'],
+      ['factor_rows_record_event', 'AFTER INSERT ON pg_temp.int_forged REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT'],
+    ];
+    for (const [fn, timing] of attached) {
+      const e = await failure(
+        withRollback(owner, async (tx) => {
+          await tx.$executeRawUnsafe(
+            'CREATE TEMP TABLE int_forged (id uuid, release_id uuid, publisher text, edition text, status text, withdrawn_at timestamptz, withdrawn_by text, withdrawal_reason text) ON COMMIT DROP',
+          );
+          await tx.$executeRawUnsafe(`CREATE TRIGGER int_forged ${timing} EXECUTE FUNCTION public.${fn}()`);
+          await tx.$executeRawUnsafe(`INSERT INTO pg_temp.int_forged VALUES (gen_random_uuid(), gen_random_uuid(), 'DESNZ', '2025', 'authoritative', null, null, null)`);
+        }),
+      );
+      expect(sqlstateOf(e), fn).toBe('TA010');
+    }
+  });
+
+  // Supabase's default privileges grant EXECUTE on every function postgres
+  // creates in `public` to the three API roles (CI, staging, production; a
+  // local reset drops them). Attaching a trigger function needs it.
+  it.each(['anon', 'authenticated', 'service_role'])('refuses %s the record\'s writers — it cannot attach one to a table of its own', async (role) => {
+    for (const fn of ['factor_releases_record_event', 'factor_rows_record_event']) {
+      const e = await failure(
+        withRollback(owner, async (tx) => {
+          await tx.$executeRawUnsafe(`SET LOCAL ROLE ${role}`);
+          await tx.$executeRawUnsafe('CREATE TEMP TABLE int_forged (id uuid) ON COMMIT DROP');
+          await tx.$executeRawUnsafe(`CREATE TRIGGER int_forged AFTER INSERT ON pg_temp.int_forged FOR EACH ROW EXECUTE FUNCTION public.${fn}()`);
+        }),
+      );
+      expect(sqlstateOf(e), `${role} ${fn}`).toBe('42501');
     }
   });
 

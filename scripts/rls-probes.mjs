@@ -981,7 +981,7 @@ async function main() {
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
     const { PrismaClient } = req('../packages/db/generated/client');
-    const { checkRuntimeRole, checkTenantInvariants, checkTableLevelGrants, checkIntegrityTriggers, factorLibraryReport, runtimeRoleExposures } =
+    const { checkRuntimeRole, checkTenantInvariants, checkTableLevelGrants, checkFunctionExecutors, checkIntegrityTriggers, factorLibraryReport, runtimeRoleExposures } =
       await import('../packages/db/scripts/runtime-role.mjs');
     const prisma = new PrismaClient();
     const query = (sql) => prisma.$queryRawUnsafe(sql);
@@ -999,6 +999,12 @@ async function main() {
         'no role but a table\'s owner holds TRIGGER, TRUNCATE, REFERENCES or MAINTAIN on a public table, now or by default (a trigger fires as the owner inside a cascade)',
         tableVerbs.length === 0,
         tableVerbs.join('; ') || 'none',
+      );
+      const executors = await checkFunctionExecutors(query);
+      check(
+        'no role but the owner may EXECUTE (so attach) the integrity functions — an event writer runs as the owner',
+        executors.length === 0,
+        executors.join('; ') || 'none',
       );
       const triggers = await checkIntegrityTriggers(query);
       check(
