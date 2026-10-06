@@ -17,8 +17,8 @@ state, plan files, logs, repository files or chat.
 2. [Bootstrap backend, apply foundation, establish OIDC](runbooks/01-azure.md).
 3. [Create/resume Supabase, configure Auth/JWKS and private buckets](runbooks/02-supabase.md).
 4. [Build immutable images, migrate, deploy one release](runbooks/03-deploy.md).
-5. [Collect live acceptance and fresh-recreation evidence](runbooks/04-verify.md).
-6. [Rotate, roll back or recover state/vault](runbooks/05-rotation.md).
+5. [Collect live acceptance and fresh-recreation evidence; restore a database](runbooks/04-verify.md).
+6. [Rotate, roll back or recover state/vault; run the owner reconciliation check](runbooks/05-rotation.md).
 7. [Prove readiness, alert delivery and staging acceptance](runbooks/06-operations.md).
 
 ## Authoritative writers

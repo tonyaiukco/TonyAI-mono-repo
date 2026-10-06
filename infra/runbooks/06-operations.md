@@ -2,9 +2,11 @@
 
 These steps are procedures, **not evidence of cloud execution**. Record each
 result against source SHA, API/web digests, migration hashes, environment, UTC
-time and the named operator in B9. Use dedicated synthetic tenants and labelled
-**DEMO — not authoritative** factors selected from a reviewed source/version;
-never invent a factor or run the local demo seed in staging. Preserve audit rows.
+time and the named operator in B9. Use dedicated synthetic tenants. Staging
+deliberately calculates nothing until LP4-02 loads authoritative factor releases
+(owner decision K3). It holds no factor library, and never a placeholder or demo
+release. Never invent a factor, load one by hand or run the local demo seed in
+staging. Preserve audit rows.
 The staging gate is open until the complete flow and recovery checks pass.
 
 ## Readiness and authenticated synthetic checks
@@ -154,12 +156,30 @@ to their separate roles.
    see RLS policies, grants, CHECK constraints or triggers: retain `rls-probe`
    and `test:int` as their guards. If the old binary fails, choose a maintenance/forward-fix plan;
    never imply that image rollback restores a database.
-3. Deploy the candidate digests. In dedicated synthetic tenants: login as author,
-   create entry with the selected labelled factor, upload genuine valid evidence,
-   submit, log in as a **different** super_admin to review/approve, then download
-   and reconcile PDF/XLSX/CSV. Own approval and non-author submission must be
-   refused; foreign-tenant IDs must remain inaccessible. Record fixture IDs and
-   digest/SHA without passwords/file names. No broad cleanup or audit deletion.
+3. Deploy the candidate digests. Staging computes no figure until LP4-02 (K3), so
+   this journey proves the record lifecycle and the refusal, not a calculation. In
+   dedicated synthetic tenants:
+   - Log in as author and create a **Water** entry. Water is invoice-tracked and
+     may be recorded without a factor. Expect `201`, with a calculation snapshot
+     that carries `reasonCode: "no_emission_factor"` and no tCO₂e figure.
+   - Upload genuine valid evidence and submit. Then log in as a **different**
+     super_admin to review and approve.
+   - Download the PDF, XLSX and CSV and reconcile each one against the entry. Its
+     row is present with tCO₂e "Not calculated", with an empty factor standing in
+     the CSV and XLSX. The PDF also notes the record as carrying no emissions
+     figure.
+   - Request a calculation in a category that needs a factor, e.g.
+     `POST /api/v1/calculations/preview` for Electricity. Expect `404` with body
+     `code` `"no_factor"` and a `coverage` object, and nothing persisted. `code`
+     `"placeholder_refused"` appears only if a placeholder release was loaded.
+     Staging never holds one, so that response is a finding, as it is in the
+     owner reconciliation check (runbook 05).
+
+   Own approval and non-author submission must be refused; foreign-tenant IDs
+   must remain inaccessible. Record fixture IDs and digest/SHA without
+   passwords/file names. No broad cleanup or audit deletion. Calculated figures,
+   factor standing and the report's factor appendix are accepted only after
+   LP4-02.
 4. Follow runbook 05 to select the previous **compatible** image digests with
    current enabled credentials and a new revision ID. Include explicit hold and
    sweep settings in every rollback manifest, preserving any incident hold; never

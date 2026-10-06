@@ -25,6 +25,8 @@ Run runbook 05's [Runtime connection and privilege evidence](05-rotation.md#runt
 procedure: `runtime-identity.mjs && runtime-role.mjs check` using the same
 `DATABASE_URL`. Require both checks to pass and attach their full output,
 including PUBLIC warnings; the privilege check alone is insufficient evidence.
+Then run the [owner reconciliation check](05-rotation.md#owner-reconciliation-check)
+from the deployed SHA and attach its output too.
 Keep pg_net disabled unless a feature needs it.
 Verify the journaled `bootstrap-db-password` version is disabled using secret
 version metadata only. Record the scope/role/principal IDs, never call a secret command with `--show-values`. The reviewed `owner-psql`
@@ -73,7 +75,7 @@ secret-resolution/image-pull failures privately; do not publish raw logs.
 |---|---|
 | Foundation recreates | Run steps 0–3 with a separate backend account, owner-approved staging rehearsal RG and Supabase project; record IDs, region, successful deployment IDs, migration status and image digests. Reapplying the original environment only proves convergence, not fresh recreation. |
 | Idempotence | Repeat foundation plan/apply and the bucket command below; stable resource identities/origins and same private settings. |
-| No demo credentials | `verify.sql` counts, no `@tonyai.local` Auth users; before onboarding, zero Auth/factor rows. Inspect ACA env names: no `ALLOW_INSECURE_LOCAL_AUTH`, no `SUPABASE_JWT_SECRET`, JWKS pinned. |
+| No demo credentials | `verify.sql` counts, no `@tonyai.local` Auth users; before onboarding, zero Auth/factor rows, and the owner reconciliation check prints no placeholder or fixture release line. Inspect ACA env names: no `ALLOW_INSECURE_LOCAL_AUTH`, no `SUPABASE_JWT_SECRET`, JWKS pinned. |
 | Auth confinement | Run the public-key `/auth/v1/settings` probe (signup/unused providers disabled) and separately verify the dashboard redirect list; in a private owner test, signup is refused. Never post passwords/tokens as evidence. |
 | Storage works privately | Both bucket probes pass; SQL confirms default-deny policies. Also test authenticated browser direct read/write denial with a controlled user when onboarding exists. |
 | No exposed service keys | Compare deployment secret references and RBAC scopes; in private DevTools confirm web requests use only public browser credentials. No service key in assets/build settings/GitHub. |
@@ -128,7 +130,9 @@ secure secret recovery/rotation procedures. Use this order for backup/restore; t
    are draining: wait until no old unheld process remains. Set the hold before backup
    begins and keep it throughout DB and both-bucket restoration.
 2. In the private shell running the matching API image/tool, also run
-   `export STORAGE_CLEANUP_HOLD=1`. After the DB and bytes are restored, run:
+   `export STORAGE_CLEANUP_HOLD=1`. After the DB (through the
+   [restore procedure below](#database-restore-procedure-and-lp5-03-drill)) and
+   the bytes are restored, run:
    `node dist/storage/reconcile.cli.js --forget-uploads --allow-remote`.
    Save its report privately. Restored upload intents can otherwise delete bytes
    committed in the discarded history after the hold lifts.
@@ -148,12 +152,143 @@ older manifests selected for rollback.
 The scheduled verification job always keeps its own hold set; it never removes
 objects and never replaces the private post-restore report review.
 
-The owner must set RPO/RTO and backup retention; LP5-03 proves restoration into an
-isolated environment: database/audit counts, immutable factor snapshots, links,
-source-file bytes/checksums, login and a reconciled report, with elapsed time and
-recovered-data age. No backup schedule, PITR guarantee or successful restore is
-claimed by this foundation. Production backup/PITR selection belongs to LP2-04.
-Do not destroy the original project or rehearsal evidence before owner review.
+### Database restore procedure and LP5-03 drill
+
+A logical restore never goes into a database that already holds data. The target
+is a newly created, isolated Supabase project in the source's region, prepared through runbook 02
+(including both buckets from its reconciliation) and migrated through runbook 03
+§3.2 **at the source's deployed SHA**. Its schema comes only from the committed
+migration chain, never from a dump. Nothing else may write to it before the load.
+
+Use one PostgreSQL 17 client installation, 17.6 or newer, for `pg_dump`,
+`pg_restore` and `psql`: an older `psql` cannot read the `\restrict` lines that a
+current `pg_dump` writes. In the private owner shell, export the libpq settings the
+`owner-psql` helper uses for the **source** project: `PGHOST`, `PGPORT=5432`,
+`PGDATABASE=postgres`, `PGUSER=postgres.<project-ref>`, `PGPASSWORD` through hidden
+input, `PGSSLMODE=verify-full` and `PGSSLROOTCERT` set to the absolute path of
+`infra/certs/prod-ca-2021.crt`. Never put a URL or password on a command line.
+With tenant writes stopped under the hold (step 1 above), work in a private
+directory:
+
+```bash
+cat > row-counts.sql <<'SQL'
+SELECT n.nspname || '.' || c.relname || ' ' ||
+       (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', n.nspname, c.relname), false, true, '')))[1]::text
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE c.relkind IN ('r', 'p') AND n.nspname IN ('public', 'auth', 'storage')
+   AND (n.nspname <> 'storage' OR c.relname IN ('objects', 'prefixes', 'buckets'))
+   AND (n.nspname, c.relname) <> ('public', '_prisma_migrations')
+   AND NOT (n.nspname = 'auth' AND c.relname IN ('schema_migrations', 'sessions', 'refresh_tokens', 'mfa_amr_claims', 'mfa_challenges', 'one_time_tokens', 'flow_state', 'saml_relay_states', 'oauth_authorizations', 'oauth_client_states'))
+ ORDER BY 1;
+SQL
+psql -X -At -c "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name" > source-migrations.txt
+psql -X -At -f row-counts.sql > source-counts.txt
+pg_dump --data-only --format=custom --file=tonyai-data.dump \
+  --table='public.*' --exclude-table-data=public._prisma_migrations \
+  --table=auth.users --table=auth.identities --table=auth.mfa_factors --table=auth.audit_log_entries \
+  --table=auth.instances --table=auth.sso_providers --table=auth.sso_domains --table=auth.saml_providers \
+  --table=auth.oauth_clients --table=auth.oauth_consents \
+  --table=storage.objects --table=storage.prefixes
+```
+
+The dump holds:
+
+- the application data, without `_prisma_migrations` (the target has its own rows
+  from its migration run);
+- from Auth, only the named tables: users, identities, MFA factors, provider
+  configuration and Auth's audit log;
+- Storage's object metadata (`storage.objects`, `storage.prefixes`).
+
+The bytes are protected separately (above).
+
+It deliberately carries **no session, refresh-token or one-time-token row**.
+`auth.sessions`, `refresh_tokens`, `mfa_amr_claims`, `mfa_challenges`,
+`one_time_tokens`, `flow_state`, `saml_relay_states`, `oauth_authorizations` and
+`oauth_client_states` stay behind. Every user signs in again after a restore;
+announce that in a real recovery. `auth.users` still holds the hashes of pending
+invitation, password-reset and email-change links. They stay valid against the
+**source** until they expire, which is one more reason the dump is a secret.
+
+It takes no other Storage table. Buckets and their settings come from runbook 02,
+and the owner cannot write Storage's vector tables. The other platform schemas hold
+nothing TonyAI uses. A named table that does not exist on the project's Auth or
+Storage version is skipped. `row-counts.sql` counts every Auth table except the
+ten above (the nine left behind and `auth.schema_migrations`), so a new Auth
+table holding rows on the source shows up in the count diff instead of being
+copied unseen.
+
+**The dump is a secret.** `tonyai-data.dump`, and the `tonyai-data.sql` rendered
+from it, hold every tenant's data, personal data, and Auth's password hashes and
+MFA secrets. Keep them only on encrypted, owner-only storage in the EU, never in
+the evidence store, a PR, chat or a shared host. Record the dump's SHA-256 (for
+example `shasum -a 256 tonyai-data.dump`), then delete both files after owner
+sign-off. The evidence is `row-counts.sql`, `source-migrations.txt`,
+`source-counts.txt` and that checksum.
+
+Switch the libpq settings to the **target** project. Then compare the migration
+lists and load the data as the owner, in one transaction, with the insert-time
+rules stepped aside:
+
+```bash
+psql -X -At -c "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name" | diff source-migrations.txt -
+pg_restore --file=tonyai-data.sql tonyai-data.dump
+psql -X -v ON_ERROR_STOP=1 --single-transaction -c 'SET session_replication_role = replica' -f tonyai-data.sql
+psql -X -At -f row-counts.sql | diff source-counts.txt -
+```
+
+- **Both `diff`s must print nothing.** A different migration list means the target
+  was not migrated at the source's SHA: stop before loading. A different row count
+  means the load is incomplete.
+- **`session_replication_role = replica`** may be set only by the owner. It lets
+  the load write what the dump holds: the factor library's load rules, its record's
+  writers and the slot rule step aside, while the update, delete and truncate
+  guards do not. Afterwards the owner reconciliation check scans for mixed record
+  slots and for `unspecified` rows under an authoritative release, and compares
+  each release's rows with its record. It does not repeat the other insert-time
+  rules (a row's version against its release's edition, rows added to a withdrawn
+  release, release ordinals) or foreign keys, which replica mode also skips. A
+  consistent dump's rows passed them when they were first written.
+- **Never use `--disable-triggers`**, on `pg_dump` or `pg_restore`. It wraps each
+  table in `DISABLE`/`ENABLE TRIGGER ALL`. As the hosted owner that fails. As a
+  superuser it leaves every `ENABLE ALWAYS` integrity trigger demoted to plain
+  ENABLE, which the check reports as `trigger … is not ENABLE ALWAYS`.
+- **If the load stops on an error,** `--single-transaction` has rolled all of it
+  back. Recreating the database is always safe. Retry into the same database only
+  after `row-counts.sql` shows that it still holds nothing but runbook 02's
+  buckets. Never load without
+  `--single-transaction`: the factor tables and `factor_release_events` refuse
+  DELETE and TRUNCATE even to the owner, so a partly committed load could never be
+  cleaned.
+
+Then run the [owner reconciliation check](05-rotation.md#owner-reconciliation-check)
+on the target from the deployed SHA. It must exit 0 with no problem line and no
+"not reconciled" line. Continue with steps 2–4 above (Storage reconciliation and
+sign-off), with the reconcile CLI's environment pointing at the **target** project.
+A shell still holding the source's credentials would run `--forget-uploads`
+against the live database.
+
+**LP5-03 drill.** The owner sets RPO/RTO and backup retention. LP5-03 proves
+restoration into an isolated environment by running this procedure end to end, and
+records in B9:
+
+- source and target project refs, the deployed SHA, dump time and recovered-data
+  age;
+- both silent `diff`s and the owner reconciliation check's full output on the
+  target;
+- immutable factor snapshots and evidence links intact (spot-check records against
+  the source), with source-file bytes and checksums from steps 2–4;
+- a fresh sign-in by a restored user (sessions are not restored), and a report
+  downloaded and reconciled against the source;
+- the elapsed time from hold to sign-off.
+
+The procedure was rehearsed on a scratch database in the local Supabase cluster,
+with the owner's privileges on `auth` and `storage` matched to the source's (the
+owner holds only SELECT on Storage's vector tables). The hosted owner's
+permissions for the `auth` and `storage` loads are proven only by this drill. No backup schedule, PITR guarantee or successful restore is claimed
+by this foundation. Production backup/PITR selection belongs to LP2-04. Do not
+destroy the original project or rehearsal evidence before owner review. The drill
+target is a full copy of production data: delete it, and the dump files, once the
+owner has signed off the B9 record.
 
 Sources: [Key Vault references](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets),
 [Supabase backup limits](https://supabase.com/docs/guides/platform/backups).
