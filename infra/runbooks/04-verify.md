@@ -176,20 +176,24 @@ SELECT n.nspname || '.' || c.relname || ' ' ||
        (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', n.nspname, c.relname), false, true, '')))[1]::text
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
  WHERE c.relkind IN ('r', 'p') AND n.nspname IN ('public', 'auth', 'storage')
-   AND (n.nspname, c.relname) NOT IN (('public', '_prisma_migrations'), ('auth', 'schema_migrations'), ('storage', 'migrations'))
+   AND (n.nspname <> 'storage' OR c.relname IN ('objects', 'prefixes', 'buckets'))
+   AND (n.nspname, c.relname) NOT IN (('public', '_prisma_migrations'), ('auth', 'schema_migrations'))
  ORDER BY 1;
 SQL
 psql -X -At -c "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name" > source-migrations.txt
 psql -X -At -f row-counts.sql > source-counts.txt
-pg_dump --data-only --format=custom --table='public.*' --table='auth.*' --table='storage.*' --exclude-table-data=public._prisma_migrations --exclude-table-data=auth.schema_migrations --exclude-table-data=storage.migrations --exclude-table-data=storage.buckets --file=tonyai-data.dump
+pg_dump --data-only --format=custom --table='public.*' --table='auth.*' --table=storage.objects --table=storage.prefixes --exclude-table-data=public._prisma_migrations --exclude-table-data=auth.schema_migrations --file=tonyai-data.dump
 ```
 
 The dump holds the application data, Auth's users and identities, and Storage's
-object metadata. The bytes are protected separately (above). It leaves out
-`_prisma_migrations` (the target has its own rows from its migration run), the
-platform's `auth.schema_migrations` and `storage.migrations`, and `storage.buckets`
-(runbook 02 owns the bucket settings). The other platform schemas hold nothing
-TonyAI uses. Keep all four files in the private evidence store.
+object metadata (`storage.objects` and `storage.prefixes`). The bytes are protected
+separately (above). It leaves out `_prisma_migrations` (the target has its own rows
+from its migration run) and the platform's `auth.schema_migrations`. It takes no
+other Storage table. Buckets and their settings come from runbook 02, and the
+owner cannot write Storage's vector tables, so naming them would stop the load.
+The other platform schemas hold nothing TonyAI uses. If `storage.prefixes` does
+not exist on the project's Storage version, `pg_dump` skips it. Keep all four
+files in the private evidence store.
 
 Switch the libpq settings to the **target** project. Then compare the migration
 lists and load the data as the owner, in one transaction, with the insert-time
@@ -223,7 +227,9 @@ psql -X -At -f row-counts.sql | diff source-counts.txt -
 Then run the [owner reconciliation check](05-rotation.md#owner-reconciliation-check)
 on the target from the deployed SHA. It must exit 0 with no problem line and no
 "not reconciled" line. Continue with steps 2–4 above (Storage reconciliation and
-sign-off).
+sign-off), with the reconcile CLI's environment pointing at the **target** project.
+A shell still holding the source's credentials would run `--forget-uploads`
+against the live database.
 
 **LP5-03 drill.** The owner sets RPO/RTO and backup retention. LP5-03 proves
 restoration into an isolated environment by running this procedure end to end, and
@@ -239,9 +245,10 @@ records in B9:
   source;
 - the elapsed time from hold to sign-off.
 
-The procedure was rehearsed on a scratch database in the local Supabase cluster.
-The hosted owner's permissions for the `auth` and `storage` loads are proven only
-by this drill. No backup schedule, PITR guarantee or successful restore is claimed
+The procedure was rehearsed on a scratch database in the local Supabase cluster,
+with the owner's privileges on `auth` and `storage` matched to the source's (the
+owner holds only SELECT on Storage's vector tables). The hosted owner's
+permissions for the `auth` and `storage` loads are proven only by this drill. No backup schedule, PITR guarantee or successful restore is claimed
 by this foundation. Production backup/PITR selection belongs to LP2-04. Do not
 destroy the original project or rehearsal evidence before owner review.
 

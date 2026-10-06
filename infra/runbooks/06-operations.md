@@ -165,8 +165,9 @@ to their separate roles.
    - Upload genuine valid evidence and submit. Then log in as a **different**
      super_admin to review and approve.
    - Download the PDF, XLSX and CSV and reconcile each one against the entry. Its
-     row is present with tCO₂e "Not calculated" and an empty factor standing. The
-     PDF also notes the record as carrying no emissions figure.
+     row is present with tCO₂e "Not calculated", with an empty factor standing in
+     the CSV and XLSX. The PDF also notes the record as carrying no emissions
+     figure.
    - Request a calculation in a category that needs a factor, e.g.
      `POST /api/v1/calculations/preview` for Electricity. Expect `404` with body
      `code` `"no_factor"` and a `coverage` object, and nothing persisted. `code`

@@ -154,8 +154,8 @@ as for the runtime URL above. Then run:
 node packages/db/scripts/runtime-role.mjs check
 ```
 
-That is `DATABASE_URL=<owner URL> node packages/db/scripts/runtime-role.mjs check`.
-Through the owner, the check also compares every factor release's held rows with
+The command reads the exported owner URL; never type the URL inline in front of
+it. Through the owner, the check also compares every factor release's held rows with
 `factor_release_events` and scans the data for what the insert-time rules would
 have refused (a replica-mode restore bypasses them). Expected:
 

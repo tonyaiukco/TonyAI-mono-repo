@@ -47,7 +47,7 @@ class MigrationDiffTests(unittest.TestCase):
         # LP3-03 (K2): the transitional six-column branch is gone; the catalogue
         # guard names exactly one key, ending in activity_type.
         self.assertIn('i.indnkeyatts = 7 AND i.indnatts = 7', INDEX_CONTRACT_SQL)
-        self.assertNotIn('= 6', INDEX_CONTRACT_SQL)
+        self.assertIsNone(re.search(r'indn(key)?atts\s*=\s*6\b', INDEX_CONTRACT_SQL))
         self.assertIsNone(re.search(r'\bOR\b', INDEX_CONTRACT_SQL))
         self.assertEqual(INDEX_CONTRACT_SQL.count('pg_get_indexdef'), 1)
         self.assertEqual(INDEX_CONTRACT_SQL.count("'category', 'activity_type']"), 1)

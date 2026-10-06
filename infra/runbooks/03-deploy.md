@@ -52,7 +52,8 @@ python3 infra/scripts/cloud_ops.py migrate --vault "$VAULT_NAME" --project-ref "
 
 **LP3-03 preflight (independent review F4).** While the target has not applied
 `20261004120000_lp3_03_factor_model`, run this read-only check in an `owner-psql`
-session (runbook 05) before `cloud_ops.py migrate`:
+session (runbook 05) before `cloud_ops.py migrate`. Skip it on initial setup: a new
+project has no tables yet, and the query errors.
 
 ```sql
 BEGIN READ ONLY;
@@ -74,11 +75,15 @@ Expected on staging and production:
 
 Any factor row stops the deploy; raise it with the owner, and never edit or
 delete rows to pass. A `seed_shaped = f` row makes the migration refuse to apply
-(`LP3-03: emission_factors holds versions …`). Prisma then records a failed
-migration (P3018) and needs owner recovery. A `seed_shaped = t` row becomes a
-placeholder release, which the owner reconciliation check reports as a finding
-(K3). Apply the migration in a write-free window: it takes ACCESS EXCLUSIVE locks
-with a 5-second `lock_timeout`, and gives up rather than queue behind a long
+(`LP3-03: emission_factors holds versions …`). The migration rolls back whole,
+but Prisma records it as failed (P3018). After the owner has classified the rows,
+`prisma migrate resolve --rolled-back 20261004120000_lp3_03_factor_model` clears
+that record. A `seed_shaped = t` row becomes a
+placeholder release (`YYYY.N`) or a fixture release (`0000-…`), which the owner
+reconciliation check reports as a finding (K3). Apply the migration in a window
+with no writes and no long-running transaction, reads included (pause the
+scheduled Storage verification job). It takes ACCESS EXCLUSIVE locks with a
+5-second `lock_timeout`, and gives up rather than queue behind a long
 transaction.
 
 Before applying the LP1-03 migration, perform the hosted owner privilege checks in runbook 05. Expected:
