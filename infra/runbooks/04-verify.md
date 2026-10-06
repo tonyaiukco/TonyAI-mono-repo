@@ -155,7 +155,7 @@ objects and never replaces the private post-restore report review.
 ### Database restore procedure and LP5-03 drill
 
 A logical restore never goes into a database that already holds data. The target
-is a newly created, isolated Supabase project prepared through runbook 02
+is a newly created, isolated Supabase project in the source's region, prepared through runbook 02
 (including both buckets from its reconciliation) and migrated through runbook 03
 §3.2 **at the source's deployed SHA**. Its schema comes only from the committed
 migration chain, never from a dump. Nothing else may write to it before the load.
@@ -177,23 +177,51 @@ SELECT n.nspname || '.' || c.relname || ' ' ||
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
  WHERE c.relkind IN ('r', 'p') AND n.nspname IN ('public', 'auth', 'storage')
    AND (n.nspname <> 'storage' OR c.relname IN ('objects', 'prefixes', 'buckets'))
-   AND (n.nspname, c.relname) NOT IN (('public', '_prisma_migrations'), ('auth', 'schema_migrations'))
+   AND (n.nspname, c.relname) <> ('public', '_prisma_migrations')
+   AND NOT (n.nspname = 'auth' AND c.relname IN ('schema_migrations', 'sessions', 'refresh_tokens', 'mfa_amr_claims', 'mfa_challenges', 'one_time_tokens', 'flow_state', 'saml_relay_states', 'oauth_authorizations', 'oauth_client_states'))
  ORDER BY 1;
 SQL
 psql -X -At -c "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name" > source-migrations.txt
 psql -X -At -f row-counts.sql > source-counts.txt
-pg_dump --data-only --format=custom --table='public.*' --table='auth.*' --table=storage.objects --table=storage.prefixes --exclude-table-data=public._prisma_migrations --exclude-table-data=auth.schema_migrations --file=tonyai-data.dump
+pg_dump --data-only --format=custom --file=tonyai-data.dump \
+  --table='public.*' --exclude-table-data=public._prisma_migrations \
+  --table=auth.users --table=auth.identities --table=auth.mfa_factors --table=auth.audit_log_entries \
+  --table=auth.instances --table=auth.sso_providers --table=auth.sso_domains --table=auth.saml_providers \
+  --table=auth.oauth_clients --table=auth.oauth_consents \
+  --table=storage.objects --table=storage.prefixes
 ```
 
-The dump holds the application data, Auth's users and identities, and Storage's
-object metadata (`storage.objects` and `storage.prefixes`). The bytes are protected
-separately (above). It leaves out `_prisma_migrations` (the target has its own rows
-from its migration run) and the platform's `auth.schema_migrations`. It takes no
-other Storage table. Buckets and their settings come from runbook 02, and the
-owner cannot write Storage's vector tables, so naming them would stop the load.
-The other platform schemas hold nothing TonyAI uses. If `storage.prefixes` does
-not exist on the project's Storage version, `pg_dump` skips it. Keep all four
-files in the private evidence store.
+The dump holds:
+
+- the application data, without `_prisma_migrations` (the target has its own rows
+  from its migration run);
+- from Auth, only the named tables: users, identities, MFA factors, provider
+  configuration and Auth's audit log;
+- Storage's object metadata (`storage.objects`, `storage.prefixes`).
+
+The bytes are protected separately (above).
+
+It deliberately carries **no session and no token**. `auth.sessions`,
+`refresh_tokens`, `mfa_amr_claims`, `mfa_challenges`, `one_time_tokens`,
+`flow_state`, `saml_relay_states`, `oauth_authorizations` and
+`oauth_client_states` stay behind, so no bearer credential leaves the source.
+Every user signs in again after a restore; announce that in a real recovery.
+
+It takes no other Storage table. Buckets and their settings come from runbook 02,
+and the owner cannot write Storage's vector tables. The other platform schemas hold
+nothing TonyAI uses. A named table that does not exist on the project's Auth or
+Storage version is skipped. `row-counts.sql` counts every Auth table except the
+ten above (the nine left behind and `auth.schema_migrations`), so a new Auth
+table holding rows on the source shows up in the count diff instead of being
+copied unseen.
+
+**The dump is a secret.** `tonyai-data.dump`, and the `tonyai-data.sql` rendered
+from it, hold every tenant's data, personal data, and Auth's password hashes and
+MFA secrets. Keep them only on encrypted, owner-only storage in the EU, never in
+the evidence store, a PR, chat or a shared host. Record the dump's SHA-256 (for
+example `shasum -a 256 tonyai-data.dump`), then delete both files after owner
+sign-off. The evidence is `row-counts.sql`, `source-migrations.txt`,
+`source-counts.txt` and that checksum.
 
 Switch the libpq settings to the **target** project. Then compare the migration
 lists and load the data as the owner, in one transaction, with the insert-time
@@ -212,17 +240,23 @@ psql -X -At -f row-counts.sql | diff source-counts.txt -
 - **`session_replication_role = replica`** may be set only by the owner. It lets
   the load write what the dump holds: the factor library's load rules, its record's
   writers and the slot rule step aside, while the update, delete and truncate
-  guards do not. The owner reconciliation check then scans the restored data for
-  what the stepped-aside rules would have refused.
+  guards do not. Afterwards the owner reconciliation check scans for mixed record
+  slots and for `unspecified` rows under an authoritative release, and compares
+  each release's rows with its record. It does not repeat the other insert-time
+  rules (a row's version against its release's edition, rows added to a withdrawn
+  release, release ordinals) or foreign keys, which replica mode also skips. A
+  consistent dump's rows passed them when they were first written.
 - **Never use `--disable-triggers`**, on `pg_dump` or `pg_restore`. It wraps each
   table in `DISABLE`/`ENABLE TRIGGER ALL`. As the hosted owner that fails. As a
   superuser it leaves every `ENABLE ALWAYS` integrity trigger demoted to plain
   ENABLE, which the check reports as `trigger … is not ENABLE ALWAYS`.
-- **If the load stops on an error, recreate the database.** `--single-transaction`
-  has rolled the load back, but do not retry into that database; start again from
-  a new project and its migration. The factor tables and `factor_release_events`
-  refuse DELETE and TRUNCATE even to the owner, so a partly loaded database can
-  never be cleaned.
+- **If the load stops on an error,** `--single-transaction` has rolled all of it
+  back. Recreating the database is always safe. Retry into the same database only
+  after `row-counts.sql` shows that it still holds nothing but runbook 02's
+  buckets. Never load without
+  `--single-transaction`: the factor tables and `factor_release_events` refuse
+  DELETE and TRUNCATE even to the owner, so a partly committed load could never be
+  cleaned.
 
 Then run the [owner reconciliation check](05-rotation.md#owner-reconciliation-check)
 on the target from the deployed SHA. It must exit 0 with no problem line and no
@@ -241,8 +275,8 @@ records in B9:
   target;
 - immutable factor snapshots and evidence links intact (spot-check records against
   the source), with source-file bytes and checksums from steps 2–4;
-- a login by a restored user, and a report downloaded and reconciled against the
-  source;
+- a fresh sign-in by a restored user (sessions are not restored), and a report
+  downloaded and reconciled against the source;
 - the elapsed time from hold to sign-off.
 
 The procedure was rehearsed on a scratch database in the local Supabase cluster,
@@ -250,7 +284,9 @@ with the owner's privileges on `auth` and `storage` matched to the source's (the
 owner holds only SELECT on Storage's vector tables). The hosted owner's
 permissions for the `auth` and `storage` loads are proven only by this drill. No backup schedule, PITR guarantee or successful restore is claimed
 by this foundation. Production backup/PITR selection belongs to LP2-04. Do not
-destroy the original project or rehearsal evidence before owner review.
+destroy the original project or rehearsal evidence before owner review. The drill
+target is a full copy of production data: delete it, and the dump files, once the
+owner has signed off the B9 record.
 
 Sources: [Key Vault references](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets),
 [Supabase backup limits](https://supabase.com/docs/guides/platform/backups).

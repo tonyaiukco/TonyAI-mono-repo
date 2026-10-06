@@ -156,8 +156,10 @@ node packages/db/scripts/runtime-role.mjs check
 
 The command reads the exported owner URL; never type the URL inline in front of
 it. Through the owner, the check also compares every factor release's held rows with
-`factor_release_events` and scans the data for what the insert-time rules would
-have refused (a replica-mode restore bypasses them). Expected:
+`factor_release_events`. It scans the data for mixed record slots and for
+`unspecified` rows under an authoritative release, two of the insert-time rules a
+replica-mode restore bypasses. It does not repeat the others or foreign keys
+(runbook 04). Expected:
 
 - exit 0 and the final line `tonyai_runtime on <host>: privileges as intended`;
 - **no** `- …` problem line;

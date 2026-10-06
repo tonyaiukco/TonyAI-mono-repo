@@ -75,8 +75,9 @@ Expected on staging and production:
 
 Any factor row stops the deploy; raise it with the owner, and never edit or
 delete rows to pass. A `seed_shaped = f` row makes the migration refuse to apply
-(`LP3-03: emission_factors holds versions …`). The migration rolls back whole,
-but Prisma records it as failed (P3018). After the owner has classified the rows,
+(`LP3-03: emission_factors holds versions …`). The deploy fails with P3018. The
+migration rolls back whole, but Prisma records it as failed, so the next deploy
+refuses with P3009. After the owner has classified the rows,
 `prisma migrate resolve --rolled-back 20261004120000_lp3_03_factor_model` clears
 that record. A `seed_shaped = t` row becomes a
 placeholder release (`YYYY.N`) or a fixture release (`0000-…`), which the owner
