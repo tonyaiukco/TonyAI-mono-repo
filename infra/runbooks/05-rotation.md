@@ -49,6 +49,8 @@ it is never a workload secret or an application environment variable.
    ```
 
    All four booleans must be true and the rolled-back role probe must succeed.
+   `server_version` must be 17.x: the [owner reconciliation check](#owner-reconciliation-check)
+   pins CHECK constraints by md5 of PostgreSQL 17's `pg_get_constraintdef` output.
    Record the server version and probe output. If the probe fails, roll back or
    exit the session; never drop an existing role named `lp1_probe`. Stop and
    resolve with the platform owner on failure; do not weaken the migration or grant wider runtime privileges.
@@ -132,6 +134,52 @@ PUBLIC warning, plus source SHA, deployed release and exact secret version IDs
 changes. LP1-03 is DONE only after the deployed identity and privilege evidence
 and required security review close. Hardening the DB checker itself belongs to
 the Claude Code lane; this PR does not modify `packages/db`.
+
+Under this runtime URL `check` also prints `! the library's record was not
+reconciled: tonyai_runtime cannot read factor_release_events …`. That line is
+**expected** here, not a failure: the runtime role cannot read the library's
+record, so the reconciliation runs only in the owner check below.
+
+## Owner reconciliation check
+
+Run it after **every** restore, every deploy that applies a migration and every
+factor-library load. Use the private owner shell, never a shared host, on a clean
+checkout of the **deployed** source SHA. Load the exact selected owner session URL
+(`direct-url`: session pooler, port 5432, user `postgres.<project-ref>`) into
+exported `DATABASE_URL` through hidden input, never shell history or tracing, and
+replace only `sslcert`'s container path with the absolute local repository CA path,
+as for the runtime URL above. Then run:
+
+```bash
+node packages/db/scripts/runtime-role.mjs check
+```
+
+That is `DATABASE_URL=<owner URL> node packages/db/scripts/runtime-role.mjs check`.
+Through the owner, the check also compares every factor release's held rows with
+`factor_release_events` and scans the data for what the insert-time rules would
+have refused (a replica-mode restore bypasses them). Expected:
+
+- exit 0 and the final line `tonyai_runtime on <host>: privileges as intended`;
+- **no** `- …` problem line;
+- **no** `the library's record was not reconciled` line (if it appears, the URL
+  is not the owner's);
+- on staging and production, **no** `! factor library holds a placeholder release`
+  or `… fixture release` line. Neither environment ever holds one (K3), so such a
+  line is a finding even though the exit code stays 0.
+
+Record the `! tonyai_runtime can also reach …` PUBLIC warnings as in the runtime
+procedure. Attach full stdout and stderr with the source SHA and clear
+`DATABASE_URL` afterwards. Three limits apply (independent review F5):
+
+1. Its CHECK pins are md5 hashes of PostgreSQL 17 output. Confirm `SHOW
+   server_version` is 17.x in the same session before relying on it.
+2. It reads its integrity-function bodies from the checkout's migrations. Run it
+   only from the deployed SHA; any other checkout can report false drift or miss
+   real drift.
+3. On a database without migration `20261004120000_lp3_03_factor_model` it exits 1
+   with `relation "factor_releases" does not exist` and prints no privilege result
+   at all. That is not a privilege finding; the check is usable only once that
+   migration is applied.
 
 ## Rotate the runtime credential
 
@@ -278,4 +326,5 @@ secret access to make recovery easier.
 Supabase DB backups do not contain Storage bytes. Protect evidence/import-source
 objects, checksum inventory, bucket/Auth policies and release configuration.
 RPO/RTO and retention are owner decisions; LP5-03 proves an isolated restore and
-report reconciliation. A state/vault restore alone is not disaster-recovery proof.
+report reconciliation through the [database restore procedure and drill](04-verify.md#database-restore-procedure-and-lp5-03-drill)
+in runbook 04. A state/vault restore alone is not disaster-recovery proof.

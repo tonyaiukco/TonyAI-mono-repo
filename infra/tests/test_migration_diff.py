@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,6 +42,17 @@ class MigrationDiffTests(unittest.TestCase):
                     self.assertEqual(replay.args[0][replay.args[0].index('--shadow-database-url')+1], shadow)
                     self.assertEqual(contract.args[0], ['pnpm', 'exec', 'prisma', 'db', 'execute', '--url', shadow, '--stdin'])
                     self.assertEqual(contract.kwargs['input'], INDEX_CONTRACT_SQL)
+
+    def test_index_contract_requires_only_the_seven_column_key(self):
+        # LP3-03 (K2): the transitional six-column branch is gone; the catalogue
+        # guard names exactly one key, ending in activity_type.
+        self.assertIn('i.indnkeyatts = 7 AND i.indnatts = 7', INDEX_CONTRACT_SQL)
+        self.assertNotIn('= 6', INDEX_CONTRACT_SQL)
+        self.assertIsNone(re.search(r'\bOR\b', INDEX_CONTRACT_SQL))
+        self.assertEqual(INDEX_CONTRACT_SQL.count('pg_get_indexdef'), 1)
+        self.assertEqual(INDEX_CONTRACT_SQL.count("'category', 'activity_type']"), 1)
+        self.assertIn('period_value, category, activity_type) NULLS NOT DISTINCT WHERE', INDEX_CONTRACT_SQL)
+        self.assertNotIn('period_value, category) NULLS', INDEX_CONTRACT_SQL)
 
     def test_both_commands_refuse_non_ci_or_other_database_before_connecting(self):
         shadow = 'postgresql://postgres:ci-only@127.0.0.1:5432/tonyai_shadow'

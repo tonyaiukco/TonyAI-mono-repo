@@ -22,51 +22,53 @@ def main():
     name = 'activity_records_reporting_entity_period_category_key'
     drop = 'DROP INDEX public.' + name + ';'
     valid = ('CREATE UNIQUE INDEX ' + name + ' ON public.activity_records '
-             '(subsidiary_id, location_id, reporting_year, reporting_period, period_value, category) '
+             '(subsidiary_id, location_id, reporting_year, reporting_period, period_value, category, activity_type) '
              'NULLS NOT DISTINCT WHERE status <> \'voided\';')
-    valid_seven = valid.replace('category)', 'category, activity_type)')
     def check_variant(create):
-        # IF NOT EXISTS also supports PR B's replay, which already has this column.
         # Each connection owns a transaction; failure or explicit ROLLBACK leaves
         # the original replayed schema intact. No migration files are edited.
-        setup = 'ALTER TABLE public.activity_records ADD COLUMN IF NOT EXISTS activity_type text;'
-        sql = INDEX_CONTRACT_SQL.replace('BEGIN READ ONLY;', 'BEGIN;\n' + setup + '\n' + drop + '\n' + create).replace('COMMIT;', 'ROLLBACK;')
+        sql = INDEX_CONTRACT_SQL.replace('BEGIN READ ONLY;', 'BEGIN;\n' + drop + '\n' + create).replace('COMMIT;', 'ROLLBACK;')
         return check(sql)
 
-    for label, create in [('six-column', valid), ('seven-column', valid_seven)]:
-        if check_variant(create).returncode:
-            sys.exit('FAIL: valid index variant must pass: ' + label)
-        if check(INDEX_CONTRACT_SQL).returncode:
-            sys.exit('FAIL: rollback did not preserve the control index: ' + label)
-        print('PASS: valid ' + label + ' index accepted; original index retained.', flush=True)
+    if check_variant(valid).returncode:
+        sys.exit('FAIL: valid seven-column index must pass.')
+    if check(INDEX_CONTRACT_SQL).returncode:
+        sys.exit('FAIL: rollback did not preserve the control index.')
+    print('PASS: valid seven-column index accepted; original index retained.', flush=True)
 
     variants = [
         ('missing index', ''),
         ('wrong index name', valid.replace(name, 'activity_records_wrong_key')),
+        ('quoted mixed-case name', valid.replace(name, '"A' + name[1:] + '"')),
         ('nonunique index', valid.replace('UNIQUE ', '').replace('NULLS NOT DISTINCT ', '')),
         ('NULLS DISTINCT', valid.replace('NULLS NOT DISTINCT ', '')),
+        ('legacy six-column key', valid.replace(', activity_type)', ')')),
+        ('activity_type replacing category', valid.replace('category, activity_type)', 'activity_type)')),
+        ('activity_type not last', valid.replace('category, activity_type', 'activity_type, category')),
         ('missing key', valid.replace('location_id, ', '')),
+        ('replaced key', valid.replace('location_id, ', 'id, ')),
         ('reordered keys', valid.replace('subsidiary_id, location_id', 'location_id, subsidiary_id')),
-        ('extra key', valid.replace('period_value, category)', 'period_value, category, id)')),
+        ('eighth key', valid.replace('activity_type)', 'activity_type, id)')),
+        ('INCLUDE column', valid.replace('activity_type) ', 'activity_type) INCLUDE (id) ')),
         ('expression key', valid.replace('reporting_year,', '(reporting_year + 0),')),
+        ('activity_type expression', valid.replace('activity_type)', 'lower(activity_type))')),
+        ('different sort order', valid.replace('reporting_year,', 'reporting_year DESC,')),
+        ('activity_type DESC', valid.replace('activity_type)', 'activity_type DESC)')),
+        ('activity_type NULLS FIRST', valid.replace('activity_type)', 'activity_type NULLS FIRST)')),
+        ('activity_type collation', valid.replace('activity_type)', 'activity_type COLLATE "C")')),
+        ('activity_type operator class', valid.replace('activity_type)', 'activity_type text_pattern_ops)')),
+        ('storage parameter', valid.replace(' WHERE ', ' WITH (fillfactor = 50) WHERE ')),
         ('no predicate', valid.replace(" WHERE status <> 'voided'", '')),
         ('reversed predicate', valid.replace("status <> 'voided'", "status = 'voided'")),
         ('different predicate', valid.replace("'voided'", "'rejected'")),
         ('narrowed predicate', valid.replace("status <> 'voided'", "status <> 'voided' AND status <> 'draft'")),
-        ('different sort order', valid.replace('reporting_year,', 'reporting_year DESC,')),
+        ('invalid index', valid + ' UPDATE pg_catalog.pg_index SET indisvalid = false '
+                                  "WHERE indexrelid = 'public." + name + "'::regclass;"),
         ('wrong table', 'CREATE TABLE public.index_decoy (LIKE public.activity_records); ' + valid.replace('ON public.activity_records', 'ON public.index_decoy')),
         ('wrong schema', 'CREATE SCHEMA index_decoy; CREATE TABLE index_decoy.activity_records (LIKE public.activity_records); ' + valid.replace('ON public.activity_records', 'ON index_decoy.activity_records')),
-        ('seven-column activity_type not last', valid_seven.replace('category, activity_type', 'activity_type, category')),
-        ('activity_type replacing category', valid.replace('category)', 'activity_type)')),
-        ('seven-column replaced key', valid_seven.replace('location_id, ', 'id, ')),
-        ('seven-column eighth key', valid_seven.replace('activity_type)', 'activity_type, id)')),
-        ('seven-column NULLS DISTINCT', valid_seven.replace('NULLS NOT DISTINCT ', '')),
-        ('seven-column expression key', valid_seven.replace('activity_type)', 'lower(activity_type))')),
-        ('seven-column no predicate', valid_seven.replace(" WHERE status <> 'voided'", '')),
-        ('seven-column reversed predicate', valid_seven.replace("status <> 'voided'", "status = 'voided'")),
-        ('seven-column different predicate', valid_seven.replace("'voided'", "'rejected'")),
-        ('seven-column narrowed predicate', valid_seven.replace("status <> 'voided'", "status <> 'voided' AND status <> 'draft'")),
     ]
+    if len({create for _, create in variants}) != len(variants) or valid in {create for _, create in variants}:
+        sys.exit('FAIL: a mutant repeats another or the control; check its replacement matched.')
     for label, create in variants:
         result = check_variant(create)
         if result.returncode == 0 or 'Required live-record unique index contract is missing or changed' not in result.stdout + result.stderr:
