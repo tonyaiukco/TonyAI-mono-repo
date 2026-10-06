@@ -201,11 +201,13 @@ The dump holds:
 
 The bytes are protected separately (above).
 
-It deliberately carries **no session and no token**. `auth.sessions`,
-`refresh_tokens`, `mfa_amr_claims`, `mfa_challenges`, `one_time_tokens`,
-`flow_state`, `saml_relay_states`, `oauth_authorizations` and
-`oauth_client_states` stay behind, so no bearer credential leaves the source.
-Every user signs in again after a restore; announce that in a real recovery.
+It deliberately carries **no session, refresh-token or one-time-token row**.
+`auth.sessions`, `refresh_tokens`, `mfa_amr_claims`, `mfa_challenges`,
+`one_time_tokens`, `flow_state`, `saml_relay_states`, `oauth_authorizations` and
+`oauth_client_states` stay behind. Every user signs in again after a restore;
+announce that in a real recovery. `auth.users` still holds the hashes of pending
+invitation, password-reset and email-change links. They stay valid against the
+**source** until they expire, which is one more reason the dump is a secret.
 
 It takes no other Storage table. Buckets and their settings come from runbook 02,
 and the owner cannot write Storage's vector tables. The other platform schemas hold
