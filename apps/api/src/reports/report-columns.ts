@@ -1,4 +1,4 @@
-import { entityLabel } from '@tonyai/shared-types';
+import { CATEGORY_ACTIVITY_TYPES, entityLabel, UNSPECIFIED_ACTIVITY_TYPE, type Category } from '@tonyai/shared-types';
 import { ANOMALY_BASELINE_PERIODS } from '@tonyai/shared-types';
 import { csvField, type CellValue } from '../common/csv-cell';
 import type {
@@ -260,7 +260,9 @@ export const BODY_COLUMNS = [
   { key: 'category', aggregatable: false,
     csv: { label: 'category', cell: (r) => r.category },
     excel: { label: 'Category', cell: (r) => r.category },
-    pdf: { label: 'Category', cell: (r) => r.category } },
+    // The PDF carries the activity type here, not in a column of its own (A4
+    // width): "Fuel (Diesel)".
+    pdf: { label: 'Category', cell: (r) => categoryWithActivity(r) } },
   { key: 'reporting_period', aggregatable: false,
     csv: { label: 'reporting_period', cell: (r) => r.reportingPeriod },
     excel: { label: 'Reporting period', cell: (r) => r.reportingPeriod },
@@ -491,6 +493,57 @@ export const _numericParity: [UndeclaredNumeric] extends [never]
   ? true
   : UndeclaredNumeric = true;
 
+/** An activity type as people read it ("Diesel"); '' for a record without one. */
+export function activityTypeLabel(r: Pick<ReportRowBase, 'category' | 'activityType'>): string {
+  if (!r.activityType) return '';
+  // A factor's lookup for records written before fuels were typed.
+  if (r.activityType === UNSPECIFIED_ACTIVITY_TYPE) return 'Not specified';
+  return (
+    CATEGORY_ACTIVITY_TYPES[r.category as Category]?.types.find((t) => t.value === r.activityType)?.label ??
+    r.activityType
+  );
+}
+
+function categoryWithActivity(r: Pick<ReportRowBase, 'category' | 'activityType'>): string {
+  const activity = activityTypeLabel(r);
+  return activity ? `${r.category} (${activity})` : r.category;
+}
+
+/**
+ * Identifying columns APPENDED after everything else (LP3-03). The activity
+ * type is part of a record's identity since LP3-03, but this file's rule is
+ * that new columns are appended, never inserted — and in the CSV the body
+ * columns are followed by the withdrawal disclosure, so a body column added
+ * last would still have moved every `voided_*` column one place right. These
+ * come after the disclosure in the CSV, last on each Excel sheet, and ride in
+ * the Category cell of the PDF. Never marked on a withdrawn row: they say
+ * which record it was, not what it counted.
+ */
+export const TRAILING_COLUMNS = [
+  {
+    key: 'activity_type',
+    // The token, machine-readable (`diesel`); the label in Excel.
+    csv: { label: 'activity_type', cell: (r: ReportRowBase) => r.activityType ?? '' },
+    excel: { label: 'Activity type', cell: (r: ReportRowBase) => activityTypeLabel(r) },
+  },
+  {
+    // Whether a reader may rely on the figure — the whole path's standing
+    // (`isAuthoritativeSnapshot`) as it stands NOW, a later withdrawal
+    // included; empty for a record with no figure. The token here, the
+    // sentence on the Excel sheet.
+    key: 'factor_standing',
+    csv: { label: 'factor_standing', cell: (r: ReportRowBase) => r.factorStanding?.code ?? '' },
+    excel: { label: 'Factor standing', cell: (r: ReportRowBase) => r.factorStanding?.text ?? '' },
+  },
+  // Text, always: a trailing column is identifying, never summable, so it is
+  // never marked on a withdrawn row — a number here would print a withdrawn
+  // row's real value where the body columns print WITHDRAWN.
+] as const satisfies readonly {
+  key: string;
+  csv: { label: string; cell: (r: ReportRowBase) => string };
+  excel: { label: string; cell: (r: ReportRowBase) => string };
+}[];
+
 /**
  * The header, and the only one: withdrawn records share this table rather than
  * getting a second file, because one header row keeps the export parseable.
@@ -499,8 +552,9 @@ export function csvHeader(): string {
   return [
     ...BODY_COLUMNS.filter((c) => c.csv).map((c) => c.csv!.label),
     ...DISCLOSURE_COLUMNS.map((d) => d.label),
+    ...TRAILING_COLUMNS.map((c) => c.csv.label),
   ]
-    // Identity for all fifteen labels, which is the point: they are module
+    // Identity for every label, which is the point: they are module
     // literals today, and the golden that pins them fails with a message
     // asking you to update a literal — so a sixteenth column with a hostile
     // label could be waved through by editing both sides. The header is a row.
@@ -541,6 +595,7 @@ export function csvLedgerRow(r: ReportLedgerRow): string {
     // Empty for a counted row, and empty is the right word: this row was never
     // withdrawn.
     ...DISCLOSURE_COLUMNS.map(() => ''),
+    ...TRAILING_COLUMNS.map((c) => c.csv.cell(r)),
   ]
     .map(csvField)
     .join(',');
@@ -559,6 +614,7 @@ export function csvWithdrawnRow(r: ReportWithdrawnRow): string {
       c.aggregatable ? WITHDRAWN : c.csv!.cell(r),
     ),
     ...DISCLOSURE_COLUMNS.map((d) => d.cell(r)),
+    ...TRAILING_COLUMNS.map((c) => c.csv.cell(r)),
   ]
     .map(csvField)
     .join(',');
@@ -617,11 +673,17 @@ function disclosure<K extends (typeof DISCLOSURE_COLUMNS)[number]['key']>(
  * reorders a filed CSV. That, and only that, would force an explicit list.
  */
 export function excelLedgerHeader(): string[] {
-  return BODY_COLUMNS.filter((c) => c.excel).map((c) => c.excel!.label);
+  return [
+    ...BODY_COLUMNS.filter((c) => c.excel).map((c) => c.excel!.label),
+    ...TRAILING_COLUMNS.map((c) => c.excel.label),
+  ];
 }
 
 export function excelLedgerRow(r: ReportLedgerRow): CellValue[] {
-  return BODY_COLUMNS.filter((c) => c.excel).map((c) => c.excel!.cell(r));
+  return [
+    ...BODY_COLUMNS.filter((c) => c.excel).map((c) => c.excel!.cell(r)),
+    ...TRAILING_COLUMNS.map((c) => c.excel.cell(r)),
+  ];
 }
 
 /**
@@ -659,6 +721,7 @@ const WITHDRAWN_SHEET: readonly ExcelSlot<ReportWithdrawnRow>[] = [
   // Eleventh, after Reason. No `withdrawnTotal`: an actor does not aggregate,
   // and the writer emits `''` for the total row's cell under it.
   { ...disclosure('voided_by').excel!, cell: disclosure('voided_by').cell },
+  ...TRAILING_COLUMNS.map((c) => c.excel),
 ];
 
 /**

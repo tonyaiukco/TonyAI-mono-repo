@@ -9,50 +9,39 @@ This logic is suitable for prototype and mock backend use. It must not be treate
 
 ## 2. Unit Conversion and Normalisation
 
-Before emission factors are applied, raw activity data must be normalised to the required calculation unit for the selected category.
+Before an emission factor is applied, the activity value is normalised to the unit the factor is quoted per. Since LP3-03 this happens in **two steps, and only the first is code** (`normalize(value, unit, category, conversion)` in `apps/api/src/calculations/normalization.ts`):
 
-### 2.1 Natural Gas Normalisation
-- **Base Unit:** `kwh`
-- **Conversion Factors:**
-  - `cubic_metres` to `kwh`: multiply by `11.36`
+1. **Definitional** — within a unit family, to that family's base unit (`DIMENSION_BASE_UNIT` in `@tonyai/shared-types`). These are exact by definition and need no source.
+2. **Sourced** — between families (metered m³ of natural gas → kWh). That depends on the fuel, the country, the year and the calorific basis, so it is a `unit_conversions` row of a factor release, chosen by `resolveFactorPath` for the record's category, activity type, geography and year — never a code constant, and never borrowed from another country or year.
 
-> **Provenance warning (added WP15).** The `11.36` above is a **prototype
-> assumption carried over from the original demo spec. It has no citation, no
-> stated calorific-value basis (gross vs net) and no stated reference conditions
-> (temperature/pressure).** Volume-to-energy conversion for natural gas depends on
-> all three, so this number must not be treated as authoritative. It is applied
-> today so the prototype can calculate, it is recorded in every affected
-> calculation snapshot as `conversionFactor` + `conversionBasis`, and it is
-> replaced by a sourced factor with the Phase-4 factor library.
->
-> **Standard cubic metres (`Sm3` / `Nm3`) are deliberately NOT converted.** They
-> are a different physical quantity from actual cubic metres, and this repository
-> holds no sourced calorific value for them. The unit is offered in the UI and
-> refused by the API with that reason, rather than silently reusing the m³
-> assumption — which would put a fabricated figure into an emissions inventory.
-  - `therms` to `kwh`: multiply by `29.3`
-  - `gj` to `kwh`: multiply by `277.78`
+Every factor is quoted per **one base unit** of its family: kWh (energy), litres (liquid fuel), cubic metres (metered volume), standard cubic metres, kilometres, passenger-kilometres, kg (mass).
 
-### 2.2 Liquid Fuel Normalisation
-- **Base Unit:** `litres`
-- **Conversion Factors:**
-  - `uk_gallons` to `litres`: multiply by `4.546`
-  - `us_gallons` to `litres`: multiply by `3.785`
+### 2.1 Natural Gas (base units `kWh` and `cubic_metres`)
+Energy, base unit `kWh`:
+- `kwh`: identity
+- `therms` → `kwh`: × `105,505,585.257348 / 3,600,000` (= 29.30710701593, exact) — the UK statutory therm (Units of Measurement Regulations 1995, SI 1995/1804, regs 3(3) and 4(d) and the Schedule: 105.505585257348 MJ), the value UK law converts therms of gas supply with. Not the US therm (29.3001 kWh).
+- `gj` → `kwh`: × `1000/3.6` (exact)
 
-### 2.3 Electricity Normalisation
-- **Base Unit:** `kwh`
-- **Conversion Factors:**
-  - `mwh` to `kwh`: multiply by `1000`
+A fuel's energy quantity carries a **calorific basis**: billed kWh are on gross (higher) calorific value, so a factor applied directly to them must be a gross-CV factor (`directCalorificBasisFor`).
 
-### 2.4 Category Specific Rule
-Not all categories should be converted to energy units.
+Metered volume, base unit `cubic_metres`: a meter reading stays a volume. It becomes kWh only through a **sourced conversion row** for natural gas in the record's country and year, on the same calorific basis as the factor it reaches; with none loaded the calculation is refused (`no_conversion`), never estimated. A conversion is never borrowed from another country — with one exception, stated next.
 
-Examples:
-- electricity and natural gas may normalise to `kwh`
-- liquid fuels may normalise to `litres`
-- travel should remain in `passenger_kilometres` or `kilometres`
-- waste should remain in `tonnes`
-- water should remain in `cubic_metres`
+> **Placeholder (owner decision K4, 2026-10-04).** The prototype's `11.36` kWh per m³ — carried over from the original demo spec, with **no citation and no stated reference conditions**; its gross calorific basis is a reconstruction (~40.0 MJ/m³ with the UK volume correction 1.02264), not a stated fact — is now a labelled **placeholder** `unit_conversions` row of the seed's demo release, one per seeded geography (UK, TR, EU) for 2026. **It is a UK-shaped number filed under TR and EU too** — the placeholder's one exception to "never borrowed": Türkiye's sourced value, stated at its own reference conditions, will differ. The rows are per geography so that each country's sourced row can replace its own. It is used only where the API runs with `ALLOW_PLACEHOLDER_FACTORS=true` (local development, CI) and refused everywhere else. Each affected snapshot records it in `conversion` (with its release), `conversionFactor` and `conversionBasis`. A sourced conversion replaces it when LP4-02 loads authoritative releases.
+
+> **Standard and normal cubic metres (`Sm3` / `Nm3`) are deliberately NOT converted.** They are different physical quantities from metered cubic metres (and from each other: 15 °C vs 0 °C), and this repository holds no sourced calorific value for them. The units are recognised and refused by name — in code and in the shared unit vocabulary, so a sourced conversion row alone does not lift the block; lifting it is a contract change with that row (LP4-02). Re-entering a standard volume as metered m³ would overstate it.
+
+### 2.2 Liquid fuel (base unit `litres`)
+- `litres`: identity
+- `uk_gallons` → `litres`: × `4.54609` (exact)
+- `us_gallons` → `litres`: × `3.785411784` (exact)
+
+### 2.3 Electricity (base unit `kWh`)
+- `mwh` → `kwh`: × `1000` (exact)
+
+### 2.4 Category specific rules
+- Travel stays in `passenger_kilometres` or `kilometres` (identity).
+- Mass is quoted per `kg`: `tonnes` → `kg` × `1000` (exact). Refrigerant leakage is entered in kg. A publisher's per-tonne value (DESNZ quotes waste and materials per tonne) must be loaded per kg by exact decimal division (LP4-02; no loader exists yet), keeping the published value and unit in the row's methodology — never by floating-point arithmetic (0.20705/1000 is 0.00020705000000000002 in binary floating point).
+- Water stays in `cubic_metres` and is recorded without a factor (no factor is loaded for it): the reading is kept exactly as entered and no figure is produced.
 
 ---
 
@@ -61,7 +50,7 @@ Examples:
 The system must retrieve factors based on the `geographyCode` of the selected reporting entity, normally inherited from the selected subsidiary or organisation.
 
 ### 3.1 Scope 1: Direct Combustion
-Scope 1 fuel factors may use standard factor libraries unless organisation specific or country specific factors are configured.
+Scope 1 fuel factors come from a factor release for the record's country (organisation-specific factors are not supported: factor rows carry no organisation).
 
 #### Demo Factors
 - **Natural Gas:** `0.1829 kgCo2e / kwh`
@@ -75,6 +64,9 @@ Factors represent `kgCo2e per kwh` of electricity consumed.
 - **United Kingdom (`UK`)**: `0.2071`
 - **Turkey (`TR`)**: `0.4400`
 - **European Union Residual Mix Demo (`EU`)**: `0.2310`
+- **United Kingdom, prior year (`UK`, 2025)**: `0.2123` — a versioning-demo placeholder, uncited and never verified against any edition: it exists only so the factor library holds a second reporting year to resolve against.
+
+> These are the prototype's **placeholder** values (the seed's `TonyAI prototype` release); the seed loads Natural Gas, Diesel and the electricity values only — Petrol and the §3.3 travel factors are listed for reference and price nothing. The EU residual-mix figure is a market-based quantity; it is resolved as location-based until LP4-02 relabels or replaces it (owner decision K-a, 2026-10-04). The Diesel value prices both records written before fuels were typed (`unspecified`) and new `diesel` records (owner decision K-b).
 
 ### 3.3 Scope 3: Travel and Logistics
 #### Demo Factors
@@ -92,13 +84,13 @@ Factors represent `kgCo2e per kwh` of electricity consumed.
 `tCo2e = kgCo2e / 1000`
 
 ### 4.2 Step by Step Execution
-1. Identify the activity category
-2. Identify the geography code
-3. Normalize the input value to the required unit
-4. Fetch the matching emission factor
+1. Identify the activity category and, for a typed category (Fuel, Mobile Combustion, Refrigerants), the record's activity type
+2. Identify the geography code and the reporting year
+3. Find the factor path (`resolveFactorPath`): the CO2e factor of the exact category, activity type, geography and year — of the category's own Scope 2 method — directly, or through one sourced conversion; authoritative releases outrank placeholders; a conflict or a gap is refused with a code, never guessed
+4. Normalise the input value: the definitional step, then the chosen conversion (§2)
 5. Apply the emissions formula
 6. Convert the result to `tCo2e`
-7. Store factor traceability metadata with the result
+7. Store the snapshot (§5) with the result
 
 ### 4.3 Example Calculation
 **Input:** `5 mwh` purchased electricity  
@@ -120,7 +112,9 @@ Each calculation result must store:
 - `geographyCode`
 - `normalizedValue`
 - `normalizedUnit`
-- `conversionApplied` if relevant
+- `conversionApplied`, and `conversionFactor` + `conversionBasis` when something was converted
+
+Since LP3-03 the snapshot (`CalculationResultV2`, schema 2) also stores where every number came from: the factor's release (publisher, edition, ordinal, status, source URL, licence, GWP set), the activity type, gas and gas coverage, calorific basis, Scope 2 method, data year and year policy, and the sourced conversion with its own release. A figure is authoritative only when every link is (`isAuthoritativeSnapshot`); reports and screens ask that, never the factor's status alone.
 
 This information must be viewable in the Emissions History detail panel.
 

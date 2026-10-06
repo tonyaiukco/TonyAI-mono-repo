@@ -1,31 +1,126 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { NoEmissionFactorError } from './errors';
-import type { EmissionFactor } from '@tonyai/db';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import {
+  CalculationInputError,
+  FactorLibraryConflictError,
+  NoEmissionFactorError,
+  type CoverageRefusalCode,
+} from './errors';
+import type { EmissionFactor, FactorRelease, UnitConversion } from '@tonyai/db';
+import {
+  CALCULATION_GAS,
   CATEGORY_SCOPE_MAP,
   CATEGORY_UNITS,
+  DIMENSION_BASE_UNIT,
+  factorActivityTypeFor,
   isInvoiceTracked,
+  isRecordActivityTypeAllowed,
   isRecordableWithoutFactor,
+  recordActivityTypesFor,
+  resolveFactorPath,
+  scope2MethodFor,
+  unitDimensionOf,
+  yearPolicyOf,
 } from '@tonyai/shared-types';
 import type {
   ActivityCalculationSnapshot,
   CalculationInput,
+  CalculationResultV2,
   Category,
+  CoverageKey,
+  EmissionFactorDetailDTO,
   EmissionFactorDTO,
+  FactorGasCoverage,
+  FactorReleaseSnapshot,
+  FactorStatus,
+  GwpSet,
+  UnitConversionSnapshot,
 } from '@tonyai/shared-types';
 import { quoteCallerText } from '../common/caller-text';
 import { PrismaService } from '../prisma/prisma.service';
+import { FACTOR_POLICY, type FactorPolicy } from './factor-policy';
 import {
   blockedUnitReason,
   canonicalUnit as canonicalInputUnit,
   isKnownUnit,
   normalize,
-  type NormalizationResult,
 } from './normalization';
+import { storedUnit } from './storable-unit';
+
+/** Every status a calculation may ever resolve from — never `withdrawn`. */
+const LIVE_STATUSES: readonly FactorStatus[] = ['authoritative', 'placeholder', 'fixture'];
+
+/**
+ * More candidate rows than one lookup can legitimately have. A lookup is one
+ * category, activity type, geography and year; its candidates are that key's
+ * factors across releases and units, and its conversions — paths are
+ * factors × conversions, so an unbounded library would make one request
+ * quadratic. Above the cap the library is defective and the lookup refused.
+ */
+export const FACTOR_CANDIDATE_CAP = 50;
+
+type FactorRow = EmissionFactor & { release: FactorRelease };
+type ConversionRow = UnitConversion & { release: FactorRelease };
+
+/**
+ * A row with its release status typed as the contract's. The column is
+ * CHECK-constrained to `FACTOR_STATUSES`, and `selectByRelease` ignores any
+ * status it does not know in any case.
+ */
+function ranked<T extends { release: FactorRelease }>(row: T): T & { release: FactorRelease & { status: FactorStatus } } {
+  return { ...row, release: { ...row.release, status: row.release.status as FactorStatus } };
+}
+
+/** The release columns a `FactorReleaseSnapshot` carries — never reviewer, withdrawer or notes. */
+const RELEASE_SNAPSHOT_SELECT = {
+  id: true,
+  publisher: true,
+  title: true,
+  edition: true,
+  ordinal: true,
+  status: true,
+  sourceUrl: true,
+  licence: true,
+  publishedAt: true,
+  gwpSet: true,
+} as const;
+
+function releaseSnapshot(
+  release: Pick<FactorRelease, keyof typeof RELEASE_SNAPSHOT_SELECT>,
+): FactorReleaseSnapshot {
+  return {
+    id: release.id,
+    publisher: release.publisher,
+    title: release.title,
+    edition: release.edition,
+    ordinal: release.ordinal,
+    status: release.status as FactorStatus,
+    sourceUrl: release.sourceUrl,
+    licence: release.licence,
+    publishedAt: release.publishedAt ? release.publishedAt.toISOString().slice(0, 10) : null,
+    gwpSet: release.gwpSet as GwpSet | null,
+  };
+}
+
+function conversionSnapshot(conversion: ConversionRow): UnitConversionSnapshot {
+  return {
+    id: conversion.id,
+    fromUnit: conversion.fromUnit,
+    toUnit: conversion.toUnit,
+    multiplier: conversion.multiplier,
+    calorificBasis: conversion.calorificBasis as UnitConversionSnapshot['calorificBasis'],
+    referenceConditions: conversion.referenceConditions,
+    basis: conversion.basis,
+    dataYear: conversion.dataYear,
+    release: releaseSnapshot(conversion.release),
+  };
+}
 
 @Injectable()
 export class CalculationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(FACTOR_POLICY) private readonly policy: FactorPolicy,
+  ) {}
 
   private toFactorDTO(f: EmissionFactor): EmissionFactorDTO {
     return {
@@ -45,56 +140,168 @@ export class CalculationsService {
     };
   }
 
-  /** Expose the pure normalizer for callers/tests. */
-  normalize(value: number, unit: string): NormalizationResult {
-    return normalize(value, unit);
-  }
-
-  /** List factors, optionally filtered. Reference data — not tenant-scoped. */
+  /**
+   * List factors, optionally filtered. Reference data — not tenant-scoped.
+   *
+   * Each with its LP3-03 dimensions and its release (`EmissionFactorDetailDTO`,
+   * which extends the old DTO): without them a placeholder reads like an
+   * authoritative factor, a withdrawn one like a live one, and the `diesel`
+   * and `unspecified` Fuel rows like one row listed twice. Ordered by release
+   * ordinal, never by the `version` label.
+   */
   async listFactors(filter: {
     category?: string;
     geographyCode?: string;
     year?: number;
-  }): Promise<EmissionFactorDTO[]> {
+  }): Promise<EmissionFactorDetailDTO[]> {
     const factors = await this.prisma.emissionFactor.findMany({
       where: {
         category: filter.category,
         geographyCode: filter.geographyCode,
         reportingYear: filter.year,
       },
+      // Only the snapshot's columns: the release's people and notes never
+      // leave the database on this path, by construction.
+      include: { release: { select: RELEASE_SNAPSHOT_SELECT } },
       orderBy: [
         { category: 'asc' },
+        { activityType: 'asc' },
         { geographyCode: 'asc' },
         { reportingYear: 'desc' },
-        { version: 'desc' },
+        { release: { publisher: 'asc' } },
+        { release: { ordinal: 'desc' } },
+        // The rest of the identity, so rows within a release list in one order.
+        { gas: 'asc' },
+        { scope2Method: 'asc' },
+        { calorificBasis: 'asc' },
+        { normalizedUnit: 'asc' },
       ],
     });
-    return factors.map((f) => this.toFactorDTO(f));
+    return factors.map((f) => ({
+      ...this.toFactorDTO(f),
+      activityType: f.activityType,
+      gas: f.gas as EmissionFactorDetailDTO['gas'],
+      gasCoverage: f.gasCoverage as EmissionFactorDetailDTO['gasCoverage'],
+      calorificBasis: f.calorificBasis as EmissionFactorDetailDTO['calorificBasis'],
+      scope2Method: f.scope2Method as EmissionFactorDetailDTO['scope2Method'],
+      dataYear: f.dataYear,
+      release: releaseSnapshot(f.release),
+    }));
   }
 
   /**
-   * Resolve the latest-version factor for (category, geography, year). Among
-   * rows sharing that key we take the highest `version` (desc), so a newer
-   * factor library supersedes an older one for the same reporting year.
-   *
-   * Returns null rather than refusing, for the one caller allowed to proceed
-   * when nothing is found (see `compute`).
+   * The candidate factors and conversions of one lookup, matched EXACTLY on
+   * category, activity type, geography and reporting year — a loose match
+   * would apply another country's calorific value or another year's grid —
+   * factors also on the CO2e row of the category's own Scope 2 method, and
+   * conversions from the base unit of the record's family. Releases are
+   * filtered by status here, in SQL, as well as by `resolveFactorPath`.
    */
-  private async findFactor(
-    category: string,
-    geographyCode: string,
-    reportingYear: number,
-  ): Promise<EmissionFactor | null> {
-    return this.prisma.emissionFactor.findFirst({
-      where: { category, geographyCode, reportingYear },
-      orderBy: { version: 'desc' },
-    });
+  private async candidates(
+    lookup: { category: string; activityType: string; geographyCode: string; reportingYear: number },
+    baseUnit: string,
+    statuses: readonly FactorStatus[],
+  ): Promise<{ factors: FactorRow[]; conversions: ConversionRow[] }> {
+    const where = { ...lookup, release: { status: { in: [...statuses] } } };
+    const [factors, conversions] = await Promise.all([
+      this.prisma.emissionFactor.findMany({
+        where: { ...where, gas: CALCULATION_GAS, scope2Method: scope2MethodFor(lookup.category) },
+        include: { release: true },
+        orderBy: { id: 'asc' },
+        take: FACTOR_CANDIDATE_CAP + 1,
+      }),
+      this.prisma.unitConversion.findMany({
+        where: { ...where, fromUnit: baseUnit },
+        include: { release: true },
+        orderBy: { id: 'asc' },
+        take: FACTOR_CANDIDATE_CAP + 1,
+      }),
+    ]);
+    if (factors.length > FACTOR_CANDIDATE_CAP || conversions.length > FACTOR_CANDIDATE_CAP) {
+      throw new FactorLibraryConflictError(
+        'ambiguous_factor',
+        `The factor library holds more than ${FACTOR_CANDIDATE_CAP} candidate rows for category ` +
+          `"${lookup.category}" (${lookup.activityType}, ${lookup.geographyCode}, ${lookup.reportingYear}) — a library defect, refused rather than searched.`,
+      );
+    }
+    return { factors, conversions };
+  }
+
+  /**
+   * Which factor — and which sourced conversion — prices this lookup, by
+   * `resolveFactorPath`: the one rule the engine, the seed and the coverage
+   * report share.
+   *
+   * Where placeholders are refused, the pricing query reads authoritative
+   * releases only, so no non-authoritative row ever reaches the arithmetic
+   * here even if the resolver were wrong. A refusal is then re-derived over
+   * every live release — never to price, only so the code names the real gap
+   * (`placeholder_refused` — "load the source" — rather than `no_factor`).
+   */
+  private async resolve(
+    lookup: { category: string; activityType: string; geographyCode: string; reportingYear: number },
+    inputUnit: string,
+  ) {
+    const dimension = unitDimensionOf(inputUnit);
+    if (dimension === undefined) return { ok: false as const, code: 'unit_unknown' as const };
+    const baseUnit = DIMENSION_BASE_UNIT[dimension];
+    const allowPlaceholders = this.policy.allowPlaceholders;
+    const run = async (statuses: readonly FactorStatus[]) => {
+      const { factors, conversions } = await this.candidates(lookup, baseUnit, statuses);
+      return resolveFactorPath({
+        category: lookup.category,
+        inputUnit,
+        factors: factors.map(ranked),
+        conversions: conversions.map(ranked),
+        allowPlaceholders,
+      });
+    };
+    const result = await run(allowPlaceholders ? LIVE_STATUSES : ['authoritative']);
+    if (result.ok || allowPlaceholders) return result;
+    // Diagnostic only. A library that is defective among its non-authoritative
+    // rows (over the cap) must not turn this lookup's 404 into a 409.
+    try {
+      const why = await run(LIVE_STATUSES);
+      return why.ok ? result : why;
+    } catch (e) {
+      if (e instanceof FactorLibraryConflictError) return result;
+      throw e;
+    }
+  }
+
+  /** The lookup, in words. The activity is named only when the record named one. */
+  private lookupText(key: CoverageKey, typed: boolean): string {
+    return (
+      `category "${quoteCallerText(key.category)}"` +
+      (typed ? `, activity "${quoteCallerText(key.activityType)}"` : '') +
+      `, geography "${quoteCallerText(key.geographyCode)}", year ${key.reportingYear}`
+    );
+  }
+
+  /** The refusal sentence for a coverage code — what is missing, in words. */
+  private coverageMessage(code: CoverageRefusalCode, key: CoverageKey, typed: boolean): string {
+    const what = this.lookupText(key, typed);
+    switch (code) {
+      case 'placeholder_refused':
+        return `Only placeholder (non-authoritative) emission factors cover ${what}, and this environment calculates from authoritative factors only.`;
+      case 'no_conversion':
+        return `The emission factor for ${what} is quoted in another unit, and no sourced conversion from "${quoteCallerText(key.unit)}" to it is loaded.`;
+      case 'calorific_basis_mismatch':
+        return `The emission factors for ${what} are stated on a different calorific basis than "${quoteCallerText(key.unit)}" (a fuel's kWh is billed on gross calorific value).`;
+      default:
+        return `No emission factor found for ${what}`;
+    }
   }
 
   /**
    * Compute emissions for a single activity input.
    * kgCo2e = normalizedValue × factorValue ; tCo2e = kgCo2e / 1000.
-   * Returns the factor snapshot for traceability (calculation_logic.md §5).
+   * Returns the v2 snapshot — the figure and where every number came from
+   * (calculation_logic.md §5; `CalculationResultV2`).
+   *
+   * Validates the activity type against the category (`activity_type_*`), but
+   * does not require one: whether a record must name a type depends on
+   * whether it is new (`ActivityRecordsService`), which a preview cannot know.
    */
   async compute(
     input: CalculationInput,
@@ -108,20 +315,17 @@ export class CalculationsService {
       throw new BadRequestException('value must be a finite number');
     }
     if (!isKnownUnit(input.unit)) {
-      throw new BadRequestException(
-        `Unsupported unit "${quoteCallerText(input.unit)}"`,
-      );
+      throw new CalculationInputError('unit_unknown', `Unsupported unit "${quoteCallerText(input.unit)}"`);
     }
     // Recognised but not calculable (Sm³): refuse by name, with the reason, so
     // the caller learns what is missing rather than "unsupported unit".
     const blocked = blockedUnitReason(input.unit);
     if (blocked) {
-      throw new BadRequestException(blocked);
+      throw new CalculationInputError('unit_blocked', blocked);
     }
-    // Category/unit agreement. The factor guard below only catches a mismatch
-    // BETWEEN unit families (litres vs kWh); within the kWh family `therms` on
-    // Electricity or `MWh` on Natural Gas produced a plausible number and no
-    // error at all.
+    // Category/unit agreement. Path resolution only refuses a unit whose
+    // family no factor reaches; within the kWh family `therms` on Electricity
+    // or `MWh` on Natural Gas would otherwise produce a plausible number.
     const allowedUnits =
       options.enforceCategoryUnit === false
         ? undefined
@@ -139,31 +343,64 @@ export class CalculationsService {
       // padded — `canonicalUnit` collapses whitespace, so `cubic`, 30,000
       // spaces and `metres` passes `isKnownUnit` — and a bulk import repeats
       // this sentence in its report.
-      throw new BadRequestException(
+      throw new CalculationInputError(
+        'unit_not_for_category',
         `Unit "${quoteCallerText(input.unit)}" is not valid for "${input.category}". ` +
           `Accepted: ${allowedUnits.join(', ')}.`,
       );
     }
+    const recordType = input.activityType ?? null;
+    if (!isRecordActivityTypeAllowed(input.category, recordType)) {
+      const types = recordActivityTypesFor(input.category).map((t) => t.value);
+      throw new CalculationInputError(
+        'activity_type_not_for_category',
+        `Activity type "${quoteCallerText(recordType ?? '')}" is not one "${input.category}" has. ` +
+          (types.length > 0 ? `Accepted: ${types.join(', ')}.` : 'This category takes no activity type.'),
+      );
+    }
 
-    // The factor is resolved BEFORE normalization, not after, because when
-    // there is no factor there is nothing to normalise TOWARDS — and running
-    // normalize() anyway would not be merely pointless, it would be wrong:
-    // it is category-blind and converts any `cubic_metres` at the natural-gas
-    // calorific multiplier, so a water meter reading would be frozen into the
-    // record as kWh. See UncalculatedSnapshot in @tonyai/shared-types.
-    const factor = await this.findFactor(
-      input.category,
-      input.geographyCode,
-      input.reportingYear,
+    // The vocabulary spelling (`kWh`, not `kwh`): path resolution classifies a
+    // unit by exact match.
+    const unit = storedUnit(input.unit);
+    const coverage: CoverageKey = {
+      category: input.category,
+      activityType: factorActivityTypeFor(input.category, recordType),
+      geographyCode: input.geographyCode,
+      reportingYear: input.reportingYear,
+      unit,
+    };
+    // Resolved BEFORE normalization: when there is no factor there is nothing
+    // to normalise TOWARDS, and the factorless Water branch below must freeze
+    // the reading exactly as entered.
+    const resolution = await this.resolve(
+      {
+        category: coverage.category,
+        activityType: coverage.activityType,
+        geographyCode: coverage.geographyCode,
+        reportingYear: coverage.reportingYear,
+      },
+      unit,
     );
 
-    if (!factor) {
+    if (!resolution.ok) {
+      if (resolution.code === 'unit_unknown') {
+        throw new CalculationInputError('unit_unknown', `Unsupported unit "${quoteCallerText(input.unit)}"`);
+      }
+      if (resolution.code === 'ambiguous_factor') {
+        throw new FactorLibraryConflictError(
+          'ambiguous_factor',
+          `Two factor releases claim the factor for ${this.lookupText(coverage, recordType !== null)} at the same rank — the factor library needs a person to settle which applies.`,
+        );
+      }
       // Only a named category may be stored without a figure — see
       // FACTORLESS_RECORDABLE_CATEGORIES for why this is a list rather than
       // "invoice-tracked and unresolved" (that broader rule would have absorbed
-      // a missing Electricity factor). Every other case still refuses, which is
-      // what keeps DE-4 (refrigerants) and DE-5 (mobile combustion) honestly
-      // unreportable instead of quietly accepting data nobody can calculate.
+      // a missing Electricity factor). And only when NO factor exists: a
+      // placeholder refused or a conversion missing is a gap to fix, not a
+      // category without a methodology. Every other case still refuses, which
+      // is what keeps DE-4 (refrigerants) and DE-5 (mobile combustion)
+      // honestly unreportable instead of quietly accepting data nobody can
+      // calculate.
       //
       // BOTH conditions, because the `reason` below is frozen into an immutable
       // column and says the entry is kept for invoice-level completeness. Gated
@@ -171,57 +408,70 @@ export class CalculationsService {
       // invoice-tracked would write that sentence — permanently — into rows
       // where it is false.
       if (
-        !isRecordableWithoutFactor(input.category) ||
-        !isInvoiceTracked(input.category)
+        resolution.code === 'no_factor' &&
+        isRecordableWithoutFactor(input.category) &&
+        isInvoiceTracked(input.category)
       ) {
-        throw new NoEmissionFactorError(
-          `No emission factor found for category "${quoteCallerText(input.category)}", ` +
-            `geography "${quoteCallerText(input.geographyCode)}", ` +
-            `year ${input.reportingYear}`,
-        );
+        return {
+          snapshotSchema: 1,
+          category: input.category,
+          geographyCode: input.geographyCode,
+          reportingYear: input.reportingYear,
+          scope: CATEGORY_SCOPE_MAP[input.category as Category],
+          inputValue: input.value,
+          inputUnit: input.unit,
+          reasonCode: 'no_emission_factor',
+          // Raw here, deliberately, unlike the refusal below. This is a STORED
+          // value, not a sentence shown once: the identical raw `geographyCode`
+          // is frozen into the field a few lines up, so quoting only the prose
+          // would be theatre — and would leave an immutable record whose
+          // sentence disagrees with its own machine-readable fields. A second
+          // layer, if one is ever wanted, belongs on the column.
+          reason:
+            `No emission factor is available for "${input.category}" (${input.geographyCode}, ${input.reportingYear}), ` +
+            `so no tCO₂e figure is produced. The entry is still recorded because this category is tracked ` +
+            `by invoice for data-completeness purposes.`,
+        };
       }
-      return {
-        snapshotSchema: 1,
-        category: input.category,
-        geographyCode: input.geographyCode,
-        reportingYear: input.reportingYear,
-        scope: CATEGORY_SCOPE_MAP[input.category as Category],
-        inputValue: input.value,
-        inputUnit: input.unit,
-        reasonCode: 'no_emission_factor',
-        // Raw here, deliberately, unlike the refusal above. This is a STORED
-        // value, not a sentence shown once: the identical raw `geographyCode`
-        // is frozen into the field a few lines up, so quoting only the prose
-        // would be theatre — and would leave an immutable record whose
-        // sentence disagrees with its own machine-readable fields. A second
-        // layer, if one is ever wanted, belongs on the column.
-        reason:
-          `No emission factor is available for "${input.category}" (${input.geographyCode}, ${input.reportingYear}), ` +
-          `so no tCO₂e figure is produced. The entry is still recorded because this category is tracked ` +
-          `by invoice for data-completeness purposes.`,
-      };
+      throw new NoEmissionFactorError(this.coverageMessage(resolution.code, coverage, recordType !== null), {
+        code: resolution.code,
+        coverage,
+      });
     }
 
-    const {
-      normalizedValue,
-      normalizedUnit,
-      conversionApplied,
-      conversionFactor,
-      conversionBasis,
-    } = normalize(input.value, input.unit);
-
-    // Guard: the normalized unit must match the unit the factor expects.
-    if (normalizedUnit !== factor.normalizedUnit) {
-      throw new BadRequestException(
-        `Unit "${quoteCallerText(input.unit)}" normalises to "${normalizedUnit}" but the factor for ` +
-          `"${input.category}" expects "${factor.normalizedUnit}"`,
+    const { factor, conversion } = resolution;
+    // The record's scope comes from its category; a factor loaded under
+    // another scope is a library defect, never a reason to move the record.
+    const scope = CATEGORY_SCOPE_MAP[input.category as Category];
+    if (factor.scope !== scope) {
+      throw new FactorLibraryConflictError(
+        'factor_scope_mismatch',
+        `The factor resolved for "${input.category}" is a Scope ${factor.scope} factor, but "${input.category}" is Scope ${scope} — a factor-library defect.`,
       );
+    }
+
+    const { normalizedValue, normalizedUnit, conversionApplied, conversionFactor, conversionBasis } = normalize(
+      input.value,
+      input.unit,
+      input.category,
+      conversion,
+    );
+    // The resolver chose this path for this unit; arriving anywhere else is a
+    // defect in the engine, not something to price through.
+    if (normalizedUnit !== factor.normalizedUnit) {
+      throw new Error(
+        `Engine defect: ${input.unit} normalised to ${normalizedUnit}, but the resolved factor is per ${factor.normalizedUnit}`,
+      );
+    }
+    if (factor.gasCoverage === null) {
+      throw new Error(`Factor ${factor.id} is a CO2e row with no gas coverage — the library CHECK should refuse it`);
     }
 
     const kgCo2e = normalizedValue * factor.factorValue;
     const tCo2e = kgCo2e / 1000;
 
-    return {
+    const snapshot: CalculationResultV2 = {
+      snapshotSchema: 2,
       category: input.category,
       geographyCode: input.geographyCode,
       reportingYear: input.reportingYear,
@@ -240,7 +490,18 @@ export class CalculationsService {
       factorUnit: factor.factorUnit,
       methodology: factor.methodology,
       source: factor.source,
-      version: factor.version,
+      // The release's edition — the label the contract gives `version`.
+      version: factor.release.edition,
+      activityType: factor.activityType,
+      gas: CALCULATION_GAS,
+      gasCoverage: factor.gasCoverage as FactorGasCoverage,
+      calorificBasis: factor.calorificBasis as CalculationResultV2['calorificBasis'],
+      scope2Method: factor.scope2Method as CalculationResultV2['scope2Method'],
+      dataYear: factor.dataYear,
+      yearPolicy: yearPolicyOf(input.reportingYear, factor.dataYear),
+      factorRelease: releaseSnapshot(factor.release),
+      conversion: conversion ? conversionSnapshot(conversion) : null,
     };
+    return snapshot;
   }
 }

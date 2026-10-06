@@ -1,12 +1,21 @@
 import { ACTIVITY_UNITS } from '@tonyai/shared-types';
-// Unit normalization for the calculation engine.
+// Unit normalization for the calculation engine (LP3-03).
 //
-// Source of truth: docs/md_docs/calculation_logic.md §2 (Unit Conversion and
-// Normalisation). Raw activity data is converted to the base unit required by
-// the factor before the emission factor is applied. Not every category is
-// converted to energy units (§2.4): liquid fuels stay in litres, electricity /
-// natural gas go to kWh, etc. Passthrough units (already the base unit) apply a
-// multiplier of 1 and report conversionApplied = false.
+// Two steps, and only the first is code:
+// 1. DEFINITIONAL — within a unit family, to that family's base unit
+//    (`DIMENSION_BASE_UNIT` in @tonyai/shared-types): MWh → kWh, therms → kWh,
+//    gallons → litres, tonnes → kg. These are exact by definition and need no
+//    source.
+// 2. SOURCED — between families (metered m³ of natural gas → kWh), which
+//    depends on the fuel, the country, the year and the calorific basis. That
+//    is a `unit_conversions` row of a factor release, chosen by
+//    `resolveFactorPath` for the record's category and passed in here; code
+//    never carries one. Until LP3-03 the m³ → kWh multiplier 11.36 lived in
+//    this table and converted ANY cubic metres, a water meter's included; it
+//    is now a labelled placeholder row of the seed's release (owner decision
+//    K4), refused wherever placeholders are.
+// Passthrough units (already the base unit) apply a multiplier of 1 and report
+// conversionApplied = false.
 
 export interface NormalizationResult {
   normalizedValue: number;
@@ -50,38 +59,40 @@ const BLOCKED_SM3 =
   ACTIVITY_UNITS.find((u) => u.value === 'standard_cubic_metres')?.blocked ??
   'Standard cubic metres cannot be converted without a sourced calorific value.';
 
-// Keyed by a canonical (lowercased, trimmed) unit alias. Values taken verbatim
-// from calculation_logic.md §2 — do not invent conversion factors here.
+// Keyed by a canonical (lowercased, trimmed) unit alias. Every `target` is the
+// base unit of the unit's family (`DIMENSION_BASE_UNIT`), and every multiplier
+// is definitional and exact — a spec pins both. Do not add a cross-family
+// conversion here: it belongs in a factor release.
 const UNIT_RULES: Record<string, UnitRule> = {
   // --- Energy base unit: kWh ---
   kwh: { target: 'kWh', multiplier: 1, basis: 'identity' },
-  // Natural gas -> kWh (§2.1)
-  // §2.1 gives 11.36 with no source, no calorific-value basis and no stated
-  // reference conditions. It is a prototype assumption, not a sourced factor —
-  // `basis` carries that into the calculation snapshot so a record can say what
-  // was applied instead of leaving it to arithmetic.
-  cubic_metres: {
+  mwh: { target: 'kWh', multiplier: 1000, basis: 'definitional — 1 MWh = 1,000 kWh (exact)' },
+  // The UK statutory therm (Units of Measurement Regulations 1995, SI 1995/1804,
+  // regs 3(3) and 4(d) and the Schedule): 105.505585257348 MJ — the value UK
+  // law converts therms of gas supply with — divided by the 3.6 MJ of a kWh,
+  // a terminating quotient (29.30710701593 kWh). Not the US therm (29.3001 kWh).
+  // The basis text is frozen into every therms snapshot, so it cites the
+  // instrument that defines the value, and the exact result.
+  therms: {
     target: 'kWh',
-    multiplier: 11.36,
+    multiplier: 105_505_585.257348 / 3_600_000,
     basis:
-      'calculation_logic.md §2.1 prototype assumption, NOT a sourced factor. ' +
-      'It reconstructs as a GROSS (higher) calorific value of ~40.0 MJ/m³ with ' +
-      'the UK volume correction 1.02264 — a UK-shaped number currently applied ' +
-      'to TR and EU records too. It must stay paired with a gross-CV emission ' +
-      'factor; a net-CV factor would be ~10% inconsistent with it.',
+      'definitional — 1 therm = 105.505585257348 MJ (UK: Units of Measurement Regulations 1995, SI 1995/1804, Schedule) ÷ 3.6 MJ/kWh = 29.30710701593 kWh (exact)',
   },
-  therms: { target: 'kWh', multiplier: 29.3, basis: 'definitional — 1 therm = 29.30711 kWh (exact), rounded' },
-  gj: { target: 'kWh', multiplier: 277.78, basis: 'definitional — 1 GJ = 277.7778 kWh (exact), rounded' },
-  // Electricity -> kWh (§2.3)
-  mwh: { target: 'kWh', multiplier: 1000, basis: 'definitional — exact' },
+  gj: { target: 'kWh', multiplier: 1000 / 3.6, basis: 'definitional — 1 GJ = 1,000/3.6 kWh (exact)' },
+
+  // --- Metered gas volume base unit: cubic_metres ---
+  // A volume as the meter reads it. Natural gas reaches kWh only through a
+  // sourced conversion row (see the header); water is priced per m³ as it is.
+  cubic_metres: { target: 'cubic_metres', multiplier: 1, basis: 'identity' },
 
   // Standard cubic metres: RECOGNISED but not calculable. Sm³ and m³ are
   // different physical quantities — the conversion needs a calorific value at
   // stated reference conditions, and this repo has no sourced one. Registering
   // it with any multiplier would produce a number nobody could defend, so it is
-  // registered with none and refused by name.
+  // registered with none and refused by name (K4: until a sourced row exists).
   standard_cubic_metres: {
-    target: 'kWh',
+    target: 'standard_cubic_metres',
     blocked: BLOCKED_SM3,
   },
   // Nm³ is NOT Sm³. Normal cubic metres are referenced to 0 °C, standard to
@@ -90,7 +101,7 @@ const UNIT_RULES: Record<string, UnitRule> = {
   // an Nm³ user told about "standard cubic metres" would reasonably conclude
   // they are the same unit.
   normal_cubic_metres: {
-    target: 'kWh',
+    target: 'normal_cubic_metres',
     blocked:
       'Normal cubic metres (Nm³, referenced to 0 °C) need a sourced calorific ' +
       'value to become kWh, and this prototype has none — it arrives with the ' +
@@ -100,15 +111,18 @@ const UNIT_RULES: Record<string, UnitRule> = {
 
   // --- Liquid fuel base unit: litres (§2.2) ---
   litres: { target: 'litres', multiplier: 1, basis: 'identity' },
-  uk_gallons: { target: 'litres', multiplier: 4.546, basis: 'definitional — 1 UK gallon = 4.54609 L (exact), rounded' },
-  us_gallons: { target: 'litres', multiplier: 3.785, basis: 'definitional — 1 US gallon = 3.785411784 L (exact), rounded' },
+  uk_gallons: { target: 'litres', multiplier: 4.54609, basis: 'definitional — 1 UK gallon = 4.54609 L (exact)' },
+  us_gallons: { target: 'litres', multiplier: 3.785411784, basis: 'definitional — 1 US gallon = 3.785411784 L (exact)' },
 
-  // --- Categories that stay in their own unit (§2.4) ---
+  // --- Distance (§2.4) ---
   passenger_kilometres: { target: 'passenger_kilometres', multiplier: 1, basis: 'identity' },
   kilometres: { target: 'kilometres', multiplier: 1, basis: 'identity' },
-  tonnes: { target: 'tonnes', multiplier: 1, basis: 'identity' },
-  // Refrigerant leakage (LP3-03): a mass, priced per kg by the gas's GWP.
+
+  // --- Mass base unit: kg ---
+  // Refrigerant leakage is priced per kg by the gas's GWP; waste and fuel by
+  // mass are quoted per kg too, so a tonne is 1,000 of them.
   kg: { target: 'kg', multiplier: 1, basis: 'identity' },
+  tonnes: { target: 'kg', multiplier: 1000, basis: 'definitional — 1 tonne = 1,000 kg (exact)' },
 };
 
 /**
@@ -205,10 +219,34 @@ export function isKnownUnit(unit: string): boolean {
 }
 
 /**
- * Normalise a raw activity value/unit to the base unit required by the factor.
- * Throws for units the engine does not recognise so callers can surface a 400.
+ * A sourced conversion row as `normalize` applies it — the step a release
+ * states between two base units (metered m³ → kWh for one fuel, country and
+ * year), chosen by `resolveFactorPath`.
  */
-export function normalize(value: number, unit: string): NormalizationResult {
+export interface NormalizationConversion {
+  category: string;
+  fromUnit: string;
+  toUnit: string;
+  multiplier: number;
+  basis: string;
+}
+
+/**
+ * Normalise a raw activity value/unit to the unit the chosen factor is quoted
+ * per: the definitional step to the unit family's base unit, then — only when
+ * the resolver chose one for this category — the sourced conversion.
+ *
+ * Throws for a unit the engine does not recognise or cannot calculate, so
+ * callers can surface a 400, and for a conversion that does not belong to
+ * this category or does not start at this unit's base: a resolver defect,
+ * never something to price through.
+ */
+export function normalize(
+  value: number,
+  unit: string,
+  category: string,
+  conversion: NormalizationConversion | null,
+): NormalizationResult {
   const key = canonicalUnit(unit);
   const rule = UNIT_RULES[key];
   if (!rule) {
@@ -217,17 +255,37 @@ export function normalize(value: number, unit: string): NormalizationResult {
   if ('blocked' in rule) {
     throw new Error(rule.blocked);
   }
-  const converted = rule.multiplier !== 1;
+  let normalizedValue = value * rule.multiplier;
+  let normalizedUnit = rule.target;
+  let multiplier = rule.multiplier;
+  // Only the steps that changed something: a passthrough has no basis to
+  // record, and an empty string would read as "basis unknown".
+  const bases = rule.multiplier !== 1 ? [rule.basis] : [];
+  if (conversion) {
+    if (conversion.category !== category) {
+      throw new Error(`A ${conversion.category} conversion cannot price a ${category} record`);
+    }
+    if (conversion.fromUnit !== normalizedUnit) {
+      throw new Error(`A conversion from ${conversion.fromUnit} cannot follow ${unit} (${normalizedUnit})`);
+    }
+    normalizedValue *= conversion.multiplier;
+    multiplier *= conversion.multiplier;
+    normalizedUnit = conversion.toUnit;
+    bases.push(conversion.basis);
+  }
+  const converted = bases.length > 0;
   return {
-    normalizedValue: value * rule.multiplier,
-    normalizedUnit: rule.target,
+    normalizedValue,
+    normalizedUnit,
     conversionApplied: converted,
-    // Only when something was actually converted; a passthrough has no basis to
-    // record and an empty string would read as "basis unknown".
-    ...(converted
-      ? { conversionFactor: rule.multiplier, conversionBasis: rule.basis }
-      : {}),
+    ...(converted ? { conversionFactor: multiplier, conversionBasis: bases.join(' Then: ') } : {}),
   };
+}
+
+/** The base unit a known unit normalises to by definition alone, or null. */
+export function baseUnitOf(unit: string): string | null {
+  const rule = UNIT_RULES[canonicalUnit(unit)];
+  return rule ? rule.target : null;
 }
 
 /** The reason a recognised unit cannot be calculated, or null if it can. */

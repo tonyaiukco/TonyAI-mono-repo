@@ -1,9 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
+  INTEGRITY_CHECKS,
+  INTEGRITY_TRIGGERS,
   RUNTIME_ROLE,
+  checkIntegrityTriggers,
   checkRuntimeRole,
+  checkFunctionExecutors,
+  checkTableLevelGrants,
   checkTenantInvariants,
+  factorLibraryReport,
   runtimeRoleExposures,
 } from '../../../../packages/db/scripts/runtime-role.mjs';
 import { connect, connectOwner, createTenant, withRollback } from './db';
@@ -138,6 +144,47 @@ describe('the runtime role', () => {
   });
 });
 
+describe('the factor model is in force on this database (LP3-03)', () => {
+  it('holds every integrity trigger, ENABLE ALWAYS, on its events, with its migration\'s function body; every key CHECK', async () => {
+    expect(await checkIntegrityTriggers((sql: string) => runtime.$queryRawUnsafe(sql))).toEqual([]);
+  });
+
+  it('leaves the table-level verbs (TRIGGER, TRUNCATE, REFERENCES, MAINTAIN) to the owners alone, now and by default', async () => {
+    expect(await checkTableLevelGrants((sql: string) => owner.$queryRawUnsafe(sql))).toEqual([]);
+  });
+
+  it('lets no role but the owner EXECUTE (so attach) the integrity functions', async () => {
+    expect(await checkFunctionExecutors((sql: string) => owner.$queryRawUnsafe(sql))).toEqual([]);
+  });
+
+  it('pins every CHECK on a guarded table — a new or renamed one cannot go unwatched', async () => {
+    const guarded = [...new Set(INTEGRITY_TRIGGERS.map((t) => t.table))];
+    const rows = await owner.$queryRawUnsafe<{ key: string }[]>(
+      `SELECT c.conrelid::regclass::text || '.' || c.conname AS key
+         FROM pg_constraint c
+        WHERE c.contype = 'c' AND c.conrelid::regclass::text IN (${guarded.map((t) => `'${t}'`).join(', ')})`,
+    );
+    const pinned = new Set(INTEGRITY_CHECKS.map(([table, name]) => `${table}.${name}`));
+    expect(rows.map((r) => r.key).filter((k) => !pinned.has(k))).toEqual([]);
+    expect(rows.length).toBe(INTEGRITY_CHECKS.length);
+  });
+
+  it('reports the seed\'s placeholder releases as notices, and no unspecified row under an authoritative release', async () => {
+    const report = await factorLibraryReport((sql: string) => owner.$queryRawUnsafe(sql));
+    expect(report.problems).toEqual([]);
+    expect(report.skipped).toEqual([]);
+    expect(report.notices.some((n: string) => n.startsWith('placeholder release TonyAI prototype 2026.1'))).toBe(true);
+  });
+
+  it('cannot reconcile the library\'s record as the runtime role, which may not read it — and says so', async () => {
+    const report = await factorLibraryReport((sql: string) => runtime.$queryRawUnsafe(sql));
+    expect(report.problems).toEqual([]);
+    expect(report.skipped).toEqual([
+      "the library's record was not reconciled: tonyai_runtime cannot read factor_release_events — run this check through the owner (DIRECT_URL)",
+    ]);
+  });
+});
+
 describe('the runtime role is refused', () => {
   it.each([
     ['rewriting the audit trail', `UPDATE audit_log SET action = 'forged' WHERE id = gen_random_uuid()`],
@@ -162,6 +209,33 @@ describe('the runtime role is refused', () => {
     ['deleting a profile', 'DELETE FROM profiles WHERE id = gen_random_uuid()'],
     ['editing a grant in place', 'UPDATE user_subsidiary_access SET organisation_id = organisation_id WHERE false'],
     ['writing reference factors', 'DELETE FROM emission_factors WHERE false'],
+    // LP3-03: the factor library is read-only to the API — loaded on the owner
+    // connection by the seed and LP4-02's loader, never through the runtime.
+    [
+      'loading a factor release',
+      `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status) VALUES (gen_random_uuid(), 'TonyAI test fixture', 'x', 'x', 999999, 'fixture')`,
+    ],
+    ['withdrawing a factor release', `UPDATE factor_releases SET status = 'withdrawn' WHERE false`],
+    ['deleting a factor release', 'DELETE FROM factor_releases WHERE false'],
+    [
+      'loading a factor',
+      `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, geography_code, reporting_year, data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+       SELECT gen_random_uuid(), id, 'Waste', 'unspecified', 'CO2e', 'UK', 2026, 2026, 3, 'not_applicable', 'not_applicable', 1, 'x', 'kg', 'x', 'x', 'x', now() FROM factor_releases LIMIT 1`,
+    ],
+    [
+      'loading a unit conversion',
+      `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit, multiplier, calorific_basis, basis)
+       SELECT gen_random_uuid(), id, 'Natural Gas', 'natural_gas', 'UK', 2031, 2031, 'cubic_metres', 'kWh', 1, 'gross', 'x' FROM factor_releases LIMIT 1`,
+    ],
+    ['rewriting a unit conversion', 'UPDATE unit_conversions SET multiplier = 1 WHERE false'],
+    [
+      "forging the factor library's record",
+      `INSERT INTO factor_release_events (id, release_id, publisher, edition, release_status, event, db_role)
+       VALUES (gen_random_uuid(), gen_random_uuid(), 'x', 'x', 'x', 'loaded', 'x')`,
+    ],
+    ["erasing the factor library's record", 'DELETE FROM factor_release_events WHERE false'],
+    ["reading the factor library's record (no reader yet)", 'SELECT 1 FROM factor_release_events LIMIT 1'],
+    ['truncating the factor library', 'TRUNCATE factor_releases CASCADE'],
     ['assuming a client role', 'SET LOCAL ROLE authenticated'],
     ['assuming the owner', 'SET LOCAL ROLE postgres'],
     ['creating a role', 'CREATE ROLE lp1_03_probe'],

@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
+import { Prisma } from '@tonyai/db';
 
 /**
  * The refusals a caller has to tell apart, as CLASSES.
@@ -115,4 +116,60 @@ export class VarianceReasonRequiredError extends BadRequestException {
   constructor() {
     super(VARIANCE_REFUSAL);
   }
+}
+
+/**
+ * A slot — one reporting entity, period and category — holds typed records
+ * (one per activity type) or ONE untyped record, never both (LP3-03): an
+ * untyped Fuel record beside a diesel one would count the same fuel twice.
+ * Refused by a database trigger (SQLSTATE TA002) for every writer; the
+ * sentence depends on which side the new record is on.
+ */
+export const SLOT_HOLDS_UNTYPED_MESSAGE =
+  'A record of this category without an activity type already exists for this reporting entity and period. ' +
+  'Edit that record, or void it, before entering one per activity type.';
+export const SLOT_HOLDS_TYPED_MESSAGE =
+  'Records of this category with an activity type already exist for this reporting entity and period, ' +
+  'so this one must name its activity type too.';
+
+export class ActivityTypeSlotConflictError extends ConflictException {
+  constructor(newRecordTyped: boolean) {
+    super(newRecordTyped ? SLOT_HOLDS_UNTYPED_MESSAGE : SLOT_HOLDS_TYPED_MESSAGE);
+  }
+}
+
+/**
+ * K5: a record that has left draft and rejected keeps its calculation and
+ * every input it was computed from (SQLSTATE TA001). The API never attempts
+ * such a write — edits are gated on EDITABLE_STATUSES with a compare-and-set
+ * on the status — so reaching this is a lost race or a defect, answered as a
+ * conflict rather than a 500.
+ */
+export const SNAPSHOT_IMMUTABLE_MESSAGE =
+  'This record has left draft, so its figure and the inputs it was computed from can no longer change. Reload it.';
+
+export class SnapshotImmutableError extends ConflictException {
+  constructor() {
+    super(SNAPSHOT_IMMUTABLE_MESSAGE);
+  }
+}
+
+/**
+ * The SQLSTATE an `activity_records` integrity trigger raised, or null. Prisma
+ * 6 reports a trigger's RAISE on a model query as an unknown request error
+ * whose message carries the PostgreSQL code (measured against PostgreSQL 17;
+ * `test:int` pins it), and on a raw query as P2010 with the code in `meta`.
+ */
+export function recordTriggerCode(e: unknown): 'TA001' | 'TA002' | null {
+  if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2010') {
+    const code = (e.meta as { code?: unknown } | undefined)?.code;
+    return code === 'TA001' || code === 'TA002' ? code : null;
+  }
+  if (e instanceof Prisma.PrismaClientUnknownRequestError) {
+    // Anchored on the engine's own framing, so text inside the message —
+    // never caller-controlled today — cannot be read as a code.
+    const match = /PostgresError \{ code: "(TA00[12])"/.exec(e.message);
+    return match ? (match[1] as 'TA001' | 'TA002') : null;
+  }
+  return null;
 }

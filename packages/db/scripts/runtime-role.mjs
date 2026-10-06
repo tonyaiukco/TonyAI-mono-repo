@@ -35,7 +35,8 @@
  * `ALTER ROLE … PASSWORD '…'`, which statement logs and pg_stat_statements keep.
  */
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const RUNTIME_ROLE = 'tonyai_runtime';
 
@@ -121,7 +122,15 @@ const SIUD = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
  */
 export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   organisations: ['SELECT'],
+  // The factor library (LP3-03): reference data the API reads and never
+  // writes — releases and conversions are loaded by the seed and LP4-02's
+  // loader on the owner connection.
   emission_factors: ['SELECT'],
+  factor_releases: ['SELECT'],
+  unit_conversions: ['SELECT'],
+  // The library's record: written by its own triggers only, and not read by
+  // the API yet — the grant arrives with its first reader.
+  factor_release_events: [],
   // + UPDATE on (role, updated_at) only — see RUNTIME_COLUMN_UPDATES.
   profiles: ['SELECT'],
   user_subsidiary_access: ['SELECT', 'INSERT', 'DELETE'],
@@ -417,7 +426,393 @@ export async function checkTenantInvariants(query) {
          OR p.organisation_id IS DISTINCT FROM usa.organisation_id
          OR s.organisation_id IS DISTINCT FROM usa.organisation_id`,
   );
-  return n > 0 ? [`${n} user_subsidiary_access row(s) cross an organisation or point at nothing`] : [];
+  // The slot rule (`activity_records_slot_kind`) steps aside for a restore's
+  // inserts: a slot holding typed records and an untyped one counts a fuel
+  // twice.
+  const [{ slots }] = await query(
+    `SELECT count(*)::int AS slots FROM (
+       SELECT 1 FROM activity_records
+        WHERE status <> 'voided'
+        GROUP BY subsidiary_id, location_id, reporting_year, reporting_period, period_value, category
+       HAVING bool_or(activity_type IS NULL) AND bool_or(activity_type IS NOT NULL)
+     ) mixed`,
+  );
+  return [
+    ...(n > 0 ? [`${n} user_subsidiary_access row(s) cross an organisation or point at nothing`] : []),
+    ...(slots > 0 ? [`${slots} activity_records slot(s) hold typed records and an untyped one`] : []),
+  ];
+}
+
+/**
+ * Table-level verbs no role but a table's owner may hold in `public`, now or
+ * by default privilege: TRIGGER (a trigger on any table a referential action
+ * reaches runs as the owner — PostgreSQL runs those actions as the owner — so
+ * past every guard that trusts it), TRUNCATE (past every row guard),
+ * REFERENCES and MAINTAIN. Supabase's default privileges grant all four to
+ * anon, authenticated and the service role; the LP3-03 migration takes them
+ * back. Default privileges are checked for the role that owns the schema's
+ * tables (the migrations' role): another creator's — Supabase's
+ * `supabase_admin` — are the platform's, no migration can change them, and
+ * no table of ours is created by it.
+ */
+export async function checkTableLevelGrants(query) {
+  const verbs = "('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')";
+  const granted = await query(
+    `SELECT c.relname AS "table", CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee",
+            a.privilege_type AS "privilege"
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace,
+            LATERAL pg_catalog.aclexplode(c.relacl) a
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+        AND a.privilege_type IN ${verbs} AND a.grantee <> c.relowner
+      ORDER BY 1, 2, 3`,
+  );
+  const defaults = await query(
+    `SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee",
+            pg_catalog.pg_get_userbyid(d.defaclrole) AS "creator", a.privilege_type AS "privilege"
+       FROM pg_catalog.pg_default_acl d, LATERAL pg_catalog.aclexplode(d.defaclacl) a
+      WHERE d.defaclnamespace = 'public'::regnamespace AND d.defaclobjtype = 'r'
+        AND d.defaclrole = (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass)
+        AND a.privilege_type IN ${verbs} AND a.grantee <> d.defaclrole
+      ORDER BY 1, 2, 3`,
+  );
+  return [
+    ...granted.map((g) => `${g.grantee} holds ${g.privilege} on public.${g.table} — only its owner may`),
+    ...defaults.map((d) => `${d.grantee} is granted ${d.privilege} on every new public table ${d.creator} creates — only its owner may hold it`),
+  ];
+}
+
+/**
+ * EXECUTE on the integrity functions — what attaching a trigger function to a
+ * table requires — for their owner alone. PostgreSQL grants it to PUBLIC on
+ * creation and Supabase's default privileges to anon, authenticated and the
+ * service role; a SECURITY DEFINER event writer attached to a table of the
+ * caller's own would write forged rows into the library's record as the owner.
+ */
+export async function checkFunctionExecutors(query) {
+  const names = [...new Set([...INTEGRITY_TRIGGERS.map((t) => t.fn), ...INTEGRITY_HELPERS.map((h) => h.fn)])];
+  const executors = await query(
+    `SELECT p.proname AS "fn", CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee"
+       FROM pg_catalog.pg_proc p
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace,
+            LATERAL pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+      WHERE n.nspname = 'public' AND p.proname IN (${names.map((n) => `'${n}'`).join(', ')})
+        AND a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner
+      ORDER BY 1, 2`,
+  );
+  return executors.map((e) => `${e.grantee} may EXECUTE public.${e.fn}() — attach it to a table of its own; only its owner may`);
+}
+
+/**
+ * The integrity triggers the LP3-03 migration installs: each must exist, be
+ * ENABLE ALWAYS (`tgenabled = 'A'`, firing in replica mode too, so a restore
+ * cannot slip past it), fire on exactly its events, and run its own function
+ * with exactly the body the migrations define. A trigger disabled, dropped,
+ * re-created on fewer events or pointed at an emptied function is a silent
+ * hole: the snapshot of an approved record becomes editable, or a loaded
+ * factor rewritable.
+ *
+ * `type` is `pg_trigger.tgtype`: ROW 1, BEFORE 2, INSERT 4, DELETE 8,
+ * UPDATE 16, TRUNCATE 32.
+ */
+const ROW = 1;
+const BEFORE = 2;
+const ON = { insert: 4, delete: 8, update: 16, truncate: 32 };
+export const INTEGRITY_TRIGGERS = Object.freeze([
+  { table: 'activity_records', trigger: 'activity_records_snapshot_immutable', fn: 'activity_records_snapshot_immutable', type: ROW | BEFORE | ON.update },
+  { table: 'activity_records', trigger: 'activity_records_slot_kind', fn: 'activity_records_slot_kind', type: ROW | BEFORE | ON.insert | ON.update },
+  { table: 'activity_records', trigger: 'activity_records_committed_delete', fn: 'activity_records_committed_delete', type: ROW | BEFORE | ON.delete },
+  ...['factor_releases', 'emission_factors', 'unit_conversions'].flatMap((table) => {
+    const rows = table === 'factor_releases' ? 'factor_releases' : 'factor_rows';
+    return [
+      { table, trigger: `${table}_before_insert`, fn: `${rows}_before_insert`, type: ROW | BEFORE | ON.insert },
+      { table, trigger: `${table}_before_update`, fn: `${rows}_before_update`, type: ROW | BEFORE | ON.update },
+      { table, trigger: `${table}_before_delete`, fn: `${rows}_before_delete`, type: ROW | BEFORE | ON.delete },
+      { table, trigger: `${table}_before_truncate`, fn: 'factor_tables_before_truncate', type: BEFORE | ON.truncate },
+    ];
+  }),
+  // The library's record: AFTER triggers, SECURITY DEFINER so the table needs
+  // no INSERT grant; and the record's own append-only guards.
+  { table: 'factor_releases', trigger: 'factor_releases_record_event', fn: 'factor_releases_record_event', type: ROW | ON.insert | ON.update | ON.delete, definer: true },
+  ...['emission_factors', 'unit_conversions'].flatMap((table) => [
+    { table, trigger: `${table}_record_insert`, fn: 'factor_rows_record_event', type: ON.insert, definer: true },
+    { table, trigger: `${table}_record_delete`, fn: 'factor_rows_record_event', type: ON.delete, definer: true },
+  ]),
+  { table: 'factor_release_events', trigger: 'factor_release_events_before_insert', fn: 'factor_release_events_before_insert', type: ROW | BEFORE | ON.insert },
+  { table: 'factor_release_events', trigger: 'factor_release_events_before_update', fn: 'factor_release_events_refuse', type: ROW | BEFORE | ON.update },
+  { table: 'factor_release_events', trigger: 'factor_release_events_before_delete', fn: 'factor_release_events_refuse', type: ROW | BEFORE | ON.delete },
+  { table: 'factor_release_events', trigger: 'factor_release_events_before_truncate', fn: 'factor_tables_before_truncate', type: BEFORE | ON.truncate },
+]);
+
+/**
+ * The CHECK constraints the factor model's guarantees rest on, each with the
+ * md5 of its `pg_get_constraintdef` on a database migrated from this
+ * repository — so `CHECK (true)` under the same name is a finding, not a pass.
+ * A migration that changes one updates its hash here (`runtime-role.int.spec`
+ * fails until it does).
+ */
+export const INTEGRITY_CHECKS = Object.freeze([
+  ['activity_records', 'activity_records_activity_type_check', '209bc4e708c65029678d21cb1c434ea6'],
+  ['emission_factors', 'emission_factors_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
+  ['emission_factors', 'emission_factors_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
+  ['emission_factors', 'emission_factors_factor_value_check', '9fd4bc38d56fd6f39cda5c362d62ca79'],
+  ['emission_factors', 'emission_factors_gas_check', '98099ec2264bdb41bb798716f68f2471'],
+  ['emission_factors', 'emission_factors_gas_coverage_check', 'a074aa7da19f92fe950c538451581817'],
+  ['emission_factors', 'emission_factors_scope2_method_check', '491d417be371753abd66161e71bfd365'],
+  ['emission_factors', 'emission_factors_scope_check', 'baf79c7460165f52d4d03548c8049f8e'],
+  ['factor_release_events', 'factor_release_events_actor_check', '7a4d849bfe1c4906fef80b31a7585182'],
+  ['factor_release_events', 'factor_release_events_db_role_check', 'ce62d7745ab1349239767e82684dfa4d'],
+  ['factor_release_events', 'factor_release_events_event_check', '251ece6a1f65e0f7e32ea3ef8c503240'],
+  ['factor_release_events', 'factor_release_events_rows_check', '1501bbfca3f7df329a4bc8fe3eab8dda'],
+  ['factor_releases', 'factor_releases_authoritative_provenance_check', '07c31e476a2f5a64d9b7bf843eb69ce1'],
+  ['factor_releases', 'factor_releases_fixture_publisher_check', 'f732d504c73b4902273df4dd596bb839'],
+  ['factor_releases', 'factor_releases_gwp_set_check', 'f6e24213b9fca85d3a461e21251bc870'],
+  ['factor_releases', 'factor_releases_ordinal_check', '6580fa22ba83139e4fd215ea6bc16a65'],
+  ['factor_releases', 'factor_releases_placeholder_publisher_check', '8e38e4580950d19e9acc916fd2a67bce'],
+  ['factor_releases', 'factor_releases_publisher_check', '436f2593daab905bce8207daac167c44'],
+  ['factor_releases', 'factor_releases_review_after_publication_check', '353156c1deb3822c89c3e2f11821ec78'],
+  ['factor_releases', 'factor_releases_source_url_check', '21eb1a772e5e1387ef77a535984e21b3'],
+  ['factor_releases', 'factor_releases_status_check', 'fd922ea1cc055a55f0e91a96f486f183'],
+  ['factor_releases', 'factor_releases_text_check', 'd23326d88a280c94d486b236f0c12e0b'],
+  ['factor_releases', 'factor_releases_withdrawal_check', '4430a3652b1631e86ce68f076eae32a4'],
+  ['unit_conversions', 'unit_conversions_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
+  ['unit_conversions', 'unit_conversions_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
+  ['unit_conversions', 'unit_conversions_multiplier_check', 'b44055800a17e765590df1c5c881b412'],
+  ['unit_conversions', 'unit_conversions_text_check', '8d2e1321b2663ba9997f792676f25afc'],
+  ['unit_conversions', 'unit_conversions_units_check', 'beeb2e7d9604ac1218b01390e2f1e6cb'],
+]);
+
+/**
+ * Functions the triggers call that are not trigger functions themselves —
+ * replacing one changes what a trigger records (`db_role`) as surely as
+ * replacing the trigger function. Each must keep its migration body and be a
+ * SECURITY INVOKER function pinned to search_path ''.
+ */
+export const INTEGRITY_HELPERS = Object.freeze([{ fn: 'factor_release_events_actor_role', language: 'sql' }]);
+
+const MIGRATIONS_DIR = fileURLToPath(new URL('../prisma/migrations/', import.meta.url));
+
+/**
+ * Each trigger function's body as the LAST migration that (re)defines it has
+ * it — what `pg_proc.prosrc` must equal, byte for byte.
+ */
+export function expectedTriggerFunctionBodies(dir = MIGRATIONS_DIR) {
+  const bodies = new Map();
+  const names = new Set([...INTEGRITY_TRIGGERS.map((t) => t.fn), ...INTEGRITY_HELPERS.map((h) => h.fn)]);
+  for (const migration of readdirSync(dir).filter((d) => /^\d/.test(d)).sort()) {
+    let sql;
+    try {
+      sql = readFileSync(`${dir}/${migration}/migration.sql`, 'utf8');
+    } catch {
+      continue;
+    }
+    const definition = /CREATE (?:OR REPLACE )?FUNCTION "public"\."([a-z_]+)"\(\)[\s\S]*?AS \$fn\$([\s\S]*?)\$fn\$;/g;
+    const parsed = new Set();
+    for (const [, name, body] of sql.matchAll(definition)) {
+      if (names.has(name)) {
+        bodies.set(name, body);
+        parsed.add(name);
+      }
+    }
+    // A redefinition written another way (other quoting, another delimiter)
+    // must fail here, loudly — not be skipped and later reported as tampering.
+    for (const name of names) {
+      const mentioned = new RegExp(`CREATE\\s+(OR\\s+REPLACE\\s+)?FUNCTION\\s+[^(]*\\b${name}\\b`, 'i').test(sql);
+      if (mentioned && !parsed.has(name)) {
+        throw new Error(
+          `${migration} defines ${name} in a form the integrity check cannot read; ` +
+            `write it as CREATE FUNCTION "public"."${name}"() … AS $fn$ … $fn$;`,
+        );
+      }
+    }
+  }
+  return bodies;
+}
+
+const md5 = (text) => createHash('md5').update(text, 'utf8').digest('hex');
+
+/** The tables the integrity triggers guard: nothing else may hook into them. */
+const GUARDED_TABLES = Object.freeze(['activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events']);
+
+/** Every integrity trigger and CHECK, present, in force and unaltered. */
+export async function checkIntegrityTriggers(query, expectedBodies = expectedTriggerFunctionBodies()) {
+  const triggers = await query(
+    `SELECT c.relname AS "table", t.tgname AS "trigger", t.tgenabled AS "enabled", t.tgtype::int AS "type",
+            t.tgqual IS NULL AS "unconditional", cardinality(t.tgattr::int2[]) = 0 AS "allColumns",
+            pn.nspname AS "fnSchema", p.proname AS "fn", md5(p.prosrc) AS "bodyMd5",
+            p.prosecdef AS "definer", COALESCE(p.proconfig, '{}') AS "config", l.lanname AS "language"
+       FROM pg_trigger t
+       JOIN pg_class c ON c.oid = t.tgrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_proc p ON p.oid = t.tgfoid
+       JOIN pg_namespace pn ON pn.oid = p.pronamespace
+       JOIN pg_language l ON l.oid = p.prolang
+      WHERE n.nspname = 'public' AND NOT t.tgisinternal`,
+  );
+  const helpers = await query(
+    `SELECT p.proname AS "fn", md5(p.prosrc) AS "bodyMd5", p.prosecdef AS "definer",
+            COALESCE(p.proconfig, '{}') AS "config", l.lanname AS "language"
+       FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+       JOIN pg_language l ON l.oid = p.prolang
+      WHERE n.nspname = 'public' AND p.proname IN (${INTEGRITY_HELPERS.map((h) => `'${h.fn}'`).join(', ')})`,
+  );
+  const constraints = await query(
+    `SELECT c.relname AS "table", k.conname AS "name", k.convalidated AS "validated",
+            md5(pg_get_constraintdef(k.oid)) AS "definitionMd5", pg_get_constraintdef(k.oid) AS "definition"
+       FROM pg_constraint k
+       JOIN pg_class c ON c.oid = k.conrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND k.contype = 'c'`,
+  );
+  const rules = await query(
+    `SELECT c.relname AS "table", r.rulename AS "rule"
+       FROM pg_rewrite r
+       JOIN pg_class c ON c.oid = r.ev_class
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND r.ev_type <> '1'`,
+  );
+  const problems = [];
+  // Anything else hooked into a guarded table could undo what the integrity
+  // triggers check (a later BEFORE trigger rewriting NEW, a DO INSTEAD rule).
+  for (const t of triggers) {
+    if (GUARDED_TABLES.includes(t.table) && !INTEGRITY_TRIGGERS.some((w) => w.table === t.table && w.trigger === t.trigger)) {
+      problems.push(`unexpected trigger ${t.trigger} on ${t.table}`);
+    }
+  }
+  for (const r of rules) {
+    if (GUARDED_TABLES.includes(r.table)) problems.push(`unexpected rule ${r.rule} on ${r.table}`);
+  }
+  for (const want of INTEGRITY_TRIGGERS) {
+    const found = triggers.find((t) => t.table === want.table && t.trigger === want.trigger);
+    if (!found) {
+      problems.push(`trigger ${want.trigger} on ${want.table} is missing`);
+      continue;
+    }
+    if (found.enabled !== 'A') {
+      problems.push(`trigger ${want.trigger} on ${want.table} is not ENABLE ALWAYS (tgenabled = '${found.enabled}')`);
+    }
+    if (found.type !== want.type) {
+      problems.push(`trigger ${want.trigger} on ${want.table} fires on the wrong events (tgtype ${found.type}, expected ${want.type})`);
+    }
+    if (!found.unconditional || !found.allColumns) {
+      problems.push(`trigger ${want.trigger} on ${want.table} is narrowed (a WHEN condition or an UPDATE OF column list)`);
+    }
+    if (found.definer !== Boolean(want.definer) || found.language !== 'plpgsql' || JSON.stringify(found.config) !== JSON.stringify(['search_path=""'])) {
+      problems.push(
+        `function public.${found.fn}() is not a SECURITY ${want.definer ? 'DEFINER' : 'INVOKER'} plpgsql function pinned to search_path '' ` +
+          `(definer ${found.definer}, ${found.language}, config ${JSON.stringify(found.config)})`,
+      );
+    }
+    if (found.fnSchema !== 'public' || found.fn !== want.fn) {
+      problems.push(`trigger ${want.trigger} on ${want.table} runs ${found.fnSchema}.${found.fn}, not public.${want.fn}`);
+    } else if (!expectedBodies.has(want.fn)) {
+      problems.push(`no migration defines public.${want.fn}()`);
+    } else if (found.bodyMd5 !== md5(expectedBodies.get(want.fn))) {
+      problems.push(`function public.${want.fn}() differs from its migration's definition`);
+    }
+  }
+  for (const [table, name, definitionMd5] of INTEGRITY_CHECKS) {
+    const found = constraints.find((c) => c.table === table && c.name === name);
+    if (!found) problems.push(`CHECK ${name} on ${table} is missing`);
+    else if (!found.validated) problems.push(`CHECK ${name} on ${table} is NOT VALID`);
+    else if (found.definitionMd5 !== definitionMd5) {
+      // The observed hash and definition, so a legitimate change can be
+      // recognised and re-pinned without a separate replay.
+      problems.push(
+        `CHECK ${name} on ${table} differs from its migration's definition (md5 ${found.definitionMd5}: ${found.definition})`,
+      );
+    }
+  }
+  for (const want of INTEGRITY_HELPERS) {
+    const found = helpers.find((h) => h.fn === want.fn);
+    if (!found) problems.push(`function public.${want.fn}() is missing`);
+    else if (
+      found.definer ||
+      found.language !== want.language ||
+      JSON.stringify(found.config) !== JSON.stringify(['search_path=""']) ||
+      found.bodyMd5 !== md5(expectedBodies.get(want.fn) ?? '')
+    ) {
+      problems.push(`function public.${want.fn}() differs from its migration's definition`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * What the factor library holds that production must not calculate from, as
+ * data. `problems`: an `unspecified` activity type under an authoritative
+ * release (the insert trigger refuses it; a replica-mode restore would not).
+ * `notices`: every non-authoritative release present — expected locally and
+ * in CI, a finding on staging or production, where the seed never runs
+ * (owner decision K3). `skipped`: a check this connection cannot run — the
+ * runtime role may not read `factor_release_events`, so the record is
+ * reconciled only through the owner.
+ */
+export async function factorLibraryReport(query) {
+  const [{ n }] = await query(
+    `SELECT (
+        (SELECT count(*) FROM emission_factors f JOIN factor_releases r ON r.id = f.release_id
+          WHERE r.status = 'authoritative' AND f.activity_type = 'unspecified')
+      + (SELECT count(*) FROM unit_conversions u JOIN factor_releases r ON r.id = u.release_id
+          WHERE r.status = 'authoritative' AND u.activity_type = 'unspecified')
+     )::int AS n`,
+  );
+  const releases = await query(
+    `SELECT r.publisher, r.edition, r.status,
+            (SELECT count(*) FROM emission_factors f WHERE f.release_id = r.id)::int AS factors,
+            (SELECT count(*) FROM unit_conversions u WHERE u.release_id = r.id)::int AS conversions
+       FROM factor_releases r
+      WHERE r.status IN ('placeholder', 'fixture')
+      ORDER BY r.publisher, r.ordinal`,
+  );
+  // Every row the library holds was recorded as added (net of fixture
+  // deletions), and every recorded row is held: a difference either way means
+  // a load or a delete bypassed the record's triggers.
+  const [{ readable, who }] = await query(
+    `SELECT pg_catalog.has_table_privilege('public.factor_release_events', 'SELECT') AS readable, current_user AS who`,
+  );
+  if (!readable) {
+    return {
+      problems: unspecified(n),
+      notices: placeholderNotices(releases),
+      skipped: [`the library's record was not reconciled: ${who} cannot read factor_release_events — run this check through the owner (DIRECT_URL)`],
+    };
+  }
+  const unrecorded = await query(
+    `WITH held AS (
+       SELECT release_id, 'emission_factors' AS table_name, count(*)::int AS n FROM emission_factors GROUP BY release_id
+       UNION ALL
+       SELECT release_id, 'unit_conversions', count(*)::int FROM unit_conversions GROUP BY release_id
+     ), recorded AS (
+       SELECT release_id, table_name,
+              sum(CASE event WHEN 'rows_added' THEN row_count ELSE -row_count END)::int AS n
+         FROM factor_release_events WHERE event IN ('rows_added', 'rows_deleted')
+        GROUP BY release_id, table_name
+     )
+     SELECT release_id AS "releaseId", table_name AS "tableName", COALESCE(h.n, 0) AS "held", COALESCE(r.n, 0) AS "recorded"
+       FROM held h FULL JOIN recorded r USING (release_id, table_name)
+      WHERE COALESCE(h.n, 0) <> COALESCE(r.n, 0)
+      ORDER BY 1, 2`,
+  );
+  return {
+    problems: [
+      ...unspecified(n),
+      ...unrecorded.map(
+        (u) => `release ${u.releaseId} holds ${u.held} ${u.tableName} row(s) but factor_release_events records ${u.recorded}`,
+      ),
+    ],
+    notices: placeholderNotices(releases),
+    skipped: [],
+  };
+}
+
+function unspecified(n) {
+  return n > 0 ? [`${n} factor/conversion row(s) with an unspecified activity type under an authoritative release`] : [];
+}
+
+function placeholderNotices(releases) {
+  return releases.map((r) => `${r.status} release ${r.publisher} ${r.edition} (${r.factors} factor(s), ${r.conversions} conversion(s))`);
 }
 
 /**
@@ -467,14 +862,27 @@ async function main() {
     const client = new PrismaClient({ datasourceUrl: url });
     let problems;
     let exposures;
+    let library;
     try {
       const query = (sql) => client.$queryRawUnsafe(sql);
-      problems = [...(await checkRuntimeRole(query)), ...(await checkTenantInvariants(query))];
+      library = await factorLibraryReport(query);
+      problems = [
+        ...(await checkRuntimeRole(query)),
+        ...(await checkTenantInvariants(query)),
+        ...(await checkTableLevelGrants(query)),
+        ...(await checkFunctionExecutors(query)),
+        ...(await checkIntegrityTriggers(query)),
+        ...library.problems,
+      ];
       exposures = await runtimeRoleExposures(query);
     } finally {
       await client.$disconnect();
     }
     for (const e of exposures) console.warn(`  ! ${RUNTIME_ROLE} can also reach ${e}`);
+    // Not a failure here — local and CI databases hold the seed's placeholder
+    // library on purpose. On staging or production each line is a finding.
+    for (const n of library.notices) console.warn(`  ! factor library holds a ${n}`);
+    for (const k of library.skipped) console.warn(`  ! ${k}`);
     if (problems.length > 0) {
       console.error(`${RUNTIME_ROLE} on ${new URL(url).host}: ${problems.length} problem(s)`);
       for (const p of problems) console.error(`  - ${p}`);

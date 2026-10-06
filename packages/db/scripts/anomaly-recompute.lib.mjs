@@ -58,12 +58,14 @@ export function periodOrdinal(reportingPeriod, periodValue) {
   return reportingPeriod === 'quarterly' ? i + 1 : i;
 }
 
-/** The reporting entity + granularity, as one key. JSON rather than a joined
- *  string: `category` and `reporting_period` are plain text columns with no
- *  database constraint, so a separator character inserted by direct SQL would
- *  merge two pools that must never merge. */
+/** The reporting entity + activity + granularity, as one key. JSON rather
+ *  than a joined string: `category` and `reporting_period` are plain text
+ *  columns with no database constraint, so a separator character inserted by
+ *  direct SQL would merge two pools that must never merge. The activity type
+ *  (LP3-03) keeps diesel and petrol of one site in separate baselines; an
+ *  untyped record (null) pools only with untyped ones. */
 export const poolKey = (r) =>
-  JSON.stringify([r.subsidiaryId, r.locationId, r.category, r.reportingPeriod]);
+  JSON.stringify([r.subsidiaryId, r.locationId, r.category, r.activityType ?? null, r.reportingPeriod]);
 
 /** The lock key, matched the way `assertPeriodNotLocked` matches it: exact
  *  equality on all four columns. */

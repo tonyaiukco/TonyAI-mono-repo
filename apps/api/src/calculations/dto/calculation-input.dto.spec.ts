@@ -242,3 +242,17 @@ describe('CalculationInputDto — the fields that were already bounded', () => {
     );
   });
 });
+
+describe('CalculationInputDto — activityType (LP3-03)', () => {
+  it('accepts a token, null and its absence — the same shape the record DTOs take', () => {
+    for (const activityType of ['diesel', 'R-410A', null, undefined]) {
+      expect(parse({ activityType }).errors, String(activityType)).toHaveLength(0);
+    }
+  });
+
+  it('refuses a malformed or overlong token', () => {
+    for (const activityType of ['die sel', 'x'.repeat(33), '']) {
+      expect(constraintsOn({ activityType }, 'activityType'), activityType).toContain('matches');
+    }
+  });
+});

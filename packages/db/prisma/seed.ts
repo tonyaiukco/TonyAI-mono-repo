@@ -13,8 +13,23 @@ import {
   ANOMALY_BASELINE_PERIODS,
   ANOMALY_THRESHOLD,
   COUNTED_STATUSES,
+  CALCULATION_GAS,
   MONTH_NAMES,
+  factorActivityTypeFor,
+  resolveFactorPath,
+  scope2MethodFor,
+  yearPolicyOf,
+  type FactorReleaseSnapshot,
+  type FactorStatus,
 } from '@tonyai/shared-types';
+import {
+  DEMO_YEAR,
+  PRIOR_YEAR,
+  SEED_CONVERSIONS,
+  SEED_FACTORS,
+  SEED_RELEASES,
+} from './factor-library';
+import { assertLocalSeedTarget, seedActivityType } from './seed-guards';
 
 /** The status every activity record the seed writes is created with. Read by
  *  `findOrCreateRecord` AND by the rolling-baseline guard below, so the two
@@ -33,9 +48,16 @@ function rollingBaseline(priors: number[]): number | null {
 // only the OWNER may (LP1-03): DIRECT_URL. DATABASE_URL is the least-privileged
 // runtime role wherever the two differ; CI's supabase-stack sets both to the
 // owner, so the fallback keeps that path unchanged.
-const prisma = new PrismaClient({ datasourceUrl: process.env.DIRECT_URL || process.env.DATABASE_URL });
+const SEED_DATABASE_URL = process.env.DIRECT_URL || process.env.DATABASE_URL;
+
+assertLocalSeedTarget(SEED_DATABASE_URL, 'DIRECT_URL / DATABASE_URL');
+
+const prisma = new PrismaClient({ datasourceUrl: SEED_DATABASE_URL });
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? 'http://127.0.0.1:54321';
+// The demo auth users (with their documented password) and buckets go to this
+// project: local only, like the database.
+assertLocalSeedTarget(SUPABASE_URL, 'SUPABASE_URL');
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SERVICE_ROLE) {
@@ -91,108 +113,18 @@ const LOCATIONS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Emission factors (reference data, not tenant-scoped).
-//
-// Values are sourced from docs/md_docs/calculation_logic.md (§3 Regional
-// Emission Factors). Scope 1 = direct combustion, Scope 2 = purchased energy.
-// Electricity, natural gas and liquid fuels normalise to a base unit before the
-// factor is applied (see the calculation engine's normalize()): electricity and
-// natural gas -> kWh, liquid fuels -> litres.
-//
-// The doc gives a single demo factor set, seeded here under DEMO_YEAR. The
-// VALUES are the doc's demo numbers; re-dating them does not make them that
-// year's real factors, which is why every row's `source` says so. Authoritative
-// DEFRA/AIB values arrive with the Phase-4 factor library.
-// To demonstrate factor VERSIONING we additionally seed a PRIOR_YEAR variant for
-// UK electricity, explicitly marked as a demo placeholder.
-// The `source`/`version` fields carry provenance so a calculation can snapshot
-// exactly which factor it used.
-// The reporting year the demo dataset lives in. Restated in 30+ places before
-// WP15; a single constant is what stops the next move from being another sweep.
-// PRIOR_YEAR exists only to give the factor library a second version to resolve
-// against, so factor versioning is demonstrable.
-export const DEMO_YEAR = 2026;
-export const PRIOR_YEAR = DEMO_YEAR - 1;
-
-// The DEMO_YEAR rows are the doc's demo numbers RE-DATED, so they need the same
-// "not authoritative" marking the prior-year row has. Without it the two sets
-// read backwards: a reader comparing them infers the year with the caveat is the
-// placeholder and the other one is real. `source` and `version` are printed
-// verbatim into the customer-facing factor appendix, so this is the label a
-// customer actually sees.
-
-const DEMO_SOURCE = 'docs/md_docs/calculation_logic.md §3 (prototype demo factors)';
-// Applied to the DEMO_YEAR rows: those values are the doc's demo set re-dated,
-// so they get exactly the same caveat the prior-year row carries.
-const DEMO_FACTOR_SOURCE = `${DEMO_SOURCE} — ${DEMO_YEAR} demo placeholder, NOT an authoritative value`;
-
-interface SeedFactor {
-  category: string;
-  geographyCode: string;
-  reportingYear: number;
-  scope: number;
-  factorValue: number;
-  factorUnit: string;
-  normalizedUnit: string;
-  methodology: string;
-  source: string;
-  version: string;
-}
-
-/**
- * RESERVED: a version beginning `0000-` belongs to a TEST FIXTURE, never to a
- * sourced factor.
- *
- * The E2E suite seeds `0000-E2E-FIXTURE` for a category this library does not
- * cover (`e2e/helpers.ts`, `seedE2EFactor`), because every category it DOES
- * cover is evidence-required and a bulk import cannot attach a file. The suite
- * removes it at teardown, and `main()` below sweeps the prefix on every seed —
- * which is the repair for an E2E run killed before its teardown ran.
- *
- * The prefix is also what keeps such a row from shadowing a real factor:
- * `findFactor` takes the highest `version` for a (category, geography, year),
- * and leading zeroes sort below every plausible real version. Treat that as the
- * last line of defence rather than the first — the ordering is lexicographic,
- * which is separately recorded as unsafe (`"2024.2" > "2024.10"`). If you are
- * adding the real factor for such a category, nothing here needs changing; just
- * do not adopt this prefix for it.
- */
-export const FIXTURE_VERSION_PREFIX = '0000-';
-
-const EMISSION_FACTORS: SeedFactor[] = [
-  // --- Scope 2: purchased electricity (kgCO2e/kWh) — DEMO_YEAR ---
-  { category: 'Electricity', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.2071, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Electricity', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.4400, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Electricity', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 2, factorValue: 0.2310, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'residual-mix', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
-
-  // --- Scope 2: purchased electricity — PRIOR_YEAR versioning demo (UK) ---
-  // Placeholder value (the doc gives one demo set only); present to prove that
-  // (category, geography, year) resolves to a DIFFERENT factor than DEMO_YEAR.
-  { category: 'Electricity', geographyCode: 'UK', reportingYear: PRIOR_YEAR, scope: 2, factorValue: 0.2123, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'location-based', source: `${DEMO_SOURCE} — ${PRIOR_YEAR} demo placeholder, NOT an authoritative value`, version: `${PRIOR_YEAR}.1` },
-
-  // --- Scope 1: natural gas (kgCO2e/kWh) — DEMO_YEAR ---
-  // Geography-agnostic demo factor; seeded per supported geography so a lookup by
-  // the reporting entity's geographyCode always resolves.
-  { category: 'Natural Gas', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Natural Gas', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Natural Gas', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 1, factorValue: 0.1829, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'standard-factor', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
-
-  // --- Scope 1: liquid fuels (kgCO2e/litre) — DEMO_YEAR ---
-  // Doc §3.1 gives Diesel 2.6841 and Petrol 2.3111; both fall under the
-  // canonical "Fuel" category, differentiated by geography-agnostic demo values.
-  // Seeded per geography so a lookup always resolves; Diesel is used as the
-  // representative "Fuel" factor here.
-  { category: 'Fuel', geographyCode: 'UK', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Fuel', geographyCode: 'TR', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
-  { category: 'Fuel', geographyCode: 'EU', reportingYear: DEMO_YEAR, scope: 1, factorValue: 2.6841, factorUnit: 'kgCO2e/litre', normalizedUnit: 'litres', methodology: 'standard-factor (diesel)', source: DEMO_FACTOR_SOURCE, version: `${DEMO_YEAR}.1` },
-];
+// Emission factors (reference data, not tenant-scoped): the placeholder
+// library — releases, factors and the K4 conversion — lives in
+// `factor-library.ts`, pure data the parity spec checks against the LP3-03
+// migration and the shared contract.
+export { DEMO_YEAR, PRIOR_YEAR } from './factor-library';
 
 // ---------------------------------------------------------------------------
 // Demo activity records so the Emissions Analytics workspace renders with data.
 //
 // These are PROTOTYPE values, NOT real operational data — they exist so the
 // analytics/trend views are demoable out of the box. They reuse the demo
-// emission factors above (already labelled as prototype/DEMO_SOURCE), so every
+// placeholder factor library (`factor-library.ts`, labelled as prototype), so every
 // calculation snapshot carries that same non-authoritative provenance.
 //
 // Only Scope 1 & 2 categories are seeded (Electricity, Natural Gas, Fuel) —
@@ -242,17 +174,197 @@ function monthlyActivity(spec: ActivitySpec, month: number): number {
   return Math.round(seasonal * spike);
 }
 
-/** Resolve the latest-version factor for (category, geography, year), mirroring
- * the calc engine's resolution so seeded snapshots match runtime output. */
+/**
+ * The factor a seeded record of `category` — its seed activity type, entered
+ * in `unit` — is priced by, through `resolveFactorPath`: the one selection rule
+ * the calculation engine applies, so seeded snapshots match runtime output.
+ * The seed is a local tool, so placeholders are allowed. No factor → null (the
+ * caller skips the series); any other refusal is a defect in the library.
+ */
 async function resolveFactor(
   category: string,
   geographyCode: string,
   reportingYear: number,
+  unit: string,
 ) {
-  return prisma.emissionFactor.findFirst({
-    where: { category, geographyCode, reportingYear },
-    orderBy: { version: 'desc' },
+  const lookup = {
+    category,
+    activityType: factorActivityTypeFor(category, seedActivityType(category)),
+    geographyCode,
+    reportingYear,
+    release: { status: { not: 'withdrawn' } },
+  };
+  const [factors, conversions] = await Promise.all([
+    prisma.emissionFactor.findMany({
+      where: { ...lookup, gas: CALCULATION_GAS, scope2Method: scope2MethodFor(category) },
+      include: { release: true },
+    }),
+    prisma.unitConversion.findMany({ where: lookup, include: { release: true } }),
+  ]);
+  // The column is CHECK-constrained to FactorStatus; selection ignores any
+  // status it does not know in any case.
+  const ranked = <T extends { release: { status: string } }>(row: T) => ({
+    ...row,
+    release: { ...row.release, status: row.release.status as FactorStatus },
   });
+  const resolution = resolveFactorPath({
+    category,
+    inputUnit: unit,
+    factors: factors.map(ranked),
+    conversions: conversions.map(ranked),
+    allowPlaceholders: true,
+  });
+  if (!resolution.ok) {
+    if (resolution.code === 'no_factor') return null;
+    throw new Error(`Seed factor library refuses ${category}/${geographyCode}/${reportingYear} in ${unit}: ${resolution.code}`);
+  }
+  if (resolution.conversion) {
+    throw new Error(`Seed series are entered in their factor's own unit; ${category} in ${unit} needs a conversion`);
+  }
+  return resolution.factor;
+}
+
+type ResolvedFactor = NonNullable<Awaited<ReturnType<typeof resolveFactor>>>;
+
+/** The release as a v2 snapshot embeds it (`FactorReleaseSnapshot`). */
+function releaseSnapshot(release: ResolvedFactor['release']): FactorReleaseSnapshot {
+  return {
+    id: release.id,
+    publisher: release.publisher,
+    title: release.title,
+    edition: release.edition,
+    ordinal: release.ordinal,
+    status: release.status,
+    sourceUrl: release.sourceUrl,
+    licence: release.licence,
+    publishedAt: release.publishedAt ? release.publishedAt.toISOString().slice(0, 10) : null,
+    gwpSet: release.gwpSet as FactorReleaseSnapshot['gwpSet'],
+  };
+}
+
+/**
+ * The v2 snapshot's provenance (`CalculationResultV2`), as the engine writes
+ * it: where the figure came from, so a screen or report can tell a
+ * placeholder from an authoritative number (`isAuthoritativeSnapshot`).
+ */
+function snapshotProvenance(factor: ResolvedFactor, reportingYear: number) {
+  return {
+    snapshotSchema: 2 as const,
+    activityType: factor.activityType,
+    gas: CALCULATION_GAS,
+    gasCoverage: factor.gasCoverage,
+    calorificBasis: factor.calorificBasis,
+    scope2Method: factor.scope2Method,
+    dataYear: factor.dataYear,
+    yearPolicy: yearPolicyOf(reportingYear, factor.dataYear),
+    factorRelease: releaseSnapshot(factor.release),
+    conversion: null,
+  };
+}
+
+/** Throw unless `stored` matches `wanted` on every listed field. */
+function assertUnchanged<T extends object>(
+  what: string,
+  stored: T,
+  wanted: Partial<T>,
+  fields: readonly (keyof T)[],
+): void {
+  const drifted = fields.filter((field) => stored[field] !== wanted[field]);
+  if (drifted.length > 0) {
+    throw new Error(
+      `${what} already exists with different ${drifted.join(', ')}. The factor library ` +
+        'is append-only: a changed value is a NEW release, never an edit. Reset this ' +
+        'database (pnpm db:reset) if the stored row is a stale local copy.',
+    );
+  }
+}
+
+/**
+ * Load the placeholder library, insert-if-absent: a release, factor or
+ * conversion already present must match the seed exactly, or the seed stops —
+ * the tables are append-only, so it can never "update" a value.
+ */
+async function seedFactorLibrary(): Promise<void> {
+  const releaseIds = new Map<string, string>();
+  for (const release of SEED_RELEASES) {
+    const stored = await prisma.factorRelease.findUnique({
+      where: { publisher_edition: { publisher: release.publisher, edition: release.edition } },
+    });
+    if (stored) {
+      assertUnchanged(`Release ${release.publisher} ${release.edition}`, stored, release, ['title', 'ordinal', 'status']);
+      releaseIds.set(release.edition, stored.id);
+    } else {
+      releaseIds.set(release.edition, (await prisma.factorRelease.create({ data: release })).id);
+    }
+  }
+  const releaseIdOf = (edition: string): string => {
+    const id = releaseIds.get(edition);
+    if (!id) throw new Error(`Seed row names edition ${edition}, which the seed does not declare`);
+    return id;
+  };
+
+  // Missing rows go in with ONE statement per table, so the library's record
+  // (factor_release_events) shows one load per release, not one per row.
+  const missingFactors: Prisma.EmissionFactorUncheckedCreateInput[] = [];
+  for (const { edition, ...factor } of SEED_FACTORS) {
+    const data = { ...factor, releaseId: releaseIdOf(edition) };
+    const stored = await prisma.emissionFactor.findUnique({
+      where: {
+        identity: {
+          releaseId: data.releaseId,
+          category: data.category,
+          activityType: data.activityType,
+          gas: data.gas,
+          geographyCode: data.geographyCode,
+          reportingYear: data.reportingYear,
+          scope2Method: data.scope2Method,
+          calorificBasis: data.calorificBasis,
+          normalizedUnit: data.normalizedUnit,
+        },
+      },
+    });
+    if (stored) {
+      assertUnchanged(
+        `Factor ${data.category}/${data.activityType}/${data.geographyCode}/${data.reportingYear} (${edition})`,
+        stored,
+        data,
+        ['scope', 'factorValue', 'factorUnit', 'methodology', 'source', 'version', 'gasCoverage', 'dataYear'],
+      );
+    } else {
+      missingFactors.push(data);
+    }
+  }
+  if (missingFactors.length > 0) await prisma.emissionFactor.createMany({ data: missingFactors });
+
+  const missingConversions: Prisma.UnitConversionUncheckedCreateInput[] = [];
+  for (const { edition, ...conversion } of SEED_CONVERSIONS) {
+    const data = { ...conversion, releaseId: releaseIdOf(edition) };
+    const stored = await prisma.unitConversion.findUnique({
+      where: {
+        identity: {
+          releaseId: data.releaseId,
+          category: data.category,
+          activityType: data.activityType,
+          geographyCode: data.geographyCode,
+          reportingYear: data.reportingYear,
+          fromUnit: data.fromUnit,
+          toUnit: data.toUnit,
+          calorificBasis: data.calorificBasis,
+        },
+      },
+    });
+    if (stored) {
+      assertUnchanged(
+        `Conversion ${data.category}/${data.geographyCode}/${data.reportingYear} ${data.fromUnit}→${data.toUnit} (${edition})`,
+        stored,
+        data,
+        ['multiplier', 'referenceConditions', 'basis', 'dataYear'],
+      );
+    } else {
+      missingConversions.push(data);
+    }
+  }
+  if (missingConversions.length > 0) await prisma.unitConversion.createMany({ data: missingConversions });
 }
 
 // --- Demo evidence ---------------------------------------------------------
@@ -394,6 +506,10 @@ async function findOrCreateRecord(
   const record = await prisma.activityRecord.create({
     data: {
       ...data,
+      // Found above by its slot alone, so a database seeded before LP3-03 keeps
+      // its untyped records; a fresh one gets typed ones (the slot-kind rule
+      // refuses a mix).
+      activityType: seedActivityType(data.category),
       // The snapshot is modelled here as a plain object; Prisma's Json input
       // type is a narrower union that an index signature does not satisfy.
       // Asserted rather than re-typed: the shape is the calc engine's, not the
@@ -506,46 +622,31 @@ async function main() {
     });
   }
 
-  // Sweep any stranded test fixture BEFORE seeding the real library. Playwright
-  // skips its `globalTeardown` on SIGINT or a crash, and until this existed
-  // `pnpm db:seed` deleted nothing — so an interrupted E2E run left a fabricated
-  // factor in place, and the obvious repair did not remove it. While it sits
-  // there its category calculates at a made-up rate instead of being refused,
-  // and every record entered against it freezes that rate into an immutable
-  // snapshot this sweep cannot undo. Scoped to the reserved prefix, so it can
-  // only ever remove a row something deliberately labelled as a fixture.
-  const strandedFixtures = await prisma.emissionFactor.deleteMany({
-    where: { version: { startsWith: FIXTURE_VERSION_PREFIX } },
+  // Sweep any stranded test fixture BEFORE seeding the library. Playwright
+  // skips its `globalTeardown` on SIGINT or a crash, so an interrupted E2E run
+  // can leave its fixture release behind — and while it sits there its
+  // category calculates at a made-up rate instead of being refused, freezing
+  // that rate into every snapshot entered against it. Scoped to `fixture`
+  // releases, the only rows the append-only triggers let anyone delete.
+  const fixtureReleases = await prisma.factorRelease.findMany({
+    where: { status: 'fixture' },
+    select: { id: true, edition: true },
   });
-  if (strandedFixtures.count > 0) {
+  if (fixtureReleases.length > 0) {
+    const releaseId = { in: fixtureReleases.map((r) => r.id) };
+    await prisma.$transaction([
+      prisma.emissionFactor.deleteMany({ where: { releaseId } }),
+      prisma.unitConversion.deleteMany({ where: { releaseId } }),
+      prisma.factorRelease.deleteMany({ where: { id: releaseId } }),
+    ]);
     console.log(
-      `Removed ${strandedFixtures.count} stranded test-fixture factor(s) ` +
-        `(version ${FIXTURE_VERSION_PREFIX}*) left by an interrupted E2E run.`,
+      `Removed ${fixtureReleases.length} stranded test-fixture release(s) ` +
+        `(${fixtureReleases.map((r) => r.edition).join(', ')}) left by an interrupted E2E run.`,
     );
   }
 
-  console.log('Seeding emission factors (reference data)...');
-  for (const f of EMISSION_FACTORS) {
-    await prisma.emissionFactor.upsert({
-      where: {
-        category_geographyCode_reportingYear_version: {
-          category: f.category,
-          geographyCode: f.geographyCode,
-          reportingYear: f.reportingYear,
-          version: f.version,
-        },
-      },
-      update: {
-        scope: f.scope,
-        factorValue: f.factorValue,
-        factorUnit: f.factorUnit,
-        normalizedUnit: f.normalizedUnit,
-        methodology: f.methodology,
-        source: f.source,
-      },
-      create: f,
-    });
-  }
+  console.log('Seeding the placeholder factor library (reference data, insert-if-absent)...');
+  await seedFactorLibrary();
 
   console.log('Seeding auth users + profiles...');
   const adminId = await ensureAuthUser('admin@tonyai.local', 'TonyAI!2026', 'Tony Admin');
@@ -663,14 +764,14 @@ const LOCATION_ACTIVITY = [
     unit: string;
     base: number;
     subsidiary: (typeof SUBSIDIARIES)[number];
-    factor: NonNullable<Awaited<ReturnType<typeof resolveFactor>>>;
+    factor: ResolvedFactor;
   }> = [];
   for (const spec of LOCATION_ACTIVITY) {
     const subsidiary = SUBSIDIARIES.find((s) => s.id === spec.location.subsidiaryId);
     if (!subsidiary) {
       throw new Error(`Seed location "${spec.location.name}" points at an unknown subsidiary`);
     }
-    const factor = await resolveFactor(spec.category, subsidiary.geographyCode, LOCATION_YEAR);
+    const factor = await resolveFactor(spec.category, subsidiary.geographyCode, LOCATION_YEAR, spec.unit);
     if (!factor) {
       console.warn(
         `  ! no factor for ${spec.category}/${subsidiary.geographyCode}/${LOCATION_YEAR} — ` +
@@ -714,6 +815,7 @@ const LOCATION_ACTIVITY = [
       spec.category,
       subsidiary.geographyCode,
       ACTIVITY_YEAR,
+      spec.unit,
     );
     if (!factor) {
       console.warn(
@@ -796,7 +898,8 @@ const LOCATION_ACTIVITY = [
         factorUnit: factor.factorUnit,
         methodology: factor.methodology,
         source: factor.source,
-        version: factor.version,
+        version: factor.release.edition,
+        ...snapshotProvenance(factor, ACTIVITY_YEAR),
       };
 
       const { id: recordId } = await findOrCreateRecord({
@@ -851,7 +954,8 @@ const LOCATION_ACTIVITY = [
         scope: factor.scope, inputValue: activityValue, inputUnit: spec.unit,
         normalizedValue: activityValue, normalizedUnit: factor.normalizedUnit, conversionApplied: false,
         kgCo2e, tCo2e: kgCo2e / 1000, factorId: factor.id, factorValue: factor.factorValue,
-        factorUnit: factor.factorUnit, methodology: factor.methodology, source: factor.source, version: factor.version,
+        factorUnit: factor.factorUnit, methodology: factor.methodology, source: factor.source, version: factor.release.edition,
+        ...snapshotProvenance(factor, LOCATION_YEAR),
       };
       const { id: recordId } = await findOrCreateRecord({
         subsidiaryId: subsidiary.id,

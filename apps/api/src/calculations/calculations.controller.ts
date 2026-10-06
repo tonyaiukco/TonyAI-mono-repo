@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
 import type {
   ActivityCalculationSnapshot,
-  EmissionFactorDTO,
+  EmissionFactorDetailDTO,
 } from '@tonyai/shared-types';
 import { CalculationsService } from './calculations.service';
 import { CalculationInputDto } from './dto/calculation-input.dto';
@@ -23,7 +23,7 @@ export class CalculationsController {
   }
 
   @Get('factors')
-  listFactors(@Query() query: ListFactorsQueryDto): Promise<EmissionFactorDTO[]> {
+  listFactors(@Query() query: ListFactorsQueryDto): Promise<EmissionFactorDetailDTO[]> {
     return this.service.listFactors(query);
   }
 }

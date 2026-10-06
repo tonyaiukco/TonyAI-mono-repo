@@ -13,6 +13,7 @@ import {
   selectSubsidiary,
   serviceReadRecords,
   SUB,
+  e2eActivityTypeFor,
 } from './helpers';
 
 /**
@@ -50,6 +51,11 @@ import {
 const SUBSIDIARY = SUB.energy;
 const OPTION = 'TonyAI Energy (TR)';
 const CATEGORY = 'Fuel';
+/** Its fuel (LP3-03): a new Fuel record names one. */
+const ACTIVITY_TYPE = e2eActivityTypeFor(CATEGORY);
+/** How a row and its checkbox name the record: the category with its fuel,
+ *  since diesel and petrol of one quarter are two records. */
+const CATEGORY_LABEL = `${CATEGORY} (Diesel)`;
 /** The draft that gets the file, and is sent. */
 const ATTACHED = 'Q3';
 /** The draft that never gets a file. */
@@ -70,6 +76,7 @@ async function createDraft(
       reportingPeriod: E2E_PERIOD,
       periodValue,
       category: CATEGORY,
+      activityType: ACTIVITY_TYPE,
       activityValue: 640,
       activityUnit: 'litres',
     },
@@ -109,7 +116,7 @@ test('attaching the file in the vault makes a Fuel draft sendable in place, and 
     // `onCountChange` fails.
     const checkboxFor = (periodValue: string) =>
       list.getByRole('checkbox', {
-        name: `Select ${periodValue} ${E2E_YEAR} ${CATEGORY}, ${WHOLE_COMPANY_ENTITY_LABEL}`,
+        name: `Select ${periodValue} ${E2E_YEAR} ${CATEGORY_LABEL}, ${WHOLE_COMPANY_ENTITY_LABEL}`,
         exact: true,
       });
     // Held back, with the row saying why. The reason is the positive anchor,

@@ -1,6 +1,7 @@
 import type {
   ActivityRecordStatus,
   EmissionsSummary,
+  FactorStatus,
   ReportStatus,
   ReportTemplate,
 } from '@tonyai/shared-types';
@@ -47,6 +48,15 @@ export interface ReportLedgerRow {
    *  indistinguishable in the ledger an auditor keeps. */
   locationName: string | null;
   category: string;
+  /** The fuel or gas of a typed category's record (LP3-03), null otherwise —
+   *  part of the record's identity: diesel and gas oil of one site and month
+   *  are two records, and without it their rows read as one entered twice. */
+  activityType: string | null;
+  /** Whether a reader may rely on the figure (LP3-03): the whole factor
+   *  path's standing — `isAuthoritativeSnapshot`, and no release withdrawn
+   *  since — as a machine code and a sentence; null for a record with no
+   *  figure. */
+  factorStanding: { code: FactorStandingCode; text: string } | null;
   periodValue: string;
   reportingPeriod: string;
   activityValue: number;
@@ -117,9 +127,25 @@ export interface ReportWithdrawnRow extends Omit<ReportLedgerRow, 'status'> {
   voidedBy: string | null;
 }
 
-/** One deduplicated factor snapshot (audit traceability core, FR §3.5/§5). */
+/**
+ * A factor path's standing as of the report's generation: `authoritative`, or
+ * why not — the weakest link's status, a release withdrawn since, or a
+ * snapshot written before factor releases (`pre_release`).
+ */
+export type FactorStandingCode = FactorStatus | 'pre_release';
+
+/** One deduplicated factor path (audit traceability core, FR §3.5/§5). */
 export interface ReportFactorRow {
   category: string;
+  /** The activity the factor prices (`diesel`, `grid_electricity`, or
+   *  `unspecified` for a pre-LP3-03 untyped record); null on a snapshot written
+   *  before LP3-03, which does not say. */
+  activityType: string | null;
+  /** The release, as `<publisher> <edition>` — or the pre-LP3-03 label. */
+  release: string;
+  /** Whether a report may rely on it: decided by `isAuthoritativeSnapshot` over
+   *  the whole path (factor AND conversion), never by the factor alone. */
+  standing: string;
   geographyCode: string;
   factorValue: number;
   factorUnit: string;
@@ -192,6 +218,11 @@ export interface ReportData {
   withdrawn: ReportWithdrawnRow[];
   withdrawnTotals: ReportWithdrawnTotals;
   factors: ReportFactorRow[];
+  /** Calculated ledger figures, and how many of them rest on a factor path
+   *  that is not authoritative (`isAuthoritativeSnapshot`) — what the report's
+   *  factor note states, instead of a fixed "prototype factors" sentence. */
+  calculatedRecords: number;
+  nonAuthoritativeRecords: number;
   evidenceSummary: ReportEvidenceRow[];
   /** Distinct evidence files behind the ledger's records — a file shared by
    *  several records counts once here, and once per record in `evidenceCount`. */

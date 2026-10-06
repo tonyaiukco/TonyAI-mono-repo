@@ -165,9 +165,10 @@ test('a dry run writes nothing — asserted against the database, not the report
   // No ids, by contract — not placeholder ids.
   expect(report.accepted.every((a: { recordId: null }) => a.recordId === null)).toBe(true);
 
-  // The FIGURE, per row. The fixture factor is 7 kgCO2e per tonne and `tonnes`
-  // normalises by identity, so these three numbers are the only place in the
-  // suite where the normalisation and the factor multiply are both observable —
+  // The FIGURE, per row. The fixture factor is 0.007 kgCO2e per kg and
+  // `tonnes` normalises to kg ×1000 (LP3-03), so these three numbers are the
+  // only place in the suite where the normalisation and the factor multiply
+  // are both observable —
   // and each is derived from its own row's value, so a preview that computed
   // every row from the first would fail here rather than agree with itself.
   expect(report.accepted.map((a: BulkUploadAcceptedRow) => [a.row, a.tCo2e])).toEqual([
@@ -305,7 +306,10 @@ test('the row-level refusals arrive with the codes the contract names', async ({
     // on the insert, which is why the importer checks it itself.
     { ...LANE, activityValue: 13 },
     { ...LANE, periodValue: 'Q4', activityValue: 'N/A' },
-    // Refrigerants in its one unit (kg, LP3-03): a coverage gap, not a unit error.
+    // Refrigerants in its one unit (kg): a typed category, whose record must
+    // name its gas — and a file cannot carry an activity type until LP4-02
+    // (owner decision (b), 2026-10-04), so the row is refused as `invalid`,
+    // before any factor lookup or duplicate check.
     { ...LANE, periodValue: 'Q4', category: 'Refrigerants', activityValue: 5, activityUnit: 'kg' },
     // The same category and unit as row 2, one year earlier. The factor
     // library is year-scoped with no fallback, and the fixture covers
@@ -330,9 +334,9 @@ test('the row-level refusals arrive with the codes the contract names', async ({
   ).toEqual({
     3: 'duplicate_in_file',
     4: 'invalid',
+    5: 'invalid',
     // The archetypal bulk-import failure, and the one that used to be reported
     // as a tenant/permission problem.
-    5: 'no_factor',
     6: 'no_factor',
   });
   expect(report.accepted).toHaveLength(1);

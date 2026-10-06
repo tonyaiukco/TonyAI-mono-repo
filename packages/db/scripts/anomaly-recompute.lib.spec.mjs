@@ -165,6 +165,20 @@ describe('pool identity', () => {
   it('keeps a whole-company series apart from a site one', () => {
     expect(poolKey(rec({ locationId: null }))).not.toBe(poolKey(rec({ locationId: 'loc-1' })));
   });
+
+  it('keeps each activity type in its own baseline (LP3-03)', () => {
+    // Diesel and petrol of one site and month are two records; one series must
+    // never baseline the other. An untyped (pre-LP3-03) record pools only with
+    // untyped ones, and a record read without the field is untyped.
+    const fuel = rec({ category: 'Fuel' });
+    const keys = new Set(
+      [{ activityType: 'diesel' }, { activityType: 'petrol' }, { activityType: null }].map((o) =>
+        poolKey({ ...fuel, ...o }),
+      ),
+    );
+    expect(keys.size).toBe(3);
+    expect(poolKey(fuel)).toBe(poolKey({ ...fuel, activityType: null }));
+  });
 });
 
 describe('freshVerdict', () => {

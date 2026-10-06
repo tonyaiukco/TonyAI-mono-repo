@@ -19,6 +19,9 @@ import {
   SubmitAuthorRefusedError,
   SubmitRoleRefusedError,
   VarianceReasonRequiredError,
+  ActivityTypeSlotConflictError,
+  SnapshotImmutableError,
+  recordTriggerCode,
 } from './errors';
 import {
   EVIDENCE_REQUIRED_CATEGORIES,
@@ -39,6 +42,7 @@ import {
   type Category,
   type ReportingPeriod,
   mayAuthorRecords,
+  recordActivityTypesFor,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { quoteCallerText } from '../common/caller-text';
@@ -49,6 +53,7 @@ import {
 } from '../common/resolve-profiles';
 import { CalculationsService } from '../calculations/calculations.service';
 import { storedUnit } from '../calculations/storable-unit';
+import { CalculationInputError } from '../calculations/errors';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { EvidenceService } from '../evidence/evidence.service';
@@ -66,11 +71,29 @@ import { CreateActivityRecordDto } from './dto/create-activity-record.dto';
 import { UpdateActivityRecordDto } from './dto/update-activity-record.dto';
 import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.dto';
 
+/**
+ * A record in a typed category (Fuel, Mobile Combustion, Refrigerants) names
+ * its fuel or gas (`activity_type_required`, LP3-03). Whether the category
+ * HAS the named type is the engine's check (`activity_type_not_for_category`).
+ */
+function assertActivityTypeNamed(category: string, activityType: string | null): void {
+  const types = recordActivityTypesFor(category);
+  if (types.length > 0 && activityType === null) {
+    throw new CalculationInputError(
+      'activity_type_required',
+      `A ${category} record must name its activity type. Accepted: ${types.map((t) => t.value).join(', ')}.`,
+    );
+  }
+}
+
 /** Inputs to the VAR §4 rolling-baseline check, minus the figure itself. */
 interface AnomalyParams {
   subsidiaryId: string;
   locationId: string | null;
   category: string;
+  /** Null for an untyped record — never undefined, which Prisma would drop
+   *  from the `where` and so pool diesel with petrol (LP3-03). */
+  activityType: string | null;
   reportingPeriod: string;
   reportingYear: number;
   periodValue: string;
@@ -303,6 +326,7 @@ export class ActivityRecordsService {
       reportingPeriod: r.reportingPeriod as ReportingPeriod,
       periodValue: r.periodValue,
       category: r.category as Category,
+      activityType: r.activityType,
       scope: r.scope,
       status: r.status,
       activityValue: r.activityValue,
@@ -477,7 +501,9 @@ export class ActivityRecordsService {
     reportingYear: number,
     activityValue: number,
     activityUnit: string,
-    locationId?: string | null,
+    locationId: string | null | undefined,
+    /** The record's own activity type (null when it names none). */
+    activityType: string | null,
     /** False when `activityUnit` came from the stored record, not this request. */
     unitChosenNow = true,
   ): Promise<{ calculation: ActivityCalculationSnapshot; scope: number }> {
@@ -508,6 +534,7 @@ export class ActivityRecordsService {
     const calculation = await this.calculations.compute(
       {
         category,
+        activityType,
         geographyCode,
         reportingYear,
         value: activityValue,
@@ -588,6 +615,7 @@ export class ActivityRecordsService {
         subsidiaryId: params.subsidiaryId,
         locationId: params.locationId,
         category: params.category,
+        activityType: params.activityType,
         reportingPeriod: params.reportingPeriod,
         status: { in: BASELINE_STATUSES },
         ...(params.excludeId ? { id: { not: params.excludeId } } : {}),
@@ -716,6 +744,7 @@ export class ActivityRecordsService {
     subsidiaryId: string;
     locationId: string | null;
     periodValue: string;
+    activityType: string | null;
     calculation: ActivityCalculationSnapshot;
     scope: number;
     verdict: AnomalyVerdict;
@@ -746,6 +775,10 @@ export class ActivityRecordsService {
       dto.reportingPeriod,
       dto.periodValue,
     );
+    // A NEW record in a typed category names its fuel or gas (LP3-03). Records
+    // written before LP3-03 stay untyped; no new one joins them.
+    const activityType = dto.activityType ?? null;
+    assertActivityTypeNamed(dto.category, activityType);
     // Period-lock gate (FR §4.2): no new records in a closed period. An early
     // answer only — `create` asks again once it holds the period.
     await this.assertPeriodNotLocked({
@@ -763,12 +796,14 @@ export class ActivityRecordsService {
       dto.activityValue,
       dto.activityUnit,
       dto.locationId,
+      activityType,
     );
 
     const verdict = await this.detectAnomalyFor(calculation, {
       subsidiaryId: dto.subsidiaryId,
       locationId: dto.locationId ?? null,
       category: dto.category,
+      activityType,
       reportingPeriod: dto.reportingPeriod,
       reportingYear: dto.reportingYear,
       periodValue,
@@ -778,6 +813,7 @@ export class ActivityRecordsService {
       subsidiaryId: dto.subsidiaryId,
       locationId: dto.locationId ?? null,
       periodValue,
+      activityType,
       calculation,
       scope,
       verdict,
@@ -795,7 +831,7 @@ export class ActivityRecordsService {
     dto: CreateActivityRecordDto,
     provenance?: { importBatchId: string },
   ): Promise<ActivityRecordDTO> {
-    const { subsidiaryId, locationId, periodValue, calculation, scope, verdict } =
+    const { subsidiaryId, locationId, periodValue, activityType, calculation, scope, verdict } =
       await this.previewCreate(user, dto);
     const period: PeriodKey = {
       subsidiaryId,
@@ -825,6 +861,7 @@ export class ActivityRecordsService {
             reportingPeriod: dto.reportingPeriod,
             periodValue,
             category: dto.category,
+            activityType,
             scope,
             status: ActivityRecordStatus.draft,
             anomalyFlag: verdict.anomalous,
@@ -859,6 +896,12 @@ export class ActivityRecordsService {
       ) {
         throw new DuplicateActivityRecordError();
       }
+      // The slot already holds the other kind (typed vs untyped) — LP3-03's
+      // trigger, under its own advisory lock, so a concurrent pair cannot
+      // both pass.
+      if (recordTriggerCode(e) === 'TA002') {
+        throw new ActivityTypeSlotConflictError(activityType !== null);
+      }
       throw asLostRace(e);
     }
     return this.toDTO(created, 0, await this.actorsFor(user, [created]));
@@ -881,6 +924,16 @@ export class ActivityRecordsService {
     // (undefined) — distinguish "not provided" from an explicit null.
     const locationId =
       dto.locationId !== undefined ? dto.locationId : existing.locationId;
+    // Likewise the activity type: set (string), cleared (null) or kept. Checked
+    // against the EFFECTIVE category by the engine, so a diesel Fuel draft
+    // re-filed as Electricity without clearing it is refused. A typed category
+    // requires one unless this is a pre-LP3-03 untyped record staying in its
+    // own category — the only untyped record a typed category may hold.
+    const storedType = existing.activityType ?? null;
+    const activityType = dto.activityType !== undefined ? dto.activityType : storedType;
+    if (!(storedType === null && activityType === null && category === existing.category)) {
+      assertActivityTypeNamed(category, activityType);
+    }
 
     const reportingPeriod = dto.reportingPeriod ?? existing.reportingPeriod;
     const periodValue = requireCanonicalPeriodValue(
@@ -908,6 +961,7 @@ export class ActivityRecordsService {
       activityValue,
       activityUnit,
       locationId,
+      activityType,
       // Enforce the category/unit map when the unit was chosen NOW **or when
       // the category changed**. The second half was missing and it was a live
       // path to a fabricated figure: a PATCH that sends only `{category}` left
@@ -925,6 +979,7 @@ export class ActivityRecordsService {
       subsidiaryId: existing.subsidiaryId,
       locationId,
       category,
+      activityType,
       reportingPeriod,
       reportingYear,
       periodValue,
@@ -955,6 +1010,7 @@ export class ActivityRecordsService {
         : { disconnect: true };
     }
     if (dto.reportingPeriod !== undefined) data.reportingPeriod = dto.reportingPeriod;
+    if (dto.activityType !== undefined) data.activityType = dto.activityType;
     // The canonical spelling, not the caller's. Gated on the caller having
     // SENT one, so an unrelated edit never rewrites a field nobody touched —
     // that would put a change into the audit diff that the user did not make.
@@ -1004,6 +1060,9 @@ export class ActivityRecordsService {
       ) {
         throw new DuplicateActivityRecordError();
       }
+      const trigger = recordTriggerCode(e);
+      if (trigger === 'TA002') throw new ActivityTypeSlotConflictError(activityType !== null);
+      if (trigger === 'TA001') throw new SnapshotImmutableError();
       throw e;
     }
     return this.toDTO(
@@ -1124,6 +1183,7 @@ export class ActivityRecordsService {
         {
           subsidiaryId: record.subsidiaryId,
           locationId: record.locationId,
+          activityType: record.activityType,
           category: record.category,
           reportingPeriod: record.reportingPeriod,
           reportingYear: record.reportingYear,

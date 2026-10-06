@@ -21,6 +21,9 @@ function loadE2EEnv(): void {
   process.env.E2E_SUPABASE_URL ??= readVar('apps/web/.env.local', 'NEXT_PUBLIC_SUPABASE_URL');
   process.env.E2E_SUPABASE_ANON_KEY ??= readVar('apps/web/.env.local', 'NEXT_PUBLIC_SUPABASE_ANON_KEY');
   process.env.E2E_SUPABASE_SERVICE_KEY ??= readVar('apps/api/.env', 'SUPABASE_SERVICE_ROLE_KEY');
+  // The database owner, for the one teardown the service role may not do:
+  // deleting committed activity records (K5's delete guard, LP3-03).
+  process.env.E2E_OWNER_DATABASE_URL ??= process.env.DIRECT_URL ?? readVar('apps/api/.env', 'DIRECT_URL');
 }
 loadE2EEnv();
 
@@ -64,16 +67,22 @@ const apiStartCmd = 'pnpm --filter @tonyai/api build && node dist/main.js';
  * the command line.
  */
 const RUNTIME_ROLE = 'tonyai_runtime'; // = packages/db/scripts/runtime-role.mjs
+// The suite runs on a local stack holding the seed's placeholder factor
+// library, so its API calculates from placeholders (LP3-03, K3) — the API
+// itself refuses the flag unless its database is loopback.
+const PLACEHOLDER_POLICY = { ALLOW_PLACEHOLDER_FACTORS: 'true' };
 function runtimeApi(): { command: string; env?: Record<string, string> } {
   const owner = process.env.DIRECT_URL || process.env.DATABASE_URL;
-  if (!owner || decodeURIComponent(new URL(owner).username) === RUNTIME_ROLE) return { command: apiStartCmd };
+  if (!owner || decodeURIComponent(new URL(owner).username) === RUNTIME_ROLE) {
+    return { command: apiStartCmd, env: PLACEHOLDER_POLICY };
+  }
   const password = randomBytes(24).toString('base64url');
   const runtime = new URL(owner);
   runtime.username = RUNTIME_ROLE;
   runtime.password = password;
   return {
     command: `node ../../packages/db/scripts/runtime-role.mjs provision && ${apiStartCmd}`,
-    env: { DIRECT_URL: owner, RUNTIME_DB_PASSWORD: password, DATABASE_URL: runtime.toString() },
+    env: { DIRECT_URL: owner, RUNTIME_DB_PASSWORD: password, DATABASE_URL: runtime.toString(), ...PLACEHOLDER_POLICY },
   };
 }
 const api = runtimeApi();

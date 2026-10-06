@@ -55,6 +55,7 @@ import {
   EVIDENCE_ALLOWED_MIME_TYPES,
   EVIDENCE_MAX_SIZE_BYTES,
   isSubmittable,
+  recordActivityTypesFor,
   WHOLE_COMPANY_ENTITY_LABEL,
 } from "@/lib/types";
 import type {
@@ -147,6 +148,20 @@ export interface PreviousSubmissionsProps {
   /** Refetch after one file was attached to several records: their evidence
    *  counts, and the open record's vault, have changed. */
   onEvidenceAttached: () => void;
+}
+
+
+/**
+ * The category as a row names it, with its activity type when it has one
+ * (LP3-03): diesel and petrol of one site and month are two records, and
+ * without the type their rows — and their checkboxes' accessible names — would
+ * be identical.
+ */
+function categoryWithActivity(r: Pick<ActivityRecordDTO, "category" | "activityType">): string {
+  if (!r.activityType) return r.category;
+  const label =
+    recordActivityTypesFor(r.category).find((t) => t.value === r.activityType)?.label ?? r.activityType;
+  return `${r.category} (${label})`;
 }
 
 export function PreviousSubmissions({
@@ -480,7 +495,7 @@ export function PreviousSubmissions({
                         // it their checkboxes carry byte-identical accessible
                         // names — indistinguishable to a screen reader, and a
                         // strict-mode collision for anything locating them.
-                        aria-label={`${attachMode ? "Attach the file to" : "Select"} ${r.periodValue} ${r.reportingYear} ${r.category}, ${
+                        aria-label={`${attachMode ? "Attach the file to" : "Select"} ${r.periodValue} ${r.reportingYear} ${categoryWithActivity(r)}, ${
                           r.locationId ? (r.locationName ?? "A site") : WHOLE_COMPANY_ENTITY_LABEL
                         }`}
                       />
@@ -540,7 +555,7 @@ export function PreviousSubmissions({
                         )}
                       >
                         {[
-                          r.category,
+                          categoryWithActivity(r),
                           // `locationName` is optional on the contract,
                           // so a bare `??` would label a site row as the
                           // whole company if the include were ever

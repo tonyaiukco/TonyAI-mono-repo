@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs';
 import { ReportsService } from './reports.service';
 import { buildReportHtml } from './report-html';
 import {
+  activityTypeLabel,
   BODY_COLUMNS,
   DISCLOSURE_COLUMNS,
   MARKED_WITHOUT_DISCLOSURE,
@@ -153,6 +154,8 @@ function createPrismaMock() {
       ]),
     },
     auditLog: { create: vi.fn() },
+    // The releases a report's figures rest on, as they stand now (LP3-03).
+    factorRelease: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
 type PrismaMock = ReturnType<typeof createPrismaMock>;
@@ -1264,6 +1267,8 @@ describe('ReportsService', () => {
         'period_value', 'activity_value', 'activity_unit', 'tco2e', 'status',
         'evidence_files', 'anomaly_flag', 'voided_activity_value',
         'voided_tco2e', 'voided_at_utc', 'void_reason', 'voided_by',
+        // LP3-03, appended after the disclosure so no column moved.
+        'activity_type', 'factor_standing',
       ]);
     });
 
@@ -1298,7 +1303,7 @@ describe('ReportsService', () => {
       // catches a marker gained or lost when the columns move: the fixture is
       // comma-free on purpose, so a plain split is exact here.
       const width = lines[0].split(',').length;
-      expect(width).toBe(16);
+      expect(width).toBe(18);
       for (const line of lines.slice(1)) {
         expect(line.split(',')).toHaveLength(width);
       }
@@ -1309,7 +1314,7 @@ describe('ReportsService', () => {
       expect(await excelHeader('Raw Activity Data')).toEqual([
         'Subsidiary', 'Reporting entity', 'Category', 'Reporting period',
         'Period', 'Activity value', 'Unit', 'tCO₂e', 'Status',
-        'Evidence files', 'Anomaly flag',
+        'Evidence files', 'Anomaly flag', 'Activity type', 'Factor standing',
       ]);
     });
 
@@ -1318,7 +1323,7 @@ describe('ReportsService', () => {
       expect(await excelHeader('Withdrawn Records')).toEqual([
         'Subsidiary', 'Reporting entity', 'Category', 'Reporting period',
         'Period', 'Activity value', 'Unit', 'tCO₂e removed',
-        'Withdrawn (UTC)', 'Reason', 'Withdrawn by (user id)',
+        'Withdrawn (UTC)', 'Reason', 'Withdrawn by (user id)', 'Activity type', 'Factor standing',
       ]);
     });
 
@@ -1676,6 +1681,8 @@ describe('report column descriptors', () => {
   const ledgerRow: ReportLedgerRow = {
     subsidiaryName: 'Energy', locationId: null, locationName: null,
     category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
+    activityType: null,
+    factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
     activityValue: 1000, activityUnit: 'kWh', tCo2e: 0.44, status: 'approved',
     evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
     anomalyBaselinePriorCount: 3,
@@ -1935,6 +1942,8 @@ describe('no column can opt out of CSV neutralisation', () => {
   const base: ReportLedgerRow = {
     subsidiaryName: 'Energy', locationId: null, locationName: null,
     category: 'Electricity', periodValue: 'January', reportingPeriod: 'monthly',
+    activityType: null,
+    factorStanding: { code: 'pre_release', text: 'Not authoritative (written before factor releases)' },
     activityValue: 1000, activityUnit: 'kWh', tCo2e: 0.44, status: 'approved',
     evidenceCount: 1, anomalyFlag: false, anomalyEvaluated: true,
     anomalyBaselinePriorCount: 3,
@@ -1997,5 +2006,198 @@ describe('no column can opt out of CSV neutralisation', () => {
     expect(parsed).toHaveLength(2);
     expect(parsed[1]).toHaveLength(csvHeader().split(',').length);
     for (const cell of parsed[1]) expect(executable(cell)).toBe(false);
+  });
+});
+
+
+describe('ReportsService — activity types and factor standing (LP3-03)', () => {
+  let prisma: PrismaMock;
+  let service: ReportsService;
+  const placeholderRelease = { id: 'rel-p', publisher: 'TonyAI prototype', title: 't', edition: '2026.1', ordinal: 202601, status: 'placeholder', sourceUrl: null, licence: null, publishedAt: null, gwpSet: null };
+  const authoritativeRelease = { ...placeholderRelease, id: 'rel-a', publisher: 'DESNZ', edition: '2026', ordinal: 1, status: 'authoritative' };
+  const v2 = (overrides: Record<string, unknown>) => ({
+    tCo2e: 0.0268, factorId: 'f-diesel', factorValue: 2.6841, factorUnit: 'kgCO2e/litre', methodology: 'standard-factor (diesel)',
+    source: 'demo', version: '2026.1', geographyCode: 'UK', snapshotSchema: 2, activityType: 'diesel', gas: 'CO2e',
+    gasCoverage: 'all_ghg', calorificBasis: 'not_applicable', scope2Method: 'not_applicable', dataYear: 2026, yearPolicy: 'exact',
+    factorRelease: placeholderRelease, conversion: null, ...overrides,
+  });
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    service = new ReportsService(
+      prisma as unknown as PrismaService,
+      { summary: vi.fn().mockResolvedValue(SUMMARY) } as unknown as EmissionsService,
+      auditMock(),
+    );
+  });
+
+  it('names a typed record\'s activity in every format, on both row kinds — and its standing', async () => {
+    const diesel = makeRecord({ id: 'rec-d', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', calculation: v2({}) });
+    const voidedDiesel = makeRecord({
+      id: 'rec-v', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', periodValue: 'March', status: 'voided',
+      voidReason: 'Entered twice for the same month.', voidedAt: new Date('2026-04-01T00:00:00Z'), voidedBy: 'u-1',
+      calculation: v2({}),
+    });
+    // An authoritative electricity figure beside it: one of two is not.
+    const grid = makeRecord({ id: 'rec-e', calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity', factorRelease: authoritativeRelease }) });
+    stubRecords(prisma, [diesel, grid, voidedDiesel]);
+    const noNotes = { ...q, includeMethodologyNotes: false } as ReportQueryDto;
+
+    // CSV: activity_type then factor_standing, last on BOTH row kinds — the
+    // withdrawn row keeps them (identifying, never marked).
+    const csv = (await service.generateCsv(admin, noNotes)).trim().split('\n');
+    const tail = (line: string) => line.split(',').slice(-2);
+    expect(csv.slice(1).map(tail)).toEqual([['diesel', 'placeholder'], ['', 'authoritative'], ['diesel', 'placeholder']]);
+
+    // Excel: the label and the sentence, last on the ledger and the withdrawn sheet.
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load((await service.generateExcel(admin, noNotes)) as unknown as ArrayBuffer);
+    const lastTwo = (sheet: string, row: number) => (wb.getWorksheet(sheet)!.getRow(row).values as unknown[]).slice(-2);
+    expect(lastTwo('Raw Activity Data', 2)).toEqual(['Diesel', 'Not authoritative (placeholder)']);
+    expect(lastTwo('Withdrawn Records', 2)).toEqual(['Diesel', 'Not authoritative (placeholder)']);
+
+    // PDF: the ledger's Category cell, with no appendix to borrow the text from.
+    const data = await service.assemble(admin, noNotes);
+    const html = buildReportHtml(data);
+    expect(html).toContain('<td>Fuel (Diesel)</td>');
+    // No appendix, so the note does not point at one.
+    expect(html).toContain('1 of 2 calculated figures is computed from emission factors or unit conversions that are NOT authoritative');
+    expect(html).not.toContain('standing is in the appendix');
+  });
+
+  it('prints the appendix\'s release and standing cells, and the zero-figure note', async () => {
+    stubRecords(prisma, [makeRecord({ id: 'r1', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', calculation: v2({}) })]);
+    const html = buildReportHtml(await service.assemble(admin, q));
+    expect(html).toContain('<td>TonyAI prototype 2026.1 (2026.1)</td><td>Not authoritative (placeholder)</td>');
+    // The appendix row names the activity too (Category, then Geography).
+    expect(html).toContain('<tr><td>Fuel (Diesel)</td><td>UK</td>');
+    expect(html).toContain('Each factor’s standing is in the appendix.');
+    // An implicit category's own activity adds nothing to the label.
+    stubRecords(prisma, [makeRecord({ calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity' }) })]);
+    // The appendix row (Category, then Geography) — not the summary table's.
+    expect(buildReportHtml(await service.assemble(admin, q))).toMatch(/<tr><td>Electricity<\/td><td>UK<\/td>/);
+    // No calculated figure at all.
+    stubRecords(prisma, [makeRecord({ calculation: { reasonCode: 'no_emission_factor', reason: 'r', snapshotSchema: 1 } })]);
+    expect(buildReportHtml(await service.assemble(admin, q))).toContain('No figure in this report is calculated from an emission factor.');
+  });
+
+  it('labels a factor\'s `unspecified` lookup "Not specified", and an unknown token as itself', () => {
+    expect(activityTypeLabel({ category: 'Fuel', activityType: 'unspecified' })).toBe('Not specified');
+    expect(activityTypeLabel({ category: 'Fuel', activityType: 'kerosene_x' })).toBe('kerosene_x');
+    expect(activityTypeLabel({ category: 'Fuel', activityType: null })).toBe('');
+  });
+
+  it('states each factor\'s standing by the whole path, and the report\'s factor note by its figures', async () => {
+    stubRecords(prisma, [
+      makeRecord({ id: 'r1', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', calculation: v2({}) }),
+      makeRecord({
+        id: 'r2', category: 'Natural Gas', periodValue: 'February',
+        calculation: v2({ factorId: 'f-gas', activityType: 'natural_gas', factorRelease: authoritativeRelease,
+          conversion: { id: 'c', fromUnit: 'cubic_metres', toUnit: 'kWh', multiplier: 11.36, calorificBasis: 'gross', referenceConditions: null, basis: 'b', dataYear: 2026, release: placeholderRelease } }),
+      }),
+      makeRecord({ id: 'r3', periodValue: 'March', calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity', factorRelease: authoritativeRelease }) }),
+      makeRecord({ id: 'r4', periodValue: 'April' }),
+    ]);
+    const data = await service.assemble(admin, q);
+    const standing = data.factors.map((f) => [f.category, f.standing, f.release, f.activityType]);
+    expect(standing).toEqual([
+      ['Fuel', 'Not authoritative (placeholder)', 'TonyAI prototype 2026.1', 'diesel'],
+      // An authoritative factor behind a placeholder conversion is not authoritative.
+      ['Natural Gas', 'Not authoritative (placeholder conversion)', 'DESNZ 2026', 'natural_gas'],
+      ['Electricity', 'Authoritative', 'DESNZ 2026', 'grid_electricity'],
+      // The fixture's default record: a snapshot written before releases.
+      ['Electricity', 'Not authoritative (written before factor releases)', 'Pre-release prototype library', null],
+    ]);
+    expect([data.calculatedRecords, data.nonAuthoritativeRecords]).toEqual([4, 3]);
+    const html = buildReportHtml(data);
+    expect(html).toContain('3 of 4 calculated figures are computed from emission factors or unit conversions that are NOT authoritative');
+    expect(html).not.toContain('prototype demo emission factors');
+  });
+
+  it('calls a snapshot written before releases not authoritative, and says so when every figure is', async () => {
+    stubRecords(prisma, [makeRecord()]);
+    const data = await service.assemble(admin, q);
+    expect(data.factors[0]).toMatchObject({ standing: 'Not authoritative (written before factor releases)', release: 'Pre-release prototype library', activityType: null });
+    expect(buildReportHtml(data)).toContain('Every calculated figure is computed from emission factors or unit conversions that are NOT authoritative');
+  });
+
+  it('says every figure is authoritative only when every path is', async () => {
+    stubRecords(prisma, [makeRecord({ calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity', factorRelease: authoritativeRelease }) })]);
+    expect(buildReportHtml(await service.assemble(admin, q))).toContain('using authoritative emission-factor releases');
+  });
+
+  it('reports a figure whose release was withdrawn since as withdrawn — never by the status frozen in its snapshot', async () => {
+    stubRecords(prisma, [makeRecord({ calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity', factorRelease: authoritativeRelease }) })]);
+    prisma.factorRelease.findMany.mockResolvedValue([
+      { id: 'rel-a', withdrawnAt: new Date('2027-03-01T10:00:00Z'), withdrawalReason: 'Erratum: superseded by 2026.2' },
+    ]);
+    const data = await service.assemble(admin, q);
+    expect(data.factors[0].standing).toBe('Factor release DESNZ 2026 withdrawn on 2027-03-01 — not authoritative: Erratum: superseded by 2026.2');
+    expect(data.records[0].factorStanding?.code).toBe('withdrawn');
+    expect(data.nonAuthoritativeRecords).toBe(1);
+    expect(prisma.factorRelease.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['rel-a'] }, status: 'withdrawn' },
+      select: { id: true, withdrawnAt: true, withdrawalReason: true },
+    });
+    const html = buildReportHtml(data);
+    expect(html).not.toContain('using authoritative emission-factor releases');
+    // Stated as of now, and never recalculated — in the note and the appendix.
+    expect(html.split('Standing is assessed when this report is generated.').length - 1).toBe(2);
+  });
+
+  it('codes a fixture path as fixture, and looks up the releases of withdrawn (voided) records too', async () => {
+    const fixtureRelease = { ...placeholderRelease, id: 'rel-f', publisher: 'TonyAI test fixture', edition: '0000-E2E', ordinal: 1, status: 'fixture' };
+    const voidedOnAuthoritative = makeRecord({
+      id: 'rec-v', periodValue: 'March', status: 'voided', voidReason: 'Entered twice.', voidedAt: new Date('2026-04-01T00:00:00Z'), voidedBy: 'u-1',
+      calculation: v2({ factorId: 'f-el', activityType: 'grid_electricity', factorRelease: { ...authoritativeRelease, id: 'rel-v' } }),
+    });
+    stubRecords(prisma, [makeRecord({ calculation: v2({ factorRelease: fixtureRelease }) }), voidedOnAuthoritative]);
+    prisma.factorRelease.findMany.mockResolvedValue([{ id: 'rel-v', withdrawnAt: new Date('2027-01-05T00:00:00Z'), withdrawalReason: 'Erratum' }]);
+    const data = await service.assemble(admin, q);
+    expect(data.records[0].factorStanding).toEqual({ code: 'fixture', text: 'Not authoritative (fixture)' });
+    expect(prisma.factorRelease.findMany.mock.calls[0][0].where.id.in).toEqual(expect.arrayContaining(['rel-f', 'rel-v']));
+    expect(data.withdrawn[0].factorStanding).toMatchObject({ code: 'withdrawn', text: expect.stringContaining('Factor release DESNZ 2026 withdrawn on 2027-01-05') });
+  });
+
+  it('names the conversion\'s release when only the conversion\'s was withdrawn — not the factor\'s the Release column shows', async () => {
+    const conversionRelease = { ...authoritativeRelease, id: 'rel-c', publisher: 'DESNZ', edition: '2026-gas' };
+    stubRecords(prisma, [
+      makeRecord({
+        category: 'Natural Gas', activityUnit: 'cubic_metres',
+        calculation: v2({
+          factorId: 'f-gas', activityType: 'natural_gas', factorRelease: authoritativeRelease,
+          conversion: { id: 'c', fromUnit: 'cubic_metres', toUnit: 'kWh', multiplier: 11.2, calorificBasis: 'gross', referenceConditions: 'r', basis: 'b', dataYear: 2026, release: conversionRelease },
+        }),
+      }),
+    ]);
+    prisma.factorRelease.findMany.mockResolvedValue([{ id: 'rel-c', withdrawnAt: new Date('2027-05-02T00:00:00Z'), withdrawalReason: 'Wrong reference conditions' }]);
+    const data = await service.assemble(admin, q);
+    expect(data.factors[0]).toMatchObject({
+      release: expect.stringContaining('DESNZ 2026'),
+      standing: 'Conversion release DESNZ 2026-gas withdrawn on 2027-05-02 — not authoritative: Wrong reference conditions',
+    });
+    expect(data.records[0].factorStanding?.code).toBe('withdrawn');
+    expect(data.nonAuthoritativeRecords).toBe(1);
+  });
+
+  it('lists one appendix line per PATH — the same factor reached directly and through a conversion — and names the weak link', async () => {
+    const authoritativeConversion = { id: 'c-a', fromUnit: 'cubic_metres', toUnit: 'kWh', multiplier: 10.6, calorificBasis: 'gross', referenceConditions: null, basis: 'b', dataYear: 2026, release: authoritativeRelease };
+    stubRecords(prisma, [
+      makeRecord({ id: 'g1', category: 'Natural Gas', calculation: v2({ factorId: 'f-gas', activityType: 'natural_gas' }) }),
+      makeRecord({ id: 'g2', category: 'Natural Gas', periodValue: 'February', calculation: v2({ factorId: 'f-gas', activityType: 'natural_gas', conversion: authoritativeConversion }) }),
+    ]);
+    const data = await service.assemble(admin, q);
+    // A placeholder factor behind an authoritative conversion: the factor is the weak link.
+    expect(data.factors.map((f) => f.standing)).toEqual(['Not authoritative (placeholder)', 'Not authoritative (placeholder)']);
+    expect(data.factors).toHaveLength(2);
+  });
+
+  it('lists the factor appendix\'s activity, release and standing last on its Excel sheet', async () => {
+    stubRecords(prisma, [makeRecord({ id: 'r1', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', calculation: v2({}) })]);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load((await service.generateExcel(admin, q)) as unknown as ArrayBuffer);
+    const sheet = wb.getWorksheet('Factors Used')!;
+    expect((sheet.getRow(1).values as unknown[]).slice(-3)).toEqual(['Activity type', 'Release', 'Standing']);
+    expect((sheet.getRow(2).values as unknown[]).slice(-3)).toEqual(['Diesel', 'TonyAI prototype 2026.1', 'Not authoritative (placeholder)']);
   });
 });
