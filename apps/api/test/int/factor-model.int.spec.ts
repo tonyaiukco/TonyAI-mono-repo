@@ -302,6 +302,33 @@ describe('a slot holds typed records or one untyped record, never both', () => {
     }
   });
 
+  it('refuses a draft moved to another slot or to the other kind under a stricter isolation level — and lets a same-slot edit or a status step through', async () => {
+    const diesel = { category: 'Fuel', scope: 1, activityUnit: 'litres', activityType: 'diesel' };
+    const typedDraft = await createRecord(owner, tenant, { ...nextSlot(), ...diesel });
+    const untypedDraft = await createRecord(owner, tenant, { ...nextSlot(), ...diesel, activityType: null });
+    const approved = await createRecord(owner, tenant, { ...nextSlot(), ...diesel, status: ActivityRecordStatus.approved });
+    // Each control runs in a transaction that throws at its end, so nothing it
+    // wrote is kept; anything else it throws is the failure.
+    const sentinel = new Error('rolled back on purpose');
+    const under = async (isolationLevel: 'RepeatableRead' | 'Serializable', write: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
+      const e = await failure(
+        owner.$transaction(async (tx) => {
+          await write(tx);
+          throw sentinel;
+        }, { isolationLevel }),
+      );
+      return e === sentinel ? null : sqlstateOf(e);
+    };
+    for (const isolationLevel of ['RepeatableRead', 'Serializable'] as const) {
+      expect(await under(isolationLevel, (tx) => tx.activityRecord.update({ where: { id: typedDraft.id }, data: nextSlot() })), `${isolationLevel} slot move`).toBe('TA003');
+      expect(await under(isolationLevel, (tx) => tx.activityRecord.update({ where: { id: typedDraft.id }, data: { activityType: null } })), `${isolationLevel} typed → untyped`).toBe('TA003');
+      expect(await under(isolationLevel, (tx) => tx.activityRecord.update({ where: { id: untypedDraft.id }, data: { activityType: 'diesel' } })), `${isolationLevel} untyped → typed`).toBe('TA003');
+      // Same slot, same kind: no slot question to answer, so any level will do.
+      expect(await under(isolationLevel, (tx) => tx.activityRecord.update({ where: { id: typedDraft.id }, data: { activityValue: 250 } })), `${isolationLevel} same-slot edit`).toBeNull();
+      expect(await under(isolationLevel, (tx) => tx.activityRecord.update({ where: { id: approved.id }, data: { status: ActivityRecordStatus.locked } })), `${isolationLevel} status step`).toBeNull();
+    }
+  });
+
   const fuel = { category: 'Fuel', scope: 1, activityUnit: 'litres' };
 
   it('refuses either order, for the runtime role and the owner, while two types share a slot', async () => {
@@ -845,9 +872,15 @@ describe("the factor library's record (factor_release_events)", () => {
           await tx.$executeRawUnsafe(`CREATE TRIGGER int_forged AFTER INSERT ON pg_temp.int_forged FOR EACH ROW EXECUTE FUNCTION public.${fn}()`);
         }),
       );
+      // The function's EXECUTE, not some other privilege (TEMP, say), refused it.
       expect(sqlstateOf(e), `${role} ${fn}`).toBe('42501');
+      expect(String((e as Error).message)).toMatch(new RegExp(`permission denied for function public\\.${fn}\\b`));
     }
   });
+  // This test and runtime-role.int.spec's checkFunctionExecutors test bite only
+  // on a stack that carries Supabase's default privileges (CI): on a locally
+  // reset database the ACL was owner-only even before the fix (Open questions,
+  // "LP3-03 PR B" (13)).
 
   it('reports rows the record never saw added (a load past its triggers)', async () => {
     const problems = await withRollback(owner, async (tx) => {
