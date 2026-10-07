@@ -5,7 +5,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { IntlProvider, useLocale, type IntlError } from "use-intl";
 import { localeCookie } from "@/lib/i18n/locale";
 import { useAuthStore } from "@/lib/store";
-import type { Locale } from "@/lib/types";
+import { isLocale, type Locale } from "@/lib/types";
 import type { Messages } from "@/messages";
 
 /**
@@ -59,7 +59,9 @@ function LocaleSync() {
   const attempted = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!user || user.language === locale) return;
+    // `isLocale`: the value goes into document.cookie, so nothing but a known
+    // locale may reach it, whatever /me answers (`security-rls` P3-3).
+    if (!user || user.language === locale || !isLocale(user.language)) return;
     const key = `${user.id}:${user.language}`;
     if (attempted.current === key) return;
     attempted.current = key;

@@ -27,6 +27,12 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
   for another organisation's id as for a missing one.** Use
   `ResourceNotFoundError(code)`; never put an id, a count or anything read
   before the tenant check into a 404.
+- **A refusal that depends on the resource comes after the tenant check.**
+  Now that each refusal has its own code, a 403 such as
+  `record_author_forbidden` or `self_approval_forbidden` thrown before the
+  record is loaded through the caller's accessible set would tell a foreign id
+  from a missing one. Role-only refusals (`record_create_forbidden`, a
+  `super_admin` gate) do not look at the resource and may come first.
 - **Params are canonical values** (a `PERIOD_VALUES` or `CATEGORIES` entry, a
   year) — never caller text, never an id. The web translates the vocabularies.
 - **A 5xx says nothing about its cause** — the filter replaces it; do not try

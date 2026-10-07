@@ -184,14 +184,15 @@ function DataEntryPageInner() {
   const [activityUnit, setActivityUnit] = useState("kWh");
   // A language change re-renders the page with its form state. The typed
   // quantity is re-written from the number it meant — re-reading Turkish
-  // `1.234` (1234) under English rules would store 1.234.
-  const typedIn = useRef(locale);
-  useEffect(() => {
-    if (typedIn.current === locale) return;
-    const from = typedIn.current;
-    typedIn.current = locale;
-    setActivityValue((text) => reformatDecimalInput(text, from, locale));
-  }, [locale]);
+  // `1.234` (1234) under English rules would store 1.234. Adjusted during
+  // render, not in an effect: React re-renders before committing, so no
+  // committed render (and no Save handler) ever pairs the old text with the
+  // new language (`security-rls` P3-2).
+  const [valueLocale, setValueLocale] = useState(locale);
+  if (valueLocale !== locale) {
+    setValueLocale(locale);
+    setActivityValue((text) => reformatDecimalInput(text, valueLocale, locale));
+  }
 
   // Optional context (demo extras)
   const [context, setContext] = useState<ContextValues>({});
@@ -300,7 +301,7 @@ function DataEntryPageInner() {
 
   // Typed in the user's locale, sent as a JSON number (D15). Zero and below
   // are not activity: the form has always asked for a value above zero.
-  const valueCheck = checkActivityValue(activityValue, locale);
+  const valueCheck = checkActivityValue(activityValue, valueLocale);
   const numericValue = valueCheck.ok ? valueCheck.value : NaN;
   // Mirrors the API's `activity_type_required`: a typed category's record
   // names its activity type — unless it is a record written before LP3-03,
