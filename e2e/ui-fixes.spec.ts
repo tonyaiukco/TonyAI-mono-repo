@@ -105,7 +105,18 @@ test('DASH-1: a background refresh neither blanks the page nor stampedes', async
   // fetch has already resolved proves nothing, which is how the first attempt at
   // these guards passed against code that had neither behaviour.
   const token = await getAccessToken(request, ADMIN_EMAIL);
+  const locations = page.getByText('Locations', { exact: true }).locator('..');
   await login(page, ADMIN_EMAIL);
+  // The first load must have LANDED before the probe. `login` returns once the
+  // heading renders, while the first load may still be in flight — and the
+  // page's one-refresh-at-a-time guard folds a focus event that arrives then
+  // into that load, which read the counts before the probe location existed.
+  // Measured on CI (run 37698326685): the POST and the focus events landed
+  // 15 ms before the first load finished, and the tile stayed one short.
+  // `inFlight` is released in the same tick as the loading state.
+  await expect(page.getByText('Loading…')).toHaveCount(0);
+  await expect(locations).toHaveText(/^\d+Locations$/);
+  const before = Number((await locations.textContent())?.replace(/\D/g, ''));
 
   let kpiCalls = 0;
   await page.route('**/api/v1/kpi', async (route) => {
@@ -119,6 +130,7 @@ test('DASH-1: a background refresh neither blanks the page nor stampedes', async
     headers: bearer(token),
     data: { subsidiaryId: SUB.energy, name: 'E2E Stampede Probe', geographyCode: 'TR' },
   });
+  expect(created.status()).toBe(201);
   const loc = await created.json();
 
   try {
@@ -134,7 +146,7 @@ test('DASH-1: a background refresh neither blanks the page nor stampedes', async
     expect(await page.getByText('Loading…').count(), 'a silent refresh blanked the page').toBe(0);
     await expect(page.getByRole('cell', { name: 'TonyAI Energy A.Ş.' })).toBeVisible();
 
-    await expect(page.getByText('Locations', { exact: true }).locator('..')).toContainText('9');
+    await expect(locations).toHaveText(`${before + 1}Locations`);
     expect(kpiCalls, 'five focus events should coalesce into one refresh').toBe(1);
   } finally {
     await page.unroute('**/api/v1/kpi');
