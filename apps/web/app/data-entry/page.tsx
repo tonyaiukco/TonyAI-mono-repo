@@ -35,11 +35,13 @@ import { useLocale, useTranslations } from "use-intl";
 import { api, ApiError } from "@/lib/api";
 import { useDescribeError } from "@/lib/i18n/hooks";
 import {
+  alternativeReading,
   checkActivityValue,
   formatDecimalInput,
   formatNumber,
   NUMBER_SEPARATORS,
-  reformatDecimalInput,
+  retypeForLocale,
+  type TypedDecimal,
 } from "@/lib/i18n/number";
 import {
   anomalyStatement,
@@ -180,19 +182,19 @@ function DataEntryPageInner() {
   const isTypedCategory = activityTypes.length > 0;
 
   // Primary calc inputs
-  const [activityValue, setActivityValue] = useState("");
+  // The typed quantity and the locale it was typed in, in ONE state, so the
+  // text is never read under another locale's rules. A language change
+  // re-renders the page with its form state; the text is re-written from the
+  // number it meant (`retypeForLocale`) — re-reading Turkish `1.234` (1234)
+  // under English rules would store 1.234. Adjusted during render, not in an
+  // effect: React re-renders before committing, so no committed render (and
+  // no Save handler) ever pairs the old text with the new language
+  // (`security-rls` P3-2).
+  const [typedValue, setTypedValue] = useState<TypedDecimal>({ text: "", locale });
+  if (typedValue.locale !== locale) setTypedValue(retypeForLocale(typedValue, locale));
+  const activityValue = typedValue.text;
+  const setActivityValue = useCallback((text: string) => setTypedValue({ text, locale }), [locale]);
   const [activityUnit, setActivityUnit] = useState("kWh");
-  // A language change re-renders the page with its form state. The typed
-  // quantity is re-written from the number it meant — re-reading Turkish
-  // `1.234` (1234) under English rules would store 1.234. Adjusted during
-  // render, not in an effect: React re-renders before committing, so no
-  // committed render (and no Save handler) ever pairs the old text with the
-  // new language (`security-rls` P3-2).
-  const [valueLocale, setValueLocale] = useState(locale);
-  if (valueLocale !== locale) {
-    setValueLocale(locale);
-    setActivityValue((text) => reformatDecimalInput(text, valueLocale, locale));
-  }
 
   // Optional context (demo extras)
   const [context, setContext] = useState<ContextValues>({});
@@ -301,7 +303,10 @@ function DataEntryPageInner() {
 
   // Typed in the user's locale, sent as a JSON number (D15). Zero and below
   // are not activity: the form has always asked for a value above zero.
-  const valueCheck = checkActivityValue(activityValue, valueLocale);
+  const valueCheck = checkActivityValue(typedValue.text, typedValue.locale);
+  // What the other convention would have read — named on screen, so a 1000×
+  // misreading is visible before saving (qa F2).
+  const otherReading = valueCheck.ok ? alternativeReading(typedValue.text, typedValue.locale) : null;
   const numericValue = valueCheck.ok ? valueCheck.value : NaN;
   // Mirrors the API's `activity_type_required`: a typed category's record
   // names its activity type — unless it is a record written before LP3-03,
@@ -1190,10 +1195,19 @@ function DataEntryPageInner() {
                       />
                       <p id="activity-value-note" className="mt-1 min-h-4 text-xs" aria-live="polite">
                         {valueCheck.ok ? (
-                          valueCheck.grouped && (
+                          otherReading !== null ? (
                             <span className="text-muted-foreground">
-                              {tNumbers("readAs", { value: formatDecimalInput(valueCheck.value, locale) })}
+                              {tNumbers("readAsNot", {
+                                value: formatDecimalInput(valueCheck.value, locale),
+                                other: formatDecimalInput(otherReading, locale),
+                              })}
                             </span>
+                          ) : (
+                            valueCheck.grouped && (
+                              <span className="text-muted-foreground">
+                                {tNumbers("readAs", { value: formatDecimalInput(valueCheck.value, locale) })}
+                              </span>
+                            )
                           )
                         ) : valueCheck.reason === "empty" ? null : (
                           <span className="text-destructive">

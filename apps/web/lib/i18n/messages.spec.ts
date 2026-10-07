@@ -37,8 +37,12 @@ function hasInvisible(message: string): boolean {
     return (
       c <= 0x1f ||
       c === 0x7f ||
+      c === 0xa0 || // no-break space
+      c === 0xad || // soft hyphen
+      c === 0x2009 || // thin space
       (c >= 0x200b && c <= 0x200f) ||
-      (c >= 0x202a && c <= 0x202e) ||
+      (c >= 0x202a && c <= 0x202f) || // bidi embeddings, narrow no-break space
+      c === 0x2060 || // word joiner
       (c >= 0x2066 && c <= 0x2069) ||
       c === 0xfeff
     );
@@ -72,7 +76,30 @@ describe("the catalogues", () => {
     }
   });
 
-  it("has no control, bidi or zero-width character (they render invisibly and survive review)", () => {
+  it.each(SUPPORTED_LOCALES.filter((l) => l !== "en"))("%s translates every message — none left in English", (locale) => {
+    // A sentence identical in both languages is almost always one nobody
+    // translated. A key that genuinely reads the same (a unit, a code) goes in
+    // this list, deliberately.
+    const SAME_IN_EVERY_LANGUAGE = new Set<string>([]);
+    const other = leaves(MESSAGES[locale]);
+    for (const [key, message] of en) {
+      if (SAME_IN_EVERY_LANGUAGE.has(key)) continue;
+      expect(other.get(key), key).not.toBe(message);
+    }
+  });
+
+  it("has no key with a dot — use-intl reads it as a path (categories and periods are keyed by canonical value)", () => {
+    const walk = (node: unknown, path: string) => {
+      if (typeof node !== "object" || node === null) return;
+      for (const [key, value] of Object.entries(node)) {
+        expect(key.includes("."), `${path}${key}`).toBe(false);
+        walk(value, `${path}${key}/`);
+      }
+    };
+    for (const locale of SUPPORTED_LOCALES) walk(MESSAGES[locale], `${locale}:`);
+  });
+
+  it("has no control, bidi, zero-width or no-break character (they render invisibly and survive review)", () => {
     for (const locale of SUPPORTED_LOCALES) {
       for (const [key, message] of leaves(MESSAGES[locale])) {
         expect(hasInvisible(message), `${locale} ${key}`).toBe(false);

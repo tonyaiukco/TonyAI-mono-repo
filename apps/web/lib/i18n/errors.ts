@@ -52,15 +52,14 @@ const STATUS_ONLY = /^API \d{3}$/;
 
 /**
  * Params as the catalogue reads them: a period and a category in the user's
- * language (they arrive canonical), a year as text — ICU would group a numeric
- * one (`2.025` in Turkish).
+ * language — they arrive canonical. A plain `{year}` argument is printed as
+ * given, never grouped (`qa-auditor` F6), so numbers pass through.
  */
 export function localiseParams(params: ApiErrorParams | undefined, t: ErrorTranslator): Record<string, string | number> {
   const out: Record<string, string | number> = {};
   for (const [key, value] of Object.entries(params ?? {})) {
     if (key === "period" && t.has(`periods.values.${value}`)) out[key] = t(`periods.values.${value}`);
     else if (key === "category" && t.has(`categories.${value}`)) out[key] = t(`categories.${value}`);
-    else if (key === "year") out[key] = String(value);
     else out[key] = value;
   }
   return out;

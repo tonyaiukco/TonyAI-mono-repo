@@ -2,5 +2,6 @@
   "invalid": "Bir sayı girin, örneğin {example}.",
   "wrongDecimalSeparator": "Ondalık ayırıcı olarak virgül kullanın, örneğin {example}.",
   "notPositive": "Sıfırdan büyük bir değer girin.",
-  "readAs": "{value} olarak okundu."
+  "readAs": "{value} olarak okundu.",
+  "readAsNot": "{value} olarak okundu — {other} değil."
 }

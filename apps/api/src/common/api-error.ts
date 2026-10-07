@@ -25,6 +25,9 @@ const STATUS_TEXT: Readonly<Record<number, string>> = {
   413: 'Payload Too Large',
   429: 'Too Many Requests',
   500: 'Internal Server Error',
+  502: 'Bad Gateway',
+  503: 'Service Unavailable',
+  504: 'Gateway Timeout',
 };
 
 export function statusText(status: number): string | undefined {
@@ -104,7 +107,8 @@ const SERVER_ERROR_MESSAGE = 'Internal server error';
  */
 export function toErrorBody(status: number, raw: unknown): ApiErrorBody & Record<string, unknown> {
   if (status >= 500) {
-    return { statusCode: status, code: 'internal_error', message: SERVER_ERROR_MESSAGE, error: STATUS_TEXT[500] };
+    // `internal_error` is the one code that answers every 5xx, not only 500.
+    return { statusCode: status, code: 'internal_error', message: SERVER_ERROR_MESSAGE, error: STATUS_TEXT[status] ?? STATUS_TEXT[500] };
   }
   const fallbackError = STATUS_TEXT[status];
   if (typeof raw === 'string') {
@@ -119,9 +123,13 @@ export function toErrorBody(status: number, raw: unknown): ApiErrorBody & Record
   const { params: rawParams, code: rawCode, ...rest } = object;
   const message = rest.message;
   const params = cleanParams(rawParams);
+  // `error` names the status actually sent — a code downgraded below keeps
+    // no trace of the class it was thrown as (`architect` P3-2).
+  const error = fallbackError ?? (typeof rest.error === 'string' ? rest.error : undefined);
   return {
     ...rest,
     statusCode: status,
+    ...(error ? { error } : {}),
     message:
       typeof message === 'string' || (Array.isArray(message) && message.every((m) => typeof m === 'string'))
         ? (message as string | string[])

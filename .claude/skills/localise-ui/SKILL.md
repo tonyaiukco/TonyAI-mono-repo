@@ -41,9 +41,10 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
   `parseLocaleDecimal` / `checkActivityValue` and sent as a JSON number; a
   field's text is re-rendered with `reformatDecimalInput` on a language change;
   CSV stays dot-only and XLSX numbers stay numbers.
-- **Look for invisible characters before committing.** Writing `​` or
-  ` ` through an edit tool can put the character itself in the file. Build
-  such characters with `String.fromCharCode`, then scan every changed file.
+- **Look for invisible characters before committing.** Writing a zero-width
+  space or a no-break space as a backslash-u escape through an edit tool can
+  put the character itself in the file. Build such characters with
+  `String.fromCharCode`, then scan every changed file for them.
 
 ## Recipe A — a screen's copy
 
@@ -65,8 +66,8 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
    `checkActivityValue` (or `parseLocaleDecimal` and your own range rule), with
    its refusal and `readAs` hint from the `numbers` namespace.
 7. Run `pnpm --filter @tonyai/web test`: `messages.spec.ts` fails on a missing
-   or extra key, a mismatched argument, an empty message or an invisible
-   character.
+   or extra key, a mismatched argument, an empty message, a message left in
+   English, a key containing a dot, or an invisible character.
 
 ## Recipe B — an API refusal with its own wording
 
@@ -94,9 +95,19 @@ Follow D16 (README "Localisation and error codes"): the report's language is a
 generation parameter defaulting to the requester's `profiles.language` and is
 recorded in its audit row; an email uses the recipient's; an invitation the
 inviter's choice, stored on it. Keep the module's copy in
-`apps/api/src/<module>/i18n/{en,tr}.json`, render with `createTranslator` from
-`use-intl/core`, and give the module a parity spec like `messages.spec.ts`.
-CSV headers stay English machine keys and CSV numbers dot-decimal.
+`apps/api/src/<module>/i18n/{en,tr}.json`, render it with ICU MessageFormat —
+`intl-messageformat` directly is the light choice for the CommonJS API
+(`use-intl/core` works too, but brings React along) — and give the module a
+parity spec like `messages.spec.ts`. CSV headers stay English machine keys and
+CSV numbers dot-decimal; XLSX figures stay numeric cells (a number format, never
+a localised string).
+
+**Auth emails are the exception to decide first (LP4-01):** Supabase Auth
+sends invitation and password-reset mail from its own templates, which cannot
+read `profiles.language` or these catalogues. Route them through the API — a
+Send-Email Auth Hook pointed at it, or `auth.admin.generateLink` and the API
+sends the mail — rather than mirroring the language into `user_metadata` (a
+second source of truth that goes stale after `PATCH /me/preferences`).
 
 ## Not yet localised (LP4-04 owns them)
 

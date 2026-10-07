@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  alternativeReading,
   checkActivityValue,
   formatDecimalInput,
   formatNumber,
   parseLocaleDecimal,
   reformatDecimalInput,
+  retypeForLocale,
 } from "./number";
 
 /**
@@ -83,6 +85,61 @@ describe("parseLocaleDecimal — the F09 table", () => {
   });
 });
 
+describe("a first group that no convention writes (qa F1: the 1000× misread)", () => {
+  it.each([
+    ["0.500", "tr"],
+    ["0.050", "tr"],
+    ["0.001", "tr"],
+    ["-0.500", "tr"],
+    ["01.234", "tr"],
+    ["001.234", "tr"],
+    ["0,500", "en"],
+    ["0,050", "en"],
+    ["01,234", "en"],
+  ] as const)("%j in %s is a decimal typed the other way — refused, never read as thousands", (input, locale) => {
+    expect(parseLocaleDecimal(input, locale)).toEqual({ ok: false, reason: "wrong_decimal_separator" });
+  });
+
+  it.each([
+    ["0.000.001", "tr"],
+    ["0,000,001", "en"],
+    ["00.000,5", "tr"],
+  ] as const)("%j in %s is not a number at all", (input, locale) => {
+    expect(parseLocaleDecimal(input, locale)).toEqual({ ok: false, reason: "invalid" });
+  });
+
+  it("a first group has one to three digits — 1234.567 is not 1,234,567 in Turkish", () => {
+    expect(parseLocaleDecimal("1234.567", "tr")).toEqual({ ok: false, reason: "wrong_decimal_separator" });
+    expect(parseLocaleDecimal("1234,567", "en")).toEqual({ ok: false, reason: "wrong_decimal_separator" });
+    expect(parseLocaleDecimal("123.456", "tr")).toEqual({ ok: true, value: 123456, grouped: true });
+  });
+});
+
+describe("alternativeReading — what the other convention would have read", () => {
+  it.each([
+    ["1.234", "tr", 1.234],
+    ["1,234", "tr", 1234],
+    ["1.234", "en", 1234],
+    ["1,234", "en", 1.234],
+    ["12.500", "tr", 12.5],
+  ] as const)("%j in %s would be %d the other way", (input, locale, other) => {
+    expect(alternativeReading(input, locale)).toBe(other);
+  });
+
+  it.each([
+    ["45000", "tr"],
+    ["45000", "en"],
+    ["1.234,5", "tr"],
+    ["1,234.5", "en"],
+    ["0,5", "tr"],
+    ["1.5", "en"],
+    ["abc", "en"],
+    ["", "tr"],
+  ] as const)("%j in %s has no other reading", (input, locale) => {
+    expect(alternativeReading(input, locale)).toBeNull();
+  });
+});
+
 describe("checkActivityValue — Data Entry's rule", () => {
   it("accepts a positive number in the user's locale", () => {
     expect(checkActivityValue("1.234,5", "tr")).toEqual({ ok: true, value: 1234.5, grouped: true });
@@ -108,13 +165,19 @@ describe("formatDecimalInput — what an input field shows", () => {
     expect(formatDecimalInput(1234567, "tr")).toBe("1234567");
   });
 
-  it("writes no exponent, at either end", () => {
+  it("writes no exponent, at either end — and drops no digit (qa F5)", () => {
     expect(formatDecimalInput(1e21, "en")).toBe("1000000000000000000000");
     expect(formatDecimalInput(1e-7, "tr")).toBe("0,0000001");
+    // Every digit of the shortest round-trip form, the point moved.
+    const tiny = 1.2345678901234566e-7;
+    expect(formatDecimalInput(tiny, "en")).toBe(`0.000000${String(tiny).split("e")[0].replace(".", "")}`);
+    expect(formatDecimalInput(1.5e-20, "en")).toBe("0.000000000000000000015");
+    expect(formatDecimalInput(-2.5e-8, "tr")).toBe("-0,000000025");
+    expect(formatDecimalInput(1.5e22, "en")).toBe("15000000000000000000000");
   });
 
   it("round-trips: reading back what it wrote gives the same number, in both locales", () => {
-    const values = [0, 1, 0.1, 0.2, 0.3, 1.5, 12.25, 640, 1234.5, 45000, 99999.999, 1234567.891, 0.000123, 3.14159265358979, 1e-7, 1e15, 2 ** 53 - 1];
+    const values = [0, 1, 0.1, 0.2, 0.3, 1.5, 12.25, 640, 1234.5, 45000, 99999.999, 1234567.891, 0.000123, 3.14159265358979, 1e-7, 1e15, 2 ** 53 - 1, 1.2345678901234566e-7, 1.5e-20, 1e-21, 1.5e22, 5e-324];
     for (let i = 0; i < 500; i++) values.push(Number((Math.random() * 10 ** (i % 12)).toFixed(i % 7)));
     for (const value of values) {
       for (const locale of ["tr", "en"] as const) {
@@ -153,6 +216,18 @@ describe("a language change cannot change a quantity", () => {
 
   it("is the identity within one locale", () => {
     expect(reformatDecimalInput("1.234", "tr", "tr")).toBe("1.234");
+  });
+
+  it("retypeForLocale carries the text and its locale together — what Data Entry holds", () => {
+    const typed = { text: "1.234", locale: "tr" } as const;
+    expect(retypeForLocale(typed, "tr")).toBe(typed);
+    const moved = retypeForLocale(typed, "en");
+    expect(moved).toEqual({ text: "1234", locale: "en" });
+    const before = checkActivityValue(typed.text, typed.locale);
+    const after = checkActivityValue(moved.text, moved.locale);
+    expect(before.ok && after.ok && after.value === before.value && after.value === 1234).toBe(true);
+    // …and back, still the same number.
+    expect(retypeForLocale(moved, "tr")).toEqual({ text: "1234", locale: "tr" });
   });
 });
 

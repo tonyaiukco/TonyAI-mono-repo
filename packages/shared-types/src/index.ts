@@ -2055,7 +2055,8 @@ export const GENERIC_ERROR_STATUS = Object.freeze({
   conflict: 409,
   payload_too_large: 413,
   rate_limited: 429,
-  /** Any 5xx. Its body never carries the cause — that goes to the logs. */
+  /** Any 5xx — the one code whose status is a range, not only 500. Its body
+   *  never carries the cause; that goes to the logs. */
   internal_error: 500,
 } as const);
 export type GenericErrorCode = keyof typeof GENERIC_ERROR_STATUS;
@@ -2154,9 +2155,8 @@ export function isGenericErrorCode(value: unknown): value is GenericErrorCode {
 }
 
 /**
- * The generic code for a status the API answered with: the status's own code
- * where one exists, otherwise `bad_request` for a 4xx and `internal_error`
- * for anything else.
+ * The generic code for a status the API answered with: `internal_error` for
+ * any 5xx, the status's own code where one exists, otherwise `bad_request`.
  */
 export function genericErrorCode(status: number): GenericErrorCode {
   if (status >= 500) return 'internal_error';

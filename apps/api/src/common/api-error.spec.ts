@@ -197,17 +197,25 @@ describe('what an error body can never carry', () => {
     expect(logged).toContain('name resolution failed');
   });
 
-  it('a 5xx that names a 4xx code still answers internal_error', () => {
+  it('a 5xx that names a 4xx code still answers internal_error, with its own status text', () => {
     expect(send(new HttpException({ code: 'record_changed', message: 'secret detail' }, 503)).body).toEqual({
       statusCode: 503,
       code: 'internal_error',
       message: 'Internal server error',
-      error: 'Internal Server Error',
+      error: 'Service Unavailable',
     });
   });
 
-  it('a code it does not answer with — status and code always agree', () => {
-    expect(toErrorBody(400, { message: 'x', code: 'record_changed' }).code).toBe('bad_request');
+  it('a status with no text of ours keeps the one it was thrown with', () => {
+    expect(toErrorBody(410, { message: 'x', error: 'Gone' })).toMatchObject({ code: 'bad_request', error: 'Gone' });
+  });
+
+  it('a code it does not answer with — status, code and error text always agree', () => {
+    expect(toErrorBody(400, { message: 'x', code: 'record_changed', error: 'Conflict' })).toMatchObject({
+      statusCode: 400,
+      code: 'bad_request',
+      error: 'Bad Request',
+    });
     expect(toErrorBody(404, { message: 'x', code: 'record_not_found' }).code).toBe('record_not_found');
   });
 
@@ -230,10 +238,16 @@ describe('what an error body can never carry', () => {
         inf: Number.POSITIVE_INFINITY,
         flag: true,
         'bad key': 'x',
-        __proto__: 'x',
       },
     });
     expect(body.params).toEqual({ period: 'March', year: 2025 });
+    // An own `__proto__` key, as JSON.parse makes one (an object literal would not).
+    const proto = toErrorBody(409, JSON.parse('{"message":"x","params":{"__proto__":"x","constructor":"y","period":"May"}}'));
+    // `__proto__` is dropped by the key rule; `constructor` stays a plain own
+    // string, harmless on an object that is never used as a prototype.
+    expect(proto.params).toEqual({ constructor: 'y', period: 'May' });
+    expect(Object.prototype.hasOwnProperty.call(proto.params, '__proto__')).toBe(false);
+    expect(Object.getPrototypeOf(proto.params)).toBe(Object.prototype);
     expect(toErrorBody(409, { message: 'x', params: ['a'] }).params).toBeUndefined();
     expect(toErrorBody(409, { message: 'x', params: 'a' }).params).toBeUndefined();
   });

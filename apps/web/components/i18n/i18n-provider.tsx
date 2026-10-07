@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, type ReactNode } from "react";
-import { IntlProvider, useLocale, type IntlError } from "use-intl";
+import { IntlErrorCode, IntlProvider, useLocale, type IntlError } from "use-intl";
 import { localeCookie } from "@/lib/i18n/locale";
 import { useAuthStore } from "@/lib/store";
 import { isLocale, type Locale } from "@/lib/types";
@@ -27,7 +27,7 @@ export function I18nProvider({
   children: ReactNode;
 }) {
   return (
-    <IntlProvider locale={locale} messages={messages} onError={ignoreIntlError}>
+    <IntlProvider locale={locale} messages={messages} onError={reportIntlError}>
       <LocaleSync />
       {children}
     </IntlProvider>
@@ -35,13 +35,17 @@ export function I18nProvider({
 }
 
 /**
- * Silent on purpose. The viewer's time zone is the rule (see above), not a
- * fallback (`ENVIRONMENT_FALLBACK`); and a missing key renders as its path,
- * which messages.spec.ts keeps from shipping — use-intl's default would log
- * both to the console on every render.
+ * The viewer's time zone is the rule (see above), not a fallback, so
+ * `ENVIRONMENT_FALLBACK` is silent. Anything else — a missing key, or a call
+ * site that does not pass an argument its sentence names, which the types do
+ * not catch (`architect` P2-3) — renders as the key path; outside production
+ * it is also logged, so it cannot ship unnoticed.
  */
-function ignoreIntlError(error: IntlError) {
-  void error;
+function reportIntlError(error: IntlError) {
+  if (error.code === IntlErrorCode.ENVIRONMENT_FALLBACK) return;
+  if (process.env.NODE_ENV === "production") return;
+  // eslint-disable-next-line no-console -- development only; the web app has no logger
+  console.error(error);
 }
 
 /**

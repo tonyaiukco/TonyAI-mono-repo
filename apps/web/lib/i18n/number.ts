@@ -1,4 +1,4 @@
-import { LOCALE_FORMAT_TAGS, type Locale } from "@/lib/types";
+import { LOCALE_FORMAT_TAGS, SUPPORTED_LOCALES, type Locale } from "@/lib/types";
 
 /**
  * Numbers typed into the UI and numbers shown by it (LP3-01, decision D15).
@@ -21,7 +21,9 @@ import { LOCALE_FORMAT_TAGS, type Locale } from "@/lib/types";
  *     thousands separator (`1234.5`, `1.23`) is refused as a wrong decimal
  *     separator — and the same for a comma in English (`1,5`).
  * A grouped input (`1.234` in Turkish is 1234) parses, and the screen says how
- * it was read, so a user who meant 1.234 sees it before saving.
+ * it was read — and, when the other convention would read the same text as a
+ * different number (`1.234`, `1,234`), which one it was NOT — so a user who
+ * meant the other sees it before saving (`alternativeReading`).
  */
 
 export interface NumberSeparators {
@@ -46,7 +48,9 @@ function grammar(locale: Locale) {
   const g = escape(group);
   return {
     plain: new RegExp(`^-?\\d+(?:${d}\\d+)?$`),
-    grouped: new RegExp(`^-?\\d{1,3}(?:${g}\\d{3})+(?:${d}\\d+)?$`),
+    // A first group of 0, 00 or 000 is never written: `0.500` is not five
+    // hundred in any convention, so it must not parse as grouped (qa F1).
+    grouped: new RegExp(`^-?[1-9]\\d{0,2}(?:${g}\\d{3})+(?:${d}\\d+)?$`),
     // The other convention's decimal: one separator of the wrong kind, not in
     // a position a group separator could hold.
     foreignDecimal: new RegExp(`^-?\\d+${g}\\d+$`),
@@ -72,6 +76,19 @@ export function parseLocaleDecimal(input: string, locale: Locale): DecimalParse 
   return { ok: false, reason: "invalid" };
 }
 
+/** `String(n)`'s exponent form (`1.5e-7`, `1e+21`) written out in plain digits —
+ *  exactly, since it only moves the point of the shortest round-trip digits. */
+function withoutExponent(text: string): string {
+  const match = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/i.exec(text);
+  if (!match) return text;
+  const [, sign, int, frac = "", exp] = match;
+  const digits = int + frac;
+  const point = int.length + Number(exp);
+  if (point <= 0) return `${sign}0.${"0".repeat(-point)}${digits}`.replace(/\.?0+$/, "");
+  if (point >= digits.length) return `${sign}${digits}${"0".repeat(point - digits.length)}`;
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
+}
+
 /**
  * `value` as an input field shows it in `locale`: no grouping, the locale's
  * decimal separator, every digit the number has — so reading it back gives the
@@ -79,12 +96,37 @@ export function parseLocaleDecimal(input: string, locale: Locale): DecimalParse 
  */
 export function formatDecimalInput(value: number, locale: Locale): string {
   if (!Number.isFinite(value)) return "";
-  let text = String(value);
-  if (/e/i.test(text)) {
-    // Outside 1e-7…1e21 String() writes an exponent the grammar refuses.
-    text = value.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 20 });
+  // Outside 1e-7…1e21 String() writes an exponent the grammar refuses.
+  return withoutExponent(String(value)).replace(".", NUMBER_SEPARATORS[locale].decimal);
+}
+
+/**
+ * The number another supported locale would read `text` as, when that differs
+ * from what `locale` reads — `1.234` is 1234 in Turkish and 1.234 in English.
+ * The screen names it ("not 1,234"), so a user typing in the other convention
+ * notices a 1000× difference before saving. Null when no other reading exists.
+ */
+export function alternativeReading(text: string, locale: Locale): number | null {
+  const own = parseLocaleDecimal(text, locale);
+  if (!own.ok) return null;
+  for (const other of SUPPORTED_LOCALES) {
+    if (other === locale) continue;
+    const theirs = parseLocaleDecimal(text, other);
+    if (theirs.ok && theirs.value !== own.value) return theirs.value;
   }
-  return text.replace(".", NUMBER_SEPARATORS[locale].decimal);
+  return null;
+}
+
+/** A value typed into a field, with the locale it was typed in — kept together
+ *  so the text is never read under another locale's rules. */
+export interface TypedDecimal {
+  text: string;
+  locale: Locale;
+}
+
+/** The field after a language change: the same number, written the new way. */
+export function retypeForLocale(typed: TypedDecimal, locale: Locale): TypedDecimal {
+  return typed.locale === locale ? typed : { text: reformatDecimalInput(typed.text, typed.locale, locale), locale };
 }
 
 /** Re-renders typed text for a new locale from the number it meant — never by

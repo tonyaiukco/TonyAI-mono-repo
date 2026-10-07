@@ -6,7 +6,8 @@ import { PreferencesService } from './preferences.service';
 
 // DB-free: what is written, and in which transaction. That the runtime role
 // may write `language` and nothing else new is proven on PostgreSQL in
-// test/int/preferences.int.spec.ts.
+// test/int/runtime-role.int.spec.ts, and the route end to end in
+// test/int/tenant-isolation.int.spec.ts ("PATCH /me/preferences").
 
 const user: RequestUser = {
   id: '22222222-2222-4222-8222-222222222222',
