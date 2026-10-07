@@ -8,6 +8,13 @@ packages:
 # pinned SDK version rather than ship two Sentry cores.
 overrides:
   '@sentry/core': 10.40.0
+  # use-intl 4.14.5 (LP3-01) is pinned, but its caret ranges resolved
+  # icu-minify and the ICU parser to releases days old. Held at the versions
+  # its own release shipped with: icu-minify matches use-intl, and 3.5.18 is
+  # the parser intl-messageformat already pins exactly, so one copy remains
+  # (owner decision 2026-10-08). Lift them deliberately, not by a re-resolve.
+  icu-minify: 4.14.5
+  '@formatjs/icu-messageformat-parser': 3.5.18
 
 allowBuilds:
   '@prisma/client': true
