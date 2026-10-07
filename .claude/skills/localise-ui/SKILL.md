@@ -22,7 +22,9 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
 - **Never show `error.message` for a code you know.** Toast through
   `useErrorToast()` / `useDescribeError()` (`apps/web/lib/i18n/hooks.ts`); branch
   on `error.code`, never on the sentence (a regex on a message breaks silently
-  the day the sentence is reworded).
+  the day the sentence is reworded). The exceptions are `describeApiError`'s:
+  a generic code, and a calculation refusal whose English names the lookup,
+  show the server's sentence in English and beneath the catalogue's elsewhere.
 - **A not-found code names a kind of thing, carries no params, and is the same
   for another organisation's id as for a missing one.** Use
   `ResourceNotFoundError(code)`; never put an id, a count or anything read
@@ -62,9 +64,13 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
 5. Numbers: `formatNumber(value, locale, options)`; dates:
    `Intl.DateTimeFormat(LOCALE_FORMAT_TAGS[locale], …)` in the viewer's time
    zone. Never `"en-GB"` hard-coded on a localised screen.
-6. A numeric input is `type="text" inputMode="decimal"` read with
-   `checkActivityValue` (or `parseLocaleDecimal` and your own range rule), with
-   its refusal and `readAs` hint from the `numbers` namespace.
+6. A quantity input is `type="text" inputMode="decimal"` driven by
+   `useDecimalInput()` (`lib/i18n/use-decimal-input.ts`: the text and its
+   locale in one state, re-written on a language switch), checked with
+   `checkDecimal(input.parsed, "positive" | "non_negative")`, and followed by
+   `<DecimalNote>` (`components/i18n/decimal-note.tsx`) for its refusal or
+   reading. Never `type="number"`: the browser, not the user, decides how it
+   reads. A year is `inputMode="numeric"` read with `parseYearInput`.
 7. Run `pnpm --filter @tonyai/web test`: `messages.spec.ts` fails on a missing
    or extra key, a mismatched argument, an empty message, a message left in
    English, a key containing a dot, or an invisible character.
@@ -95,10 +101,11 @@ Follow D16 (README "Localisation and error codes"): the report's language is a
 generation parameter defaulting to the requester's `profiles.language` and is
 recorded in its audit row; an email uses the recipient's; an invitation the
 inviter's choice, stored on it. Keep the module's copy in
-`apps/api/src/<module>/i18n/{en,tr}.json`, render it with ICU MessageFormat —
-`intl-messageformat` directly is the light choice for the CommonJS API
-(`use-intl/core` works too, but brings React along) — and give the module a
-parity spec like `messages.spec.ts`. CSV headers stay English machine keys and
+`apps/api/src/<module>/i18n/{en,tr}.json`, render it with `intl-messageformat`
+(the same ICU format, no React) and give the module a parity spec like
+`messages.spec.ts`. It is ESM-only: the CommonJS API loads it through
+`require(esm)`, which needs Node ≥ 22.12 — raise README's prerequisite with the
+first server-side catalogue. CSV headers stay English machine keys and
 CSV numbers dot-decimal; XLSX figures stay numeric cells (a number format, never
 a localised string).
 
