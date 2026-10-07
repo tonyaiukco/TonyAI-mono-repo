@@ -135,6 +135,9 @@ describe("alternativeReading — what the other convention would have read", () 
     ["1.5", "en"],
     ["abc", "en"],
     ["", "tr"],
+    // Its own locale refuses it, so there is no reading to contrast (qa AR3).
+    ["1.23", "tr"],
+    ["1,5", "en"],
   ] as const)("%j in %s has no other reading", (input, locale) => {
     expect(alternativeReading(input, locale)).toBeNull();
   });

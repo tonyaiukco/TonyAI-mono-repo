@@ -123,13 +123,13 @@ export function toErrorBody(status: number, raw: unknown): ApiErrorBody & Record
   const { params: rawParams, code: rawCode, ...rest } = object;
   const message = rest.message;
   const params = cleanParams(rawParams);
-  // `error` names the status actually sent — a code downgraded below keeps
-    // no trace of the class it was thrown as (`architect` P3-2).
-  const error = fallbackError ?? (typeof rest.error === 'string' ? rest.error : undefined);
   return {
     ...rest,
     statusCode: status,
-    ...(error ? { error } : {}),
+    // `error` names the status actually sent — a code downgraded below keeps no
+    // trace of the class it was thrown as (`architect` P3-2). A status we have
+    // no text for keeps the one it was thrown with, through `...rest`.
+    ...(fallbackError ? { error: fallbackError } : {}),
     message:
       typeof message === 'string' || (Array.isArray(message) && message.every((m) => typeof m === 'string'))
         ? (message as string | string[])
