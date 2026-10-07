@@ -3,9 +3,10 @@ import { useLocale } from "use-intl";
 import type { Locale } from "@/lib/types";
 import {
   alternativeReading,
-  formatDecimalInput,
   parseLocaleDecimal,
   retypeForLocale,
+  typedText,
+  typedValue,
   type DecimalParse,
   type TypedDecimal,
 } from "./number";
@@ -45,11 +46,8 @@ export function useDecimalInput(initial?: TypedDecimal): DecimalInput {
     current = retypeForLocale(typed, locale);
     setTyped(current);
   }
-  const setText = useCallback((text: string) => setTyped({ text, locale }), [locale]);
-  const setValue = useCallback(
-    (value: number | null) => setTyped({ text: value === null ? "" : formatDecimalInput(value, locale), locale }),
-    [locale],
-  );
+  const setText = useCallback((text: string) => setTyped(typedText(text, locale)), [locale]);
+  const setValue = useCallback((value: number | null) => setTyped(typedValue(value, locale)), [locale]);
   const parsed = parseLocaleDecimal(current.text, current.locale);
   return {
     text: current.text,

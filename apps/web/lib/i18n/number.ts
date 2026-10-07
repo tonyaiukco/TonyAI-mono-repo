@@ -124,6 +124,18 @@ export interface TypedDecimal {
   locale: Locale;
 }
 
+/** What the user typed, tagged with the locale it was typed in. */
+export function typedText(text: string, locale: Locale): TypedDecimal {
+  return { text, locale };
+}
+
+/** A number put into a field (opening a record), or the field cleared with
+ *  null — written in `locale` AND tagged with it, from the one argument, so
+ *  the text is never paired with a convention it was not written in. */
+export function typedValue(value: number | null, locale: Locale): TypedDecimal {
+  return { text: value === null ? "" : formatDecimalInput(value, locale), locale };
+}
+
 /** The field after a language change: the same number, written the new way. */
 export function retypeForLocale(typed: TypedDecimal, locale: Locale): TypedDecimal {
   return typed.locale === locale ? typed : { text: reformatDecimalInput(typed.text, typed.locale, locale), locale };

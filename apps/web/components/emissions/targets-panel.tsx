@@ -230,14 +230,14 @@ export function TargetsPanel({ canManage, subsidiaries, nameById }: TargetsPanel
                     <Input type="text" inputMode="numeric" autoComplete="off" value={form.baselineYear} onChange={(e) => setForm((f) => ({ ...f, baselineYear: e.target.value }))} />
                   </Field>
                   <Field label="Baseline tCO₂e">
-                    <Input type="text" inputMode="decimal" autoComplete="off" value={baselineInput.text} onChange={(e) => baselineInput.setText(e.target.value)} placeholder="e.g. 1600" aria-describedby="target-baseline-note" />
+                    <Input type="text" inputMode="decimal" autoComplete="off" value={baselineInput.text} onChange={(e) => baselineInput.setText(e.target.value)} placeholder="e.g. 1600" aria-describedby="target-baseline-note" aria-invalid={baselineInput.text.trim() !== '' && !baselineCheck.ok} />
                     <DecimalNote id="target-baseline-note" check={baselineCheck} otherReading={baselineInput.otherReading} locale={baselineInput.locale} />
                   </Field>
                   <Field label="Target year">
                     <Input type="text" inputMode="numeric" autoComplete="off" value={form.targetYear} onChange={(e) => setForm((f) => ({ ...f, targetYear: e.target.value }))} />
                   </Field>
                   <Field label="Target tCO₂e">
-                    <Input type="text" inputMode="decimal" autoComplete="off" value={targetInput.text} onChange={(e) => targetInput.setText(e.target.value)} placeholder="e.g. 900" aria-describedby="target-target-note" />
+                    <Input type="text" inputMode="decimal" autoComplete="off" value={targetInput.text} onChange={(e) => targetInput.setText(e.target.value)} placeholder="e.g. 900" aria-describedby="target-target-note" aria-invalid={targetInput.text.trim() !== '' && !targetCheck.ok} />
                     <DecimalNote id="target-target-note" check={targetCheck} otherReading={targetInput.otherReading} locale={targetInput.locale} />
                   </Field>
                 </div>

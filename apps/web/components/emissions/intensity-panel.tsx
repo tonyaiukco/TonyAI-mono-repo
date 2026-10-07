@@ -195,7 +195,7 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
                 </div>
                 <div className="space-y-1.5">
                   <Label>Value</Label>
-                  <Input type="text" inputMode="decimal" autoComplete="off" value={valueInput.text} onChange={(e) => valueInput.setText(e.target.value)} placeholder="e.g. 320" aria-describedby="denominator-value-note" />
+                  <Input type="text" inputMode="decimal" autoComplete="off" value={valueInput.text} onChange={(e) => valueInput.setText(e.target.value)} placeholder="e.g. 320" aria-describedby="denominator-value-note" aria-invalid={valueInput.text.trim() !== '' && !valueCheck.ok} />
                   <DecimalNote id="denominator-value-note" check={valueCheck} otherReading={valueInput.otherReading} locale={valueInput.locale} />
                 </div>
               </div>

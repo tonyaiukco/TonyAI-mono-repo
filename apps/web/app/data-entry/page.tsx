@@ -862,11 +862,12 @@ function DataEntryPageInner() {
   const previewErrorShown: ErrorDescription | null = (() => {
     if (!previewError) return null;
     const { title, description } = describeError(previewError.error);
+    // A server sentence may end without a stop; the hint is a sentence of its own.
     const hint =
       previewError.error instanceof ApiError &&
       previewError.error.status === 404 &&
       previewError.year !== DEFAULT_REPORTING_YEAR
-        ? ` ${t("previewYearHint", { year: String(DEFAULT_REPORTING_YEAR) })}`
+        ? `${/[.!?]$/.test(title) ? "" : "."} ${t("previewYearHint", { year: String(DEFAULT_REPORTING_YEAR) })}`
         : "";
     return { title: `${title}${hint}`, ...(description ? { description } : {}) };
   })();

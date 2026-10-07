@@ -9,6 +9,8 @@ import {
   parseLocaleDecimal,
   reformatDecimalInput,
   retypeForLocale,
+  typedText,
+  typedValue,
 } from "./number";
 
 /**
@@ -254,6 +256,19 @@ describe("a language change cannot change a quantity", () => {
 
   it("is the identity within one locale", () => {
     expect(reformatDecimalInput("1.234", "tr", "tr")).toBe("1.234");
+  });
+
+  it("typedValue writes a number in the locale it tags the field with (re-check N1)", () => {
+    for (const locale of ["tr", "en"] as const) {
+      for (const value of [1.234, 1234, 1234.5, 0.5, 45000]) {
+        const field = typedValue(value, locale);
+        expect(field.locale).toBe(locale);
+        expect(parseLocaleDecimal(field.text, field.locale)).toMatchObject({ ok: true, value });
+      }
+      expect(typedValue(null, locale)).toEqual({ text: "", locale });
+    }
+    expect(typedValue(1.234, "tr").text).toBe("1,234");
+    expect(typedText("1.234", "tr")).toEqual({ text: "1.234", locale: "tr" });
   });
 
   it("retypeForLocale carries the text and its locale together — what Data Entry holds", () => {

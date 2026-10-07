@@ -63,6 +63,33 @@ describe("useDecimalInput — a language switch keeps the number", () => {
     expect(seen.otherReading).toBe(1.234);
   });
 
+  it("a value put into the field (opening a record) is written and read in the current locale", () => {
+    // setValue during render: the server renderer replays the update as the
+    // browser does after an event, so the pairing is what the spec sees.
+    function Field({ value }: { value: number }) {
+      const input = useDecimalInput();
+      if (input.text === "") input.setValue(value);
+      return createElement("output", null, `${input.locale}|${input.text}|${input.parsed.ok ? input.parsed.value : input.parsed.reason}`);
+    }
+    const render = (locale: Locale, value: number) =>
+      renderToString(createElement(IntlProvider, { locale, messages: MESSAGES[locale], children: createElement(Field, { value }) }));
+    expect(render("tr", 1.234)).toContain("tr|1,234|1.234");
+    expect(render("en", 1.234)).toContain("en|1.234|1.234");
+    expect(render("tr", 1234.5)).toContain("tr|1234,5|1234.5");
+  });
+
+  it("typed text is tagged with the current locale", () => {
+    function Field() {
+      const input = useDecimalInput();
+      if (input.text === "") input.setText("1.234");
+      return createElement("output", null, `${input.locale}|${input.parsed.ok ? input.parsed.value : input.parsed.reason}`);
+    }
+    const render = (locale: Locale) =>
+      renderToString(createElement(IntlProvider, { locale, messages: MESSAGES[locale], children: createElement(Field) }));
+    expect(render("tr")).toContain("tr|1234");
+    expect(render("en")).toContain("en|1.234");
+  });
+
   it("starts empty, in the current locale", () => {
     function Field() {
       const input = useDecimalInput();
