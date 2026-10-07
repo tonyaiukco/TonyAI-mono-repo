@@ -1,0 +1,26 @@
+{
+  "granularity": {
+    "monthly": "Aylık",
+    "quarterly": "Çeyreklik",
+    "annual": "Yıllık"
+  },
+  "values": {
+    "January": "Ocak",
+    "February": "Şubat",
+    "March": "Mart",
+    "April": "Nisan",
+    "May": "Mayıs",
+    "June": "Haziran",
+    "July": "Temmuz",
+    "August": "Ağustos",
+    "September": "Eylül",
+    "October": "Ekim",
+    "November": "Kasım",
+    "December": "Aralık",
+    "Q1": "1. çeyrek",
+    "Q2": "2. çeyrek",
+    "Q3": "3. çeyrek",
+    "Q4": "4. çeyrek",
+    "Annual": "Yıllık"
+  }
+}

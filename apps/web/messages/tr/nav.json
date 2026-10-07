@@ -1,0 +1,18 @@
+{
+  "platform": "Sürdürülebilirlik Platformu",
+  "dashboard": "Gösterge Paneli",
+  "dataEntry": "Veri Girişi",
+  "subsidiaries": "Bağlı Şirketler",
+  "emissions": "Emisyonlar",
+  "review": "İnceleme Kuyruğu",
+  "reports": "Raporlar",
+  "audit": "Denetim İzi",
+  "language": "Dil",
+  "languageSaveFailed": "Dil değiştirilemedi.",
+  "collapse": "Kenar çubuğunu daralt",
+  "expand": "Kenar çubuğunu genişlet",
+  "languages": {
+    "en": "İngilizce",
+    "tr": "Türkçe"
+  }
+}

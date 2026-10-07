@@ -1,0 +1,18 @@
+{
+  "platform": "Sustainability Platform",
+  "dashboard": "Dashboard",
+  "dataEntry": "Data Entry",
+  "subsidiaries": "Subsidiaries",
+  "emissions": "Emissions",
+  "review": "Review Queue",
+  "reports": "Reports",
+  "audit": "Audit Trail",
+  "language": "Language",
+  "languageSaveFailed": "Your language could not be changed.",
+  "collapse": "Collapse sidebar",
+  "expand": "Expand sidebar",
+  "languages": {
+    "en": "English",
+    "tr": "Turkish"
+  }
+}

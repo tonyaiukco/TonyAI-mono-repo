@@ -1,6 +1,6 @@
 "use client";
 
-import { canSubmitEntry, saveErrorMessage } from "@/lib/record-lifecycle-view";
+import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -31,7 +31,16 @@ import {
   Send,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useLocale, useTranslations } from "use-intl";
 import { api, ApiError } from "@/lib/api";
+import { useDescribeError } from "@/lib/i18n/hooks";
+import {
+  checkActivityValue,
+  formatDecimalInput,
+  formatNumber,
+  NUMBER_SEPARATORS,
+  reformatDecimalInput,
+} from "@/lib/i18n/number";
 import {
   anomalyStatement,
   type AnomalyVerdictFields,
@@ -75,7 +84,6 @@ import {
   unitSymbol,
   unitsForCategory,
   UNSPECIFIED_ACTIVITY_TYPE,
-  WHOLE_COMPANY_ENTITY_LABEL,
 } from "@/lib/types";
 import { isPeriodLockedFor } from "@/lib/bulk-submit-view";
 import {
@@ -100,29 +108,23 @@ import { describeMove, hasMovedOffRecord } from "@/lib/record-identity";
 // --- Static option sets -----------------------------------------------------
 
 
-const PERIODS: { value: ReportingPeriod; label: string }[] = [
-  { value: "quarterly", label: "Quarterly" },
-  { value: "monthly", label: "Monthly" },
-  { value: "annual", label: "Annual" },
-];
+/** In the order the select lists them; labelled by the catalogue's `periods.granularity`. */
+const PERIODS: readonly ReportingPeriod[] = ["quarterly", "monthly", "annual"];
 
 // The canonical vocabulary, from the contract rather than a local copy: this
 // dropdown decides what a user can send, and the server now stores exactly
 // these spellings. A copy that drifted would offer a value the API rejects.
 
-const numberFmt = new Intl.NumberFormat("en-GB", {
-  maximumFractionDigits: 3,
-});
+/** The preview's figures, in the user's locale (LP3-01). */
+const PREVIEW_DIGITS = { maximumFractionDigits: 3 } as const;
 
 /** A record's reporting entity, in PROSE — it appears mid-sentence ("Moved to
  *  the whole company, draft saved"), which is why it is not `entityLabel`: that
  *  one is a standalone label and is now exported from `@tonyai/shared-types`,
  *  so two functions of one name would sit in one bundle. Same `locationId`
  *  degradation, which is where the shared helper's rule came from. */
-function entityPhrase(rec: ActivityRecordDTO): string {
-  return rec.locationId
-    ? (rec.locationName ?? "a site")
-    : `the ${WHOLE_COMPANY_ENTITY_LABEL.toLowerCase()}`;
+function entityPhrase(rec: ActivityRecordDTO, t: (key: "aSite" | "theWholeCompany") => string): string {
+  return rec.locationId ? (rec.locationName ?? t("aSite")) : t("theWholeCompany");
 }
 
 // The optional "context" fields from the elaborate mock, kept as demo extras
@@ -147,6 +149,13 @@ function DataEntryPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, setUser } = useAuthStore();
+  const t = useTranslations("dataEntry");
+  const tNumbers = useTranslations("numbers");
+  const tCategories = useTranslations("categories");
+  const tPeriods = useTranslations("periods");
+  const tCommon = useTranslations("common");
+  const locale = useLocale();
+  const describeError = useDescribeError();
 
   // Controls
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
@@ -171,6 +180,16 @@ function DataEntryPageInner() {
   // Primary calc inputs
   const [activityValue, setActivityValue] = useState("");
   const [activityUnit, setActivityUnit] = useState("kWh");
+  // A language change re-renders the page with its form state. The typed
+  // quantity is re-written from the number it meant — re-reading Turkish
+  // `1.234` (1234) under English rules would store 1.234.
+  const typedIn = useRef(locale);
+  useEffect(() => {
+    if (typedIn.current === locale) return;
+    const from = typedIn.current;
+    typedIn.current = locale;
+    setActivityValue((text) => reformatDecimalInput(text, from, locale));
+  }, [locale]);
 
   // Optional context (demo extras)
   const [context, setContext] = useState<ContextValues>({});
@@ -277,7 +296,10 @@ function DataEntryPageInner() {
     );
   }, [editingId, editingTuple, locationId, availableLocations, records]);
 
-  const numericValue = activityValue.trim() === "" ? NaN : Number(activityValue);
+  // Typed in the user's locale, sent as a JSON number (D15). Zero and below
+  // are not activity: the form has always asked for a value above zero.
+  const valueCheck = checkActivityValue(activityValue, locale);
+  const numericValue = valueCheck.ok ? valueCheck.value : NaN;
   // Mirrors the API's `activity_type_required`: a typed category's record
   // names its activity type — unless it is a record written before LP3-03,
   // opened for editing and left untyped in its own category, the one untyped
@@ -420,7 +442,7 @@ function DataEntryPageInner() {
         const wantedPeriod = searchParams.get("period");
         const wantedPeriodValue = searchParams.get("periodValue");
         const validPeriod =
-          wantedPeriod && (PERIODS as { value: ReportingPeriod }[]).some((p) => p.value === wantedPeriod)
+          wantedPeriod && (PERIODS as readonly string[]).includes(wantedPeriod)
             ? (wantedPeriod as ReportingPeriod)
             : undefined;
         // Canonicalised rather than matched exactly. A link carrying
@@ -551,23 +573,18 @@ function DataEntryPageInner() {
         setPreviewError(null);
       } catch (e) {
         setPreview(null);
-        if (e instanceof ApiError && e.status === 404) {
-          // The API's own sentence: since LP3-03 a 404 says WHICH gap it is —
-          // no factor, a placeholder refused, a conversion not loaded — and a
-          // fixed "no factor" text would misreport the other two. Outside the
-          // one year the prototype library covers, also name the year that
-          // does work (DE-9 opened the list to 2015–2026), so a tester picking
-          // 2018 sees a boundary of the demo data, not a broken app.
-          setPreviewError(
-            reportingYear === DEFAULT_REPORTING_YEAR
-              ? e.message
-              : `${e.message} This prototype's factor library currently covers ${DEFAULT_REPORTING_YEAR}.`,
-          );
-        } else {
-          // 400 (unit mismatch / unsupported unit) and anything else: show the
-          // API's own message.
-          setPreviewError((e as Error).message);
-        }
+        // The refusal's code says WHICH gap it is — no factor, a placeholder
+        // refused, a conversion not loaded (LP3-03) — and the catalogue words
+        // each in the user's language. Outside the one year the prototype
+        // library covers, a 404 also names the year that does work (DE-9
+        // opened the list to 2015–2026), so a tester picking 2018 sees a
+        // boundary of the demo data, not a broken app.
+        const { title } = describeError(e);
+        setPreviewError(
+          e instanceof ApiError && e.status === 404 && reportingYear !== DEFAULT_REPORTING_YEAR
+            ? `${title} ${t("previewYearHint", { year: String(DEFAULT_REPORTING_YEAR) })}`
+            : title,
+        );
       } finally {
         setPreviewing(false);
       }
@@ -640,7 +657,7 @@ function DataEntryPageInner() {
     setPeriodValue(rec.periodValue);
     setCategory(rec.category as Category);
     setActivityType(rec.activityType ?? "");
-    setActivityValue(String(rec.activityValue));
+    setActivityValue(formatDecimalInput(rec.activityValue, locale));
     setActivityUnit(rec.activityUnit);
     setContext((rec.input as ContextValues | null) ?? {});
     setVerdict(verdictOf(rec));
@@ -734,7 +751,7 @@ function DataEntryPageInner() {
 
   async function persist(): Promise<ActivityRecordDTO | null> {
     if (!hasValidInput || !selectedSubsidiary) {
-      toast.error("Pick a subsidiary, category, and enter an activity value.");
+      toast.error(t("pickRequired"));
       return null;
     }
     const inputPayload = buildInputPayload();
@@ -773,6 +790,11 @@ function DataEntryPageInner() {
     });
   }
 
+  function showSaveError(e: unknown, moving: boolean) {
+    const { title, description } = saveErrorDescription(e, moving, describeError, t);
+    toast.error(title, description ? { description } : undefined);
+  }
+
   async function handleSaveDraft() {
     setSaving("draft");
     // Read once, for use after the awaits. `movingTo` is a per-render const so
@@ -792,17 +814,15 @@ function DataEntryPageInner() {
       // either/or toast would announce the move and swallow the flag, leaving
       // the user to meet it later as a blocked Submit. The location comes from
       // the server's response, so it states what was actually written.
-      const anomalyNote = rec.anomalyFlag
-        ? " — value flagged as anomalous, add a variance comment"
-        : "";
+      const entity = entityPhrase(rec, t);
       toast.success(
         wasMoving
-          ? `Moved to ${entityPhrase(rec)}, draft saved${anomalyNote}`
-          : `Draft saved${anomalyNote}`,
+          ? t(rec.anomalyFlag ? "movedDraftSavedAnomalous" : "movedDraftSaved", { entity })
+          : t(rec.anomalyFlag ? "draftSavedAnomalous" : "draftSaved"),
       );
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      toast.error(saveErrorMessage(e, wasMoving));
+      showSaveError(e, wasMoving);
     } finally {
       setSaving(null);
     }
@@ -825,9 +845,7 @@ function DataEntryPageInner() {
       // Mirror the server anomaly gate (VAR §2.2 / §4.3): a flagged value needs
       // a variance comment before it can be submitted.
       if (rec.anomalyFlag && !varianceReason.trim()) {
-        toast.error(
-          "This value looks anomalous — add a variance comment before submitting.",
-        );
+        toast.error(t("anomalousBeforeSubmit"));
         return;
       }
       await api.submitActivityRecord(rec.id);
@@ -835,14 +853,12 @@ function DataEntryPageInner() {
       // a draft save does, and saying nothing made the two paths disagree about
       // an action with the same consequence.
       toast.success(
-        wasMoving
-          ? `Moved to ${entityPhrase(rec)}, submitted for review`
-          : "Submitted for review",
+        wasMoving ? t("movedSubmitted", { entity: entityPhrase(rec, t) }) : t("submitted"),
       );
       resetForm();
       await refreshRecords(subsidiaryId);
     } catch (e) {
-      toast.error(saveErrorMessage(e, wasMoving));
+      showSaveError(e, wasMoving);
     } finally {
       setSaving(null);
     }
@@ -867,17 +883,16 @@ function DataEntryPageInner() {
           <div className="flex items-start justify-between">
             <div>
               <h1 className="text-2xl font-semibold text-foreground">
-                Data Entry
+                {t("title")}
               </h1>
               <p className="mt-1 text-muted-foreground">
-                Enter activity data and preview emissions from the TonyAI
-                calculation engine
+                {t("subtitle")}
                 {user ? ` · ${user.fullName} (${user.role})` : ""}
               </p>
             </div>
             <Button variant="outline" onClick={handleLogout} className="gap-2">
               <LogOut className="h-4 w-4" />
-              Sign out
+              {tCommon("signOut")}
             </Button>
           </div>
 
@@ -887,15 +902,15 @@ function DataEntryPageInner() {
               {/* Scope selectors */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Reporting scope</CardTitle>
+                  <CardTitle className="text-base">{t("reportingScope")}</CardTitle>
                 </CardHeader>
                 <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field label="Subsidiary">
+                  <Field label={t("subsidiary")}>
                     {subsLoading ? (
                       <Skeleton className="h-9 w-full" />
                     ) : subsidiaries.length === 0 ? (
                       <p className="text-sm text-muted-foreground">
-                        No subsidiaries accessible to your account.
+                        {t("noSubsidiaries")}
                       </p>
                     ) : (
                       <Select
@@ -907,7 +922,7 @@ function DataEntryPageInner() {
                         }}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Select subsidiary" />
+                          <SelectValue placeholder={t("selectSubsidiary")} />
                         </SelectTrigger>
                         <SelectContent>
                           {subsidiaries.map((s) => (
@@ -922,7 +937,7 @@ function DataEntryPageInner() {
 
                   {/* Reporting entity: whole subsidiary or one of its locations.
                       The chosen entity drives the factor geography (data_entry_page.md §5.2). */}
-                  <Field label="Location">
+                  <Field label={t("location")}>
                     <Select
                       value={locationId || "__whole__"}
                       onValueChange={(v) => setLocationId(v === "__whole__" ? "" : v)}
@@ -936,7 +951,7 @@ function DataEntryPageInner() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__whole__">{WHOLE_COMPANY_ENTITY_LABEL}</SelectItem>
+                        <SelectItem value="__whole__">{t("wholeCompany")}</SelectItem>
                         {availableLocations.map((l) => (
                           <SelectItem key={l.id} value={l.id}>
                             {l.name} ({l.geographyCode})
@@ -975,7 +990,7 @@ function DataEntryPageInner() {
                     </p>
                   </Field>
 
-                  <Field label="Category">
+                  <Field label={t("category")}>
                     <Select
                       value={category}
                       onValueChange={(v) => {
@@ -1002,7 +1017,7 @@ function DataEntryPageInner() {
                       <SelectContent>
                         {CATEGORIES.map((c) => (
                           <SelectItem key={c} value={c}>
-                            {c}
+                            {tCategories(c)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1012,14 +1027,14 @@ function DataEntryPageInner() {
                   {isTypedCategory && (
                     // Labelled "Fuel or gas", never with the word "category":
                     // the e2e suite finds the Category field by that text.
-                    <Field label="Fuel or gas">
+                    <Field label={t("fuelOrGas")}>
                       <Select value={activityType} onValueChange={setActivityType}>
-                        <SelectTrigger aria-label="Fuel or gas">
+                        <SelectTrigger aria-label={t("fuelOrGas")}>
                           <SelectValue
                             placeholder={
                               keepsLegacyUntyped
-                                ? "Not specified (entered before fuels were tracked)"
-                                : "Choose one"
+                                ? t("notSpecifiedLegacy")
+                                : t("chooseOne")
                             }
                           />
                         </SelectTrigger>
@@ -1034,7 +1049,7 @@ function DataEntryPageInner() {
                     </Field>
                   )}
 
-                  <Field label="Reporting year">
+                  <Field label={t("reportingYear")}>
                     <Select
                       value={String(reportingYear)}
                       onValueChange={(v) => setReportingYear(Number(v))}
@@ -1053,7 +1068,7 @@ function DataEntryPageInner() {
                   </Field>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <Field label="Period">
+                    <Field label={t("period")}>
                       <Select
                         value={reportingPeriod}
                         onValueChange={(v) =>
@@ -1065,14 +1080,14 @@ function DataEntryPageInner() {
                         </SelectTrigger>
                         <SelectContent>
                           {PERIODS.map((p) => (
-                            <SelectItem key={p.value} value={p.value}>
-                              {p.label}
+                            <SelectItem key={p} value={p}>
+                              {tPeriods(`granularity.${p}`)}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </Field>
-                    <Field label="Value">
+                    <Field label={t("periodValue")}>
                       <Select value={periodValue} onValueChange={setPeriodValue}>
                         <SelectTrigger>
                           <SelectValue />
@@ -1080,7 +1095,7 @@ function DataEntryPageInner() {
                         <SelectContent>
                           {PERIOD_VALUES[reportingPeriod].map((v) => (
                             <SelectItem key={v} value={v}>
-                              {v}
+                              {tPeriods(`values.${v}`)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1097,16 +1112,21 @@ function DataEntryPageInner() {
                       from, rather than offer a control that changes nothing. */}
                   {effectiveGeography && (
                     <p className="text-xs text-muted-foreground">
-                      Factor geography:{" "}
+                      {t("factorGeography")}{" "}
                       <span className="font-mono">{effectiveGeography}</span> —{" "}
-                      {GEOGRAPHY_LABELS[
-                        effectiveGeography as keyof typeof GEOGRAPHY_LABELS
-                      ] ?? effectiveGeography}
-                      , from{" "}
-                      {selectedLocation
-                        ? `${selectedLocation.name} (location)`
-                        : `${selectedSubsidiary?.tradingName ?? selectedSubsidiary?.legalName ?? "this subsidiary"} (subsidiary)`}
-                      . Change it on the Subsidiaries page.
+                      {t("factorGeographySource", {
+                        geography:
+                          GEOGRAPHY_LABELS[effectiveGeography as keyof typeof GEOGRAPHY_LABELS] ??
+                          effectiveGeography,
+                        source: selectedLocation
+                          ? t("locationSource", { name: selectedLocation.name })
+                          : t("subsidiarySource", {
+                              name:
+                                selectedSubsidiary?.tradingName ??
+                                selectedSubsidiary?.legalName ??
+                                t("thisSubsidiary"),
+                            }),
+                      })}
                     </p>
                   )}
                 </CardContent>
@@ -1146,22 +1166,45 @@ function DataEntryPageInner() {
               {/* Activity value — the calc driver */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Activity data</CardTitle>
+                  <CardTitle className="text-base">{t("activityData")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_220px]">
-                    <Field label="Activity value">
+                    <Field label={t("activityValue")}>
+                      {/* Text, not type="number": a number input reads and
+                          writes the browser's convention, not the user's, and
+                          silently drops what it cannot parse. The value is read
+                          here by the user's locale (D15, lib/i18n/number.ts). */}
                       <Input
-                        type="number"
+                        type="text"
                         inputMode="decimal"
-                        min={0}
-                        step="any"
-                        placeholder="e.g. 45000"
+                        autoComplete="off"
+                        placeholder={t("activityValuePlaceholder")}
                         value={activityValue}
                         onChange={(e) => setActivityValue(e.target.value)}
+                        aria-invalid={activityValue.trim() !== "" && !valueCheck.ok}
+                        aria-describedby="activity-value-note"
                       />
+                      <p id="activity-value-note" className="mt-1 min-h-4 text-xs" aria-live="polite">
+                        {valueCheck.ok ? (
+                          valueCheck.grouped && (
+                            <span className="text-muted-foreground">
+                              {tNumbers("readAs", { value: formatDecimalInput(valueCheck.value, locale) })}
+                            </span>
+                          )
+                        ) : valueCheck.reason === "empty" ? null : (
+                          <span className="text-destructive">
+                            {valueCheck.reason === "not_positive"
+                              ? tNumbers("notPositive")
+                              : tNumbers(
+                                  valueCheck.reason === "wrong_decimal_separator" ? "wrongDecimalSeparator" : "invalid",
+                                  { example: `45000${NUMBER_SEPARATORS[locale].decimal}5` },
+                                )}
+                          </span>
+                        )}
+                      </p>
                     </Field>
-                    <Field label="Unit">
+                    <Field label={t("unit")}>
                       <Select value={activityUnit} onValueChange={setActivityUnit}>
                         <SelectTrigger>
                           <SelectValue />
@@ -1179,11 +1222,7 @@ function DataEntryPageInner() {
                       </Select>
                     </Field>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    This value and unit drive the emissions calculation. The
-                    engine normalises the unit (e.g. MWh &rarr; kWh) before
-                    applying the factor.
-                  </p>
+                  <p className="text-xs text-muted-foreground">{t("unitHelp")}</p>
                   {(() => {
                     const spec = ACTIVITY_UNITS.find(
                       (u) => u.value === activityUnit,
@@ -1370,7 +1409,7 @@ function DataEntryPageInner() {
               <div className="flex items-center justify-end gap-2">
                 {editingId && (
                   <span className="mr-auto flex items-center gap-2 text-sm text-muted-foreground">
-                    Editing draft {editingId.slice(0, 8)}…
+                    {t("editingDraft", { id: editingId.slice(0, 8) })}
                     {/* The only way out of edit mode used to be a successful
                         submit or a page reload — and a cell click can now put
                         you here without asking. */}
@@ -1380,7 +1419,7 @@ function DataEntryPageInner() {
                       className="h-7 px-2"
                       onClick={resetForm}
                     >
-                      Start a new record
+                      {t("startNewRecord")}
                     </Button>
                   </span>
                 )}
@@ -1391,7 +1430,7 @@ function DataEntryPageInner() {
                   disabled={isBusy || !hasValidInput}
                 >
                   <Save className="h-4 w-4" />
-                  {saving === "draft" ? "Saving…" : "Save draft"}
+                  {saving === "draft" ? t("saving") : t("saveDraft")}
                 </Button>
                 {canSubmit && <Button
                   className="gap-2"
@@ -1399,7 +1438,7 @@ function DataEntryPageInner() {
                   disabled={isBusy || !hasValidInput}
                 >
                   <Send className="h-4 w-4" />
-                  {saving === "submit" ? "Submitting…" : "Submit for review"}
+                  {saving === "submit" ? t("submitting") : t("submit")}
                 </Button>}
               </div>
             </div>
@@ -1476,22 +1515,22 @@ function PreviewCard({
   hasValidInput: boolean;
   geographyCode: string | null;
 }) {
+  const t = useTranslations("dataEntry");
+  const locale = useLocale();
+  const numberFmt = { format: (n: number) => formatNumber(n, locale, PREVIEW_DIGITS) };
   return (
     <Card className="border-primary/20">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Calculator className="h-4 w-4 text-primary" />
-          Live emissions preview
+          {t("previewTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent>
         {!hasValidInput ? (
           <div className="flex items-start gap-2 py-4 text-sm text-muted-foreground">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              Pick a subsidiary and category, then enter an activity value to see
-              a live tCO₂e estimate.
-            </span>
+            <span>{t("previewPrompt")}</span>
           </div>
         ) : error ? (
           <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700">
