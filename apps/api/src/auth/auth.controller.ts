@@ -1,5 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
-import type { AuthUser } from '@tonyai/shared-types';
+import { DEFAULT_LOCALE, isLocale, type AuthUser } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { CurrentUser } from './current-user.decorator';
 import type { RequestUser } from './auth.types';
@@ -18,7 +18,10 @@ export class AuthController {
       role: user.role,
       organisationId: user.organisationId,
       accessibleSubsidiaryIds: user.accessibleSubsidiaryIds,
-      language: profile?.language ?? 'en',
+      // The column's CHECK admits only supported locales; a row from before it
+      // (or a missing profile) reads as the default rather than as a string
+      // the web cannot load a catalogue for.
+      language: isLocale(profile?.language) ? profile.language : DEFAULT_LOCALE,
       theme: profile?.theme ?? 'light',
     };
   }

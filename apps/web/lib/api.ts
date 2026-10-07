@@ -1,5 +1,7 @@
 import type {
   ActivityRecordDTO,
+  ApiErrorCode,
+  ApiErrorParams,
   AuditLogDTO,
   AuthUser,
   ListAuditParams,
@@ -43,7 +45,9 @@ import type {
   UpdateTargetInput,
   BulkUploadReportDTO,
   BulkSubmitReportDTO,
+  UpdatePreferencesRequest,
 } from "@tonyai/shared-types";
+import { isApiErrorCode } from "@tonyai/shared-types";
 import { getSupabaseBrowserClient } from "./supabase";
 
 /** Optional filters for GET /emissions/summary (all AND-combined). */
@@ -71,16 +75,37 @@ async function authHeaders(): Promise<Record<string, string>> {
  */
 export const SESSION_EXPIRED_MESSAGE = 'Your session has expired — please sign in again.';
 
-/** Error thrown by the API client; carries the HTTP status for callers that
- * need to branch on it (e.g. a 404 "no emission factor" preview). */
+/**
+ * Error thrown by the API client. A screen branches on `code` (LP3-01's
+ * registry in `@tonyai/shared-types`) and words it through the catalogue —
+ * `describeApiError` in `lib/i18n/errors.ts` — never on `message`, the
+ * server's English sentence, which is kept for logs and the K5 fallback.
+ */
 export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** Absent when the body had none this build knows: a proxy's non-JSON
+     *  413, or a code from an API newer than this page. */
+    readonly code?: ApiErrorCode,
+    readonly params?: ApiErrorParams,
   ) {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** Only plain string or finite-number values survive — a param is rendered
+ *  into a sentence, so nothing else from a response body may reach one. */
+function errorParams(raw: unknown): ApiErrorParams | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const params: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "string" || (typeof value === "number" && Number.isFinite(value))) {
+      params[key] = value;
+    }
+  }
+  return Object.keys(params).length > 0 ? params : undefined;
 }
 
 /**
@@ -98,17 +123,23 @@ export class ApiError extends Error {
  * `await` without `throw` — or call without `await` — and both compile clean,
  * because `no-floating-promises` is deliberately off in this repo.
  */
-async function apiError(res: Response): Promise<ApiError> {
+export async function apiError(res: Response): Promise<ApiError> {
   let message: string | string[] = `API ${res.status}`;
+  let code: ApiErrorCode | undefined;
+  let params: ApiErrorParams | undefined;
   try {
     const body = await res.json();
-    message = body.message ?? message;
+    message = body?.message ?? message;
+    code = isApiErrorCode(body?.code) ? body.code : undefined;
+    params = errorParams(body?.params);
   } catch {
     /* a 413 from the proxy, or any non-JSON body — keep the status sentence */
   }
   return new ApiError(
-    Array.isArray(message) ? message.join(", ") : message,
+    Array.isArray(message) ? message.join(", ") : String(message),
     res.status,
+    code,
+    params,
   );
 }
 
@@ -126,6 +157,9 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 
 export const api = {
   me: () => apiFetch<AuthUser>("/me"),
+  /** The caller's own preferences (today the UI language); answers the updated user. */
+  updateMyPreferences: (body: UpdatePreferencesRequest) =>
+    apiFetch<AuthUser>("/me/preferences", { method: "PATCH", body: JSON.stringify(body) }),
   listSubsidiaries: () => apiFetch<SubsidiaryDTO[]>("/subsidiaries"),
   getSubsidiary: (id: string) => apiFetch<SubsidiaryDTO>(`/subsidiaries/${id}`),
   /** Counts of everything hanging off a subsidiary, plus why a delete would be
