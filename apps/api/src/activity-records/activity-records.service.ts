@@ -2,8 +2,8 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
-  NotFoundException,
 } from '@nestjs/common';
+import { ResourceNotFoundError } from '../common/api-error';
 import {
   ActivityRecordStatus,
   Prisma,
@@ -423,7 +423,7 @@ export class ActivityRecordsService {
       include: { location: { select: { name: true } } },
     });
     if (!record || !user.accessibleSubsidiaryIds.includes(record.subsidiaryId)) {
-      throw new NotFoundException('Activity record not found');
+      throw new ResourceNotFoundError('record_not_found');
     }
     return record;
   }
@@ -453,13 +453,13 @@ export class ActivityRecordsService {
         await lockPeriodsShared(tx, [periodOf(seen), ...alsoPeriods]);
         // Deleted meanwhile by a concurrent request, which audited it.
         if (!(await lockActivityRecordRow(tx, seen.id))) {
-          throw new NotFoundException('Activity record not found');
+          throw new ResourceNotFoundError('record_not_found');
         }
         const current = await tx.activityRecord.findUnique({
           where: { id: seen.id },
           include: { location: { select: { name: true } } },
         });
-        if (!current) throw new NotFoundException('Activity record not found');
+        if (!current) throw new ResourceNotFoundError('record_not_found');
         if (!samePeriod(periodOf(seen), periodOf(current))) {
           throw new RecordChangedError();
         }
@@ -509,12 +509,12 @@ export class ActivityRecordsService {
   ): Promise<{ calculation: ActivityCalculationSnapshot; scope: number }> {
     if (!accessibleSubsidiaryIds.includes(subsidiaryId)) {
       // Tenant isolation: cannot attach a record to an inaccessible subsidiary.
-      throw new NotFoundException('Subsidiary not found');
+      throw new ResourceNotFoundError('subsidiary_not_found');
     }
     const subsidiary = await this.prisma.subsidiary.findUnique({
       where: { id: subsidiaryId },
     });
-    if (!subsidiary) throw new NotFoundException('Subsidiary not found');
+    if (!subsidiary) throw new ResourceNotFoundError('subsidiary_not_found');
 
     // Reporting entity (data_entry_page.md §5.2): when a location is targeted, it drives the
     // factor geography; otherwise the subsidiary does. A location must belong to
@@ -525,7 +525,7 @@ export class ActivityRecordsService {
         where: { id: locationId },
       });
       if (!location || location.subsidiaryId !== subsidiaryId) {
-        throw new NotFoundException('Location not found');
+        throw new ResourceNotFoundError('location_not_found');
       }
       geographyCode = location.geographyCode;
     }
@@ -559,6 +559,7 @@ export class ActivityRecordsService {
     if (lock) {
       throw new PeriodLockedError(
         `Reporting period ${periodValue} ${reportingYear} is locked — a super_admin must unlock it before records can change.`,
+        { periodValue, reportingYear },
       );
     }
   }
@@ -764,7 +765,7 @@ export class ActivityRecordsService {
     // bypasses the pipe.) Every other service that takes a body
     // `subsidiaryId` already checks the set as its first statement.
     if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
-      throw new NotFoundException('Subsidiary not found');
+      throw new ResourceNotFoundError('subsidiary_not_found');
     }
     // Canonicalised, not merely validated. Everything downstream compares RAW
     // strings — the uniqueness index, both period-lock lookups, the seed's own

@@ -154,25 +154,29 @@ describe('LoggingInterceptor', () => {
 });
 
 // --- Exception filter: the response-shape regression lock -------------------
+// LP3-01 added `code` (and an `error` on the 500). Everything Nest sent before
+// is still sent, unchanged — the web's `body.message` readers and the e2e
+// suite's message assertions depend on that. common/api-error.spec.ts covers
+// the codes themselves.
 
-describe('HttpExceptionFilter — response body is unchanged', () => {
+describe('HttpExceptionFilter — Nest\'s body, plus a code', () => {
   let logger: JsonLogger;
   beforeEach(() => {
     logger = createLogger().logger;
   });
 
   it.each([
-    ['BadRequest', new BadRequestException('Category requires evidence'), 400],
-    ['Forbidden', new ForbiddenException('Only super_admin may manage targets'), 403],
-    ['Conflict', new ConflictException('Reporting period Q1 2024 is locked'), 409],
-  ])('passes a %s through verbatim (frontend reads body.message)', (_label, exception, status) => {
+    ['BadRequest', new BadRequestException('Category requires evidence'), 400, 'bad_request'],
+    ['Forbidden', new ForbiddenException('Only super_admin may manage targets'), 403, 'forbidden'],
+    ['Conflict', new ConflictException('Reporting period Q1 2024 is locked'), 409, 'conflict'],
+  ])('passes a %s through with its generic code (frontend reads body.message)', (_label, exception, status, code) => {
     const { res, sent } = createResponse();
     new HttpExceptionFilter(logger).catch(
       exception,
       createHost({ method: 'POST', originalUrl: '/api/v1/x' }, res),
     );
     expect(sent.status).toBe(status);
-    expect(sent.body).toEqual((exception as HttpException).getResponse());
+    expect(sent.body).toEqual({ ...((exception as HttpException).getResponse() as object), code });
     expect((sent.body as { message: string }).message).toBe((exception as Error).message);
   });
 
@@ -201,7 +205,12 @@ describe('HttpExceptionFilter — response body is unchanged', () => {
       createHost({ method: 'GET', originalUrl: '/api/v1/kpi' }, res),
     );
     expect(sent.status).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
-    expect(sent.body).toEqual({ statusCode: 500, message: 'Internal server error' });
+    expect(sent.body).toEqual({
+      statusCode: 500,
+      code: 'internal_error',
+      message: 'Internal server error',
+      error: 'Internal Server Error',
+    });
     expect(JSON.stringify(sent.body)).not.toContain('ECONNREFUSED');
   });
 

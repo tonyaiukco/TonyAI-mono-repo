@@ -75,6 +75,8 @@ model Profile {
   email            String                 @unique
   fullName         String                 @map("full_name")
   role             UserRole               @default(data_entry)
+  /// A `SUPPORTED_LOCALES` entry (CHECK `profiles_language_supported`, LP3-01);
+  /// the user sets their own through PATCH /me/preferences.
   language         String                 @default("en")
   theme            String                 @default("light")
   organisationId   String?                @map("organisation_id") @db.Uuid

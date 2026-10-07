@@ -483,7 +483,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     const { records, service } = build();
     records.create
       .mockResolvedValueOnce({ id: 'rec-1', calculation: SNAPSHOT, anomalyFlag: false, varianceReason: null })
-      .mockRejectedValueOnce(new PeriodLockedError('Reporting period February 2024 is locked'))
+      .mockRejectedValueOnce(new PeriodLockedError('Reporting period February 2024 is locked', { periodValue: 'January', reportingYear: 2024 }))
       .mockResolvedValueOnce({ id: 'rec-3', calculation: SNAPSHOT, anomalyFlag: false, varianceReason: null });
 
     const report = await service.import(
@@ -504,7 +504,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
 
   it.each([
     [new NotFoundException('Subsidiary not found'), 'not_found'],
-    [new PeriodLockedError('Reporting period January 2024 is locked'), 'period_locked'],
+    [new PeriodLockedError('Reporting period January 2024 is locked', { periodValue: 'January', reportingYear: 2024 }), 'period_locked'],
     [new DuplicateActivityRecordError(), 'duplicate_existing'],
     [new BadRequestException('"Michaelmas" is not a period'), 'invalid'],
   ])('maps %s onto a row code', async (error, code) => {
@@ -622,7 +622,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     // unexpected failures of different classes.
     const { records, service } = build();
     records.create
-      .mockRejectedValueOnce(new PeriodLockedError('Period 2001 January is locked.'))
+      .mockRejectedValueOnce(new PeriodLockedError('Period 2001 January is locked.', { periodValue: 'January', reportingYear: 2024 }))
       .mockRejectedValueOnce(new Error('driver said no'))
       .mockRejectedValueOnce(new TypeError('records.create is not a function'));
     const rows = Array.from({ length: 4 }, (_, i) =>
@@ -666,7 +666,7 @@ describe('BulkUploadService — a bad row does not abort the batch', () => {
     // ordinary answer to an ordinary file, and ERROR level is not for them.
     const { records, service } = build();
     records.create.mockRejectedValue(
-      new PeriodLockedError('Period 2024 January is locked.'),
+      new PeriodLockedError('Period 2024 January is locked.', { periodValue: 'January', reportingYear: 2024 }),
     );
 
     const { result: report, logged } = await captureErrors(() =>
@@ -1979,7 +1979,7 @@ describe('BulkUploadService — what the report repeats back', () => {
     ],
     [
       'a closed period, told apart from a taken slot by its class',
-      () => new PeriodLockedError(`${nul}${'p'.repeat(10_000)}`),
+      () => new PeriodLockedError(`${nul}${'p'.repeat(10_000)}`, { periodValue: 'January', reportingYear: 2024 }),
       'period_locked',
       `${'p'.repeat(BULK_UPLOAD_MESSAGE_MAX_LENGTH)}…`,
     ],
@@ -2183,7 +2183,7 @@ describe('BulkUploadService — what is audited, and under which verb', () => {
     const { records, service } = build();
     records.create
       .mockRejectedValueOnce(new ConflictException(DUPLICATE_RECORD_MESSAGE))
-      .mockRejectedValueOnce(new PeriodLockedError('closed'))
+      .mockRejectedValueOnce(new PeriodLockedError('closed', { periodValue: 'January', reportingYear: 2024 }))
       .mockRejectedValueOnce(
         new NotFoundException('No emission factor found for anything at all'),
       );

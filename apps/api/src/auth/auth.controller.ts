@@ -1,12 +1,17 @@
-import { Controller, Get } from '@nestjs/common';
+import { Body, Controller, Get, Patch } from '@nestjs/common';
 import { DEFAULT_LOCALE, isLocale, type AuthUser } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { CurrentUser } from './current-user.decorator';
 import type { RequestUser } from './auth.types';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
+import { PreferencesService } from './preferences.service';
 
 @Controller()
 export class AuthController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly preferences: PreferencesService,
+  ) {}
 
   @Get('me')
   async me(@CurrentUser() user: RequestUser): Promise<AuthUser> {
@@ -24,5 +29,15 @@ export class AuthController {
       language: isLocale(profile?.language) ? profile.language : DEFAULT_LOCALE,
       theme: profile?.theme ?? 'light',
     };
+  }
+
+  /** The caller's own preferences; answers the updated user, as GET /me does. */
+  @Patch('me/preferences')
+  async updatePreferences(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: UpdatePreferencesDto,
+  ): Promise<AuthUser> {
+    await this.preferences.setLanguage(user, dto.language);
+    return this.me(user);
   }
 }

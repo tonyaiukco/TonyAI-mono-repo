@@ -1,0 +1,22 @@
+import type { INestApplication } from '@nestjs/common';
+import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from './common/coded-validation.pipe';
+import { HttpExceptionFilter } from './observability/http-exception.filter';
+import type { JsonLogger } from './observability/json-logger';
+import { LoggingInterceptor } from './observability/logging.interceptor';
+
+/**
+ * Everything that decides what a request and its error look like: the
+ * prefix, the validating pipe and the exception filter (LP3-01's error
+ * bodies). `main.ts` and the integration suite both call it, so the bodies
+ * `tenant-isolation.int.spec.ts` compares are the ones the deployed API sends.
+ */
+export function configureApp(
+  app: INestApplication,
+  logger: JsonLogger,
+  options: { requestLogging?: boolean } = {},
+): void {
+  app.setGlobalPrefix('api/v1');
+  app.useGlobalPipes(new CodedValidationPipe(GLOBAL_VALIDATION_OPTIONS));
+  if (options.requestLogging ?? true) app.useGlobalInterceptors(new LoggingInterceptor(logger));
+  app.useGlobalFilters(new HttpExceptionFilter(logger));
+}

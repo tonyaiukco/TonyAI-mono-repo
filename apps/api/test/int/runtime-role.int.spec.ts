@@ -254,7 +254,15 @@ describe('the runtime role is refused', () => {
     expect(after).toEqual([{ update: false, delete: false }]);
   });
 
-  it('…while the one profile column it may change still changes (control for the refusals above)', async () => {
+  it('…while the profile columns it may change still change (control for the refusals above)', async () => {
     expect(await attempt('UPDATE profiles SET role = role WHERE id = gen_random_uuid()')).toBeNull();
+    // LP3-01: the UI language, the user's own (PATCH /me/preferences).
+    expect(await attempt(`UPDATE profiles SET language = 'tr' WHERE id = gen_random_uuid()`)).toBeNull();
+  });
+
+  it('a language the product does not speak is refused by the column itself (LP3-01)', async () => {
+    expect(
+      await attempt(`UPDATE profiles SET language = 'de' WHERE id = (SELECT id FROM profiles LIMIT 1)`),
+    ).toMatch(/profiles_language_supported/);
   });
 });

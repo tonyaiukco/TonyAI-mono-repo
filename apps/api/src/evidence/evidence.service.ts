@@ -7,6 +7,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { randomUUID } from 'node:crypto';
 import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import {
@@ -50,7 +51,6 @@ const EDITABLE_STATUSES = new Set<ActivityRecordStatus>([
 
 const ROLE_REFUSAL = 'Your role may not modify evidence';
 const RECORD_NOT_FOUND = 'Activity record not found';
-const EVIDENCE_NOT_FOUND = 'Evidence not found';
 
 /** Every record a file backs, with what a reviewer needs to judge the link. */
 const WITH_LINKED_RECORDS = {
@@ -176,7 +176,7 @@ export class EvidenceService {
       where: { id: recordId },
     });
     if (!record || !user.accessibleSubsidiaryIds.includes(record.subsidiaryId)) {
-      throw new NotFoundException(RECORD_NOT_FOUND);
+      throw new ResourceNotFoundError('record_not_found');
     }
     return record;
   }
@@ -191,7 +191,7 @@ export class EvidenceService {
       include: WITH_LINKED_RECORDS,
     });
     if (!evidence || !user.accessibleSubsidiaryIds.includes(evidence.subsidiaryId)) {
-      throw new NotFoundException(EVIDENCE_NOT_FOUND);
+      throw new ResourceNotFoundError('evidence_not_found');
     }
     return evidence;
   }
@@ -255,6 +255,7 @@ export class EvidenceService {
     if (locked) {
       return new PeriodLockedError(
         `Reporting period ${record.periodValue} ${record.reportingYear} is locked — a super_admin must unlock it before its evidence can change.`,
+        record,
       );
     }
     return null;
@@ -406,7 +407,7 @@ export class EvidenceService {
         await this.intents.adoptUpload(tx, intentId);
         await lockPeriodsShared(tx, records.map(periodOf));
         const present = await lockActivityRecordRows(tx, ids);
-        if (present.size !== ids.length) throw new NotFoundException(RECORD_NOT_FOUND);
+        if (present.size !== ids.length) throw new ResourceNotFoundError('record_not_found');
         const current = await tx.activityRecord.findMany({ where: { id: { in: ids } } });
         const locked = await this.lockedRecordIds(current, tx);
         for (const record of current) {
@@ -457,7 +458,7 @@ export class EvidenceService {
       // key refuses it (P2003). That is the same answer as a record that was
       // never there, not a server error.
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
-        throw new NotFoundException(RECORD_NOT_FOUND);
+        throw new ResourceNotFoundError('record_not_found');
       }
       throw asLostRace(error);
     }
@@ -488,7 +489,10 @@ export class EvidenceService {
       // Sentry event names the row, not the key.
       captureException(new Error(`Evidence ${evidence.id} has no object in Storage`), { userId: user.id });
       throw new NotFoundException(
-        "This file's contents are missing from storage. The problem has been reported to the administrators.",
+        errorBody(
+          'evidence_content_missing',
+          "This file's contents are missing from storage. The problem has been reported to the administrators.",
+        ),
       );
     }
     return { url, expiresIn: SIGNED_URL_TTL_SECONDS };
@@ -511,7 +515,7 @@ export class EvidenceService {
       where: { id: evidenceId, links: { some: { activityRecordId: record.id } } },
       include: WITH_LINKED_RECORDS,
     });
-    if (!evidence) throw new NotFoundException(EVIDENCE_NOT_FOUND);
+    if (!evidence) throw new ResourceNotFoundError('evidence_not_found');
 
     // The lifecycle protocol: the record's period shared, its row locked, then
     // the file's row. A submit counts this record's files under the same row
@@ -525,7 +529,7 @@ export class EvidenceService {
       gone = await this.prisma.$transaction(async (tx) => {
         await lockPeriodsShared(tx, [periodOf(record)]);
         if ((await lockActivityRecordRows(tx, [record.id])).size === 0) {
-          throw new NotFoundException(RECORD_NOT_FOUND);
+          throw new ResourceNotFoundError('record_not_found');
         }
         const current = await tx.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
         if (lockKey(current) !== lockKey(record)) throw new RecordChangedError();
@@ -538,7 +542,7 @@ export class EvidenceService {
           where: { id: evidence.id },
           include: WITH_LINKED_RECORDS,
         });
-        if (!file) throw new NotFoundException(EVIDENCE_NOT_FOUND);
+        if (!file) throw new ResourceNotFoundError('evidence_not_found');
 
         // From here on the DATABASE's ids, never the path's: the route accepts
         // either case, and an uppercase id once made a deleted file answer
@@ -548,7 +552,7 @@ export class EvidenceService {
         });
         // A concurrent detach of the same link got there first: it answers and
         // audits the change; this request changed nothing.
-        if (count === 0) throw new NotFoundException(EVIDENCE_NOT_FOUND);
+        if (count === 0) throw new ResourceNotFoundError('evidence_not_found');
         const deleted = await this.deleteUnlinkedRows([file.id], tx);
         await this.audit.record(
           user,
@@ -621,7 +625,7 @@ export class EvidenceService {
         await lockActivityRecordRows(tx, [...seen.keys()]);
         // Deleted meanwhile by another request, which audited it.
         if ((await lockEvidenceRows(tx, [evidence.id])).size === 0) {
-          throw new NotFoundException(EVIDENCE_NOT_FOUND);
+          throw new ResourceNotFoundError('evidence_not_found');
         }
         const current = await tx.activityRecord.findMany({
           where: { evidenceLinks: { some: { evidenceId: evidence.id } } },

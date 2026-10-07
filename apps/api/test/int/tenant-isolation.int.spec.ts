@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { ActivityRecordStatus } from '@tonyai/db';
-import { BULK_UPLOAD_COLUMNS } from '@tonyai/shared-types';
+import { BULK_UPLOAD_COLUMNS, isApiErrorCode } from '@tonyai/shared-types';
 import ExcelJS from 'exceljs';
 import { SignJWT } from 'jose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -56,11 +56,15 @@ beforeAll(async () => {
   process.env.SUPABASE_JWT_SECRET = JWT_SECRET;
   process.env.STORAGE_SWEEP_INTERVAL_SECONDS = '0';
   const { NestFactory } = await import('@nestjs/core');
-  const { ValidationPipe } = await import('@nestjs/common');
   const { AppModule } = await import('../../src/app.module');
+  const { configureApp } = await import('../../src/app-setup');
+  const { JsonLogger } = await import('../../src/observability/json-logger');
   app = await NestFactory.create(AppModule, { logger: ['error'] });
-  app.setGlobalPrefix('api/v1');
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
+  // The deployed app's prefix, pipe and exception filter (LP3-01): the bodies
+  // compared below are the ones a client receives, codes included. Its
+  // request and refusal log lines are silenced — hundreds of expected 4xx.
+  const quiet = Object.assign(new JsonLogger(), { event: () => undefined });
+  configureApp(app, quiet, { requestLogging: false });
   await app.listen(0, '127.0.0.1');
   base = `${await app.getUrl()}/api/v1`.replace('[::1]', '127.0.0.1');
   const [{ user }] = await app.get(PrismaService).$queryRaw<{ user: string }[]>`SELECT current_user AS "user"`;
@@ -306,6 +310,13 @@ describe("B's ids, through the API, as each of A's roles: the same refusal as an
       const context = `${role} ${route.name}: B's id → ${foreign.status} ${foreign.text.slice(0, 200)}`;
       expect(foreign.status, context).toBeLessThan(500);
       expect(normalise(foreign, foreignIds), context).toBe(normalise(missing, missingIds));
+      // Every refusal carries a registered code (LP3-01), and a 404's names a
+      // kind of thing — the same for B's id as for none, by the line above.
+      if (foreign.status >= 400) {
+        const { code } = JSON.parse(foreign.text) as { code?: unknown };
+        expect(isApiErrorCode(code), `${context} — code ${String(code)}`).toBe(true);
+        if (foreign.status === 404) expect(code, context).toMatch(/(^|_)not_found$/);
+      }
       // An id the caller sent may come back (a per-record refusal names it);
       // anything else of B's may not.
       const sent = new Set(Object.values(foreignIds));
@@ -551,4 +562,52 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
       await owner.activityRecord.deleteMany({ where: { id: { in: records.map((r) => r.id) } } });
     }
   }, 120_000);
+});
+
+describe('PATCH /me/preferences (LP3-01): the caller\'s own language, and nothing else', () => {
+  it('sets it for every role, audits the change, and GET /me reads it back', async () => {
+    for (const role of ROLES) {
+      const set = await call(role, 'PATCH', '/me/preferences', { language: 'tr' });
+      expect(set.status, `${role}: ${set.text}`).toBe(200);
+      expect(JSON.parse(set.text)).toMatchObject({ id: A.users[role].id, language: 'tr' });
+      expect(JSON.parse((await call(role, 'GET', '/me')).text).language, role).toBe('tr');
+    }
+    const rows = await owner.auditLog.findMany({
+      where: { entity: 'profile', entityId: { in: ROLES.map((r) => A.users[r].id) }, action: 'update' },
+    });
+    expect(rows).toHaveLength(ROLES.length);
+    for (const row of rows) {
+      expect(row.organisationId).toBe(A.organisationId);
+      expect(row.diff).toEqual({ before: { language: 'en' }, after: { language: 'tr' } });
+    }
+  });
+
+  it('writes no audit row for a language already set', async () => {
+    await call('dataEntry', 'PATCH', '/me/preferences', { language: 'en' });
+    expect(await owner.auditLog.count({ where: { entity: 'profile', entityId: A.users.dataEntry.id } })).toBe(0);
+  });
+
+  it.each([
+    ['an unsupported language', { language: 'de' }],
+    ['a locale tag', { language: 'tr-TR' }],
+    ['no language', {}],
+    ['another profile column', { language: 'tr', role: 'super_admin' }],
+    ['another user', { language: 'tr', id: randomUUID() }],
+  ])('refuses %s with validation_failed and changes nothing', async (_label, body) => {
+    const res = await call('dataEntry', 'PATCH', '/me/preferences', body);
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.text).code).toBe('validation_failed');
+    const profile = await owner.profile.findUniqueOrThrow({ where: { id: A.users.dataEntry.id } });
+    expect(profile).toMatchObject({ language: 'en', role: 'data_entry' });
+  });
+
+  it("leaves every other profile as it was — A's other users and B's", async () => {
+    // Only this file's tenants: other spec files create and remove theirs concurrently.
+    const others = [...ROLES.filter((r) => r !== 'dataEntry').map((r) => A.users[r].id), ...ROLES.map((r) => B.users[r].id)];
+    const read = () => owner.profile.findMany({ where: { id: { in: others } }, orderBy: { id: 'asc' } });
+    const before = await read();
+    expect(before).toHaveLength(others.length);
+    expect((await call('dataEntry', 'PATCH', '/me/preferences', { language: 'tr' })).status).toBe(200);
+    expect(await read()).toEqual(before);
+  });
 });

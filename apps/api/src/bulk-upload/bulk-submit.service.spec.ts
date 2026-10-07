@@ -484,6 +484,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     [
       new PeriodLockedError(
         'Reporting period January 2024 is locked — a super_admin must unlock it.',
+        { periodValue: 'January', reportingYear: 2024 },
       ),
       'period_locked',
       /locked/i,
@@ -709,7 +710,7 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
       candidate({ id: 'b', periodValue: 'February' }),
     ]);
     records.submit.mockRejectedValue(
-      new PeriodLockedError('Period 2024 January is locked.'),
+      new PeriodLockedError('Period 2024 January is locked.', { periodValue: 'January', reportingYear: 2024 }),
     );
 
     const { result: report, logged } = await captureErrors(() =>

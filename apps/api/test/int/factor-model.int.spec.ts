@@ -1208,7 +1208,14 @@ describe('the engine on the real library', () => {
     expect(foreignAnswer).toBeInstanceOf(NotFoundException);
     expect(foreignAnswer).not.toBeInstanceOf(NoEmissionFactorError);
     expect((foreignAnswer as NotFoundException).getResponse()).not.toHaveProperty('coverage');
-    expect((foreignAnswer as NotFoundException).getResponse()).not.toHaveProperty('code');
+    // LP3-01: every 404 has a code now — the kind of thing not found, the
+    // same one a subsidiary that does not exist gets; never a library code.
+    expect((foreignAnswer as NotFoundException).getResponse()).toEqual({
+      statusCode: 404,
+      error: 'Not Found',
+      message: 'Subsidiary not found',
+      code: 'subsidiary_not_found',
+    });
     // Positive control: the tenant's own administrator learns the gap.
     const ownAnswer = await failure(records.previewCreate(tenant.users.superAdmin, dto));
     expect((ownAnswer as NoEmissionFactorError).getResponse()).toMatchObject({ code: 'no_factor', coverage: { reportingYear: 2031 } });

@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
+import { ResourceNotFoundError } from '../common/api-error';
 import {
   BadRequestException,
   ForbiddenException,
   Injectable,
-  NotFoundException,
 } from '@nestjs/common';
 import { Prisma, UserRole as DbUserRole } from '@tonyai/db';
 import type { UserRole } from '@tonyai/shared-types';
@@ -64,7 +64,7 @@ export class AccessAdminService {
         where: { id: subsidiaryId, organisationId },
         select: { id: true },
       });
-      if (!subsidiary) throw new NotFoundException('Subsidiary not found');
+      if (!subsidiary) throw new ResourceNotFoundError('subsidiary_not_found');
 
       const existing = await tx.userSubsidiaryAccess.findUnique({
         where: { userId_subsidiaryId: { userId: profileId, subsidiaryId } },
@@ -78,7 +78,7 @@ export class AccessAdminService {
         // The subsidiary (or profile) was deleted after the lookup above — a
         // subsidiary delete does not take this lock. The same answer as a miss.
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
-          throw new NotFoundException('Subsidiary not found');
+          throw new ResourceNotFoundError('subsidiary_not_found');
         }
         throw err;
       }
@@ -98,7 +98,7 @@ export class AccessAdminService {
       const { count } = await tx.userSubsidiaryAccess.deleteMany({
         where: { userId: profileId, subsidiaryId, organisationId },
       });
-      if (count === 0) throw new NotFoundException('Grant not found');
+      if (count === 0) throw new ResourceNotFoundError('access_grant_not_found');
       await this.audit.record(
         admin,
         { action: 'delete', entity: 'subsidiary_access', entityId: profileId, diff: { subsidiaryId } },
@@ -195,6 +195,6 @@ async function findMember(tx: Prisma.TransactionClient, organisationId: string, 
     where: { id: profileId, organisationId },
     select: { id: true, role: true },
   });
-  if (!member) throw new NotFoundException('User not found');
+  if (!member) throw new ResourceNotFoundError('user_not_found');
   return member;
 }
