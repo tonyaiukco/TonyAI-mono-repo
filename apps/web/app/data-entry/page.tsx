@@ -117,6 +117,8 @@ const PERIODS: readonly ReportingPeriod[] = ["quarterly", "monthly", "annual"];
 
 /** The preview's figures, in the user's locale (LP3-01). */
 const PREVIEW_DIGITS = { maximumFractionDigits: 3 } as const;
+/** A factor shows every digit it has, ungrouped — only the decimal separator follows the locale. */
+const FACTOR_DIGITS = { maximumFractionDigits: 20, useGrouping: false } as const;
 
 /** A record's reporting entity, in PROSE — it appears mid-sentence ("Moved to
  *  the whole company, draft saved"), which is why it is not `entityLabel`: that
@@ -1605,7 +1607,7 @@ function PreviewCard({
             <dl className="space-y-2 text-sm">
               <Row
                 label="Emission factor"
-                value={`${preview.factorValue} ${preview.factorUnit}`}
+                value={`${formatNumber(preview.factorValue, locale, FACTOR_DIGITS)} ${preview.factorUnit}`}
               />
               <Row
                 label="Normalised input"
