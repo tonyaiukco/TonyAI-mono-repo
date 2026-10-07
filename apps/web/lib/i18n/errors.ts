@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/api";
 import {
   API_ERROR_PARAMS,
+  CALCULATION_REFUSAL_CODES,
   genericErrorCode,
   isGenericErrorCode,
   type ApiErrorCode,
@@ -20,6 +21,11 @@ import {
  * which is more specific than any generic one, exactly as before LP3-01; in
  * another language the generic sentence, with the server's English sentence
  * beneath it so nothing the user needs is lost.
+ *
+ * Calculation refusals follow the same rule (independent review P3-7): their
+ * English sentence names the lookup ("Unit "litres" is not valid for
+ * "Electricity". Accepted: kWh, MWh."), which the catalogue cannot until their
+ * params carry it (LP3-04/LP4-04). Their code still decides everything else.
  */
 
 /** The slice of a use-intl translator this needs — `createTranslator` and
@@ -46,6 +52,9 @@ const SERVER_WORDED: ReadonlySet<GenericErrorCode> = new Set([
   "conflict",
   "payload_too_large",
 ]);
+
+/** Specific codes whose English sentence says more than the catalogue's. */
+const SERVER_DETAILED: ReadonlySet<ApiErrorCode> = new Set(CALCULATION_REFUSAL_CODES);
 
 /** A body with no JSON message gets this from `api.ts` — not a sentence. */
 const STATUS_ONLY = /^API \d{3}$/;
@@ -80,8 +89,11 @@ export function describeApiError(error: unknown, t: ErrorTranslator, locale: Loc
     // A param the sentence names that did not arrive (an older API) would
     // render as a broken sentence: the status's generic one is better.
     const complete = (API_ERROR_PARAMS[code] ?? []).every((name) => error.params?.[name] !== undefined);
-    if (complete) return { title: t(`errors.codes.${code}`, localiseParams(error.params, t)) };
-    return describeApiError(new ApiError(error.message, error.status), t, locale);
+    if (!complete) return describeApiError(new ApiError(error.message, error.status), t, locale);
+    const title = t(`errors.codes.${code}`, localiseParams(error.params, t));
+    const detail = SERVER_DETAILED.has(code) && !STATUS_ONLY.test(error.message) ? error.message : undefined;
+    if (detail && locale === "en") return { title: detail };
+    return { title, ...(detail ? { description: detail } : {}) };
   }
   const key = `errors.codes.${code}`;
   const serverSentence = SERVER_WORDED.has(code) && !STATUS_ONLY.test(error.message) ? error.message : undefined;

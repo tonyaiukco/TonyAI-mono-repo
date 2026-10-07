@@ -2044,8 +2044,14 @@ export interface CalculationRefusalBody {
  * to every error that carries no code of its own, so a body never lacks a
  * code; a screen shows its catalogue's generic sentence for it (in English,
  * the server's own `message`, which is more specific — decision K5 of LP3-01).
+ *
+ * Two of them cover a range rather than their one status: `bad_request` is
+ * the code of ANY 4xx without one of its own (405, 410, 422, …), and
+ * `internal_error` of any 5xx. Every other code always answers exactly the
+ * status listed here.
  */
 export const GENERIC_ERROR_STATUS = Object.freeze({
+  /** 400, and any other 4xx without a code of its own. */
   bad_request: 400,
   /** A DTO refused the body or query; `message` lists the fields. */
   validation_failed: 400,

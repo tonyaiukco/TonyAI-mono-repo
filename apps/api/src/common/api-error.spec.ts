@@ -243,12 +243,30 @@ describe('what an error body can never carry', () => {
     expect(body.params).toEqual({ period: 'March', year: 2025 });
     // An own `__proto__` key, as JSON.parse makes one (an object literal would not).
     const proto = toErrorBody(409, JSON.parse('{"message":"x","params":{"__proto__":"x","constructor":"y","period":"May"}}'));
-    // `__proto__` is dropped by the key rule; `constructor` stays a plain own
-    // string, harmless on an object that is never used as a prototype.
-    expect(proto.params).toEqual({ constructor: 'y', period: 'May' });
-    expect(Object.prototype.hasOwnProperty.call(proto.params, '__proto__')).toBe(false);
-    expect(Object.getPrototypeOf(proto.params)).toBe(Object.prototype);
+    // A conflict without its own code declares no params, so none survive.
+    expect(proto.params).toBeUndefined();
+    const locked = toErrorBody(
+      409,
+      JSON.parse('{"message":"x","code":"period_locked","params":{"__proto__":"x","constructor":"y","period":"May","year":2025}}'),
+    );
+    expect(locked.params).toEqual({ period: 'May', year: 2025 });
+    expect(Object.getPrototypeOf(locked.params)).toBe(Object.prototype);
     expect(toErrorBody(409, { message: 'x', params: ['a'] }).params).toBeUndefined();
+  });
+
+  it('a param the code does not declare — an id or caller text cannot ride along (independent review P3-2)', () => {
+    const body = toErrorBody(409, {
+      message: 'x',
+      code: 'period_locked',
+      params: { period: 'March', year: 2025, recordId: '3e84c2a0-0000-4000-8000-000000000000', category: '<img src=x>' },
+    });
+    expect(body.params).toEqual({ period: 'March', year: 2025 });
+  });
+
+  it("no params at all once a code is downgraded to its status's generic one", () => {
+    const body = toErrorBody(400, { message: 'x', code: 'period_locked', params: { period: 'March', year: 2025 } });
+    expect(body.code).toBe('bad_request');
+    expect(body.params).toBeUndefined();
     expect(toErrorBody(409, { message: 'x', params: 'a' }).params).toBeUndefined();
   });
 

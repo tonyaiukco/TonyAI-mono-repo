@@ -34,15 +34,10 @@ import { toast } from "sonner";
 import { useLocale, useTranslations } from "use-intl";
 import { api, ApiError } from "@/lib/api";
 import { useDescribeError } from "@/lib/i18n/hooks";
-import {
-  alternativeReading,
-  checkActivityValue,
-  formatDecimalInput,
-  formatNumber,
-  NUMBER_SEPARATORS,
-  retypeForLocale,
-  type TypedDecimal,
-} from "@/lib/i18n/number";
+import type { ErrorDescription } from "@/lib/i18n/errors";
+import { checkDecimal, formatNumber } from "@/lib/i18n/number";
+import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
+import { DecimalNote } from "@/components/i18n/decimal-note";
 import {
   anomalyStatement,
   type AnomalyVerdictFields,
@@ -154,11 +149,9 @@ function DataEntryPageInner() {
   const searchParams = useSearchParams();
   const { user, setUser } = useAuthStore();
   const t = useTranslations("dataEntry");
-  const tNumbers = useTranslations("numbers");
   const tCategories = useTranslations("categories");
   const tPeriods = useTranslations("periods");
   const tCommon = useTranslations("common");
-  const locale = useLocale();
   const describeError = useDescribeError();
 
   // Controls
@@ -182,18 +175,10 @@ function DataEntryPageInner() {
   const isTypedCategory = activityTypes.length > 0;
 
   // Primary calc inputs
-  // The typed quantity and the locale it was typed in, in ONE state, so the
-  // text is never read under another locale's rules. A language change
-  // re-renders the page with its form state; the text is re-written from the
-  // number it meant (`retypeForLocale`) — re-reading Turkish `1.234` (1234)
-  // under English rules would store 1.234. Adjusted during render, not in an
-  // effect: React re-renders before committing, so no committed render (and
-  // no Save handler) ever pairs the old text with the new language
-  // (`security-rls` P3-2).
-  const [typedValue, setTypedValue] = useState<TypedDecimal>({ text: "", locale });
-  if (typedValue.locale !== locale) setTypedValue(retypeForLocale(typedValue, locale));
-  const activityValue = typedValue.text;
-  const setActivityValue = useCallback((text: string) => setTypedValue({ text, locale }), [locale]);
+  // Typed in the user's locale; a language switch keeps the number it meant
+  // (`useDecimalInput`, D15 — its spec covers the switch).
+  const activity = useDecimalInput();
+  const activityValue = activity.text;
   const [activityUnit, setActivityUnit] = useState("kWh");
 
   // Optional context (demo extras)
@@ -201,7 +186,10 @@ function DataEntryPageInner() {
 
   // Preview
   const [preview, setPreview] = useState<ActivityCalculationSnapshot | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
+  // The failed call itself, not its sentence: the sentence is chosen at render,
+  // so a language switch re-words a refusal already on screen (independent
+  // review P3-3).
+  const [previewError, setPreviewError] = useState<{ error: unknown; year: number } | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
   // Anomaly (VAR §4): server flags a value that deviates >±50% from the
@@ -301,12 +289,9 @@ function DataEntryPageInner() {
     );
   }, [editingId, editingTuple, locationId, availableLocations, records]);
 
-  // Typed in the user's locale, sent as a JSON number (D15). Zero and below
-  // are not activity: the form has always asked for a value above zero.
-  const valueCheck = checkActivityValue(typedValue.text, typedValue.locale);
-  // What the other convention would have read — named on screen, so a 1000×
-  // misreading is visible before saving (qa F2).
-  const otherReading = valueCheck.ok ? alternativeReading(typedValue.text, typedValue.locale) : null;
+  // Sent as a JSON number (D15). Zero and below are not activity: the form has
+  // always asked for a value above zero.
+  const valueCheck = checkDecimal(activity.parsed, "positive");
   const numericValue = valueCheck.ok ? valueCheck.value : NaN;
   // Mirrors the API's `activity_type_required`: a typed category's record
   // names its activity type — unless it is a record written before LP3-03,
@@ -581,18 +566,7 @@ function DataEntryPageInner() {
         setPreviewError(null);
       } catch (e) {
         setPreview(null);
-        // The refusal's code says WHICH gap it is — no factor, a placeholder
-        // refused, a conversion not loaded (LP3-03) — and the catalogue words
-        // each in the user's language. Outside the one year the prototype
-        // library covers, a 404 also names the year that does work (DE-9
-        // opened the list to 2015–2026), so a tester picking 2018 sees a
-        // boundary of the demo data, not a broken app.
-        const { title } = describeError(e);
-        setPreviewError(
-          e instanceof ApiError && e.status === 404 && reportingYear !== DEFAULT_REPORTING_YEAR
-            ? `${title} ${t("previewYearHint", { year: String(DEFAULT_REPORTING_YEAR) })}`
-            : title,
-        );
+        setPreviewError({ error: e, year: reportingYear });
       } finally {
         setPreviewing(false);
       }
@@ -665,7 +639,7 @@ function DataEntryPageInner() {
     setPeriodValue(rec.periodValue);
     setCategory(rec.category as Category);
     setActivityType(rec.activityType ?? "");
-    setActivityValue(formatDecimalInput(rec.activityValue, locale));
+    activity.setValue(rec.activityValue);
     setActivityUnit(rec.activityUnit);
     setContext((rec.input as ContextValues | null) ?? {});
     setVerdict(verdictOf(rec));
@@ -721,7 +695,7 @@ function DataEntryPageInner() {
   ]);
 
   function resetForm() {
-    setActivityValue("");
+    activity.setValue(null);
     setContext({});
     setPreview(null);
     setPreviewError(null);
@@ -879,6 +853,23 @@ function DataEntryPageInner() {
   }
 
   const isBusy = saving !== null;
+
+  // The refusal's code says WHICH gap it is — no factor, a placeholder
+  // refused, a conversion not loaded (LP3-03) — and is worded here, in the
+  // current language. Outside the one year the prototype library covers, a 404
+  // also names the year that does work (DE-9 opened the list to 2015–2026), so
+  // a tester picking 2018 sees a boundary of the demo data, not a broken app.
+  const previewErrorShown: ErrorDescription | null = (() => {
+    if (!previewError) return null;
+    const { title, description } = describeError(previewError.error);
+    const hint =
+      previewError.error instanceof ApiError &&
+      previewError.error.status === 404 &&
+      previewError.year !== DEFAULT_REPORTING_YEAR
+        ? ` ${t("previewYearHint", { year: String(DEFAULT_REPORTING_YEAR) })}`
+        : "";
+    return { title: `${title}${hint}`, ...(description ? { description } : {}) };
+  })();
 
   // --- Render ---------------------------------------------------------------
 
@@ -1189,37 +1180,18 @@ function DataEntryPageInner() {
                         autoComplete="off"
                         placeholder={t("activityValuePlaceholder")}
                         value={activityValue}
-                        onChange={(e) => setActivityValue(e.target.value)}
+                        onChange={(e) => activity.setText(e.target.value)}
                         aria-invalid={activityValue.trim() !== "" && !valueCheck.ok}
                         aria-describedby="activity-value-note"
                       />
-                      <p id="activity-value-note" className="mt-1 min-h-4 text-xs" aria-live="polite">
-                        {valueCheck.ok ? (
-                          otherReading !== null ? (
-                            <span className="text-muted-foreground">
-                              {tNumbers("readAsNot", {
-                                value: formatDecimalInput(valueCheck.value, locale),
-                                other: formatDecimalInput(otherReading, locale),
-                              })}
-                            </span>
-                          ) : (
-                            valueCheck.grouped && (
-                              <span className="text-muted-foreground">
-                                {tNumbers("readAs", { value: formatDecimalInput(valueCheck.value, locale) })}
-                              </span>
-                            )
-                          )
-                        ) : valueCheck.reason === "empty" ? null : (
-                          <span className="text-destructive">
-                            {valueCheck.reason === "not_positive"
-                              ? tNumbers("notPositive")
-                              : tNumbers(
-                                  valueCheck.reason === "wrong_decimal_separator" ? "wrongDecimalSeparator" : "invalid",
-                                  { example: `45000${NUMBER_SEPARATORS[locale].decimal}5` },
-                                )}
-                          </span>
-                        )}
-                      </p>
+                      {/* What the other convention would have read is named, so a
+                          1000× misreading is visible before saving. */}
+                      <DecimalNote
+                        id="activity-value-note"
+                        check={valueCheck}
+                        otherReading={activity.otherReading}
+                        locale={activity.locale}
+                      />
                     </Field>
                     <Field label={t("unit")}>
                       <Select value={activityUnit} onValueChange={setActivityUnit}>
@@ -1465,7 +1437,7 @@ function DataEntryPageInner() {
               <PreviewCard
                 previewing={previewing}
                 preview={preview}
-                error={previewError}
+                error={previewErrorShown}
                 hasValidInput={hasValidInput}
                 geographyCode={effectiveGeography}
               />
@@ -1528,7 +1500,7 @@ function PreviewCard({
 }: {
   previewing: boolean;
   preview: ActivityCalculationSnapshot | null;
-  error: string | null;
+  error: ErrorDescription | null;
   hasValidInput: boolean;
   geographyCode: string | null;
 }) {
@@ -1552,7 +1524,10 @@ function PreviewCard({
         ) : error ? (
           <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>{error}</span>
+            <span className="space-y-1">
+              <span className="block">{error.title}</span>
+              {error.description && <span className="block text-xs text-amber-700/80">{error.description}</span>}
+            </span>
           </div>
         ) : previewing || !preview ? (
           <div className="space-y-3">

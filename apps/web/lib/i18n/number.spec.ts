@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   alternativeReading,
   checkActivityValue,
+  checkDecimal,
+  parseYearInput,
   formatDecimalInput,
   formatNumber,
   parseLocaleDecimal,
@@ -157,6 +159,39 @@ describe("checkActivityValue — Data Entry's rule", () => {
     expect(checkActivityValue("", "tr")).toEqual({ ok: false, reason: "empty" });
     expect(checkActivityValue("1234.5", "tr")).toEqual({ ok: false, reason: "wrong_decimal_separator" });
     expect(checkActivityValue("1e3", "en")).toEqual({ ok: false, reason: "invalid" });
+  });
+});
+
+describe("checkDecimal — a field's range on top of the grammar (Targets, Intensity)", () => {
+  it("non_negative: zero passes, below zero does not", () => {
+    expect(checkDecimal(parseLocaleDecimal("0", "tr"), "non_negative")).toEqual({ ok: true, value: 0, grouped: false });
+    expect(checkDecimal(parseLocaleDecimal("1.600", "tr"), "non_negative")).toEqual({ ok: true, value: 1600, grouped: true });
+    expect(checkDecimal(parseLocaleDecimal("-1", "en"), "non_negative")).toEqual({ ok: false, reason: "negative" });
+  });
+
+  it("positive: zero does not pass", () => {
+    expect(checkDecimal(parseLocaleDecimal("0", "en"), "positive")).toEqual({ ok: false, reason: "not_positive" });
+  });
+
+  it("the grammar's refusals pass through — 45,000 in Turkish is never 45", () => {
+    expect(checkDecimal(parseLocaleDecimal("45,000", "tr"), "non_negative")).toEqual({ ok: true, value: 45, grouped: false });
+    expect(alternativeReading("45,000", "tr")).toBe(45000);
+    expect(checkDecimal(parseLocaleDecimal("45.000,5", "en"), "positive")).toEqual({ ok: false, reason: "invalid" });
+  });
+});
+
+describe("parseYearInput — four digits, in every locale", () => {
+  it.each([
+    ["2030", 2030],
+    [" 2023 ", 2023],
+    ["2.030", null],
+    ["2,030", null],
+    ["203", null],
+    ["20300", null],
+    ["", null],
+    ["2030.0", null],
+  ] as const)("%j → %s", (input, expected) => {
+    expect(parseYearInput(input)).toBe(expected);
   });
 });
 

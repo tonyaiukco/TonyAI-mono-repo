@@ -48,6 +48,29 @@ describe("a code the catalogue knows", () => {
   });
 });
 
+describe("a calculation refusal keeps its lookup-specific English (independent review P3-7)", () => {
+  const sentence = 'Unit "litres" is not valid for "Electricity". Accepted: kWh, MWh.';
+  const refusal = new ApiError(sentence, 400, "unit_not_for_category");
+
+  it("English: the server's sentence, which names the unit, category and accepted units — as before LP3-01", () => {
+    expect(describe_(refusal, "en")).toEqual({ title: sentence });
+  });
+
+  it("Turkish: the catalogue's sentence, with the English detail beneath", () => {
+    expect(describe_(refusal, "tr")).toEqual({ title: MESSAGES.tr.errors.codes.unit_not_for_category, description: sentence });
+  });
+
+  it("with no sentence to show, the catalogue's alone", () => {
+    const bare = new ApiError("API 404", 404, "no_factor");
+    expect(describe_(bare, "en")).toEqual({ title: MESSAGES.en.errors.codes.no_factor });
+  });
+
+  it("other specific codes are still worded by the catalogue alone", () => {
+    const changed = new ApiError("This record was changed by someone else…", 409, "record_changed");
+    expect(describe_(changed, "tr")).toEqual({ title: MESSAGES.tr.errors.codes.record_changed });
+  });
+});
+
 describe("a generic code, or none (decision K5)", () => {
   it("English: the server's own sentence, exactly as before LP3-01", () => {
     const e = new ApiError("Only super_admin may manage targets", 403, "forbidden");

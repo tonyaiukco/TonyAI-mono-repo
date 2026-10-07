@@ -151,14 +151,31 @@ export function formatNumber(value: number, locale: Locale, options: Intl.Number
   return formatter.format(value);
 }
 
-export type ActivityValueCheck =
+/** The range a field accepts, on top of the grammar. */
+export type DecimalRule = "positive" | "non_negative";
+
+export type DecimalCheck =
   | { ok: true; value: number; grouped: boolean }
-  | { ok: false; reason: "empty" | "invalid" | "wrong_decimal_separator" | "not_positive" };
+  | { ok: false; reason: "empty" | "invalid" | "wrong_decimal_separator" | "not_positive" | "negative" };
+
+/** A parsed field against its range: above zero, or zero and above. */
+export function checkDecimal(parsed: DecimalParse, rule: DecimalRule): DecimalCheck {
+  if (!parsed.ok) return parsed;
+  if (rule === "positive" && parsed.value <= 0) return { ok: false, reason: "not_positive" };
+  if (rule === "non_negative" && parsed.value < 0) return { ok: false, reason: "negative" };
+  return parsed;
+}
+
+export type ActivityValueCheck = DecimalCheck;
 
 /** Data Entry's rule for an activity value: a number in the user's locale, above zero. */
 export function checkActivityValue(input: string, locale: Locale): ActivityValueCheck {
-  const parsed = parseLocaleDecimal(input, locale);
-  if (!parsed.ok) return parsed;
-  if (parsed.value <= 0) return { ok: false, reason: "not_positive" };
-  return parsed;
+  return checkDecimal(parseLocaleDecimal(input, locale), "positive");
+}
+
+/** A four-digit year as typed: digits only, in every locale — a separator in a
+ *  year is never a reading to guess at. */
+export function parseYearInput(input: string): number | null {
+  const text = input.trim();
+  return /^\d{4}$/.test(text) ? Number(text) : null;
 }

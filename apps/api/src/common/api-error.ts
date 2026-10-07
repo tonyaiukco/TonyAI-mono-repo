@@ -1,5 +1,6 @@
 import { HttpException, NotFoundException } from '@nestjs/common';
 import {
+  API_ERROR_PARAMS,
   API_ERROR_STATUS,
   genericErrorCode,
   isApiErrorCode,
@@ -81,12 +82,18 @@ export class ResourceNotFoundError extends NotFoundException {
   }
 }
 
-/** Only plain string or finite-number params, keyed by plain names. */
-function cleanParams(raw: unknown): ApiErrorParams | undefined {
+/**
+ * Exactly the params `code` declares (`API_ERROR_PARAMS`), each a plain string
+ * or finite number — never another key, so an id or caller text cannot ride
+ * along, and none at all for a code that declares none (a generic code, or one
+ * downgraded because its status did not match — independent review P3-2).
+ */
+function cleanParams(raw: unknown, code: ApiErrorCode): ApiErrorParams | undefined {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const params: Record<string, string | number> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (!/^[a-zA-Z][a-zA-Z0-9]*$/.test(key)) continue;
+  for (const key of API_ERROR_PARAMS[code] ?? []) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
+    const value = (raw as Record<string, unknown>)[key];
     if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) params[key] = value;
   }
   return Object.keys(params).length > 0 ? params : undefined;
@@ -103,7 +110,8 @@ const SERVER_ERROR_MESSAGE = 'Internal server error';
  *     the status's generic code (a validation refusal arrives already coded
  *     by the pipe);
  *   - every other field of an object response is kept as it was (a
- *     calculation refusal's `coverage`, a batch's `failed`), `params` cleaned.
+ *     calculation refusal's `coverage`, a batch's `failed`); `params` keep only
+ *     what the final code declares.
  */
 export function toErrorBody(status: number, raw: unknown): ApiErrorBody & Record<string, unknown> {
   if (status >= 500) {
@@ -122,7 +130,11 @@ export function toErrorBody(status: number, raw: unknown): ApiErrorBody & Record
   const object = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const { params: rawParams, code: rawCode, ...rest } = object;
   const message = rest.message;
-  const params = cleanParams(rawParams);
+  // A code answers with its own status or not at all — a screen that keys
+  // on `record_changed` must never see it on, say, a 400.
+  const code: ApiErrorCode =
+    isApiErrorCode(rawCode) && API_ERROR_STATUS[rawCode] === status ? rawCode : genericErrorCode(status);
+  const params = cleanParams(rawParams, code);
   return {
     ...rest,
     statusCode: status,
@@ -134,9 +146,7 @@ export function toErrorBody(status: number, raw: unknown): ApiErrorBody & Record
       typeof message === 'string' || (Array.isArray(message) && message.every((m) => typeof m === 'string'))
         ? (message as string | string[])
         : (fallbackError ?? 'Error'),
-    // A code answers with its own status or not at all — a screen that keys
-    // on `record_changed` must never see it on, say, a 400.
-    code: isApiErrorCode(rawCode) && API_ERROR_STATUS[rawCode] === status ? rawCode : genericErrorCode(status),
+    code,
     ...(params ? { params } : {}),
   };
 }
