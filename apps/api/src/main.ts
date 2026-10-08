@@ -2,12 +2,10 @@ import 'reflect-metadata';
 import { initSentry } from './observability/sentry';
 import { assertAuthConfig } from './auth/token-verifier';
 import { bootFactorPolicy } from './calculations/factor-policy';
-import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { JsonLogger } from './observability/json-logger';
-import { LoggingInterceptor } from './observability/logging.interceptor';
-import { HttpExceptionFilter } from './observability/http-exception.filter';
+import { configureApp } from './app-setup';
 
 async function bootstrap() {
   // Sentry first, before Nest builds the app — a no-op unless SENTRY_DSN is
@@ -21,14 +19,9 @@ async function bootstrap() {
   const factorPolicy = bootFactorPolicy();
   const logger = new JsonLogger();
   const app = await NestFactory.create(AppModule, { logger });
-  app.setGlobalPrefix('api/v1');
-  app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
-  );
-  // Structured request logging + error reporting. The filter deliberately keeps
-  // Nest's response body shape (the web client reads `body.message`).
-  app.useGlobalInterceptors(new LoggingInterceptor(logger));
-  app.useGlobalFilters(new HttpExceptionFilter(logger));
+  // Prefix, validation, structured request logging and error reporting; every
+  // error body carries a code (LP3-01).
+  configureApp(app, logger);
 
   const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:3000';
   app.enableCors({

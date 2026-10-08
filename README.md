@@ -25,6 +25,7 @@ Track Scope 1/2/3 emissions across subsidiaries with audit‑ready, tenant‑iso
 - [Troubleshooting](#troubleshooting)
 - [Scripts](#scripts)
 - [API reference (current slice)](#api-reference-current-slice)
+- [Localisation and error codes](#localisation-and-error-codes)
 - [Data model](#data-model)
 - [Roles (RBAC)](#roles-rbac)
 - [Observability](#observability)
@@ -82,6 +83,7 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 | Audit-trail viewer (WP7) — read-only `/audit`, tenant-scoped and paginated, showing each actor's role **as recorded at the time** | ✅ |
 | Review queue (WP7) — `/review` turns the submit → review → approve/reject API into a screen: evidence and factor provenance in the detail sheet, rejection reason returned to the submitter | ✅ |
 | Subsidiary control panel at `/subsidiaries/[id]` (WP16) — detail, reporting contact, locations managed in place, and a dependents card that explains a refused delete in the API's own words. The geography change is confirmed and states what does **not** move (committed records keep their factor snapshot) | ✅ |
+| TR/EN foundation and stable error codes (LP3-01) — `use-intl` catalogues, the user's language saved to the profile, locale-aware numeric input on Data Entry, a `code` on every API error — see [Localisation and error codes](#localisation-and-error-codes); the remaining screens are LP4-04 | ✅ foundation |
 | Dashboard matrix drill-in (WP7) — a cell opens Data Entry for that subsidiary **and** category, reopening the existing record when there is one; the grid is scoped to one reporting year | ✅ |
 
 **What's proven by tests today:** an `admin` sees all 5 seeded subsidiaries, a `data_entry` user sees only their 2, non‑admins are blocked from writes (HTTP 403), unauthenticated requests are rejected (HTTP 401), and every mutation writes an immutable `audit_log` row — verified at the API layer **and** the database (RLS) layer.
@@ -122,7 +124,7 @@ flowchart LR
 
 | Layer | Technology |
 | --- | --- |
-| **Frontend** | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, shadcn/ui, Recharts, Zustand, `@supabase/ssr` |
+| **Frontend** | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, shadcn/ui, Recharts, Zustand, `@supabase/ssr`, `use-intl` (TR/EN catalogues) |
 | **Backend** | NestJS 11, Prisma 6 ORM, `class-validator`, `jose` (Supabase JWT verification — HS256 + JWKS) |
 | **Database / Auth / Storage** | Supabase (PostgreSQL + RLS, Auth, Storage) |
 | **Shared** | `@tonyai/shared-types` — domain + API contracts used by both apps |
@@ -203,6 +205,7 @@ Recurring procedures are packaged as **skills** in [`.claude/skills/`](.claude/s
 | **e2e-flow** | Add a Playwright E2E spec or an RLS/API probe against the running local stack (shared login / API-token / safe-period / evidence-upload / teardown helpers) |
 | **report-generation** | Add a server-generated, tenant-scoped file artifact (PDF via Puppeteer / Excel / CSV) streamed as an audited download |
 | **bulk-ingest** | Import many rows from an uploaded CSV/XLSX through the resource's own create service, with a dry run that provably writes nothing |
+| **localise-ui** | Put a screen's copy in the TR/EN catalogues, add a stable API error code end to end, read and show numbers and dates by locale (LP3-01) |
 
 The relevant subagents (`backend-integrator`, `architect`, `security-rls`) have `Skill` access and invoke these automatically.
 
@@ -395,7 +398,8 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/h
 | `GET` | `/health` | Process liveness | public |
 | `GET` | `/health/ready` | Bounded DB and private-Storage readiness | public |
 | `GET` | `/health/synthetic` | Authenticated dependency readiness | any |
-| `GET` | `/me` | Current user + role + `accessibleSubsidiaryIds` | any |
+| `GET` | `/me` | Current user + role + `accessibleSubsidiaryIds` + UI `language` (`en`/`tr`) | any |
+| `PATCH` | `/me/preferences` | Set the caller's own UI language (`{ language: "en" \| "tr" }`); audited; answers the updated user | any |
 | `GET` | `/subsidiaries` | List (tenant‑scoped). Includes the reporting contact (`designatedPerson` / `contactEmail` / `contactPhone`), which is **deliberately visible to every role in the tenant** — see `permissions_and_roles.md` §6.4 for the decision and its consequences | any |
 | `GET` | `/subsidiaries/:id` | Get one (404 if outside access set) | any |
 | `GET` | `/subsidiaries/:id/summary` | Counts of everything hanging off it (locations, records split into approved/locked · awaiting review · draft/rejected, period locks, targets, denominators), plus `hasBlockingDependents` and `blockers[]` — the delete guard's own sentences, so a UI never restates them. Exists so a caller can show "36 records" without downloading 36 records, and can see **why** a delete would be refused without attempting it | any |
@@ -485,13 +489,28 @@ Period locking (FR §4.2): a `super_admin` closes one subsidiary's reporting per
 
 ---
 
+## Localisation and error codes
+
+LP3-01 laid the foundation the remaining screens (LP4-04), onboarding (LP4-01) and reports (LP4-03) build on. Turkish UI copy lives **only** in the `tr` catalogue (CLAUDE.md's one exception); keys, code and docs stay English. Recipes: the [`localise-ui`](.claude/skills/localise-ui/SKILL.md) skill.
+
+- **Framework.** [`use-intl`](https://next-intl.dev/docs/environments/core-library) 4 (next-intl's core, pinned) behind a client `I18nProvider` (`apps/web/components/i18n/`). Every page is a client component behind sign-in, so neither locale routing nor next-intl's server and extractor layers are used.
+- **Which language.** `profiles.language` is the truth; the `tonyai-locale` cookie mirrors it for the first paint. The root layout resolves cookie → `Accept-Language` → English, and once `/me` answers, the profile wins (`LocaleSync`). The sidebar's switcher saves through `PATCH /me/preferences` (audited).
+- **Catalogues.** `apps/web/messages/{en,tr}/<namespace>.json`, one file per namespace so parallel features do not collide: `common`, `nav` (app shell), `errors` (`codes.<ApiErrorCode>`), `numbers`, `periods` (`granularity.*`, `values.*` by canonical value), `categories` (by canonical value), `dataEntry`. A new screen adds its own namespace. English is the source type; `messages.spec.ts` holds every locale to the same keys and ICU arguments, every registered error code to a sentence, and every canonical category and period to a label.
+- **Error body.** Every API error carries `code` from the registry in `@tonyai/shared-types` (`API_ERROR_STATUS`): `{ statusCode, code, message, error?, params? }` plus a refusal's own fields (`coverage`, `failed`, …). `message` stays the English sentence (logs, older readers, e2e). Specific codes are thrown with `errorBody(code, …)` / `ResourceNotFoundError` (`apps/api/src/common/api-error.ts`); anything else gets its status's generic code from the exception filter, and DTO refusals answer `validation_failed`. **Every 5xx is `internal_error` with no cause in the body** (it goes to the logs and Sentry). A `*_not_found` code names the kind of thing, never why, and carries no params — another organisation's id and a missing one answer byte-for-byte the same (`tenant-isolation.int.spec.ts`). `params` carry exactly the keys their code declares (`API_ERROR_PARAMS`) — canonical values, never ids or caller text; the filter drops any other key, and all params when a code is downgraded. A specific code always answers its own status; `bad_request` is the code of any 4xx without one of its own (405, 410, 422, …) and `internal_error` of any 5xx. **Stability:** a code is added, never renamed or reworded into another; a route may move from a generic code to a specific one (subsidiaries, locations, targets, intensity and import batches still answer 404 as `not_found`), never from one specific code to another. Per-row outcomes keep their own vocabularies (`BULK_UPLOAD_ISSUE_CODES`, `BULK_SUBMIT_ISSUE_CODES`, `EvidenceLinkRefusal.reason`) until LP4-04 words them.
+- **On screen.** `describeApiError` (`apps/web/lib/i18n/errors.ts`): a specific code → its catalogue sentence in the user's language; a generic code → in English the server's own sentence (as before LP3-01), in Turkish the generic sentence with the server's English beneath it (decision K5) until LP4-04 codes the remaining ~60 sentences; a calculation refusal is worded the same way, because its English names the lookup (unit, category, accepted units) that its params do not carry yet; 401, 429 and 5xx → the catalogue's sentence; a network failure → `errors.network`.
+- **Numbers (D15).** UI input follows the user's locale — Turkish `1.234,5`, English `1,234.5` — under a strict grammar (`apps/web/lib/i18n/number.ts`): no spaces, exponents or `+`; a separator that cannot be a thousands separator in that locale (`1234.5` or `1.23` in Turkish, `1,5` in English) is refused with a reason, never guessed; a grouped input is echoed as read, and an input the other convention would read as a different number (`1.234`, `45,000`) is echoed with the reading it was NOT; a language change re-renders a typed value from the number it meant. Every quantity field goes through `useDecimalInput` + `DecimalNote` — Data Entry's activity value, the target baseline and target, the intensity denominator — never `type="number"`, whose reading follows the browser rather than the user. The wire value is always a JSON number. **CSV stays dot-only** (the importer's `strictNumber`) and **XLSX numeric cells are taken as numbers**, whatever the user's language. **Not yet delivered:** D15's "CSV interpretation previewed" — the dry run does not show the quantity it read from each row, so a Turkish `1.234` in a CSV (read as 1.234) is not shown back; assigned to LP4-04 as a G4 gate (owner, 2026-10-08). Display: `formatNumber` (`en` → `en-GB`, `tr` → `tr-TR`).
+- **Dates.** On the wire, timestamps are ISO 8601 UTC and calendar dates `YYYY-MM-DD`; a reporting period travels as its canonical value (`January`, `Q1`, `Annual`) and year as an integer, translated only for display (`periods.values.*`). Screens show dates with `Intl.DateTimeFormat` for the locale's tag in the viewer's time zone. Nothing parses a localised date string; CSV and report exports keep ISO dates.
+- **Report and email language (D16 — the convention LP4-01/LP4-03 implement).** A report's language is chosen at generation (`language` parameter), defaulting to the requester's `profiles.language`, and is recorded in the report's audit row. An email is sent in the recipient's `profiles.language`; an invitation in the language its inviter chose, stored on the invitation. Server-side copy lives beside its module (`apps/api/src/<module>/i18n/{en,tr}.json`) in the same ICU format, rendered with `intl-messageformat` (no React). It is ESM-only, so the CommonJS API loads it through `require(esm)`: Node ≥ 22.12 (CI and the image run Node 22) — the first server-side catalogue must raise the prerequisite below from Node ≥ 20. PDF and XLSX headings follow the report language; **CSV headers stay fixed English machine keys**, CSV numbers stay dot-decimal and XLSX figures stay numeric cells in every language. Never recompute or reinterpret a stored figure for a language. **Auth emails (invitation, password reset) are LP4-01's first decision:** Supabase Auth sends them from its own templates, which cannot read `profiles.language` — route them through the API (a Send-Email Auth Hook, or `auth.admin.generateLink` and the API sends the mail) rather than mirroring the language into `user_metadata`.
+
+---
+
 ## Data model
 
 Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `Profile.id` mirrors `auth.users.id`.
 
 | Table | Purpose |
 | --- | --- |
-| `profiles` | App user: role, organisation, locale/theme (1:1 with an auth user) |
+| `profiles` | App user: role, organisation, UI language (`en`/`tr`, CHECK; the runtime may update it — LP3-01) and theme (1:1 with an auth user) |
 | `organisations` | The holding company (top of the hierarchy) |
 | `subsidiaries` | Companies within an organisation (geography, sector, status, included scopes, reporting contact, and `tracking_granularity` — whether completeness is measured for the whole entity or per location) |
 | `locations` | Facilities within a subsidiary |

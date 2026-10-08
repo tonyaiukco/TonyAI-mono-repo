@@ -1092,6 +1092,41 @@ export const SCOPE3_SUBCATEGORIES = [
 ] as const;
 
 // ---------------------------------------------------------------------------
+// Locales (LP3-01)
+// ---------------------------------------------------------------------------
+
+/**
+ * The languages the product speaks. `profiles.language` holds one of these
+ * (a CHECK constraint since LP3-01), and so does the web's locale cookie.
+ *
+ * A locale changes how a value is SHOWN and how a typed one is READ — never
+ * what is stored or sent: the wire carries JSON numbers, ISO dates and the
+ * canonical vocabularies (`PERIOD_VALUES`, `CATEGORIES`) in every locale (D15).
+ */
+export const SUPPORTED_LOCALES = ['en', 'tr'] as const;
+export type Locale = (typeof SUPPORTED_LOCALES)[number];
+export const DEFAULT_LOCALE: Locale = 'en';
+
+/**
+ * The BCP 47 tag each locale formats numbers and dates with. English is
+ * British English — a UK product, and what every screen formatted with before
+ * LP3-01 (`'en-GB'`).
+ */
+export const LOCALE_FORMAT_TAGS: Readonly<Record<Locale, string>> = Object.freeze({
+  en: 'en-GB',
+  tr: 'tr-TR',
+});
+
+export function isLocale(value: unknown): value is Locale {
+  return typeof value === 'string' && (SUPPORTED_LOCALES as readonly string[]).includes(value);
+}
+
+/** PATCH /api/v1/me/preferences — the caller's own preferences. */
+export interface UpdatePreferencesRequest {
+  language: Locale;
+}
+
+// ---------------------------------------------------------------------------
 // API contract types (backend <-> frontend) — Milestone 1 vertical slice
 // ---------------------------------------------------------------------------
 
@@ -1103,7 +1138,8 @@ export interface AuthUser {
   role: UserRole;
   organisationId: string | null;
   accessibleSubsidiaryIds: string[];
-  language: string;
+  /** The UI language the user chose — `en` until they choose. */
+  language: Locale;
   theme: string;
 }
 
@@ -1991,6 +2027,150 @@ export interface CalculationRefusalBody {
   message: string;
   code: CalculationRefusalCode;
   coverage?: CoverageKey;
+}
+
+// ---------------------------------------------------------------------------
+// Error codes and the error body (LP3-01)
+// ---------------------------------------------------------------------------
+//
+// Every error the API answers carries a `code` from this registry, and a
+// screen shows the message its language's catalogue holds for that code — the
+// English `message` is for logs and for the fallback below. A code is a
+// contract: renaming one breaks every catalogue, so add codes, never reword
+// them. Recipe: `.claude/skills/localise-ui`.
+
+/**
+ * Codes that name only the HTTP status. The API's exception filter gives one
+ * to every error that carries no code of its own, so a body never lacks a
+ * code; a screen shows its catalogue's generic sentence for it (in English,
+ * the server's own `message`, which is more specific — decision K5 of LP3-01).
+ *
+ * Two of them cover a range rather than their one status: `bad_request` is
+ * the code of ANY 4xx without one of its own (405, 410, 422, …), and
+ * `internal_error` of any 5xx. Every other code always answers exactly the
+ * status listed here.
+ */
+export const GENERIC_ERROR_STATUS = Object.freeze({
+  /** 400, and any other 4xx without a code of its own. */
+  bad_request: 400,
+  /** A DTO refused the body or query; `message` lists the fields. */
+  validation_failed: 400,
+  unauthorized: 401,
+  forbidden: 403,
+  not_found: 404,
+  conflict: 409,
+  payload_too_large: 413,
+  rate_limited: 429,
+  /** Any 5xx — the one code whose status is a range, not only 500. Its body
+   *  never carries the cause; that goes to the logs. */
+  internal_error: 500,
+} as const);
+export type GenericErrorCode = keyof typeof GENERIC_ERROR_STATUS;
+
+/**
+ * Codes for refusals a screen words on its own.
+ *
+ * A `*_not_found` code names the KIND of thing the caller asked for, never
+ * why it was not found: an id of another organisation and an id that does not
+ * exist answer the same code and the same body (tenant-isolation.int.spec.ts
+ * compares them byte for byte). No 404 carries params.
+ */
+export const DOMAIN_ERROR_STATUS = Object.freeze({
+  /** A path id that is not a UUID. */
+  invalid_id: 400,
+  /** params: `category` (canonical, from `CATEGORIES`). */
+  evidence_required: 400,
+  variance_reason_required: 400,
+  record_create_forbidden: 403,
+  record_submit_forbidden: 403,
+  /** Only a record's author submits or resubmits it (D02). */
+  record_author_forbidden: 403,
+  /** Segregation of duties (D01). */
+  self_approval_forbidden: 403,
+  subsidiary_not_found: 404,
+  location_not_found: 404,
+  record_not_found: 404,
+  evidence_not_found: 404,
+  /** The row exists but its bytes are gone from Storage (reported to operators). */
+  evidence_content_missing: 404,
+  period_lock_not_found: 404,
+  user_not_found: 404,
+  access_grant_not_found: 404,
+  /** One record per reporting entity, period, category and activity type. */
+  record_duplicate: 409,
+  /** params: `period` (canonical, from `PERIOD_VALUES`) and `year`. */
+  period_locked: 409,
+  /** LP1-01's lost race: someone else changed the record first. */
+  record_changed: 409,
+  /** The slot holds an untyped record; this one names an activity type (TA002). */
+  slot_holds_untyped: 409,
+  /** The slot holds typed records; this one names none (TA002). */
+  slot_holds_typed: 409,
+  /** The record has left draft; its figure is frozen (TA001). */
+  snapshot_immutable: 409,
+  upload_expired: 409,
+} as const);
+export type DomainErrorCode = keyof typeof DOMAIN_ERROR_STATUS;
+
+export type ApiErrorCode = GenericErrorCode | DomainErrorCode | CalculationRefusalCode;
+
+/** Every code, with the status it answers with. */
+export const API_ERROR_STATUS: Readonly<Record<ApiErrorCode, number>> = Object.freeze({
+  ...GENERIC_ERROR_STATUS,
+  ...DOMAIN_ERROR_STATUS,
+  ...CALCULATION_REFUSAL_STATUS,
+});
+
+export const API_ERROR_CODES = Object.freeze(Object.keys(API_ERROR_STATUS)) as readonly ApiErrorCode[];
+
+/**
+ * The params each code carries — exactly these keys, every time — so a
+ * catalogue message can name them (`{period}`). A code absent here carries
+ * none. Values are canonical (a `PERIOD_VALUES` or `CATEGORIES` entry, a year),
+ * never caller text or an id, and the web translates the vocabularies.
+ */
+export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly string[]>>> =
+  Object.freeze({
+    evidence_required: Object.freeze(['category']),
+    period_locked: Object.freeze(['period', 'year']),
+  });
+
+export type ApiErrorParams = Readonly<Record<string, string | number>>;
+
+/**
+ * The body of every API error. Additive over Nest's default — `statusCode`,
+ * `message` and `error` keep their meaning — so older readers and the e2e
+ * suite's message assertions keep working; a refusal may add fields of its
+ * own (a calculation refusal's `coverage`, a batch's `failed` or `refused`).
+ */
+export interface ApiErrorBody {
+  statusCode: number;
+  code: ApiErrorCode;
+  /** English. A DTO refusal lists one sentence per field. */
+  message: string | string[];
+  error?: string;
+  params?: ApiErrorParams;
+}
+
+export function isApiErrorCode(value: unknown): value is ApiErrorCode {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(API_ERROR_STATUS, value);
+}
+
+export function isGenericErrorCode(value: unknown): value is GenericErrorCode {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(GENERIC_ERROR_STATUS, value);
+}
+
+/**
+ * The generic code for a status the API answered with: `internal_error` for
+ * any 5xx, the status's own code where one exists, otherwise `bad_request`.
+ */
+export function genericErrorCode(status: number): GenericErrorCode {
+  if (status >= 500) return 'internal_error';
+  for (const [code, codeStatus] of Object.entries(GENERIC_ERROR_STATUS)) {
+    // `validation_failed` shares 400 with `bad_request`; only the pipe says which.
+    if (codeStatus === status && code !== 'validation_failed') return code as GenericErrorCode;
+  }
+  return 'bad_request';
 }
 
 /** Anything resolution ranks: a factor or a conversion, with its release. */

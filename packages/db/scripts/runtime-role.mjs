@@ -131,7 +131,7 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // The library's record: written by its own triggers only, and not read by
   // the API yet — the grant arrives with its first reader.
   factor_release_events: [],
-  // + UPDATE on (role, updated_at) only — see RUNTIME_COLUMN_UPDATES.
+  // + UPDATE on (role, language, updated_at) only — see RUNTIME_COLUMN_UPDATES.
   profiles: ['SELECT'],
   user_subsidiary_access: ['SELECT', 'INSERT', 'DELETE'],
   // + UPDATE on every column but its identity and organisation — see
@@ -155,9 +155,10 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
 
 /** Column-level UPDATE grants on tables whose table-level UPDATE is withheld. */
 export const RUNTIME_COLUMN_UPDATES = Object.freeze({
-  // The role is the one profile attribute that changes at runtime
-  // (AccessAdminService); the organisation never does (D17).
-  profiles: ['role', 'updated_at'],
+  // The role changes at runtime (AccessAdminService), and so does the UI
+  // language, the user's own (LP3-01, PATCH /me/preferences); the
+  // organisation never does (D17).
+  profiles: ['role', 'language', 'updated_at'],
   // Everything an edit changes; never `id` or `organisation_id`, so not even a
   // bug can move a subsidiary — and every record, file and lock under it — to
   // another tenant. A new column needs its grant here and in a migration.

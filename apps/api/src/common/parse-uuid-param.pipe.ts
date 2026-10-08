@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, type PipeTransform } from '@nestjs/common';
+import { errorBody } from './api-error';
 
 /**
  * The canonical 8-4-4-4-12 hex form, and nothing about RFC 4122 beyond it.
@@ -41,7 +42,7 @@ export class ParseUuidParamPipe implements PipeTransform<string, string> {
   transform(value: string): string {
     if (typeof value !== 'string' || !UUID_SHAPE.test(value)) {
       throw new BadRequestException(
-        `"${value}" is not a valid id — expected a UUID.`,
+        errorBody('invalid_id', `"${value}" is not a valid id — expected a UUID.`),
       );
     }
     return value;

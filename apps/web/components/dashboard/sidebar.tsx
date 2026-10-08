@@ -1,31 +1,34 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { BarChart3, Building2, ChevronLeft, ChevronRight, ClipboardEdit, FileText, LayoutDashboard, Leaf, ScrollText, Settings, Stamp } from 'lucide-react';
+import { BarChart3, Building2, ChevronLeft, ChevronRight, ClipboardEdit, FileText, LayoutDashboard, Leaf, ScrollText, Stamp } from 'lucide-react';
 import { useState } from 'react';
+import { useTranslations } from 'use-intl';
+import { LanguageSwitcher } from '@/components/i18n/language-switcher';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const navItems = [
-  { id: 'overview', label: 'Dashboard', icon: LayoutDashboard, href: '/' },
-  { id: 'data-entry', label: 'Data Entry', icon: ClipboardEdit, href: '/data-entry' },
-  { id: 'subsidiaries', label: 'Subsidiaries', icon: Building2, href: '/subsidiaries' },
-  { id: 'emissions', label: 'Emissions', icon: BarChart3, href: '/emissions' },
+  { id: 'overview', label: 'dashboard', icon: LayoutDashboard, href: '/' },
+  { id: 'data-entry', label: 'dataEntry', icon: ClipboardEdit, href: '/data-entry' },
+  { id: 'subsidiaries', label: 'subsidiaries', icon: Building2, href: '/subsidiaries' },
+  { id: 'emissions', label: 'emissions', icon: BarChart3, href: '/emissions' },
   // Sits next to Emissions because that is where the records it decides live.
   // Shown to every role for the same reason as the audit item below: the page
   // explains who may review, which a missing nav entry cannot.
-  { id: 'review', label: 'Review Queue', icon: Stamp, href: '/review' },
-  { id: 'reports', label: 'Reports', icon: FileText, href: '/reports' },
+  { id: 'review', label: 'review', icon: Stamp, href: '/review' },
+  { id: 'reports', label: 'reports', icon: FileText, href: '/reports' },
   // super_admin-only: the API 403s every other role, and the page says so
   // rather than hiding — a missing nav item reads as a bug to a tester.
-  { id: 'audit', label: 'Audit Trail', icon: ScrollText, href: '/audit' },
-];
+  { id: 'audit', label: 'audit', icon: ScrollText, href: '/audit' },
+] as const;
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
+  const t = useTranslations('nav');
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -43,7 +46,7 @@ export function Sidebar() {
           {!collapsed && (
             <div className="flex flex-col">
               <span className="text-lg font-bold text-[#1D1D1F]">TonyAI</span>
-              <span className="text-xs font-medium text-[#6E6E73]">Sustainability Platform</span>
+              <span className="text-xs font-medium text-[#6E6E73]">{t('platform')}</span>
             </div>
           )}
         </div>
@@ -69,7 +72,7 @@ export function Sidebar() {
                   'h-5 w-5 shrink-0',
                   isActive ? 'text-white' : 'text-[#6E6E73]'
                 )} />
-                {!collapsed && <span>{item.label}</span>}
+                {!collapsed && <span>{t(item.label)}</span>}
               </Link>
             );
 
@@ -78,7 +81,7 @@ export function Sidebar() {
                 <Tooltip key={item.id}>
                   <TooltipTrigger asChild>{linkContent}</TooltipTrigger>
                   <TooltipContent side="right" className="bg-[#1D1D1F] text-white border-0 font-semibold shadow-lg">
-                    {item.label}
+                    {t(item.label)}
                   </TooltipContent>
                 </Tooltip>
               );
@@ -88,28 +91,16 @@ export function Sidebar() {
           })}
         </nav>
 
-        {/* Settings & Collapse */}
+        {/* Language & Collapse. The language switcher replaces a Settings
+            button that had no handler (LP3-01). */}
         <div className="border-t border-[#D8D8DC] p-3">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-[#1D1D1F] transition-all duration-200 hover:bg-[#E0E0E5]"
-              >
-                <Settings className="h-5 w-5 shrink-0 text-[#6E6E73]" />
-                {!collapsed && <span>Settings</span>}
-              </button>
-            </TooltipTrigger>
-            {collapsed && (
-              <TooltipContent side="right" className="bg-[#1D1D1F] text-white border-0 font-semibold shadow-lg">
-                Settings
-              </TooltipContent>
-            )}
-          </Tooltip>
+          <LanguageSwitcher collapsed={collapsed} />
 
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setCollapsed(!collapsed)}
+            aria-label={collapsed ? t('expand') : t('collapse')}
             className="mt-2 w-full justify-center text-[#6E6E73] hover:text-[#1D1D1F] hover:bg-[#E0E0E5] font-semibold"
           >
             {collapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}

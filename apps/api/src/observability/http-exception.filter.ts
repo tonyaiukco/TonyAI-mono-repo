@@ -5,20 +5,23 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import { toErrorBody } from '../common/api-error';
 import { JsonLogger } from './json-logger';
 import { currentRequestContext } from './request-context';
 import { captureException } from './sentry';
 
 /**
- * Observability-only exception filter: it LOGS and REPORTS, it does not reshape.
+ * The exception filter: it LOGS and REPORTS every failure, and gives every
+ * error body a `code` (LP3-01, `toErrorBody` in common/api-error.ts).
  *
- * The response body is byte-compatible with Nest's default handling, because
- * the whole frontend reads `body.message` (apps/web/lib/api.ts) and every toast
- * in the app depends on it:
- *   - HttpException  → its own status + `getResponse()` passed through verbatim
- *     (including ValidationPipe's `message: string[]`).
- *   - anything else  → 500 `{ statusCode, message: 'Internal server error' }`,
- *     the same shape Nest produces, with the real error kept server-side.
+ * The body stays a superset of Nest's default — `statusCode`, `message` and
+ * `error` keep their meaning, so readers of `body.message` keep working:
+ *   - HttpException  → its own status, its response with a `code` added (its
+ *     own when it carries a registered one, else the status's generic code);
+ *     ValidationPipe's `message: string[]` is kept.
+ *   - a 5xx of any kind → `{ statusCode, code: 'internal_error', message:
+ *     'Internal server error' }`, with the real error kept server-side — an
+ *     InternalServerErrorException's own text (Storage's error, say) included.
  */
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -47,16 +50,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
       : isTooLarge
         ? HttpStatus.PAYLOAD_TOO_LARGE
         : HttpStatus.INTERNAL_SERVER_ERROR;
-    const body = isHttp
-      ? exception.getResponse()
-      : isTooLarge
-        ? {
-            statusCode: status,
-            message:
-              'Request body is too large. If you are creating a subsidiary with many locations, add them in smaller batches.',
-            error: 'Payload Too Large',
-          }
-        : { statusCode: status, message: 'Internal server error' };
+    const body = toErrorBody(
+      status,
+      isHttp
+        ? exception.getResponse()
+        : isTooLarge
+          ? {
+              message:
+                'Request body is too large. If you are creating a subsidiary with many locations, add them in smaller batches.',
+              error: 'Payload Too Large',
+            }
+          : undefined,
+    );
 
     const ctx = currentRequestContext();
     const path = String(request?.originalUrl ?? request?.url ?? '').split('?')[0];

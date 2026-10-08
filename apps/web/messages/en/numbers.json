@@ -1,0 +1,8 @@
+{
+  "invalid": "Enter a number, e.g. {example}.",
+  "wrongDecimalSeparator": "Use a point as the decimal separator, e.g. {example}.",
+  "notPositive": "Enter a value above zero.",
+  "readAs": "Read as {value}.",
+  "readAsNot": "Read as {value} — not {other}.",
+  "notNegative": "Enter zero or more."
+}

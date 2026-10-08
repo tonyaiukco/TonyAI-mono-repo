@@ -6,6 +6,7 @@ import {
   type OnModuleDestroy,
 } from '@nestjs/common';
 import { Prisma, StorageIntentKind } from '@tonyai/db';
+import { errorBody } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { captureException } from '../observability/sentry';
 import { StorageService } from './storage.service';
@@ -71,7 +72,7 @@ export function sweepIntervalSeconds(env: NodeJS.ProcessEnv = process.env): numb
  */
 export class UploadExpiredError extends ConflictException {
   constructor() {
-    super('The upload took too long and was discarded. Upload the file again.');
+    super(errorBody('upload_expired', 'The upload took too long and was discarded. Upload the file again.'));
   }
 }
 

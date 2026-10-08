@@ -24,7 +24,8 @@ Two tools work in parallel — one Claude Code session, one Codex session — an
 - **Git:** never push to `main`. Branch as `feat/`, `fix/`, `chore/`, `docs/`, `test/` or `refactor/`; conventional-commit messages; open a pull request. **The owner merges — never self-merge.** Commit and push only when the owner asked for it.
 - **Never invent emission-factor values**; cite source and version, and never present demo or prototype values as authoritative. Historic calculation snapshots are immutable.
 - **Never weaken tenant isolation** (the API guard and RLS), never `FORCE` RLS, never add an UPDATE or DELETE path to `audit_log`; every mutation writes one audit row.
-- **Runtime grants:** a new table needs its runtime grant in the migration and an entry in `packages/db/scripts/runtime-role.mjs`. LP3-01 language preference will need UPDATE (language) on `profiles`.
+- **Runtime grants:** a new table needs its runtime grant in the migration and an entry in `packages/db/scripts/runtime-role.mjs` (LP3-01 added `UPDATE (language)` on `profiles` this way).
+- **UI copy and API errors (LP3-01):** every user-facing string goes through the TR/EN catalogues in `apps/web/messages/`, and an API refusal a screen words gets a registered error code — follow [`.claude/skills/localise-ui/SKILL.md`](.claude/skills/localise-ui/SKILL.md) and README "Localisation and error codes".
 - **One source of types:** `@tonyai/shared-types`. The web reaches the API only through `apps/web/lib/api.ts`; the API persists only through Prisma.
 - **Keep `README.md` current** in the same PR as the change it describes.
 - **Never commit** `.env*` (except `.env.example`), `dist/`, `generated/` or `*.tsbuildinfo`.

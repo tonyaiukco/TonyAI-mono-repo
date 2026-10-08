@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { ResourceNotFoundError } from '../common/api-error';
 import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
 import {
   CATEGORIES,
@@ -798,7 +799,7 @@ export class EmissionsService {
     // Same "never leak existence" rule as every other tenant-scoped read: an
     // id outside the accessible set is not found, never forbidden.
     if (!user.accessibleSubsidiaryIds.includes(query.subsidiaryId)) {
-      throw new NotFoundException('Subsidiary not found');
+      throw new ResourceNotFoundError('subsidiary_not_found');
     }
 
     // Contemporaneous with the reported year, exactly as the matrix multiplier
@@ -835,7 +836,7 @@ export class EmissionsService {
       }),
     ]);
 
-    if (!subsidiary) throw new NotFoundException('Subsidiary not found');
+    if (!subsidiary) throw new ResourceNotFoundError('subsidiary_not_found');
 
     const empty: SubsidiaryCompletenessDTO = {
       subsidiaryId: query.subsidiaryId,

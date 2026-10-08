@@ -3,8 +3,8 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
-  NotFoundException,
 } from '@nestjs/common';
+import { ResourceNotFoundError } from '../common/api-error';
 import {
   ActivityRecordStatus,
   Prisma,
@@ -120,7 +120,7 @@ export class PeriodLocksService {
   async lock(user: RequestUser, dto: CreatePeriodLockDto): Promise<PeriodLockDTO> {
     this.assertCanLock(user);
     if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
-      throw new NotFoundException('Subsidiary not found');
+      throw new ResourceNotFoundError('subsidiary_not_found');
     }
     // Canonicalised before anything looks a record up. Every query below
     // compares `period_value` with raw Postgres equality, so a lock stored as
@@ -233,7 +233,7 @@ export class PeriodLocksService {
       !existing ||
       !user.accessibleSubsidiaryIds.includes(existing.subsidiaryId)
     ) {
-      throw new NotFoundException('Period lock not found');
+      throw new ResourceNotFoundError('period_lock_not_found');
     }
 
     try {
@@ -243,7 +243,7 @@ export class PeriodLocksService {
         // waits here and then finds it gone.
         await lockPeriodExclusive(tx, existing);
         const { count } = await tx.periodLock.deleteMany({ where: { id } });
-        if (count === 0) throw new NotFoundException('Period lock not found');
+        if (count === 0) throw new ResourceNotFoundError('period_lock_not_found');
         // Strictly the inverse of lock: `locked` → `approved` (lock only ever
         // flips approved records, since pending-review periods cannot be locked).
         const flipped = await tx.activityRecord.updateMany({

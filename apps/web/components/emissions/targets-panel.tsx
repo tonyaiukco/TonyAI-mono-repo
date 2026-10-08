@@ -24,7 +24,10 @@ import {
 } from '@/components/ui/select';
 import { Plus, Target as TargetIcon, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { DecimalNote } from '@/components/i18n/decimal-note';
 import { api } from '@/lib/api';
+import { checkDecimal, parseYearInput } from '@/lib/i18n/number';
+import { useDecimalInput } from '@/lib/i18n/use-decimal-input';
 import type {
   EmissionsScope,
   SubsidiaryDTO,
@@ -67,9 +70,7 @@ const emptyForm = {
   basis: 'science_based' as TargetBasis,
   scope: 'all' as EmissionsScope,
   baselineYear: '2023',
-  baselineTCo2e: '',
   targetYear: '2030',
-  targetTCo2e: '',
 };
 
 /** Targets tab (WP5): live reduction targets + progress; super_admin CRUD. */
@@ -80,6 +81,13 @@ export function TargetsPanel({ canManage, subsidiaries, nameById }: TargetsPanel
   const [addOpen, setAddOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  // Quantities are typed in the user's locale (D15) — the same reading Data
+  // Entry gives, never the browser's `type="number"` one (independent review
+  // P2-1: Firefox in Turkish read an English `45,000` as 45).
+  const baselineInput = useDecimalInput();
+  const targetInput = useDecimalInput();
+  const baselineCheck = checkDecimal(baselineInput.parsed, 'non_negative');
+  const targetCheck = checkDecimal(targetInput.parsed, 'non_negative');
 
   const progressById = useMemo(() => {
     const m = new Map<string, TargetProgressDTO>();
@@ -105,12 +113,18 @@ export function TargetsPanel({ canManage, subsidiaries, nameById }: TargetsPanel
   }, [refresh]);
 
   async function handleCreate() {
-    const baselineTCo2e = Number(form.baselineTCo2e);
-    const targetTCo2e = Number(form.targetTCo2e);
     if (!form.subsidiaryId || form.name.trim().length < 2) {
       toast.error('Pick a subsidiary and enter a target name.');
       return;
     }
+    const baselineYear = parseYearInput(form.baselineYear);
+    const targetYear = parseYearInput(form.targetYear);
+    if (baselineYear === null || targetYear === null || !baselineCheck.ok || !targetCheck.ok) {
+      toast.error('Enter both years as four digits and both tCO₂e values as numbers.');
+      return;
+    }
+    const baselineTCo2e = baselineCheck.value;
+    const targetTCo2e = targetCheck.value;
     setSaving(true);
     try {
       await api.createTarget({
@@ -118,14 +132,16 @@ export function TargetsPanel({ canManage, subsidiaries, nameById }: TargetsPanel
         name: form.name.trim(),
         basis: form.basis,
         scope: form.scope,
-        baselineYear: Number(form.baselineYear),
+        baselineYear,
         baselineTCo2e,
-        targetYear: Number(form.targetYear),
+        targetYear,
         targetTCo2e,
       });
       toast.success('Target created');
       setAddOpen(false);
       setForm(emptyForm);
+      baselineInput.setValue(null);
+      targetInput.setValue(null);
       await refresh();
     } catch (e) {
       toast.error((e as Error).message);
@@ -211,16 +227,18 @@ export function TargetsPanel({ canManage, subsidiaries, nameById }: TargetsPanel
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Baseline year">
-                    <Input type="number" value={form.baselineYear} onChange={(e) => setForm((f) => ({ ...f, baselineYear: e.target.value }))} />
+                    <Input type="text" inputMode="numeric" autoComplete="off" value={form.baselineYear} onChange={(e) => setForm((f) => ({ ...f, baselineYear: e.target.value }))} />
                   </Field>
                   <Field label="Baseline tCO₂e">
-                    <Input type="number" value={form.baselineTCo2e} onChange={(e) => setForm((f) => ({ ...f, baselineTCo2e: e.target.value }))} placeholder="e.g. 1600" />
+                    <Input type="text" inputMode="decimal" autoComplete="off" value={baselineInput.text} onChange={(e) => baselineInput.setText(e.target.value)} placeholder="e.g. 1600" aria-describedby="target-baseline-note" aria-invalid={baselineInput.text.trim() !== '' && !baselineCheck.ok} />
+                    <DecimalNote id="target-baseline-note" check={baselineCheck} otherReading={baselineInput.otherReading} locale={baselineInput.locale} />
                   </Field>
                   <Field label="Target year">
-                    <Input type="number" value={form.targetYear} onChange={(e) => setForm((f) => ({ ...f, targetYear: e.target.value }))} />
+                    <Input type="text" inputMode="numeric" autoComplete="off" value={form.targetYear} onChange={(e) => setForm((f) => ({ ...f, targetYear: e.target.value }))} />
                   </Field>
                   <Field label="Target tCO₂e">
-                    <Input type="number" value={form.targetTCo2e} onChange={(e) => setForm((f) => ({ ...f, targetTCo2e: e.target.value }))} placeholder="e.g. 900" />
+                    <Input type="text" inputMode="decimal" autoComplete="off" value={targetInput.text} onChange={(e) => targetInput.setText(e.target.value)} placeholder="e.g. 900" aria-describedby="target-target-note" aria-invalid={targetInput.text.trim() !== '' && !targetCheck.ok} />
+                    <DecimalNote id="target-target-note" check={targetCheck} otherReading={targetInput.otherReading} locale={targetInput.locale} />
                   </Field>
                 </div>
               </div>

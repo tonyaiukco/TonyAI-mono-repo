@@ -4,6 +4,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Prisma } from '@tonyai/db';
+import { errorBody } from '../common/api-error';
 
 /**
  * The refusals a caller has to tell apart, as CLASSES.
@@ -43,28 +44,28 @@ export const VARIANCE_REFUSAL =
 /** The uniqueness index refused the slot: one record per entity, period and category. */
 export class DuplicateActivityRecordError extends ConflictException {
   constructor() {
-    super(DUPLICATE_RECORD_MESSAGE);
+    super(errorBody('record_duplicate', DUPLICATE_RECORD_MESSAGE));
   }
 }
 
-/** The period is locked; the sentence names which. */
+/** The period is locked; the sentence names which, and so do the params. */
 export class PeriodLockedError extends ConflictException {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, period: { periodValue: string; reportingYear: number }) {
+    super(errorBody('period_locked', message, { period: period.periodValue, year: period.reportingYear }));
   }
 }
 
 /** The caller's role may not author records — one 403 for the whole request. */
 export class CreateRoleRefusedError extends ForbiddenException {
   constructor() {
-    super(CREATE_ROLE_REFUSAL);
+    super(errorBody('record_create_forbidden', CREATE_ROLE_REFUSAL));
   }
 }
 
 /** The caller's role may not submit — one 403 for the whole request, never a per-record row. */
 export class SubmitRoleRefusedError extends ForbiddenException {
   constructor() {
-    super(SUBMIT_ROLE_REFUSAL);
+    super(errorBody('record_submit_forbidden', SUBMIT_ROLE_REFUSAL));
   }
 }
 
@@ -77,7 +78,7 @@ export class SubmitRoleRefusedError extends ForbiddenException {
  */
 export class SubmitAuthorRefusedError extends ForbiddenException {
   constructor(resubmission: boolean) {
-    super(resubmission ? RESUBMIT_AUTHOR_REFUSAL : SUBMIT_AUTHOR_REFUSAL);
+    super(errorBody('record_author_forbidden', resubmission ? RESUBMIT_AUTHOR_REFUSAL : SUBMIT_AUTHOR_REFUSAL));
   }
 }
 
@@ -88,7 +89,7 @@ export class SubmitAuthorRefusedError extends ForbiddenException {
  */
 export class SelfApprovalRefusedError extends ForbiddenException {
   constructor() {
-    super(SELF_APPROVAL_REFUSAL);
+    super(errorBody('self_approval_forbidden', SELF_APPROVAL_REFUSAL));
   }
 }
 
@@ -100,21 +101,21 @@ export class SelfApprovalRefusedError extends ForbiddenException {
  */
 export class RecordChangedError extends ConflictException {
   constructor() {
-    super(RECORD_CHANGED_MESSAGE);
+    super(errorBody('record_changed', RECORD_CHANGED_MESSAGE));
   }
 }
 
 /** An evidence-required category with no file attached yet. */
 export class EvidenceRequiredError extends BadRequestException {
   constructor(category: string) {
-    super(`Category "${category}" ${EVIDENCE_REFUSAL_FRAGMENT}.`);
+    super(errorBody('evidence_required', `Category "${category}" ${EVIDENCE_REFUSAL_FRAGMENT}.`, { category }));
   }
 }
 
 /** An anomalous figure with no variance reason. */
 export class VarianceReasonRequiredError extends BadRequestException {
   constructor() {
-    super(VARIANCE_REFUSAL);
+    super(errorBody('variance_reason_required', VARIANCE_REFUSAL));
   }
 }
 
@@ -134,7 +135,11 @@ export const SLOT_HOLDS_TYPED_MESSAGE =
 
 export class ActivityTypeSlotConflictError extends ConflictException {
   constructor(newRecordTyped: boolean) {
-    super(newRecordTyped ? SLOT_HOLDS_UNTYPED_MESSAGE : SLOT_HOLDS_TYPED_MESSAGE);
+    super(
+      newRecordTyped
+        ? errorBody('slot_holds_untyped', SLOT_HOLDS_UNTYPED_MESSAGE)
+        : errorBody('slot_holds_typed', SLOT_HOLDS_TYPED_MESSAGE),
+    );
   }
 }
 
@@ -150,7 +155,7 @@ export const SNAPSHOT_IMMUTABLE_MESSAGE =
 
 export class SnapshotImmutableError extends ConflictException {
   constructor() {
-    super(SNAPSHOT_IMMUTABLE_MESSAGE);
+    super(errorBody('snapshot_immutable', SNAPSHOT_IMMUTABLE_MESSAGE));
   }
 }
 

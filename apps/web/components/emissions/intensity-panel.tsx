@@ -24,7 +24,10 @@ import {
 } from '@/components/ui/select';
 import { Gauge, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { DecimalNote } from '@/components/i18n/decimal-note';
 import { api } from '@/lib/api';
+import { checkDecimal } from '@/lib/i18n/number';
+import { useDecimalInput } from '@/lib/i18n/use-decimal-input';
 import {
   INTENSITY_METRIC_KEYS,
   INTENSITY_METRIC_META,
@@ -56,9 +59,13 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
   const [form, setForm] = useState({
     subsidiaryId: '',
     metric: 'revenue' as IntensityMetricKey,
-    value: '',
     unit: INTENSITY_METRIC_META.revenue.defaultUnit,
   });
+
+  // Typed in the user's locale (D15), as on Data Entry — never the browser's
+  // `type="number"` reading (independent review P2-1).
+  const valueInput = useDecimalInput();
+  const valueCheck = checkDecimal(valueInput.parsed, 'positive');
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -81,8 +88,8 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
   }, [refresh]);
 
   async function handleCreate() {
-    if (!form.subsidiaryId || !form.value) {
-      toast.error('Pick a subsidiary and enter a value.');
+    if (!form.subsidiaryId || !valueCheck.ok) {
+      toast.error('Pick a subsidiary and enter a value above zero.');
       return;
     }
     setSaving(true);
@@ -91,12 +98,12 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
         subsidiaryId: form.subsidiaryId,
         year,
         metric: form.metric,
-        value: Number(form.value),
+        value: valueCheck.value,
         unit: form.unit.trim() || INTENSITY_METRIC_META[form.metric].defaultUnit,
       });
       toast.success('Denominator configured');
       setAddOpen(false);
-      setForm((f) => ({ ...f, value: '' }));
+      valueInput.setValue(null);
       await refresh();
     } catch (e) {
       toast.error((e as Error).message);
@@ -188,7 +195,8 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
                 </div>
                 <div className="space-y-1.5">
                   <Label>Value</Label>
-                  <Input type="number" value={form.value} onChange={(e) => setForm((f) => ({ ...f, value: e.target.value }))} placeholder="e.g. 320" />
+                  <Input type="text" inputMode="decimal" autoComplete="off" value={valueInput.text} onChange={(e) => valueInput.setText(e.target.value)} placeholder="e.g. 320" aria-describedby="denominator-value-note" aria-invalid={valueInput.text.trim() !== '' && !valueCheck.ok} />
+                  <DecimalNote id="denominator-value-note" check={valueCheck} otherReading={valueInput.otherReading} locale={valueInput.locale} />
                 </div>
               </div>
               <DialogFooter>
