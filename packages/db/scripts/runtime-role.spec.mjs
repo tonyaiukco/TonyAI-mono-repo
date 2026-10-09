@@ -19,6 +19,8 @@ import {
   checkTenantInvariants,
   checkTableLevelGrants,
   checkFunctionExecutors,
+  platformDefaultPrivileges,
+  CLIENT_CALLABLE_FUNCTIONS,
 } from './runtime-role.mjs';
 
 // The database half — that PostgreSQL accepts the verifier and the privileges
@@ -263,20 +265,58 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
   });
 });
 
-describe('checkFunctionExecutors — only the owner may attach the integrity functions', () => {
-  it('passes on none, and names each executor otherwise', async () => {
-    expect(await checkFunctionExecutors(async () => [])).toEqual([]);
-    expect(await checkFunctionExecutors(async () => [{ fn: 'factor_releases_record_event', grantee: 'anon' }])).toEqual([
+describe('checkFunctionExecutors — only the owner may EXECUTE a function in public, now or by default', () => {
+  const fake = (executors, defaults) => async (sql) => (sql.includes('pg_default_acl') ? defaults : executors);
+
+  it('passes on none, and names each executor otherwise — how it is abused, with its arguments', async () => {
+    expect(await checkFunctionExecutors(fake([], []))).toEqual([]);
+    expect(
+      await checkFunctionExecutors(
+        fake(
+          [
+            { fn: 'factor_releases_record_event', args: '', trigger: true, grantee: 'anon' },
+            { fn: 'factor_release_events_actor_role', args: '', trigger: false, grantee: 'PUBLIC' },
+            { fn: 'some_rpc', args: 'p_id uuid', trigger: false, grantee: 'authenticated' },
+          ],
+          [],
+        ),
+      ),
+    ).toEqual([
       'anon may EXECUTE public.factor_releases_record_event() — attach it to a table of its own; only its owner may',
+      'PUBLIC may EXECUTE public.factor_release_events_actor_role() — call it, through /rpc too; only its owner may',
+      'authenticated may EXECUTE public.some_rpc(p_id uuid) — call it, through /rpc too; only its owner may',
     ]);
   });
 
-  it('asks about every integrity trigger function and helper, with the default ACL when none is set', async () => {
-    let sql = '';
-    await checkFunctionExecutors(async (q) => ((sql = q), []));
-    for (const fn of [...INTEGRITY_TRIGGERS.map((t) => t.fn), ...INTEGRITY_HELPERS.map((h) => h.fn)]) expect(sql).toContain(`'${fn}'`);
-    expect(sql).toContain("COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))");
-    expect(sql).toContain("a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner");
+  it("names the owner's default — global or per-schema — and leaves another creator's to the notices", async () => {
+    const defaults = [
+      { grantee: 'PUBLIC', creator: 'postgres', privilege: 'EXECUTE', ours: true },
+      { grantee: 'anon', creator: 'postgres', privilege: 'EXECUTE', ours: true },
+      { grantee: 'anon', creator: 'supabase_admin', privilege: 'EXECUTE', ours: false },
+    ];
+    expect(await checkFunctionExecutors(fake([], defaults))).toEqual([
+      'PUBLIC may EXECUTE every new public function postgres creates — only its owner may',
+      'anon may EXECUTE every new public function postgres creates — only its owner may',
+    ]);
+    expect(await platformDefaultPrivileges(async (sql) => (sql.includes("acldefault('f'") ? defaults : []))).toEqual([
+      'anon is granted EXECUTE on every new public function supabase_admin creates',
+    ]);
+  });
+
+  it('asks about every function in public, with the default ACL when none is set — not a list of names', async () => {
+    const seen = [];
+    await checkFunctionExecutors(async (sql) => (seen.push(sql), []));
+    const [functions] = seen;
+    expect(functions).toContain("COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))");
+    expect(functions).toContain("a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner");
+    expect(functions).toContain("WHERE n.nspname = 'public'\n");
+    expect(functions).not.toContain('p.proname IN');
+    expect(seen.some((sql) => sql.includes("pg_catalog.acldefault('f', c.role)") && sql.includes("IN ('EXECUTE')"))).toBe(true);
+  });
+
+  it('lets a function listed as client-callable through for its listed roles alone (the list is empty)', async () => {
+    expect(CLIENT_CALLABLE_FUNCTIONS).toEqual({});
+    expect(Object.isFrozen(CLIENT_CALLABLE_FUNCTIONS)).toBe(true);
   });
 });
 
@@ -287,10 +327,16 @@ describe('checkTableLevelGrants — only an owner holds the table-level verbs', 
     expect(await checkTableLevelGrants(fake([], []))).toEqual([]);
   });
 
-  it('names a grant on a table and a default grant on future tables', async () => {
+  it("names a grant on a table and the owner's default grant on future tables — not another creator's", async () => {
     expect(
       await checkTableLevelGrants(
-        fake([{ table: 'locations', grantee: 'service_role', privilege: 'TRIGGER' }], [{ grantee: 'service_role', creator: 'postgres', privilege: 'TRUNCATE' }]),
+        fake(
+          [{ table: 'locations', grantee: 'service_role', privilege: 'TRIGGER' }],
+          [
+            { grantee: 'service_role', creator: 'postgres', privilege: 'TRUNCATE', ours: true },
+            { grantee: 'anon', creator: 'supabase_admin', privilege: 'TRIGGER', ours: false },
+          ],
+        ),
       ),
     ).toEqual([
       'service_role holds TRIGGER on public.locations — only its owner may',
@@ -298,14 +344,36 @@ describe('checkTableLevelGrants — only an owner holds the table-level verbs', 
     ]);
   });
 
-  it('asks for exactly the four verbs, on tables and on the default privileges of public', async () => {
+  it('asks for exactly the four verbs, on tables and on the default privileges every creator in public holds', async () => {
     const seen = [];
     await checkTableLevelGrants(async (sql) => (seen.push(sql), []));
     for (const sql of seen) expect(sql).toContain("('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')");
-    expect(seen.some((sql) => sql.includes("defaclnamespace = 'public'::regnamespace"))).toBe(true);
-    // Only the defaults of the role that owns our tables — not the platform's.
-    expect(seen.some((sql) => sql.includes("d.defaclrole = (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass)"))).toBe(true);
     expect(seen.some((sql) => sql.includes("n.nspname = 'public'"))).toBe(true);
+    const [, defaults] = seen;
+    // Every role that can create in public, its global default (or the
+    // built-in one) and its per-schema one — not only the owner's per-schema row.
+    expect(defaults).toContain("pg_catalog.has_schema_privilege(r.oid, 'public', 'CREATE')");
+    expect(defaults).toContain("g.defaclnamespace = 0 AND g.defaclobjtype = 'r'");
+    expect(defaults).toContain("COALESCE(g.defaclacl, pg_catalog.acldefault('r', c.role))");
+    expect(defaults).toContain("d.defaclnamespace = 'public'::regnamespace AND d.defaclobjtype = 'r'");
+    expect(defaults).not.toContain('d.defaclrole = (SELECT');
+    expect(defaults).toContain("b.role = (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass) AS \"ours\"");
+  });
+});
+
+describe('platformDefaultPrivileges — another creator\'s defaults, named and grouped', () => {
+  it('groups by creator, kind and grantee, and leaves the owner\'s to the checks', async () => {
+    const tables = [
+      { grantee: 'anon', creator: 'supabase_admin', privilege: 'TRIGGER', ours: false },
+      { grantee: 'anon', creator: 'supabase_admin', privilege: 'TRUNCATE', ours: false },
+      { grantee: 'anon', creator: 'postgres', privilege: 'TRIGGER', ours: true },
+    ];
+    const functions = [{ grantee: 'PUBLIC', creator: 'supabase_admin', privilege: 'EXECUTE', ours: false }];
+    expect(await platformDefaultPrivileges(async (sql) => (sql.includes("acldefault('r'") ? tables : functions))).toEqual([
+      'anon is granted TRIGGER, TRUNCATE on every new public table supabase_admin creates',
+      'PUBLIC is granted EXECUTE on every new public function supabase_admin creates',
+    ]);
+    expect(await platformDefaultPrivileges(async () => [])).toEqual([]);
   });
 });
 

@@ -444,6 +444,46 @@ export async function checkTenantInvariants(query) {
   ];
 }
 
+const TABLE_VERBS = "('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')";
+const OWNER_OF_PUBLIC = "(SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass)";
+
+/**
+ * What a new object of `objtype` ('r' table, 'f' function) in `public` is born
+ * granting, per role that could create it: every role with CREATE on the
+ * schema, every role holding a default privilege in it, and the owner of our
+ * tables. A role's global default replaces PostgreSQL's built-in one (for a
+ * function: EXECUTE to PUBLIC) and its per-schema default adds to that, so
+ * both are read — the per-schema one alone cannot show what a new object
+ * gets. `ours` marks the role that owns the schema's tables (the migrations'
+ * role); another creator's defaults — Supabase's `supabase_admin` — are the
+ * platform's, out of a migration's reach (`platformDefaultPrivileges`).
+ */
+async function publicDefaultGrants(query, objtype, privileges) {
+  return query(
+    `WITH creators AS (
+       SELECT r.oid AS role FROM pg_catalog.pg_roles r WHERE pg_catalog.has_schema_privilege(r.oid, 'public', 'CREATE')
+        UNION
+       SELECT d.defaclrole FROM pg_catalog.pg_default_acl d WHERE d.defaclnamespace = 'public'::regnamespace
+        UNION
+       SELECT ${OWNER_OF_PUBLIC}
+     ), born AS (
+       SELECT c.role, COALESCE(g.defaclacl, pg_catalog.acldefault('${objtype}', c.role)) AS acl
+         FROM creators c
+         LEFT JOIN pg_catalog.pg_default_acl g
+           ON g.defaclrole = c.role AND g.defaclnamespace = 0 AND g.defaclobjtype = '${objtype}'
+       UNION ALL
+       SELECT d.defaclrole, d.defaclacl FROM pg_catalog.pg_default_acl d
+        WHERE d.defaclnamespace = 'public'::regnamespace AND d.defaclobjtype = '${objtype}'
+     )
+     SELECT DISTINCT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee",
+            pg_catalog.pg_get_userbyid(b.role) AS "creator", a.privilege_type AS "privilege",
+            b.role = ${OWNER_OF_PUBLIC} AS "ours"
+       FROM born b, LATERAL pg_catalog.aclexplode(b.acl) a
+      WHERE a.privilege_type IN ${privileges} AND a.grantee <> b.role
+      ORDER BY 2, 1, 3`,
+  );
+}
+
 /**
  * Table-level verbs no role but a table's owner may hold in `public`, now or
  * by default privilege: TRIGGER (a trigger on any table a referential action
@@ -451,13 +491,12 @@ export async function checkTenantInvariants(query) {
  * past every guard that trusts it), TRUNCATE (past every row guard),
  * REFERENCES and MAINTAIN. Supabase's default privileges grant all four to
  * anon, authenticated and the service role; the LP3-03 migration takes them
- * back. Default privileges are checked for the role that owns the schema's
- * tables (the migrations' role): another creator's — Supabase's
- * `supabase_admin` — are the platform's, no migration can change them, and
- * no table of ours is created by it.
+ * back. A failure here is a default of the role that owns the schema's tables
+ * (the migrations' role), global or per-schema; another creator's are named by
+ * `platformDefaultPrivileges` — no migration can change them, and no table of
+ * ours is created by it.
  */
 export async function checkTableLevelGrants(query) {
-  const verbs = "('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')";
   const granted = await query(
     `SELECT c.relname AS "table", CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee",
             a.privilege_type AS "privilege"
@@ -465,18 +504,10 @@ export async function checkTableLevelGrants(query) {
        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace,
             LATERAL pg_catalog.aclexplode(c.relacl) a
       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-        AND a.privilege_type IN ${verbs} AND a.grantee <> c.relowner
+        AND a.privilege_type IN ${TABLE_VERBS} AND a.grantee <> c.relowner
       ORDER BY 1, 2, 3`,
   );
-  const defaults = await query(
-    `SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee",
-            pg_catalog.pg_get_userbyid(d.defaclrole) AS "creator", a.privilege_type AS "privilege"
-       FROM pg_catalog.pg_default_acl d, LATERAL pg_catalog.aclexplode(d.defaclacl) a
-      WHERE d.defaclnamespace = 'public'::regnamespace AND d.defaclobjtype = 'r'
-        AND d.defaclrole = (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass)
-        AND a.privilege_type IN ${verbs} AND a.grantee <> d.defaclrole
-      ORDER BY 1, 2, 3`,
-  );
+  const defaults = (await publicDefaultGrants(query, 'r', TABLE_VERBS)).filter((d) => d.ours);
   return [
     ...granted.map((g) => `${g.grantee} holds ${g.privilege} on public.${g.table} — only its owner may`),
     ...defaults.map((d) => `${d.grantee} is granted ${d.privilege} on every new public table ${d.creator} creates — only its owner may hold it`),
@@ -484,24 +515,67 @@ export async function checkTableLevelGrants(query) {
 }
 
 /**
- * EXECUTE on the integrity functions — what attaching a trigger function to a
- * table requires — for their owner alone. PostgreSQL grants it to PUBLIC on
- * creation and Supabase's default privileges to anon, authenticated and the
- * service role; a SECURITY DEFINER event writer attached to a table of the
- * caller's own would write forged rows into the library's record as the owner.
+ * Functions in `public` a client may call, by name, with the roles that may:
+ * none. PostgREST exposes every function a role may EXECUTE at `/rpc`; one
+ * added here says who calls it and why.
+ */
+export const CLIENT_CALLABLE_FUNCTIONS = Object.freeze({});
+
+/**
+ * EXECUTE on every function in `public` — what attaching a trigger function to
+ * a table requires, and what PostgREST's `/rpc` serves — for its owner alone,
+ * now and by default. PostgreSQL grants it to PUBLIC on creation and
+ * Supabase's default privileges to anon, authenticated and the service role;
+ * a SECURITY DEFINER event writer attached to a table of the caller's own
+ * would write forged rows into the library's record as the owner. No function
+ * there is meant for a client (CLIENT_CALLABLE_FUNCTIONS): the policies call
+ * only `auth.uid()`, and a trigger fires without its function's EXECUTE.
  */
 export async function checkFunctionExecutors(query) {
-  const names = [...new Set([...INTEGRITY_TRIGGERS.map((t) => t.fn), ...INTEGRITY_HELPERS.map((h) => h.fn)])];
   const executors = await query(
-    `SELECT p.proname AS "fn", CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee"
+    `SELECT p.proname AS "fn", pg_catalog.pg_get_function_identity_arguments(p.oid) AS "args",
+            p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype AS "trigger",
+            CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee"
        FROM pg_catalog.pg_proc p
        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace,
             LATERAL pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
-      WHERE n.nspname = 'public' AND p.proname IN (${names.map((n) => `'${n}'`).join(', ')})
+      WHERE n.nspname = 'public'
         AND a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner
-      ORDER BY 1, 2`,
+      ORDER BY 1, 2, 4`,
   );
-  return executors.map((e) => `${e.grantee} may EXECUTE public.${e.fn}() — attach it to a table of its own; only its owner may`);
+  const defaults = (await publicDefaultGrants(query, 'f', "('EXECUTE')")).filter((d) => d.ours);
+  return [
+    ...executors
+      .filter((e) => !(Object.hasOwn(CLIENT_CALLABLE_FUNCTIONS, e.fn) && CLIENT_CALLABLE_FUNCTIONS[e.fn].includes(e.grantee)))
+      .map(
+        (e) =>
+          `${e.grantee} may EXECUTE public.${e.fn}(${e.args ?? ''}) — ${e.trigger ? 'attach it to a table of its own' : 'call it, through /rpc too'}; only its owner may`,
+      ),
+    ...defaults.map((d) => `${d.grantee} may EXECUTE every new public function ${d.creator} creates — only its owner may`),
+  ];
+}
+
+/**
+ * The default privileges in `public` of every creator but the migrations'
+ * role — Supabase's `supabase_admin`: the platform's, which no migration can
+ * change, so reported, not failed. No table or function of ours is created by
+ * it; on staging or production each line is a question for the platform.
+ */
+export async function platformDefaultPrivileges(query) {
+  const rows = [
+    ...(await publicDefaultGrants(query, 'r', TABLE_VERBS)).map((r) => ({ ...r, kind: 'table' })),
+    ...(await publicDefaultGrants(query, 'f', "('EXECUTE')")).map((r) => ({ ...r, kind: 'function' })),
+  ].filter((r) => !r.ours);
+  const grouped = new Map();
+  for (const { creator, grantee, privilege, kind } of rows) {
+    const key = `${creator}|${kind}|${grantee}`;
+    const entry = grouped.get(key) ?? { creator, grantee, kind, privileges: [] };
+    entry.privileges.push(privilege);
+    grouped.set(key, entry);
+  }
+  return [...grouped.values()].map(
+    (g) => `${g.grantee} is granted ${g.privileges.join(', ')} on every new public ${g.kind} ${g.creator} creates`,
+  );
 }
 
 /**
@@ -863,6 +937,7 @@ async function main() {
     const client = new PrismaClient({ datasourceUrl: url });
     let problems;
     let exposures;
+    let platformDefaults;
     let library;
     try {
       const query = (sql) => client.$queryRawUnsafe(sql);
@@ -876,10 +951,12 @@ async function main() {
         ...library.problems,
       ];
       exposures = await runtimeRoleExposures(query);
+      platformDefaults = await platformDefaultPrivileges(query);
     } finally {
       await client.$disconnect();
     }
     for (const e of exposures) console.warn(`  ! ${RUNTIME_ROLE} can also reach ${e}`);
+    for (const d of platformDefaults) console.warn(`  ! ${d} (the platform's default, out of a migration's reach)`);
     // Not a failure here — local and CI databases hold the seed's placeholder
     // library on purpose. On staging or production each line is a finding.
     for (const n of library.notices) console.warn(`  ! factor library holds a ${n}`);
