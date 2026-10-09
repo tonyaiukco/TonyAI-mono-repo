@@ -139,7 +139,10 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17
+        # Docker Hub's official image through its Amazon ECR Public mirror (the
+        # same digest): anonymous pulls from shared runners hit Docker Hub's
+        # rate limit (429) and failed this job before any check ran.
+        image: public.ecr.aws/docker/library/postgres:17
         env:
           POSTGRES_PASSWORD: ci-only
           POSTGRES_DB: tonyai_shadow
