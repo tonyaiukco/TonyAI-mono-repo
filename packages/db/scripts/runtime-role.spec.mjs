@@ -267,9 +267,17 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
 
 describe('checkFunctionExecutors — only the owner may EXECUTE a function in public, now or by default', () => {
   const fake =
-    (executors, defaults, owners = []) =>
+    (executors, defaults, owners = [], actsAs = [], creators = []) =>
     async (sql) =>
-      sql.includes('pg_default_acl') ? defaults : sql.includes('AS "owner"') ? owners : executors;
+      sql.includes('AS "via"')
+        ? creators
+        : sql.includes('AS "client"')
+          ? actsAs
+          : sql.includes('pg_default_acl')
+            ? defaults
+            : sql.includes('AS "owner"')
+              ? owners
+              : executors;
 
   it('passes on none, and names each executor otherwise — how it is abused, with its arguments', async () => {
     expect(await checkFunctionExecutors(fake([], []))).toEqual([]);
@@ -319,11 +327,66 @@ describe('checkFunctionExecutors — only the owner may EXECUTE a function in pu
 
   it('names a function in public another role owns', async () => {
     expect(await checkFunctionExecutors(fake([], [], [{ fn: 'some_rpc', args: 'p_id uuid', owner: 'service_role' }]))).toEqual([
-      "public.some_rpc(p_id uuid) is owned by service_role — who may run, attach and replace it; only the owner of the schema's tables may own one",
+      "public.some_rpc(p_id uuid) is owned by service_role — who may run, attach, alter and drop it; only the owner of the schema's tables may own one",
     ]);
     const seen = [];
     await checkFunctionExecutors(async (sql) => (seen.push(sql), []));
     expect(seen.some((sql) => sql.includes("p.proowner <> (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass)"))).toBe(true);
+  });
+
+  it('names a client that can act as an owner in public, or create there — by any membership path', async () => {
+    expect(
+      await checkFunctionExecutors(
+        fake(
+          [],
+          [],
+          [],
+          [
+            { client: 'authenticated', owner: 'postgres', itself: false, runtime: false },
+            { client: 'authenticator', owner: 'tonyai_runtime', itself: false, runtime: true },
+            { client: 'service_role', owner: 'service_role', itself: true, runtime: false },
+          ],
+          [
+            { client: 'anon', via: 'anon' },
+            { client: 'authenticator', via: 'oq14_creator' },
+          ],
+        ),
+      ),
+    ).toEqual([
+      'authenticated can act as postgres (a member — inherited, by SET ROLE or by ADMIN), an owner in public or of the database — it may alter, disable or drop what that role owns; no client may be',
+      "authenticator can act as tonyai_runtime (a member — inherited, by SET ROLE or by ADMIN), the API's role — BYPASSRLS and its every grant; no client may be",
+      'service_role owns the database, the schema public or something in it — it may alter, disable or drop it; no client may own one',
+      'anon may create in public — a function it creates there is its own to run, attach and grant; no client may',
+      'authenticator may create in public as oq14_creator — a function it creates there is its own to run, attach and grant; no client may',
+    ]);
+  });
+
+  it('asks about every client role, by MEMBER — not only inherited privileges, which miss SET ROLE and ADMIN', async () => {
+    const seen = [];
+    await checkFunctionExecutors(async (sql) => (seen.push(sql), []));
+    const clients = "c.rolname IN ('anon', 'authenticated', 'service_role', 'authenticator')";
+    const actsAs = seen.find((sql) => sql.includes('AS "client"') && !sql.includes('AS "via"'));
+    const creators = seen.find((sql) => sql.includes('AS "via"'));
+    for (const sql of [actsAs, creators]) {
+      expect(sql).toContain(clients);
+      expect(sql).toContain("'MEMBER')");
+    }
+    expect(actsAs).toContain('pg_catalog.pg_has_role(c.oid, o.role, \'MEMBER\')');
+    // Every role an owner's power flows from — the client itself included.
+    for (const owner of [
+      "SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass",
+      'UNION SELECT d.datdba FROM pg_catalog.pg_database d WHERE d.datname = pg_catalog.current_database()',
+      "UNION SELECT n.nspowner FROM pg_catalog.pg_namespace n WHERE n.nspname = 'public'",
+      "UNION SELECT k.relowner FROM pg_catalog.pg_class k WHERE k.relnamespace = 'public'::regnamespace",
+      "UNION SELECT t.typowner FROM pg_catalog.pg_type t WHERE t.typnamespace = 'public'::regnamespace",
+      "UNION SELECT p.proowner FROM pg_catalog.pg_proc p WHERE p.pronamespace = 'public'::regnamespace",
+      "UNION SELECT 'tonyai_runtime'::regrole",
+    ])
+      expect(actsAs).toContain(owner);
+    expect(actsAs).not.toContain('c.oid <> o.role');
+    expect(creators).toContain("pg_catalog.pg_has_role(c.oid, r.oid, 'MEMBER')");
+    expect(creators).toContain("pg_catalog.has_schema_privilege(r.oid, 'public', 'CREATE')");
+    for (const sql of [actsAs, creators]) expect(sql).toMatch(/ORDER BY 1, 2`?$/);
   });
 
   it('lets a client-callable function through for its listed roles alone, by signature — not an overload', async () => {
