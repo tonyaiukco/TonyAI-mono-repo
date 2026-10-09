@@ -981,7 +981,7 @@ async function main() {
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
     const { PrismaClient } = req('../packages/db/generated/client');
-    const { checkRuntimeRole, checkTenantInvariants, checkTableLevelGrants, checkFunctionExecutors, checkIntegrityTriggers, factorLibraryReport, runtimeRoleExposures } =
+    const { checkRuntimeRole, checkTenantInvariants, checkTableLevelGrants, checkFunctionExecutors, checkIntegrityTriggers, factorLibraryReport, platformDefaultPrivileges, runtimeRoleExposures } =
       await import('../packages/db/scripts/runtime-role.mjs');
     const prisma = new PrismaClient();
     const query = (sql) => prisma.$queryRawUnsafe(sql);
@@ -1002,7 +1002,7 @@ async function main() {
       );
       const executors = await checkFunctionExecutors(query);
       check(
-        'no role but the owner may EXECUTE (so attach) the integrity functions — an event writer runs as the owner',
+        'no role but the owner may EXECUTE (so attach, or call through /rpc) a function in public, now or by default — an event writer runs as the owner',
         executors.length === 0,
         executors.join('; ') || 'none',
       );
@@ -1030,6 +1030,9 @@ async function main() {
       for (const n of library.notices) console.log(`  ⚠️  the factor library holds a ${n}`);
       // Not a failure: what every role inherits from PUBLIC through the platform.
       for (const e of await runtimeRoleExposures(query)) console.log(`  ⚠️  the runtime role can also reach ${e}`);
+      // Not a failure: another creator's defaults in public (Supabase's
+      // supabase_admin, the platform's; pg_database_owner where it owns the schema).
+      for (const d of await platformDefaultPrivileges(query)) console.log(`  ⚠️  ${d} (another creator's default)`);
     } finally {
       await prisma.$disconnect();
     }
