@@ -489,6 +489,139 @@ Period locking (FR §4.2): a `super_admin` closes one subsidiary's reporting per
 
 ---
 
+### Bounded access contract (LP4-05 PR A)
+
+**Contract published; runtime activation is pending PR B/C.** This change adds
+shared types, client methods and error vocabulary without changing an existing
+endpoint's response or enforcing new limits. The legacy array clients remain
+active until PR C. Do not wire the new methods to screens before its API lands.
+The contract PR merges alone and first; each implementation rebases on that
+integrated commit. No migration or new dependency is part of this contract.
+
+`CursorPage<T>` is `{ items, limit, nextCursor }`, with a default limit of **50**,
+maximum **100**, and `null` as the end cursor. A cursor is opaque and at most
+2,048 characters. The server returns one envelope even for an empty or
+parameterless request; it never switches between arrays and pages based on
+query parameters. `Paginated<T>` retains its existing offset semantics for
+audit. Invalid limits (including zero, fractions and values over the maximum),
+malformed/version-invalid cursors and cursors for different normalized filters
+or ordering answer **400 `validation_failed`**. There is no silent clamp or
+restart at page one. Page clients reject old array responses and oversized or
+non-progressing envelopes; they never fetch all remaining pages automatically.
+
+| Future bounded route | New client method / contract | Ordering or scope |
+|---|---|---|
+| `GET /activity-records` | `listActivityRecordPage(ActivityRecordPageParams)` → `CursorPage<ActivityRecordPageItemDTO>` | `newest` (default): `createdAt DESC, id DESC`; `review_queue`: `submittedAt ASC NULLS LAST, id ASC`. The latter does not implicitly change the status filter. |
+| `GET /activity-records/metadata` | `activityRecordMetadata(ActivityRecordPageFilters)` → `{ total, latestReportingYear }` | Full tenant-scoped filtered set, independently of any page; null year if empty. Omit the year filter when asking for the newest available year. Register before the dynamic `/:id` route. |
+| `GET /period-locks` | `listPeriodLockPage(PeriodLockPageParams)` | `createdAt DESC, id DESC`; exact subsidiary/year/period/periodValue filters can address one unique lock. |
+| `GET /activity-records/:id/evidence` | `listEvidencePage(id, CursorPageParams)` → `CursorPage<EvidenceDTO>` | `createdAt DESC, id DESC`; each file's nested linked-record list stays complete under `EVIDENCE_MAX_LINKED_RECORDS`. A stored overflow is an integrity error, never a truncated sharing count. |
+| `GET /targets` | `listTargetPage(TargetPageParams)` | `targetYear ASC, createdAt DESC, id DESC`. |
+| `GET /targets/progress` | `targetPageProgress({ targetIds })` | Explicit comma-separated UUIDs, 1–100, no duplicates; request order, missing/inaccessible ids omitted identically. No omitted/empty-id fallback to every target. |
+| `GET /denominators` | `listDenominatorPage(DenominatorPageParams)` | `year DESC, metric ASC, id ASC`; optional subsidiary/year filters. |
+
+Activity page filters retain subsidiary/year/period/category/status and add
+scope, location, period value and search. `locationId` omitted means all sites;
+`null` serializes as `locationId=none` for company-level records; a UUID selects
+one site. Search is a case-insensitive literal substring (not wildcard syntax),
+at most 200 characters, across the displayed subsidiary name (nonempty trading
+name, otherwise legal name), category, period value and variance reason. Escape
+`%`, `_` and backslash in SQL LIKE patterns. Empty search or an empty status set
+means no such filter. Period values require a period, use existing
+canonicalization and must belong to that period. Empty identifier filters are
+invalid; only `locationId` accepts null. Client methods send only the keys
+documented for their endpoint; metadata never forwards pagination or sort keys.
+`periodLocked` on each activity page item is advisory state for that record's
+exact period. Absence from a general lock page must never mean "unlocked".
+
+**Live traversal, not a snapshot.** Cursors are versioned and bound to the
+endpoint, normalized filters and ordering. Every page reconstructs current
+tenant access; cursor contents cannot authorize a read, and resolving an anchor
+must neither read it unscoped nor require a deleted anchor to exist. A cursor
+carries the sort-key tuple, no organisation/scope identity; acceptance depends
+only on the cursor and request, never stored data. Filters come from the request
+and decoded values are bound parameters (no `$queryRawUnsafe`). `review_queue`
+needs an explicit NULL `submittedAt` branch. Rows with
+unchanged ordering/filter membership do not shift merely because rows ahead of
+them were inserted/deleted. Lifecycle changes, permissions and concurrent
+inserts/deletes remain visible: metadata and a later page can differ. Refresh,
+filter changes, local mutations and a stale cursor's `validation_failed` after
+deployment reset the cursor chain. A short nonempty page may carry a continuation;
+only `nextCursor: null` ends traversal. Previous submissions
+and bulk/evidence selections must be page-local and labelled in both locales;
+deep links use narrow server filters, not a search of the first page. PR C
+releases API and web together and documents reload/rollback for old open tabs;
+no compatibility shim may pretend the first page is the complete history.
+
+**Reserved refusals and partial outcomes.** PR B/C use **422
+`query_too_broad`** for a read/export exceeding its complete-output or work
+budget, with no partial inventory/report. Calculate budgets **after authorization
+and only over the caller's accessible set**; inaccessible filters answer like an
+empty set. This also applies to search and metadata work: metadata may answer
+422, never a partial count. The refusal is a function of the code alone: fixed
+message, no params or extra fields, including counts or limits. Use
+`QueryTooBroadError`; the exception filter canonicalizes this code's entire body.
+
+`ReportMetaDTO.recordLimit` advertises the server-configured positive safe-integer
+export row budget, counting committed and withdrawn rows together. It is absent
+on pre-PR-B servers (unknown, never unlimited); compare it with
+`committedCount + voidedCount`, not `totalCount`. The client rejects malformed
+advertised limits. PR B emits it and owns configuration/defaults; LP5-03 qualifies
+the budget. There is no shared compile-time row cap or capacity claim. Export
+rechecks current access, rows and limits; preview metadata reserves no capacity.
+Byte, relationship and processing bounds are additional runtime controls.
+Upload size remains **413 `payload_too_large`**;
+quota/admission rejection is **429 `rate_limited`** with `Retry-After`.
+
+Bulk upload and submit reserve the row code **`not_processed_deadline`** and an
+additive `completion: completed | deadline_exceeded` field (absent on legacy
+servers). PR B emits completion on every result, including dry runs. Deadline
+means stop starting rows, settle the current mutation, finalize batch counts and
+audit summaries, and return every applied and unstarted outcome. Each unstarted
+row/id is an error with this code; the import's `accepted + errors = totalRows`
+and submit's `submitted + failed = requested` invariants still hold. The outcome
+makes no existence or access claim: missing and inaccessible ids
+receive identical outcomes at every deadline position, including after preflight.
+An import stopped by deadline closes its batch as `failed`, retaining successful
+records. Persisted `acceptedCount` counts accepted rows and `rejectedCount` only
+examined, refused rows; unstarted rows equal
+`totalRows - acceptedCount - rejectedCount`. Null counts on an interrupted or
+processing batch mean unknown, never zero. This needs no new database column.
+The response's error outcomes still include unstarted rows, so they are distinct
+from the persisted rejected count. PR B must update batch labels to display all
+three counts without calling unstarted rows refused.
+
+Non-refused import and submit audit diffs carry `completion` and
+`notProcessedCount`; PR B writes both, including dry runs with no batch row.
+Pre-PR-B append-only rows lack these fields and remain unchanged. Import audit
+counts follow the persisted batch rule; submit `failedCount` includes unstarted
+ids, and `notProcessedCount` is its deadline subset. `completed` in a response
+only means processing finished, not that all
+rows succeeded. Clients must never automatically retry successful rows or hide
+the report behind a generic timeout. The new label is in both catalogues; its
+current exhaustive English maps are compatibility scaffolding only. **PR B
+must wire the locale-aware label in every bulk consumer before emitting it.**
+
+**Carried implementation gates:** PR B owns runtime configuration, pre-auth
+parser/proxy protections, user quotas, export/import admission and cooperative
+deadlines, replica/DB pool budgets and production image bounds. PR C owns all
+list consumers plus bounded emissions/report history, the anomaly prior lookup,
+lock/evidence history and targets/denominators. It must preserve anomaly math
+and complete accounting results; neither page-by-page client draining nor silent
+server truncation closes this task. Real tenant isolation, page consistency,
+resource cleanup and deadline tests remain implementation evidence, not claims
+made by this contract PR. Capacity qualification remains LP5-03.
+
+PR C changes period-lock history from `reportingYear DESC, createdAt DESC` to
+`createdAt DESC, id DESC`, and evidence history from ascending to descending
+creation order. Its keyset indexes need a separately granted migration slot;
+the no-migration claim applies only to PR A. Further implementation gates:
+bound evidence's aggregate nested payload, redact free-text query strings from
+request logs before enabling search, expose `Retry-After` through CORS (the client
+already retains exposed values), validate target-progress request ids and batch
+its queries (the client already rejects extraneous, duplicate or unordered response ids), and
+cover every legacy list call in e2e fixtures. Deadline finalization must write
+the batch audit row after settled work, including the `failed` closing path.
+
 ## Localisation and error codes
 
 LP3-01 laid the foundation the remaining screens (LP4-04), onboarding (LP4-01) and reports (LP4-03) build on. Turkish UI copy lives **only** in the `tr` catalogue (CLAUDE.md's one exception); keys, code and docs stay English. Recipes: the [`localise-ui`](.claude/skills/localise-ui/SKILL.md) skill.

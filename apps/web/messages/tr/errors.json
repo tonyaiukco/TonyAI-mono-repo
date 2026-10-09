@@ -1,7 +1,11 @@
 {
   "network": "Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.",
   "unexpected": "Bir şeyler ters gitti.",
+  "bulkIssues": {
+    "not_processed_deadline": "Süre sınırı dolduğu için işlenmedi"
+  },
   "codes": {
+    "query_too_broad": "Bu istek işleme sınırını aşıyor. Filtreleri daraltın veya daha küçük bir rapor isteyin.",
     "bad_request": "İstek işlenemedi.",
     "validation_failed": "Bazı alanlar geçerli değil.",
     "unauthorized": "Oturumunuzun süresi doldu — lütfen yeniden giriş yapın.",

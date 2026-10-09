@@ -16,6 +16,7 @@ import type {
 } from '@/lib/types';
 import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import { formatNumber } from '@/lib/utils';
+import enErrors from '@/messages/en/errors.json';
 
 /**
  * The client half of bulk submit: which imported rows can even be sent, what
@@ -38,6 +39,8 @@ export const SUBMIT_ISSUE_LABEL: Record<BulkSubmitIssueCode, string> = {
   evidence_required: 'Needs an evidence file',
   variance_reason_required: 'Needs a variance reason',
   unexpected: 'Could not be submitted',
+  // PR B wires the locale-aware label before the API emits this new code.
+  not_processed_deadline: enErrors.bulkIssues.not_processed_deadline,
 };
 
 export interface SubmitEligibility {

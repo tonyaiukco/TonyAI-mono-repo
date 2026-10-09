@@ -907,6 +907,12 @@ export const REPORT_TEMPLATES: { id: ReportTemplate; name: string; description: 
 
 /** Completeness/status meta for the report preview badge (GET /reports/meta). */
 export interface ReportMetaDTO {
+  /** PR B publishes the configured positive safe-integer export row budget.
+   * Compare committedCount + voidedCount against this limit, not totalCount:
+   * exports count committed and withdrawn rows together. Absent on pre-PR-B servers;
+   * absence is unknown, never unlimited. The export rechecks current limits and
+   * authorized data; this preview does not reserve capacity or promise success. */
+  recordLimit?: number;
   status: ReportStatus;
   organisationName: string;
   totalCount: number;
@@ -2109,6 +2115,11 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** The record has left draft; its figure is frozen (TA001). */
   snapshot_immutable: 409,
   upload_expired: 409,
+  /** A complete read/export exceeds its work or output budget after authorization,
+   * over the caller's accessible set only. Inaccessible filters equal empty sets.
+   * No partial result. Body depends only on this code: fixed message, no params
+   * or extra fields (including counts, ids or limits). */
+  query_too_broad: 422,
 } as const);
 export type DomainErrorCode = keyof typeof DOMAIN_ERROR_STATUS;
 
@@ -3635,6 +3646,11 @@ export type EvidenceLinkedRecordDTO = Pick<
  * decision 3a); `linkedRecords` lists all of them, the record it was fetched
  * through included, so "also backs N other records" is visible wherever the
  * file is.
+ * LP4-05's paged GET /activity-records/:id/evidence preserves this complete
+ * nested list, capped at EVIDENCE_MAX_LINKED_RECORDS. An excessive stored link
+ * count is an integrity error, never a reason to silently omit links. The
+ * outer CursorPage<EvidenceDTO> orders files by createdAt DESC, id DESC;
+ * aggregate response work/bytes may additionally refuse query_too_broad.
  */
 export interface EvidenceDTO {
   id: string;
@@ -4112,10 +4128,8 @@ export interface TrackingMatrixDTO {
 // ---------------------------------------------------------------------------
 
 /**
- * Envelope for paginated list endpoints. The audit trail is the first list in
- * the API that cannot return everything — every other list is bounded by the
- * tenant's own data, while `audit_log` grows forever. New paginated endpoints
- * should reuse this shape rather than inventing a second one.
+ * Offset envelope retained for the audit trail. LP4-05's history endpoints
+ * use CursorPage<T>; tenant ownership alone does not bound a growing list.
  */
 export interface Paginated<T> {
   items: T[];
@@ -4222,7 +4236,12 @@ export type BulkImportAuditDiff = {
       refused?: never;
       totalRows: number;
       acceptedCount: number;
+      /** Examined rows refused; excludes rows not started before a deadline. */
       rejectedCount: number;
+      /** Absent on pre-PR-B audit rows; PR B writes both fields, even on dry runs. */
+      completion?: import('./bounded-access').BulkOperationCompletion;
+      /** totalRows - acceptedCount - rejectedCount; zero when completed. */
+      notProcessedCount?: number;
       /** The batch an apply created; absent on a dry run, which creates none. */
       batchId?: string;
     }
@@ -4244,7 +4263,12 @@ export type BulkSubmitAuditDiff = {
   | {
       refused?: never;
       submittedCount: number;
+      /** Includes unstarted ids, so submittedCount + failedCount = requested. */
       failedCount: number;
+      /** Absent on pre-PR-B audit rows; PR B writes both fields. */
+      completion?: import('./bounded-access').BulkOperationCompletion;
+      /** The subset of failedCount with not_processed_deadline. */
+      notProcessedCount?: number;
       recordIds: string[];
     }
 );
@@ -4437,6 +4461,9 @@ export const BULK_UPLOAD_ERROR_CODES = [
   'period_locked',
   /** Anything the server did not anticipate; the row is refused, not applied. */
   'unexpected',
+  /** The request's deadline passed before this row began. Nothing was applied
+   * for this row; other rows' successful outcomes are retained. */
+  'not_processed_deadline',
 ] as const;
 
 export type BulkUploadErrorCode = (typeof BULK_UPLOAD_ERROR_CODES)[number];
@@ -4500,6 +4527,11 @@ export interface BulkUploadAcceptedRow {
 }
 
 export interface BulkUploadReportDTO {
+  /** Absent on legacy servers. PR B emits this on every completed response;
+   * deadline_exceeded preserves accepted rows and accounts for every unstarted
+   * row in errors as not_processed_deadline. completed does not mean all rows
+   * succeeded. Clients must always inspect the per-row outcomes. */
+  completion?: import('./bounded-access').BulkOperationCompletion;
   dryRun: boolean;
   /**
    * The upload's own name, cleaned by the rule `BulkUploadRowIssue.message`
@@ -4558,8 +4590,12 @@ export interface ImportBatchDTO {
   sha256: string;
   status: ImportBatchStatus;
   totalRows: number;
-  /** Null while processing, and on an interrupted import. */
+  /** Null while processing or after an interruption without finalized counts.
+   * Cooperative deadlines finalize both counts and status=failed. Unstarted rows
+   * are totalRows - acceptedCount - rejectedCount when both counts are known;
+   * null counts mean unknown, never zero unstarted rows. */
   acceptedCount: number | null;
+  /** Only examined, refused rows; excludes unstarted rows. */
   rejectedCount: number | null;
   subsidiaryIds: string[];
   uploadedBy: string;
@@ -4741,6 +4777,9 @@ export const BULK_SUBMIT_ISSUE_CODES = [
   'variance_reason_required',
   /** Anything the server did not anticipate. The record was NOT submitted. */
   'unexpected',
+  /** No operation started for this id before the deadline; no existence or
+   * access check is implied. The id is the normalized request UUID. */
+  'not_processed_deadline',
 ] as const;
 
 export type BulkSubmitIssueCode = (typeof BULK_SUBMIT_ISSUE_CODES)[number];
@@ -4761,7 +4800,9 @@ export interface BulkSubmitIssue {
    * lets this entry be joined to the record and to its `audit_log` rows —
    * the accepted rows above already carry it, and a report whose two halves
    * disagreed about an id would be unjoinable. A client matching an entry
-   * back to what it sent must compare case-insensitively.
+   * back to what it sent must compare case-insensitively. For
+   * not_processed_deadline no lookup took place: use the normalized request
+   * UUID instead, making no claim that a stored record exists.
    */
   recordId: string;
   code: BulkSubmitIssueCode;
@@ -4806,9 +4847,14 @@ export interface BulkSubmitAcceptedRecord {
  * application the caller cannot enumerate is a data-integrity incident.
  */
 export interface BulkSubmitReportDTO {
+  /** Absent on legacy servers; PR B emits a value on every response. A
+   * deadline accounts for unstarted ids in failed as not_processed_deadline,
+   * preserving submitted and requested = submitted.length + failed.length. */
+  completion?: import('./bounded-access').BulkOperationCompletion;
   /** Ids the caller asked for, after de-duplication. */
   requested: number;
   submitted: BulkSubmitAcceptedRecord[];
   failed: BulkSubmitIssue[];
 }
 
+export * from './bounded-access';
