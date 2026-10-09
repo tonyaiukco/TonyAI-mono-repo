@@ -1,4 +1,4 @@
-import { HttpException, NotFoundException } from '@nestjs/common';
+import { HttpException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
   API_ERROR_PARAMS,
   API_ERROR_STATUS,
@@ -24,6 +24,7 @@ const STATUS_TEXT: Readonly<Record<number, string>> = {
   404: 'Not Found',
   409: 'Conflict',
   413: 'Payload Too Large',
+  422: 'Unprocessable Entity',
   429: 'Too Many Requests',
   500: 'Internal Server Error',
   502: 'Bad Gateway',
@@ -82,6 +83,16 @@ export class ResourceNotFoundError extends NotFoundException {
   }
 }
 
+const QUERY_TOO_BROAD_MESSAGE = 'Narrow the request and try again.';
+
+/** Construct only after authorization, using work in the caller's scope.
+ * PR A supplies the refusal contract; PR B/C enable the budget checks. */
+export class QueryTooBroadError extends UnprocessableEntityException {
+  constructor() {
+    super(errorBody('query_too_broad', QUERY_TOO_BROAD_MESSAGE));
+  }
+}
+
 /**
  * Exactly the params `code` declares (`API_ERROR_PARAMS`), each a plain string
  * or finite number — never another key, so an id or caller text cannot ride
@@ -109,6 +120,7 @@ const SERVER_ERROR_MESSAGE = 'Internal server error';
  *   - a registered `code` whose status this is is kept; anything else gets
  *     the status's generic code (a validation refusal arrives already coded
  *     by the pipe);
+ *   - query_too_broad is a fixed body without params or extra fields;
  *   - every other field of an object response is kept as it was (a
  *     calculation refusal's `coverage`, a batch's `failed`); `params` keep only
  *     what the final code declares.
@@ -134,6 +146,7 @@ export function toErrorBody(status: number, raw: unknown): ApiErrorBody & Record
   // on `record_changed` must never see it on, say, a 400.
   const code: ApiErrorCode =
     isApiErrorCode(rawCode) && API_ERROR_STATUS[rawCode] === status ? rawCode : genericErrorCode(status);
+  if (code === 'query_too_broad') return { ...errorBody(code, QUERY_TOO_BROAD_MESSAGE) };
   const params = cleanParams(rawParams, code);
   return {
     ...rest,

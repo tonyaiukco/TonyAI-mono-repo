@@ -33,7 +33,7 @@ import {
 import { UpdatePreferencesDto } from '../auth/dto/update-preferences.dto';
 import { HttpExceptionFilter } from '../observability/http-exception.filter';
 import { UploadExpiredError } from '../storage/storage-intents.service';
-import { errorBody, errorCodeOf, ResourceNotFoundError, toErrorBody } from './api-error';
+import { errorBody, errorCodeOf, QueryTooBroadError, ResourceNotFoundError, toErrorBody } from './api-error';
 import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from './coded-validation.pipe';
 import { ParseUuidParamPipe } from './parse-uuid-param.pipe';
 
@@ -96,9 +96,25 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   slot_holds_typed: () => new ActivityTypeSlotConflictError(false),
   snapshot_immutable: () => new SnapshotImmutableError(),
   upload_expired: () => new UploadExpiredError(),
+  query_too_broad: () => new QueryTooBroadError(),
 };
 
 describe('every domain code, as the client receives it', () => {
+  it('keeps budget refusals byte-identical despite caller text, counts and extra fields', () => {
+    const expected = {
+      statusCode: 422, error: 'Unprocessable Entity',
+      message: 'Narrow the request and try again.', code: 'query_too_broad',
+    };
+    const clean = send(new QueryTooBroadError());
+    expect(clean.status).toBe(422);
+    expect(clean.body).toEqual(expected);
+    for (const raw of [
+      { code: 'query_too_broad', message: 'Tenant A has 10000 records', matchedRows: 10000, params: { id: 'foreign' } },
+      { code: 'query_too_broad', message: ['secret'], coverage: { ids: ['private'] }, limit: 10, error: 'secret' },
+    ]) {
+      expect(JSON.stringify(send(new HttpException(raw, 422)).body)).toBe(JSON.stringify(clean.body));
+    }
+  });
   it('has a thrower — no registry code goes unused', () => {
     expect(Object.keys(THROWERS).sort()).toEqual(Object.keys(DOMAIN_ERROR_STATUS).sort());
   });

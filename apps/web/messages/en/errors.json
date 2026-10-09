@@ -1,6 +1,9 @@
 {
   "network": "Could not reach the server. Check your connection and try again.",
   "unexpected": "Something went wrong.",
+  "bulkIssues": {
+    "not_processed_deadline": "Not processed before the time limit"
+  },
   "codes": {
     "bad_request": "The request could not be processed.",
     "validation_failed": "Some of the fields are not valid.",
@@ -33,6 +36,7 @@
     "slot_holds_typed": "Records of this category with a fuel or gas already exist for this reporting entity and period, so this one must name its fuel or gas too.",
     "snapshot_immutable": "This record has left draft, so its figure and the inputs it was computed from can no longer change. Reload it.",
     "upload_expired": "The upload took too long and was discarded. Upload the file again.",
+    "query_too_broad": "This request exceeds the processing limit. Narrow the filters or request a smaller report.",
     "unit_unknown": "This unit is not one the calculation engine knows.",
     "unit_blocked": "This unit cannot be calculated yet.",
     "unit_not_for_category": "This category is not measured in this unit.",

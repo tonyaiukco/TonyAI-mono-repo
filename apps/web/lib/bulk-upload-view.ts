@@ -11,6 +11,7 @@ import type {
 } from '@/lib/types';
 import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import { formatNumber } from '@/lib/utils';
+import enErrors from '@/messages/en/errors.json';
 
 /**
  * The client half of bulk upload: whether a file is worth sending, what the
@@ -96,6 +97,9 @@ export const ISSUE_CODE_LABEL: Record<BulkUploadIssueCode, string> = {
   no_factor: 'No emission factor',
   period_locked: 'Period closed',
   unexpected: 'Could not be imported',
+  // Contract-only fallback; PR B must render this code through the locale
+  // catalogue before its API starts emitting deadline outcomes.
+  not_processed_deadline: enErrors.bulkIssues.not_processed_deadline,
   formula_lead: 'Reads as a formula',
   would_block_submit: 'Cannot be submitted yet',
   evidence_required: 'Needs an evidence file',
@@ -434,4 +438,3 @@ export function templateErrorMessage(error: unknown): string {
   }
   return error instanceof Error ? error.message : 'The template could not be downloaded.';
 }
-

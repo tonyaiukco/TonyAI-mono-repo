@@ -6,6 +6,16 @@ import type {
   AuthUser,
   ListAuditParams,
   ListActivityRecordsParams,
+  ActivityRecordPageParams,
+  ActivityRecordPageFilters,
+  ActivityRecordPageItemDTO,
+  ActivityRecordListMetadataDTO,
+  CursorPage,
+  CursorPageParams,
+  PeriodLockPageParams,
+  TargetPageParams,
+  TargetProgressParams,
+  DenominatorPageParams,
   Paginated,
   ActivityCalculationSnapshot,
   CalculationInput,
@@ -47,7 +57,7 @@ import type {
   BulkSubmitReportDTO,
   UpdatePreferencesRequest,
 } from "@tonyai/shared-types";
-import { isApiErrorCode } from "@tonyai/shared-types";
+import { DEFAULT_PAGE_LIMIT, TARGET_PROGRESS_MAX_IDS, isApiErrorCode, isCursorPage } from "@tonyai/shared-types";
 import { getSupabaseBrowserClient } from "./supabase";
 
 /** Optional filters for GET /emissions/summary (all AND-combined). */
@@ -89,10 +99,63 @@ export class ApiError extends Error {
      *  413, or a code from an API newer than this page. */
     readonly code?: ApiErrorCode,
     readonly params?: ApiErrorParams,
+    /** Raw Retry-After value on a 429, if exposed by the API/proxy. PR B exposes
+     * it through CORS. No automatic batch retry is implied. */
+    readonly retryAfter?: string,
   ) {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** Serialize LP4-05's additive contracts without broadening a query: null site
+ * means company-level, an empty cursor/targetIds is sent for the API to refuse,
+ * and only the documented empty status set means no filter. */
+const PAGE_KEYS = ["limit", "cursor"] as const satisfies readonly (keyof CursorPageParams)[];
+const ACTIVITY_FILTER_KEYS = ["subsidiaryId", "year", "period", "category", "status", "locationId", "periodValue", "scope", "search"] as const satisfies readonly (keyof ActivityRecordPageFilters)[];
+const ACTIVITY_PAGE_KEYS = [...PAGE_KEYS, ...ACTIVITY_FILTER_KEYS, "sort"] as const satisfies readonly (keyof ActivityRecordPageParams)[];
+const PERIOD_LOCK_PAGE_KEYS = [...PAGE_KEYS, "subsidiaryId", "year", "period", "periodValue"] as const satisfies readonly (keyof PeriodLockPageParams)[];
+const TARGET_PAGE_KEYS = [...PAGE_KEYS, "subsidiaryId"] as const satisfies readonly (keyof TargetPageParams)[];
+const TARGET_PROGRESS_KEYS = ["targetIds"] as const satisfies readonly (keyof TargetProgressParams)[];
+const DENOMINATOR_PAGE_KEYS = [...PAGE_KEYS, "subsidiaryId", "year"] as const satisfies readonly (keyof DenominatorPageParams)[];
+
+// `satisfies` rejects unknown keys, but optional fields can still be omitted.
+// Fail compilation if any endpoint forgets a key, including a future filter.
+const _noMissingQueryKeys: never = null as unknown as (
+  | Exclude<keyof CursorPageParams, (typeof PAGE_KEYS)[number]>
+  | Exclude<keyof ActivityRecordPageFilters, (typeof ACTIVITY_FILTER_KEYS)[number]>
+  | Exclude<keyof ActivityRecordPageParams, (typeof ACTIVITY_PAGE_KEYS)[number]>
+  | Exclude<keyof PeriodLockPageParams, (typeof PERIOD_LOCK_PAGE_KEYS)[number]>
+  | Exclude<keyof TargetPageParams, (typeof TARGET_PAGE_KEYS)[number]>
+  | Exclude<keyof TargetProgressParams, (typeof TARGET_PROGRESS_KEYS)[number]>
+  | Exclude<keyof DenominatorPageParams, (typeof DENOMINATOR_PAGE_KEYS)[number]>
+);
+void _noMissingQueryKeys;
+
+function boundedQuery(params: object, keys: readonly string[]): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (!keys.includes(key)) continue;
+    if (value === undefined || (key === "status" && Array.isArray(value) && !value.length)) continue;
+    if (value === null && key !== "locationId") {
+      throw new ApiError("Invalid query parameter.", 400, "validation_failed");
+    }
+    search.set(key, value === null ? "none" : Array.isArray(value) ? value.join(",") : String(value));
+  }
+  const query = search.toString();
+  return query ? `?${query}` : "";
+}
+
+/** PR A publishes unused methods; PR C changes their routes to one page shape.
+ * Calling one against the old API fails explicitly instead of accepting an
+ * unbounded array. This checks the envelope, not each domain DTO. */
+async function apiCursorPage<T>(path: string, params: CursorPageParams, keys: readonly string[] = PAGE_KEYS): Promise<CursorPage<T>> {
+  const result = await apiFetch<unknown>(`${path}${boundedQuery(params, keys)}`);
+  if (!isCursorPage(result) || result.limit !== (params.limit ?? DEFAULT_PAGE_LIMIT) ||
+      (result.nextCursor !== null && result.nextCursor === params.cursor)) {
+    throw new ApiError("The server returned an incompatible page response.", 502, "internal_error");
+  }
+  return result as CursorPage<T>;
 }
 
 /** Only plain string or finite-number values survive — a param is rendered
@@ -140,6 +203,7 @@ export async function apiError(res: Response): Promise<ApiError> {
     res.status,
     code,
     params,
+    res.status === 429 ? res.headers.get("Retry-After") ?? undefined : undefined,
   );
 }
 
@@ -213,6 +277,8 @@ export const api = {
     }),
 
   // --- Activity records ---
+  /** @deprecated PR C migrates every active consumer to listActivityRecordPage.
+   * Retained only so the standalone contract PR works with the current API. */
   listActivityRecords: (params: ListActivityRecordsParams = {}) => {
     const search = new URLSearchParams();
     if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
@@ -229,6 +295,12 @@ export const api = {
       `/activity-records${qs ? `?${qs}` : ""}`,
     );
   },
+  /** Requires LP4-05 PR C's API. Never automatically drains later pages. */
+  listActivityRecordPage: (params: ActivityRecordPageParams = {}) =>
+    apiCursorPage<ActivityRecordPageItemDTO>("/activity-records", params, ACTIVITY_PAGE_KEYS),
+  /** The same scoped filters as the list, without cursor/order. Requires PR C. */
+  activityRecordMetadata: (params: ActivityRecordPageFilters = {}) =>
+    apiFetch<ActivityRecordListMetadataDTO>(`/activity-records/metadata${boundedQuery(params, ACTIVITY_FILTER_KEYS)}`),
   getActivityRecord: (id: string) =>
     apiFetch<ActivityRecordDTO>(`/activity-records/${id}`),
   createActivityRecord: (body: CreateActivityRecordInput) =>
@@ -276,6 +348,11 @@ export const api = {
   // --- Evidence (a file backs one or more records of one subsidiary) ---
   listEvidence: (recordId: string) =>
     apiFetch<EvidenceDTO[]>(`/activity-records/${recordId}/evidence`),
+  /** Requires PR C. Files ordered by createdAt DESC, id DESC. Each file's
+   * linkedRecords remains complete and bounded by EVIDENCE_MAX_LINKED_RECORDS;
+   * a violated stored bound is refused, never silently truncated. */
+  listEvidencePage: (recordId: string, params: CursorPageParams = {}) =>
+    apiCursorPage<EvidenceDTO>(`/activity-records/${recordId}/evidence`, params),
   uploadEvidence: async (recordId: string, file: File) => {
     // Multipart: let the browser set Content-Type (with boundary), so this
     // bypasses the JSON apiFetch wrapper but keeps the same auth + error shape.
@@ -314,10 +391,7 @@ export const api = {
     ),
 
   // --- Period locks (FR §4.2) ---
-  /**
-   * Audit trail (super_admin only — the API 403s every other role). Paginated:
-   * unlike every other list in the app, this one grows without bound.
-   */
+  /** Audit trail (super_admin only), retaining its offset contract. */
   listAudit: (params: ListAuditParams = {}) => {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
@@ -333,6 +407,9 @@ export const api = {
     const qs = search.toString();
     return apiFetch<PeriodLockDTO[]>(`/period-locks${qs ? `?${qs}` : ""}`);
   },
+  /** Requires PR C. Absence from a general page never proves unlocked state. */
+  listPeriodLockPage: (params: PeriodLockPageParams = {}) =>
+    apiCursorPage<PeriodLockDTO>("/period-locks", params, PERIOD_LOCK_PAGE_KEYS),
   lockPeriod: (body: CreatePeriodLockInput) =>
     apiFetch<PeriodLockDTO>("/period-locks", {
       method: "POST",
@@ -349,6 +426,25 @@ export const api = {
     if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
     const qs = search.toString();
     return apiFetch<TargetDTO[]>(`/targets${qs ? `?${qs}` : ""}`);
+  },
+  /** Requires PR C. */
+  listTargetPage: (params: TargetPageParams = {}) =>
+    apiCursorPage<TargetDTO>("/targets", params, TARGET_PAGE_KEYS),
+  /** Requires PR C. Fetch progress only for the ids on the visible target page. */
+  targetPageProgress: async (params: TargetProgressParams) => {
+    const result = await apiFetch<unknown>(`/targets/progress${boundedQuery(params, TARGET_PROGRESS_KEYS)}`);
+    const requestedIds = params.targetIds.map((id) => id.toLowerCase());
+    let previousIndex = -1;
+    if (!Array.isArray(result) || result.length > TARGET_PROGRESS_MAX_IDS || !result.every((row) => {
+      if (row === null || typeof row !== "object" || typeof row.targetId !== "string") return false;
+      const index = requestedIds.indexOf(row.targetId.toLowerCase());
+      if (index <= previousIndex) return false;
+      previousIndex = index;
+      return true;
+    })) {
+      throw new ApiError("The server returned incompatible target progress.", 502, "internal_error");
+    }
+    return result as TargetProgressDTO[];
   },
   targetProgress: (params: { subsidiaryId?: string } = {}) => {
     const search = new URLSearchParams();
@@ -373,6 +469,9 @@ export const api = {
     const qs = search.toString();
     return apiFetch<DenominatorDTO[]>(`/denominators${qs ? `?${qs}` : ""}`);
   },
+  /** Requires PR C. */
+  listDenominatorPage: (params: DenominatorPageParams = {}) =>
+    apiCursorPage<DenominatorDTO>("/denominators", params, DENOMINATOR_PAGE_KEYS),
   createDenominator: (body: CreateDenominatorInput) =>
     apiFetch<DenominatorDTO>("/denominators", {
       method: "POST",
@@ -396,10 +495,14 @@ export const api = {
   },
 
   // --- Reports (WP6, FR §5) ---
-  reportMeta: (params: { year: number; subsidiaryId?: string }) => {
+  reportMeta: async (params: { year: number; subsidiaryId?: string }) => {
     const search = new URLSearchParams({ year: String(params.year) });
     if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
-    return apiFetch<ReportMetaDTO>(`/reports/meta?${search.toString()}`);
+    const result = await apiFetch<ReportMetaDTO>(`/reports/meta?${search.toString()}`);
+    if (result.recordLimit !== undefined && (!Number.isSafeInteger(result.recordLimit) || result.recordLimit < 1)) {
+      throw new ApiError("The server returned an incompatible report limit.", 502, "internal_error");
+    }
+    return result;
   },
   /** Download a generated report artifact and hand it to the browser. */
   downloadReport: async (kind: ReportExportType, params: ReportParams): Promise<void> => {

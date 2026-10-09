@@ -641,10 +641,9 @@ describe('bulk upload — the column contract', () => {
 });
 
 describe('bulk submit — the code list', () => {
-  it('covers every precondition submit() enforces, and nothing else', () => {
-    // One code per gate, in that method's own order. A code with no gate is a
-    // state the server cannot emit and a client must still switch on; a gate
-    // with no code comes back as `unexpected` and tells the user nothing.
+  it('covers submit preconditions and the reserved LP4-05 deadline outcome', () => {
+    // One code per refusal gate. PR A publishes the deadline gate before PR B
+    // enables it; this vocabulary must not collapse distinct refusal reasons.
     expect([...BULK_SUBMIT_ISSUE_CODES]).toEqual([
       'not_found',
       'not_submittable',
@@ -653,6 +652,7 @@ describe('bulk submit — the code list', () => {
       'evidence_required',
       'variance_reason_required',
       'unexpected',
+      'not_processed_deadline',
     ]);
   });
 
