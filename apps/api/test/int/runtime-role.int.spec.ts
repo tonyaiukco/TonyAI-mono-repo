@@ -198,6 +198,14 @@ describe('no function in public is born executable by a client (OQ 14)', () => {
   const executors = `SELECT r.role, pg_catalog.has_function_privilege(r.role, 'public.oq14_probe()', 'EXECUTE') AS "may"
     FROM unnest(ARRAY['public', 'anon', 'authenticated', 'service_role', '${RUNTIME_ROLE}']) AS r(role) ORDER BY 1`;
   let creator: string;
+  const actsAs = (client: string, role: string) =>
+    `${client} can act as ${role} (a member — inherited, by SET ROLE or by ADMIN), an owner in public or of the database — it may alter, disable or drop what that role owns; no client may be`;
+  const ownsSomething = (client: string) =>
+    `${client} owns the database, the schema public or something in it — it may alter, disable or drop it; no client may own one`;
+  const ownedBy = (fn: string, role: string) =>
+    `public.${fn} is owned by ${role} — who may run, attach, alter and drop it; only the owner of the schema's tables may own one`;
+  const mayCreate = (client: string, via?: string) =>
+    `${client} may create in public${via ? ` as ${via}` : ''} — a function it creates there is its own to run, attach and grant; no client may`;
 
   beforeAll(async () => {
     [{ creator }] = await owner.$queryRaw<{ creator: string }[]>`SELECT current_user AS "creator"`;
@@ -251,16 +259,174 @@ describe('no function in public is born executable by a client (OQ 14)', () => {
     expect(problems).toEqual(['anon may EXECUTE public.oq14_rpc(p_id uuid, p_note text) — call it, through /rpc too; only its owner may']);
   });
 
-  it('names a function in public that another role owns — its owner may run, attach and replace it', async () => {
+  it('names a function in public that another role owns — its owner may run, attach, alter and drop it', async () => {
     const problems = await withRollback(owner, async (tx) => {
       await tx.$executeRawUnsafe(probe);
+      // A new owner needs CREATE on the schema; taken back at once, so only ownership remains.
       await tx.$executeRawUnsafe('GRANT CREATE ON SCHEMA public TO service_role');
       await tx.$executeRawUnsafe('ALTER FUNCTION public.oq14_probe() OWNER TO service_role');
+      await tx.$executeRawUnsafe('REVOKE CREATE ON SCHEMA public FROM service_role');
       return checkFunctionExecutors((sql: string) => tx.$queryRawUnsafe(sql));
     });
     expect(problems).toEqual([
-      "public.oq14_probe() is owned by service_role — who may run, attach and replace it; only the owner of the schema's tables may own one",
+      ownedBy('oq14_probe()', 'service_role'),
+      // PostgREST's login may SET ROLE service_role, so it reaches the function too.
+      actsAs('authenticator', 'service_role'),
+      ownsSomething('service_role'),
     ]);
+  });
+
+  it('names a procedure and an aggregate a client may run — not only functions', async () => {
+    const problems = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(`CREATE PROCEDURE public.oq14_proc() LANGUAGE sql AS 'SELECT 1'`);
+      await tx.$executeRawUnsafe('CREATE AGGREGATE public.oq14_agg(integer) (SFUNC = int4pl, STYPE = integer)');
+      await tx.$executeRawUnsafe('GRANT EXECUTE ON PROCEDURE public.oq14_proc() TO anon');
+      await tx.$executeRawUnsafe('GRANT EXECUTE ON FUNCTION public.oq14_agg(integer) TO authenticated');
+      return checkFunctionExecutors((sql: string) => tx.$queryRawUnsafe(sql));
+    });
+    expect(problems).toEqual([
+      'authenticated may EXECUTE public.oq14_agg(integer) — call it, through /rpc too; only its owner may',
+      'anon may EXECUTE public.oq14_proc() — call it, through /rpc too; only its owner may',
+    ]);
+  });
+
+  it('names a procedure and an aggregate another role owns — and the clients that can act as it', async () => {
+    const problems = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL createrole_self_grant = 'set, inherit'");
+      await tx.$executeRawUnsafe('CREATE ROLE oq14_owner NOLOGIN');
+      await tx.$executeRawUnsafe(`CREATE PROCEDURE public.oq14_proc() LANGUAGE sql AS 'SELECT 1'`);
+      await tx.$executeRawUnsafe('CREATE AGGREGATE public.oq14_agg(integer) (SFUNC = int4pl, STYPE = integer)');
+      await tx.$executeRawUnsafe('GRANT CREATE ON SCHEMA public TO oq14_owner');
+      await tx.$executeRawUnsafe('ALTER PROCEDURE public.oq14_proc() OWNER TO oq14_owner');
+      await tx.$executeRawUnsafe('ALTER AGGREGATE public.oq14_agg(integer) OWNER TO oq14_owner');
+      await tx.$executeRawUnsafe('REVOKE CREATE ON SCHEMA public FROM oq14_owner');
+      await tx.$executeRawUnsafe('GRANT oq14_owner TO anon WITH INHERIT FALSE, SET TRUE');
+      return checkFunctionExecutors((sql: string) => tx.$queryRawUnsafe(sql));
+    });
+    expect(problems).toEqual([
+      ownedBy('oq14_agg(integer)', 'oq14_owner'),
+      ownedBy('oq14_proc()', 'oq14_owner'),
+      actsAs('anon', 'oq14_owner'),
+      actsAs('authenticator', 'oq14_owner'),
+    ]);
+  });
+
+  it('names a client that may create in public — by its own CREATE, or by SET ROLE or ADMIN in a role that has it, transitively (Codex P2-2)', async () => {
+    const { direct, viaRole } = await withRollback(owner, async (tx) => {
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      await tx.$executeRawUnsafe('GRANT CREATE ON SCHEMA public TO authenticated');
+      const direct = await checkFunctionExecutors(query);
+      await tx.$executeRawUnsafe('REVOKE CREATE ON SCHEMA public FROM authenticated');
+      // SET only, no INHERIT: has_schema_privilege('anon', …) stays false, and
+      // authenticator reaches it through its own SET-only grant of anon.
+      await tx.$executeRawUnsafe('CREATE ROLE oq14_creator NOLOGIN');
+      await tx.$executeRawUnsafe('GRANT CREATE ON SCHEMA public TO oq14_creator');
+      await tx.$executeRawUnsafe('GRANT oq14_creator TO anon WITH INHERIT FALSE, SET TRUE');
+      // ADMIN alone: it may grant itself SET.
+      await tx.$executeRawUnsafe('GRANT oq14_creator TO service_role WITH ADMIN TRUE, INHERIT FALSE, SET FALSE');
+      return { direct, viaRole: await checkFunctionExecutors(query) };
+    });
+    expect(direct).toEqual([mayCreate('authenticated'), mayCreate('authenticator', 'authenticated')]);
+    expect(viaRole).toEqual([mayCreate('anon', 'oq14_creator'), mayCreate('authenticator', 'oq14_creator'), mayCreate('service_role', 'oq14_creator')]);
+  });
+
+  it('names a client that can act as an owner in public — by INHERIT, or by ADMIN alone, and transitively (Codex P2-1)', async () => {
+    const problems = await withRollback(owner, async (tx) => {
+      // The owner may become the role it creates, so that it can hand it a function.
+      await tx.$executeRawUnsafe("SET LOCAL createrole_self_grant = 'set, inherit'");
+      await tx.$executeRawUnsafe('CREATE ROLE oq14_owner NOLOGIN');
+      await tx.$executeRawUnsafe(probe);
+      // A new owner needs CREATE on the schema; taken back at once, so only ownership remains.
+      await tx.$executeRawUnsafe('GRANT CREATE ON SCHEMA public TO oq14_owner');
+      await tx.$executeRawUnsafe('ALTER FUNCTION public.oq14_probe() OWNER TO oq14_owner');
+      await tx.$executeRawUnsafe('REVOKE CREATE ON SCHEMA public FROM oq14_owner');
+      await tx.$executeRawUnsafe('GRANT oq14_owner TO service_role WITH INHERIT TRUE, SET FALSE');
+      await tx.$executeRawUnsafe('GRANT oq14_owner TO authenticated WITH ADMIN TRUE, INHERIT FALSE, SET FALSE');
+      return checkFunctionExecutors((sql: string) => tx.$queryRawUnsafe(sql));
+    });
+    expect(problems).toEqual([
+      ownedBy('oq14_probe()', 'oq14_owner'),
+      actsAs('authenticated', 'oq14_owner'),
+      // PostgREST's login reaches it through its SET-only grant of authenticated.
+      actsAs('authenticator', 'oq14_owner'),
+      actsAs('service_role', 'oq14_owner'),
+    ]);
+  });
+
+  it("names a client that owns a table in public, or can act as a table's owner (security-rls, re-review)", async () => {
+    const { member, owns } = await withRollback(owner, async (tx) => {
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      await tx.$executeRawUnsafe("SET LOCAL createrole_self_grant = 'set, inherit'");
+      await tx.$executeRawUnsafe('CREATE ROLE oq14_tabowner NOLOGIN');
+      await tx.$executeRawUnsafe('CREATE TABLE public.oq14_t (x integer)');
+      await tx.$executeRawUnsafe('GRANT CREATE ON SCHEMA public TO oq14_tabowner');
+      await tx.$executeRawUnsafe('ALTER TABLE public.oq14_t OWNER TO oq14_tabowner');
+      await tx.$executeRawUnsafe('REVOKE CREATE ON SCHEMA public FROM oq14_tabowner');
+      await tx.$executeRawUnsafe('GRANT oq14_tabowner TO anon WITH INHERIT TRUE, SET FALSE');
+      const member = await checkFunctionExecutors(query);
+      await tx.$executeRawUnsafe('REVOKE oq14_tabowner FROM anon');
+      await tx.$executeRawUnsafe('GRANT CREATE ON SCHEMA public TO service_role');
+      await tx.$executeRawUnsafe('ALTER TABLE public.oq14_t OWNER TO service_role');
+      await tx.$executeRawUnsafe('REVOKE CREATE ON SCHEMA public FROM service_role');
+      return { member, owns: await checkFunctionExecutors(query) };
+    });
+    expect(member).toEqual([actsAs('anon', 'oq14_tabowner'), actsAs('authenticator', 'oq14_tabowner')]);
+    expect(owns).toEqual([actsAs('authenticator', 'service_role'), ownsSomething('service_role')]);
+  });
+
+  it("names a client that owns a type in public, or can act as a type's owner — an enum's values are the roles (security-rls, verification pass)", async () => {
+    const { member, owns } = await withRollback(owner, async (tx) => {
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      await tx.$executeRawUnsafe("SET LOCAL createrole_self_grant = 'set, inherit'");
+      await tx.$executeRawUnsafe('CREATE ROLE oq14_typowner NOLOGIN');
+      await tx.$executeRawUnsafe('GRANT CREATE ON SCHEMA public TO oq14_typowner, service_role');
+      await tx.$executeRawUnsafe('ALTER TYPE public."ActivityRecordStatus" OWNER TO oq14_typowner');
+      await tx.$executeRawUnsafe('ALTER TYPE public."UserRole" OWNER TO service_role');
+      await tx.$executeRawUnsafe('REVOKE CREATE ON SCHEMA public FROM oq14_typowner, service_role');
+      const owns = await checkFunctionExecutors(query);
+      await tx.$executeRawUnsafe('ALTER TYPE public."UserRole" OWNER TO CURRENT_USER');
+      await tx.$executeRawUnsafe('GRANT oq14_typowner TO anon WITH INHERIT FALSE, SET TRUE');
+      return { owns, member: await checkFunctionExecutors(query) };
+    });
+    expect(owns).toEqual([actsAs('authenticator', 'service_role'), ownsSomething('service_role')]);
+    expect(member).toEqual([actsAs('anon', 'oq14_typowner'), actsAs('authenticator', 'oq14_typowner')]);
+  });
+
+  it('names a client that can act as the runtime role — ADMIN alone, directly or transitively (security-rls, re-review)', async () => {
+    const { direct, transitive } = await withRollback(owner, async (tx) => {
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      await tx.$executeRawUnsafe(`GRANT ${RUNTIME_ROLE} TO authenticated WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`);
+      const direct = await checkFunctionExecutors(query);
+      await tx.$executeRawUnsafe(`REVOKE ${RUNTIME_ROLE} FROM authenticated`);
+      await tx.$executeRawUnsafe('CREATE ROLE oq14_mid NOLOGIN');
+      await tx.$executeRawUnsafe(`GRANT ${RUNTIME_ROLE} TO oq14_mid WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`);
+      await tx.$executeRawUnsafe('GRANT oq14_mid TO anon');
+      return { direct, transitive: await checkFunctionExecutors(query) };
+    });
+    const asRuntime = (client: string) =>
+      `${client} can act as ${RUNTIME_ROLE} (a member — inherited, by SET ROLE or by ADMIN), the API's role — BYPASSRLS and its every grant; no client may be`;
+    expect(direct).toEqual([asRuntime('authenticated'), asRuntime('authenticator')]);
+    expect(transitive).toEqual([asRuntime('anon'), asRuntime('authenticator')]);
+  });
+
+  it('reads only: every reader `check` runs works in a READ ONLY transaction, as the runtime role', async () => {
+    const { problems, notices } = await withRollback(runtime, async (tx) => {
+      await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      return {
+        problems: [
+          ...(await checkRuntimeRole(query)),
+          ...(await checkTenantInvariants(query)),
+          ...(await checkTableLevelGrants(query)),
+          ...(await checkFunctionExecutors(query)),
+          ...(await checkIntegrityTriggers(query)),
+          ...(await factorLibraryReport(query)).problems,
+        ],
+        notices: [...(await platformDefaultPrivileges(query)), ...(await runtimeRoleExposures(query))],
+      };
+    });
+    expect(problems).toEqual([]);
+    expect(Array.isArray(notices)).toBe(true);
   });
 
   it('covers every function in public — not only the integrity functions it names', async () => {

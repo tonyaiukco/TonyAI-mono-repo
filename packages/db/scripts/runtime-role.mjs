@@ -515,6 +515,13 @@ export async function checkTableLevelGrants(query) {
 }
 
 /**
+ * The roles a client connects as or becomes: PostgREST's login and the three
+ * roles it switches to. The runtime role is held tighter by `checkRuntimeRole`
+ * (a member of no role, no CREATE in `public`).
+ */
+const CLIENT_ROLES = Object.freeze(['anon', 'authenticated', 'service_role', 'authenticator']);
+
+/**
  * Functions in `public` a client may call, keyed by signature — the name and
  * argument types as `oidvectortypes` prints them, `name(uuid, text)`, so an
  * overload is not let through by its name — with the roles that may: none.
@@ -534,6 +541,16 @@ export const CLIENT_CALLABLE_FUNCTIONS = Object.freeze({});
  * into the library's record as the owner. No function there is meant for a
  * client (`clientCallable`, CLIENT_CALLABLE_FUNCTIONS by default): the policies
  * call only `auth.uid()`, and a trigger fires without its function's EXECUTE.
+ * A client role (CLIENT_ROLES) is held to more than its ACL entries. It may own
+ * nothing an owner's power flows from — the database, the schema `public`, a
+ * relation, a type or a function there (a type's owner may rename an enum's
+ * values or drop it with the columns that use it) — and be a member of no role
+ * that does, nor of
+ * the runtime role (BYPASSRLS): through any chain of grants, INHERIT or SET, or
+ * ADMIN alone, which lets it grant itself the rest (`has_function_privilege`
+ * sees only what is inherited). And it may create nothing there, by its own
+ * CREATE or a role's it is a member of: what it created would be its own to
+ * run, attach and grant.
  */
 export async function checkFunctionExecutors(query, clientCallable = CLIENT_CALLABLE_FUNCTIONS) {
   const executors = await query(
@@ -556,9 +573,42 @@ export async function checkFunctionExecutors(query, clientCallable = CLIENT_CALL
       WHERE n.nspname = 'public' AND p.proowner <> ${OWNER_OF_OUR_TABLES}
       ORDER BY 1, 2`,
   );
+  const actsAs = await query(
+    `SELECT c.rolname AS "client", pg_catalog.pg_get_userbyid(o.role) AS "owner",
+            c.oid = o.role AS "itself", o.role = '${RUNTIME_ROLE}'::regrole AS "runtime"
+       FROM pg_catalog.pg_roles c,
+            (SELECT ${OWNER_OF_OUR_TABLES} AS role
+              UNION SELECT d.datdba FROM pg_catalog.pg_database d WHERE d.datname = pg_catalog.current_database()
+              UNION SELECT n.nspowner FROM pg_catalog.pg_namespace n WHERE n.nspname = 'public'
+              UNION SELECT k.relowner FROM pg_catalog.pg_class k WHERE k.relnamespace = 'public'::regnamespace
+              UNION SELECT t.typowner FROM pg_catalog.pg_type t WHERE t.typnamespace = 'public'::regnamespace
+              UNION SELECT p.proowner FROM pg_catalog.pg_proc p WHERE p.pronamespace = 'public'::regnamespace
+              UNION SELECT '${RUNTIME_ROLE}'::regrole) o
+      WHERE c.rolname IN (${sqlList(CLIENT_ROLES)})
+        AND pg_catalog.pg_has_role(c.oid, o.role, 'MEMBER')
+      ORDER BY 1, 2`,
+  );
+  const creators = await query(
+    `SELECT c.rolname AS "client", pg_catalog.pg_get_userbyid(r.oid) AS "via"
+       FROM pg_catalog.pg_roles c, pg_catalog.pg_roles r
+      WHERE c.rolname IN (${sqlList(CLIENT_ROLES)})
+        AND pg_catalog.pg_has_role(c.oid, r.oid, 'MEMBER')
+        AND pg_catalog.has_schema_privilege(r.oid, 'public', 'CREATE')
+      ORDER BY 1, 2`,
+  );
   const defaults = (await publicDefaultGrants(query, 'f', "('EXECUTE')")).filter((d) => d.ours);
   return [
-    ...owners.map((o) => `public.${o.fn}(${o.args ?? ''}) is owned by ${o.owner} — who may run, attach and replace it; only the owner of the schema's tables may own one`),
+    ...owners.map((o) => `public.${o.fn}(${o.args ?? ''}) is owned by ${o.owner} — who may run, attach, alter and drop it; only the owner of the schema's tables may own one`),
+    ...actsAs.map((a) =>
+      a.itself
+        ? `${a.client} owns the database, the schema public or something in it — it may alter, disable or drop it; no client may own one`
+        : a.runtime
+          ? `${a.client} can act as ${a.owner} (a member — inherited, by SET ROLE or by ADMIN), the API's role — BYPASSRLS and its every grant; no client may be`
+          : `${a.client} can act as ${a.owner} (a member — inherited, by SET ROLE or by ADMIN), an owner in public or of the database — it may alter, disable or drop what that role owns; no client may be`,
+    ),
+    ...creators.map(
+      (c) => `${c.client} may create in public${c.via === c.client ? '' : ` as ${c.via}`} — a function it creates there is its own to run, attach and grant; no client may`,
+    ),
     ...executors
       .filter((e) => !(Object.hasOwn(clientCallable, e.signature) && clientCallable[e.signature].includes(e.grantee)))
       .map(

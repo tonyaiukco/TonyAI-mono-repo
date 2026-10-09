@@ -1002,7 +1002,7 @@ async function main() {
       );
       const executors = await checkFunctionExecutors(query);
       check(
-        'no role but the owner may EXECUTE (so attach, or call through /rpc) a function in public, now or by default — an event writer runs as the owner',
+        'no role but the owner may EXECUTE (so attach, or call through /rpc) a function in public, now or by default, and no client can act as an owner there or create there — an event writer runs as the owner',
         executors.length === 0,
         executors.join('; ') || 'none',
       );
