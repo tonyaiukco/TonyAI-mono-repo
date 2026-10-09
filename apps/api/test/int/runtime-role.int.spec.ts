@@ -10,6 +10,7 @@ import {
   checkTableLevelGrants,
   checkTenantInvariants,
   factorLibraryReport,
+  platformDefaultPrivileges,
   runtimeRoleExposures,
 } from '../../../../packages/db/scripts/runtime-role.mjs';
 import { connect, connectOwner, createTenant, withRollback } from './db';
@@ -214,15 +215,21 @@ describe('no function in public is born executable by a client (OQ 14)', () => {
     expect(problems).toEqual([]);
   });
 
-  it('fails when the default grants EXECUTE again — naming the default and the function born with it', async () => {
-    const problems = await withRollback(owner, async (tx) => {
+  it('fails when the default grants EXECUTE again — naming the default and the function born with it, whoever runs the check', async () => {
+    const { problems, asAnotherRole } = await withRollback(owner, async (tx) => {
       // PUBLIC: back to PostgreSQL's built-in default (the global row goes);
       // anon: what Supabase's per-schema default gives.
       await tx.$executeRawUnsafe('ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC');
       await tx.$executeRawUnsafe('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon');
       await tx.$executeRawUnsafe(probe);
-      return checkFunctionExecutors((sql: string) => tx.$queryRawUnsafe(sql));
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      const asOwner = await checkFunctionExecutors(query);
+      // `check` and `rls:probe` run as the runtime role where DATABASE_URL is
+      // it: the owner's defaults stay the owner's, not the caller's.
+      await tx.$executeRawUnsafe('SET LOCAL ROLE service_role');
+      return { problems: asOwner, asAnotherRole: await checkFunctionExecutors(query) };
     });
+    expect(asAnotherRole).toEqual(problems);
     expect(problems).toEqual(
       expect.arrayContaining([
         `PUBLIC may EXECUTE every new public function ${creator} creates — only its owner may`,
@@ -231,6 +238,29 @@ describe('no function in public is born executable by a client (OQ 14)', () => {
         'anon may EXECUTE public.oq14_probe() — attach it to a table of its own; only its owner may',
       ]),
     );
+  });
+
+  it('names a function called through /rpc, with its arguments — not only trigger functions', async () => {
+    const problems = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(
+        `CREATE FUNCTION public.oq14_rpc(p_id uuid, p_note text) RETURNS integer LANGUAGE sql SECURITY DEFINER SET search_path = '' AS 'SELECT 1'`,
+      );
+      await tx.$executeRawUnsafe('GRANT EXECUTE ON FUNCTION public.oq14_rpc(uuid, text) TO anon');
+      return checkFunctionExecutors((sql: string) => tx.$queryRawUnsafe(sql));
+    });
+    expect(problems).toEqual(['anon may EXECUTE public.oq14_rpc(p_id uuid, p_note text) — call it, through /rpc too; only its owner may']);
+  });
+
+  it('names a function in public that another role owns — its owner may run, attach and replace it', async () => {
+    const problems = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(probe);
+      await tx.$executeRawUnsafe('GRANT CREATE ON SCHEMA public TO service_role');
+      await tx.$executeRawUnsafe('ALTER FUNCTION public.oq14_probe() OWNER TO service_role');
+      return checkFunctionExecutors((sql: string) => tx.$queryRawUnsafe(sql));
+    });
+    expect(problems).toEqual([
+      "public.oq14_probe() is owned by service_role — who may run, attach and replace it; only the owner of the schema's tables may own one",
+    ]);
   });
 
   it('covers every function in public — not only the integrity functions it names', async () => {
@@ -251,16 +281,23 @@ describe('no function in public is born executable by a client (OQ 14)', () => {
     expect(problems).toEqual([`anon is granted TRIGGER on every new public table ${creator} creates — only its owner may hold it`]);
   });
 
-  it("leaves another creator's defaults to the platform notices — they fail neither check", async () => {
-    const problems = await withRollback(owner, async (tx) => {
+  it("names another creator's defaults as the platform's — they fail neither check", async () => {
+    const { problems, notices } = await withRollback(owner, async (tx) => {
       await tx.$executeRawUnsafe('ALTER DEFAULT PRIVILEGES FOR ROLE service_role IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon');
       await tx.$executeRawUnsafe('ALTER DEFAULT PRIVILEGES FOR ROLE service_role IN SCHEMA public GRANT TRIGGER ON TABLES TO anon');
-      return [
-        ...(await checkFunctionExecutors((sql: string) => tx.$queryRawUnsafe(sql))),
-        ...(await checkTableLevelGrants((sql: string) => tx.$queryRawUnsafe(sql))),
-      ];
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      return {
+        problems: [...(await checkFunctionExecutors(query)), ...(await checkTableLevelGrants(query))],
+        notices: await platformDefaultPrivileges(query),
+      };
     });
     expect(problems).toEqual([]);
+    expect(notices).toEqual(
+      expect.arrayContaining([
+        'anon is granted TRIGGER on every new public table service_role creates',
+        'anon is granted EXECUTE on every new public function service_role creates',
+      ]),
+    );
   });
 });
 

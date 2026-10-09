@@ -266,7 +266,10 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
 });
 
 describe('checkFunctionExecutors — only the owner may EXECUTE a function in public, now or by default', () => {
-  const fake = (executors, defaults) => async (sql) => (sql.includes('pg_default_acl') ? defaults : executors);
+  const fake =
+    (executors, defaults, owners = []) =>
+    async (sql) =>
+      sql.includes('pg_default_acl') ? defaults : sql.includes('AS "owner"') ? owners : executors;
 
   it('passes on none, and names each executor otherwise — how it is abused, with its arguments', async () => {
     expect(await checkFunctionExecutors(fake([], []))).toEqual([]);
@@ -314,9 +317,32 @@ describe('checkFunctionExecutors — only the owner may EXECUTE a function in pu
     expect(seen.some((sql) => sql.includes("pg_catalog.acldefault('f', c.role)") && sql.includes("IN ('EXECUTE')"))).toBe(true);
   });
 
-  it('lets a function listed as client-callable through for its listed roles alone (the list is empty)', async () => {
+  it('names a function in public another role owns', async () => {
+    expect(await checkFunctionExecutors(fake([], [], [{ fn: 'some_rpc', args: 'p_id uuid', owner: 'service_role' }]))).toEqual([
+      "public.some_rpc(p_id uuid) is owned by service_role — who may run, attach and replace it; only the owner of the schema's tables may own one",
+    ]);
+    const seen = [];
+    await checkFunctionExecutors(async (sql) => (seen.push(sql), []));
+    expect(seen.some((sql) => sql.includes("p.proowner <> (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass)"))).toBe(true);
+  });
+
+  it('lets a client-callable function through for its listed roles alone, by signature — not an overload', async () => {
     expect(CLIENT_CALLABLE_FUNCTIONS).toEqual({});
     expect(Object.isFrozen(CLIENT_CALLABLE_FUNCTIONS)).toBe(true);
+    const rpc = (signature, args, grantee) => ({ fn: 'some_rpc', args, signature, trigger: false, grantee });
+    const executors = [
+      rpc('some_rpc(uuid)', 'p_id uuid', 'authenticated'),
+      rpc('some_rpc(uuid)', 'p_id uuid', 'anon'),
+      rpc('some_rpc(text)', 'p_name text', 'authenticated'),
+    ];
+    expect(await checkFunctionExecutors(fake(executors, []), { 'some_rpc(uuid)': ['authenticated'] })).toEqual([
+      'anon may EXECUTE public.some_rpc(p_id uuid) — call it, through /rpc too; only its owner may',
+      'authenticated may EXECUTE public.some_rpc(p_name text) — call it, through /rpc too; only its owner may',
+    ]);
+    // The signature the allowlist is keyed by is the one the query builds.
+    const seen = [];
+    await checkFunctionExecutors(async (sql) => (seen.push(sql), []));
+    expect(seen[0]).toContain("p.proname || '(' || pg_catalog.oidvectortypes(p.proargtypes) || ')' AS \"signature\"");
   });
 });
 
@@ -366,12 +392,20 @@ describe('platformDefaultPrivileges — another creator\'s defaults, named and g
     const tables = [
       { grantee: 'anon', creator: 'supabase_admin', privilege: 'TRIGGER', ours: false },
       { grantee: 'anon', creator: 'supabase_admin', privilege: 'TRUNCATE', ours: false },
+      { grantee: 'authenticated', creator: 'supabase_admin', privilege: 'TRIGGER', ours: false },
+      { grantee: 'anon', creator: 'pg_database_owner', privilege: 'TRIGGER', ours: false },
       { grantee: 'anon', creator: 'postgres', privilege: 'TRIGGER', ours: true },
     ];
-    const functions = [{ grantee: 'PUBLIC', creator: 'supabase_admin', privilege: 'EXECUTE', ours: false }];
+    const functions = [
+      { grantee: 'PUBLIC', creator: 'supabase_admin', privilege: 'EXECUTE', ours: false },
+      { grantee: 'anon', creator: 'supabase_admin', privilege: 'EXECUTE', ours: false },
+    ];
     expect(await platformDefaultPrivileges(async (sql) => (sql.includes("acldefault('r'") ? tables : functions))).toEqual([
       'anon is granted TRIGGER, TRUNCATE on every new public table supabase_admin creates',
+      'authenticated is granted TRIGGER on every new public table supabase_admin creates',
+      'anon is granted TRIGGER on every new public table pg_database_owner creates',
       'PUBLIC is granted EXECUTE on every new public function supabase_admin creates',
+      'anon is granted EXECUTE on every new public function supabase_admin creates',
     ]);
     expect(await platformDefaultPrivileges(async () => [])).toEqual([]);
   });

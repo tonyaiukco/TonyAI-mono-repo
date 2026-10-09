@@ -445,7 +445,7 @@ export async function checkTenantInvariants(query) {
 }
 
 const TABLE_VERBS = "('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')";
-const OWNER_OF_PUBLIC = "(SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass)";
+const OWNER_OF_OUR_TABLES = "(SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'public.activity_records'::regclass)";
 
 /**
  * What a new object of `objtype` ('r' table, 'f' function) in `public` is born
@@ -465,7 +465,7 @@ async function publicDefaultGrants(query, objtype, privileges) {
         UNION
        SELECT d.defaclrole FROM pg_catalog.pg_default_acl d WHERE d.defaclnamespace = 'public'::regnamespace
         UNION
-       SELECT ${OWNER_OF_PUBLIC}
+       SELECT ${OWNER_OF_OUR_TABLES}
      ), born AS (
        SELECT c.role, COALESCE(g.defaclacl, pg_catalog.acldefault('${objtype}', c.role)) AS acl
          FROM creators c
@@ -477,7 +477,7 @@ async function publicDefaultGrants(query, objtype, privileges) {
      )
      SELECT DISTINCT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee",
             pg_catalog.pg_get_userbyid(b.role) AS "creator", a.privilege_type AS "privilege",
-            b.role = ${OWNER_OF_PUBLIC} AS "ours"
+            b.role = ${OWNER_OF_OUR_TABLES} AS "ours"
        FROM born b, LATERAL pg_catalog.aclexplode(b.acl) a
       WHERE a.privilege_type IN ${privileges} AND a.grantee <> b.role
       ORDER BY 2, 1, 3`,
@@ -515,25 +515,30 @@ export async function checkTableLevelGrants(query) {
 }
 
 /**
- * Functions in `public` a client may call, by name, with the roles that may:
- * none. PostgREST exposes every function a role may EXECUTE at `/rpc`; one
- * added here says who calls it and why.
+ * Functions in `public` a client may call, keyed by signature — the name and
+ * argument types as `oidvectortypes` prints them, `name(uuid, text)`, so an
+ * overload is not let through by its name — with the roles that may: none.
+ * PostgREST exposes every function a role may EXECUTE at `/rpc`; one added
+ * here says who calls it and why.
  */
 export const CLIENT_CALLABLE_FUNCTIONS = Object.freeze({});
 
 /**
  * EXECUTE on every function in `public` — what attaching a trigger function to
  * a table requires, and what PostgREST's `/rpc` serves — for its owner alone,
- * now and by default. PostgreSQL grants it to PUBLIC on creation and
- * Supabase's default privileges to anon, authenticated and the service role;
- * a SECURITY DEFINER event writer attached to a table of the caller's own
- * would write forged rows into the library's record as the owner. No function
- * there is meant for a client (CLIENT_CALLABLE_FUNCTIONS): the policies call
- * only `auth.uid()`, and a trigger fires without its function's EXECUTE.
+ * now and by default; and that owner the one that owns the schema's tables (a
+ * function another role owns is that role's to run, attach and replace).
+ * PostgreSQL grants EXECUTE to PUBLIC on creation and Supabase's default
+ * privileges to anon, authenticated and the service role; a SECURITY DEFINER
+ * event writer attached to a table of the caller's own would write forged rows
+ * into the library's record as the owner. No function there is meant for a
+ * client (`clientCallable`, CLIENT_CALLABLE_FUNCTIONS by default): the policies
+ * call only `auth.uid()`, and a trigger fires without its function's EXECUTE.
  */
-export async function checkFunctionExecutors(query) {
+export async function checkFunctionExecutors(query, clientCallable = CLIENT_CALLABLE_FUNCTIONS) {
   const executors = await query(
     `SELECT p.proname AS "fn", pg_catalog.pg_get_function_identity_arguments(p.oid) AS "args",
+            p.proname || '(' || pg_catalog.oidvectortypes(p.proargtypes) || ')' AS "signature",
             p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype AS "trigger",
             CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(a.grantee) END AS "grantee"
        FROM pg_catalog.pg_proc p
@@ -543,10 +548,19 @@ export async function checkFunctionExecutors(query) {
         AND a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner
       ORDER BY 1, 2, 4`,
   );
+  const owners = await query(
+    `SELECT p.proname AS "fn", pg_catalog.pg_get_function_identity_arguments(p.oid) AS "args",
+            pg_catalog.pg_get_userbyid(p.proowner) AS "owner"
+       FROM pg_catalog.pg_proc p
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proowner <> ${OWNER_OF_OUR_TABLES}
+      ORDER BY 1, 2`,
+  );
   const defaults = (await publicDefaultGrants(query, 'f', "('EXECUTE')")).filter((d) => d.ours);
   return [
+    ...owners.map((o) => `public.${o.fn}(${o.args ?? ''}) is owned by ${o.owner} — who may run, attach and replace it; only the owner of the schema's tables may own one`),
     ...executors
-      .filter((e) => !(Object.hasOwn(CLIENT_CALLABLE_FUNCTIONS, e.fn) && CLIENT_CALLABLE_FUNCTIONS[e.fn].includes(e.grantee)))
+      .filter((e) => !(Object.hasOwn(clientCallable, e.signature) && clientCallable[e.signature].includes(e.grantee)))
       .map(
         (e) =>
           `${e.grantee} may EXECUTE public.${e.fn}(${e.args ?? ''}) — ${e.trigger ? 'attach it to a table of its own' : 'call it, through /rpc too'}; only its owner may`,
@@ -557,9 +571,10 @@ export async function checkFunctionExecutors(query) {
 
 /**
  * The default privileges in `public` of every creator but the migrations'
- * role — Supabase's `supabase_admin`: the platform's, which no migration can
- * change, so reported, not failed. No table or function of ours is created by
- * it; on staging or production each line is a question for the platform.
+ * role — Supabase's `supabase_admin`, the platform's, which no migration can
+ * change, and `pg_database_owner` where it owns the schema — reported, not
+ * failed. No table or function of ours is created by either; on staging or
+ * production each line is a question for the platform.
  */
 export async function platformDefaultPrivileges(query) {
   const rows = [
@@ -956,7 +971,7 @@ async function main() {
       await client.$disconnect();
     }
     for (const e of exposures) console.warn(`  ! ${RUNTIME_ROLE} can also reach ${e}`);
-    for (const d of platformDefaults) console.warn(`  ! ${d} (the platform's default, out of a migration's reach)`);
+    for (const d of platformDefaults) console.warn(`  ! ${d} (another creator's default, not the migrations' role)`);
     // Not a failure here — local and CI databases hold the seed's placeholder
     // library on purpose. On staging or production each line is a finding.
     for (const n of library.notices) console.warn(`  ! factor library holds a ${n}`);

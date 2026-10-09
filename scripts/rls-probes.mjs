@@ -1031,8 +1031,8 @@ async function main() {
       // Not a failure: what every role inherits from PUBLIC through the platform.
       for (const e of await runtimeRoleExposures(query)) console.log(`  ⚠️  the runtime role can also reach ${e}`);
       // Not a failure: another creator's defaults in public (Supabase's
-      // supabase_admin) — the platform's, out of a migration's reach.
-      for (const d of await platformDefaultPrivileges(query)) console.log(`  ⚠️  ${d} (the platform's default)`);
+      // supabase_admin, the platform's; pg_database_owner where it owns the schema).
+      for (const d of await platformDefaultPrivileges(query)) console.log(`  ⚠️  ${d} (another creator's default)`);
     } finally {
       await prisma.$disconnect();
     }
