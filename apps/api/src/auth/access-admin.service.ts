@@ -410,7 +410,9 @@ const TENANT_ADMIN_LOCK_NAMESPACE = 0x5441444d;
 
 /** An organisation's advisory-lock key: 32 bits of a SHA-256 of its id. */
 export function tenantAdminLockKey(organisationId: string): number {
-  return createHash('sha256').update(organisationId).digest().readInt32BE(0);
+  // Lowercased here too: every caller must reach the same key for one
+  // organisation, whatever spelling of its id it holds (`architect` re-review).
+  return createHash('sha256').update(organisationId.toLowerCase()).digest().readInt32BE(0);
 }
 
 /** The actor's organisation, when the actor may administer it at all. */

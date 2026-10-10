@@ -12,8 +12,10 @@
 --    steps that run outside the database (the Auth user, the email, the
 --    acceptance), so a half-done invitation is visible and retried, never lost.
 --
--- Additive only: four nullable columns (no rewrite), one new table, grants.
--- The migration still holds ACCESS EXCLUSIVE on `profiles` and
+-- Four nullable columns (no rewrite), one new table, grants — and one gate:
+-- `profiles_email_normalised` refuses an address that is not trimmed and
+-- lower-case, and its precondition stops the deploy if a row already breaks
+-- it (see there for the fix). The migration also holds ACCESS EXCLUSIVE on `profiles` and
 -- `organisations` until it commits — the guard reads `profiles` on every
 -- request — so each lock wait gives up after 5 s rather than stall every
 -- request behind a long transaction. Then Prisma records the migration as
@@ -36,13 +38,21 @@ ADD COLUMN     "recovery_sent_at" TIMESTAMPTZ(6);
 -- for every writer. Before this, lookups were case-insensitive pattern matches
 -- (Prisma's `mode: 'insensitive'` is ILIKE): `%` and `_` in an address matched
 -- other accounts (the review seats' P1). Every writer already stores the
--- normalised form; a row that does not stops the migration here, to be
--- corrected first (`UPDATE profiles SET email = lower(btrim(email))`, after
--- checking for a duplicate).
+-- normalised form; a row that does not stops the migration here. Then:
+-- `prisma migrate resolve --rolled-back 20261010180000_lp4_01_onboarding`;
+-- look for two rows that would become one —
+--   SELECT lower(btrim(email)), count(*) FROM profiles GROUP BY 1 HAVING count(*) > 1;
+-- (resolve any by hand: D17, one account per address); then
+-- `UPDATE profiles SET email = lower(btrim(email)) WHERE email <> lower(btrim(email));`
+-- and deploy again.
 DO $$
+DECLARE
+  offending integer;
 BEGIN
-  IF EXISTS (SELECT 1 FROM "profiles" WHERE "email" <> lower(btrim("email"))) THEN
-    RAISE EXCEPTION 'profiles.email holds addresses that are not trimmed and lower-case; normalise them before this migration';
+  SELECT count(*) INTO offending FROM "profiles" WHERE "email" <> lower(btrim("email"));
+  IF offending > 0 THEN
+    RAISE EXCEPTION 'profiles.email holds % address(es) that are not trimmed and lower-case; normalise them before this migration', offending
+      USING HINT = 'See this migration''s comment: resolve it as rolled back, check for duplicates, normalise, deploy again.';
   END IF;
 END
 $$;

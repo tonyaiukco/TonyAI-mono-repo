@@ -38,7 +38,9 @@ export interface ProvisionReport {
   organisation: { id: string | null; created: boolean };
   /** `invitation` as found before this run. */
   admin: { id: string | null; created: boolean; invitation: InvitationStatus | 'none' | 'new' };
-  /** A sent, unaccepted invitation re-opened and sent again with a fresh link. */
+  /** A sent, unaccepted invitation re-opened and sent again with a fresh link
+   *  — in a dry run, one that `--apply` would re-send (voiding the link in the
+   *  administrator's inbox). */
   resent: boolean;
   delivery: DeliveryOutcome | null;
 }
@@ -148,15 +150,16 @@ export class OnboardingOperator {
       // finish. Accepted, revoked or none: nothing to send.
       const resend = invitation === InvitationStatus.sent;
       if (!apply || (invitation !== InvitationStatus.pending && !resend)) {
-        return { applied: apply, organisation: { id: org.id, created: false }, admin: { id: existing.id, created: false, invitation }, resent: false, delivery: null };
+        // A dry run states its plan: whether --apply would re-send.
+        return { applied: apply, organisation: { id: org.id, created: false }, admin: { id: existing.id, created: false, invitation }, resent: !apply && resend, delivery: null };
       }
       if (resend) {
-        await this.db.$transaction(async (tx) => {
+        const reopened = await this.db.$transaction(async (tx) => {
           const { count } = await tx.invitation.updateMany({
             where: { profileId: existing.id, status: InvitationStatus.sent },
             data: { status: InvitationStatus.pending },
           });
-          if (count === 0) return; // accepted or revoked in the meantime
+          if (count === 0) return false; // accepted or revoked in the meantime
           await this.audit.recordSystem(
             {
               organisationId: org.id,
@@ -167,7 +170,12 @@ export class OnboardingOperator {
             },
             tx,
           );
+          return true;
         });
+        // Nothing re-opened: report that, and send nothing.
+        if (!reopened) {
+          return { applied: true, organisation: { id: org.id, created: false }, admin: { id: existing.id, created: false, invitation }, resent: false, delivery: null };
+        }
       }
       const delivery = await this.delivery.deliver(this.db, existing.id);
       return { applied: true, organisation: { id: org.id, created: false }, admin: { id: existing.id, created: false, invitation }, resent: resend, delivery };

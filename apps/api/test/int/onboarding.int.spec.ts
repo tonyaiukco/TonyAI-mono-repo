@@ -103,6 +103,17 @@ async function bannedInAuth(id: string): Promise<boolean> {
   return Boolean(until && new Date(until) > new Date());
 }
 
+/** Waits until some session is queued on an advisory lock — the operation under test is blocked behind the holder. */
+async function queuedOnAdvisoryLock(timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const [{ n }] = await owner.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`;
+    if (n > 0) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error('nothing queued on an advisory lock within the timeout');
+}
+
 beforeAll(async () => {
   tag = randomUUID().slice(0, 8);
   runtime = connect(4);
@@ -610,10 +621,10 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
   it('provisioning into an organisation an offboarding is closing waits for it, and refuses (security re-review P3-3)', async () => {
     const C = await createTenant();
     const email = address();
+    const holder = connectOwner(1);
     try {
       const real = new AuthAdminService();
       const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL)), new AuthSyncService(real));
-      const holder = connectOwner(1);
       const locked = deferred();
       const release = deferred();
       // An offboarding mid-flight: the tenant lock held, the mark written, not yet committed.
@@ -626,13 +637,13 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
       await locked.promise;
       const provisioning = operator.provision({ organisationId: C.organisationId, adminEmail: email, adminName: 'Late', language: 'en' }, true);
       const outcome = provisioning.then(() => 'provisioned', (e: unknown) => (e instanceof OperatorRefusal ? e.message : String(e)));
-      await new Promise((r) => setTimeout(r, 300)); // provision has passed its first check and waits on the lock
+      await queuedOnAdvisoryLock(); // provision has passed its first check and waits on the lock
       release.resolve();
       await offboarding;
-      await holder.$disconnect();
       expect(await outcome).toMatch(/offboarded/);
       expect(await owner.profile.count({ where: { email } })).toBe(0);
     } finally {
+      await holder.$disconnect();
       await owner.profile.deleteMany({ where: { email } });
       await owner.auditLog.deleteMany({ where: { organisationId: C.organisationId } });
       await C.cleanup();
@@ -722,10 +733,10 @@ describe('offboarding and the tenant administrators (architect P2-1)', () => {
   it('an offboarding waits for an administrative change in flight and disables what it added', async () => {
     const C = await createTenant();
     const added = randomUUID();
+    const holder = connectOwner(1);
     try {
       const real = new AuthAdminService();
       const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null)), new AuthSyncService(real));
-      const holder = connectOwner(1);
       const locked = deferred();
       const release = deferred();
       // An invitation's transaction, mid-flight: the lock held, a new member written, not yet committed.
@@ -739,14 +750,14 @@ describe('offboarding and the tenant administrators (architect P2-1)', () => {
       }, { timeout: 20_000 });
       await locked.promise;
       const offboarding = operator.offboard(C.organisationId, true);
-      await new Promise((r) => setTimeout(r, 300)); // the offboarding is now queued on the lock
+      await queuedOnAdvisoryLock(); // the offboarding now waits on the tenant lock
       release.resolve();
       await change;
       const report = await offboarding;
-      await holder.$disconnect();
       expect(report.disabled).toBe(C.profileIds.length + 1);
       expect((await owner.profile.findUniqueOrThrow({ where: { id: added } })).disabledAt).not.toBeNull();
     } finally {
+      await holder.$disconnect();
       await owner.auditLog.deleteMany({ where: { organisationId: C.organisationId } });
       await owner.profile.deleteMany({ where: { id: added } });
       await C.cleanup();
@@ -847,6 +858,14 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
     expect(await bannedInAuth(created.id)).toBe(true);
     const rows = await owner.auditLog.findMany({ where: { action: 'disable', entityId: { in: [created.id, created.id.toUpperCase()] } } });
     expect(rows.map((r) => r.entityId)).toEqual([created.id]);
+  });
+
+  it('an uppercase subsidiary id is the same grant: re-sending the same set changes and audits nothing', async () => {
+    const target = A.users.dataEntry.id;
+    const before = await owner.auditLog.count({ where: { entityId: target, entity: 'subsidiary_access' } });
+    const res = await call('PUT', `/users/${target}/access`, A.users.superAdmin.id, { subsidiaryIds: [A.subsidiaryId.toUpperCase()] });
+    expect(res).toMatchObject({ status: 200, body: { subsidiaryIds: [A.subsidiaryId] } });
+    expect(await owner.auditLog.count({ where: { entityId: target, entity: 'subsidiary_access' } })).toBe(before);
   });
 
   it('the users routes: super_admin only, ids validated, another tenant’s id answers like none', async () => {

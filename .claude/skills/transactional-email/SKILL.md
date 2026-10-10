@@ -42,6 +42,10 @@ kind is a product decision first (workflow notifications are LP7-05).
 - **Mint only when the email can carry it.** A re-minted Auth link voids the
   previous one; check `mail.config` before `generateLink`, so "mail not
   configured" never strands a person with a dead link.
+- **Look an address up by exact equality** on `normaliseEmail()` (stored
+  trimmed and lower-case, CHECK `profiles_email_normalised`) — never Prisma's
+  `mode: 'insensitive'`, which is an unescaped ILIKE: `%` and `_` in a typed
+  address would match other accounts (LP4-01 review P1).
 - **No existence oracle on public endpoints.** A public trigger (reset) answers
   the same status and body for every address and does the work after the
   response (`setImmediate`, tracked with `RuntimeLimits.acquire` so a shutdown's
