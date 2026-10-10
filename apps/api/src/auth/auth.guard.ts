@@ -13,6 +13,22 @@ import { AccountDisabledError, SessionRevokedError } from './access-errors';
 import type { RequestUser } from './auth.types';
 
 /**
+ * When the token's session began, in epoch milliseconds: the earliest of its
+ * `amr` timestamps (Supabase Auth keeps the sign-in's across refreshes —
+ * measured on GoTrue v2.184.0 — while `iat` is the refresh's) and `iat`.
+ * Whole seconds, so a session begun in the revocation's own second counts as
+ * before it. A token with neither is treated as older than any revocation.
+ */
+export function sessionStartedAt(payload: { iat?: unknown; amr?: unknown }): number {
+  const stamps = [payload.iat];
+  if (Array.isArray(payload.amr)) {
+    for (const entry of payload.amr) stamps.push((entry as { timestamp?: unknown } | null)?.timestamp);
+  }
+  const seconds = stamps.filter((s): s is number => typeof s === 'number' && Number.isFinite(s));
+  return seconds.length ? Math.min(...seconds) * 1000 : -Infinity;
+}
+
+/**
  * Primary tenant-isolation enforcement point.
  *
  * Verifies the Supabase-issued JWT (HS256 shared secret or asymmetric via JWKS
@@ -89,14 +105,12 @@ export class SupabaseAuthGuard implements CanActivate {
     if (profile.disabledAt || profile.organisation?.offboardedAt) {
       throw new AccountDisabledError();
     }
-    // A token issued before the account's sessions were revoked (a disable)
-    // stays refused after a re-enable: its signature and expiry are still good,
-    // but Supabase Auth has revoked the session it belongs to, and the API is
-    // where that has to hold (Codex review, finding 1). `iat` is whole seconds:
-    // a token issued in the same second as the revocation is refused too.
-    if (profile.sessionsRevokedAt) {
-      const issuedAt = typeof payload.iat === 'number' ? payload.iat * 1000 : -Infinity;
-      if (issuedAt <= profile.sessionsRevokedAt.getTime()) throw new SessionRevokedError();
+    // A session that began before the account's sessions were revoked (a
+    // disable) stays refused after a re-enable: its token's signature and
+    // expiry are still good, and Supabase Auth may not have revoked it yet,
+    // so the API is where that has to hold (Codex review, finding 1).
+    if (profile.sessionsRevokedAt && sessionStartedAt(payload) <= profile.sessionsRevokedAt.getTime()) {
+      throw new SessionRevokedError();
     }
 
     let accessibleSubsidiaryIds: string[];

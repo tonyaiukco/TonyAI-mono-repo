@@ -980,6 +980,36 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
     }
   });
 
+  it('a session from before the disable stays refused after the enable though it refreshed in between — the disable’s Auth step failed (Codex finding 1)', async () => {
+    // GoTrue's own claims — its `iat`, `amr` and session — re-signed with this app's test secret.
+    const withToken = async (gotrue: string) => {
+      const claims = JSON.parse(Buffer.from(gotrue.split('.')[1], 'base64url').toString()) as Record<string, unknown>;
+      const bearer = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(JWT_SECRET));
+      return (await fetch(`${base}/me`, { headers: { Authorization: `Bearer ${bearer}` } })).json().then((b) => b as { code?: string; id?: string });
+    };
+    const created = await invite(inbox().transport, { role: UserRole.consultant });
+    await admin.updateUserById(created.id, { password: 'a-long-enough-pass-1', email_confirm: true });
+    const signedIn = await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' });
+    expect(signedIn.error).toBeNull();
+    const failing = new AuthAdminService();
+    vi.spyOn(failing, 'setBanned').mockRejectedValue(new AuthAdminError('auth_unavailable'));
+    const lifecycle = services(null, { authAdmin: failing }).lifecycle;
+    await lifecycle.disable(A.users.superAdmin, created.id); // neither the ban nor the rotation reaches Auth
+    await new Promise((r) => setTimeout(r, 1_100)); // a refresh stamped a later second than the revocation
+    const refreshed = await browser().auth.refreshSession({ refresh_token: signedIn.data.session!.refresh_token });
+    expect(refreshed.error).toBeNull();
+    await lifecycle.enable(A.users.superAdmin, created.id);
+    expect(await withToken(refreshed.data.session!.access_token)).toMatchObject({ code: 'session_revoked' });
+    // The session's refresh token is still alive in Auth (both syncs failed): what it mints now is refused too.
+    const again = await browser().auth.refreshSession({ refresh_token: refreshed.data.session!.refresh_token });
+    expect(again.error).toBeNull();
+    expect(await withToken(again.data.session!.access_token)).toMatchObject({ code: 'session_revoked' });
+    // A new session — a recovery link after the enable — is accepted.
+    const { data } = await admin.generateLink({ type: 'recovery', email: created.email });
+    const fresh = await browser().auth.verifyOtp({ type: 'recovery', token_hash: data.properties!.hashed_token });
+    expect(await withToken(fresh.data.session!.access_token)).toMatchObject({ id: created.id });
+  });
+
   it('an uppercase spelling of one’s own id is still one’s own; another member’s is stored and banned in the one spelling', async () => {
     const own = A.users.superAdmin.id.toUpperCase();
     expect(await call('POST', `/users/${own}/disable`, A.users.superAdmin.id)).toMatchObject({ status: 403, body: { code: 'own_account_forbidden' } });
