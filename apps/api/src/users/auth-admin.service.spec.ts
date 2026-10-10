@@ -21,13 +21,17 @@ describe('AuthAdminService — every Auth answer onboarding depends on (measured
     service = new AuthAdminService();
   });
 
-  it('creates the Auth user with the profile id; a second time, the same user is fine', async () => {
+  it('creates the Auth user banned, with the profile id; a second time, the same user is fine — and says whether it is banned', async () => {
     admin.createUser.mockResolvedValueOnce({ data: { user: { id: ID } }, error: null });
-    await service.ensureUser(ID, 'a@b.test');
+    await expect(service.ensureUser(ID, 'a@b.test')).resolves.toEqual({ banned: true });
     expect(admin.createUser).toHaveBeenCalledWith({ id: ID, email: 'a@b.test', email_confirm: false, ban_duration: '876000h' });
-    admin.createUser.mockResolvedValueOnce(fail('email_exists'));
-    admin.getUserById.mockResolvedValueOnce({ data: { user: { id: ID, email: 'A@B.test' } }, error: null });
-    await expect(service.ensureUser(ID, 'a@b.test')).resolves.toBeUndefined();
+    const later = new Date(Date.now() + 3_600_000).toISOString();
+    const earlier = new Date(Date.now() - 3_600_000).toISOString();
+    for (const [bannedUntil, banned] of [[undefined, false], [null, false], [earlier, false], [later, true]] as const) {
+      admin.createUser.mockResolvedValueOnce(fail('email_exists'));
+      admin.getUserById.mockResolvedValueOnce({ data: { user: { id: ID, email: 'A@B.test', banned_until: bannedUntil } }, error: null });
+      await expect(service.ensureUser(ID, 'a@b.test'), String(bannedUntil)).resolves.toEqual({ banned });
+    }
   });
 
   it('an address held by another Auth user is unavailable; the profile id under another address is a mismatch', async () => {

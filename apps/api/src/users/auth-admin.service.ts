@@ -58,17 +58,19 @@ export class AuthAdminService {
    * ban. A creation whose answer is lost, or a process that stops right after
    * it, leaves a user nobody can sign in as — never an unbanned user for an
    * account disabled meanwhile, which no flag would point to (Codex
-   * re-review, finding 2).
+   * re-review, finding 2). Answers whether the user is banned now — a new one
+   * always is.
    */
-  async ensureUser(profileId: string, email: string): Promise<void> {
+  async ensureUser(profileId: string, email: string): Promise<{ banned: boolean }> {
     const admin = this.admin();
     const created = await admin.createUser({ id: profileId, email, email_confirm: false, ban_duration: BAN_DURATION });
-    if (!created.error) return;
+    if (!created.error) return { banned: true };
     if (created.error.code !== 'email_exists') throw new AuthAdminError('auth_unavailable');
     const existing = await admin.getUserById(profileId);
     if (existing.data.user) {
       if (existing.data.user.email?.toLowerCase() !== email.toLowerCase()) throw new AuthAdminError('auth_user_mismatch');
-      return;
+      const until = existing.data.user.banned_until;
+      return { banned: Boolean(until) && new Date(until!).getTime() > Date.now() };
     }
     throw new AuthAdminError('email_unavailable');
   }

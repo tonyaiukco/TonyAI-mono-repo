@@ -322,6 +322,23 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     expect(sent).toHaveLength(1);
   });
 
+  it('a re-send to an invitee Auth already confirmed leaves their password and session alone (security re-review of be2b8d9, P2)', async () => {
+    const { sent, transport } = inbox();
+    const created = await invite(transport, { language: 'en' });
+    const session = await browser().auth.verifyOtp({ type: 'invite', token_hash: tokenIn(sent[0], 'invite') });
+    expect(session.error).toBeNull();
+    const holder = browser();
+    await holder.auth.setSession(session.data.session!);
+    expect((await holder.auth.updateUser({ password: 'their-own-pass-123' })).error).toBeNull();
+    // …and their acceptance never reached the API: the invitation is still `sent`.
+    const again = inbox();
+    await services(again.transport).lifecycle.resendInvitation(A.users.superAdmin, created.id);
+    expect(again.sent).toHaveLength(0);
+    expect(await bannedInAuth(created.id)).toBe(false);
+    expect((await browser().auth.signInWithPassword({ email: created.email, password: 'their-own-pass-123' })).error).toBeNull();
+    expect((await holder.auth.refreshSession()).error).toBeNull();
+  });
+
   it('an enabled invitee whose unban fails gets no link — the auth step is recorded, and a re-send completes it (Codex re-review, finding 2)', async () => {
     const authAdmin = new AuthAdminService();
     vi.spyOn(authAdmin, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
@@ -369,8 +386,9 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const real = new AuthAdminService();
     const s = services(null);
     vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
-      await real.ensureUser(id, email);
+      const made = await real.ensureUser(id, email);
       await s.access.disableMember(A.users.superAdmin, id); // an administrator, at that moment
+      return made;
     });
     const { sent, transport } = inbox();
     const created = await services(transport, { authAdmin }).lifecycle.invite(A.users.superAdmin, {
@@ -477,8 +495,9 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const authAdmin = new AuthAdminService();
     // Disabled while the Auth user is being made (its own sync bans the new user).
     vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
-      await real.ensureUser(id, email);
+      const made = await real.ensureUser(id, email);
       await s.lifecycle.disable(A.users.superAdmin, id);
+      return made;
     });
     const hold = holdBefore(runtime, 'Profile', 'updateMany'); // delivery's re-arm, after it saw "disabled"
     const delivering = new InvitationDeliveryService(authAdmin, new MailService(inbox().transport, MAIL), new AuthSyncService(authAdmin))
@@ -501,7 +520,7 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const authAdmin = new AuthAdminService();
     vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
       await s.lifecycle.disable(A.users.superAdmin, id); // finds no Auth user: nothing banned, flag cleared
-      await real.ensureUser(id, email);
+      return real.ensureUser(id, email);
     });
     const outcome = await new InvitationDeliveryService(authAdmin, new MailService(inbox().transport, MAIL), new AuthSyncService(authAdmin))
       .deliver(runtime, profileId);
@@ -561,7 +580,7 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     vi.spyOn(deliveryAuth, 'ensureUser').mockImplementation(async (id, email) => {
       disabling = s.lifecycle.disable(A.users.superAdmin, id);
       await banReached;
-      await real.ensureUser(id, email); // the Auth user appears after that ban
+      return real.ensureUser(id, email); // the Auth user appears after that ban
     });
     const delivering = new InvitationDeliveryService(deliveryAuth, new MailService(inbox().transport, MAIL), new AuthSyncService(deliveryAuth))
       .deliver(runtime, profileId);
@@ -584,7 +603,7 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     // The disable's own sync runs before the Auth user exists — nothing to ban, flag cleared — then the user is made.
     vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
       await s.lifecycle.disable(A.users.superAdmin, id);
-      await real.ensureUser(id, email);
+      return real.ensureUser(id, email);
     });
     vi.spyOn(authAdmin, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable')); // the corrective ban fails
     const outcome = await new InvitationDeliveryService(authAdmin, new MailService(inbox().transport, MAIL), new AuthSyncService(authAdmin))

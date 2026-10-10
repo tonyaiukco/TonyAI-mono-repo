@@ -65,24 +65,31 @@ export class InvitationDeliveryService {
     try {
       // Born banned (`ensureUser`): whatever happens from here on, an Auth user
       // exists only banned until the sync below has applied the profile's state.
-      await this.authAdmin.ensureUser(profileId, email);
+      const { banned } = await this.authAdmin.ensureUser(profileId, email);
       // Disabled while the Auth user was being created: its own sync may have
       // found no user to ban — the one just made is banned already.
       const now = await db.profile.findUnique({
         where: { id: profileId },
         select: { disabledAt: true, organisation: { select: { offboardedAt: true } } },
       });
-      // The profile's state reaches the new user through the durable protocol,
+      const disabled = Boolean(now?.disabledAt || now?.organisation?.offboardedAt);
+      // The profile's state reaches the user through the durable protocol,
       // never directly (Codex review, finding 2): arm the flag, then let the
       // sync apply whatever state it reads under the account's lock — the
-      // unban for an enabled account, the ban for one disabled meanwhile. A
-      // failure stays flagged for `pnpm onboarding reconcile`.
-      await db.profile.updateMany({
-        where: { id: profileId },
-        data: { authSyncPendingSince: new Date(), authSyncGeneration: { increment: 1 } },
-      });
-      const synced = await this.authSync.apply(db, profileId);
-      if (now?.disabledAt || now?.organisation?.offboardedAt) return { delivered: false, skipped: 'disabled' };
+      // unban for a banned user of an enabled account, the ban for one
+      // disabled meanwhile. A failure stays flagged for `pnpm onboarding
+      // reconcile`. An unbanned user of an enabled account is left alone: the
+      // sync replaces the password, and an invitee who already confirmed (and
+      // chose one) would lose it (security re-review of `be2b8d9`, P2).
+      let synced = true;
+      if (banned || disabled) {
+        await db.profile.updateMany({
+          where: { id: profileId },
+          data: { authSyncPendingSince: new Date(), authSyncGeneration: { increment: 1 } },
+        });
+        synced = await this.authSync.apply(db, profileId);
+      }
+      if (disabled) return { delivered: false, skipped: 'disabled' };
       // Still banned: a link would only reach a person who cannot use it.
       if (!synced) return this.fail(db, profileId, 'auth', 'auth_unavailable');
       // Minting voids the previous link — only once the email can carry the new one.
