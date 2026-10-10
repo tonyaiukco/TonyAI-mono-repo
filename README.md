@@ -489,6 +489,81 @@ Period locking (FR §4.2): a `super_admin` closes one subsidiary's reporting per
 
 ---
 
+### Reporting context contract (LP3-02 PR A)
+
+**PR A publishes the shared contract and unused web clients; it does not implement
+the new API routes or connect the annual screens.** Existing routes and clients
+retain their response shapes. The expanded `REPORTING_YEARS` list already affects
+existing year selectors: the accepted range is **2000–2100 inclusive**, matching
+the API's existing DTO bounds. `DEFAULT_REPORTING_YEAR` stays **2026** (D06),
+independently of list order and calendar rollover. Selecting 2027 does not promise
+factor coverage: D07 still refuses a calculation without its activity-year factor;
+there is no "latest overall" fallback or recalculation of historical snapshots.
+
+`ReportingContext` in `@tonyai/shared-types` requires `year` and optionally carries
+`subsidiaryId`, `scope` and `category`. Omitted subsidiary means **all accessible
+subsidiaries**, which may be less than the whole organisation. One subsidiary
+includes its company- and site-attributed records; no company-only or individual
+site selector is added. Scope and category combine with AND; a conflicting pair
+is invalid. `isReportingYear` and `isReportingContext` validate values, not tenant
+access or factor availability. APIs must recheck access on every request and keep
+an inaccessible selection empty instead of broadening it to the accessible set.
+
+The implementation must make the URL authoritative for this context across
+navigation, refreshes and exports. An explicit URL wins over remembered state;
+an omitted year becomes an explicit 2026 in the canonical URL. Invalid values or
+duplicate context keys must be refused, not silently dropped. Dashboard, absolute
+emissions, intensity, the ledger and reports use the selected year. Explicit
+historical comparisons may span years; targets retain their own baseline, target
+and actual progress years and inherit only the subsidiary selection. Search,
+record status, sort and export formatting remain view-local options.
+
+The following **reserved GET routes are not live in PR A**. Paths are relative to
+`/api/v1`, declared once in `REPORTING_CONTEXT_API_PATHS`; the web calls them only
+through `apps/web/lib/api.ts`:
+
+| Route | Client | Response contract |
+|---|---|---|
+| `/emissions/context/summary` | `reportingSummary` | `ReportingSummaryResponse` |
+| `/emissions/context/tracking-matrix` | `reportingMatrix` | `ReportingMatrixResponse` |
+| `/intensity/context` | `reportingIntensity` | `ReportingIntensityResponse` |
+| `/reports/context/meta` | `reportingMeta` | `ReportingMetaResponse` |
+| `/reports/context/{pdf,excel,csv}` | `downloadReportingReport` | File bytes; `ReportingExportParams` request |
+
+JSON responses use `{ context, data }`, echoing every requested inventory field
+even for empty results. Clients reject a missing or mismatched acknowledgement.
+The separate paths make an older API refuse instead of silently ignoring new
+filters; clients never fall back to a legacy path. Exports use the same context
+as preview/meta and apply it to totals, committed and withdrawn ledgers, labels
+and the generation audit. Binary responses have no context acknowledgement: their
+implementation needs artifact-content tests. A JSON acknowledgement likewise
+does not prove arithmetic, tenant isolation or a consistent database snapshot.
+
+For **D14 intensity**, the new contract permits only `revenue` for an
+all-accessible selection, even when that set contains one subsidiary. Physical
+metrics require an explicitly selected subsidiary. Different monetary units stay
+separate; there is no FX conversion. `selectedSubsidiaryIds` describes authorized
+coverage, and each metric's `contributingSubsidiaryIds` identifies the subset with
+that exact metric/unit denominator. Only those subsidiaries contribute to its
+filtered numerator; the denominator stays annual, without scope/category
+proration. Missing denominators are disclosed as missing coverage, never zero.
+PR A validates this response boundary in the new client; server enforcement is
+an implementation obligation, not a change to the legacy intensity endpoint.
+
+The filtered tracking matrix must filter both records and emitted category cells,
+then recompute row and overall counts; filtering records alone would manufacture
+missing obligations. Existing cell coverage rules remain. This contract does not
+implement D11/D12 attribution/applicability or D13 final/PARTIAL reporting, which
+remain LP3-04/LP4-03 work. Consumers still need request-generation/cancellation
+guards so an older response cannot replace a newer selection.
+
+PR A merges alone and first after the required architecture review; LP4-01 and
+the LP3-02 implementation rebase on its merged contract. No migration is needed.
+Contract/client tests cover year bounds, context preservation and rejection,
+denominator coverage and export requests. Completing LP3-02 also requires the
+two-year/two-subsidiary reconciliation, URL and refresh behavior, 2027 missing
+factor refusal, and live API/browser evidence on an authorized isolated environment.
+
 ### Bounded access contract (LP4-05 PR A)
 
 **Contract published; runtime activation is pending PR B/C.** This change adds
