@@ -52,7 +52,10 @@ kind is a product decision first (workflow notifications are LP7-05).
   tracked with `RuntimeLimits.acquire`, so a shutdown's `settle()` waits for it).
   **Capacity is an oracle too:** a job for an existing account holds a worker
   longer, so a full queue drops and logs, still answering 202; only a quota that
-  knows nothing of accounts may answer 429 (LP4-01 Codex review, finding 4). A
+  knows nothing of accounts may answer 429 (LP4-01 Codex review, finding 4).
+  What a FIFO queue still shows is *when* the requester's own email arrives —
+  eligible jobs ahead of it delay it: a noisy residual (one trial per address
+  per cooldown, and it mails the target), accepted for the pilot. A
   per-address cooldown lives in the database (claimed in one conditional
   UPDATE), a per-client-address quota in `RuntimeLimits.quota`.
 - **Audit what changed, not what was said.** The state change is audited; a diff
