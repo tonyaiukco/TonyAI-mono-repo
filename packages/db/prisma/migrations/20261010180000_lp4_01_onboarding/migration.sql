@@ -1,0 +1,161 @@
+-- LP4-01 PR B — onboarding and the user lifecycle (Decisions 2026-10-10
+-- (second), K3–K6; sub-decisions S1–S12, same day).
+--
+--  * `profiles.disabled_at` (D19): the API's guard refuses a disabled account
+--    on its next request; Supabase Auth bans it too, the database first.
+--    `auth_sync_pending_since` records that Auth has yet to catch up (K4) and
+--    `auth_sync_generation` which change it is catching up with (a sync clears
+--    only its own); `sessions_revoked_at` is the durable boundary the guard
+--    holds every access token to (a disable and an enable move it; a session
+--    begun at or before it is refused); `recovery_sent_at` is the public reset endpoint's
+--    per-address cooldown.
+--  * `organisations.offboarded_at` (K6, D21): set by the operator CLI's
+--    `offboard`, which also disables every member; the start of D21's 90-day
+--    clock. Nothing here deletes anything.
+--  * `invitations`: one row per invited profile — the durable state of the
+--    steps that run outside the database (the Auth user, the email, the
+--    acceptance), so a half-done invitation is visible and retried, never lost.
+--
+-- Four nullable columns (no rewrite), one new table, grants — and one gate:
+-- `profiles_email_normalised` refuses an address that is not trimmed and
+-- lower-case, and its precondition stops the deploy if a row already breaks
+-- it (see there for the fix). The migration also holds ACCESS EXCLUSIVE on `profiles` and
+-- `organisations` until it commits — the guard reads `profiles` on every
+-- request — so each lock wait gives up after 5 s rather than stall every
+-- request behind a long transaction. Then Prisma records the migration as
+-- failed and rolls it back whole: resolve it with
+-- `prisma migrate resolve --rolled-back 20261010180000_lp4_01_onboarding`
+-- before deploying again, in a quieter window.
+SET LOCAL lock_timeout = '5s';
+
+-- CreateEnum
+CREATE TYPE "InvitationStatus" AS ENUM ('pending', 'sent', 'accepted', 'revoked');
+
+-- AlterTable
+ALTER TABLE "profiles" ADD COLUMN     "auth_sync_generation" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "auth_sync_pending_since" TIMESTAMPTZ(6),
+ADD COLUMN     "disabled_at" TIMESTAMPTZ(6),
+ADD COLUMN     "recovery_sent_at" TIMESTAMPTZ(6),
+ADD COLUMN     "sessions_revoked_at" TIMESTAMPTZ(6);
+
+-- An address is stored in one spelling — trimmed, lower-case — so the API, the
+-- operator CLI and the public reset look it up by exact equality, and the
+-- existing unique index holds D17 (one account per address) case-insensitively
+-- for every writer. Before this, lookups were case-insensitive pattern matches
+-- (Prisma's `mode: 'insensitive'` is ILIKE): `%` and `_` in an address matched
+-- other accounts (the review seats' P1). Every writer already stores the
+-- normalised form; a row that does not stops the migration here. Then:
+-- `prisma migrate resolve --rolled-back 20261010180000_lp4_01_onboarding`;
+-- look for two rows that would become one —
+--   SELECT lower(btrim(email)), count(*) FROM profiles GROUP BY 1 HAVING count(*) > 1;
+-- (resolve any by hand: D17, one account per address); then
+-- `UPDATE profiles SET email = lower(btrim(email)) WHERE email <> lower(btrim(email));`
+-- and deploy again.
+DO $$
+DECLARE
+  offending integer;
+BEGIN
+  SELECT count(*) INTO offending FROM "profiles" WHERE "email" <> lower(btrim("email"));
+  IF offending > 0 THEN
+    RAISE EXCEPTION 'profiles.email holds % address(es) that are not trimmed and lower-case; normalise them before this migration', offending
+      USING HINT = 'See this migration''s comment: resolve it as rolled back, check for duplicates, normalise, deploy again.';
+  END IF;
+END
+$$;
+ALTER TABLE "profiles" ADD CONSTRAINT "profiles_email_normalised" CHECK ("email" = lower(btrim("email")));
+
+-- AlterTable
+ALTER TABLE "organisations" ADD COLUMN     "offboarded_at" TIMESTAMPTZ(6);
+
+-- CreateTable
+CREATE TABLE "invitations" (
+    "profile_id" UUID NOT NULL,
+    "language" TEXT NOT NULL,
+    "invited_by" UUID,
+    "status" "InvitationStatus" NOT NULL DEFAULT 'pending',
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "last_error_step" TEXT,
+    "last_error_code" TEXT,
+    "last_attempt_at" TIMESTAMPTZ(6),
+    "sent_at" TIMESTAMPTZ(6),
+    "accepted_at" TIMESTAMPTZ(6),
+    "revoked_at" TIMESTAMPTZ(6),
+    "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT transaction_timestamp(),
+    "updated_at" TIMESTAMPTZ(6) NOT NULL,
+
+    CONSTRAINT "invitations_pkey" PRIMARY KEY ("profile_id")
+);
+
+-- AddForeignKey. The profile's own key, not (id, organisation_id): an
+-- invitation names no organisation of its own (it is the profile's), so there
+-- is nothing to keep in step — and a composite key here would refuse an
+-- organisation's deletion the way LP1-03 measured for `user_subsidiary_access`.
+ALTER TABLE "invitations" ADD CONSTRAINT "invitations_profile_id_fkey" FOREIGN KEY ("profile_id") REFERENCES "profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- What the state machine may hold, whoever writes it. Prisma does not model
+-- CHECK constraints, so it reports no drift for these.
+ALTER TABLE "invitations"
+  ADD CONSTRAINT "invitations_language_supported" CHECK ("language" IN ('en', 'tr')),
+  ADD CONSTRAINT "invitations_error_step_known" CHECK ("last_error_step" IN ('auth', 'email')),
+  ADD CONSTRAINT "invitations_error_paired" CHECK (("last_error_step" IS NULL) = ("last_error_code" IS NULL)),
+  ADD CONSTRAINT "invitations_attempts_non_negative" CHECK ("attempts" >= 0),
+  ADD CONSTRAINT "invitations_sent_has_time" CHECK ("status" <> 'sent' OR "sent_at" IS NOT NULL),
+  ADD CONSTRAINT "invitations_accepted_has_time" CHECK (("status" = 'accepted') = ("accepted_at" IS NOT NULL)),
+  ADD CONSTRAINT "invitations_revoked_has_time" CHECK (("status" = 'revoked') = ("revoked_at" IS NOT NULL));
+
+-- ---------------------------------------------------------------------------
+-- Row Level Security and client grants
+-- ---------------------------------------------------------------------------
+--
+-- Operational state read and written by the API alone (the runtime role,
+-- BYPASSRLS): RLS on with NO policy, never FORCE, and nothing granted to a
+-- client role — not even the service role, which nothing here needs — so
+-- PostgREST serves no row of it. The new `profiles` columns need nothing
+-- here: `profiles_select_own` lets a user read their own row, these three
+-- included; `anon` and `authenticated` hold Supabase's table-level UPDATE but
+-- no UPDATE policy admits them (`rls:probe` measures a self-update); the
+-- service role writes them as it writes every tenant column (it bypasses RLS —
+-- Open questions, "LP4-01 follow-ups" (1)).
+ALTER TABLE "invitations" ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    RAISE NOTICE 'Supabase roles absent — skipping invitations client grants';
+    RETURN;
+  END IF;
+  REVOKE ALL ON "invitations" FROM anon, authenticated, service_role;
+END
+$$;
+
+-- ---------------------------------------------------------------------------
+-- The runtime role (LP1-03) — `runtime-role.mjs` lists the same
+-- ---------------------------------------------------------------------------
+
+-- An invitation creates its profile at request time (S1, S2): a column-level
+-- INSERT of exactly what the API writes. Never `disabled_at` or the Auth and
+-- reset bookkeeping (their NULL defaults), so a new account is born enabled
+-- and in no state the lifecycle has not put it in. Which organisation and
+-- role is the API's to enforce (`AccessAdminService`, the actor's own
+-- organisation); the profile can never move afterwards (D17: no UPDATE on
+-- `organisation_id`). Prisma fills `theme` and `auth_sync_generation` (their
+-- schema defaults: a cosmetic preference, a counter starting at 0 — measured:
+-- a create without them is refused), `created_at` and `updated_at` itself.
+GRANT INSERT ("id", "email", "full_name", "role", "language", "theme", "auth_sync_generation", "organisation_id", "created_at", "updated_at")
+  ON "profiles" TO "tonyai_runtime";
+
+-- Disabling and enabling (D19), the session boundary, the Auth catch-up flag
+-- and its generation (K4), the reset cooldown — beside `role`, `language` and
+-- `updated_at` (LP1-03, LP3-01).
+GRANT UPDATE ("disabled_at", "sessions_revoked_at", "auth_sync_pending_since", "auth_sync_generation", "recovery_sent_at")
+  ON "profiles" TO "tonyai_runtime";
+
+-- Invitations: created with the profile, moved along by delivery and
+-- acceptance. Never deleted at runtime (a withdrawn invitation is `revoked`,
+-- and its profile disabled), and never re-pointed: not `profile_id`,
+-- `invited_by`, `language` or `created_at`.
+GRANT SELECT, INSERT ON "invitations" TO "tonyai_runtime";
+GRANT UPDATE (
+  "status", "attempts", "last_error_step", "last_error_code", "last_attempt_at",
+  "sent_at", "accepted_at", "revoked_at", "updated_at"
+) ON "invitations" TO "tonyai_runtime";

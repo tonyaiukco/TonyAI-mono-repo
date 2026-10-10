@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { BarChart3, Building2, ChevronLeft, ChevronRight, ClipboardEdit, FileText, LayoutDashboard, Leaf, ScrollText, Stamp } from 'lucide-react';
+import { BarChart3, Building2, ChevronLeft, ChevronRight, ClipboardEdit, FileText, LayoutDashboard, Leaf, ScrollText, Stamp, Users } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { LanguageSwitcher } from '@/components/i18n/language-switcher';
@@ -23,6 +23,8 @@ const navItems = [
   // super_admin-only: the API 403s every other role, and the page says so
   // rather than hiding — a missing nav item reads as a bug to a tester.
   { id: 'audit', label: 'audit', icon: ScrollText, href: '/audit' },
+  // LP4-01, super_admin-only like the audit trail, and shown for the same reason.
+  { id: 'users', label: 'users', icon: Users, href: '/users' },
 ] as const;
 
 export function Sidebar() {

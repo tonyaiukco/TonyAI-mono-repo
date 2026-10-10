@@ -95,7 +95,9 @@ enabled = true
 # Port to use for the email testing server web interface.
 port = 54324
 # Uncomment to expose additional ports for testing user applications that send emails.
-# smtp_port = 54325
+# LP4-01: the API sends invitations and password resets itself (K5) — to this
+# SMTP port locally (`SMTP_HOST=127.0.0.1`, `SMTP_PORT=54325` in apps/api/.env).
+smtp_port = 54325
 # pop3_port = 54326
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
@@ -170,9 +172,12 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "http://127.0.0.1:3000"
+# LP4-01: the web app's origin as `pnpm dev` serves it (and the API's APP_URL).
+# The API builds the invitation and reset links itself, straight to the app's
+# `/auth/confirm` (K5), so no Auth redirect is followed in either flow.
+site_url = "http://localhost:3000"
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+additional_redirect_urls = ["http://localhost:3000/auth/confirm", "http://127.0.0.1:3000/auth/confirm"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to the local API URL (http://127.0.0.1:<port>/auth/v1).
@@ -185,13 +190,18 @@ enable_refresh_token_rotation = true
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
 # Allow/disallow new user signups to your project.
-enable_signup = true
+# LP4-01: invitation only — an account starts from an administrator's
+# invitation or the operator's provisioning (D18); the Auth admin API still
+# creates users. Staging and production: Codex's `supabase_auth.py`.
+enable_signup = false
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false
 # Allow/disallow testing manual linking of accounts
 enable_manual_linking = false
 # Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
-minimum_password_length = 6
+# LP4-01 (decision S9): 12, and no composition rules (NIST SP 800-63B). The
+# set-password screen checks the same length before it asks.
+minimum_password_length = 12
 # Passwords that do not meet the following requirements will be rejected as weak. Supported values
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
 password_requirements = ""
@@ -220,6 +230,9 @@ web3 = 30
 
 [auth.email]
 # Allow/disallow new user signups via email to your project.
+# Stays true: in this CLI it is the email PROVIDER switch (GOTRUE_EXTERNAL_EMAIL_ENABLED)
+# — false refuses every password sign-in (`email_provider_disabled`, measured in
+# LP4-01). `[auth] enable_signup = false` above is what closes public signups.
 enable_signup = true
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.

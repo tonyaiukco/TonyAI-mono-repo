@@ -131,8 +131,13 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // The library's record: written by its own triggers only, and not read by
   // the API yet — the grant arrives with its first reader.
   factor_release_events: [],
-  // + UPDATE on (role, language, updated_at) only — see RUNTIME_COLUMN_UPDATES.
+  // + INSERT and UPDATE on listed columns only — see RUNTIME_COLUMN_INSERTS
+  // and RUNTIME_COLUMN_UPDATES.
   profiles: ['SELECT'],
+  // LP4-01's onboarding state: created with its profile, moved along by
+  // delivery and acceptance, never deleted (a withdrawn one is `revoked`).
+  // + UPDATE on the state columns only — see RUNTIME_COLUMN_UPDATES.
+  invitations: ['SELECT', 'INSERT'],
   user_subsidiary_access: ['SELECT', 'INSERT', 'DELETE'],
   // + UPDATE on every column but its identity and organisation — see
   // RUNTIME_COLUMN_UPDATES.
@@ -153,12 +158,47 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   _prisma_migrations: [],
 });
 
+/**
+ * Column-level INSERT grants on tables whose table-level INSERT is withheld.
+ * Exactly these columns, no more and no fewer.
+ */
+export const RUNTIME_COLUMN_INSERTS = Object.freeze({
+  // An invitation creates its profile (LP4-01): identity, role, language and
+  // organisation, never `disabled_at` or the Auth/reset bookkeeping — a new
+  // account is born enabled. Prisma fills `theme` and `auth_sync_generation`
+  // (their schema defaults) and the two timestamps on every create.
+  profiles: ['id', 'email', 'full_name', 'role', 'language', 'theme', 'auth_sync_generation', 'organisation_id', 'created_at', 'updated_at'],
+});
+
 /** Column-level UPDATE grants on tables whose table-level UPDATE is withheld. */
 export const RUNTIME_COLUMN_UPDATES = Object.freeze({
   // The role changes at runtime (AccessAdminService), and so does the UI
   // language, the user's own (LP3-01, PATCH /me/preferences); the
-  // organisation never does (D17).
-  profiles: ['role', 'language', 'updated_at'],
+  // organisation never does (D17). LP4-01: an account is disabled and enabled
+  // (D19), Auth's catch-up is flagged (K4) and the reset cooldown kept.
+  profiles: [
+    'role',
+    'language',
+    'updated_at',
+    'disabled_at',
+    'sessions_revoked_at',
+    'auth_sync_pending_since',
+    'auth_sync_generation',
+    'recovery_sent_at',
+  ],
+  // The state an invitation moves through; never its profile, inviter,
+  // language or creation time.
+  invitations: [
+    'status',
+    'attempts',
+    'last_error_step',
+    'last_error_code',
+    'last_attempt_at',
+    'sent_at',
+    'accepted_at',
+    'revoked_at',
+    'updated_at',
+  ],
   // Everything an edit changes; never `id` or `organisation_id`, so not even a
   // bug can move a subsidiary — and every record, file and lock under it — to
   // another tenant. A new column needs its grant here and in a migration.
@@ -277,21 +317,27 @@ export async function checkRuntimeRole(query) {
     // Column-level grants are invisible to has_table_privilege: `INSERT (…)` on
     // `profiles` or `SELECT (migration_name)` on `_prisma_migrations` would
     // pass the loop above (`qa-auditor`).
-    for (const p of ['SELECT', 'INSERT', 'REFERENCES']) {
+    for (const p of ['SELECT', 'REFERENCES']) {
       if (expected.has(p)) continue;
       const [{ any }] = await query(`SELECT has_any_column_privilege('${role}', 'public.${name}', '${p}') AS any`);
       if (any) problems.push(`${role} has column-level ${p} on public.${name}`);
     }
-    if (!expected.has('UPDATE')) {
-      const allowed = new Set(RUNTIME_COLUMN_UPDATES[name] ?? []);
+    // INSERT and UPDATE may be granted per column instead — exactly the listed
+    // columns (LP4-01's profile INSERT, LP1-03's profile and subsidiary UPDATE).
+    for (const [p, listed] of [
+      ['INSERT', RUNTIME_COLUMN_INSERTS],
+      ['UPDATE', RUNTIME_COLUMN_UPDATES],
+    ]) {
+      if (expected.has(p)) continue;
+      const allowed = new Set(listed[name] ?? []);
       const cols = await query(
-        `SELECT a.attname AS col, has_column_privilege('${role}', 'public.${name}', a.attname, 'UPDATE') AS can
+        `SELECT a.attname AS col, has_column_privilege('${role}', 'public.${name}', a.attname, '${p}') AS can
            FROM pg_attribute a
           WHERE a.attrelid = 'public.${name}'::regclass AND a.attnum > 0 AND NOT a.attisdropped`,
       );
       for (const { col, can } of cols) {
-        if (can && !allowed.has(col)) problems.push(`${role} can UPDATE public.${name}.${col}`);
-        if (!can && allowed.has(col)) problems.push(`${role} cannot UPDATE public.${name}.${col}`);
+        if (can && !allowed.has(col)) problems.push(`${role} can ${p} public.${name}.${col}`);
+        if (!can && allowed.has(col)) problems.push(`${role} cannot ${p} public.${name}.${col}`);
       }
     }
   }

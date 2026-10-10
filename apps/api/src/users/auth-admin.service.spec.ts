@@ -1,0 +1,86 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AuthAdminError, AuthAdminService } from './auth-admin.service';
+
+const admin = {
+  createUser: vi.fn(),
+  getUserById: vi.fn(),
+  generateLink: vi.fn(),
+  updateUserById: vi.fn(),
+};
+vi.mock('@supabase/supabase-js', () => ({ createClient: () => ({ auth: { admin } }) }));
+
+const ID = '11111111-1111-4111-8111-111111111111';
+const fail = (code: string) => ({ data: { user: null }, error: { code } });
+
+describe('AuthAdminService — every Auth answer onboarding depends on (measured against GoTrue in LP4-01)', () => {
+  let service: AuthAdminService;
+  beforeEach(() => {
+    vi.resetAllMocks();
+    process.env.SUPABASE_URL = 'http://127.0.0.1:54321';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service';
+    service = new AuthAdminService();
+  });
+
+  it('creates the Auth user banned, with the profile id; a second time, the same user is fine — and says whether it is banned', async () => {
+    admin.createUser.mockResolvedValueOnce({ data: { user: { id: ID } }, error: null });
+    await expect(service.ensureUser(ID, 'a@b.test')).resolves.toEqual({ banned: true });
+    expect(admin.createUser).toHaveBeenCalledWith({ id: ID, email: 'a@b.test', email_confirm: false, ban_duration: '876000h' });
+    const later = new Date(Date.now() + 3_600_000).toISOString();
+    const earlier = new Date(Date.now() - 3_600_000).toISOString();
+    for (const [bannedUntil, banned] of [[undefined, false], [null, false], [earlier, false], [later, true]] as const) {
+      admin.createUser.mockResolvedValueOnce(fail('email_exists'));
+      admin.getUserById.mockResolvedValueOnce({ data: { user: { id: ID, email: 'A@B.test', banned_until: bannedUntil } }, error: null });
+      await expect(service.ensureUser(ID, 'a@b.test'), String(bannedUntil)).resolves.toEqual({ banned });
+    }
+  });
+
+  it('an address held by another Auth user is unavailable; the profile id under another address is a mismatch', async () => {
+    admin.createUser.mockResolvedValue(fail('email_exists'));
+    admin.getUserById.mockResolvedValueOnce({ data: { user: null }, error: { code: 'user_not_found' } });
+    await expect(service.ensureUser(ID, 'a@b.test')).rejects.toMatchObject({ code: 'email_unavailable' });
+    admin.getUserById.mockResolvedValueOnce({ data: { user: { id: ID, email: 'other@b.test' } }, error: null });
+    await expect(service.ensureUser(ID, 'a@b.test')).rejects.toMatchObject({ code: 'auth_user_mismatch' });
+    admin.createUser.mockResolvedValueOnce(fail('unexpected_failure'));
+    await expect(service.ensureUser(ID, 'a@b.test')).rejects.toMatchObject({ code: 'auth_unavailable' });
+  });
+
+  it('never returns a token minted for another account', async () => {
+    admin.generateLink.mockResolvedValueOnce({ data: { user: { id: ID }, properties: { hashed_token: 'tok' } }, error: null });
+    await expect(service.inviteToken(ID, 'a@b.test')).resolves.toBe('tok');
+    admin.generateLink.mockResolvedValueOnce({ data: { user: { id: 'someone-else' }, properties: { hashed_token: 'tok' } }, error: null });
+    await expect(service.recoveryToken(ID, 'a@b.test')).rejects.toMatchObject({ code: 'auth_user_mismatch' });
+    expect(admin.generateLink).toHaveBeenLastCalledWith({ type: 'recovery', email: 'a@b.test' });
+  });
+
+  it('names each failed link: an address already confirmed, no Auth user, anything else', async () => {
+    for (const [code, expected] of [['email_exists', 'email_unavailable'], ['user_not_found', 'auth_user_missing'], ['over_request_rate_limit', 'auth_unavailable']] as const) {
+      admin.generateLink.mockResolvedValueOnce({ data: { user: null, properties: null }, error: { code } });
+      const error = await service.inviteToken(ID, 'a@b.test').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(AuthAdminError);
+      expect((error as AuthAdminError).code).toBe(expected);
+    }
+  });
+
+  it('bans for ten years and unbans, each with a password nobody holds (GoTrue then revokes every session); an unknown id has nothing to ban', async () => {
+    admin.updateUserById.mockResolvedValue({ data: { user: { id: ID } }, error: null });
+    await service.setBanned(ID, true);
+    await service.setBanned(ID, true);
+    await service.setBanned(ID, false);
+    const [first, second, unban] = admin.updateUserById.mock.calls;
+    // 256 random bits, plus one character of every class: any password policy accepts it.
+    expect(first).toEqual([ID, { ban_duration: '876000h', password: expect.stringMatching(/^[A-Za-z0-9_-]{43}Aa1!$/) }]);
+    expect(second[1].password).not.toBe(first[1].password);
+    // The unban rotates it too: an enable may reach Auth before the disable's call did.
+    expect(unban).toEqual([ID, { ban_duration: 'none', password: expect.stringMatching(/^[A-Za-z0-9_-]{43}Aa1!$/) }]);
+    expect(unban[1].password).not.toBe(second[1].password);
+    admin.updateUserById.mockResolvedValueOnce(fail('user_not_found'));
+    await expect(service.setBanned(ID, true)).resolves.toBeUndefined();
+    admin.updateUserById.mockResolvedValueOnce(fail('unexpected_failure'));
+    await expect(service.setBanned(ID, true)).rejects.toMatchObject({ code: 'auth_unavailable' });
+  });
+
+  it('without the service-role settings it fails as unavailable, never with a half-built client', async () => {
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    await expect(new AuthAdminService().setBanned(ID, true)).rejects.toMatchObject({ code: 'auth_unavailable' });
+  });
+});

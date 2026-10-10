@@ -191,8 +191,10 @@ async function ownerDb() {
 
 // period_locks is empty in the seed → seed a temporary pair (one accessible to
 // entry, one not) so the entry>0 and entry<service assertions have data.
+// The seeded admin by address, not "any super_admin": an organisation the
+// operator CLI provisioned locally (LP4-01) has one too, in another tenant.
 async function seedPeriodLocks() {
-  const r = await fetch(`${URL_}/rest/v1/profiles?role=eq.super_admin&select=id&limit=1`, {
+  const r = await fetch(`${URL_}/rest/v1/profiles?email=eq.${ADMIN_EMAIL}&select=id`, {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const adminId = (await r.json())[0]?.id;
@@ -217,7 +219,7 @@ async function cleanupPeriodLocks() {
 const IMPORT_PROBE_FILE = 'rls-probe-import.csv';
 const MANUFACTURING = '22222222-2222-2222-2222-222222220003';
 async function seedImportBatches(entryId) {
-  const r = await fetch(`${URL_}/rest/v1/profiles?role=eq.super_admin&select=id,organisation_id&limit=1`, {
+  const r = await fetch(`${URL_}/rest/v1/profiles?email=eq.${ADMIN_EMAIL}&select=id,organisation_id`, {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const admin = (await r.json())[0];
@@ -253,7 +255,7 @@ async function cleanupImportBatches() {
 const AUDIT_PROBE_ENTITY = 'rls_probe';
 const FOREIGN_ORG = '99999999-9999-9999-9999-999999999999';
 async function seedAuditRows() {
-  const r = await fetch(`${URL_}/rest/v1/profiles?role=eq.super_admin&select=id,organisation_id&limit=1`, {
+  const r = await fetch(`${URL_}/rest/v1/profiles?email=eq.${ADMIN_EMAIL}&select=id,organisation_id`, {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const admin = (await r.json())[0];
@@ -766,6 +768,73 @@ async function main() {
     );
   } finally {
     await svc('DELETE', `storage_intents?id=in.(${PROBE_INTENT},99999999-0000-0000-0000-00000000f002)`);
+  }
+
+  // --- invitations (LP4-01): onboarding state, no client access ------------
+  // Read and written by the API (the runtime role) alone: RLS on with NO
+  // policy, and nothing granted to anon, authenticated — or the service role,
+  // which nothing needs it for. So each role is refused by PRIVILEGE (42501),
+  // which is not vacuous the way "0 rows" would be with nothing seeded. A
+  // client that could write here could mark its own invitation accepted, or
+  // another account's revoked.
+  console.log('▸ invitations (no client access, the service role included)');
+  {
+    const denied = (r) => Boolean(r.error) && /42501|permission denied/i.test(r.error);
+    const query = 'select=profile_id';
+    const adminToken = await getToken(ADMIN_EMAIL);
+    const reads = {
+      anon: await count('invitations', { query }),
+      entry: await count('invitations', { token, query }),
+      admin: await count('invitations', { token: adminToken, query }),
+      service: await count('invitations', { key: SERVICE, token: SERVICE, query }),
+    };
+    check(
+      'invitations: no client role reads it, not even the service role (refused by privilege)',
+      Object.values(reads).every(denied),
+      Object.entries(reads).map(([role, r]) => `${role}=${r.error?.slice(0, 3) ?? r.total}`).join(', '),
+    );
+    const now = new Date().toISOString();
+    const forged = await fetch(`${URL_}/rest/v1/invitations`, {
+      method: 'POST',
+      headers: { apikey: ANON, Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ profile_id: subjectOf(adminToken), language: 'en', status: 'accepted', accepted_at: now, updated_at: now }),
+    });
+    const forgedBody = forged.ok ? '' : await forged.text();
+    check(
+      'invitations: a client cannot write one (an accepted invitation for itself)',
+      !forged.ok && /42501|permission denied/i.test(forgedBody),
+      `status=${forged.status}`,
+    );
+
+    // The lifecycle columns on `profiles` (LP4-01). Supabase's default
+    // privileges give `authenticated` table-level UPDATE on `profiles`, so
+    // RLS — no UPDATE policy — is all that stops a user rewriting its own row:
+    // a disabled account inside K4's token window clearing its `disabled_at`
+    // or its `sessions_revoked_at` (reviving its pre-disable tokens at the API
+    // once enabled), or anyone promoting itself. Read back with the service role: "no error"
+    // is not "no change".
+    const entryId = subjectOf(token);
+    const lifecycle = 'select=role,disabled_at,sessions_revoked_at,auth_sync_pending_since,auth_sync_generation,recovery_sent_at';
+    const readOwn = async () =>
+      (await (await fetch(`${URL_}/rest/v1/profiles?${lifecycle}&id=eq.${entryId}`, { headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` } })).json())[0];
+    const beforeRow = await readOwn();
+    const stamp = '2001-01-01T00:00:00+00:00';
+    const selfPatch = await fetch(`${URL_}/rest/v1/profiles?id=eq.${entryId}`, {
+      method: 'PATCH',
+      headers: { apikey: ANON, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify({
+        role: 'super_admin', disabled_at: stamp, sessions_revoked_at: stamp, auth_sync_pending_since: stamp, auth_sync_generation: 999, recovery_sent_at: stamp,
+      }),
+    });
+    const afterRow = await readOwn();
+    const unchanged = Boolean(beforeRow) && JSON.stringify(afterRow) === JSON.stringify(beforeRow);
+    // A failing probe must not leave the seeded user promoted or disabled.
+    if (!unchanged && beforeRow) await svc('PATCH', `profiles?id=eq.${entryId}`, beforeRow);
+    check(
+      'profiles: a user cannot write its own role or lifecycle state through PostgREST (no UPDATE policy) — a disabled account cannot re-enable itself',
+      unchanged,
+      `status=${selfPatch.status}, before=${JSON.stringify(beforeRow)}, after=${JSON.stringify(afterRow)}`,
+    );
   }
 
   // --- The factor library (LP3-03): reference data, append-only ------------

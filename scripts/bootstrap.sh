@@ -116,6 +116,12 @@ ALLOW_INSECURE_LOCAL_AUTH=true
 # without this the API refuses them (placeholder_refused). Refused at boot
 # unless DATABASE_URL and SUPABASE_URL are loopback. Never set it elsewhere.
 ALLOW_PLACEHOLDER_FACTORS=true
+# LP4-01: invitations and password resets go to the stack's mail catcher
+# (mailpit's SMTP port, supabase/config.toml); read them at http://127.0.0.1:54324.
+SMTP_HOST=127.0.0.1
+SMTP_PORT=54325
+MAIL_FROM="TonyAI <no-reply@tonyai.local>"
+APP_URL=http://localhost:3000
 EOF
 info "wrote apps/api/.env"
 

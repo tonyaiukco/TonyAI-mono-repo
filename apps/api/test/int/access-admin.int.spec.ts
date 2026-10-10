@@ -121,11 +121,11 @@ describe('grantSubsidiaryAccess', () => {
   });
 
   it.each(['superAdmin', 'consultant', 'executiveViewer'] as const)(
-    'a grant to a %s is refused (400): organisation-wide roles hold no grants',
+    'a grant to a %s is refused (409 access_role_mismatch, LP4-01): organisation-wide roles hold no grants',
     async (role) => {
       await expect(
         service(a).grantSubsidiaryAccess(A.users.superAdmin, A.users[role].id, secondSubsidiaryA),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toMatchObject({ status: 409, response: { code: 'access_role_mismatch' } });
       expect(await grantsOf(A.users[role].id)).toEqual([]);
     },
   );

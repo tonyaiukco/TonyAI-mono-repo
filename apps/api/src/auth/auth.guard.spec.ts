@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Logger, UnauthorizedException } from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
 import type { Reflector } from '@nestjs/core';
-import { SupabaseAuthGuard } from './auth.guard';
+import { SupabaseAuthGuard, sessionStartedAt } from './auth.guard';
 import { tokenVerifier, TokenVerificationError } from './token-verifier';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from './auth.types';
@@ -252,5 +252,95 @@ describe('SupabaseAuthGuard — rejection paths', () => {
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(tokenVerifier.verify).not.toHaveBeenCalled();
+  });
+});
+
+describe('SupabaseAuthGuard — a disabled account (D19, LP4-01)', () => {
+  let prisma: PrismaMock;
+  let guard: SupabaseAuthGuard;
+  const profile = (over: Record<string, unknown>) => ({
+    id: 'user-1',
+    email: 'e@x',
+    role: 'super_admin',
+    organisationId: 'org-1',
+    subsidiaryAccess: [],
+    disabledAt: null,
+    organisation: { offboardedAt: null },
+    ...over,
+  });
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    guard = new SupabaseAuthGuard(reflector, prisma as unknown as PrismaService);
+  });
+
+  it.each([
+    ['a disabled profile', { disabledAt: new Date() }],
+    ["an offboarded organisation's member", { organisation: { offboardedAt: new Date() } }],
+  ])('refuses %s with 401 account_disabled, before any access is computed', async (_label, over) => {
+    prisma.profile.findUnique.mockResolvedValue(profile(over));
+    const { context, request } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toMatchObject({ status: 401, response: { code: 'account_disabled' } });
+    expect(request.user).toBeUndefined();
+    expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a token issued before the sessions were revoked — even once the account is enabled again', async () => {
+    const revokedAt = new Date('2026-10-10T12:00:00.500Z');
+    const iatSeconds = (date: string) => Math.floor(new Date(date).getTime() / 1000);
+    const cases: [string, number | undefined, boolean][] = [
+      ['issued before', iatSeconds('2026-10-10T11:59:00Z'), false],
+      ['issued in the same second (whole seconds: refused too)', iatSeconds('2026-10-10T12:00:00Z'), false],
+      ['no iat at all', undefined, false],
+      ['issued after (a fresh sign-in)', iatSeconds('2026-10-10T12:00:02Z'), true],
+    ];
+    for (const [label, iat, admitted] of cases) {
+      vi.mocked(tokenVerifier.verify).mockResolvedValueOnce({ sub: 'user-1', ...(iat === undefined ? {} : { iat }) } as never);
+      prisma.profile.findUnique.mockResolvedValueOnce(profile({ sessionsRevokedAt: revokedAt }));
+      const { context } = makeContext();
+      const outcome = await guard.canActivate(context).then(() => 'admitted', (e: { response?: { code?: string } }) => e.response?.code);
+      expect(outcome, label).toBe(admitted ? 'admitted' : 'session_revoked');
+    }
+    // A revocation on a whole second and a token stamped with that second: refused.
+    vi.mocked(tokenVerifier.verify).mockResolvedValueOnce({ sub: 'user-1', iat: iatSeconds('2026-10-10T12:00:00Z') } as never);
+    prisma.profile.findUnique.mockResolvedValueOnce(profile({ sessionsRevokedAt: new Date('2026-10-10T12:00:00.000Z') }));
+    const { context } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toMatchObject({ response: { code: 'session_revoked' } });
+  });
+
+  it('judges the session by when it began — `amr` — so a refresh after the revocation does not revive it', async () => {
+    const revokedAt = new Date('2026-10-10T12:00:00.500Z');
+    const at = (date: string) => Math.floor(new Date(date).getTime() / 1000);
+    const cases: [string, Record<string, unknown>, boolean][] = [
+      ['a session begun before, refreshed after', { iat: at('2026-10-10T12:05:00Z'), amr: [{ method: 'password', timestamp: at('2026-10-10T11:00:00Z') }] }, false],
+      ['a session begun after (a recovery link)', { iat: at('2026-10-10T12:05:00Z'), amr: [{ method: 'otp', timestamp: at('2026-10-10T12:04:00Z') }] }, true],
+      ['a step-up after, on a session begun before', { iat: at('2026-10-10T12:05:00Z'), amr: [{ method: 'totp', timestamp: at('2026-10-10T12:05:00Z') }, { method: 'password', timestamp: at('2026-10-10T11:00:00Z') }] }, false],
+      ['an `amr` without timestamps falls back to `iat`', { iat: at('2026-10-10T12:05:00Z'), amr: ['pwd', null, { method: 'password' }] }, true],
+      ['an `amr` without timestamps and an old `iat`', { iat: at('2026-10-10T11:00:00Z'), amr: ['pwd'] }, false],
+    ];
+    for (const [label, claims, admitted] of cases) {
+      vi.mocked(tokenVerifier.verify).mockResolvedValueOnce({ sub: 'user-1', ...claims } as never);
+      prisma.profile.findUnique.mockResolvedValueOnce(profile({ sessionsRevokedAt: revokedAt }));
+      const { context } = makeContext();
+      const outcome = await guard.canActivate(context).then(() => 'admitted', (e: { response?: { code?: string } }) => e.response?.code);
+      expect(outcome, label).toBe(admitted ? 'admitted' : 'session_revoked');
+    }
+  });
+
+  it('sessionStartedAt: the earliest finite stamp, in milliseconds; none at all is older than anything', () => {
+    expect(sessionStartedAt({ iat: 200, amr: [{ timestamp: 100 }, { timestamp: 150 }] })).toBe(100_000);
+    expect(sessionStartedAt({ iat: 200 })).toBe(200_000);
+    expect(sessionStartedAt({ iat: 200, amr: [{ timestamp: Number.NaN }, { timestamp: '50' }] })).toBe(200_000);
+    expect(sessionStartedAt({ amr: 'password' })).toBe(-Infinity);
+    expect(sessionStartedAt({})).toBe(-Infinity);
+  });
+
+  it('admits an enabled member of an active organisation, reading both in the one profile query', async () => {
+    prisma.profile.findUnique.mockResolvedValue(profile({}));
+    const { context } = makeContext();
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(prisma.profile.findUnique.mock.calls[0][0]).toMatchObject({
+      include: { organisation: { select: { offboardedAt: true } } },
+    });
   });
 });

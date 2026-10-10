@@ -106,18 +106,27 @@ describe('the runtime role', () => {
 
   it('notices column-level grants, which has_table_privilege does not see (`qa-auditor`)', async () => {
     const problems = await withRollback(owner, async (tx) => {
-      await tx.$executeRawUnsafe('GRANT INSERT (id, email, full_name, updated_at) ON profiles TO tonyai_runtime');
+      // LP4-01's profile INSERT is per column: one column beyond its list is
+      // reported, and so is a listed one taken away.
+      await tx.$executeRawUnsafe('GRANT INSERT (disabled_at) ON profiles TO tonyai_runtime');
+      await tx.$executeRawUnsafe('REVOKE INSERT (organisation_id) ON profiles FROM tonyai_runtime');
+      await tx.$executeRawUnsafe('GRANT INSERT (organisation_id) ON audit_log TO tonyai_runtime');
       await tx.$executeRawUnsafe('GRANT SELECT (migration_name) ON _prisma_migrations TO tonyai_runtime');
       await tx.$executeRawUnsafe('GRANT UPDATE (organisation_id) ON subsidiaries TO tonyai_runtime');
+      await tx.$executeRawUnsafe('GRANT UPDATE (profile_id) ON invitations TO tonyai_runtime');
       return checkRuntimeRole((sql) => tx.$queryRawUnsafe(sql));
     });
     expect(problems).toEqual(
       expect.arrayContaining([
-        'tonyai_runtime has column-level INSERT on public.profiles',
+        'tonyai_runtime can INSERT public.profiles.disabled_at',
+        'tonyai_runtime cannot INSERT public.profiles.organisation_id',
         'tonyai_runtime has column-level SELECT on public._prisma_migrations',
         'tonyai_runtime can UPDATE public.subsidiaries.organisation_id',
+        'tonyai_runtime can UPDATE public.invitations.profile_id',
       ]),
     );
+    // A table already granted INSERT whole is not re-checked per column.
+    expect(problems.filter((p) => p.includes('audit_log'))).toEqual([]);
   });
 
   it('cannot move a subsidiary to another organisation — every other column of it, it can edit', async () => {
@@ -485,7 +494,17 @@ describe('the runtime role is refused', () => {
     ['turning RLS off', 'ALTER TABLE subsidiaries DISABLE ROW LEVEL SECURITY'],
     ['forcing RLS on', 'ALTER TABLE subsidiaries FORCE ROW LEVEL SECURITY'],
     ['creating an organisation', `INSERT INTO organisations (id, legal_name, country, geography_code, updated_at) VALUES (gen_random_uuid(), 'x', 'GB', 'UK', now())`],
-    ['creating a profile', `INSERT INTO profiles (id, email, full_name, updated_at) VALUES (gen_random_uuid(), 'x@x.test', 'x', now())`],
+    // LP4-01: an invitation creates its profile, but never one born disabled
+    // or carrying the Auth or reset bookkeeping.
+    ['creating a profile born disabled', `INSERT INTO profiles (id, email, full_name, updated_at, disabled_at) VALUES (gen_random_uuid(), 'x@x.test', 'x', now(), now())`],
+    ['creating a profile with Auth bookkeeping', `INSERT INTO profiles (id, email, full_name, updated_at, auth_sync_pending_since) VALUES (gen_random_uuid(), 'x@x.test', 'x', now(), now())`],
+    ['creating a profile already in a reset cooldown', `INSERT INTO profiles (id, email, full_name, updated_at, recovery_sent_at) VALUES (gen_random_uuid(), 'x@x.test', 'x', now(), now())`],
+    ['creating a profile with its sessions already revoked', `INSERT INTO profiles (id, email, full_name, updated_at, sessions_revoked_at) VALUES (gen_random_uuid(), 'x@x.test', 'x', now(), now())`],
+    ['deleting an invitation (a withdrawn one is revoked)', 'DELETE FROM invitations WHERE false'],
+    ['re-pointing an invitation', 'UPDATE invitations SET profile_id = profile_id WHERE false'],
+    ['rewriting who invited', 'UPDATE invitations SET invited_by = NULL WHERE false'],
+    ['rewriting an invitation language', `UPDATE invitations SET language = 'en' WHERE false`],
+    ['marking an organisation offboarded (the operator CLI does)', 'UPDATE organisations SET offboarded_at = now() WHERE false'],
     ['moving a profile to another organisation (D17)', 'UPDATE profiles SET organisation_id = NULL WHERE id = gen_random_uuid()'],
     ['rewriting a profile identity', `UPDATE profiles SET email = 'x@x.test' WHERE id = gen_random_uuid()`],
     ['deleting a profile', 'DELETE FROM profiles WHERE id = gen_random_uuid()'],
@@ -540,6 +559,25 @@ describe('the runtime role is refused', () => {
     expect(await attempt('UPDATE profiles SET role = role WHERE id = gen_random_uuid()')).toBeNull();
     // LP3-01: the UI language, the user's own (PATCH /me/preferences).
     expect(await attempt(`UPDATE profiles SET language = 'tr' WHERE id = gen_random_uuid()`)).toBeNull();
+    // LP4-01: disabling (D19), Auth's catch-up (K4), the reset cooldown.
+    expect(
+      await attempt('UPDATE profiles SET disabled_at = now(), sessions_revoked_at = now(), auth_sync_pending_since = now(), auth_sync_generation = auth_sync_generation + 1, recovery_sent_at = now() WHERE id = gen_random_uuid()'),
+    ).toBeNull();
+    // An invitation's profile, and the state it moves through.
+    expect(
+      await attempt(`INSERT INTO profiles (id, email, full_name, role, language, theme, auth_sync_generation, organisation_id, created_at, updated_at) SELECT gen_random_uuid(), 'x@x.test', 'x', 'data_entry', 'en', 'light', 0, NULL, now(), now() WHERE false`),
+    ).toBeNull();
+    expect(
+      await attempt(`UPDATE invitations SET status = 'sent', attempts = attempts + 1, sent_at = now(), last_attempt_at = now(), last_error_step = NULL, last_error_code = NULL, updated_at = now() WHERE false`),
+    ).toBeNull();
+  });
+
+  it('an address is stored in one spelling — trimmed, lower-case — whoever writes it (LP4-01)', async () => {
+    for (const email of ['Mixed@x.test', ' padded@x.test']) {
+      expect(
+        await attempt(`INSERT INTO profiles (id, email, full_name, updated_at) VALUES (gen_random_uuid(), '${email}', 'x', now())`),
+      ).toMatch(/profiles_email_normalised/);
+    }
   });
 
   it('a language the product does not speak is refused by the column itself (LP3-01)', async () => {
