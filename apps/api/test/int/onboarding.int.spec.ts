@@ -649,8 +649,11 @@ describe('offboarding and the tenant administrators (architect P2-1)', () => {
       await expect(services(null).access.disableMember(A.users.superAdmin, A.users.consultant.id)).rejects.toMatchObject({
         response: { code: 'account_disabled' },
       });
-      const outcome = await new InvitationDeliveryService(new AuthAdminService(), new MailService(transport, MAIL)).deliver(runtime, pending.id);
+      const authAdmin = new AuthAdminService();
+      const ensureUser = vi.spyOn(authAdmin, 'ensureUser');
+      const outcome = await new InvitationDeliveryService(authAdmin, new MailService(transport, MAIL)).deliver(runtime, pending.id);
       expect(outcome).toEqual({ delivered: false, skipped: 'disabled' });
+      expect(ensureUser).not.toHaveBeenCalled(); // refused before any Auth step
       expect(sent).toHaveLength(0);
     } finally {
       await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: null } });
