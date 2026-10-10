@@ -254,3 +254,43 @@ describe('SupabaseAuthGuard — rejection paths', () => {
     expect(tokenVerifier.verify).not.toHaveBeenCalled();
   });
 });
+
+describe('SupabaseAuthGuard — a disabled account (D19, LP4-01)', () => {
+  let prisma: PrismaMock;
+  let guard: SupabaseAuthGuard;
+  const profile = (over: Record<string, unknown>) => ({
+    id: 'user-1',
+    email: 'e@x',
+    role: 'super_admin',
+    organisationId: 'org-1',
+    subsidiaryAccess: [],
+    disabledAt: null,
+    organisation: { offboardedAt: null },
+    ...over,
+  });
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    guard = new SupabaseAuthGuard(reflector, prisma as unknown as PrismaService);
+  });
+
+  it.each([
+    ['a disabled profile', { disabledAt: new Date() }],
+    ["an offboarded organisation's member", { organisation: { offboardedAt: new Date() } }],
+  ])('refuses %s with 401 account_disabled, before any access is computed', async (_label, over) => {
+    prisma.profile.findUnique.mockResolvedValue(profile(over));
+    const { context, request } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toMatchObject({ status: 401, response: { code: 'account_disabled' } });
+    expect(request.user).toBeUndefined();
+    expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
+  });
+
+  it('admits an enabled member of an active organisation, reading both in the one profile query', async () => {
+    prisma.profile.findUnique.mockResolvedValue(profile({}));
+    const { context } = makeContext();
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(prisma.profile.findUnique.mock.calls[0][0]).toMatchObject({
+      include: { organisation: { select: { offboardedAt: true } } },
+    });
+  });
+});

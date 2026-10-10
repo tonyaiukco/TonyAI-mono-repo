@@ -1,0 +1,90 @@
+{
+  "title": "Kullanıcılar",
+  "subtitle": "Kuruluşunuza kişileri davet edin, rollerini ve erişimlerini yönetin.",
+  "invite": "Kullanıcı davet et",
+  "forbiddenTitle": "Kullanıcıları yalnızca süper yöneticiler yönetir",
+  "forbidden": "Kişileri davet etmek, rollerini veya erişimlerini değiştirmek kuruluşunuzun süper yöneticilerine aittir. Rolünüz: {role}.",
+  "loadFailed": "Kullanıcılar yüklenemedi.",
+  "empty": "Henüz kullanıcı yok.",
+  "loadMore": "Daha fazla yükle",
+  "you": "siz",
+  "columns": {
+    "name": "Ad",
+    "role": "Rol",
+    "status": "Durum",
+    "access": "Bağlı şirketler",
+    "actions": "İşlemler"
+  },
+  "roles": {
+    "super_admin": "Süper yönetici",
+    "consultant": "Danışman",
+    "data_entry": "Veri girişi",
+    "executive_viewer": "Yönetici izleyici"
+  },
+  "languages": {
+    "en": "İngilizce",
+    "tr": "Türkçe"
+  },
+  "status": {
+    "active": "Etkin",
+    "invited": "Davet edildi",
+    "disabled": "Devre dışı"
+  },
+  "invitationSent": "Davet gönderildi: {date}",
+  "invitationPending": "Davet gönderiliyor",
+  "deliveryFailed": "Davet iletilemedi; yeniden gönderin",
+  "authSyncPending": "Giriş engeli henüz uygulanmadı",
+  "wholeOrganisation": "Tüm kuruluş",
+  "noAccess": "Erişim verilmedi",
+  "accessCount": "Bağlı şirket: {count}",
+  "actions": {
+    "menu": "{name} için işlemler",
+    "changeRole": "Rolü değiştir",
+    "editAccess": "Bağlı şirket erişimini düzenle",
+    "disable": "Hesabı devre dışı bırak",
+    "enable": "Hesabı etkinleştir",
+    "resend": "Daveti yeniden gönder"
+  },
+  "inviteDialog": {
+    "title": "Kullanıcı davet et",
+    "description": "Şifresini belirlemesi için bir bağlantı içeren e-posta alır. Bağlantı yalnızca bir kez kullanılabilir ve bir saat sonra geçerliliğini yitirir.",
+    "email": "E-posta",
+    "name": "Ad soyad",
+    "role": "Rol",
+    "language": "E-posta dili",
+    "subsidiaries": "Bağlı şirketler",
+    "subsidiariesHelp": "Veri Girişi kullanıcıları yalnızca burada işaretlenen bağlı şirketlerde çalışır.",
+    "noSubsidiaries": "Kuruluşunuzun henüz bağlı şirketi yok.",
+    "cancel": "Vazgeç",
+    "submit": "Daveti gönder",
+    "submitting": "Gönderiliyor…"
+  },
+  "invited": "Davet {email} adresine gönderildi",
+  "invitedNotDelivered": "{email} eklendi, ancak davet e-postası gönderilemedi. Listeden yeniden gönderin.",
+  "resent": "Davet {email} adresine yeniden gönderildi",
+  "roleDialog": {
+    "title": "{name} için rolü değiştir",
+    "description": "Başka bir role geçen Veri Girişi kullanıcısı bağlı şirket erişimlerini kaybeder.",
+    "submit": "Rolü kaydet",
+    "submitting": "Kaydediliyor…",
+    "cancel": "Vazgeç"
+  },
+  "roleChanged": "Rol güncellendi",
+  "accessDialog": {
+    "title": "{name} için bağlı şirket erişimi",
+    "description": "Yalnızca burada işaretlenen bağlı şirketler için veri girip gönderebilir.",
+    "submit": "Erişimi kaydet",
+    "submitting": "Kaydediliyor…",
+    "cancel": "Vazgeç"
+  },
+  "accessSaved": "Erişim güncellendi",
+  "disableDialog": {
+    "title": "{name} devre dışı bırakılsın mı?",
+    "description": "Bir sonraki işleminde oturumu kapatılır ve hesap yeniden etkinleştirilene kadar giriş yapamaz. Kayıtları ve denetim geçmişi korunur.",
+    "confirm": "Devre dışı bırak",
+    "cancel": "Vazgeç"
+  },
+  "disabledToast": "{name} devre dışı bırakıldı",
+  "enabledToast": "{name} etkinleştirildi",
+  "authSyncWarning": "Kaydedildi. Giriş engeli kısa süre içinde uygulanacak; uygulama hesabı her durumda reddediyor."
+}

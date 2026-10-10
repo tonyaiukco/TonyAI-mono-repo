@@ -768,6 +768,43 @@ async function main() {
     await svc('DELETE', `storage_intents?id=in.(${PROBE_INTENT},99999999-0000-0000-0000-00000000f002)`);
   }
 
+  // --- invitations (LP4-01): onboarding state, no client access ------------
+  // Read and written by the API (the runtime role) alone: RLS on with NO
+  // policy, and nothing granted to anon, authenticated — or the service role,
+  // which nothing needs it for. So each role is refused by PRIVILEGE (42501),
+  // which is not vacuous the way "0 rows" would be with nothing seeded. A
+  // client that could write here could mark its own invitation accepted, or
+  // another account's revoked.
+  console.log('▸ invitations (no client access, the service role included)');
+  {
+    const denied = (r) => Boolean(r.error) && /42501|permission denied/i.test(r.error);
+    const query = 'select=profile_id';
+    const adminToken = await getToken(ADMIN_EMAIL);
+    const reads = {
+      anon: await count('invitations', { query }),
+      entry: await count('invitations', { token, query }),
+      admin: await count('invitations', { token: adminToken, query }),
+      service: await count('invitations', { key: SERVICE, token: SERVICE, query }),
+    };
+    check(
+      'invitations: no client role reads it, not even the service role (refused by privilege)',
+      Object.values(reads).every(denied),
+      Object.entries(reads).map(([role, r]) => `${role}=${r.error?.slice(0, 3) ?? r.total}`).join(', '),
+    );
+    const now = new Date().toISOString();
+    const forged = await fetch(`${URL_}/rest/v1/invitations`, {
+      method: 'POST',
+      headers: { apikey: ANON, Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ profile_id: subjectOf(adminToken), language: 'en', status: 'accepted', accepted_at: now, updated_at: now }),
+    });
+    const forgedBody = forged.ok ? '' : await forged.text();
+    check(
+      'invitations: a client cannot write one (an accepted invitation for itself)',
+      !forged.ok && /42501|permission denied/i.test(forgedBody),
+      `status=${forged.status}`,
+    );
+  }
+
   // --- The factor library (LP3-03): reference data, append-only ------------
   // Every authenticated user reads the library (no tenant predicate, by
   // design); anon reads none of it; no client role writes it — and, because

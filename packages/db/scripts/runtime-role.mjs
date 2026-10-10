@@ -165,9 +165,9 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
 export const RUNTIME_COLUMN_INSERTS = Object.freeze({
   // An invitation creates its profile (LP4-01): identity, role, language and
   // organisation, never `disabled_at` or the Auth/reset bookkeeping — a new
-  // account is born enabled — nor `theme` (its default). Prisma fills the two
-  // timestamps.
-  profiles: ['id', 'email', 'full_name', 'role', 'language', 'organisation_id', 'created_at', 'updated_at'],
+  // account is born enabled. Prisma fills `theme` (its schema default) and the
+  // two timestamps on every create.
+  profiles: ['id', 'email', 'full_name', 'role', 'language', 'theme', 'organisation_id', 'created_at', 'updated_at'],
 });
 
 /** Column-level UPDATE grants on tables whose table-level UPDATE is withheld. */

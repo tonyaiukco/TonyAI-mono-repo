@@ -27,6 +27,36 @@ const user = (role: RequestUser['role'], organisationId: string | null = ORG): R
   accessibleSubsidiaryIds: [],
 });
 
+const INVITE = { email: 'new@tonyai.test', fullName: 'New', role: UserRole.data_entry, language: 'en' as const, subsidiaryIds: [] };
+
+describe('AccessAdminService — LP4-01 refusals before the database is touched', () => {
+  it.each(['consultant', 'data_entry', 'executive_viewer'] as const)('a %s invites, disables, enables or re-sends nothing', async (role) => {
+    const { prisma, service } = setup();
+    await expect(service.inviteMember(user(role), INVITE)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.disableMember(user(role), 'p')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.enableMember(user(role), 'p')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.reopenInvitation(user(role), 'p')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.replaceSubsidiaryAccess(user(role), 'p', [])).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('nobody disables their own account (so the actor always stays an active super_admin)', async () => {
+    const { prisma, service } = setup();
+    await expect(service.disableMember(user('super_admin'), 'actor')).rejects.toMatchObject({ response: { code: 'own_account_forbidden' } });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('an invitation with grants for an organisation-wide role, an unknown role or language is refused', async () => {
+    const { prisma, service } = setup();
+    await expect(service.inviteMember(user('super_admin'), { ...INVITE, role: UserRole.consultant, subsidiaryIds: ['s'] })).rejects.toMatchObject({
+      response: { code: 'access_role_mismatch' },
+    });
+    await expect(service.inviteMember(user('super_admin'), { ...INVITE, role: 'platform_admin' as UserRole })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.inviteMember(user('super_admin'), { ...INVITE, language: 'de' as 'en' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('AccessAdminService — refused before the database is touched', () => {
   it.each(['consultant', 'data_entry', 'executive_viewer'] as const)('a %s administers nothing', async (role) => {
     const { prisma, service } = setup();

@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "use-intl";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
+import { signInFailureKey } from "@/lib/auth-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,11 +19,29 @@ import {
 import { Leaf } from "lucide-react";
 import { toast } from "sonner";
 
+// `useSearchParams` needs a Suspense boundary for the page to prerender.
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const t = useTranslations("auth");
   const [email, setEmail] = useState("admin@tonyai.local");
   const [password, setPassword] = useState("TonyAI!2026");
   const [loading, setLoading] = useState(false);
+  const reason = searchParams.get("reason");
+
+  // Sent here because the account was disabled (D19): `lib/api.ts` ended the
+  // session on the API's 401 `account_disabled`.
+  useEffect(() => {
+    if (reason === "account_disabled") toast.error(t("signIn.disabled"), { id: "login-reason" });
+  }, [reason, t]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,10 +50,12 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) {
-      toast.error(error.message);
+      // Supabase's own sentence is English and names internals; the catalogue
+      // words the two outcomes a person can act on.
+      toast.error(t(signInFailureKey(error.code)));
       return;
     }
-    toast.success("Signed in");
+    toast.success(t("signIn.success"));
     router.push("/");
     router.refresh();
   }
@@ -47,15 +70,13 @@ export default function LoginPage() {
             </span>
             <span className="text-lg font-semibold">TonyAI</span>
           </div>
-          <CardTitle className="text-xl">Sign in</CardTitle>
-          <CardDescription>
-            Enterprise carbon accounting &amp; ESG platform
-          </CardDescription>
+          <CardTitle className="text-xl">{t("signIn.title")}</CardTitle>
+          <CardDescription>{t("tagline")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t("signIn.email")}</Label>
               <Input
                 id="email"
                 type="email"
@@ -66,7 +87,15 @@ export default function LoginPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">{t("signIn.password")}</Label>
+                <Link
+                  href="/forgot-password"
+                  className="text-xs font-medium text-primary underline-offset-4 hover:underline"
+                >
+                  {t("signIn.forgot")}
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"
@@ -77,11 +106,9 @@ export default function LoginPage() {
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Signing in…" : "Sign in"}
+              {loading ? t("signIn.submitting") : t("signIn.submit")}
             </Button>
-            <p className="text-center text-xs text-muted-foreground">
-              Seed users: admin@tonyai.local · entry@tonyai.local (TonyAI!2026)
-            </p>
+            <p className="text-center text-xs text-muted-foreground">{t("signIn.seedHint")}</p>
           </form>
         </CardContent>
       </Card>

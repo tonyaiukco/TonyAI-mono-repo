@@ -49,21 +49,36 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isLoginRoute = request.nextUrl.pathname.startsWith("/login");
+  const path = request.nextUrl.pathname;
 
-  if (!user && !isLoginRoute) {
+  if (!user && !matches(path, PUBLIC_PATHS)) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
 
-  if (user && isLoginRoute) {
+  if (user && matches(path, SIGNED_OUT_ONLY)) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);
   }
 
   return response;
+}
+
+/**
+ * Reachable without a session (LP4-01): sign-in, "forgot password", and the
+ * landing pages of the emailed links — `/auth/confirm` runs `verifyOtp` with
+ * the link's token, and `/auth/set-password` works only with the session that
+ * made (it says so when there is none). Exact paths and their sub-paths.
+ */
+const PUBLIC_PATHS = ["/login", "/forgot-password", "/auth/confirm", "/auth/set-password"];
+/** A signed-in visitor has nothing to do here and goes to the dashboard. The
+ *  email-link pages are not among them: an invitee is signed in by the link. */
+const SIGNED_OUT_ONLY = ["/login", "/forgot-password"];
+
+function matches(path: string, list: readonly string[]): boolean {
+  return list.some((p) => path === p || path.startsWith(`${p}/`));
 }
 
 export const config = {

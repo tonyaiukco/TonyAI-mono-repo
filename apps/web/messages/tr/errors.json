@@ -47,7 +47,14 @@
     "ambiguous_factor": "Emisyon faktörü kütüphanesinde bu giriş için eşit önceliğe sahip iki faktör var. Bir yöneticinin bunu çözmesi gerekir.",
     "factor_scope_mismatch": "Bu giriş için bulunan emisyon faktörü başka bir kapsam altında kayıtlı. Bir yöneticinin kütüphaneyi düzeltmesi gerekir.",
     "no_conversion": "Bu giriş için henüz kaynağı belirtilmiş bir birim dönüşümü yok.",
-    "calorific_basis_mismatch": "Bir birim dönüşümü var, ancak emisyon faktöründen farklı bir ısıl değer esasına dayanıyor."
+    "calorific_basis_mismatch": "Bir birim dönüşümü var, ancak emisyon faktöründen farklı bir ısıl değer esasına dayanıyor.",
+    "invitation_not_found": "Bu hesabın yeniden gönderilecek bir daveti yok.",
+    "account_disabled": "Hesabınız devre dışı bırakıldı. Bunun bir hata olduğunu düşünüyorsanız yöneticinize başvurun.",
+    "own_account_forbidden": "Kendi rolünüzü değiştiremez veya kendi hesabınızı devre dışı bırakamazsınız; başka bir süper yöneticiden isteyin.",
+    "access_role_mismatch": "Bağlı şirket erişimi yalnızca Veri Girişi kullanıcılarına verilir; diğer roller tüm kuruluşu görür.",
+    "email_unavailable": "Bu e-posta adresinin zaten bir hesabı var.",
+    "invitation_closed": "Bu davet zaten kabul edildi.",
+    "user_disabled": "Bu hesap devre dışı; davetini yeniden göndermeden önce etkinleştirin."
   },
   "bulkOutcomes": {
     "imported": "{count} satır içe aktarıldı",

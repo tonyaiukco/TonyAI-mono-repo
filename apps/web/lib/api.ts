@@ -60,6 +60,12 @@ import type {
   BulkUploadReportDTO,
   BulkSubmitReportDTO,
   UpdatePreferencesRequest,
+  InviteUserRequest,
+  ListUsersParams,
+  PasswordResetRequest,
+  ReplaceUserAccessRequest,
+  UpdateUserRoleRequest,
+  UserSummaryDTO,
 } from "@tonyai/shared-types";
 import {
   DEFAULT_PAGE_LIMIT, TARGET_PROGRESS_MAX_IDS, isApiErrorCode, isCursorPage,
@@ -201,6 +207,7 @@ export async function apiError(res: Response): Promise<ApiError> {
   } catch {
     /* a 413 from the proxy, or any non-JSON body — keep the status sentence */
   }
+  if (res.status === 401 && code === "account_disabled") endDisabledSession();
   return new ApiError(
     Array.isArray(message) ? message.join(", ") : String(message),
     res.status,
@@ -208,6 +215,27 @@ export async function apiError(res: Response): Promise<ApiError> {
     params,
     res.status === 429 ? res.headers.get("Retry-After") ?? undefined : undefined,
   );
+}
+
+/** Where a disabled account lands: the sign-in page, which says why. */
+export const ACCOUNT_DISABLED_PATH = "/login?reason=account_disabled";
+let endingSession = false;
+
+/**
+ * D19 (LP4-01): the API refuses a disabled account on its next request with
+ * 401 `account_disabled`, whatever token it still holds. Every failed call —
+ * `apiFetch` and the multipart/blob calls alike — passes through `apiError`,
+ * so this is the one place the session ends: the local session is dropped
+ * (Auth has banned the account, so nothing server-side is needed) and the
+ * browser goes to the sign-in page. Once, however many calls fail together.
+ */
+function endDisabledSession(): void {
+  if (endingSession || typeof window === "undefined") return;
+  endingSession = true;
+  void getSupabaseBrowserClient()
+    .auth.signOut({ scope: "local" })
+    .catch(() => undefined)
+    .finally(() => window.location.assign(ACCOUNT_DISABLED_PATH));
 }
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -339,6 +367,36 @@ export const api = {
   /** The caller's own preferences (today the UI language); answers the updated user. */
   updateMyPreferences: (body: UpdatePreferencesRequest) =>
     apiFetch<AuthUser>("/me/preferences", { method: "PATCH", body: JSON.stringify(body) }),
+
+  // --- Users and invitations (LP4-01; super_admin only, own organisation) ---
+  /** Members, newest first. */
+  listUsersPage: (params: ListUsersParams = {}) => apiCursorPage<UserSummaryDTO>("/users", params),
+  /** Invites an account; the answer's `invitation` says whether the email went out. */
+  inviteUser: (body: InviteUserRequest) =>
+    apiFetch<UserSummaryDTO>("/users/invitations", { method: "POST", body: JSON.stringify(body) }),
+  resendInvitation: (id: string) =>
+    apiFetch<UserSummaryDTO>(`/users/${id}/invitation/resend`, { method: "POST" }),
+  setUserRole: (id: string, body: UpdateUserRoleRequest) =>
+    apiFetch<UserSummaryDTO>(`/users/${id}/role`, { method: "PATCH", body: JSON.stringify(body) }),
+  /** The complete set of a data_entry user's subsidiaries. */
+  replaceUserAccess: (id: string, body: ReplaceUserAccessRequest) =>
+    apiFetch<UserSummaryDTO>(`/users/${id}/access`, { method: "PUT", body: JSON.stringify(body) }),
+  disableUser: (id: string) => apiFetch<UserSummaryDTO>(`/users/${id}/disable`, { method: "POST" }),
+  enableUser: (id: string) => apiFetch<UserSummaryDTO>(`/users/${id}/enable`, { method: "POST" }),
+  /** The invitee, once `verifyOtp` signed them in (`/auth/confirm`). */
+  acceptInvitation: () => apiFetch<void>("/invitations/accept", { method: "POST" }),
+  /**
+   * "Forgot password" — public, so no session header. The API answers 202 with
+   * no body for every address (nothing to parse), or 429 past its quota.
+   */
+  requestPasswordReset: async (body: PasswordResetRequest): Promise<void> => {
+    const res = await fetch(`${BASE_URL}/auth/password-reset`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await apiError(res);
+  },
   listSubsidiaries: () => apiFetch<SubsidiaryDTO[]>("/subsidiaries"),
   getSubsidiary: (id: string) => apiFetch<SubsidiaryDTO>(`/subsidiaries/${id}`),
   /** Counts of everything hanging off a subsidiary, plus why a delete would be

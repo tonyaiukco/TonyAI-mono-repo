@@ -96,13 +96,15 @@ $$;
 -- ---------------------------------------------------------------------------
 
 -- An invitation creates its profile at request time (S1, S2): a column-level
--- INSERT of exactly what the API writes. Never `disabled_at`, the Auth or
--- reset bookkeeping, or `theme` (their defaults), so a new account is born
--- enabled and in no state the lifecycle has not put it in. Which organisation
--- and role is the API's to enforce (`AccessAdminService`, the actor's own
+-- INSERT of exactly what the API writes. Never `disabled_at` or the Auth and
+-- reset bookkeeping (their NULL defaults), so a new account is born enabled
+-- and in no state the lifecycle has not put it in. Which organisation and
+-- role is the API's to enforce (`AccessAdminService`, the actor's own
 -- organisation); the profile can never move afterwards (D17: no UPDATE on
--- `organisation_id`). `created_at` and `updated_at` are Prisma's to fill.
-GRANT INSERT ("id", "email", "full_name", "role", "language", "organisation_id", "created_at", "updated_at")
+-- `organisation_id`). Prisma fills `theme` (its schema default, a cosmetic
+-- preference — measured: a create without it is refused), `created_at` and
+-- `updated_at` itself.
+GRANT INSERT ("id", "email", "full_name", "role", "language", "theme", "organisation_id", "created_at", "updated_at")
   ON "profiles" TO "tonyai_runtime";
 
 -- Disabling and enabling (D19), the Auth catch-up flag (K4), the reset

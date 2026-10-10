@@ -1,0 +1,90 @@
+{
+  "title": "Users",
+  "subtitle": "Invite people to your organisation and manage their roles and access.",
+  "invite": "Invite user",
+  "forbiddenTitle": "Only a super admin manages users",
+  "forbidden": "Inviting people and changing their roles or access is restricted to your organisation's super admins. Your role is {role}.",
+  "loadFailed": "Users could not be loaded.",
+  "empty": "No users yet.",
+  "loadMore": "Load more",
+  "you": "you",
+  "columns": {
+    "name": "Name",
+    "role": "Role",
+    "status": "Status",
+    "access": "Subsidiaries",
+    "actions": "Actions"
+  },
+  "roles": {
+    "super_admin": "Super admin",
+    "consultant": "Consultant",
+    "data_entry": "Data entry",
+    "executive_viewer": "Executive viewer"
+  },
+  "languages": {
+    "en": "English",
+    "tr": "Turkish"
+  },
+  "status": {
+    "active": "Active",
+    "invited": "Invited",
+    "disabled": "Disabled"
+  },
+  "invitationSent": "Invitation sent {date}",
+  "invitationPending": "Invitation being sent",
+  "deliveryFailed": "Invitation not delivered — re-send it",
+  "authSyncPending": "Sign-in block not applied yet",
+  "wholeOrganisation": "Whole organisation",
+  "noAccess": "None granted",
+  "accessCount": "Subsidiaries: {count}",
+  "actions": {
+    "menu": "Actions for {name}",
+    "changeRole": "Change role",
+    "editAccess": "Edit subsidiary access",
+    "disable": "Disable account",
+    "enable": "Enable account",
+    "resend": "Re-send invitation"
+  },
+  "inviteDialog": {
+    "title": "Invite a user",
+    "description": "They receive an email with a link to choose their password. The link works once and expires in one hour.",
+    "email": "Email",
+    "name": "Full name",
+    "role": "Role",
+    "language": "Email language",
+    "subsidiaries": "Subsidiaries",
+    "subsidiariesHelp": "Data Entry users work only in the subsidiaries ticked here.",
+    "noSubsidiaries": "Your organisation has no subsidiaries yet.",
+    "cancel": "Cancel",
+    "submit": "Send invitation",
+    "submitting": "Sending…"
+  },
+  "invited": "Invitation sent to {email}",
+  "invitedNotDelivered": "{email} was added, but the invitation email did not go out. Re-send it from the list.",
+  "resent": "Invitation re-sent to {email}",
+  "roleDialog": {
+    "title": "Change the role of {name}",
+    "description": "A Data Entry user moved to another role loses their subsidiary grants.",
+    "submit": "Save role",
+    "submitting": "Saving…",
+    "cancel": "Cancel"
+  },
+  "roleChanged": "Role updated",
+  "accessDialog": {
+    "title": "Subsidiary access for {name}",
+    "description": "They can enter and submit data for the subsidiaries ticked here, and nothing else.",
+    "submit": "Save access",
+    "submitting": "Saving…",
+    "cancel": "Cancel"
+  },
+  "accessSaved": "Access updated",
+  "disableDialog": {
+    "title": "Disable {name}?",
+    "description": "They are signed out on their next action and cannot sign in until the account is enabled again. Their records and audit history stay.",
+    "confirm": "Disable",
+    "cancel": "Cancel"
+  },
+  "disabledToast": "{name} is disabled",
+  "enabledToast": "{name} is enabled",
+  "authSyncWarning": "Saved. The sign-in block will be applied shortly; the account is refused by the app either way."
+}

@@ -47,7 +47,14 @@
     "ambiguous_factor": "The emission factor library holds two equally ranked factors for this entry. An administrator must resolve it.",
     "factor_scope_mismatch": "The emission factor found for this entry is filed under another scope. An administrator must correct the library.",
     "no_conversion": "No sourced unit conversion covers this entry yet.",
-    "calorific_basis_mismatch": "A unit conversion exists, but on a different calorific basis than the emission factor."
+    "calorific_basis_mismatch": "A unit conversion exists, but on a different calorific basis than the emission factor.",
+    "invitation_not_found": "This account has no invitation to re-send.",
+    "account_disabled": "Your account has been disabled. Ask your administrator if you think this is a mistake.",
+    "own_account_forbidden": "You cannot change your own role or disable your own account — ask another super admin.",
+    "access_role_mismatch": "Only Data Entry users are granted subsidiaries; other roles see their whole organisation.",
+    "email_unavailable": "This email address already has an account.",
+    "invitation_closed": "This invitation was already accepted.",
+    "user_disabled": "This account is disabled — enable it before re-sending its invitation."
   },
   "bulkOutcomes": {
     "imported": "{count} imported",
