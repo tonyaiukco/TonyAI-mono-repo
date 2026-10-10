@@ -191,8 +191,10 @@ async function ownerDb() {
 
 // period_locks is empty in the seed → seed a temporary pair (one accessible to
 // entry, one not) so the entry>0 and entry<service assertions have data.
+// The seeded admin by address, not "any super_admin": an organisation the
+// operator CLI provisioned locally (LP4-01) has one too, in another tenant.
 async function seedPeriodLocks() {
-  const r = await fetch(`${URL_}/rest/v1/profiles?role=eq.super_admin&select=id&limit=1`, {
+  const r = await fetch(`${URL_}/rest/v1/profiles?email=eq.${ADMIN_EMAIL}&select=id`, {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const adminId = (await r.json())[0]?.id;
@@ -217,7 +219,7 @@ async function cleanupPeriodLocks() {
 const IMPORT_PROBE_FILE = 'rls-probe-import.csv';
 const MANUFACTURING = '22222222-2222-2222-2222-222222220003';
 async function seedImportBatches(entryId) {
-  const r = await fetch(`${URL_}/rest/v1/profiles?role=eq.super_admin&select=id,organisation_id&limit=1`, {
+  const r = await fetch(`${URL_}/rest/v1/profiles?email=eq.${ADMIN_EMAIL}&select=id,organisation_id`, {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const admin = (await r.json())[0];
@@ -253,7 +255,7 @@ async function cleanupImportBatches() {
 const AUDIT_PROBE_ENTITY = 'rls_probe';
 const FOREIGN_ORG = '99999999-9999-9999-9999-999999999999';
 async function seedAuditRows() {
-  const r = await fetch(`${URL_}/rest/v1/profiles?role=eq.super_admin&select=id,organisation_id&limit=1`, {
+  const r = await fetch(`${URL_}/rest/v1/profiles?email=eq.${ADMIN_EMAIL}&select=id,organisation_id`, {
     headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
   });
   const admin = (await r.json())[0];
@@ -802,6 +804,30 @@ async function main() {
       'invitations: a client cannot write one (an accepted invitation for itself)',
       !forged.ok && /42501|permission denied/i.test(forgedBody),
       `status=${forged.status}`,
+    );
+
+    // The lifecycle columns on `profiles` (LP4-01). Supabase's default
+    // privileges give `authenticated` table-level UPDATE on `profiles`, so
+    // RLS — no UPDATE policy — is all that stops a user rewriting its own row:
+    // a disabled account inside K4's token window clearing its `disabled_at`,
+    // or anyone promoting itself. Read back with the service role: "no error"
+    // is not "no change".
+    const entryId = subjectOf(token);
+    const lifecycle = 'select=role,disabled_at,auth_sync_pending_since,recovery_sent_at';
+    const readOwn = async () =>
+      (await (await fetch(`${URL_}/rest/v1/profiles?${lifecycle}&id=eq.${entryId}`, { headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` } })).json())[0];
+    const beforeRow = await readOwn();
+    const stamp = '2001-01-01T00:00:00+00:00';
+    const selfPatch = await fetch(`${URL_}/rest/v1/profiles?id=eq.${entryId}`, {
+      method: 'PATCH',
+      headers: { apikey: ANON, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify({ role: 'super_admin', disabled_at: stamp, auth_sync_pending_since: stamp, recovery_sent_at: stamp }),
+    });
+    const afterRow = await readOwn();
+    check(
+      'profiles: a user cannot write its own role or lifecycle state through PostgREST (no UPDATE policy) — a disabled account cannot re-enable itself',
+      Boolean(beforeRow) && JSON.stringify(afterRow) === JSON.stringify(beforeRow),
+      `status=${selfPatch.status}, before=${JSON.stringify(beforeRow)}, after=${JSON.stringify(afterRow)}`,
     );
   }
 
