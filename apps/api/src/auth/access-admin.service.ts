@@ -402,6 +402,16 @@ function assertTenantAdmin(actor: RequestUser): string {
 }
 
 /**
+ * The organisation's administrative lock, held until the transaction ends.
+ * Every change through this service takes it, and so does the operator's
+ * offboarding (LP4-01), so an invitation or an enable cannot slip past an
+ * offboarding that is disabling everyone.
+ */
+export async function lockTenantAdmin(tx: Prisma.TransactionClient, organisationId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${TENANT_ADMIN_LOCK_NAMESPACE}::int4, ${tenantAdminLockKey(organisationId)}::int4)`;
+}
+
+/**
  * Serialises every administrative change within one organisation, then
  * re-reads the actor: the role the request was authenticated with may have
  * been withdrawn since.
@@ -411,14 +421,15 @@ async function lockAndReadActor(
   actor: RequestUser,
   organisationId: string,
 ): Promise<RequestUser> {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${TENANT_ADMIN_LOCK_NAMESPACE}::int4, ${tenantAdminLockKey(organisationId)}::int4)`;
+  await lockTenantAdmin(tx, organisationId);
   const current = await tx.profile.findUnique({
     where: { id: actor.id },
-    select: { role: true, organisationId: true, disabledAt: true },
+    select: { role: true, organisationId: true, disabledAt: true, organisation: { select: { offboardedAt: true } } },
   });
-  // Disabled since the guard admitted the request (D19): the same answer the
-  // guard gives, so the session ends rather than acting once more.
-  if (current?.disabledAt) throw new AccountDisabledError();
+  // Disabled — or the organisation offboarded — since the guard admitted the
+  // request (D19, K6): the same answer the guard gives, so the session ends
+  // rather than acting once more.
+  if (current?.disabledAt || current?.organisation?.offboardedAt) throw new AccountDisabledError();
   if (!current || current.role !== DbUserRole.super_admin || current.organisationId !== organisationId) {
     throw new ForbiddenException('Only a super_admin manages roles and access.');
   }

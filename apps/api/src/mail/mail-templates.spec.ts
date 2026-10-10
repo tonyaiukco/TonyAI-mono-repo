@@ -40,6 +40,12 @@ describe('the email catalogues (D16)', () => {
   });
 });
 
+describe('escapeHtml', () => {
+  it('escapes all five characters that change HTML meaning, attributes included', () => {
+    expect(escapeHtml(`<a href="x" title='y'>&</a>`)).toBe('&lt;a href=&quot;x&quot; title=&#39;y&#39;&gt;&amp;&lt;/a&gt;');
+  });
+});
+
 describe('renderMail', () => {
   it('renders an invitation in the chosen language, with the inviter and the link', () => {
     const mail = renderMail({ kind: 'invitation', language: 'tr', name: 'Ayşe', organisation: 'Örnek Holding', inviter: 'Mehmet', link: LINK });

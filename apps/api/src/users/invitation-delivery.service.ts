@@ -41,14 +41,17 @@ export class InvitationDeliveryService {
             email: true,
             fullName: true,
             disabledAt: true,
-            organisation: { select: { legalName: true, tradingName: true } },
+            organisation: { select: { legalName: true, tradingName: true, offboardedAt: true } },
           },
         },
       },
     });
     if (!invitation || !invitation.profile.organisation) return { delivered: false, skipped: 'missing' };
     if (invitation.status !== InvitationStatus.pending) return { delivered: false, skipped: 'not_pending' };
-    if (invitation.profile.disabledAt) return { delivered: false, skipped: 'disabled' };
+    // A disabled account, or any member of an offboarded organisation (K6).
+    if (invitation.profile.disabledAt || invitation.profile.organisation.offboardedAt) {
+      return { delivered: false, skipped: 'disabled' };
+    }
     const { email, fullName, organisation } = invitation.profile;
 
     await db.invitation.updateMany({
@@ -61,8 +64,11 @@ export class InvitationDeliveryService {
       await this.authAdmin.ensureUser(profileId, email);
       // Disabled while the Auth user was being created: its own Auth step may
       // have found no user to ban, so ban the one just made (D19).
-      const now = await db.profile.findUnique({ where: { id: profileId }, select: { disabledAt: true } });
-      if (now?.disabledAt) {
+      const now = await db.profile.findUnique({
+        where: { id: profileId },
+        select: { disabledAt: true, organisation: { select: { offboardedAt: true } } },
+      });
+      if (now?.disabledAt || now?.organisation?.offboardedAt) {
         await this.authAdmin.setBanned(profileId, true);
         return { delivered: false, skipped: 'disabled' };
       }

@@ -76,9 +76,12 @@ ALTER TABLE "invitations"
 -- Operational state read and written by the API alone (the runtime role,
 -- BYPASSRLS): RLS on with NO policy, never FORCE, and nothing granted to a
 -- client role — not even the service role, which nothing here needs — so
--- PostgREST serves no row of it. The new `profiles` columns need nothing:
--- `profiles_select_own` already lets a user read their own row, these three
--- included, and no client role writes `profiles`.
+-- PostgREST serves no row of it. The new `profiles` columns need nothing
+-- here: `profiles_select_own` lets a user read their own row, these three
+-- included; `anon` and `authenticated` hold Supabase's table-level UPDATE but
+-- no UPDATE policy admits them (`rls:probe` measures a self-update); the
+-- service role writes them as it writes every tenant column (it bypasses RLS —
+-- Open questions, "LP4-01 follow-ups" (1)).
 ALTER TABLE "invitations" ENABLE ROW LEVEL SECURITY;
 
 DO $$

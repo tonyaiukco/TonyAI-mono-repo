@@ -75,8 +75,9 @@ export class AuditService {
 
   /**
    * A row no person performed (LP4-01): the operator CLI's provisioning and
-   * offboarding — the operator named in `diff.operator` — and a reset link
-   * sent through the public endpoint. `userId` and `role` are null, as on
+   * offboarding — the operator named in `diff.operator` — and a password reset
+   * requested through the public endpoint (written when its cooldown is
+   * claimed, before the link goes out). `userId` and `role` are null, as on
    * `rescore` rows; the tenant is the one acted on.
    */
   async recordSystem(

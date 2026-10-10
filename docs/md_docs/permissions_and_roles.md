@@ -217,7 +217,7 @@ How an account starts, recovers access and ends. The design is Decisions 2026-10
 | Disable / enable | `super_admin` | Refused from the account's **next request** (401 `account_disabled`; the web signs it out), banned in Supabase Auth; an open invitation is revoked. Never one's own account, so the organisation keeps an active `super_admin`. A Supabase Auth step that fails is retried by `pnpm onboarding reconcile` |
 | Offboard an organisation | Operator (`pnpm onboarding offboard`) | `offboarded_at` set (D21's 90-day clock), every member disabled and banned, audited. Nothing is deleted until the lawyer confirms D21/D24 |
 
-One account per organisation (D17): an address with a profile anywhere cannot be invited again. Known residual (K4, Open questions): a disabled account's live access token can still read its own organisation through PostgREST until it expires (≤ 1 hour); the API refuses it at once.
+One organisation per account (D17): an address with a profile anywhere cannot be invited again. Known residual (K4, Open questions): a disabled account's live access token can still read its own organisation through PostgREST until it expires (≤ 1 hour); the API refuses it at once.
 
 ---
 
@@ -244,7 +244,7 @@ Every significant action must be logged.
 - `delete`
 - `login`
 - `request_unlock`
-- LP4-01's lifecycle verbs: `invite`, `accept`, `disable`, `enable`, `offboard`, `password_reset` (the current taxonomy is `AUDIT_ACTIONS` in `@tonyai/shared-types`). Rows no person performed — the operator CLI's, a reset link sent through the public endpoint — carry a null `userId`; the operator is named in the diff. A diff never holds an invited person's address or name
+- LP4-01's lifecycle verbs: `invite`, `accept`, `disable`, `enable`, `offboard`, `password_reset` (the current taxonomy is `AUDIT_ACTIONS` in `@tonyai/shared-types`). Rows no person performed — the operator CLI's, a reset requested through the public endpoint — carry a null `userId`; the operator is named in the diff. A diff never holds an invited person's address or name
 
 ### Example JSON shape
 ```json

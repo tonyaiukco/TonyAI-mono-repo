@@ -85,7 +85,7 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   // Red: access withdrawn from a person, or from a whole organisation.
   disable: "bg-red-500/15 text-red-700 border-red-500/30",
   offboard: "bg-red-500/15 text-red-700 border-red-500/30",
-  // Amber: a reset link went out (no person is the actor) — worth a look.
+  // Amber: a reset was requested for the account (no person is the actor) — worth a look.
   password_reset: "bg-amber-500/15 text-amber-700 border-amber-500/30",
 };
 

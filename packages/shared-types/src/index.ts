@@ -2324,8 +2324,8 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   period_lock_not_found: 404,
   user_not_found: 404,
   access_grant_not_found: 404,
-  /** LP4-01: the profile has no invitation (a seeded or operator-made account
-   *  that never had one) — same shape as any other 404. */
+  /** LP4-01: the profile has no invitation (a seeded account, from before
+   *  LP4-01) — same shape as any other 404. */
   invitation_not_found: 404,
   /** D19: the account (or its organisation, offboarded) is disabled. Refused
    *  on the next request, whatever token it carries; the web signs it out. */
@@ -4432,7 +4432,9 @@ export const AUDIT_ACTIONS = [
   'enable',
   /** An organisation offboarded by the operator (K6). `entity: 'organisation'`. */
   'offboard',
-  /** A password-reset link sent through the public endpoint. No person is
+  /** A password reset requested for an eligible account through the public
+   *  endpoint — written when its cooldown is claimed, before the link is minted
+   *  and sent (an Auth or SMTP failure after it leaves the row). No person is
    *  the actor (null `userId`); `entity: 'profile'`. */
   'password_reset',
 ] as const;

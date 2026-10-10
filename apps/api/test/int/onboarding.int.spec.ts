@@ -6,7 +6,7 @@ import { InvitationStatus, UserRole } from '@tonyai/db';
 import { SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AuditService } from '../../src/audit/audit.service';
-import { AccessAdminService } from '../../src/auth/access-admin.service';
+import { AccessAdminService, lockTenantAdmin } from '../../src/auth/access-admin.service';
 import type { RequestUser } from '../../src/auth/auth.types';
 import { MailService, type MailConfig, type MailTransport } from '../../src/mail/mail.service';
 import { OnboardingOperator, OperatorRefusal } from '../../src/onboarding/onboarding-operator';
@@ -17,7 +17,7 @@ import { InvitationDeliveryService } from '../../src/users/invitation-delivery.s
 import { PasswordResetService } from '../../src/users/password-reset.service';
 import { UserLifecycleService } from '../../src/users/user-lifecycle.service';
 import { UsersQueryService } from '../../src/users/users-query.service';
-import { connect, connectOwner, createTenant, TENANT_ORG_PREFIX, type Tenant } from './db';
+import { connect, connectOwner, createTenant, deferred, TENANT_ORG_PREFIX, type Tenant } from './db';
 import { failingAuditClient, INJECTED_AUDIT_FAILURE } from './services';
 
 /**
@@ -244,6 +244,17 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     expect(resends.map((r) => (r.diff as { resend?: boolean } | null)?.resend ?? false)).toEqual(expect.arrayContaining([false, true]));
   });
 
+  it('a re-send voids the link already in the inbox; only the new one signs in', async () => {
+    const first = inbox();
+    const created = await invite(first.transport);
+    const second = inbox();
+    await services(second.transport).lifecycle.resendInvitation(A.users.superAdmin, created.id);
+    const stale = await browser().auth.verifyOtp({ type: 'invite', token_hash: tokenIn(first.sent[0], 'invite') });
+    expect(stale.error).not.toBeNull();
+    const fresh = await browser().auth.verifyOtp({ type: 'invite', token_hash: tokenIn(second.sent[0], 'invite') });
+    expect(fresh.error).toBeNull();
+  });
+
   it('without mail settings the email step records mail_not_configured and mints no link', async () => {
     const created = await invite(null);
     expect(created.invitation).toMatchObject({ status: 'pending', lastErrorStep: 'email', lastErrorCode: 'mail_not_configured' });
@@ -355,21 +366,24 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const second = await invite(inbox().transport, { role: UserRole.super_admin });
     const other = await asRequestUser(second.id);
     const s = services(null);
-    const results = await Promise.allSettled([
-      s.access.disableMember(A.users.superAdmin, second.id),
-      s.access.disableMember(other, A.users.superAdmin.id),
-    ]);
-    const fulfilled = results.filter((r) => r.status === 'fulfilled');
-    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
-    expect(fulfilled).toHaveLength(1);
-    expect(rejected[0].reason).toMatchObject({ response: { code: 'account_disabled' } });
-    const active = await owner.profile.count({
-      where: { organisationId: A.organisationId, role: UserRole.super_admin, disabledAt: null, id: { in: [A.users.superAdmin.id, second.id] } },
-    });
-    expect(active).toBe(1);
-    // Put A's administrator back for the tests below (as the fixture owner).
-    await owner.profile.update({ where: { id: A.users.superAdmin.id }, data: { disabledAt: null, authSyncPendingSince: null } });
-    await owner.profile.update({ where: { id: second.id }, data: { disabledAt: new Date() } });
+    try {
+      const results = await Promise.allSettled([
+        s.access.disableMember(A.users.superAdmin, second.id),
+        s.access.disableMember(other, A.users.superAdmin.id),
+      ]);
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected[0].reason).toMatchObject({ response: { code: 'account_disabled' } });
+      const active = await owner.profile.count({
+        where: { organisationId: A.organisationId, role: UserRole.super_admin, disabledAt: null, id: { in: [A.users.superAdmin.id, second.id] } },
+      });
+      expect(active).toBe(1);
+    } finally {
+      // Put A's administrator back for the tests below (as the fixture owner), pass or fail.
+      await owner.profile.update({ where: { id: A.users.superAdmin.id }, data: { disabledAt: null, authSyncPendingSince: null } });
+      await owner.profile.update({ where: { id: second.id }, data: { disabledAt: new Date() } });
+    }
   });
 
   it('an Auth ban that fails stays flagged — the API still refuses the account — and reconcile applies it', async () => {
@@ -448,6 +462,16 @@ describe('the users list (CursorPage)', () => {
     expect(JSON.stringify(await q.list(A.users.superAdmin, {}))).not.toContain(B.organisationId);
   });
 
+  it('a page that ends exactly at the last member says so — no cursor to an empty page', async () => {
+    const q = services(null).query;
+    const total = await owner.profile.count({ where: { organisationId: A.organisationId } });
+    const page = await q.list(A.users.superAdmin, { limit: total });
+    expect(page.items).toHaveLength(total);
+    expect(page.nextCursor).toBeNull();
+    const short = await q.list(A.users.superAdmin, { limit: total - 1 });
+    expect(short.nextCursor).not.toBeNull();
+  });
+
   it('refuses every other role and a malformed or foreign cursor', async () => {
     const q = services(null).query;
     for (const actor of [A.users.consultant, A.users.dataEntry, A.users.executiveViewer]) {
@@ -476,6 +500,19 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
     expect(rows.map((r) => [r.userId, r.role, r.organisationId])).toEqual([[null, null, A.organisationId]]);
   });
 
+  it('a member of an offboarded organisation gets nothing', async () => {
+    const created = await invite(inbox().transport);
+    const { sent, transport } = inbox();
+    const resets = new PasswordResetService(runtime, new AuthAdminService(), new MailService(transport, MAIL), new AuditService(runtime), {} as never);
+    await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: new Date() } });
+    try {
+      expect(await resets.run(created.email)).toBe('skipped');
+    } finally {
+      await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: null } });
+    }
+    expect(sent).toHaveLength(0);
+  });
+
   it('an unknown or disabled address gets nothing, and nothing is written', async () => {
     const created = await invite(inbox().transport);
     await services(null).lifecycle.disable(A.users.superAdmin, created.id);
@@ -491,10 +528,35 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
 describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
   const orgName = () => `${TENANT_ORG_PREFIX}operator ${tag}`;
 
-  it('refuses any login but the tables’ owner', async () => {
+  it('refuses any login but the tables’ owner — the runtime login, or the owner acting as another role', async () => {
     const real = new AuthAdminService();
-    const operator = new OnboardingOperator(runtime, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null)), new AuthSyncService(real));
-    await expect(operator.assertOwner()).rejects.toBeInstanceOf(OperatorRefusal);
+    const make = (db: unknown) =>
+      new OnboardingOperator(db as never, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null)), new AuthSyncService(real));
+    await expect(make(runtime).assertOwner()).rejects.toBeInstanceOf(OperatorRefusal);
+    const refused = await owner
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe('SET LOCAL ROLE authenticated');
+        return make(tx).assertOwner().then(() => 'admitted', (e: unknown) => (e instanceof OperatorRefusal ? e.message : String(e)));
+      })
+      .catch((e: unknown) => String(e));
+    expect(refused).toMatch(/acting as authenticated/);
+    await expect(make(owner).assertOwner()).resolves.toBeUndefined();
+  });
+
+  it('an existing address is provisioned again only as its own organisation’s super_admin, never in an offboarded one', async () => {
+    const real = new AuthAdminService();
+    const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL)), new AuthSyncService(real));
+    await expect(
+      operator.provision({ organisationId: A.organisationId, adminEmail: A.users.consultant.email, adminName: 'X', language: 'en' }, true),
+    ).rejects.toThrow(/already a consultant/);
+    await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: new Date() } });
+    try {
+      await expect(
+        operator.provision({ organisationId: A.organisationId, adminEmail: A.users.superAdmin.email, adminName: 'X', language: 'en' }, true),
+      ).rejects.toThrow(/offboarded/);
+    } finally {
+      await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: null } });
+    }
   });
 
   it('provisions an organisation and its first administrator, idempotently; then offboards it', async () => {
@@ -541,6 +603,58 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     expect(reOff.disabled).toBe(0);
     expect(await owner.auditLog.count({ where: { organisationId: orgId, action: { in: ['offboard', 'disable'] } } })).toBe(2);
     await expect(operator.provision({ organisationId: orgId, adminEmail: address(), adminName: 'X', language: 'en' }, true)).rejects.toBeInstanceOf(OperatorRefusal);
+  });
+});
+
+describe('offboarding and the tenant administrators (architect P2-1)', () => {
+  it('an offboarding waits for an administrative change in flight and disables what it added', async () => {
+    const C = await createTenant();
+    const added = randomUUID();
+    try {
+      const real = new AuthAdminService();
+      const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null)), new AuthSyncService(real));
+      const holder = connectOwner(1);
+      const locked = deferred();
+      const release = deferred();
+      // An invitation's transaction, mid-flight: the lock held, a new member written, not yet committed.
+      const change = holder.$transaction(async (tx) => {
+        await lockTenantAdmin(tx, C.organisationId);
+        await tx.profile.create({
+          data: { id: added, email: `int-added-${tag}@tonyai.test`, fullName: 'Added', role: UserRole.consultant, organisationId: C.organisationId },
+        });
+        locked.resolve();
+        await release.promise;
+      }, { timeout: 20_000 });
+      await locked.promise;
+      const offboarding = operator.offboard(C.organisationId, true);
+      await new Promise((r) => setTimeout(r, 300)); // the offboarding is now queued on the lock
+      release.resolve();
+      await change;
+      const report = await offboarding;
+      await holder.$disconnect();
+      expect(report.disabled).toBe(C.profileIds.length + 1);
+      expect((await owner.profile.findUniqueOrThrow({ where: { id: added } })).disabledAt).not.toBeNull();
+    } finally {
+      await owner.auditLog.deleteMany({ where: { organisationId: C.organisationId } });
+      await owner.profile.deleteMany({ where: { id: added } });
+      await C.cleanup();
+    }
+  });
+
+  it('an administrator of an offboarded organisation is refused under the lock, and no invitation goes out to it', async () => {
+    const { sent, transport } = inbox();
+    const pending = await invite(null); // pending, mail not configured
+    await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: new Date() } });
+    try {
+      await expect(services(null).access.disableMember(A.users.superAdmin, A.users.consultant.id)).rejects.toMatchObject({
+        response: { code: 'account_disabled' },
+      });
+      const outcome = await new InvitationDeliveryService(new AuthAdminService(), new MailService(transport, MAIL)).deliver(runtime, pending.id);
+      expect(outcome).toEqual({ delivered: false, skipped: 'disabled' });
+      expect(sent).toHaveLength(0);
+    } finally {
+      await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: null } });
+    }
   });
 });
 

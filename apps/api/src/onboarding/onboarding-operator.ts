@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { InvitationStatus, type Prisma, type PrismaClient, UserRole } from '@tonyai/db';
 import type { Locale } from '@tonyai/shared-types';
 import { AuditService } from '../audit/audit.service';
-import { normaliseEmail } from '../auth/access-admin.service';
+import { lockTenantAdmin, normaliseEmail } from '../auth/access-admin.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { AuthSyncService } from '../users/auth-sync.service';
 import type { DeliveryOutcome, InvitationDeliveryService } from '../users/invitation-delivery.service';
@@ -235,9 +235,16 @@ export class OnboardingOperator {
         authPending: pending,
       };
     }
-    const { offboardedAt, revoked } = await this.db.$transaction(async (tx) => {
+    const { offboardedAt, revoked, disabled } = await this.db.$transaction(async (tx) => {
+      // The tenant administrators' lock: an invitation or an enable that is in
+      // flight finishes first, and none starts until this commits — so no
+      // member is left enabled (and unbanned) in an offboarded organisation.
+      await lockTenantAdmin(tx, organisationId);
+      const enabled = (
+        await tx.profile.findMany({ where: { organisationId, disabledAt: null }, select: { id: true }, orderBy: { id: 'asc' } })
+      ).map((m) => m.id);
       const now = new Date();
-      let at = org.offboardedAt;
+      let at = (await tx.organisation.findUniqueOrThrow({ where: { id: organisationId }, select: { offboardedAt: true } })).offboardedAt;
       if (!at) {
         // Conditional: two operators at once record one offboarding.
         const { count } = await tx.organisation.updateMany({ where: { id: organisationId, offboardedAt: null }, data: { offboardedAt: now } });
@@ -250,7 +257,7 @@ export class OnboardingOperator {
         }
       }
       let invitationsRevoked = 0;
-      for (const id of toDisable) {
+      for (const id of enabled) {
         const { count } = await tx.profile.updateMany({
           where: { id, organisationId, disabledAt: null },
           data: { disabledAt: now, authSyncPendingSince: now },
@@ -272,14 +279,14 @@ export class OnboardingOperator {
           tx,
         );
       }
-      return { offboardedAt: at, revoked: invitationsRevoked };
+      return { offboardedAt: at, revoked: invitationsRevoked, disabled: enabled.length };
     });
     for (const id of await this.pendingIn(organisationId)) await this.authSync.apply(this.db, id);
     return {
       applied: true,
       organisationId,
       offboardedAt: offboardedAt?.toISOString() ?? null,
-      disabled: toDisable.length,
+      disabled,
       invitationsRevoked: revoked,
       authPending: await this.pendingIn(organisationId),
     };

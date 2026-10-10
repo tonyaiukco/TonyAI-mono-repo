@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { isLoopback, parseArgs, refuseUnsafe, UsageError } from './onboarding.cli';
+import { afterEach, describe, expect, it } from 'vitest';
+import { isLoopback, parseArgs, refuseUnsafe, run, UsageError } from './onboarding.cli';
 
 const PROVISION = [
   'provision', '--operator=ops@tonyai.com', '--legal-name=Örnek Holding A.Ş.', '--country=tr', '--geography-code=tr',
@@ -66,5 +66,21 @@ describe('isLoopback and refuseUnsafe', () => {
     expect(() => refuseUnsafe(apply, true)).not.toThrow();
     expect(() => refuseUnsafe(apply, false)).toThrow(UsageError);
     expect(() => refuseUnsafe(allowed, false)).not.toThrow();
+  });
+});
+
+describe('run — where it points, before it connects', () => {
+  const saved = { DIRECT_URL: process.env.DIRECT_URL, SUPABASE_URL: process.env.SUPABASE_URL };
+  afterEach(() => Object.assign(process.env, saved));
+
+  it('refuses to write when Supabase is remote although the database is local (it would ban real accounts)', async () => {
+    process.env.DIRECT_URL = 'postgresql://postgres:x@127.0.0.1:1/none';
+    process.env.SUPABASE_URL = 'https://abc.supabase.co';
+    await expect(run(parseArgs(['reconcile', '--operator=o@x.io', '--apply']))).rejects.toBeInstanceOf(UsageError);
+  });
+
+  it('refuses without the owner connection', async () => {
+    delete process.env.DIRECT_URL;
+    await expect(run(parseArgs(['reconcile', '--operator=o@x.io']))).rejects.toThrow('DIRECT_URL');
   });
 });
