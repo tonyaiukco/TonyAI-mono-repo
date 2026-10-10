@@ -72,6 +72,8 @@ enum ActivityRecordStatus {
 
 model Profile {
   id                   String                 @id @db.Uuid // = auth.users.id
+  /// Trimmed and lower-case (CHECK `profiles_email_normalised`, LP4-01): looked
+  /// up by exact equality; the unique index is then case-insensitive in effect.
   email                String                 @unique
   fullName             String                 @map("full_name")
   role                 UserRole               @default(data_entry)

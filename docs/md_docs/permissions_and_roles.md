@@ -209,12 +209,12 @@ How an account starts, recovers access and ends. The design is Decisions 2026-10
 
 | Step | Who | What happens |
 | :--- | :--- | :--- |
-| Provision an organisation and its first `super_admin` | Operator (`pnpm onboarding provision`, owner connection) | Organisation, profile and invitation created in one transaction, audited with a null `userId` and the operator in the diff; the invitation email follows. Idempotent; a dry run unless `--apply` |
+| Provision an organisation and its first `super_admin` | Operator (`pnpm onboarding provision`, owner connection) | Organisation, profile and invitation created in one transaction, audited with a null `userId` and the operator in the diff; the invitation email follows. Re-run, it completes what failed and re-sends an unaccepted invitation; a dry run unless `--apply` |
 | Invite | `super_admin` (`/users`) | Profile (role, language), data_entry grants and invitation created first, audited; then the Supabase Auth user (same id) and the TR/EN email. A failed step is recorded on the invitation and shown on the screen; **Re-send** retries it with a fresh link |
 | Accept | The invitee | Opens the emailed link → `/auth/confirm` (a click, then `verifyOtp`) → invitation `accepted` (audited as the invitee) → chooses a password (≥ 12 characters) |
 | Reset a password | Anyone, signed out | `/forgot-password`: the same answer for every address; an enabled account gets a link in its own language, at most once per 5 minutes per address, audited |
 | Change role or access | `super_admin` | Never one's own role. A data_entry user leaving the role loses its grants, each audited |
-| Disable / enable | `super_admin` | Refused from the account's **next request** (401 `account_disabled`; the web signs it out), banned in Supabase Auth; an open invitation is revoked. Never one's own account, so the organisation keeps an active `super_admin`. A Supabase Auth step that fails is retried by `pnpm onboarding reconcile` |
+| Disable / enable | `super_admin` | Refused from the account's **next request** (401 `account_disabled`; the web signs it out), banned in Supabase Auth with every session revoked (its password replaced); an open invitation is revoked. A re-enabled person chooses a new password ("Forgot your password?"). Never one's own account, so the organisation keeps an active `super_admin`. A Supabase Auth step that fails is retried by `pnpm onboarding reconcile` |
 | Offboard an organisation | Operator (`pnpm onboarding offboard`) | `offboarded_at` set (D21's 90-day clock), every member disabled and banned, audited. Nothing is deleted until the lawyer confirms D21/D24 |
 
 One organisation per account (D17): an address with a profile anywhere cannot be invited again. Known residual (K4, Open questions): a disabled account's live access token can still read its own organisation through PostgREST until it expires (≤ 1 hour); the API refuses it at once.

@@ -72,7 +72,9 @@ export class PasswordResetService implements OnModuleInit {
     const email = normaliseEmail(rawEmail);
     const profile = await this.prisma.profile.findFirst({
       where: {
-        email: { equals: email, mode: 'insensitive' },
+        // Exact equality on the stored spelling — never a pattern a caller's
+        // `%` or `_` could widen to someone else's account.
+        email,
         disabledAt: null,
         organisationId: { not: null },
         organisation: { offboardedAt: null },

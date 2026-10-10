@@ -571,6 +571,14 @@ describe('the runtime role is refused', () => {
     ).toBeNull();
   });
 
+  it('an address is stored in one spelling — trimmed, lower-case — whoever writes it (LP4-01)', async () => {
+    for (const email of ['Mixed@x.test', ' padded@x.test']) {
+      expect(
+        await attempt(`INSERT INTO profiles (id, email, full_name, updated_at) VALUES (gen_random_uuid(), '${email}', 'x', now())`),
+      ).toMatch(/profiles_email_normalised/);
+    }
+  });
+
   it('a language the product does not speak is refused by the column itself (LP3-01)', async () => {
     expect(
       await attempt(`UPDATE profiles SET language = 'de' WHERE id = (SELECT id FROM profiles LIMIT 1)`),

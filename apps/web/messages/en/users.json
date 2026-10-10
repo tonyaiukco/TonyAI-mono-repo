@@ -80,11 +80,11 @@
   "accessSaved": "Access updated",
   "disableDialog": {
     "title": "Disable {name}?",
-    "description": "They are signed out on their next action and cannot sign in until the account is enabled again. Their records and audit history stay.",
+    "description": "They are signed out on their next action and cannot sign in until the account is enabled again — then they choose a new password. Their records and audit history stay.",
     "confirm": "Disable",
     "cancel": "Cancel"
   },
   "disabledToast": "{name} is disabled",
-  "enabledToast": "{name} is enabled",
+  "enabledToast": "{name} is enabled. They sign in again by choosing a new password with “Forgot your password?”.",
   "authSyncWarning": "Saved. The sign-in block will be applied shortly; the account is refused by the app either way."
 }

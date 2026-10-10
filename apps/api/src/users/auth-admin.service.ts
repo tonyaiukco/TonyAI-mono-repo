@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
@@ -80,11 +81,19 @@ export class AuthAdminService {
   }
 
   /**
-   * Bans or unbans the Auth user (D19): no refresh, no sign-in. An id Auth does
+   * Bans or unbans the Auth user (D19): no refresh, no sign-in. Banning also
+   * replaces the password with a random one nobody holds: GoTrue revokes every
+   * session on a password change, and a ban alone does not — lifted, it would
+   * bring back every session that existed when the account was disabled
+   * (`security-rls` P2-2, measured; decision 2026-10-10). A re-enabled account
+   * therefore signs in again through "Forgot your password?". An id Auth does
    * not know (an invitation whose Auth step never ran) has nothing to ban.
    */
   async setBanned(profileId: string, banned: boolean): Promise<void> {
-    const { error } = await this.admin().updateUserById(profileId, { ban_duration: banned ? BAN_DURATION : 'none' });
+    const { error } = await this.admin().updateUserById(
+      profileId,
+      banned ? { ban_duration: BAN_DURATION, password: randomBytes(32).toString('base64url') } : { ban_duration: 'none' },
+    );
     if (error && error.code !== 'user_not_found') throw new AuthAdminError('auth_unavailable');
   }
 }

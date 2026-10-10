@@ -36,7 +36,10 @@ export interface ProvisionInput {
 export interface ProvisionReport {
   applied: boolean;
   organisation: { id: string | null; created: boolean };
+  /** `invitation` as found before this run. */
   admin: { id: string | null; created: boolean; invitation: InvitationStatus | 'none' | 'new' };
+  /** A sent, unaccepted invitation re-opened and sent again with a fresh link. */
+  resent: boolean;
   delivery: DeliveryOutcome | null;
 }
 
@@ -113,8 +116,8 @@ export class OnboardingOperator {
   async provision(input: ProvisionInput, apply: boolean): Promise<ProvisionReport> {
     await this.assertOwner();
     const email = normaliseEmail(input.adminEmail);
-    const existing = await this.db.profile.findFirst({
-      where: { email: { equals: email, mode: 'insensitive' } },
+    const existing = await this.db.profile.findUnique({
+      where: { email },
       select: {
         id: true,
         role: true,
@@ -139,8 +142,35 @@ export class OnboardingOperator {
         throw new OperatorRefusal(`That address is already a ${existing.role} of the organisation; its administrators change roles in the app.`);
       }
       const invitation = existing.invitation?.status ?? 'none';
-      const delivery = apply && invitation === InvitationStatus.pending ? await this.delivery.deliver(this.db, existing.id) : null;
-      return { applied: apply, organisation: { id: org.id, created: false }, admin: { id: existing.id, created: false, invitation }, delivery };
+      // A sent invitation not yet accepted is sent again — its link may have
+      // expired, and the first administrator has nobody else to ask (the
+      // email tells them to ask TonyAI). Pending: the last delivery did not
+      // finish. Accepted, revoked or none: nothing to send.
+      const resend = invitation === InvitationStatus.sent;
+      if (!apply || (invitation !== InvitationStatus.pending && !resend)) {
+        return { applied: apply, organisation: { id: org.id, created: false }, admin: { id: existing.id, created: false, invitation }, resent: false, delivery: null };
+      }
+      if (resend) {
+        await this.db.$transaction(async (tx) => {
+          const { count } = await tx.invitation.updateMany({
+            where: { profileId: existing.id, status: InvitationStatus.sent },
+            data: { status: InvitationStatus.pending },
+          });
+          if (count === 0) return; // accepted or revoked in the meantime
+          await this.audit.recordSystem(
+            {
+              organisationId: org.id,
+              action: 'invite',
+              entity: 'invitation',
+              entityId: existing.id,
+              diff: this.operatorDiff('provision', { resend: true, before: { status: InvitationStatus.sent } }),
+            },
+            tx,
+          );
+        });
+      }
+      const delivery = await this.delivery.deliver(this.db, existing.id);
+      return { applied: true, organisation: { id: org.id, created: false }, admin: { id: existing.id, created: false, invitation }, resent: resend, delivery };
     }
 
     let organisationId = input.organisationId ?? null;
@@ -156,6 +186,7 @@ export class OnboardingOperator {
         applied: false,
         organisation: { id: organisationId, created: !organisationId },
         admin: { id: null, created: true, invitation: 'new' },
+        resent: false,
         delivery: null,
       };
     }
@@ -210,6 +241,7 @@ export class OnboardingOperator {
       applied: true,
       organisation: { id: organisationId, created: createOrganisation },
       admin: { id: profileId, created: true, invitation: 'new' },
+      resent: false,
       delivery,
     };
   }

@@ -30,6 +30,24 @@ ALTER TABLE "profiles" ADD COLUMN     "auth_sync_pending_since" TIMESTAMPTZ(6),
 ADD COLUMN     "disabled_at" TIMESTAMPTZ(6),
 ADD COLUMN     "recovery_sent_at" TIMESTAMPTZ(6);
 
+-- An address is stored in one spelling — trimmed, lower-case — so the API, the
+-- operator CLI and the public reset look it up by exact equality, and the
+-- existing unique index holds D17 (one account per address) case-insensitively
+-- for every writer. Before this, lookups were case-insensitive pattern matches
+-- (Prisma's `mode: 'insensitive'` is ILIKE): `%` and `_` in an address matched
+-- other accounts (the review seats' P1). Every writer already stores the
+-- normalised form; a row that does not stops the migration here, to be
+-- corrected first (`UPDATE profiles SET email = lower(btrim(email))`, after
+-- checking for a duplicate).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "profiles" WHERE "email" <> lower(btrim("email"))) THEN
+    RAISE EXCEPTION 'profiles.email holds addresses that are not trimmed and lower-case; normalise them before this migration';
+  END IF;
+END
+$$;
+ALTER TABLE "profiles" ADD CONSTRAINT "profiles_email_normalised" CHECK ("email" = lower(btrim("email")));
+
 -- AlterTable
 ALTER TABLE "organisations" ADD COLUMN     "offboarded_at" TIMESTAMPTZ(6);
 

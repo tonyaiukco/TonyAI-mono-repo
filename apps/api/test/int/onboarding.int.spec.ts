@@ -208,6 +208,22 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     }
   });
 
+  it('an address is matched exactly — `_` and `%` are characters, never wildcards over other tenants (review P1)', async () => {
+    const target = B.users.consultant.email; // int-consultant-<tag>@tonyai.test
+    const underscore = target.replace('consultant', 'consultan_');
+    const percent = target.replace('consultant', 'c%');
+    // With a subsidiary that is not the actor's, every address — an existing one
+    // included — answers the same 404: the subsidiaries are checked first.
+    for (const email of [percent, underscore, `int-nobody-${tag}@tonyai.test`, target]) {
+      await expect(invite(inbox().transport, { email, subsidiaryIds: [randomUUID()] })).rejects.toMatchObject({
+        response: { code: 'subsidiary_not_found' },
+      });
+    }
+    // Without one, an address that only LOOKS like another tenant's is not "taken".
+    const created = await invite(inbox().transport, { email: underscore, role: UserRole.consultant });
+    expect(created.email).toBe(underscore);
+  });
+
   it("refuses another tenant's subsidiary (the same 404 as none) and grants for an organisation-wide role", async () => {
     const email = address();
     await expect(invite(inbox().transport, { email, subsidiaryIds: [B.subsidiaryId] })).rejects.toMatchObject({
@@ -370,6 +386,21 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     // The enable's own run then applies the state it reads: unbanned, cleared.
     expect(await new AuthSyncService(real).apply(runtime, created.id)).toBe(true);
     expect(await bannedInAuth(created.id)).toBe(false);
+  });
+
+  it('a session that existed when the account was disabled does not come back with the enable (security P2-2)', async () => {
+    const created = await invite(inbox().transport);
+    await admin.updateUserById(created.id, { password: 'a-long-enough-pass-1', email_confirm: true });
+    const session = await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' });
+    expect(session.error).toBeNull();
+    const s = services(null);
+    await s.lifecycle.disable(A.users.superAdmin, created.id);
+    await s.lifecycle.enable(A.users.superAdmin, created.id);
+    const revived = await browser().auth.refreshSession({ refresh_token: session.data.session!.refresh_token });
+    expect(revived.error?.code).toBe('refresh_token_not_found');
+    // …and the old password is gone too: the re-enabled user resets it.
+    const old = await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' });
+    expect(old.error?.code).toBe('invalid_credentials');
   });
 
   it('nobody disables their own account', async () => {
@@ -536,6 +567,9 @@ describe('password reset (K5) — one link per cooldown, in the account’s lang
     const resets = new PasswordResetService(runtime, new AuthAdminService(), new MailService(transport, MAIL), new AuditService(runtime), {} as never);
     expect(await resets.run(`int-nobody-${tag}@tonyai.test`)).toBe('skipped');
     expect(await resets.run(created.email)).toBe('skipped');
+    // A pattern reaches nobody: `%` and `_` are characters (review P1).
+    expect(await resets.run(A.users.superAdmin.email.replace(/^int-/, 'int%'))).toBe('skipped');
+    expect(await resets.run(A.users.superAdmin.email.replace('admin', 'adm_n'))).toBe('skipped');
     expect(sent).toHaveLength(0);
     expect(await owner.auditLog.count({ where: { entityId: created.id, action: 'password_reset' } })).toBe(0);
   });
@@ -602,10 +636,24 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
       ['invite', 'invitation', null, 'ops@tonyai.test'],
     ]);
 
+    // Re-run: the invitation went out but was not accepted — sent again with a
+    // fresh link (the first administrator has nobody else to ask; QA P2-1).
     const again = await operator.provision(input, true);
-    expect(again).toMatchObject({ organisation: { id: orgId, created: false }, admin: { id: first.admin.id, created: false, invitation: 'sent' }, delivery: null });
-    expect(await owner.auditLog.count({ where: { organisationId: orgId } })).toBe(2);
-    expect(sent).toHaveLength(1);
+    expect(again).toMatchObject({
+      organisation: { id: orgId, created: false },
+      admin: { id: first.admin.id, created: false, invitation: 'sent' },
+      resent: true,
+      delivery: { delivered: true },
+    });
+    expect(sent).toHaveLength(2);
+    const resend = await owner.auditLog.findMany({ where: { organisationId: orgId, action: 'invite' }, orderBy: { createdAt: 'asc' } });
+    expect(resend.map((r) => [r.userId, (r.diff as { resend?: boolean; operator?: string }).resend ?? false, (r.diff as { operator?: string }).operator])).toEqual([
+      [null, false, 'ops@tonyai.test'],
+      [null, true, 'ops@tonyai.test'],
+    ]);
+    // A pattern of the admin's address is a new address, not a re-run (review P1).
+    const dryPattern = await operator.provision({ ...input, adminEmail: input.adminEmail.replace(/^int-/, 'int%') }, false);
+    expect(dryPattern.admin).toMatchObject({ id: null, created: true });
     await expect(operator.provision({ ...input, organisation: { ...input.organisation, legalName: 'Another org' } }, true)).rejects.toBeInstanceOf(OperatorRefusal);
     await expect(operator.provision({ organisationId: orgId, adminEmail: A.users.consultant.email, adminName: 'X', language: 'en' }, true)).rejects.toBeInstanceOf(OperatorRefusal);
 
@@ -618,6 +666,8 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     const reOff = await operator.offboard(orgId, true);
     expect(reOff.disabled).toBe(0);
     expect(await owner.auditLog.count({ where: { organisationId: orgId, action: { in: ['offboard', 'disable'] } } })).toBe(2);
+    // Offboarded: a re-run sends nothing (the invitation is revoked).
+    await expect(operator.provision(input, true)).rejects.toBeInstanceOf(OperatorRefusal);
     await expect(operator.provision({ organisationId: orgId, adminEmail: address(), adminName: 'X', language: 'en' }, true)).rejects.toBeInstanceOf(OperatorRefusal);
   });
 });

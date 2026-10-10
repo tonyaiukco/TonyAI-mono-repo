@@ -20,7 +20,10 @@
  * `provision` creates the organisation (or uses --organisation-id's) and its
  * first `super_admin`, and sends the invitation (TR/EN by --language). Re-run
  * with the same arguments, it completes a provisioning a failure left half
- * done — the invitation's Auth step or email — and otherwise changes nothing.
+ * done — the invitation's Auth step or email — and re-sends an invitation that
+ * went out but was not accepted (a fresh link: the old one stops working; the
+ * first administrator's email tells them to ask TonyAI for one). An accepted
+ * invitation is left alone.
  * `offboard` marks the organisation offboarded (the start of D21's 90-day
  * retention clock; nothing is deleted), disables every member and bans them
  * in Supabase Auth. `reconcile` retries Auth bans and unbans left pending

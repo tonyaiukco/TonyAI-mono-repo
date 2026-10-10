@@ -57,11 +57,15 @@ describe('AuthAdminService — every Auth answer onboarding depends on (measured
     }
   });
 
-  it('bans for ten years and unbans with "none"; an id Auth does not know has nothing to ban', async () => {
+  it('bans for ten years with a password nobody holds (GoTrue then revokes every session); unbans with "none"; an unknown id has nothing to ban', async () => {
     admin.updateUserById.mockResolvedValue({ data: { user: { id: ID } }, error: null });
     await service.setBanned(ID, true);
+    await service.setBanned(ID, true);
     await service.setBanned(ID, false);
-    expect(admin.updateUserById.mock.calls).toEqual([[ID, { ban_duration: '876000h' }], [ID, { ban_duration: 'none' }]]);
+    const [first, second, unban] = admin.updateUserById.mock.calls;
+    expect(first).toEqual([ID, { ban_duration: '876000h', password: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) }]);
+    expect(second[1].password).not.toBe(first[1].password);
+    expect(unban).toEqual([ID, { ban_duration: 'none' }]);
     admin.updateUserById.mockResolvedValueOnce(fail('user_not_found'));
     await expect(service.setBanned(ID, true)).resolves.toBeUndefined();
     admin.updateUserById.mockResolvedValueOnce(fail('unexpected_failure'));

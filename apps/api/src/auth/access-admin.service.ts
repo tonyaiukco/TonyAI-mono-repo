@@ -245,14 +245,15 @@ export class AccessAdminService {
     try {
       await this.prisma.$transaction(async (tx) => {
         const admin = await lockAndReadActor(tx, actor, organisationId);
-        // D17: one organisation per account — an address with a profile anywhere
-        // is unavailable. The unique index catches the race between tenants.
-        const taken = await tx.profile.findFirst({
-          where: { email: { equals: email, mode: 'insensitive' } },
-          select: { id: true },
-        });
-        if (taken) throw new EmailUnavailableError();
+        // The request's own subsidiaries first, so a refusal about them never
+        // depends on whether some address exists.
         await assertSubsidiaries(tx, organisationId, subsidiaryIds);
+        // D17: one organisation per account — an address with a profile anywhere
+        // is unavailable. Exact equality on the stored spelling (CHECK
+        // `profiles_email_normalised`), never a pattern; the unique index
+        // catches the race between tenants.
+        const taken = await tx.profile.findUnique({ where: { email }, select: { id: true } });
+        if (taken) throw new EmailUnavailableError();
         await tx.profile.create({
           data: {
             id: profileId,

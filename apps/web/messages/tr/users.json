@@ -80,11 +80,11 @@
   "accessSaved": "Erişim güncellendi",
   "disableDialog": {
     "title": "{name} devre dışı bırakılsın mı?",
-    "description": "Bir sonraki işleminde oturumu kapatılır ve hesap yeniden etkinleştirilene kadar giriş yapamaz. Kayıtları ve denetim geçmişi korunur.",
+    "description": "Bir sonraki işleminde oturumu kapatılır ve hesap yeniden etkinleştirilene kadar giriş yapamaz; ardından yeni bir şifre belirler. Kayıtları ve denetim geçmişi korunur.",
     "confirm": "Devre dışı bırak",
     "cancel": "Vazgeç"
   },
   "disabledToast": "{name} devre dışı bırakıldı",
-  "enabledToast": "{name} etkinleştirildi",
+  "enabledToast": "{name} etkinleştirildi. Yeniden giriş yapmak için “Şifrenizi mi unuttunuz?” ile yeni bir şifre belirlemesi gerekir.",
   "authSyncWarning": "Kaydedildi. Giriş engeli kısa süre içinde uygulanacak; uygulama hesabı her durumda reddediyor."
 }
