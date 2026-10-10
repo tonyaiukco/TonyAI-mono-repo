@@ -221,11 +221,10 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
   });
 
   it('watches for rules and stray triggers on every guarded table, not just one', async () => {
-    // `organisations` and `subsidiaries` carry registered triggers but are not
-    // guarded: LP1-03's access-removal trigger lives on the first (Open
-    // questions, "LP3-03 PR B" (20)).
-    const guarded = [...new Set(INTEGRITY_TRIGGERS.map((t) => t.table))].filter((t) => t !== 'organisations' && t !== 'subsidiaries').sort();
-    expect(guarded).toEqual(['activity_records', 'emission_factors', 'factor_release_events', 'factor_releases', 'unit_conversions']);
+    // `organisations` carries a registered trigger but is not guarded: LP1-03's
+    // access-removal trigger lives there too (Open questions, "LP3-03 PR B" (20)).
+    const guarded = [...new Set(INTEGRITY_TRIGGERS.map((t) => t.table))].filter((t) => t !== 'organisations').sort();
+    expect(guarded).toEqual(['activity_records', 'emission_factors', 'factor_release_events', 'factor_releases', 'subsidiaries', 'unit_conversions']);
     for (const table of guarded) {
       expect(await check(allTriggers, allChecks, [{ table, rule: 'r' }])).toEqual([`unexpected rule r on ${table}`]);
       const stray = { ...allTriggers.find((t) => t.table === table), trigger: 'zz_undo', fn: 'zz_undo' };

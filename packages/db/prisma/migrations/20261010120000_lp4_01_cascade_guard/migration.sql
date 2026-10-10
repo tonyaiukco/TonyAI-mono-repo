@@ -1,6 +1,8 @@
 -- LP4-01 (Open questions, "LP3-03 PR B" (11); owner, 2026-10-06; and the
--- owner's K10, 2026-10-10): a committed activity record is removed, moved or
--- made by no one but the owner and the API's own lifecycle.
+-- owner's K10, 2026-10-10): an activity record is removed, moved or given a
+-- committed status by no one but the owner and the API's login, through its
+-- lifecycle. (What a draft says before it is submitted is the API's to check:
+-- Open questions, "LP4-01 follow-ups" (6).)
 --
 -- Before this, a direct database write — the service role through PostgREST,
 -- or the runtime role with SQL access — could:
@@ -12,12 +14,15 @@
 --   * move them to another tenant by moving their parent — a subsidiary to
 --     another organisation (the service role), a site to another subsidiary
 --     (either; the runtime role holds UPDATE on `locations`);
---   * make one: insert a record as approved or locked, or walk a draft up the
---     lifecycle, with no review and no audit row.
+--   * status one: insert a record as approved or locked (either), or walk a
+--     draft up the lifecycle (the service role; the runtime login is the API's
+--     and keeps K5's steps), with no review and no audit row.
 -- The API does none of these: it refuses to delete a subsidiary or a site that
 -- holds any record, never deletes an organisation, never moves a subsidiary or
 -- a site, creates records as drafts and moves them through its own gates.
--- Nothing here changes what the API does.
+-- None of this changes what the API does (one write follows the new site key:
+-- a record update sets `location_id` as a column, since Prisma's relation
+-- connect/disconnect would set both columns of the key).
 --
 -- 1. No referential action writes `activity_records`: each of its keys
 --    refuses both its parent's delete and a change of the parent's key
@@ -55,10 +60,12 @@
 -- `activity_records` as defined here (RESTRICT or NO ACTION both ways), K5's
 -- body, and the three new triggers present, ENABLE ALWAYS and unaltered.
 
--- Every statement here locks `activity_records`, `locations`, `subsidiaries`
--- or `organisations`, which the API reads on every request; queued behind a
--- long transaction, give up after 5 s rather than stall every request behind
--- it. Prisma then records the migration as failed: resolve it with
+-- The migration holds ACCESS EXCLUSIVE on `activity_records`, `locations`,
+-- `subsidiaries` and `import_batches` (and lighter locks on `organisations`)
+-- until it commits — tables the API reads on every request. Each lock wait
+-- gives up after 5 s rather than stall every request behind a long
+-- transaction. Then, or if the precondition below refuses, Prisma records the
+-- migration as failed and rolls it back whole: resolve it with
 -- `prisma migrate resolve --rolled-back 20261010120000_lp4_01_cascade_guard`
 -- before deploying again, in a quieter window.
 SET LOCAL lock_timeout = '5s';
@@ -75,7 +82,7 @@ BEGIN
     JOIN "locations" l ON l."id" = r."location_id"
    WHERE l."subsidiary_id" <> r."subsidiary_id";
   IF n > 0 THEN
-    RAISE EXCEPTION 'LP4-01: % activity record(s) sit at a site of another subsidiary; re-target or remove them (as the owner) before applying', n;
+    RAISE EXCEPTION 'LP4-01: % activity record(s) sit at a site of another subsidiary; fix the data before applying (a draft can be re-targeted; a committed record only removed, by the owner)', n;
   END IF;
 END
 $$;

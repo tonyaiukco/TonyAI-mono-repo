@@ -601,9 +601,14 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
 
       await service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' });
 
-      // `connect`, not a new row. This is the whole point: the record MOVES.
+      // The same row, its site column rewritten: the record MOVES. A scalar
+      // write, never the relation's `connect` — since LP4-01 the site key is
+      // (location_id, subsidiary_id), and `connect` would copy the site's
+      // subsidiary onto the record.
       const data = prisma.activityRecord.update.mock.calls[0][0].data;
-      expect(data.location).toEqual({ connect: { id: 'loc-1' } });
+      expect(data.locationId).toBe('loc-1');
+      expect(data).not.toHaveProperty('location');
+      expect(data).not.toHaveProperty('subsidiaryId');
       // And the snapshot is recomputed from the SITE's geography, not the
       // subsidiary's — the location is what decides which factor applies
       // (data_entry_page.md §5.2), so a move that kept the old factor would leave a record
@@ -612,6 +617,17 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
         expect.objectContaining({ geographyCode: 'UK' }),
         expect.anything(),
       );
+    });
+
+    it("answers a site that no longer belongs to the record's subsidiary at the write (P2003) as location_not_found", async () => {
+      const { prisma, service } = build(2);
+      withLocation(prisma);
+      prisma.activityRecord.findUnique.mockResolvedValue(draftAt('loc-1'));
+      prisma.activityRecord.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', { code: 'P2003', clientVersion: 'test' }),
+      );
+
+      await expect(service.update(dataEntry(), 'rec-move', { locationId: 'loc-1' })).rejects.toMatchObject({ code: 'location_not_found' });
     });
 
     it('detaches a site record back to the whole company', async () => {
@@ -626,9 +642,12 @@ describe('ActivityRecordsService — locationName: read-only, never audited', ()
 
       await service.update(dataEntry(), 'rec-move', { locationId: null });
 
-      expect(prisma.activityRecord.update.mock.calls[0][0].data.location).toEqual({
-        disconnect: true,
-      });
+      // `null` in the column alone: the relation's `disconnect` would NULL
+      // the subsidiary half of the composite site key too (P2011, a 500).
+      const data = prisma.activityRecord.update.mock.calls[0][0].data;
+      expect(data.locationId).toBeNull();
+      expect(data).not.toHaveProperty('location');
+      expect(data).not.toHaveProperty('subsidiaryId');
       // Back to the SUBSIDIARY's geography. `null` and "omitted" are different
       // requests and the DTO validator lets both through, so this is the half
       // of the tri-state that a `@IsOptional()` reading would silently skip.

@@ -684,9 +684,11 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   { table: 'factor_release_events', trigger: 'factor_release_events_before_truncate', fn: 'factor_tables_before_truncate', type: BEFORE | ON.truncate },
   // LP4-01: who may write a record's lifecycle (born a draft; a status moved
   // only in the API's or the owner's session); an organisation deleted, and a
-  // subsidiary moved, by the owner's session alone. `organisations` and
-  // `subsidiaries` are not in GUARDED_TABLES: LP1-03's access-removal trigger
-  // also lives on the first (Open questions, "LP3-03 PR B" (20)).
+  // subsidiary moved, by the owner's session alone. `subsidiaries` is guarded
+  // (a later BEFORE UPDATE trigger could rewrite NEW.organisation_id after the
+  // guard); `organisations` is not: LP1-03's access-removal trigger also lives
+  // there (Open questions, "LP3-03 PR B" (20)), and a later trigger cannot
+  // undo the guard's refusal.
   { table: 'activity_records', trigger: 'activity_records_lifecycle_writer', fn: 'activity_records_lifecycle_writer', type: ROW | BEFORE | ON.insert | ON.update },
   { table: 'organisations', trigger: 'organisations_delete_owner_only', fn: 'organisations_delete_owner_only', type: ROW | BEFORE | ON.delete },
   { table: 'subsidiaries', trigger: 'subsidiaries_stay_in_organisation', fn: 'subsidiaries_stay_in_organisation', type: ROW | BEFORE | ON.update },
@@ -801,7 +803,7 @@ export const RECORD_FOREIGN_KEYS = Object.freeze([
 const REFERENTIAL_ACTIONS = Object.freeze({ a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' });
 
 /** The tables the integrity triggers guard: nothing else may hook into them. */
-const GUARDED_TABLES = Object.freeze(['activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events']);
+const GUARDED_TABLES = Object.freeze(['activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events', 'subsidiaries']);
 
 /** Every integrity trigger, CHECK and record key, present, in force and unaltered. */
 export async function checkIntegrityTriggers(query, expectedBodies = expectedTriggerFunctionBodies()) {

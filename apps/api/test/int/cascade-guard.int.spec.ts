@@ -1,7 +1,7 @@
 /**
- * LP4-01 — a committed record is removed, moved or made by no one but the
- * owner and the API's own lifecycle (Open questions, "LP3-03 PR B" (11); the
- * owner's K10).
+ * LP4-01 — a record is removed, moved or given a committed status by no one
+ * but the owner and the API's login, through its lifecycle (Open questions,
+ * "LP3-03 PR B" (11); the owner's K10).
  *
  * A foreign key's action runs as the referencing table's owner, whom
  * `activity_records_committed_delete` lets delete a committed record; so no
@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import { connect, connectOwner, createRecord, createTenant, withRollback, type Tenant } from './db';
+import { lifecycleServices } from './services';
 
 let runtime: PrismaService;
 let owner: PrismaService;
@@ -162,6 +163,16 @@ describe('LP4-01 — records stay where they were filed', () => {
     expect((await owner.subsidiary.findUniqueOrThrow({ where: { id: tenant.subsidiaryId } })).organisationId).toBe(tenant.organisationId);
   });
 
+  it("refuses the service role a subsidiary's new id (TA004), and lets the owner's session move one (the operator)", async () => {
+    expect(await refusal(await serviceRest('PATCH', `subsidiaries?id=eq.${foreign.subsidiaryId}`, { id: randomUUID() }))).toEqual({ ok: false, code: 'TA004' });
+    // A subsidiary with no grant (a granted one is held by LP1-03's keys, for the owner too).
+    const moved = await withRollback(owner, async (tx) => {
+      const spare = await tx.subsidiary.create({ data: { organisationId: foreign.organisationId, legalName: 'Int-test spare', geographyCode: 'UK' } });
+      return (await tx.subsidiary.update({ where: { id: spare.id }, data: { organisationId: tenant.organisationId } })).organisationId;
+    });
+    expect(moved).toBe(tenant.organisationId);
+  });
+
   it('refuses moving a site that holds a record to another subsidiary — the service role (23503) and the runtime role', async () => {
     expect(await refusal(await serviceRest('PATCH', `locations?id=eq.${siteId}`, { subsidiary_id: foreign.subsidiaryId }))).toEqual({
       ok: false, code: '23503',
@@ -216,5 +227,31 @@ describe('LP4-01 — a record is born a draft and moved by the API alone', () =>
       (await tx.activityRecord.create({ data: recordData('September', ActivityRecordStatus.approved) })).status,
     );
     expect(inserted).toBe(ActivityRecordStatus.approved);
+  });
+});
+
+describe("LP4-01 — the API still files a draft at the company or at one of its own sites", () => {
+  // The site key is (location_id, subsidiary_id): a relation write would set
+  // both columns (Prisma's `disconnect` NULLed the subsidiary — P2011, a 500
+  // on every save of a company-level draft). The service writes the column.
+  it('saves a company-level draft as such, moves it to its own site and back, and refuses another tenant\'s site', async () => {
+    const { records } = lifecycleServices(runtime);
+    const foreignSite = await owner.location.create({ data: { subsidiaryId: foreign.subsidiaryId, name: 'Int-test foreign site', geographyCode: 'UK' } });
+    const created = await records.create(tenant.users.dataEntry, {
+      subsidiaryId: tenant.subsidiaryId, reportingYear: 2026, reportingPeriod: 'quarterly', periodValue: 'Q1',
+      category: 'Fuel', activityType: 'diesel', activityValue: 10, activityUnit: 'litres',
+    });
+    try {
+      // Data Entry sends `locationId: null` on every save of a company-level draft.
+      expect((await records.update(tenant.users.dataEntry, created.id, { locationId: null, activityValue: 11 })).locationId).toBeNull();
+      expect((await records.update(tenant.users.dataEntry, created.id, { locationId: siteId })).locationId).toBe(siteId);
+      expect((await records.update(tenant.users.dataEntry, created.id, { locationId: null })).locationId).toBeNull();
+      expect(await failure(records.update(tenant.users.dataEntry, created.id, { locationId: foreignSite.id }))).toMatchObject({ code: 'location_not_found' });
+      const stored = await owner.activityRecord.findUniqueOrThrow({ where: { id: created.id } });
+      expect(stored).toMatchObject({ subsidiaryId: tenant.subsidiaryId, locationId: null });
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { id: created.id } });
+      await owner.location.delete({ where: { id: foreignSite.id } });
+    }
   });
 });
