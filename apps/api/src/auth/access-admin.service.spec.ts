@@ -141,7 +141,8 @@ describe('tenantAdminLockKey', () => {
   it('is stable for an organisation and differs between organisations', () => {
     expect(tenantAdminLockKey(ORG)).toBe(tenantAdminLockKey(ORG));
     // Any spelling of one organisation's id reaches the same lock (the operator CLI, the API).
-    expect(tenantAdminLockKey(ORG.toUpperCase())).toBe(tenantAdminLockKey(ORG));
+    const lettered = 'abcdef12-3456-4789-8abc-def012345678';
+    expect(tenantAdminLockKey(lettered.toUpperCase())).toBe(tenantAdminLockKey(lettered));
     expect(tenantAdminLockKey(ORG)).not.toBe(tenantAdminLockKey('22222222-2222-4222-8222-222222222222'));
     expect(Number.isInteger(tenantAdminLockKey(ORG))).toBe(true);
   });
