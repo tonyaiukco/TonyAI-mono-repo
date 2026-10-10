@@ -16,5 +16,6 @@ describe('a revoked session (a disable since it began) ends like a disabled acco
     expect(error).toMatchObject({ status: 401, code: 'session_revoked' });
     expect(signOut).toHaveBeenCalledWith({ scope: 'local' });
     expect(assign).toHaveBeenCalledWith(SESSION_REVOKED_PATH);
+    expect(SESSION_REVOKED_PATH).toBe('/login?reason=session_revoked'); // the reason the login page words
   });
 });

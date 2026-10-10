@@ -490,6 +490,41 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     expect((await owner.profile.findUniqueOrThrow({ where: { id: profileId } })).authSyncPendingSince).toBeNull();
   });
 
+  it('a disable whose own sync is still in flight cannot clear delivery’s re-armed flag (Codex finding 2, the re-arm moves the generation)', async () => {
+    const real = new AuthAdminService();
+    const gated = new AuthAdminService(); // the disable's own sync
+    const s = services(null, { authAdmin: gated });
+    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
+      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    });
+    invitedIds.push(profileId);
+    let reachedBan!: () => void;
+    const banReached = new Promise<void>((r) => (reachedBan = r));
+    let openGate!: () => void;
+    const gate = new Promise<void>((r) => (openGate = r));
+    // Its ban finds no Auth user yet (nothing to ban) and is held before it clears the flag.
+    vi.spyOn(gated, 'setBanned').mockImplementationOnce(async (id, banned) => {
+      await real.setBanned(id, banned);
+      reachedBan();
+      await gate;
+    });
+    let disabling!: Promise<unknown>;
+    const deliveryAuth = new AuthAdminService();
+    vi.spyOn(deliveryAuth, 'ensureUser').mockImplementation(async (id, email) => {
+      disabling = s.lifecycle.disable(A.users.superAdmin, id);
+      await banReached;
+      await real.ensureUser(id, email); // the Auth user appears after that ban
+    });
+    const delivering = new InvitationDeliveryService(deliveryAuth, new MailService(inbox().transport, MAIL), new AuthSyncService(deliveryAuth))
+      .deliver(runtime, profileId);
+    await queuedOnAdvisoryLock(); // delivery re-armed the flag and waits for the disable's sync
+    openGate();
+    expect(await delivering).toEqual({ delivered: false, skipped: 'disabled' });
+    await disabling;
+    expect(await bannedInAuth(profileId)).toBe(true);
+    expect((await owner.profile.findUniqueOrThrow({ where: { id: profileId } })).authSyncPendingSince).toBeNull();
+  });
+
   it('a corrective ban that fails stays flagged, and reconcile applies it (Codex finding 2, schedule B)', async () => {
     const s = services(null);
     const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
