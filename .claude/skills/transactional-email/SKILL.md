@@ -41,7 +41,12 @@ kind is a product decision first (workflow notifications are LP7-05).
   code only: a provider's message can echo the address.
 - **Mint only when the email can carry it.** A re-minted Auth link voids the
   previous one; check `mail.config` before `generateLink`, so "mail not
-  configured" never strands a person with a dead link.
+  configured" never strands a person with a dead link. Auth users are created
+  banned and unbanned by the Auth sync before the link is minted (a password
+  change voids one-time tokens, so never mint first); a failed unban sends no
+  link (LP4-01 Codex re-review, finding 2). Sync only a banned user: the
+  unban replaces the password, and a re-send must not wipe the one a
+  confirmed invitee chose.
 - **Look an address up by exact equality** on `normaliseEmail()` (stored
   trimmed and lower-case, CHECK `profiles_email_normalised`) — never Prisma's
   `mode: 'insensitive'`, which is an unescaped ILIKE: `%` and `_` in a typed
