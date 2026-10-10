@@ -48,9 +48,13 @@ kind is a product decision first (workflow notifications are LP7-05).
   address would match other accounts (LP4-01 review P1).
 - **No existence oracle on public endpoints.** A public trigger (reset) answers
   the same status and body for every address and does the work after the
-  response (`setImmediate`, tracked with `RuntimeLimits.acquire` so a shutdown's
-  `settle()` waits for it); a per-address cooldown lives in the database (claimed
-  in one conditional UPDATE), a per-client-address quota in `RuntimeLimits.quota`.
+  response — in a bounded queue drained by a fixed number of workers (each
+  tracked with `RuntimeLimits.acquire`, so a shutdown's `settle()` waits for it).
+  **Capacity is an oracle too:** a job for an existing account holds a worker
+  longer, so a full queue drops and logs, still answering 202; only a quota that
+  knows nothing of accounts may answer 429 (LP4-01 Codex review, finding 4). A
+  per-address cooldown lives in the database (claimed in one conditional
+  UPDATE), a per-client-address quota in `RuntimeLimits.quota`.
 - **Audit what changed, not what was said.** The state change is audited; a diff
   never holds the address, the name or the token (the trail has no correction
   path, D20). A row no person performed carries a null `userId`
