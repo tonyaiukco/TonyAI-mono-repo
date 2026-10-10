@@ -1,3 +1,5 @@
+import type { CursorPageParams } from './bounded-access';
+
 export type DataStatus = 'complete' | 'incomplete' | 'missing';
 
 export interface CategoryData {
@@ -1271,6 +1273,88 @@ export interface UpdatePreferencesRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Users and invitations (LP4-01)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where an invitation stands. `pending` until the Auth user exists and the
+ * email went out, `sent` after, `accepted` once the invitee opened a valid
+ * link, `revoked` when the account was disabled before that.
+ */
+export const INVITATION_STATUSES = ['pending', 'sent', 'accepted', 'revoked'] as const;
+export type InvitationStatus = (typeof INVITATION_STATUSES)[number];
+
+/** The step a failed delivery stopped at: creating the Auth user (or its
+ *  link), or sending the email. */
+export type InvitationErrorStep = 'auth' | 'email';
+
+export interface InvitationStateDTO {
+  status: InvitationStatus;
+  /** The email's language, chosen by the inviter (D16). */
+  language: Locale;
+  attempts: number;
+  /** Set while the last delivery attempt failed; a re-send retries it. */
+  lastErrorStep: InvitationErrorStep | null;
+  /** A short machine code (e.g. `smtp_failed`), never a provider's message. */
+  lastErrorCode: string | null;
+  lastAttemptAt: string | null;
+  sentAt: string | null;
+  acceptedAt: string | null;
+}
+
+/** `disabled` wins; then `invited` until the invitation is accepted. */
+export type UserAccountStatus = 'active' | 'invited' | 'disabled';
+
+/** One member of the caller's organisation, as GET /api/v1/users lists it. */
+export interface UserSummaryDTO {
+  id: string;
+  email: string;
+  fullName: string;
+  role: UserRole;
+  language: Locale;
+  status: UserAccountStatus;
+  /** Granted subsidiaries — data_entry users only; empty for other roles. */
+  subsidiaryIds: string[];
+  disabledAt: string | null;
+  /** The account's enabled state has not reached Supabase Auth yet (K4); the
+   *  API refuses it either way, and `pnpm onboarding reconcile` retries. */
+  authSyncPending: boolean;
+  /** Null for accounts that were never invited (seeded ones). */
+  invitation: InvitationStateDTO | null;
+  createdAt: string;
+}
+
+/** GET /api/v1/users — newest first, keyset-paged (`CursorPage`). */
+export type ListUsersParams = CursorPageParams;
+
+/** POST /api/v1/users/invitations */
+export interface InviteUserRequest {
+  email: string;
+  fullName: string;
+  role: UserRole;
+  /** The invitation email's language (D16); also the account's first UI language. */
+  language: Locale;
+  /** data_entry only: the subsidiaries to grant. */
+  subsidiaryIds?: string[];
+}
+
+/** PATCH /api/v1/users/:id/role */
+export interface UpdateUserRoleRequest {
+  role: UserRole;
+}
+
+/** PUT /api/v1/users/:id/access — the complete set; data_entry only. */
+export interface ReplaceUserAccessRequest {
+  subsidiaryIds: string[];
+}
+
+/** POST /api/v1/auth/password-reset — public; always 202, whatever the
+ *  address. The email goes out in the account's own language (D16). */
+export interface PasswordResetRequest {
+  email: string;
+}
+
+// ---------------------------------------------------------------------------
 // API contract types (backend <-> frontend) — Milestone 1 vertical slice
 // ---------------------------------------------------------------------------
 
@@ -2240,6 +2324,30 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   period_lock_not_found: 404,
   user_not_found: 404,
   access_grant_not_found: 404,
+  /** LP4-01: the profile has no invitation (a seeded account, from before
+   *  LP4-01) — same shape as any other 404. */
+  invitation_not_found: 404,
+  /** D19: the account (or its organisation, offboarded) is disabled. Refused
+   *  on the next request, whatever token it carries; the web signs it out. */
+  account_disabled: 401,
+  /** The access token's session began at or before the account's sessions
+   *  were revoked (a disable, an enable); a fresh sign-in is needed. The web
+   *  signs out. */
+  session_revoked: 401,
+  /** An administrator acting on their own account — their role or their
+   *  access to the product. Ask another super_admin (LP1-03, LP4-01). */
+  own_account_forbidden: 403,
+  /** Subsidiary grants belong to data_entry users only (LP1-03): other roles
+   *  read their whole organisation, and a stored grant would widen access on
+   *  a later role change. */
+  access_role_mismatch: 409,
+  /** The address already has an account — in this organisation or another
+   *  (D17: one organisation per account). */
+  email_unavailable: 409,
+  /** Re-sending an invitation that was accepted. */
+  invitation_closed: 409,
+  /** The account is disabled; enable it before re-sending its invitation. */
+  user_disabled: 409,
   /** One record per reporting entity, period, category and activity type. */
   record_duplicate: 409,
   /** params: `period` (canonical, from `PERIOD_VALUES`) and `year`. */
@@ -4314,6 +4422,25 @@ export const AUDIT_ACTIONS = [
    *  (`entity: 'evidence'`, `diff.before.recordId`). Taking off the LAST link
    *  deletes the file, and that row is a `delete`. */
   'detach',
+  // LP4-01 — the user lifecycle. `entityId` is the profile throughout; an
+  // invitation's row names its role, language and grants, never the address
+  // or the name (the trail has no correction path, D20). Rows written by the
+  // operator CLI carry a null `userId` and the operator in `diff.operator`.
+  /** An account invited — its profile, grants and invitation created — or its
+   *  invitation re-sent (`diff.resend`). `entity: 'invitation'`. */
+  'invite',
+  /** The invitee opened a valid link. `entity: 'invitation'`. */
+  'accept',
+  /** Account disabled (D19) or re-enabled. `entity: 'profile'`. */
+  'disable',
+  'enable',
+  /** An organisation offboarded by the operator (K6). `entity: 'organisation'`. */
+  'offboard',
+  /** A password reset requested for an eligible account through the public
+   *  endpoint — written when its cooldown is claimed, before the link is minted
+   *  and sent (an Auth or SMTP failure after it leaves the row). No person is
+   *  the actor (null `userId`); `entity: 'profile'`. */
+  'password_reset',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -4336,6 +4463,10 @@ export const AUDIT_ENTITIES = [
   // A subsidiary granted to or withdrawn from a data_entry user; `entityId` is
   // the profile, the subsidiary is in the diff.
   'subsidiary_access',
+  // LP4-01: an organisation provisioned (`create`) or offboarded by the
+  // operator CLI; an account's invitation (`invite`, `accept`).
+  'organisation',
+  'invitation',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

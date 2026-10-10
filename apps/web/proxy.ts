@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isPublicPath, isSignedOutOnlyPath } from "@/lib/auth-view";
 
 // Next.js 16 renamed the `middleware` file convention to `proxy` (same runtime
 // behaviour). This guards every route: unauthenticated users are redirected to
@@ -49,15 +50,15 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isLoginRoute = request.nextUrl.pathname.startsWith("/login");
+  const path = request.nextUrl.pathname;
 
-  if (!user && !isLoginRoute) {
+  if (!user && !isPublicPath(path)) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
 
-  if (user && isLoginRoute) {
+  if (user && isSignedOutOnlyPath(path)) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);

@@ -20,6 +20,7 @@ import { TargetsModule } from './targets/targets.module';
 import { IntensityModule } from './intensity/intensity.module';
 import { ReportsModule } from './reports/reports.module';
 import { BulkUploadModule } from './bulk-upload/bulk-upload.module';
+import { UsersModule } from './users/users.module';
 import { HealthController } from './health.controller';
 import { RequestContextMiddleware } from './observability/request-context.middleware';
 
@@ -41,6 +42,8 @@ import { RequestContextMiddleware } from './observability/request-context.middle
     IntensityModule,
     ReportsModule,
     BulkUploadModule,
+    // LP4-01: onboarding and the user lifecycle (its MailModule with it).
+    UsersModule,
   ],
   controllers: [HealthController],
   providers: [RuntimeLimits, {

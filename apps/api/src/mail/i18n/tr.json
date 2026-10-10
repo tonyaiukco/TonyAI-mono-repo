@@ -1,0 +1,22 @@
+{
+  "invitation": {
+    "subject": "TonyAI'da {organisation} için davetiniz var",
+    "greeting": "Merhaba {name},",
+    "body": "{inviter}, sizi karbon muhasebesi ve ESG raporlama platformu TonyAI'da {organisation} ekibine katılmaya davet etti.",
+    "bodyProvisioned": "Karbon muhasebesi ve ESG raporlama platformu TonyAI'da {organisation} hesabını ilk yönetici olarak kurmaya davet edildiniz.",
+    "action": "Daveti kabul et",
+    "expiry": "Bağlantı yalnızca bir kez kullanılabilir ve {hours, plural, one {# saat} other {# saat}} sonra geçerliliğini yitirir. Süresi dolduysa yöneticinizden yeni bir davet göndermesini isteyin.",
+    "expiryProvisioned": "Bağlantı yalnızca bir kez kullanılabilir ve {hours, plural, one {# saat} other {# saat}} sonra geçerliliğini yitirir. Süresi dolduysa TonyAI'dan yeni bir davet göndermesini isteyin.",
+    "ignore": "Bu daveti beklemiyorsanız bu e-postayı yok sayabilirsiniz."
+  },
+  "passwordReset": {
+    "subject": "TonyAI şifrenizi sıfırlayın",
+    "greeting": "Merhaba {name},",
+    "body": "TonyAI hesabınızın şifresini sıfırlamak için bir istek aldık.",
+    "action": "Yeni şifre belirle",
+    "expiry": "Bağlantı yalnızca bir kez kullanılabilir ve {hours, plural, one {# saat} other {# saat}} sonra geçerliliğini yitirir. Giriş sayfasından yenisini isteyebilirsiniz.",
+    "ignore": "Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz; şifreniz değişmeden kalır."
+  },
+  "footer": "TonyAI — karbon muhasebesi ve ESG raporlama",
+  "linkFallback": "Düğme çalışmazsa bu adresi tarayıcınıza kopyalayın:"
+}

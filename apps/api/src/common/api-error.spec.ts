@@ -36,6 +36,15 @@ import { UploadExpiredError } from '../storage/storage-intents.service';
 import { errorBody, errorCodeOf, QueryTooBroadError, ResourceNotFoundError, toErrorBody } from './api-error';
 import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from './coded-validation.pipe';
 import { ParseUuidParamPipe } from './parse-uuid-param.pipe';
+import {
+  AccessRoleMismatchError,
+  AccountDisabledError,
+  EmailUnavailableError,
+  InvitationClosedError,
+  OwnAccountError,
+  SessionRevokedError,
+  UserDisabledError,
+} from '../auth/access-errors';
 
 vi.mock('../observability/sentry', () => ({ captureException: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
@@ -97,6 +106,14 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   snapshot_immutable: () => new SnapshotImmutableError(),
   upload_expired: () => new UploadExpiredError(),
   query_too_broad: () => new QueryTooBroadError(),
+  invitation_not_found: () => new ResourceNotFoundError('invitation_not_found'),
+  account_disabled: () => new AccountDisabledError(),
+  session_revoked: () => new SessionRevokedError(),
+  own_account_forbidden: () => new OwnAccountError('disable'),
+  access_role_mismatch: () => new AccessRoleMismatchError(),
+  email_unavailable: () => new EmailUnavailableError(),
+  invitation_closed: () => new InvitationClosedError(),
+  user_disabled: () => new UserDisabledError(),
 };
 
 describe('every domain code, as the client receives it', () => {

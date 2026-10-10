@@ -1,6 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PrismaClient } from '@tonyai/db';
+import { createClient } from '@supabase/supabase-js';
 import {
   RUNTIME_ROLE,
   isLoopbackUrl,
@@ -89,6 +90,10 @@ export default async function setup(): Promise<void> {
       await runtime.$disconnect();
     }
 
+    // LP4-01's tests create real Supabase Auth users (invitations); a run
+    // killed mid-test leaves them behind. Only the fixtures' own addresses.
+    await sweepAuthUsers(prisma);
+
     // A run killed mid-test skips its cleanup(); sweep synthetic tenants left
     // behind. Only rows carrying the fixtures' own markers are touched.
     const orphanOrgs = await prisma.organisation.findMany({
@@ -124,6 +129,22 @@ export default async function setup(): Promise<void> {
  * local Storage, and only when one is configured — the stub-based specs need
  * none.
  */
+/**
+ * Removes the Auth users a killed run left — every address the fixtures use
+ * (`int-…@tonyai.test`) — through the Auth admin API, on a local stack only.
+ * Read from `auth.users` with the owner's login, which may read it.
+ */
+async function sweepAuthUsers(prisma: PrismaClient): Promise<void> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key || !LOCAL_HOSTS.has(new URL(url).hostname)) return;
+  const orphans = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id::text FROM auth.users WHERE email LIKE ${TENANT_EMAIL_PATTERN}`;
+  if (orphans.length === 0) return;
+  const admin = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }).auth.admin;
+  for (const { id } of orphans) await admin.deleteUser(id);
+}
+
 async function sweepTenantObjects(
   prisma: PrismaClient,
   subsidiaryIds: string[],

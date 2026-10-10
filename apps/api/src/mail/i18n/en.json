@@ -1,0 +1,22 @@
+{
+  "invitation": {
+    "subject": "You're invited to {organisation} on TonyAI",
+    "greeting": "Hello {name},",
+    "body": "{inviter} has invited you to join {organisation} on TonyAI, the carbon accounting and ESG reporting platform.",
+    "bodyProvisioned": "You have been invited to set up {organisation} on TonyAI, the carbon accounting and ESG reporting platform, as its first administrator.",
+    "action": "Accept the invitation",
+    "expiry": "The link works once and expires in {hours, plural, one {# hour} other {# hours}}. If it has expired, ask your administrator to send a new invitation.",
+    "expiryProvisioned": "The link works once and expires in {hours, plural, one {# hour} other {# hours}}. If it has expired, ask TonyAI to send a new invitation.",
+    "ignore": "If you weren't expecting this invitation, you can ignore this email."
+  },
+  "passwordReset": {
+    "subject": "Reset your TonyAI password",
+    "greeting": "Hello {name},",
+    "body": "We received a request to reset the password of your TonyAI account.",
+    "action": "Choose a new password",
+    "expiry": "The link works once and expires in {hours, plural, one {# hour} other {# hours}}. You can request a new one from the sign-in page.",
+    "ignore": "If you didn't ask for this, you can ignore this email — your password stays as it is."
+  },
+  "footer": "TonyAI — carbon accounting and ESG reporting",
+  "linkFallback": "If the button does not work, copy this address into your browser:"
+}
