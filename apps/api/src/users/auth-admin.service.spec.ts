@@ -24,7 +24,7 @@ describe('AuthAdminService — every Auth answer onboarding depends on (measured
   it('creates the Auth user with the profile id; a second time, the same user is fine', async () => {
     admin.createUser.mockResolvedValueOnce({ data: { user: { id: ID } }, error: null });
     await service.ensureUser(ID, 'a@b.test');
-    expect(admin.createUser).toHaveBeenCalledWith({ id: ID, email: 'a@b.test', email_confirm: false });
+    expect(admin.createUser).toHaveBeenCalledWith({ id: ID, email: 'a@b.test', email_confirm: false, ban_duration: '876000h' });
     admin.createUser.mockResolvedValueOnce(fail('email_exists'));
     admin.getUserById.mockResolvedValueOnce({ data: { user: { id: ID, email: 'A@B.test' } }, error: null });
     await expect(service.ensureUser(ID, 'a@b.test')).resolves.toBeUndefined();

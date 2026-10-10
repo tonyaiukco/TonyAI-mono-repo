@@ -104,6 +104,57 @@ describe('PasswordResetService — capacity is not an oracle', () => {
     expect(known).toEqual({ targetStatus: 202, probeStatus: 202, held: RESET_WORKERS });
   });
 
+  it('a request accepted while the last workers finish still runs — no later request needed (Codex re-review, finding 3)', async () => {
+    for (let offset = 0; offset < 10; offset++) {
+      const limits = new RuntimeLimits();
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      const lookups: string[] = [];
+      const prisma = {
+        profile: {
+          findFirst: async ({ where }: { where: { email: string } }) => {
+            lookups.push(where.email);
+            if (where.email !== 'late@x.test') await held;
+            return null;
+          },
+        },
+      };
+      const service = new PasswordResetService(prisma as never, {} as never, { config: {} } as never, {} as never, { get: () => limits } as never);
+      service.onModuleInit();
+      for (let i = 0; i < RESET_WORKERS; i++) {
+        await service.request(`203.0.113.${i + 1}`, `bg${i}@x.test`);
+        await immediate();
+      }
+      release(); // the four lookups finish together…
+      for (let i = 0; i < offset; i++) await Promise.resolve();
+      await service.request('198.51.100.9', 'late@x.test'); // …and this one arrives as their workers wind down
+      for (let i = 0; i < 10; i++) await immediate();
+      expect(lookups, `offset ${offset}`).toContain('late@x.test');
+      await limits.settle();
+      limits.onApplicationShutdown();
+    }
+  });
+
+  it('a shutdown drops what is still queued and starts no worker for it', async () => {
+    const limits = new RuntimeLimits();
+    const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, { get: () => limits } as never);
+    service.onModuleInit();
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const run = vi.spyOn(service, 'run').mockImplementation(async () => { await held; return 'skipped'; });
+    for (let i = 0; i < RESET_WORKERS + 10; i++) {
+      await service.request(`10.1.0.${i}`, `s${i}@x.test`);
+      await immediate();
+    }
+    expect(run).toHaveBeenCalledTimes(RESET_WORKERS);
+    const settling = limits.settle(); // stopping: the running jobs finish, the queued ten are dropped
+    release();
+    await settling;
+    for (let i = 0; i < 20; i++) await immediate();
+    expect(run).toHaveBeenCalledTimes(RESET_WORKERS);
+    limits.onApplicationShutdown();
+  });
+
   it('a full queue drops the request — still 202, and nothing runs for it', async () => {
     const limits = new RuntimeLimits();
     const service = new PasswordResetService({} as never, {} as never, {} as never, {} as never, { get: () => limits } as never);

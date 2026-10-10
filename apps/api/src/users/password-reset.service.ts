@@ -89,6 +89,11 @@ export class PasswordResetService implements OnModuleInit {
         void this.drain().finally(() => {
           this.workers -= 1;
           release();
+          // A request can arrive after this drain found the queue empty but
+          // before it got here — `pump()` then saw every worker still busy and
+          // started none. Look again now that a worker is free (Codex
+          // re-review, finding 3).
+          this.pump();
         });
       });
     }

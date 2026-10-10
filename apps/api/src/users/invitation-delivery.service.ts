@@ -63,28 +63,28 @@ export class InvitationDeliveryService {
 
     let token: string | null = null;
     try {
+      // Born banned (`ensureUser`): whatever happens from here on, an Auth user
+      // exists only banned until the sync below has applied the profile's state.
       await this.authAdmin.ensureUser(profileId, email);
-      // Disabled while the Auth user was being created: its own Auth step may
-      // have found no user to ban, so ban the one just made (D19).
+      // Disabled while the Auth user was being created: its own sync may have
+      // found no user to ban — the one just made is banned already.
       const now = await db.profile.findUnique({
         where: { id: profileId },
         select: { disabledAt: true, organisation: { select: { offboardedAt: true } } },
       });
-      if (now?.disabledAt || now?.organisation?.offboardedAt) {
-        // Disabled while the Auth user was being made: the disable's own sync
-        // may have run before that user existed and found nothing to ban. Ban
-        // it through the same durable protocol, never directly (Codex review,
-        // finding 2): re-arm the flag while the account is still disabled — an
-        // enable that won the race leaves nothing to re-arm — and let the sync
-        // apply whatever state it then reads; a failure stays flagged for
-        // `pnpm onboarding reconcile`.
-        await db.profile.updateMany({
-          where: { id: profileId, disabledAt: { not: null } },
-          data: { authSyncPendingSince: new Date(), authSyncGeneration: { increment: 1 } },
-        });
-        await this.authSync.apply(db, profileId);
-        return { delivered: false, skipped: 'disabled' };
-      }
+      // The profile's state reaches the new user through the durable protocol,
+      // never directly (Codex review, finding 2): arm the flag, then let the
+      // sync apply whatever state it reads under the account's lock — the
+      // unban for an enabled account, the ban for one disabled meanwhile. A
+      // failure stays flagged for `pnpm onboarding reconcile`.
+      await db.profile.updateMany({
+        where: { id: profileId },
+        data: { authSyncPendingSince: new Date(), authSyncGeneration: { increment: 1 } },
+      });
+      const synced = await this.authSync.apply(db, profileId);
+      if (now?.disabledAt || now?.organisation?.offboardedAt) return { delivered: false, skipped: 'disabled' };
+      // Still banned: a link would only reach a person who cannot use it.
+      if (!synced) return this.fail(db, profileId, 'auth', 'auth_unavailable');
       // Minting voids the previous link — only once the email can carry the new one.
       if (this.mail.config) token = await this.authAdmin.inviteToken(profileId, email);
     } catch (error) {

@@ -45,6 +45,18 @@ export class AuthSyncService {
           if (!profile?.authSyncPendingSince) return true;
           const banned = profile.disabledAt !== null;
           await this.authAdmin.setBanned(profileId, banned);
+          // The call replaced the password, so Auth has just ended every
+          // session the account had — one begun after the enable's commit
+          // included, with credentials Auth still accepted. Its access token
+          // must die at the API too (Codex re-review, finding 1): the boundary
+          // moves to now. Only forward, and only where one exists — a newer
+          // disable or enable may already have moved it, and an account never
+          // disabled has no session the API must refuse.
+          const rotatedAt = new Date();
+          await tx.profile.updateMany({
+            where: { id: profileId, sessionsRevokedAt: { lt: rotatedAt } },
+            data: { sessionsRevokedAt: rotatedAt },
+          });
           // Cleared only while no newer change has come in: a disable and an
           // enable that commit during the Auth call (they take the tenant lock,
           // not this one) move the generation on, so their own run still finds

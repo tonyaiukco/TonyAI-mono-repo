@@ -53,10 +53,16 @@ export class AuthAdminService {
    * profile written first (the database before Auth, K4) and the Auth user
    * name each other without a lookup. An address that already belongs to
    * another Auth user is `email_unavailable`.
+   *
+   * Born banned: only the Auth sync, applying the profile's state, lifts the
+   * ban. A creation whose answer is lost, or a process that stops right after
+   * it, leaves a user nobody can sign in as — never an unbanned user for an
+   * account disabled meanwhile, which no flag would point to (Codex
+   * re-review, finding 2).
    */
   async ensureUser(profileId: string, email: string): Promise<void> {
     const admin = this.admin();
-    const created = await admin.createUser({ id: profileId, email, email_confirm: false });
+    const created = await admin.createUser({ id: profileId, email, email_confirm: false, ban_duration: BAN_DURATION });
     if (!created.error) return;
     if (created.error.code !== 'email_exists') throw new AuthAdminError('auth_unavailable');
     const existing = await admin.getUserById(profileId);

@@ -321,6 +321,26 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     expect(resent.invitation?.status).toBe('sent');
     expect(sent).toHaveLength(1);
   });
+
+  it('an enabled invitee whose unban fails gets no link — the auth step is recorded, and a re-send completes it (Codex re-review, finding 2)', async () => {
+    const authAdmin = new AuthAdminService();
+    vi.spyOn(authAdmin, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
+    const first = inbox();
+    const created = await services(first.transport, { authAdmin }).lifecycle.invite(A.users.superAdmin, {
+      email: address(), fullName: 'X', role: UserRole.executive_viewer, language: 'en', subsidiaryIds: [],
+    });
+    invitedIds.push(created.id);
+    expect(created.invitation).toMatchObject({ status: 'pending', lastErrorStep: 'auth', lastErrorCode: 'auth_unavailable' });
+    expect(first.sent).toHaveLength(0);
+    expect(await bannedInAuth(created.id)).toBe(true); // born banned, still
+    const { sent, transport } = inbox();
+    const resent = await services(transport).lifecycle.resendInvitation(A.users.superAdmin, created.id);
+    expect(resent.invitation?.status).toBe('sent');
+    expect(sent).toHaveLength(1);
+    expect(await bannedInAuth(created.id)).toBe(false);
+    const session = await browser().auth.verifyOtp({ type: 'invite', token_hash: tokenIn(sent[0], 'invite') });
+    expect(session.error).toBeNull();
+  });
 });
 
 describe('disabling (D19, K4) — the database first, then the Auth ban', () => {
@@ -490,6 +510,34 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     expect((await owner.profile.findUniqueOrThrow({ where: { id: profileId } })).authSyncPendingSince).toBeNull();
   });
 
+  it('an Auth user whose creation response is lost stays banned for a disabled account (Codex re-review, finding 2)', async () => {
+    const s = services(null);
+    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
+      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    });
+    invitedIds.push(profileId);
+    const real = new AuthAdminService();
+    const authAdmin = new AuthAdminService();
+    vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
+      await s.lifecycle.disable(A.users.superAdmin, id); // its sync finds no Auth user: nothing banned, flag cleared
+      await real.ensureUser(id, email); // Auth creates the user…
+      throw new AuthAdminError('auth_unavailable'); // …and the response is lost
+    });
+    const outcome = await new InvitationDeliveryService(authAdmin, new MailService(inbox().transport, MAIL), new AuthSyncService(authAdmin))
+      .deliver(runtime, profileId);
+    expect(outcome).toMatchObject({ delivered: false });
+    expect(await bannedInAuth(profileId)).toBe(true);
+  });
+
+  it('an Auth user is born banned: a delivery interrupted after creating it leaves nothing to sign in with (Codex re-review, finding 2)', async () => {
+    const { profileId, email } = await services(null).access.inviteMember(A.users.superAdmin, {
+      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    }).then(async (r) => ({ ...r, email: (await owner.profile.findUniqueOrThrow({ where: { id: r.profileId } })).email }));
+    invitedIds.push(profileId);
+    await new AuthAdminService().ensureUser(profileId, email); // …and the process stops here
+    expect(await bannedInAuth(profileId)).toBe(true);
+  });
+
   it('a disable whose own sync is still in flight cannot clear delivery’s re-armed flag (Codex finding 2, the re-arm moves the generation)', async () => {
     const real = new AuthAdminService();
     const gated = new AuthAdminService(); // the disable's own sync
@@ -542,7 +590,7 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const outcome = await new InvitationDeliveryService(authAdmin, new MailService(inbox().transport, MAIL), new AuthSyncService(authAdmin))
       .deliver(runtime, profileId);
     expect(outcome).toEqual({ delivered: false, skipped: 'disabled' });
-    expect(await bannedInAuth(profileId)).toBe(false);
+    expect(await bannedInAuth(profileId)).toBe(true); // born banned: the failed sync leaves nothing to sign in with
     expect((await owner.profile.findUniqueOrThrow({ where: { id: profileId } })).authSyncPendingSince).not.toBeNull();
     const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null), new AuthSyncService(real)), new AuthSyncService(real));
     const report = await operator.reconcile(A.organisationId, true);
@@ -1040,6 +1088,32 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
     expect(again.error).toBeNull();
     expect(await withToken(again.data.session!.access_token)).toMatchObject({ code: 'session_revoked' });
     // A new session — a recovery link after the enable, in a later second than it — is accepted.
+    await new Promise((r) => setTimeout(r, 1_100));
+    const { data } = await admin.generateLink({ type: 'recovery', email: created.email });
+    const fresh = await browser().auth.verifyOtp({ type: 'recovery', token_hash: data.properties!.hashed_token });
+    expect(await withToken(fresh.data.session!.access_token)).toMatchObject({ id: created.id });
+  });
+
+  it('a session begun between the enable’s commit and its successful Auth sync loses its API access with its refresh token (Codex re-review, finding 1)', async () => {
+    const withToken = async (gotrue: string) => {
+      const claims = JSON.parse(Buffer.from(gotrue.split('.')[1], 'base64url').toString()) as Record<string, unknown>;
+      const bearer = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(JWT_SECRET));
+      return (await fetch(`${base}/me`, { headers: { Authorization: `Bearer ${bearer}` } })).json().then((b) => b as { code?: string; id?: string });
+    };
+    const created = await invite(inbox().transport, { role: UserRole.consultant });
+    await admin.updateUserById(created.id, { password: 'a-long-enough-pass-1', email_confirm: true });
+    const failing = new AuthAdminService();
+    vi.spyOn(failing, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
+    await services(null, { authAdmin: failing }).lifecycle.disable(A.users.superAdmin, created.id); // Auth keeps the password
+    await new Promise((r) => setTimeout(r, 1_100));
+    await services(null).access.enableMember(A.users.superAdmin, created.id); // committed; its sync has not run
+    await new Promise((r) => setTimeout(r, 1_100));
+    const between = await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' });
+    expect(between.error).toBeNull();
+    expect(await withToken(between.data.session!.access_token)).toMatchObject({ id: created.id });
+    expect(await new AuthSyncService(new AuthAdminService()).apply(runtime, created.id)).toBe(true); // unban + rotation
+    expect((await browser().auth.refreshSession({ refresh_token: between.data.session!.refresh_token })).error?.code).toBe('refresh_token_not_found');
+    expect(await withToken(between.data.session!.access_token)).toMatchObject({ code: 'session_revoked' });
     await new Promise((r) => setTimeout(r, 1_100));
     const { data } = await admin.generateLink({ type: 'recovery', email: created.email });
     const fresh = await browser().auth.verifyOtp({ type: 'recovery', token_hash: data.properties!.hashed_token });
