@@ -809,11 +809,12 @@ async function main() {
     // The lifecycle columns on `profiles` (LP4-01). Supabase's default
     // privileges give `authenticated` table-level UPDATE on `profiles`, so
     // RLS — no UPDATE policy — is all that stops a user rewriting its own row:
-    // a disabled account inside K4's token window clearing its `disabled_at`,
-    // or anyone promoting itself. Read back with the service role: "no error"
+    // a disabled account inside K4's token window clearing its `disabled_at`
+    // or its `sessions_revoked_at` (reviving its pre-disable tokens at the API
+    // once enabled), or anyone promoting itself. Read back with the service role: "no error"
     // is not "no change".
     const entryId = subjectOf(token);
-    const lifecycle = 'select=role,disabled_at,auth_sync_pending_since,recovery_sent_at';
+    const lifecycle = 'select=role,disabled_at,sessions_revoked_at,auth_sync_pending_since,auth_sync_generation,recovery_sent_at';
     const readOwn = async () =>
       (await (await fetch(`${URL_}/rest/v1/profiles?${lifecycle}&id=eq.${entryId}`, { headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` } })).json())[0];
     const beforeRow = await readOwn();
@@ -821,7 +822,9 @@ async function main() {
     const selfPatch = await fetch(`${URL_}/rest/v1/profiles?id=eq.${entryId}`, {
       method: 'PATCH',
       headers: { apikey: ANON, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
-      body: JSON.stringify({ role: 'super_admin', disabled_at: stamp, auth_sync_pending_since: stamp, recovery_sent_at: stamp }),
+      body: JSON.stringify({
+        role: 'super_admin', disabled_at: stamp, sessions_revoked_at: stamp, auth_sync_pending_since: stamp, auth_sync_generation: 999, recovery_sent_at: stamp,
+      }),
     });
     const afterRow = await readOwn();
     const unchanged = Boolean(beforeRow) && JSON.stringify(afterRow) === JSON.stringify(beforeRow);
