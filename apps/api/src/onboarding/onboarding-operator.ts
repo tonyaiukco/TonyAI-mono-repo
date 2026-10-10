@@ -195,7 +195,15 @@ export class OnboardingOperator {
     const createOrganisation = !organisationId;
     organisationId = await this.db.$transaction(async (tx) => {
       let orgId = organisationId;
-      if (!orgId) {
+      if (orgId) {
+        // An existing organisation: the tenant administrators' lock, as
+        // offboarding takes it, and its state read again under it — an
+        // offboarding that commits after the check above is seen here, so no
+        // enabled administrator is ever added to an offboarded organisation.
+        await lockTenantAdmin(tx, orgId);
+        const now = await tx.organisation.findUniqueOrThrow({ where: { id: orgId }, select: { offboardedAt: true } });
+        if (now.offboardedAt) throw new OperatorRefusal('That organisation is offboarded.');
+      } else {
         const o = input.organisation!;
         const created = await tx.organisation.create({
           data: {

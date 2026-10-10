@@ -403,6 +403,20 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     expect(old.error?.code).toBe('invalid_credentials');
   });
 
+  it('an enable that reaches Auth before the disable’s own call did still revokes the old session (security re-review P3-1)', async () => {
+    const created = await invite(inbox().transport);
+    await admin.updateUserById(created.id, { password: 'a-long-enough-pass-1', email_confirm: true });
+    const session = await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' });
+    expect(session.error).toBeNull();
+    const failing = new AuthAdminService();
+    vi.spyOn(failing, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
+    const disabled = await services(null, { authAdmin: failing }).lifecycle.disable(A.users.superAdmin, created.id);
+    expect(disabled.authSyncPending).toBe(true); // the disable never reached Auth
+    await services(null).lifecycle.enable(A.users.superAdmin, created.id); // …and the enable's run does
+    expect((await browser().auth.refreshSession({ refresh_token: session.data.session!.refresh_token })).error?.code).toBe('refresh_token_not_found');
+    expect((await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' })).error?.code).toBe('invalid_credentials');
+  });
+
   it('nobody disables their own account', async () => {
     await expect(services(null).lifecycle.disable(A.users.superAdmin, A.users.superAdmin.id)).rejects.toMatchObject({
       response: { code: 'own_account_forbidden' },
@@ -591,6 +605,38 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
       .catch((e: unknown) => String(e));
     expect(refused).toMatch(/acting as authenticated/);
     await expect(make(owner).assertOwner()).resolves.toBeUndefined();
+  });
+
+  it('provisioning into an organisation an offboarding is closing waits for it, and refuses (security re-review P3-3)', async () => {
+    const C = await createTenant();
+    const email = address();
+    try {
+      const real = new AuthAdminService();
+      const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL)), new AuthSyncService(real));
+      const holder = connectOwner(1);
+      const locked = deferred();
+      const release = deferred();
+      // An offboarding mid-flight: the tenant lock held, the mark written, not yet committed.
+      const offboarding = holder.$transaction(async (tx) => {
+        await lockTenantAdmin(tx, C.organisationId);
+        await tx.organisation.update({ where: { id: C.organisationId }, data: { offboardedAt: new Date() } });
+        locked.resolve();
+        await release.promise;
+      }, { timeout: 20_000 });
+      await locked.promise;
+      const provisioning = operator.provision({ organisationId: C.organisationId, adminEmail: email, adminName: 'Late', language: 'en' }, true);
+      const outcome = provisioning.then(() => 'provisioned', (e: unknown) => (e instanceof OperatorRefusal ? e.message : String(e)));
+      await new Promise((r) => setTimeout(r, 300)); // provision has passed its first check and waits on the lock
+      release.resolve();
+      await offboarding;
+      await holder.$disconnect();
+      expect(await outcome).toMatch(/offboarded/);
+      expect(await owner.profile.count({ where: { email } })).toBe(0);
+    } finally {
+      await owner.profile.deleteMany({ where: { email } });
+      await owner.auditLog.deleteMany({ where: { organisationId: C.organisationId } });
+      await C.cleanup();
+    }
   });
 
   it('an existing address is provisioned again only as its own organisation’s super_admin, never in an offboarded one', async () => {

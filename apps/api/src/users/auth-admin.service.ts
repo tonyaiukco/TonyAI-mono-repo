@@ -17,6 +17,16 @@ export class AuthAdminError extends Error {
 const BAN_DURATION = '876000h';
 
 /**
+ * A password nobody holds — 256 random bits — with one character of every
+ * class appended, so it passes any password policy Auth can be set to
+ * (S9 today: 12 characters, no composition rules). It travels in the same
+ * call as the ban, and a refused password would drop the ban with it.
+ */
+function unusablePassword(): string {
+  return `${randomBytes(32).toString('base64url')}Aa1!`;
+}
+
+/**
  * The Supabase Auth admin calls onboarding makes (service-role key, server
  * only). Each is idempotent, so a half-done step completes on a retry:
  * every behaviour below was measured against the local stack's GoTrue
@@ -81,19 +91,22 @@ export class AuthAdminService {
   }
 
   /**
-   * Bans or unbans the Auth user (D19): no refresh, no sign-in. Banning also
-   * replaces the password with a random one nobody holds: GoTrue revokes every
-   * session on a password change, and a ban alone does not — lifted, it would
-   * bring back every session that existed when the account was disabled
-   * (`security-rls` P2-2, measured; decision 2026-10-10). A re-enabled account
-   * therefore signs in again through "Forgot your password?". An id Auth does
-   * not know (an invitation whose Auth step never ran) has nothing to ban.
+   * Bans or unbans the Auth user (D19): no refresh, no sign-in. Both also
+   * replace the password with one nobody holds: GoTrue revokes every session
+   * (and every pending link) on a password change, and a ban alone does not —
+   * lifted, it would bring back every session that existed when the account
+   * was disabled (`security-rls` P2-2, measured; decision R3). The unban
+   * rotates it too, because an enable can reach Auth before the disable's own
+   * call ever did (a failed call, a restart) — then no earlier rotation
+   * happened (`security-rls` re-review P3-1). A re-enabled account therefore
+   * signs in again through "Forgot your password?". An id Auth does not know
+   * (an invitation whose Auth step never ran) has nothing to ban.
    */
   async setBanned(profileId: string, banned: boolean): Promise<void> {
-    const { error } = await this.admin().updateUserById(
-      profileId,
-      banned ? { ban_duration: BAN_DURATION, password: randomBytes(32).toString('base64url') } : { ban_duration: 'none' },
-    );
+    const { error } = await this.admin().updateUserById(profileId, {
+      ban_duration: banned ? BAN_DURATION : 'none',
+      password: unusablePassword(),
+    });
     if (error && error.code !== 'user_not_found') throw new AuthAdminError('auth_unavailable');
   }
 }
