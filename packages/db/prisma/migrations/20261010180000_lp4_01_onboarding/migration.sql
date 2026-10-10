@@ -3,8 +3,12 @@
 --
 --  * `profiles.disabled_at` (D19): the API's guard refuses a disabled account
 --    on its next request; Supabase Auth bans it too, the database first.
---    `auth_sync_pending_since` records that Auth has yet to catch up (K4), and
---    `recovery_sent_at` is the public reset endpoint's per-address cooldown.
+--    `auth_sync_pending_since` records that Auth has yet to catch up (K4) and
+--    `auth_sync_generation` which change it is catching up with (a sync clears
+--    only its own); `sessions_revoked_at` is the durable boundary the guard
+--    holds every access token to (one issued before it is refused, even after
+--    a re-enable); `recovery_sent_at` is the public reset endpoint's
+--    per-address cooldown.
 --  * `organisations.offboarded_at` (K6, D21): set by the operator CLI's
 --    `offboard`, which also disables every member; the start of D21's 90-day
 --    clock. Nothing here deletes anything.
@@ -28,9 +32,11 @@ SET LOCAL lock_timeout = '5s';
 CREATE TYPE "InvitationStatus" AS ENUM ('pending', 'sent', 'accepted', 'revoked');
 
 -- AlterTable
-ALTER TABLE "profiles" ADD COLUMN     "auth_sync_pending_since" TIMESTAMPTZ(6),
+ALTER TABLE "profiles" ADD COLUMN     "auth_sync_generation" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "auth_sync_pending_since" TIMESTAMPTZ(6),
 ADD COLUMN     "disabled_at" TIMESTAMPTZ(6),
-ADD COLUMN     "recovery_sent_at" TIMESTAMPTZ(6);
+ADD COLUMN     "recovery_sent_at" TIMESTAMPTZ(6),
+ADD COLUMN     "sessions_revoked_at" TIMESTAMPTZ(6);
 
 -- An address is stored in one spelling — trimmed, lower-case — so the API, the
 -- operator CLI and the public reset look it up by exact equality, and the
@@ -132,15 +138,17 @@ $$;
 -- and in no state the lifecycle has not put it in. Which organisation and
 -- role is the API's to enforce (`AccessAdminService`, the actor's own
 -- organisation); the profile can never move afterwards (D17: no UPDATE on
--- `organisation_id`). Prisma fills `theme` (its schema default, a cosmetic
--- preference — measured: a create without it is refused), `created_at` and
--- `updated_at` itself.
-GRANT INSERT ("id", "email", "full_name", "role", "language", "theme", "organisation_id", "created_at", "updated_at")
+-- `organisation_id`). Prisma fills `theme` and `auth_sync_generation` (their
+-- schema defaults: a cosmetic preference, a counter starting at 0 — measured:
+-- a create without them is refused), `created_at` and `updated_at` itself.
+GRANT INSERT ("id", "email", "full_name", "role", "language", "theme", "auth_sync_generation", "organisation_id", "created_at", "updated_at")
   ON "profiles" TO "tonyai_runtime";
 
--- Disabling and enabling (D19), the Auth catch-up flag (K4), the reset
--- cooldown — beside `role`, `language` and `updated_at` (LP1-03, LP3-01).
-GRANT UPDATE ("disabled_at", "auth_sync_pending_since", "recovery_sent_at") ON "profiles" TO "tonyai_runtime";
+-- Disabling and enabling (D19), the session boundary, the Auth catch-up flag
+-- and its generation (K4), the reset cooldown — beside `role`, `language` and
+-- `updated_at` (LP1-03, LP3-01).
+GRANT UPDATE ("disabled_at", "sessions_revoked_at", "auth_sync_pending_since", "auth_sync_generation", "recovery_sent_at")
+  ON "profiles" TO "tonyai_runtime";
 
 -- Invitations: created with the profile, moved along by delivery and
 -- acceptance. Never deleted at runtime (a withdrawn invitation is `revoked`,

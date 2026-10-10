@@ -17,7 +17,7 @@ import { InvitationDeliveryService } from '../../src/users/invitation-delivery.s
 import { PasswordResetService } from '../../src/users/password-reset.service';
 import { UserLifecycleService } from '../../src/users/user-lifecycle.service';
 import { UsersQueryService } from '../../src/users/users-query.service';
-import { connect, connectOwner, createTenant, deferred, TENANT_ORG_PREFIX, type Tenant } from './db';
+import { connect, connectOwner, createTenant, deferred, holdBefore, TENANT_ORG_PREFIX, type Tenant } from './db';
 import { failingAuditClient, INJECTED_AUDIT_FAILURE } from './services';
 
 /**
@@ -71,8 +71,8 @@ function services(transport: MailTransport | null, overrides: { authAdmin?: Auth
   const access = new AccessAdminService(db, audit);
   const authAdmin = overrides.authAdmin ?? new AuthAdminService();
   const mail = new MailService(transport ?? undefined, transport ? MAIL : null);
-  const delivery = new InvitationDeliveryService(authAdmin, mail);
   const authSync = new AuthSyncService(authAdmin);
+  const delivery = new InvitationDeliveryService(authAdmin, mail, authSync);
   const query = new UsersQueryService(db);
   const lifecycle = new UserLifecycleService(db, access, delivery, authSync, query, audit);
   return { audit, access, delivery, authSync, query, lifecycle, mail, authAdmin };
@@ -377,7 +377,7 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     });
     invitedIds.push(created.profileId);
     target = created.profileId;
-    await new InvitationDeliveryService(authAdmin, new MailService(transport, MAIL)).deliver(runtime, created.profileId);
+    await new InvitationDeliveryService(authAdmin, new MailService(transport, MAIL), new AuthSyncService(authAdmin)).deliver(runtime, created.profileId);
     const invitation = await owner.invitation.findUniqueOrThrow({ where: { profileId: created.profileId } });
     expect(invitation).toMatchObject({ status: InvitationStatus.revoked, sentAt: null });
   });
@@ -389,8 +389,12 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     const flipping = new AuthAdminService();
     vi.spyOn(flipping, 'setBanned').mockImplementation(async (id, banned) => {
       await real.setBanned(id, banned);
-      // An enable commits while the ban is in flight (it takes no Auth lock).
-      await owner.profile.update({ where: { id }, data: { disabledAt: null, authSyncPendingSince: new Date() } });
+      // An enable commits while the ban is in flight (it takes no Auth lock) —
+      // the same data `enableMember` writes.
+      await owner.profile.update({
+        where: { id },
+        data: { disabledAt: null, authSyncPendingSince: new Date(), authSyncGeneration: { increment: 1 } },
+      });
     });
     expect(await new AuthSyncService(flipping).apply(runtime, created.id)).toBe(false);
     expect((await owner.profile.findUniqueOrThrow({ where: { id: created.id } })).authSyncPendingSince).not.toBeNull();
@@ -426,6 +430,80 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     await services(null).lifecycle.enable(A.users.superAdmin, created.id); // …and the enable's run does
     expect((await browser().auth.refreshSession({ refresh_token: session.data.session!.refresh_token })).error?.code).toBe('refresh_token_not_found');
     expect((await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' })).error?.code).toBe('invalid_credentials');
+  });
+
+  it('a corrective ban that loses to an enable leaves the account enabled and unbanned (Codex finding 2, schedule A)', async () => {
+    const s = services(null);
+    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
+      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    });
+    invitedIds.push(profileId);
+    const real = new AuthAdminService();
+    const authAdmin = new AuthAdminService();
+    // Disabled while the Auth user is being made (its own sync bans the new user).
+    vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
+      await real.ensureUser(id, email);
+      await s.lifecycle.disable(A.users.superAdmin, id);
+    });
+    const hold = holdBefore(runtime, 'Profile', 'updateMany'); // delivery's re-arm, after it saw "disabled"
+    const delivering = new InvitationDeliveryService(authAdmin, new MailService(inbox().transport, MAIL), new AuthSyncService(authAdmin))
+      .deliver(hold.client, profileId);
+    await hold.reached();
+    await s.lifecycle.enable(A.users.superAdmin, profileId); // the enable commits and its sync completes first
+    hold.release();
+    expect(await delivering).toEqual({ delivered: false, skipped: 'disabled' });
+    expect(await bannedInAuth(profileId)).toBe(false);
+    expect(await owner.profile.findUniqueOrThrow({ where: { id: profileId } })).toMatchObject({ disabledAt: null, authSyncPendingSince: null });
+  });
+
+  it('a corrective ban that fails stays flagged, and reconcile applies it (Codex finding 2, schedule B)', async () => {
+    const s = services(null);
+    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
+      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    });
+    invitedIds.push(profileId);
+    const real = new AuthAdminService();
+    const authAdmin = new AuthAdminService();
+    // The disable's own sync runs before the Auth user exists — nothing to ban, flag cleared — then the user is made.
+    vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
+      await s.lifecycle.disable(A.users.superAdmin, id);
+      await real.ensureUser(id, email);
+    });
+    vi.spyOn(authAdmin, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable')); // the corrective ban fails
+    const outcome = await new InvitationDeliveryService(authAdmin, new MailService(inbox().transport, MAIL), new AuthSyncService(authAdmin))
+      .deliver(runtime, profileId);
+    expect(outcome).toEqual({ delivered: false, skipped: 'disabled' });
+    expect(await bannedInAuth(profileId)).toBe(false);
+    expect((await owner.profile.findUniqueOrThrow({ where: { id: profileId } })).authSyncPendingSince).not.toBeNull();
+    const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null), new AuthSyncService(real)), new AuthSyncService(real));
+    const report = await operator.reconcile(A.organisationId, true);
+    expect(report.authApplied).toContain(profileId);
+    expect(await bannedInAuth(profileId)).toBe(true);
+  });
+
+  it('a sync that outlives a newer disable and enable leaves their work to them: a session from in between is revoked (Codex finding 3)', async () => {
+    const created = await invite(inbox().transport);
+    await admin.updateUserById(created.id, { email_confirm: true });
+    const s = services(null);
+    await s.lifecycle.disable(A.users.superAdmin, created.id);
+    await s.access.enableMember(A.users.superAdmin, created.id); // an enable whose sync is about to run
+    const real = new AuthAdminService();
+    const slow = new AuthAdminService();
+    let refreshToken: string | undefined;
+    vi.spyOn(slow, 'setBanned').mockImplementationOnce(async (id, banned) => {
+      await real.setBanned(id, banned); // the unban and its rotation reach Auth…
+      // …a fresh recovery session starts before the response comes back…
+      const { data } = await admin.generateLink({ type: 'recovery', email: created.email });
+      const session = await browser().auth.verifyOtp({ type: 'recovery', token_hash: data.properties!.hashed_token });
+      refreshToken = session.data.session!.refresh_token;
+      // …and a disable and an enable commit meanwhile (the tenant lock, not the sync's).
+      await s.access.disableMember(A.users.superAdmin, id);
+      await s.access.enableMember(A.users.superAdmin, id);
+    });
+    expect(await new AuthSyncService(slow).apply(runtime, created.id)).toBe(false); // the newer change keeps its flag
+    expect(await new AuthSyncService(real).apply(runtime, created.id)).toBe(true); // …and its run rotates again
+    expect(refreshToken).toBeDefined();
+    expect((await browser().auth.refreshSession({ refresh_token: refreshToken! })).error?.code).toBe('refresh_token_not_found');
   });
 
   it('nobody disables their own account', async () => {
@@ -467,7 +545,7 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     expect(await bannedInAuth(created.id)).toBe(false);
 
     const real = new AuthAdminService();
-    const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null)), new AuthSyncService(real));
+    const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null), new AuthSyncService(real)), new AuthSyncService(real));
     const dry = await operator.reconcile(A.organisationId, false);
     expect(dry.authPending).toContain(created.id);
     const report = await operator.reconcile(A.organisationId, true);
@@ -606,7 +684,7 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
   it('refuses any login but the tables’ owner — the runtime login, or the owner acting as another role', async () => {
     const real = new AuthAdminService();
     const make = (db: unknown) =>
-      new OnboardingOperator(db as never, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null)), new AuthSyncService(real));
+      new OnboardingOperator(db as never, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null), new AuthSyncService(real)), new AuthSyncService(real));
     await expect(make(runtime).assertOwner()).rejects.toBeInstanceOf(OperatorRefusal);
     const refused = await owner
       .$transaction(async (tx) => {
@@ -624,7 +702,7 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     const holder = connectOwner(1);
     try {
       const real = new AuthAdminService();
-      const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL)), new AuthSyncService(real));
+      const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL), new AuthSyncService(real)), new AuthSyncService(real));
       const locked = deferred();
       const release = deferred();
       // An offboarding mid-flight: the tenant lock held, the mark written, not yet committed.
@@ -652,7 +730,7 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
 
   it('an existing address is provisioned again only as its own organisation’s super_admin, never in an offboarded one', async () => {
     const real = new AuthAdminService();
-    const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL)), new AuthSyncService(real));
+    const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(inbox().transport, MAIL), new AuthSyncService(real)), new AuthSyncService(real));
     await expect(
       operator.provision({ organisationId: A.organisationId, adminEmail: A.users.consultant.email, adminName: 'X', language: 'en' }, true),
     ).rejects.toThrow(/already a consultant/);
@@ -669,7 +747,7 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
   it('provisions an organisation and its first administrator, idempotently; then offboards it', async () => {
     const { sent, transport } = inbox();
     const real = new AuthAdminService();
-    const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(transport, MAIL)), new AuthSyncService(real));
+    const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(transport, MAIL), new AuthSyncService(real)), new AuthSyncService(real));
     const input = {
       organisation: { legalName: orgName(), country: 'TR', geographyCode: 'TR', reportingCurrency: 'TRY' },
       adminEmail: address(),
@@ -736,7 +814,7 @@ describe('offboarding and the tenant administrators (architect P2-1)', () => {
     const holder = connectOwner(1);
     try {
       const real = new AuthAdminService();
-      const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null)), new AuthSyncService(real));
+      const operator = new OnboardingOperator(owner, 'ops@tonyai.test', new InvitationDeliveryService(real, new MailService(undefined, null), new AuthSyncService(real)), new AuthSyncService(real));
       const locked = deferred();
       const release = deferred();
       // An invitation's transaction, mid-flight: the lock held, a new member written, not yet committed.
@@ -774,7 +852,7 @@ describe('offboarding and the tenant administrators (architect P2-1)', () => {
       });
       const authAdmin = new AuthAdminService();
       const ensureUser = vi.spyOn(authAdmin, 'ensureUser');
-      const outcome = await new InvitationDeliveryService(authAdmin, new MailService(transport, MAIL)).deliver(runtime, pending.id);
+      const outcome = await new InvitationDeliveryService(authAdmin, new MailService(transport, MAIL), new AuthSyncService(authAdmin)).deliver(runtime, pending.id);
       expect(outcome).toEqual({ delivered: false, skipped: 'disabled' });
       expect(ensureUser).not.toHaveBeenCalled(); // refused before any Auth step
       expect(sent).toHaveLength(0);
@@ -840,6 +918,26 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
       expect(await call('GET', '/me', created.id)).toMatchObject({ status: 401, body: { code: 'account_disabled' } });
     } finally {
       await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: null } });
+    }
+  });
+
+  it('a token issued before a disable stays refused after the enable — synced or not — and a fresh sign-in is accepted (Codex finding 1)', async () => {
+    const withToken = async (bearer: string) =>
+      (await fetch(`${base}/me`, { headers: { Authorization: `Bearer ${bearer}` } })).json().then((b) => b as { code?: string; id?: string });
+    for (const authFails of [false, true]) {
+      const created = await invite(inbox().transport, { role: UserRole.consultant });
+      const before = await token(created.id);
+      expect(await withToken(before)).toMatchObject({ id: created.id });
+      const authAdmin = new AuthAdminService();
+      if (authFails) vi.spyOn(authAdmin, 'setBanned').mockRejectedValue(new AuthAdminError('auth_unavailable'));
+      const lifecycle = services(null, { authAdmin }).lifecycle;
+      await lifecycle.disable(A.users.superAdmin, created.id);
+      expect(await withToken(before)).toMatchObject({ code: 'account_disabled' });
+      await lifecycle.enable(A.users.superAdmin, created.id);
+      expect(await withToken(before)).toMatchObject({ code: 'session_revoked' });
+      await new Promise((r) => setTimeout(r, 1_100)); // iat is whole seconds
+      expect(await withToken(await token(created.id))).toMatchObject({ id: created.id });
+      vi.restoreAllMocks();
     }
   });
 

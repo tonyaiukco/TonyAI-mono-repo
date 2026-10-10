@@ -16,6 +16,14 @@ export class AccountDisabledError extends UnauthorizedException {
   }
 }
 
+/** The access token predates the account's session revocation (a disable):
+ *  a fresh sign-in is needed, even if the account was re-enabled since. */
+export class SessionRevokedError extends UnauthorizedException {
+  constructor() {
+    super(errorBody('session_revoked', 'This session has ended. Sign in again.'));
+  }
+}
+
 /** An administrator acting on their own account. */
 export class OwnAccountError extends ForbiddenException {
   constructor(what: 'role' | 'disable') {

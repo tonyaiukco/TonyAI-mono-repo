@@ -285,6 +285,24 @@ describe('SupabaseAuthGuard — a disabled account (D19, LP4-01)', () => {
     expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
   });
 
+  it('refuses a token issued before the sessions were revoked — even once the account is enabled again', async () => {
+    const revokedAt = new Date('2026-10-10T12:00:00.500Z');
+    const iatSeconds = (date: string) => Math.floor(new Date(date).getTime() / 1000);
+    const cases: [string, number | undefined, boolean][] = [
+      ['issued before', iatSeconds('2026-10-10T11:59:00Z'), false],
+      ['issued in the same second (whole seconds: refused too)', iatSeconds('2026-10-10T12:00:00Z'), false],
+      ['no iat at all', undefined, false],
+      ['issued after (a fresh sign-in)', iatSeconds('2026-10-10T12:00:02Z'), true],
+    ];
+    for (const [label, iat, admitted] of cases) {
+      vi.mocked(tokenVerifier.verify).mockResolvedValueOnce({ sub: 'user-1', ...(iat === undefined ? {} : { iat }) } as never);
+      prisma.profile.findUnique.mockResolvedValueOnce(profile({ sessionsRevokedAt: revokedAt }));
+      const { context } = makeContext();
+      const outcome = await guard.canActivate(context).then(() => 'admitted', (e: { response?: { code?: string } }) => e.response?.code);
+      expect(outcome, label).toBe(admitted ? 'admitted' : 'session_revoked');
+    }
+  });
+
   it('admits an enabled member of an active organisation, reading both in the one profile query', async () => {
     prisma.profile.findUnique.mockResolvedValue(profile({}));
     const { context } = makeContext();

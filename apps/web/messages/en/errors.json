@@ -54,7 +54,8 @@
     "access_role_mismatch": "Only Data Entry users are granted subsidiaries; other roles see their whole organisation.",
     "email_unavailable": "This email address already has an account.",
     "invitation_closed": "This invitation was already accepted.",
-    "user_disabled": "This account is disabled — enable it before re-sending its invitation."
+    "user_disabled": "This account is disabled — enable it before re-sending its invitation.",
+    "session_revoked": "Your session has ended — sign in again."
   },
   "bulkOutcomes": {
     "imported": "{count} imported",

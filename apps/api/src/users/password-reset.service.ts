@@ -10,8 +10,10 @@ import { AuthAdminService } from './auth-admin.service';
 
 /** The durable per-address cooldown (decision S5): one link per five minutes. */
 export const RESET_COOLDOWN_SECONDS = 300;
-/** Concurrent reset jobs one API instance runs before refusing with 429. */
-const MAX_RESET_JOBS = 20;
+/** Reset jobs one API instance runs at once. */
+export const RESET_WORKERS = 4;
+/** Requests one API instance holds waiting for a worker; past it they are dropped. */
+export const RESET_QUEUE_MAX = 1_000;
 
 /**
  * Requests per minute one client address may make (decision S6). Read here
@@ -34,13 +36,23 @@ export function readResetPerIpLimit(env: NodeJS.ProcessEnv = process.env): numbe
  * an enabled account of an active organisation outside its cooldown: one
  * audited claim of the cooldown, a fresh recovery link, and the email in the
  * account's own language. Unknown, disabled or cooling-down addresses get
- * nothing. The job is tracked by `RuntimeLimits`, so a shutdown waits for it.
+ * nothing.
+ *
+ * Capacity never shows in the answer (Codex review, finding 4): requests wait
+ * in a bounded queue for a fixed set of workers, and one past the queue's
+ * bound is dropped and logged — still a 202. A refusal that depended on how
+ * long the work ahead took would tell an outsider whether the accounts behind
+ * it exist. Only the per-client-address quota, which knows nothing of
+ * accounts, answers 429. A running job is tracked by `RuntimeLimits`, so a
+ * shutdown waits for it; queued ones are dropped once it starts.
  */
 @Injectable()
 export class PasswordResetService implements OnModuleInit {
   private readonly logger = new Logger(PasswordResetService.name);
   private readonly perIpPerMinute = readResetPerIpLimit();
   private limits!: RuntimeLimits;
+  private readonly queue: string[] = [];
+  private workers = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -56,15 +68,41 @@ export class PasswordResetService implements OnModuleInit {
     this.limits = this.moduleRef.get(RuntimeLimits, { strict: false });
   }
 
-  /** Admits the request (429 past the per-address quota) and schedules it. */
+  /** Admits the request (429 past the per-client-address quota) and queues it. */
   async request(clientIp: string, email: string): Promise<void> {
     await this.limits.quota(`auth-email:ip:${clientIp}`, this.perIpPerMinute);
-    const release = this.limits.acquire('auth-email:jobs', MAX_RESET_JOBS);
-    setImmediate(() => {
-      this.run(email)
-        .catch((error: unknown) => this.logger.error(`Password reset job failed: ${(error as Error).name}`))
-        .finally(release);
-    });
+    if (this.queue.length >= RESET_QUEUE_MAX) {
+      // Still a 202: whether the queue is full depends on the accounts ahead.
+      this.logger.warn('Password reset dropped: the queue is full');
+      return;
+    }
+    this.queue.push(email);
+    this.pump();
+  }
+
+  /** Starts workers up to the fixed number; each drains the queue after the response has left. */
+  private pump(): void {
+    while (this.workers < RESET_WORKERS && this.queue.length > 0) {
+      this.workers += 1;
+      const release = this.limits.acquire('auth-email:jobs', RESET_WORKERS);
+      setImmediate(() => {
+        void this.drain().finally(() => {
+          this.workers -= 1;
+          release();
+        });
+      });
+    }
+  }
+
+  private async drain(): Promise<void> {
+    for (let email = this.queue.shift(); email !== undefined; email = this.queue.shift()) {
+      if (this.limits.stopping) {
+        this.logger.warn(`Password reset dropped at shutdown (${this.queue.length + 1} queued)`);
+        this.queue.length = 0;
+        return;
+      }
+      await this.run(email).catch((error: unknown) => this.logger.error(`Password reset job failed: ${(error as Error).name}`));
+    }
   }
 
   /** The job itself; exported for the integration suite, which awaits it. */

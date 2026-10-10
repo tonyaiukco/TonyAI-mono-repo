@@ -9,7 +9,7 @@ import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { tokenVerifier, TokenVerificationError } from './token-verifier';
-import { AccountDisabledError } from './access-errors';
+import { AccountDisabledError, SessionRevokedError } from './access-errors';
 import type { RequestUser } from './auth.types';
 
 /**
@@ -88,6 +88,15 @@ export class SupabaseAuthGuard implements CanActivate {
     // one an incomplete offboarding missed.
     if (profile.disabledAt || profile.organisation?.offboardedAt) {
       throw new AccountDisabledError();
+    }
+    // A token issued before the account's sessions were revoked (a disable)
+    // stays refused after a re-enable: its signature and expiry are still good,
+    // but Supabase Auth has revoked the session it belongs to, and the API is
+    // where that has to hold (Codex review, finding 1). `iat` is whole seconds:
+    // a token issued in the same second as the revocation is refused too.
+    if (profile.sessionsRevokedAt) {
+      const issuedAt = typeof payload.iat === 'number' ? payload.iat * 1000 : -Infinity;
+      if (issuedAt <= profile.sessionsRevokedAt.getTime()) throw new SessionRevokedError();
     }
 
     let accessibleSubsidiaryIds: string[];

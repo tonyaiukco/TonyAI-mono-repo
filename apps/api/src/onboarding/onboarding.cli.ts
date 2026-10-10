@@ -177,11 +177,12 @@ export async function run(options: Options): Promise<{ report: unknown; needsAPe
   const db = new PrismaClient({ datasourceUrl: url });
   try {
     const authAdmin = new AuthAdminService();
+    const authSync = new AuthSyncService(authAdmin);
     const operator = new OnboardingOperator(
       db,
       options.operator,
-      new InvitationDeliveryService(authAdmin, new MailService()),
-      new AuthSyncService(authAdmin),
+      new InvitationDeliveryService(authAdmin, new MailService(), authSync),
+      authSync,
     );
     if (options.command === 'provision') {
       const report = await operator.provision(options.provision!, options.apply);

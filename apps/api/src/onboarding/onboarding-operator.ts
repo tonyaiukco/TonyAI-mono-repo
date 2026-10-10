@@ -308,7 +308,7 @@ export class OnboardingOperator {
       for (const id of enabled) {
         const { count } = await tx.profile.updateMany({
           where: { id, organisationId, disabledAt: null },
-          data: { disabledAt: now, authSyncPendingSince: now },
+          data: { disabledAt: now, sessionsRevokedAt: now, authSyncPendingSince: now, authSyncGeneration: { increment: 1 } },
         });
         if (count === 0) continue;
         const r = await tx.invitation.updateMany({

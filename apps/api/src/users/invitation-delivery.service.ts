@@ -3,6 +3,7 @@ import { InvitationStatus, type PrismaClient } from '@tonyai/db';
 import { isLocale, DEFAULT_LOCALE } from '@tonyai/shared-types';
 import { MailService } from '../mail/mail.service';
 import { AuthAdminError, AuthAdminService } from './auth-admin.service';
+import { AuthSyncService } from './auth-sync.service';
 
 /** What a delivery attempt ended in — recorded on the invitation either way. */
 export type DeliveryOutcome =
@@ -27,6 +28,7 @@ export class InvitationDeliveryService {
   constructor(
     private readonly authAdmin: AuthAdminService,
     private readonly mail: MailService,
+    private readonly authSync: AuthSyncService,
   ) {}
 
   async deliver(db: PrismaClient, profileId: string): Promise<DeliveryOutcome> {
@@ -69,7 +71,18 @@ export class InvitationDeliveryService {
         select: { disabledAt: true, organisation: { select: { offboardedAt: true } } },
       });
       if (now?.disabledAt || now?.organisation?.offboardedAt) {
-        await this.authAdmin.setBanned(profileId, true);
+        // Disabled while the Auth user was being made: the disable's own sync
+        // may have run before that user existed and found nothing to ban. Ban
+        // it through the same durable protocol, never directly (Codex review,
+        // finding 2): re-arm the flag while the account is still disabled — an
+        // enable that won the race leaves nothing to re-arm — and let the sync
+        // apply whatever state it then reads; a failure stays flagged for
+        // `pnpm onboarding reconcile`.
+        await db.profile.updateMany({
+          where: { id: profileId, disabledAt: { not: null } },
+          data: { authSyncPendingSince: new Date(), authSyncGeneration: { increment: 1 } },
+        });
+        await this.authSync.apply(db, profileId);
         return { delivered: false, skipped: 'disabled' };
       }
       // Minting voids the previous link — only once the email can carry the new one.

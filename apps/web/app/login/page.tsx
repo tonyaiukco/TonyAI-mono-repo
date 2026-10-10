@@ -37,11 +37,12 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   const reason = searchParams.get("reason");
 
-  // Sent here because the account was disabled (D19): `lib/api.ts` ended the
-  // session on the API's 401 `account_disabled`.
+  // Sent here because the account was disabled (D19) or its session revoked
+  // since it began: `lib/api.ts` ended the session on the API's 401.
   useEffect(() => {
     // Long enough to read: the person did not choose to leave.
     if (reason === "account_disabled") toast.error(t("signIn.disabled"), { id: "login-reason", duration: 10_000 });
+    if (reason === "session_revoked") toast.error(t("signIn.sessionRevoked"), { id: "login-reason", duration: 10_000 });
   }, [reason, t]);
 
   async function onSubmit(e: React.FormEvent) {

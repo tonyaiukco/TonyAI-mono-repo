@@ -42,6 +42,7 @@ import {
   EmailUnavailableError,
   InvitationClosedError,
   OwnAccountError,
+  SessionRevokedError,
   UserDisabledError,
 } from '../auth/access-errors';
 
@@ -107,6 +108,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   query_too_broad: () => new QueryTooBroadError(),
   invitation_not_found: () => new ResourceNotFoundError('invitation_not_found'),
   account_disabled: () => new AccountDisabledError(),
+  session_revoked: () => new SessionRevokedError(),
   own_account_forbidden: () => new OwnAccountError('disable'),
   access_role_mismatch: () => new AccessRoleMismatchError(),
   email_unavailable: () => new EmailUnavailableError(),

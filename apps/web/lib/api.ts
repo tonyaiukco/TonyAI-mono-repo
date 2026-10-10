@@ -207,7 +207,7 @@ export async function apiError(res: Response): Promise<ApiError> {
   } catch {
     /* a 413 from the proxy, or any non-JSON body — keep the status sentence */
   }
-  if (res.status === 401 && code === "account_disabled") endDisabledSession();
+  if (res.status === 401 && (code === "account_disabled" || code === "session_revoked")) endSession(code);
   return new ApiError(
     Array.isArray(message) ? message.join(", ") : String(message),
     res.status,
@@ -219,23 +219,26 @@ export async function apiError(res: Response): Promise<ApiError> {
 
 /** Where a disabled account lands: the sign-in page, which says why. */
 export const ACCOUNT_DISABLED_PATH = "/login?reason=account_disabled";
+/** Where a revoked session lands (the account was disabled since it began). */
+export const SESSION_REVOKED_PATH = "/login?reason=session_revoked";
 let endingSession = false;
 
 /**
  * D19 (LP4-01): the API refuses a disabled account on its next request with
- * 401 `account_disabled`, whatever token it still holds. Every failed call —
- * `apiFetch` and the multipart/blob calls alike — passes through `apiError`,
- * so this is the one place the session ends: the local session is dropped
- * (Auth has banned the account, so nothing server-side is needed) and the
- * browser goes to the sign-in page. Once, however many calls fail together.
+ * 401 `account_disabled`, and a token issued before the account's sessions
+ * were revoked with 401 `session_revoked` — whatever the token still claims.
+ * Every failed call (`apiFetch` and the multipart/blob calls alike) passes
+ * through `apiError`, so this is the one place the session ends: the local
+ * session is dropped (Auth has revoked it, so nothing server-side is needed)
+ * and the browser goes to the sign-in page. Once, however many calls fail.
  */
-function endDisabledSession(): void {
+function endSession(reason: "account_disabled" | "session_revoked"): void {
   if (endingSession || typeof window === "undefined") return;
   endingSession = true;
   void getSupabaseBrowserClient()
     .auth.signOut({ scope: "local" })
     .catch(() => undefined)
-    .finally(() => window.location.assign(ACCOUNT_DISABLED_PATH));
+    .finally(() => window.location.assign(reason === "account_disabled" ? ACCOUNT_DISABLED_PATH : SESSION_REVOKED_PATH));
 }
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {

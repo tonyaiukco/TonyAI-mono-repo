@@ -333,7 +333,12 @@ export class AccessAdminService {
       const target = await findMember(tx, organisationId, profileId);
       if (target.disabledAt) return { changed: false };
       const now = new Date();
-      await tx.profile.update({ where: { id: profileId }, data: { disabledAt: now, authSyncPendingSince: now } });
+      await tx.profile.update({
+        where: { id: profileId },
+        // Every access token issued so far dies with this (the guard holds them
+        // to `sessions_revoked_at`), and Auth has a new change to catch up with.
+        data: { disabledAt: now, sessionsRevokedAt: now, authSyncPendingSince: now, authSyncGeneration: { increment: 1 } },
+      });
       const { count: revoked } = await tx.invitation.updateMany({
         where: { profileId, status: { in: [InvitationStatus.pending, InvitationStatus.sent] } },
         data: { status: InvitationStatus.revoked, revokedAt: now },
@@ -355,7 +360,10 @@ export class AccessAdminService {
       const admin = await lockAndReadActor(tx, actor, organisationId);
       const target = await findMember(tx, organisationId, profileId);
       if (!target.disabledAt) return { changed: false };
-      await tx.profile.update({ where: { id: profileId }, data: { disabledAt: null, authSyncPendingSince: new Date() } });
+      await tx.profile.update({
+        where: { id: profileId },
+        data: { disabledAt: null, authSyncPendingSince: new Date(), authSyncGeneration: { increment: 1 } },
+      });
       await this.audit.record(admin, { action: 'enable', entity: 'profile', entityId: profileId }, tx);
       return { changed: true };
     });

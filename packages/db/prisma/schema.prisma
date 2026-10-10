@@ -92,6 +92,14 @@ model Profile {
   /// Auth's ban matches it (K4): non-null means Auth still has to catch up, and
   /// `pnpm onboarding reconcile` retries it.
   authSyncPendingSince DateTime?              @map("auth_sync_pending_since") @db.Timestamptz(6)
+  /// Incremented by every change Auth must catch up with (disable, enable,
+  /// offboarding, a delivery's corrective ban); a sync clears the pending flag
+  /// only while it is still the generation it read — never a newer change's.
+  authSyncGeneration   Int                    @default(0) @map("auth_sync_generation")
+  /// Set when the account is disabled: the guard refuses any access token
+  /// issued before it (`iat`), so a token captured before a disable stays dead
+  /// after a re-enable (Codex review, finding 1).
+  sessionsRevokedAt    DateTime?              @map("sessions_revoked_at") @db.Timestamptz(6)
   /// When the last password-reset link went out: the durable per-address
   /// cooldown of the public reset endpoint, compared with now() in SQL.
   recoverySentAt       DateTime?              @map("recovery_sent_at") @db.Timestamptz(6)

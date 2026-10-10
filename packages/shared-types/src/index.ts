@@ -2330,6 +2330,9 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** D19: the account (or its organisation, offboarded) is disabled. Refused
    *  on the next request, whatever token it carries; the web signs it out. */
   account_disabled: 401,
+  /** The access token was issued before the account's sessions were revoked
+   *  (a disable); valid again only after a fresh sign-in. The web signs out. */
+  session_revoked: 401,
   /** An administrator acting on their own account — their role or their
    *  access to the product. Ask another super_admin (LP1-03, LP4-01). */
   own_account_forbidden: 403,

@@ -499,6 +499,7 @@ describe('the runtime role is refused', () => {
     ['creating a profile born disabled', `INSERT INTO profiles (id, email, full_name, updated_at, disabled_at) VALUES (gen_random_uuid(), 'x@x.test', 'x', now(), now())`],
     ['creating a profile with Auth bookkeeping', `INSERT INTO profiles (id, email, full_name, updated_at, auth_sync_pending_since) VALUES (gen_random_uuid(), 'x@x.test', 'x', now(), now())`],
     ['creating a profile already in a reset cooldown', `INSERT INTO profiles (id, email, full_name, updated_at, recovery_sent_at) VALUES (gen_random_uuid(), 'x@x.test', 'x', now(), now())`],
+    ['creating a profile with its sessions already revoked', `INSERT INTO profiles (id, email, full_name, updated_at, sessions_revoked_at) VALUES (gen_random_uuid(), 'x@x.test', 'x', now(), now())`],
     ['deleting an invitation (a withdrawn one is revoked)', 'DELETE FROM invitations WHERE false'],
     ['re-pointing an invitation', 'UPDATE invitations SET profile_id = profile_id WHERE false'],
     ['rewriting who invited', 'UPDATE invitations SET invited_by = NULL WHERE false'],
@@ -560,11 +561,11 @@ describe('the runtime role is refused', () => {
     expect(await attempt(`UPDATE profiles SET language = 'tr' WHERE id = gen_random_uuid()`)).toBeNull();
     // LP4-01: disabling (D19), Auth's catch-up (K4), the reset cooldown.
     expect(
-      await attempt('UPDATE profiles SET disabled_at = now(), auth_sync_pending_since = now(), recovery_sent_at = now() WHERE id = gen_random_uuid()'),
+      await attempt('UPDATE profiles SET disabled_at = now(), sessions_revoked_at = now(), auth_sync_pending_since = now(), auth_sync_generation = auth_sync_generation + 1, recovery_sent_at = now() WHERE id = gen_random_uuid()'),
     ).toBeNull();
     // An invitation's profile, and the state it moves through.
     expect(
-      await attempt(`INSERT INTO profiles (id, email, full_name, role, language, theme, organisation_id, created_at, updated_at) SELECT gen_random_uuid(), 'x@x.test', 'x', 'data_entry', 'en', 'light', NULL, now(), now() WHERE false`),
+      await attempt(`INSERT INTO profiles (id, email, full_name, role, language, theme, auth_sync_generation, organisation_id, created_at, updated_at) SELECT gen_random_uuid(), 'x@x.test', 'x', 'data_entry', 'en', 'light', 0, NULL, now(), now() WHERE false`),
     ).toBeNull();
     expect(
       await attempt(`UPDATE invitations SET status = 'sent', attempts = attempts + 1, sent_at = now(), last_attempt_at = now(), last_error_step = NULL, last_error_code = NULL, updated_at = now() WHERE false`),

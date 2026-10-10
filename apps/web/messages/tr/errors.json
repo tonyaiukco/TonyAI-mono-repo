@@ -54,7 +54,8 @@
     "access_role_mismatch": "Bağlı şirket erişimi yalnızca Veri Girişi kullanıcılarına verilir; diğer roller tüm kuruluşu görür.",
     "email_unavailable": "Bu e-posta adresinin zaten bir hesabı var.",
     "invitation_closed": "Bu davet zaten kabul edildi.",
-    "user_disabled": "Bu hesap devre dışı; davetini yeniden göndermeden önce etkinleştirin."
+    "user_disabled": "Bu hesap devre dışı; davetini yeniden göndermeden önce etkinleştirin.",
+    "session_revoked": "Oturumunuz sona erdi; yeniden giriş yapın."
   },
   "bulkOutcomes": {
     "imported": "{count} satır içe aktarıldı",

@@ -18,9 +18,9 @@ function authSyncLockKey(profileId: string): number {
  * Serialised per profile, and each run applies the state it reads under the
  * lock: a disable or enable commits before its own run takes the lock, so the
  * last run to hold it applies the latest state, however the HTTP calls
- * interleave. The flag is cleared only while the state is still the one
- * applied; a change in the meantime keeps it set for that change's run (or
- * `pnpm onboarding reconcile`). A failed Auth call leaves the flag set —
+ * interleave. The flag is cleared only while `auth_sync_generation` is still
+ * the one read; a change in the meantime keeps it set for that change's run
+ * (or `pnpm onboarding reconcile`). A failed Auth call leaves the flag set —
  * visible on the users screen — and the API refuses the account either way.
  */
 @Injectable()
@@ -40,13 +40,19 @@ export class AuthSyncService {
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(${AUTH_SYNC_LOCK_NAMESPACE}::int4, ${authSyncLockKey(profileId)}::int4)`;
           const profile = await tx.profile.findUnique({
             where: { id: profileId },
-            select: { disabledAt: true, authSyncPendingSince: true },
+            select: { disabledAt: true, authSyncPendingSince: true, authSyncGeneration: true },
           });
           if (!profile?.authSyncPendingSince) return true;
           const banned = profile.disabledAt !== null;
           await this.authAdmin.setBanned(profileId, banned);
+          // Cleared only while no newer change has come in: a disable and an
+          // enable that commit during the Auth call (they take the tenant lock,
+          // not this one) move the generation on, so their own run still finds
+          // the flag set and applies their state — the password rotation
+          // included (Codex review, finding 3). Comparing the state alone would
+          // see "enabled" again and drop the newer change.
           const { count } = await tx.profile.updateMany({
-            where: { id: profileId, disabledAt: banned ? { not: null } : null },
+            where: { id: profileId, authSyncGeneration: profile.authSyncGeneration },
             data: { authSyncPendingSince: null },
           });
           return count === 1;
