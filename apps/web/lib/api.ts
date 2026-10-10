@@ -225,8 +225,8 @@ let endingSession = false;
 
 /**
  * D19 (LP4-01): the API refuses a disabled account on its next request with
- * 401 `account_disabled`, and a token issued before the account's sessions
- * were revoked with 401 `session_revoked` — whatever the token still claims.
+ * 401 `account_disabled`, and a token whose session began before the account's
+ * sessions were revoked with 401 `session_revoked` — whatever the token still claims.
  * Every failed call (`apiFetch` and the multipart/blob calls alike) passes
  * through `apiError`, so this is the one place the session ends: the local
  * session is dropped (Auth has revoked it, so nothing server-side is needed)

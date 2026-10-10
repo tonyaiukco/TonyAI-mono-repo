@@ -1004,7 +1004,39 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
     const again = await browser().auth.refreshSession({ refresh_token: refreshed.data.session!.refresh_token });
     expect(again.error).toBeNull();
     expect(await withToken(again.data.session!.access_token)).toMatchObject({ code: 'session_revoked' });
-    // A new session — a recovery link after the enable — is accepted.
+    // A new session — a recovery link after the enable, in a later second than it — is accepted.
+    await new Promise((r) => setTimeout(r, 1_100));
+    const { data } = await admin.generateLink({ type: 'recovery', email: created.email });
+    const fresh = await browser().auth.verifyOtp({ type: 'recovery', token_hash: data.properties!.hashed_token });
+    expect(await withToken(fresh.data.session!.access_token)).toMatchObject({ id: created.id });
+  });
+
+  it('a session begun while the account was disabled — through a session Auth still honoured — is refused after the enable (security re-review P2)', async () => {
+    const withToken = async (gotrue: string) => {
+      const claims = JSON.parse(Buffer.from(gotrue.split('.')[1], 'base64url').toString()) as Record<string, unknown>;
+      const bearer = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(JWT_SECRET));
+      return (await fetch(`${base}/me`, { headers: { Authorization: `Bearer ${bearer}` } })).json().then((b) => b as { code?: string; id?: string });
+    };
+    const created = await invite(inbox().transport, { role: UserRole.consultant });
+    await admin.updateUserById(created.id, { password: 'a-long-enough-pass-1', email_confirm: true });
+    const stolen = await browser().auth.signInWithPassword({ email: created.email, password: 'a-long-enough-pass-1' });
+    expect(stolen.error).toBeNull();
+    const failing = new AuthAdminService();
+    vi.spyOn(failing, 'setBanned').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
+    const s = services(null, { authAdmin: failing });
+    await s.lifecycle.disable(A.users.superAdmin, created.id); // neither the ban nor the rotation reaches Auth
+    await new Promise((r) => setTimeout(r, 1_100));
+    // While disabled: the surviving session sets a password of its own and signs in anew.
+    const holder = browser();
+    await holder.auth.setSession(stolen.data.session!);
+    expect((await holder.auth.updateUser({ password: 'attacker-chosen-pass-1' })).error).toBeNull();
+    const begunWhileDisabled = await browser().auth.signInWithPassword({ email: created.email, password: 'attacker-chosen-pass-1' });
+    expect(begunWhileDisabled.error).toBeNull();
+    expect(await withToken(begunWhileDisabled.data.session!.access_token)).toMatchObject({ code: 'account_disabled' });
+    await new Promise((r) => setTimeout(r, 1_100));
+    await s.lifecycle.enable(A.users.superAdmin, created.id); // its sync rotates the password; the token lives on
+    expect(await withToken(begunWhileDisabled.data.session!.access_token)).toMatchObject({ code: 'session_revoked' });
+    await new Promise((r) => setTimeout(r, 1_100));
     const { data } = await admin.generateLink({ type: 'recovery', email: created.email });
     const fresh = await browser().auth.verifyOtp({ type: 'recovery', token_hash: data.properties!.hashed_token });
     expect(await withToken(fresh.data.session!.access_token)).toMatchObject({ id: created.id });

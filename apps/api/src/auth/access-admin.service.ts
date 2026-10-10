@@ -360,9 +360,15 @@ export class AccessAdminService {
       const admin = await lockAndReadActor(tx, actor, organisationId);
       const target = await findMember(tx, organisationId, profileId);
       if (!target.disabledAt) return { changed: false };
+      const now = new Date();
       await tx.profile.update({
         where: { id: profileId },
-        data: { disabledAt: null, authSyncPendingSince: new Date(), authSyncGeneration: { increment: 1 } },
+        // The boundary moves to the enable too: a session begun while the
+        // account was disabled — through one Auth still honoured, before its
+        // ban landed or because it failed — is refused like the older ones
+        // (security re-review P2). No legitimate session outlives an enable:
+        // its sync replaces the password and Auth ends every session.
+        data: { disabledAt: null, sessionsRevokedAt: now, authSyncPendingSince: now, authSyncGeneration: { increment: 1 } },
       });
       await this.audit.record(admin, { action: 'enable', entity: 'profile', entityId: profileId }, tx);
       return { changed: true };

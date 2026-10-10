@@ -96,9 +96,11 @@ model Profile {
   /// offboarding, a delivery's corrective ban); a sync clears the pending flag
   /// only while it is still the generation it read — never a newer change's.
   authSyncGeneration   Int                    @default(0) @map("auth_sync_generation")
-  /// Set when the account is disabled: the guard refuses any access token
-  /// issued before it (`iat`), so a token captured before a disable stays dead
-  /// after a re-enable (Codex review, finding 1).
+  /// Set by a disable, an enable and an offboarding: the guard refuses any
+  /// access token whose session began at or before it (the earliest `amr`
+  /// timestamp, else `iat`), so no session from before an enable — begun
+  /// before the disable or while disabled — survives it (Codex review,
+  /// finding 1; security re-review P2).
   sessionsRevokedAt    DateTime?              @map("sessions_revoked_at") @db.Timestamptz(6)
   /// When the last password-reset link went out: the durable per-address
   /// cooldown of the public reset endpoint, compared with now() in SQL.

@@ -6,8 +6,8 @@
 --    `auth_sync_pending_since` records that Auth has yet to catch up (K4) and
 --    `auth_sync_generation` which change it is catching up with (a sync clears
 --    only its own); `sessions_revoked_at` is the durable boundary the guard
---    holds every access token to (one issued before it is refused, even after
---    a re-enable); `recovery_sent_at` is the public reset endpoint's
+--    holds every access token to (a disable and an enable move it; a session
+--    begun at or before it is refused); `recovery_sent_at` is the public reset endpoint's
 --    per-address cooldown.
 --  * `organisations.offboarded_at` (K6, D21): set by the operator CLI's
 --    `offboard`, which also disables every member; the start of D21's 90-day
