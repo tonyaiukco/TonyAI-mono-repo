@@ -824,9 +824,12 @@ async function main() {
       body: JSON.stringify({ role: 'super_admin', disabled_at: stamp, auth_sync_pending_since: stamp, recovery_sent_at: stamp }),
     });
     const afterRow = await readOwn();
+    const unchanged = Boolean(beforeRow) && JSON.stringify(afterRow) === JSON.stringify(beforeRow);
+    // A failing probe must not leave the seeded user promoted or disabled.
+    if (!unchanged && beforeRow) await svc('PATCH', `profiles?id=eq.${entryId}`, beforeRow);
     check(
       'profiles: a user cannot write its own role or lifecycle state through PostgREST (no UPDATE policy) — a disabled account cannot re-enable itself',
-      Boolean(beforeRow) && JSON.stringify(afterRow) === JSON.stringify(beforeRow),
+      unchanged,
       `status=${selfPatch.status}, before=${JSON.stringify(beforeRow)}, after=${JSON.stringify(afterRow)}`,
     );
   }
