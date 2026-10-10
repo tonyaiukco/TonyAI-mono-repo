@@ -40,7 +40,8 @@ function LoginForm() {
   // Sent here because the account was disabled (D19): `lib/api.ts` ended the
   // session on the API's 401 `account_disabled`.
   useEffect(() => {
-    if (reason === "account_disabled") toast.error(t("signIn.disabled"), { id: "login-reason" });
+    // Long enough to read: the person did not choose to leave.
+    if (reason === "account_disabled") toast.error(t("signIn.disabled"), { id: "login-reason", duration: 10_000 });
   }, [reason, t]);
 
   async function onSubmit(e: React.FormEvent) {
