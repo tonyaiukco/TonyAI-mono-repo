@@ -73,6 +73,36 @@ export class AuditService {
     });
   }
 
+  /**
+   * A row no person performed (LP4-01): the operator CLI's provisioning and
+   * offboarding — the operator named in `diff.operator` — and a reset link
+   * sent through the public endpoint. `userId` and `role` are null, as on
+   * `rescore` rows; the tenant is the one acted on.
+   */
+  async recordSystem(
+    entry: {
+      organisationId: string | null;
+      action: AuditAction;
+      entity: AuditEntity;
+      entityId: string | null;
+      diff?: unknown;
+    },
+    tx?: Writer,
+  ): Promise<void> {
+    const writer: Writer = tx ?? this.prisma;
+    await writer.auditLog.create({
+      data: {
+        userId: null,
+        role: null,
+        organisationId: entry.organisationId,
+        action: entry.action,
+        entity: entry.entity,
+        entityId: entry.entityId,
+        diff: (entry.diff ?? null) as Prisma.InputJsonValue,
+      },
+    });
+  }
+
   /** One stable identity across ambiguous commit acknowledgments. Batch closure
    * and its audit summary commit together. No UPDATE/DELETE of audit rows. */
   async finalize(

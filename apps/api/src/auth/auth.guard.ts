@@ -9,6 +9,7 @@ import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { tokenVerifier, TokenVerificationError } from './token-verifier';
+import { AccountDisabledError } from './access-errors';
 import type { RequestUser } from './auth.types';
 
 /**
@@ -75,10 +76,18 @@ export class SupabaseAuthGuard implements CanActivate {
 
     const profile = await this.prisma.profile.findUnique({
       where: { id: userId },
-      include: { subsidiaryAccess: true },
+      include: { subsidiaryAccess: true, organisation: { select: { offboardedAt: true } } },
     });
     if (!profile) {
       throw new UnauthorizedException('No profile found for this user');
+    }
+    // D19: a disabled account is refused on its next request — not when its
+    // token expires, which is what a Supabase Auth ban alone would give (the
+    // token verifier checks a signature and an expiry, never the session). An
+    // offboarded organisation's members are refused the same way (K6), even
+    // one an incomplete offboarding missed.
+    if (profile.disabledAt || profile.organisation?.offboardedAt) {
+      throw new AccountDisabledError();
     }
 
     let accessibleSubsidiaryIds: string[];

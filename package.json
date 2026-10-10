@@ -22,6 +22,7 @@
     "db:seed": "pnpm --filter @tonyai/db run seed",
     "db:reset": "pnpm --filter @tonyai/db run reset && pnpm storage:reconcile --reclaim-orphans --older-than=0 --apply",
     "storage:reconcile": "pnpm --filter @tonyai/api build && pnpm --filter @tonyai/api run storage:reconcile",
+    "onboarding": "pnpm --filter @tonyai/api build && pnpm --filter @tonyai/api run onboarding",
     "anomaly:probe": "pnpm --filter @tonyai/db run anomaly:probe",
     "anomaly:recompute": "pnpm --filter @tonyai/db run anomaly:recompute",
     "docker:up": "bash scripts/compose-dev.sh up --build -d",
@@ -43,6 +44,6 @@
     "typescript-eslint": "^8.68.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   }
 }

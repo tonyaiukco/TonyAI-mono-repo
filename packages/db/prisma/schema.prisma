@@ -3,8 +3,8 @@
 // Profile.id mirrors auth.users.id (no cross-schema FK in Prisma).
 
 generator client {
-  provider = "prisma-client-js"
-  output   = "../generated/client"
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
   // Container targets: debian (amd64) + arm64 for Apple-Silicon local builds.
   binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
 }
@@ -71,19 +71,30 @@ enum ActivityRecordStatus {
 }
 
 model Profile {
-  id               String                 @id @db.Uuid // = auth.users.id
-  email            String                 @unique
-  fullName         String                 @map("full_name")
-  role             UserRole               @default(data_entry)
+  id                   String                 @id @db.Uuid // = auth.users.id
+  email                String                 @unique
+  fullName             String                 @map("full_name")
+  role                 UserRole               @default(data_entry)
   /// A `SUPPORTED_LOCALES` entry (CHECK `profiles_language_supported`, LP3-01);
   /// the user sets their own through PATCH /me/preferences.
-  language         String                 @default("en")
-  theme            String                 @default("light")
-  organisationId   String?                @map("organisation_id") @db.Uuid
-  organisation     Organisation?          @relation(fields: [organisationId], references: [id])
-  subsidiaryAccess UserSubsidiaryAccess[]
-  createdAt        DateTime               @default(now()) @map("created_at")
-  updatedAt        DateTime               @updatedAt @map("updated_at")
+  language             String                 @default("en")
+  theme                String                 @default("light")
+  organisationId       String?                @map("organisation_id") @db.Uuid
+  organisation         Organisation?          @relation(fields: [organisationId], references: [id])
+  subsidiaryAccess     UserSubsidiaryAccess[]
+  invitation           Invitation?
+  /// Set while the account is disabled (D19, LP4-01): the API's guard refuses
+  /// it on the next request (401 `account_disabled`) and Supabase Auth bans it.
+  disabledAt           DateTime?              @map("disabled_at") @db.Timestamptz(6)
+  /// Set in the same transaction as `disabled_at` changes, cleared once Supabase
+  /// Auth's ban matches it (K4): non-null means Auth still has to catch up, and
+  /// `pnpm onboarding reconcile` retries it.
+  authSyncPendingSince DateTime?              @map("auth_sync_pending_since") @db.Timestamptz(6)
+  /// When the last password-reset link went out: the durable per-address
+  /// cooldown of the public reset endpoint, compared with now() in SQL.
+  recoverySentAt       DateTime?              @map("recovery_sent_at") @db.Timestamptz(6)
+  createdAt            DateTime               @default(now()) @map("created_at")
+  updatedAt            DateTime               @updatedAt @map("updated_at")
 
   // The target of `user_subsidiary_access`'s composite foreign key (LP1-03):
   // `id` alone is already unique; the pair is what lets the database refuse a
@@ -93,60 +104,108 @@ model Profile {
 }
 
 model Organisation {
-  id                String       @id @default(uuid()) @db.Uuid
-  legalName         String       @map("legal_name")
-  tradingName       String?      @map("trading_name")
+  id                String        @id @default(uuid()) @db.Uuid
+  legalName         String        @map("legal_name")
+  tradingName       String?       @map("trading_name")
   country           String
-  geographyCode     String       @map("geography_code")
+  geographyCode     String        @map("geography_code")
   sector            String?
-  reportingCurrency String       @default("EUR") @map("reporting_currency")
+  reportingCurrency String        @default("EUR") @map("reporting_currency")
   subsidiaries      Subsidiary[]
   profiles          Profile[]
   importBatches     ImportBatch[]
-  createdAt         DateTime     @default(now()) @map("created_at")
-  updatedAt         DateTime     @updatedAt @map("updated_at")
+  /// Set by the operator CLI's `offboard` (K6, D21): every user is disabled and
+  /// the guard refuses the organisation's members; the start of D21's 90-day
+  /// retention clock. The deletion itself is not built (it waits for D24).
+  offboardedAt      DateTime?     @map("offboarded_at") @db.Timestamptz(6)
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
 
   @@map("organisations")
 }
 
+/// Where an invited account's onboarding stands (LP4-01) — one row per invited
+/// profile, the durable state machine of the steps that can fail outside the
+/// database: the Supabase Auth user, the invitation email, the acceptance.
+/// The profile itself (role, grants) is created with the invitation, so a
+/// tenant admin manages it before it is accepted. Delivery bookkeeping
+/// (attempts, the last error) is operational state like `storage_intents`; the
+/// business events (invite, resend, accept, disable) are audited.
+model Invitation {
+  /// The invited profile — one invitation per account; a resend reuses it.
+  profileId     String           @id @map("profile_id") @db.Uuid
+  profile       Profile          @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  /// The email's language, chosen by the inviter (D16).
+  language      String
+  /// The profile that invited; null when the operator provisioned (D18).
+  invitedBy     String?          @map("invited_by") @db.Uuid
+  status        InvitationStatus @default(pending)
+  attempts      Int              @default(0)
+  /// `auth` or `email` — the step the last attempt stopped at; null after a
+  /// delivered attempt.
+  lastErrorStep String?          @map("last_error_step")
+  /// A short machine code, never a provider's message (which can echo input).
+  lastErrorCode String?          @map("last_error_code")
+  lastAttemptAt DateTime?        @map("last_attempt_at") @db.Timestamptz(6)
+  sentAt        DateTime?        @map("sent_at") @db.Timestamptz(6)
+  acceptedAt    DateTime?        @map("accepted_at") @db.Timestamptz(6)
+  revokedAt     DateTime?        @map("revoked_at") @db.Timestamptz(6)
+  // Database time, like `storage_intents` (see there for why not now()).
+  createdAt     DateTime         @default(dbgenerated("transaction_timestamp()")) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("invitations")
+}
+
+enum InvitationStatus {
+  /// Created; the Auth user or the email has not gone through yet.
+  pending
+  /// The link went out; waiting for the invitee to open it.
+  sent
+  /// The invitee opened a valid link (`POST /invitations/accept`).
+  accepted
+  /// Withdrawn by disabling the account before it was accepted.
+  revoked
+}
+
 model Subsidiary {
-  id               String                 @id @default(uuid()) @db.Uuid
-  organisationId   String                 @map("organisation_id") @db.Uuid
-  organisation     Organisation           @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  legalName        String                 @map("legal_name")
-  tradingName      String?                @map("trading_name")
-  location         String?
-  geographyCode    String                 @map("geography_code")
-  businessArea     String?                @map("business_area")
-  sector           String?
+  id                  String                  @id @default(uuid()) @db.Uuid
+  organisationId      String                  @map("organisation_id") @db.Uuid
+  organisation        Organisation            @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  legalName           String                  @map("legal_name")
+  tradingName         String?                 @map("trading_name")
+  location            String?
+  geographyCode       String                  @map("geography_code")
+  businessArea        String?                 @map("business_area")
+  sector              String?
   // Who to contact about this entity's reporting (round-1 UAT SUB-2). Nullable:
   // every existing row predates them, and a subsidiary is legally identifiable
   // without them. `designatedPerson` is the NAME and already existed — it is
   // rendered read-only as "responsible" in the tracking matrix — but until WP16
   // nothing could write it, so all five seeded rows say "Seed Admin".
-  designatedPerson String?                @map("designated_person")
-  contactEmail     String?                @map("contact_email")
-  contactPhone     String?                @map("contact_phone")
-  reportingStatus  SubsidiaryStatus       @default(pending) @map("reporting_status")
-  includedScopes   Int[]                  @default([1, 2]) @map("included_scopes")
+  designatedPerson    String?                 @map("designated_person")
+  contactEmail        String?                 @map("contact_email")
+  contactPhone        String?                 @map("contact_phone")
+  reportingStatus     SubsidiaryStatus        @default(pending) @map("reporting_status")
+  includedScopes      Int[]                   @default([1, 2]) @map("included_scopes")
   // Defaults to `subsidiary` so no existing row changes meaning. Both write
   // paths refuse `location` without at least one location: the denominator
   // would be `0 × 12 = 0`, every slot is then vacuously covered, and a
   // subsidiary holding one stray record would read as complete.
-  trackingGranularity TrackingGranularity @default(subsidiary) @map("tracking_granularity")
-  locations        Location[]
-  access           UserSubsidiaryAccess[]
-  activityRecords  ActivityRecord[]
-  periodLocks      PeriodLock[]
-  targets          Target[]
-  denominators     SubsidiaryDenominator[]
-  evidence         Evidence[]
-  createdAt        DateTime               @default(now()) @map("created_at")
-  updatedAt        DateTime               @updatedAt @map("updated_at")
+  trackingGranularity TrackingGranularity     @default(subsidiary) @map("tracking_granularity")
+  locations           Location[]
+  access              UserSubsidiaryAccess[]
+  activityRecords     ActivityRecord[]
+  periodLocks         PeriodLock[]
+  targets             Target[]
+  denominators        SubsidiaryDenominator[]
+  evidence            Evidence[]
+  createdAt           DateTime                @default(now()) @map("created_at")
+  updatedAt           DateTime                @updatedAt @map("updated_at")
 
-  @@index([organisationId])
   // The target of `user_subsidiary_access`'s composite foreign key (LP1-03).
   @@unique([id, organisationId])
+  @@index([organisationId])
   @@map("subsidiaries")
 }
 
@@ -188,33 +247,33 @@ model Location {
 // subsidiary: the site key is (location_id, subsidiary_id), so the database
 // also holds a record's site to its own subsidiary.
 model ActivityRecord {
-  id             String               @id @default(uuid()) @db.Uuid
-  subsidiaryId   String               @map("subsidiary_id") @db.Uuid
-  subsidiary     Subsidiary           @relation(fields: [subsidiaryId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  locationId     String?              @map("location_id") @db.Uuid
-  location       Location?            @relation(fields: [locationId, subsidiaryId], references: [id, subsidiaryId], onDelete: Restrict, onUpdate: Restrict)
-  reportingYear  Int                  @map("reporting_year")
-  reportingPeriod String              @map("reporting_period") // 'monthly' | 'quarterly' | 'annual'
+  id                        String                   @id @default(uuid()) @db.Uuid
+  subsidiaryId              String                   @map("subsidiary_id") @db.Uuid
+  subsidiary                Subsidiary               @relation(fields: [subsidiaryId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  locationId                String?                  @map("location_id") @db.Uuid
+  location                  Location?                @relation(fields: [locationId, subsidiaryId], references: [id, subsidiaryId], onDelete: Restrict, onUpdate: Restrict)
+  reportingYear             Int                      @map("reporting_year")
+  reportingPeriod           String                   @map("reporting_period") // 'monthly' | 'quarterly' | 'annual'
   // Canonicalised on write to the vocabulary in @tonyai/shared-types
   // (PERIOD_VALUES): "January".."December" | "Q1".."Q4" | "Annual". Not an
   // example set -- the uniqueness index below compares this column RAW, so a
   // second spelling of one month is a second period.
-  periodValue    String               @map("period_value")
-  category       String // canonical category key, e.g. "Electricity"
+  periodValue               String                   @map("period_value")
+  category                  String // canonical category key, e.g. "Electricity"
   // The fuel or gas a typed category's record is for (`recordActivityTypesFor`
   // in @tonyai/shared-types: Fuel, Mobile Combustion, Refrigerants); NULL for
   // an implicit category and for a record written before LP3-03. Part of the
   // record's uniqueness slot (the raw index below), so diesel and petrol of one
   // site and month are two records.
-  activityType   String?              @map("activity_type")
-  scope          Int // derived from CATEGORY_SCOPE_MAP
-  status         ActivityRecordStatus @default(draft)
-  activityValue  Float                @map("activity_value")
-  activityUnit   String               @map("activity_unit")
-  input          Json? // raw structured input as submitted (optional)
-  calculation    Json // immutable calc-engine snapshot (tCo2e + factor traceability)
-  createdBy      String               @map("created_by") @db.Uuid
-  anomalyFlag    Boolean              @default(false) @map("anomaly_flag")
+  activityType              String?                  @map("activity_type")
+  scope                     Int // derived from CATEGORY_SCOPE_MAP
+  status                    ActivityRecordStatus     @default(draft)
+  activityValue             Float                    @map("activity_value")
+  activityUnit              String                   @map("activity_unit")
+  input                     Json? // raw structured input as submitted (optional)
+  calculation               Json // immutable calc-engine snapshot (tCo2e + factor traceability)
+  createdBy                 String                   @map("created_by") @db.Uuid
+  anomalyFlag               Boolean                  @default(false) @map("anomaly_flag")
   // What the flag above was decided against: how many comparable periods
   // carried a figure, and their rolling average. VAR §4.1 requires three, so a
   // count below it means the rule did NOT run and the average is null --
@@ -239,15 +298,15 @@ model ActivityRecord {
   // Mutable, unlike `calculation`: a verdict is a judgement about a moving pool
   // of neighbours, not a frozen measurement, which is what makes re-scoring
   // legal at all. Written at create/update/submit beside the flag itself.
-  anomalyBaselinePriorCount Int?      @map("anomaly_baseline_prior_count")
-  anomalyBaselineTCo2e      Float?    @map("anomaly_baseline_tco2e")
+  anomalyBaselinePriorCount Int?                     @map("anomaly_baseline_prior_count")
+  anomalyBaselineTCo2e      Float?                   @map("anomaly_baseline_tco2e")
   // The AUTHOR's justification for an anomalous value (VAR §4). A reviewer must
   // never overwrite it — their own words go in reviewNote.
-  varianceReason String?              @map("variance_reason")
+  varianceReason            String?                  @map("variance_reason")
   // Review outcome: who acted, when, and why (a rejection reason is mandatory).
-  reviewedBy     String?              @map("reviewed_by") @db.Uuid
-  reviewedAt     DateTime?            @map("reviewed_at")
-  reviewNote     String?              @map("review_note")
+  reviewedBy                String?                  @map("reviewed_by") @db.Uuid
+  reviewedAt                DateTime?                @map("reviewed_at")
+  reviewNote                String?                  @map("review_note")
   // When this record was last SUBMITTED for review — not when its draft was
   // created. The review queue counts a reviewer's waiting time from here.
   // MOST RECENT submit, not the first: a rejected record can be resubmitted, so
@@ -258,26 +317,30 @@ model ActivityRecord {
   // seed writes records straight to `approved` without ever submitting them, so
   // a backfill finds nothing for them, and back-dating a guess would reinstate
   // exactly the misstatement this column exists to end.
-  submittedAt    DateTime?            @map("submitted_at")
+  submittedAt               DateTime?                @map("submitted_at")
   // Who withdrew this figure, when, and why. Separate from
   // `reviewNote` on purpose — that is a reviewer's verdict on data still in the
   // inventory, this is the record of taking data OUT of it, and conflating them
   // would let a rejection reason read as a restatement.
-  voidReason     String?              @map("void_reason")
-  voidedBy       String?              @map("voided_by") @db.Uuid
-  voidedAt       DateTime?            @map("voided_at")
+  voidReason                String?                  @map("void_reason")
+  voidedBy                  String?                  @map("voided_by") @db.Uuid
+  voidedAt                  DateTime?                @map("voided_at")
   // The bulk import that created this record, or null for one typed on Data
   // Entry. Written once at create, never by an update. NoAction both ways: a
   // batch cannot be deleted, nor its id changed, while records point at it.
   // Since LP4-01 an organisation that holds records cannot be deleted either
   // (the record keys above are Restrict), so its batches go after its
   // records, never with them.
-  importBatchId  String?              @map("import_batch_id") @db.Uuid
-  importBatch    ImportBatch?         @relation(fields: [importBatchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  evidenceLinks  ActivityRecordEvidence[]
-  createdAt      DateTime             @default(now()) @map("created_at")
-  updatedAt      DateTime             @updatedAt @map("updated_at")
+  importBatchId             String?                  @map("import_batch_id") @db.Uuid
+  importBatch               ImportBatch?             @relation(fields: [importBatchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  evidenceLinks             ActivityRecordEvidence[]
+  createdAt                 DateTime                 @default(now()) @map("created_at")
+  updatedAt                 DateTime                 @updatedAt @map("updated_at")
 
+  // The target of `activity_record_evidence`'s composite foreign key — `id`
+  // alone is already unique; the pair is what lets the database refuse a link
+  // between a record and a file of different subsidiaries.
+  @@unique([id, subsidiaryId])
   // Uniqueness is enforced by a raw NULLS NOT DISTINCT unique index (last
   // defined by the LP3-03 factor-model migration): one live record per
   // (subsidiary, location, year, period, periodValue, category, activityType)
@@ -288,10 +351,6 @@ model ActivityRecord {
   // migration, since the index cannot see it (NULL ≠ 'diesel').
   @@index([subsidiaryId])
   @@index([locationId])
-  // The target of `activity_record_evidence`'s composite foreign key — `id`
-  // alone is already unique; the pair is what lets the database refuse a link
-  // between a record and a file of different subsidiaries.
-  @@unique([id, subsidiaryId])
   @@index([importBatchId])
   @@map("activity_records")
 }
@@ -533,29 +592,29 @@ model FactorRelease {
 }
 
 model EmissionFactor {
-  id             String   @id @default(uuid()) @db.Uuid
-  releaseId      String   @map("release_id") @db.Uuid
+  id             String        @id @default(uuid()) @db.Uuid
+  releaseId      String        @map("release_id") @db.Uuid
   release        FactorRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   category       String // canonical category key, e.g. "Electricity", "Natural Gas"
   // `factorActivityTypeFor`: the category's implicit type, a typed category's
   // fuel or gas, or `unspecified` (non-authoritative releases only).
-  activityType   String   @map("activity_type")
+  activityType   String        @map("activity_type")
   gas            String // CO2e (the total a calculation multiplies) | CO2 | CH4 | N2O | CO2_biogenic
-  gasCoverage    String?  @map("gas_coverage") // all_ghg | co2_only on a CO2e row; NULL otherwise
-  geographyCode  String   @map("geography_code") // UK | TR | EU
-  reportingYear  Int      @map("reporting_year")
-  dataYear       Int      @map("data_year")
+  gasCoverage    String?       @map("gas_coverage") // all_ghg | co2_only on a CO2e row; NULL otherwise
+  geographyCode  String        @map("geography_code") // UK | TR | EU
+  reportingYear  Int           @map("reporting_year")
+  dataYear       Int           @map("data_year")
   scope          Int // 1 (direct) | 2 (purchased energy)
-  scope2Method   String   @map("scope2_method") // location | market | not_applicable
-  calorificBasis String   @map("calorific_basis") // gross | net | not_applicable
-  factorValue    Float    @map("factor_value") // kgCO2e per ONE normalized (base) unit
-  factorUnit     String   @map("factor_unit") // e.g. "kgCO2e/kWh"
-  normalizedUnit String   @map("normalized_unit") // the base unit of its family, e.g. "kWh"
+  scope2Method   String        @map("scope2_method") // location | market | not_applicable
+  calorificBasis String        @map("calorific_basis") // gross | net | not_applicable
+  factorValue    Float         @map("factor_value") // kgCO2e per ONE normalized (base) unit
+  factorUnit     String        @map("factor_unit") // e.g. "kgCO2e/kWh"
+  normalizedUnit String        @map("normalized_unit") // the base unit of its family, e.g. "kWh"
   methodology    String // e.g. "location-based"
   source         String // provenance, e.g. "DEFRA 2024 GHG Conversion Factors"
   version        String // the release's edition when loaded (pre-LP3-03 rows keep their own)
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
 
   // FACTOR_IDENTITY_FIELDS (@tonyai/shared-types), in its order.
   @@unique([releaseId, category, activityType, gas, geographyCode, reportingYear, scope2Method, calorificBasis, normalizedUnit], name: "identity", map: "emission_factors_identity_key")
@@ -613,25 +672,25 @@ model UnitConversion {
 }
 
 model AuditLog {
-  id     String  @id @default(uuid()) @db.Uuid
-  userId String? @map("user_id") @db.Uuid
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
   // The actor's role AT THE TIME of the action — denormalised on purpose: roles
   // change, and an audit trail that renders today's role next to a year-old
   // action would misstate who was allowed to do what. Null on rows written
   // before this column existed (never back-dated with a guess).
-  role   String?
+  role           String?
   // Tenant scope, denormalised from the ACTOR's profile rather than joined from
   // the entity: `report` rows carry a null entityId, and `delete` rows point at
   // a row that no longer exists — neither can be joined. This column is what
   // makes tenant-scoped audit reads possible for every entity.
-  organisationId String? @map("organisation_id") @db.Uuid
+  organisationId String?  @map("organisation_id") @db.Uuid
   // Deliberately TEXT, not an enum — for the same reason as `role` above: a
   // historical record must be able to hold a verb that has since been retired,
   // and a PG enum makes retiring one a migration. The current taxonomy is
   // AUDIT_ACTIONS / AUDIT_ENTITIES in @tonyai/shared-types.
   action         String
   entity         String // e.g. "subsidiary"
-  entityId       String? @map("entity_id")
+  entityId       String?  @map("entity_id")
   diff           Json?
   createdAt      DateTime @default(now()) @map("created_at")
 
