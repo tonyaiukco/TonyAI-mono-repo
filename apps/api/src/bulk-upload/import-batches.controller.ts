@@ -1,11 +1,9 @@
-import { Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
+import { Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 import { ListImportBatchesQueryDto } from './dto/list-import-batches-query.dto';
 import { ImportBatchesService } from './import-batches.service';
-import { UserThrottlerGuard } from './user-throttler.guard';
 
 /**
  * Applied bulk imports. Reads are open to every role, scoped by
@@ -13,7 +11,6 @@ import { UserThrottlerGuard } from './user-throttler.guard';
  * the submit is the bulk submit's own gates, with the batch naming the ids.
  */
 @Controller('import-batches')
-@UseGuards(UserThrottlerGuard)
 export class ImportBatchesController {
   constructor(private readonly service: ImportBatchesService) {}
 
@@ -34,7 +31,6 @@ export class ImportBatchesController {
 
   /** The bulk submit's budget: a batch submit is one. */
   @Post(':id/submit')
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   submit(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string) {
     return this.service.submit(user, id);
   }

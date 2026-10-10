@@ -15,6 +15,7 @@ variable "release" {
     source_sha              = string, release_id = string, supabase_project_ref = string,
     api_digest              = string, web_digest = string,
     database_secret_version = string, backend_secret_version = string,
+    runtime_limits          = optional(map(number), {})
     storage_cleanup_hold    = bool, storage_sweep_interval_seconds = number
   })
   validation {
@@ -25,6 +26,14 @@ variable "release" {
     condition     = var.release.storage_sweep_interval_seconds >= 1 && var.release.storage_sweep_interval_seconds <= 86400 && floor(var.release.storage_sweep_interval_seconds) == var.release.storage_sweep_interval_seconds
     error_message = "Storage sweep interval must be an integer from 1 to 86400 seconds."
   }
+  validation {
+    condition = alltrue([for k, v in var.release.runtime_limits :
+      contains(keys(jsondecode(file("${path.module}/../../config/runtime-limits.json"))), k)
+      && v >= 1 && v <= 2147483647 && floor(v) == v
+    ])
+    error_message = "Runtime limits accept only registered positive integer budgets."
+  }
+
 }
 # Operational settings are plain values, never Key Vault secrets.
 locals {
@@ -36,15 +45,18 @@ locals {
   supabase_url    = "https://${var.release.supabase_project_ref}.supabase.co"
   identity_ids    = { for kind in ["api", "web"] : kind => "${local.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${local.stem}-${kind}" }
   secret_versions = { database-url = var.release.database_secret_version, supabase-service-role-key = var.release.backend_secret_version }
-  api_env = [
+  runtime_limits  = merge(jsondecode(file("${path.module}/../../config/runtime-limits.json")), var.release.runtime_limits)
+  api_env = concat([
     { name = "NODE_ENV", value = "production" }, { name = "PORT", value = "3001" },
+    { name = "NODE_OPTIONS", value = "--max-old-space-size=768" },
+    { name = "PROXY_MODE", value = "azure" }, { name = "AZURE_INGRESS_ONLY", value = "true" },
     { name = "STORAGE_CLEANUP_HOLD", value = var.release.storage_cleanup_hold ? "1" : "0" },
     { name = "STORAGE_SWEEP_INTERVAL_SECONDS", value = tostring(var.release.storage_sweep_interval_seconds) },
     { name = "LOG_FORMAT", value = "json" }, { name = "SUPABASE_URL", value = local.supabase_url },
     { name = "SUPABASE_JWT_SCHEME", value = "jwks" }, { name = "WEB_ORIGIN", value = local.web_origin },
     { name = "DATABASE_URL", secretRef = "database-url" },
     { name = "SUPABASE_SERVICE_ROLE_KEY", secretRef = "supabase-service-role-key" }
-  ]
+  ], [for k, v in local.runtime_limits : { name = k, value = tostring(v) }])
   web_env = [
     { name = "NODE_ENV", value = "production" }, { name = "PORT", value = "3000" },
     { name = "HOSTNAME", value = "0.0.0.0" }, { name = "SUPABASE_URL_INTERNAL", value = local.supabase_url }

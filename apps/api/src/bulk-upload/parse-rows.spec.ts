@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { performance } from 'node:perf_hooks';
+import { withParserDeadline } from '../common/work-deadline';
+import { describe, expect, it, vi } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
 import ExcelJS from 'exceljs';
 import { BULK_UPLOAD_MAX_SIZE_BYTES } from '@tonyai/shared-types';
@@ -1310,3 +1312,18 @@ describe('parseRows — merged cells', () => {
   });
 });
 
+
+
+describe('cooperative parser deadline', () => {
+  it('accepts work before the deadline and refuses at the exact boundary without leaking context', async () => {
+    let time = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => time);
+    vi.stubEnv('IMPORT_PARSE_TIMEOUT_MS', '5');
+    try {
+      await expect(withParserDeadline(() => { time = 4; return parseRows(csv(ROW), 'data.csv'); })).resolves.toHaveLength(1);
+      time = 0;
+      await expect(withParserDeadline(() => { time = 5; return parseRows(csv(ROW), 'data.csv'); })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(parseRows(csv(ROW), 'data.csv')).resolves.toHaveLength(1);
+    } finally { clock.mockRestore(); vi.unstubAllEnvs(); }
+  });
+});

@@ -1,3 +1,5 @@
+import { WorkDeadline } from '../common/work-deadline';
+import { readRuntimeConfig } from '../common/runtime-config';
 import {
   BadRequestException,
   Injectable,
@@ -125,6 +127,7 @@ export class BulkSubmitService {
     // De-duplicated at all, or `[a, a]` reports `a` as `not_submittable`
     // against its own success a moment earlier — a failure the caller caused
     // by sending a list, not a fact about their data.
+    const deadline = new WorkDeadline(readRuntimeConfig().BULK_DEADLINE_MS);
     const requestedIds = [
       ...new Set(recordIds.map((id) => canonicalUuid(id) ?? id)),
     ];
@@ -152,13 +155,22 @@ export class BulkSubmitService {
     // whole call instead of one per record that fails unexpectedly.
     const unexpected = new BatchFailureLog('record');
     const { eligible, rejected } = await this.preflight(user, requestedIds);
-    failed.push(...rejected);
+    let notProcessedCount = 0;
+    const deferred = (id: string) => {
+      notProcessedCount += 1;
+      failed.push({ recordId: id, code: 'not_processed_deadline', message: 'This record was not started before the deadline.' });
+    };
+    if (deadline.expired) {
+      requestedIds.forEach(deferred);
+      eligible.length = 0;
+    } else failed.push(...rejected);
 
     // In a `finally`, because `toIssue` rethrows a role refusal: without it a
     // batch that ended on one would take every unexpected failure before it
     // out of the log, silently.
     try {
       for (const candidate of eligible) {
+        if (deadline.expired) { deferred(candidate.id); continue; }
         try {
           submitted.push(
             this.acceptedFrom(await this.records.submit(user, candidate.id)),
@@ -174,7 +186,9 @@ export class BulkSubmitService {
       }
     }
 
+    const completion = notProcessedCount ? 'deadline_exceeded' : 'completed';
     await this.recordBatch(user, {
+      completion, notProcessedCount,
       bulk: true,
       requested: requestedIds.length,
       // What the caller actually typed, beside what it resolved to. The two
@@ -190,7 +204,7 @@ export class BulkSubmitService {
       ...(options.batchId ? { batchId: options.batchId } : {}),
     });
 
-    return { requested: requestedIds.length, submitted, failed };
+    return { completion, requested: requestedIds.length, submitted, failed };
   }
 
   /**
@@ -301,7 +315,8 @@ export class BulkSubmitService {
     diff: BulkSubmitAuditDiff,
   ): Promise<void> {
     try {
-      await this.audit.record(user, {
+      const write = diff.refused ? this.audit.record.bind(this.audit) : this.audit.finalize.bind(this.audit);
+      await write(user, {
         action: 'bulk_submit',
         entity: 'activity_record',
         // No single entity — the report rows set this precedent.
@@ -310,7 +325,10 @@ export class BulkSubmitService {
       });
     } catch (error) {
       this.logger.error(
-        'bulk submit batch audit row failed to write',
+        `bulk submit batch audit row failed to write ${JSON.stringify({
+          batchId: diff.batchId, requestedCount: diff.requested,
+          ...(!diff.refused ? { submittedCount: diff.submittedCount, failedCount: diff.failedCount, notProcessedCount: diff.notProcessedCount } : {}),
+        })}`,
         error instanceof Error ? error.stack : String(error),
       );
     }

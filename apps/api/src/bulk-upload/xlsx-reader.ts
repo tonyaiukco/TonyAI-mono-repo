@@ -1,3 +1,4 @@
+import { checkParserDeadline } from '../common/work-deadline';
 import { isUtf8 } from 'node:buffer';
 import { StringDecoder } from 'node:string_decoder';
 import { BadRequestException } from '@nestjs/common';
@@ -279,6 +280,7 @@ async function parseXml(part: Buffer, handlers: XmlHandlers): Promise<void> {
   // A leading byte-order mark needs nothing here: saxes skips it.
   const decoder = new StringDecoder('utf8');
   for (let offset = 0; offset < part.length; offset += SLICE_BYTES) {
+    checkParserDeadline();
     if (offset > 0) await yieldToEventLoop();
     parser.write(decoder.write(part.subarray(offset, offset + SLICE_BYTES)));
   }

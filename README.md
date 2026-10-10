@@ -587,7 +587,7 @@ examined, refused rows; unstarted rows equal
 `totalRows - acceptedCount - rejectedCount`. Null counts on an interrupted or
 processing batch mean unknown, never zero. This needs no new database column.
 The response's error outcomes still include unstarted rows, so they are distinct
-from the persisted rejected count. PR B must update batch labels to display all
+from the persisted rejected count. Batch labels display all
 three counts without calling unstarted rows refused.
 
 Non-refused import and submit audit diffs carry `completion` and
@@ -597,19 +597,114 @@ counts follow the persisted batch rule; submit `failedCount` includes unstarted
 ids, and `notProcessedCount` is its deadline subset. `completed` in a response
 only means processing finished, not that all
 rows succeeded. Clients must never automatically retry successful rows or hide
-the report behind a generic timeout. The new label is in both catalogues; its
-current exhaustive English maps are compatibility scaffolding only. **PR B
-must wire the locale-aware label in every bulk consumer before emitting it.**
+the report behind a generic timeout. Locale-aware deadline labels and accepted/refused/unstarted
+counts are wired in every bulk consumer.
 
-**Carried implementation gates:** PR B owns runtime configuration, pre-auth
-parser/proxy protections, user quotas, export/import admission and cooperative
-deadlines, replica/DB pool budgets and production image bounds. PR C owns all
-list consumers plus bounded emissions/report history, the anomaly prior lookup,
-lock/evidence history and targets/denominators. It must preserve anomaly math
-and complete accounting results; neither page-by-page client draining nor silent
-server truncation closes this task. Real tenant isolation, page consistency,
-resource cleanup and deadline tests remain implementation evidence, not claims
-made by this contract PR. Capacity qualification remains LP5-03.
+**Runtime enforcement (LP4-05 PR B).** These are protection defaults, not
+measured capacity. All settings are positive bounded integers; empty, zero,
+negative, fractional, overflowing and incompatible values fail startup. The
+API example environment lists each setting. Deployment accepts only registered
+numeric `release.runtime_limits` overrides; omitted overrides select the defaults
+in `infra/config/runtime-limits.json`. Configuration changes require a restart.
+
+| Setting | Default | Applies to |
+|---|---:|---|
+| `RATE_IP_PER_MINUTE` | 120 | Non-probe requests before authentication/parsing (CORS preflight excluded) |
+| `RATE_READ_PER_MINUTE`, `RATE_WRITE_PER_MINUTE` | 120 / 60 | Verified user, grouped across read/mutation routes |
+| `RATE_EXPORT_PER_MINUTE`, `RATE_IMPORT_PER_MINUTE`, `RATE_SUBMIT_PER_MINUTE` | 5 / 5 / 10 | Verified user, grouped across each expensive operation |
+| `RATE_MAX_KEYS` | 10,000 | Library throttle storage; new keys refused at capacity |
+| `HTTP_MAX_INFLIGHT` | 32 | Authenticated work, after body reception |
+| `HTTP_IP_MAX_INFLIGHT` | 8 | Requests receiving or executing per trusted client IP |
+| `UPLOAD_CONCURRENCY` / `UPLOAD_USER_CONCURRENCY` | 2 / 1 | Buffered uploads globally / per verified user |
+| `SHUTDOWN_GRACE_MS` | 120000 | Drain before provider destruction; at least max(bulk deadline, PDF timeout) + 50000, at most 3600000 |
+| `MUTATION_CONCURRENCY`, `MUTATION_USER_CONCURRENCY` | 2 / 1 | Mutations globally and per verified user |
+| `HTTP_HEADER_BYTES` | 16,384 | HTTP parser header bytes |
+| `HTTP_HEADERS_TIMEOUT_MS`, `HTTP_BODY_TIMEOUT_MS`, `HTTP_KEEPALIVE_MS` | 10,000 / 30,000 / 5,000 | Header reception, body reception, idle keep-alive |
+| `BODY_MAX_BYTES`, `BODY_MAX_PARAMETERS` | 102,400 / 100 | JSON/form body bytes and flat form parameters |
+| `IMPORT_CONCURRENCY`, `IMPORT_PARSE_TIMEOUT_MS` | 1 / 5,000 | Import work after body reception; parsing checkpoints |
+| `BULK_DEADLINE_MS` | 60,000 | Deadline for starting additional batch rows |
+| `REPORT_CONCURRENCY`, `PDF_TIMEOUT_MS` | 1 / 30,000 | Export admission before assembly; PDF renderer |
+| `REPORT_RECORD_LIMIT` | 5,000 | Committed plus withdrawn export rows |
+| `REPORT_EVIDENCE_LINK_LIMIT`, `REPORT_MAX_BYTES` | 10,000 / 20,971,520 | Export evidence links and source/output bytes |
+| `DB_CONNECTION_LIMIT`, `DB_POOL_TIMEOUT_SECONDS` | 5 / 5 | Prisma connection pool and acquisition wait |
+
+Slow body reception uses the per-IP cap and, for multipart, the global and
+verified-user upload slots. HTTP work, mutation, import and export slots are
+acquired after body reception; a refused or aborted upload settles its interceptor
+and releases every slot. Incomplete previews cannot be applied: split the file
+and preview it again. Report reads omit unused free-form `input` data.
+
+On SIGTERM/SIGINT, admission stops before waiting for existing work and closing
+Prisma/Chromium. Azure's termination grace follows `SHUTDOWN_GRACE_MS`; the drain
+poll window includes an additional 30 seconds. This does not guarantee audit
+persistence during database/network outage. Interactive deployments save and show
+the plan, ask for confirmation, then drain and apply that exact plan.
+
+Pool settings come from the runtime environment. Valid legacy URL values are
+overridden; malformed or duplicate values fail startup. Hosted runtime secrets
+must omit `connection_limit` and `pool_timeout`; secret verification rejects them.
+Re-store and verify an exact secret version when migrating an existing URL.
+
+The integration/E2E workflows set test-only rate quotas to 10000/minute because
+all harness clients share loopback. E2E retains the production import quota
+(5/minute) for its explicit isolation test. Local authorized harness runs should
+set the same `RATE_*_PER_MINUTE` overrides; production defaults remain pinned by
+DB-free tests. No local integration or E2E result is implied.
+
+
+`PROXY_MODE=direct` is the default and ignores forwarded headers. `cidr` requires
+explicit `TRUSTED_PROXY_CIDRS`; `azure` requires `AZURE_INGRESS_ONLY=true` and
+uses Azure ingress's rightmost supplied forwarded address. Do not enable Azure
+mode on a directly reachable Node listener. Staging verification must exercise
+spoofed forwarded headers through the actual ingress before public acceptance.
+Authentication and tenant scoping remain in the existing guard; limits use its
+verified user identity. GET and implicit HEAD exports share their budget, as do
+case variants accepted by Express. Exact public health/readiness probes are
+exempt; authenticated synthetic checks are not.
+
+Size refusals are 413, admission/quota refusals 429 with CORS-exposed
+`Retry-After`, and scoped report-budget refusals the fixed 422 body. Malformed,
+unsupported/compressed and timed-out request bodies receive controlled 4xx
+responses. An uncertain mutation failure is never relabelled as safe to retry.
+Non-preflight API responses carry CSP, frame denial, nosniff, referrer/permissions policies,
+and production HSTS. Multipart has finite files/parts/fields plus a complete
+request-byte ceiling; existing 2 MiB import, 10 MiB evidence, 1,000-row and
+16 MiB XLSX expansion ceilings remain. Multipart ceilings are inclusive; fixed parser allowances are one file, four
+16 KiB fields (shared evidence: two 64 KiB fields), and `UPLOAD_CONCURRENCY` simultaneous
+multipart requests (default two). The whole request is additionally capped at the file ceiling
+plus 64 KiB, including framing. Parser time is checked between bounded
+chunks; it is not an OS preemption guarantee.
+
+The batch deadline stops new rows, waits for the in-flight operation, and then
+awaits final bookkeeping. Import batch closure and its final audit row share a
+transaction. A stable internal audit UUID makes up to three finalization
+attempts idempotent across lost acknowledgments. Persistent database failure is
+logged and does not erase the enumerated response; successful persistence is
+not guaranteed during an outage. Historic audit rows are unchanged. The
+response deadline is cooperative, so final latency includes the settled row
+and bounded finalization attempts. The retry count is bounded; Prisma transaction timers do not prove a strict wall-clock bound during COMMIT or a network outage. No automatic retry of successful rows occurs.
+
+Only one PDF render owns Chromium at a time, even when `REPORT_CONCURRENCY`
+is raised for other formats. Header expiry checks run at most one second apart.
+
+The pilot uses one API replica/process with memory-local counters. A deployment
+enters maintenance: the deployment tool deactivates old API revisions and
+requires zero remaining replicas before applying the new revision. Failures
+leave maintenance visible. Same-release retries leave the already active API
+untouched; an existing inactive target requires a new reviewed manifest with a fresh `release_id`. The
+tool does not automatically reactivate a possibly
+overlapping revision. Counters reset on restart. Raising replica count requires
+shared throttling and new qualification. API resources remain 1 CPU/2 GiB with a
+768 MiB Node heap and an image-level process reaper; Compose additionally caps
+PIDs. Chromium/native memory is covered by the container limit, not Node's heap.
+The API image retains compiled runtime/CLI code, generated Prisma and production
+dependencies; its base remains the ECR Public mirror.
+
+PR C still owns paginated reads/consumers, bounded history/anomaly/target paths
+and broader aggregate evidence payload protection. PR B's evidence-link budget
+is specific to export assembly. Neither runtime guard tests nor image smoke
+establish production throughput, tenant isolation in PostgreSQL, or cloud
+acceptance. Those claims require their respective live checks and LP5-03.
 
 PR C changes period-lock history from `reportingYear DESC, createdAt DESC` to
 `createdAt DESC, id DESC`, and evidence history from ascending to descending

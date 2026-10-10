@@ -11,6 +11,28 @@ import tempfile
 
 INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
+    ('runtime drain callback skipped', 'terraform_run.py', '                before_apply()', '                pass'),
+    ('runtime confirmation skipped', 'terraform_run.py', "            if action != 'approved-apply':", '            if False:'),
+    ('runtime deploy drain skipped', 'deploy_apps.py', "before_apply=lambda: drain(inputs['foundation'], inputs['release']['release_id'],\n                                          attempts=(grace + 30000 + 1999) // 2000)", 'before_apply=lambda: None'),
+    ('runtime inactive revisions hidden', 'drain_api.py', "'revision', 'list', '--all', *scope", "'revision', 'list', *scope"),
+    ('runtime inactive target reused', 'drain_api.py', "        if not target['properties']['active']:", '        if False:'),
+    ('runtime overlap replicas ignored', 'drain_api.py', ' or replicas:', ':'),
+    ('runtime replica result shape ignored', 'drain_api.py', '            if not isinstance(replicas, list):', '            if False:'),
+    ('runtime revision prefix unchecked', 'drain_api.py', "        or not row['name'].startswith(name + '--')\n", ''),
+    ('runtime scale unchecked', 'deploy_apps.py', "            if scale.get('minReplicas') != 1 or scale.get('maxReplicas') != 1:", '            if False:'),
+    ('runtime resources unchecked', 'deploy_apps.py', "            if type(resources.get('cpu')) not in (int, float) or resources.get('cpu') != 1 or resources.get('memory') != '2Gi':", '            if False:'),
+    ('runtime environment unchecked', 'deploy_apps.py', "            if any(env.get(k, {}).get('value') != v for k, v in expected_env(release).items()):", '            if False:'),
+    ('runtime grace unchecked', 'deploy_apps.py', "            if properties['template'].get('terminationGracePeriodSeconds') != (grace + 999) // 1000:", '            if False:'),
+    ('runtime active revision unchecked', 'deploy_apps.py', "            if [r['name'] for r in active if r['properties']['active']] != [stem + '-api--' + release['release_id']]:", '            if False:'),
+    ('runtime process topology unchecked', 'deploy_apps.py', "        if len(properties['template']['containers']) != 1:", '        if False:'),
+    ('runtime release budgets unchecked', 'terraform_run.py', "    validate_limits(release.get('runtime_limits', {}))", '    pass'),
+    ('runtime proxy mode weakened', 'runtime_limits.py', "'PROXY_MODE': 'azure'", "'PROXY_MODE': 'direct'"),
+    ('runtime header compatibility skipped', 'runtime_limits.py', "or limits['HTTP_HEADERS_TIMEOUT_MS'] > limits['HTTP_BODY_TIMEOUT_MS']", 'or False'),
+    ('runtime mutation compatibility skipped', 'runtime_limits.py', "or limits['MUTATION_USER_CONCURRENCY'] > limits['MUTATION_CONCURRENCY']", 'or False'),
+    ('runtime pool compatibility skipped', 'runtime_limits.py', "or limits['MUTATION_CONCURRENCY'] >= limits['DB_CONNECTION_LIMIT']", 'or False'),
+    ('runtime work pool compatibility skipped', 'runtime_limits.py', "or limits['IMPORT_CONCURRENCY'] + limits['REPORT_CONCURRENCY'] >= limits['DB_CONNECTION_LIMIT']", 'or False'),
+    ('runtime secret pool budget accepted', 'pooler.py', "    if port == 6543 and {'connection_limit', 'pool_timeout'} & set(query):", '    if False:'),
+
     ('fixture exact owner version guard removed', 'cloud_smoke.py',
      "    if not re.fullmatch(r'[a-f0-9]{32}', direct_secret_version or ''):\n        raise SafeFailure('Fixture provisioning requires an exact --direct-secret-version.')\n", ''),
     ('fixture owner URL guard removed', 'cloud_smoke.py',
@@ -93,7 +115,7 @@ MUTANTS = [
     ('principal credential check removed', 'configure_oidc.py',
      "if principal.get('passwordCredentials') != [] or principal.get('keyCredentials') != []:", 'if False:'),
     ('runtime URL validation skipped', 'cloud_ops.py', "    validate_pooler(data['value'], project, 6543)", '    pass'),
-    ('query allowlist removed', 'pooler.py', "set(query) - {'pgbouncer', 'sslmode', 'sslaccept', 'sslcert', 'connection_limit'}", 'False'),
+    ('query allowlist removed', 'pooler.py', "set(query) - {'pgbouncer', 'sslmode', 'sslaccept', 'sslcert', 'connection_limit', 'pool_timeout'}", 'False'),
     ('public download denial removed', 'cloud_ops.py', 'if public_status not in (400, 401, 403, 404):', 'if False:'),
     ('build Auth validation removed', 'check_browser_key.py', '    validate_auth_settings(settings)', '    pass'),
     ('redirect handler removed', 'cloud_ops.py', 'build_opener(NoRedirect)', 'build_opener()'),
@@ -145,7 +167,8 @@ def main():
             # New provenance tests read the actual migration/lockfile inputs; the
             # local-only guard test executes its copied script, never the original.
             root = INFRA.parent
-            for relative in ('pnpm-lock.yaml', 'scripts/rls-probes.mjs', 'scripts/compose-dev.sh', 'packages/db/scripts/runtime-role.mjs'):
+            for relative in ('pnpm-lock.yaml', 'scripts/rls-probes.mjs', 'scripts/compose-dev.sh', 'packages/db/scripts/runtime-role.mjs',
+                             'apps/api/src/common/runtime-config.ts', 'apps/api/Dockerfile', 'apps/web/Dockerfile', 'docker-compose.yml'):
                 destination = target.parent / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(root / relative, destination)
@@ -172,6 +195,7 @@ def main():
                 'bucket MIME readback removed': 'test_review_boundaries.py',
             }
             pattern = overrides.get(name, pattern)
+            if name.startswith('runtime ') and filename != 'cloud_ops.py': pattern = 'test_runtime_[dl]*.py'
             control = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(target / 'tests'), '-p', pattern],
                                      cwd=target.parent, capture_output=True)
             if control.returncode:

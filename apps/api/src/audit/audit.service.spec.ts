@@ -292,3 +292,39 @@ describe('AuditService', () => {
     });
   });
 });
+
+describe('settled batch audit finalization', () => {
+  it('recognizes a commit whose acknowledgement was lost without duplicating audit or closure', async () => {
+    const saved = new Map<string, unknown>();
+    const tx = { auditLog: {
+      findUnique: vi.fn(async ({ where }) => saved.get(where.id) ?? null),
+      create: vi.fn(async ({ data }) => { saved.set(data.id, data); return data; }),
+    } };
+    let calls = 0;
+    const prisma = { $transaction: vi.fn(async (work) => {
+      await work(tx);
+      if (++calls === 1) throw new Error('acknowledgement lost');
+    }) };
+    const close = vi.fn();
+    await new AuditService(prisma as never).finalize(makeUser(), { action: 'bulk_import', entity: 'import_batch', entityId: 'batch' }, close);
+    expect(saved.size).toBe(1);
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+  });
+  it('bounds persistent failure and never reports successful finalization', async () => {
+    const prisma = { $transaction: vi.fn().mockRejectedValue(new Error('offline')) };
+    await expect(new AuditService(prisma as never).finalize(makeUser(), { action: 'bulk_submit', entity: 'activity_record', entityId: null })).rejects.toThrow('offline');
+    expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('review regression M6', () => {
+  it('M6: runs the batch closure on the transaction client', async () => {
+    const tx = { auditLog: { findUnique: vi.fn(async () => null), create: vi.fn(async ({ data }: { data: unknown }) => data) } };
+    const prisma = { $transaction: vi.fn(async (work: (t: unknown) => unknown) => work(tx)) };
+    const close = vi.fn();
+    await new AuditService(prisma as never).finalize(makeUser(), { action: 'bulk_import', entity: 'import_batch', entityId: 'batch' }, close);
+    expect(close).toHaveBeenCalledWith(tx);
+  });
+});

@@ -192,3 +192,49 @@ to their separate roles.
 Resource contracts: [Container Apps jobs](https://learn.microsoft.com/en-us/azure/templates/microsoft.app/2025-01-01/jobs),
 [log alerts](https://learn.microsoft.com/en-us/azure/templates/microsoft.insights/2023-12-01/scheduledqueryrules),
 [console log schema](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/containerappconsolelogs).
+
+
+### LP4-05 runtime limits and maintenance rollouts
+
+API quotas and admission are process-local. Keep the API at one serving replica;
+never scale out or reactivate an old revision while a replacement may be live.
+Use `deploy_apps.py`: it creates the reviewed plan, deactivates outgoing API
+revisions, waits for their replicas to disappear, then applies and verifies the
+candidate. Owner-run first creation requires a successful app inventory proving
+the API is absent; a failed lookup alone never permits apply. This intentionally creates a maintenance interval. A failed drain or
+apply needs operator inspection; automatic reactivation could overlap a candidate
+whose apply acknowledgment was lost. An already active target (same-release
+retry or web-only change) is left active if no other revision has replicas. If
+the target already exists but is inactive, the tool refuses: inspect both
+revision and replica lists, confirm no overlap, and explicitly recover the
+reviewed target before retrying. Rollback to an existing inactive revision also
+requires this owner recovery; do not assume a no-op Terraform apply activates it.
+
+`release.runtime_limits` accepts registered integer settings only. See README's
+runtime table and `infra/config/runtime-limits.json`. Recheck API startup and
+actual ingress with spoofed `X-Forwarded-For`, quota refusal and `Retry-After`
+after deployment. Azure proxy mode is valid only while the Node target port is
+reachable exclusively through trusted ingress. Readiness probes are exempt from
+user quotas. Restart clears counters. No setting here is a throughput claim;
+LP5-03 owns load and recovery qualification.
+
+Runtime rollout corrections: the interactive path saves and shows the plan and
+asks for confirmation before deactivating any API revision. A declined plan
+leaves the API serving. Revision inventory includes inactive revisions (`--all`),
+and their replicas must be absent before replacement. The narrow deactivation
+step is the deployment tool's exception to Terraform-only writes; never manually
+activate a revision. Recovery uses a new manifest with a fresh `release_id`.
+
+The API has a 120-second default termination grace, derived from
+`SHUTDOWN_GRACE_MS`; it must exceed the larger bulk/PDF deadline by 50 seconds (15 seconds for the last row, 30 for finalization attempts, 5 for close).
+New admission stops before waiting for settled work and destroying providers.
+Drain polling allows the configured grace plus 30 seconds. Cloud command latency
+can extend the polling duration; a failed apply/drain leaves maintenance visible.
+Persistent database failure can still prevent final bookkeeping.
+
+Before rollout, re-store any runtime URL carrying `connection_limit` or
+`pool_timeout` without those parameters and verify the selected secret version
+with runbook 05. Secret verification rejects URL pool parameters; the runtime
+also overrides valid legacy values from environment budgets, preventing a
+conflicting old pool setting from blocking boot after drain. CI is not granted
+secret-value read access. Malformed/duplicate URL parameters remain invalid.

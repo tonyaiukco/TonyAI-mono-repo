@@ -1,3 +1,4 @@
+import { QueryTooBroadError } from '../common/api-error';
 import { Injectable } from '@nestjs/common';
 import { ResourceNotFoundError } from '../common/api-error';
 import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
@@ -340,6 +341,7 @@ export class EmissionsService {
   async summary(
     user: RequestUser,
     query: EmissionsSummaryQueryDto,
+    recordLimit?: number,
   ): Promise<EmissionsSummary> {
     // Tenant scope: intersect any requested subsidiaryId with the accessible set.
     let subsidiaryFilter: Prisma.StringFilter | string;
@@ -355,6 +357,7 @@ export class EmissionsService {
 
     const [rows, subs] = await Promise.all([
       this.prisma.activityRecord.findMany({
+        ...(recordLimit === undefined ? {} : { take: recordLimit + 1, omit: { input: true } }),
         where: {
           subsidiaryId: subsidiaryFilter,
           reportingYear: query.year,
@@ -368,6 +371,8 @@ export class EmissionsService {
         select: { id: true, tradingName: true, legalName: true },
       }),
     ]);
+
+    if (recordLimit !== undefined && rows.length > recordLimit) throw new QueryTooBroadError();
 
     const nameById = new Map(
       subs.map((s) => [s.id, s.tradingName || s.legalName]),

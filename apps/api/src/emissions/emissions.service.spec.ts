@@ -1791,3 +1791,16 @@ describe('the shared completeness primitives', () => {
     });
   });
 });
+
+it('bounds the report summary and omits unused input while preserving the standalone query', async () => {
+  const prisma = createPrismaMock();
+  prisma.subsidiary.findMany.mockResolvedValue([]);
+  prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), makeRecord()]);
+  const service = new EmissionsService(prisma as never);
+  await expect(service.summary(superAdmin(), { year: 2024 }, 2)).resolves.toMatchObject({ recordCount: 2 });
+  expect(prisma.activityRecord.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 3, omit: { input: true } }));
+  prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), makeRecord(), makeRecord()]);
+  await expect(service.summary(superAdmin(), { year: 2024 }, 2)).rejects.toMatchObject({ status: 422 });
+  await service.summary(superAdmin(), { year: 2024 });
+  expect(prisma.activityRecord.findMany.mock.lastCall?.[0]).not.toHaveProperty('take');
+});

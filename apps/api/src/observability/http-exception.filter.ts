@@ -9,6 +9,7 @@ import { toErrorBody } from '../common/api-error';
 import { JsonLogger } from './json-logger';
 import { currentRequestContext } from './request-context';
 import { captureException } from './sentry';
+import { CapacityError } from '../common/runtime-limits';
 
 /**
  * The exception filter: it LOGS and REPORTS every failure, and gives every
@@ -31,8 +32,21 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const http = host.switchToHttp();
     const request = http.getRequest();
     const response = http.getResponse();
+    request?.runtimeLease?.release();
 
-    const isHttp = exception instanceof HttpException;
+    // A read can fail to acquire a connection after authentication succeeds.
+    // Do not disguise an uncertain mutation outcome as a retryable refusal.
+    if (['GET', 'HEAD'].includes(request?.method)
+      && (exception as { code?: string })?.code === 'P2024') exception = new CapacityError();
+    const httpError = exception instanceof HttpException ? exception : undefined;
+    const parserType = typeof exception === 'object' && exception !== null
+      ? (exception as { type?: string }).type : undefined;
+    const abortedUpload = request?.runtimeMultipart && exception instanceof Error
+      && ['Request aborted', 'Request closed'].includes(exception.message);
+    const parserStatus = abortedUpload ? 400 : parserType ? ({
+      'entity.parse.failed': 400, 'request.aborted': 400, 'request.size.invalid': 400,
+      'encoding.unsupported': 415, 'charset.unsupported': 415, 'parameters.too.many': 413,
+    } as Record<string, number>)[parserType] : undefined;
     // body-parser throws before any Nest pipe or middleware runs, so this
     // arrives as a plain Error with a `status` and no request context — and
     // without this branch it collapsed to a 500, logged at ERROR and shipped to
@@ -40,27 +54,27 @@ export class HttpExceptionFilter implements ExceptionFilter {
     // and WP16 PR 3 made an oversized body a plausible LEGITIMATE request for
     // the first time (a subsidiary create carries its locations).
     const isTooLarge =
-      !isHttp &&
+      !httpError &&
       typeof exception === 'object' &&
       exception !== null &&
       (exception as { type?: string }).type === 'entity.too.large';
 
-    const status = isHttp
-      ? exception.getStatus()
+    const status = httpError
+      ? httpError.getStatus()
       : isTooLarge
         ? HttpStatus.PAYLOAD_TOO_LARGE
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+        : parserStatus ?? HttpStatus.INTERNAL_SERVER_ERROR;
     const body = toErrorBody(
       status,
-      isHttp
-        ? exception.getResponse()
+      httpError
+        ? httpError.getResponse()
         : isTooLarge
           ? {
               message:
                 'Request body is too large. If you are creating a subsidiary with many locations, add them in smaller batches.',
               error: 'Payload Too Large',
             }
-          : undefined,
+          : parserStatus ? { message: 'Invalid request body.' } : undefined,
     );
 
     const ctx = currentRequestContext();
@@ -86,7 +100,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
 
     // Streamed downloads (@Res) may already be mid-flight — never double-send.
-    if (response?.headersSent) return;
+    if (response?.headersSent || response?.destroyed) return;
+    if (exception instanceof CapacityError) response.setHeader('Retry-After', exception.retryAfter);
     response.status(status).json(body);
   }
 }

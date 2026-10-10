@@ -43,6 +43,8 @@ jobs:
             terraform -chdir="infra/terraform/$root" validate -no-color
             terraform -chdir="infra/terraform/$root" test -no-color
           done
+      - name: Terraform runtime budget mutation checks
+        run: python3 infra/tests/check_runtime_terraform_mutations.py
       - name: Terraform secret grant mutation checks
         run: python3 infra/tests/check_grant_mutations.py
       - name: Docker context excludes infrastructure secrets and state

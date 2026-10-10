@@ -25,7 +25,8 @@ resource "azapi_resource" "app" {
     }
     template = {
       # Secret-version changes always create a revision through a new release_id.
-      revisionSuffix = var.release.release_id
+      terminationGracePeriodSeconds = each.key == "api" ? ceil(local.runtime_limits.SHUTDOWN_GRACE_MS / 1000) : 30
+      revisionSuffix                = var.release.release_id
       containers = [{
         name      = each.key
         image     = "${local.registry}/tonyai/${each.key}@${each.value.digest}"
@@ -39,9 +40,19 @@ resource "azapi_resource" "app" {
           failureThreshold = kind == "Startup" ? 60 : 3
         }]
       }]
-      scale = { minReplicas = 0, maxReplicas = 2, rules = [{ name = "http", http = { metadata = { concurrentRequests = "10" } } }] }
+      scale = {
+        minReplicas = each.key == "api" ? 1 : 0
+        maxReplicas = each.key == "api" ? 1 : 2
+        rules       = each.key == "api" ? [] : [{ name = "http", http = { metadata = { concurrentRequests = "10" } } }]
+      }
     }
   } }
   response_export_values = ["properties.configuration.ingress.fqdn", "properties.latestReadyRevisionName"]
-  lifecycle { prevent_destroy = true }
+  lifecycle {
+    prevent_destroy = true
+    precondition {
+      condition     = local.runtime_limits.UPLOAD_USER_CONCURRENCY <= local.runtime_limits.UPLOAD_CONCURRENCY && local.runtime_limits.SHUTDOWN_GRACE_MS >= max(local.runtime_limits.BULK_DEADLINE_MS, local.runtime_limits.PDF_TIMEOUT_MS) + 50000 && local.runtime_limits.SHUTDOWN_GRACE_MS <= 3600000 && local.runtime_limits.HTTP_HEADERS_TIMEOUT_MS <= local.runtime_limits.HTTP_BODY_TIMEOUT_MS && local.runtime_limits.MUTATION_USER_CONCURRENCY <= local.runtime_limits.MUTATION_CONCURRENCY && local.runtime_limits.MUTATION_CONCURRENCY < local.runtime_limits.DB_CONNECTION_LIMIT && local.runtime_limits.IMPORT_CONCURRENCY + local.runtime_limits.REPORT_CONCURRENCY < local.runtime_limits.DB_CONNECTION_LIMIT
+      error_message = "Incompatible runtime budgets."
+    }
+  }
 }

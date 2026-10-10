@@ -1,7 +1,9 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, Reflector } from '@nestjs/core';
+import { RuntimeLimits } from './common/runtime-limits';
+import { RuntimeAuthGuard } from './common/runtime-request';
+import { PrismaService } from './prisma/prisma.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
@@ -24,18 +26,6 @@ import { RequestContextMiddleware } from './observability/request-context.middle
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    // Configured globally because the module has to be, but its guard is NOT
-    // an APP_GUARD: only the bulk-upload controller opts in with
-    // `@UseGuards(ThrottlerGuard)`. WP9 owns global rate-limit tuning, and
-    // turning it on everywhere as a side effect of WP8 would pre-empt it.
-    // The library's own in-memory storage (per replica). It needs >= 6.7.0:
-    // earlier releases cleared every key's expiry timers when one key's block
-    // ended — see `common/throttler-storage.contract.spec.ts`. No `storage`
-    // option, so Nest builds one per app and two apps in a process share no
-    // counts.
-    ThrottlerModule.forRoot({
-      throttlers: [{ name: 'default', ttl: 60_000, limit: 60 }],
-    }),
     PrismaModule,
     AuditModule,
     AuthModule,
@@ -53,7 +43,12 @@ import { RequestContextMiddleware } from './observability/request-context.middle
     BulkUploadModule,
   ],
   controllers: [HealthController],
-  providers: [{ provide: APP_GUARD, useClass: SupabaseAuthGuard }],
+  providers: [RuntimeLimits, {
+    provide: APP_GUARD,
+    inject: [Reflector, PrismaService, RuntimeLimits],
+    useFactory: (reflector: Reflector, prisma: PrismaService, limits: RuntimeLimits) =>
+      new RuntimeAuthGuard(new SupabaseAuthGuard(reflector, prisma), limits),
+  }],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

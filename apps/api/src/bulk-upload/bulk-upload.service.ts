@@ -1,3 +1,5 @@
+import { WorkDeadline, withParserDeadline } from '../common/work-deadline';
+import { readRuntimeConfig } from '../common/runtime-config';
 import {
   BadRequestException,
   Injectable,
@@ -134,6 +136,7 @@ export class BulkUploadService {
     file: Express.Multer.File | undefined,
     options: BulkUploadOptionsDto,
   ): Promise<BulkUploadReportDTO> {
+    const deadline = new WorkDeadline(readRuntimeConfig().BULK_DEADLINE_MS);
     const { dryRun } = options;
     // The DTO is what makes this a boolean over HTTP; this is what makes the
     // service refuse rather than guess for any other caller. The loop writes
@@ -156,7 +159,7 @@ export class BulkUploadService {
       this.assertAcceptableFile(file);
       this.assertHasOrganisation(user);
       const upload = file as Express.Multer.File;
-      const parsed = await parseRows(upload.buffer, upload.originalname);
+      const parsed = await withParserDeadline(() => parseRows(upload.buffer, upload.originalname));
       if (parsed.length === 0) {
         throw new BadRequestException('The file has no data rows.');
       }
@@ -183,6 +186,7 @@ export class BulkUploadService {
     // Batch-scoped, never a field: see `BatchFailureLog`. It is what keeps the
     // unexpected branch to one log line per import instead of one per row.
     const unexpected = new BatchFailureLog('row');
+    let notProcessedCount = 0;
 
     // The loop is wrapped so the batch's log line is written even when it
     // rethrows. The backstop below fires only while `accepted.length === 0`,
@@ -191,6 +195,11 @@ export class BulkUploadService {
     // incident most worth keeping, and silently.
     try {
       for (const parsed of rows) {
+        if (deadline.expired) {
+          notProcessedCount += 1;
+          errors.push({ row: parsed.row, column: null, code: 'not_processed_deadline', message: 'This row was not started before the deadline.' });
+          continue;
+        }
         try {
           await this.processRow(
             user,
@@ -225,38 +234,33 @@ export class BulkUploadService {
         this.logger.error(`bulk import: ${failures.message}`, failures.trace);
       }
     }
-    if (batchId) {
-      await this.closeBatch(batchId, 'completed', accepted.length, errors.length);
-    }
-
-    // Written even on a dry run, and even when every row failed: `audit_log`
-    // is append-only, and on an apply this row is the summary the per-record
-    // rows cannot give.
-    //
-    // Caught rather than propagated, and this is the deliberate order of
-    // precedence: by the time it runs, up to a thousand records are already
-    // written and their OWN audit rows with them. Letting it throw would hand
-    // the caller a 500 with no report — a partial import nobody can enumerate,
-    // which is the exact failure this module's design exists to prevent.
+    const completion = notProcessedCount ? 'deadline_exceeded' : 'completed';
+    const rejectedCount = errors.length - notProcessedCount;
+    // Preserve the full settled response even if the database stays unavailable.
+    // A finalization outage is logged; it is never represented as persisted success.
     try {
-      await this.recordBatch(
-        user,
-        this.batchDiff(upload, dryRun, {
-          totalRows: rows.length,
-          acceptedCount: accepted.length,
-          rejectedCount: errors.length,
-          ...(batchId ? { batchId } : {}),
+      await this.audit.finalize(user, {
+        action: 'bulk_import',
+        ...(batchId ? { entity: 'import_batch' as const, entityId: batchId }
+          : { entity: 'activity_record' as const, entityId: null }),
+        diff: this.batchDiff(upload, dryRun, {
+          totalRows: rows.length, acceptedCount: accepted.length, rejectedCount,
+          completion, notProcessedCount, ...(batchId ? { batchId } : {}),
         }),
-        batchId,
-      );
+      }, batchId ? (tx) => tx.importBatch.update({
+        where: { id: batchId },
+        data: { status: notProcessedCount ? 'failed' : 'completed', acceptedCount: accepted.length,
+          rejectedCount, completedAt: new Date() },
+      }) : undefined);
     } catch (error) {
-      this.logger.error(
-        `bulk import batch audit row failed to write (${accepted.length} records were created)`,
-        error instanceof Error ? error.stack : String(error),
-      );
+      this.logger.error(`bulk import finalization failed; persisted completion is unknown ${JSON.stringify({
+        batchId, totalRows: rows.length, acceptedCount: accepted.length, rejectedCount, notProcessedCount,
+      })}`,
+        error instanceof Error ? error.stack : String(error));
     }
 
     return {
+      completion,
       dryRun,
       fileName: this.shownFileName(upload),
       sizeBytes: upload.size,
@@ -929,6 +933,8 @@ export class BulkUploadService {
           acceptedCount: number;
           rejectedCount: number;
           batchId?: string;
+          completion?: 'completed' | 'deadline_exceeded';
+          notProcessedCount?: number;
         },
   ): BulkImportAuditDiff {
     return {

@@ -60,6 +60,14 @@ jobs:
       - uses: ./.github/actions/supabase-stack
 
       - name: PostgreSQL integration tests
+        # Harness traffic shares loopback; production defaults are pinned by unit tests.
+        env:
+          RATE_IP_PER_MINUTE: "10000"
+          RATE_READ_PER_MINUTE: "10000"
+          RATE_WRITE_PER_MINUTE: "10000"
+          RATE_EXPORT_PER_MINUTE: "10000"
+          RATE_SUBMIT_PER_MINUTE: "10000"
+          RATE_IMPORT_PER_MINUTE: "10000"
         run: pnpm --filter @tonyai/api test:int
 
       - name: Diagnostics
