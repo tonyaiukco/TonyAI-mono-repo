@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "use-intl";
+
 import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -173,6 +175,7 @@ export function PreviousSubmissions({
   onSubmitted,
   onEvidenceAttached,
 }: PreviousSubmissionsProps) {
+  const tErrors = useTranslations("errors");
   const [selected, setSelected] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -198,7 +201,7 @@ export function PreviousSubmissions({
   // `selectableIds` is already empty when there is no user, so this is the
   // whole condition.
   const showSelection = selectableIds.length > 0;
-  const summary = report ? summariseSubmit(report) : null;
+  const summary = report ? summariseSubmit(report, tErrors) : null;
 
   const attach = useMemo(
     () => attachableRecords(records, user, locks),
@@ -439,9 +442,9 @@ export function PreviousSubmissions({
                   {failuresToShow(report.failed).shown.map((f) => (
                     <li key={f.recordId}>
                       <span className="font-medium">
-                        {SUBMIT_ISSUE_LABEL[f.code]}
+                        {f.code === "not_processed_deadline" ? tErrors("bulkIssues.not_processed_deadline") : SUBMIT_ISSUE_LABEL[f.code]}
                       </span>
-                      <span className="block opacity-80">{f.message}</span>
+                      {f.code !== "not_processed_deadline" && <span className="block opacity-80">{f.message}</span>}
                     </li>
                   ))}
                 </ul>

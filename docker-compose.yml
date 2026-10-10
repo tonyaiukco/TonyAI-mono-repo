@@ -37,8 +37,11 @@ services:
       SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT:-local-docker}"
     extra_hosts:
       - "host.docker.internal:host-gateway" # Linux parity; no-op on Docker Desktop
-    shm_size: 1gb # Chromium renders PDFs in this container
-    init: true # reap Chromium child processes (PID 1)
+    shm_size: 256mb
+    cpus: 1.0
+    mem_limit: 2g
+    stop_grace_period: 120s # matches the API default SHUTDOWN_GRACE_MS
+    pids_limit: 256 # image tini reaps Chromium children
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -46,6 +49,10 @@ services:
       start_period: 15s
 
   web:
+    cpus: 0.5
+    mem_limit: 1g
+    pids_limit: 128
+    init: true
     build:
       context: .
       dockerfile: apps/web/Dockerfile

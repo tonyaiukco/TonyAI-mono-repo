@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "use-intl";
+
 import { useCallback, useEffect, useState } from "react";
 import { Download, FileSpreadsheet, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
@@ -59,6 +61,7 @@ export function RecentImports({
   refreshKey: number;
   onSubmitted: () => void;
 }) {
+  const tErrors = useTranslations("errors");
   const [batches, setBatches] = useState<ImportBatchDTO[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [confirming, setConfirming] = useState<ImportBatchDTO | null>(null);
@@ -95,9 +98,9 @@ export function RecentImports({
     setBusyId(batch.id);
     try {
       const report = await api.submitImportBatch(batch.id);
-      const summary = summariseSubmit(report);
+      const summary = summariseSubmit(report, tErrors);
       // The panel's "see below" has no list below it here: say why instead.
-      const description = submitFailureDetail(report) ?? undefined;
+      const description = submitFailureDetail(report, tErrors("bulkIssues.not_processed_deadline"), tErrors) ?? undefined;
       if (summary.tone === "clean") toast.success(summary.headline);
       else toast.warning(summary.headline, { description });
     } catch (e) {
@@ -159,7 +162,7 @@ export function RecentImports({
                   dateStyle: "medium",
                   timeStyle: "short",
                 })}
-                {batch.uploadedByName ? ` · ${batch.uploadedByName}` : ""} · {batchOutcome(batch)}
+                {batch.uploadedByName ? ` · ${batch.uploadedByName}` : ""} · {batchOutcome(batch, tErrors)}
               </p>
               {waiting && (
                 <p className="mt-1 text-xs text-status-incomplete-text">{waiting}</p>

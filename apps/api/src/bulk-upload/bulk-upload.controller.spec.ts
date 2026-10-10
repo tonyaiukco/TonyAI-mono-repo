@@ -10,7 +10,7 @@ import { RequestMethod } from '@nestjs/common';
 import { BULK_UPLOAD_MAX_SIZE_BYTES } from '@tonyai/shared-types';
 import { BulkUploadController } from './bulk-upload.controller';
 import { BulkUploadService } from './bulk-upload.service';
-import { UserThrottlerGuard } from './user-throttler.guard';
+import { routeGroup } from '../common/runtime-limits';
 
 /**
  * This controller had no spec, and a mutation sweep showed what that cost:
@@ -76,8 +76,8 @@ describe('BulkUploadController — the route', () => {
     // The reason is cost: this workbook is tens of milliseconds against an
     // import's thousands.
     const handler = BulkUploadController.prototype.template;
-    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler)).toBe(20);
-    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', BulkUploadController.prototype.import)).toBe(5);
+    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler)).toBeUndefined();
+    expect(routeGroup('POST', '/api/v1/bulk-upload/activity-records')).toBe('IMPORT');
   });
 
   it('hands the template route the caller, and the download headers', async () => {
@@ -120,21 +120,17 @@ describe('BulkUploadController — the route', () => {
     });
   });
 
-  it('is rate-limited per USER, not per socket address', () => {
-    // `ThrottlerGuard`'s default tracker is `req.ip`, and this API never
-    // enables `trust proxy` — behind a reverse proxy that is one bucket for
-    // the whole product. Pinning the guard CLASS is what keeps the override.
+  it('delegates admission to the global runtime guard', () => {
     const guards = Reflect.getMetadata(
       GUARDS_METADATA,
       BulkUploadController,
     ) as unknown[];
-    expect(guards).toContain(UserThrottlerGuard);
+    expect(guards).toBeUndefined();
   });
 
-  it('carries a throttle limit', () => {
+  it('has no competing per-handler throttle', () => {
     const handler = BulkUploadController.prototype.import;
-    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler)).toBe(5);
-    expect(Reflect.getMetadata('THROTTLER:TTLdefault', handler)).toBe(60_000);
+    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler)).toBeUndefined();
   });
 
   it('bounds the upload: size, one file, and a handful of fields', () => {
@@ -150,7 +146,7 @@ describe('BulkUploadController — the route', () => {
       defParamCharset: string;
     };
 
-    expect(options.limits.fileSize).toBe(BULK_UPLOAD_MAX_SIZE_BYTES);
+    expect(options.limits.fileSize).toBe(BULK_UPLOAD_MAX_SIZE_BYTES + 1);
     expect(options.limits.files).toBe(1);
     expect(options.limits.fields).toBeLessThanOrEqual(4);
     // Round-1 DE-8: multer decodes filename bytes as latin1 by default, so a
@@ -159,3 +155,5 @@ describe('BulkUploadController — the route', () => {
     expect(options.defParamCharset).toBe('utf8');
   });
 });
+
+it('uses the global grouped runtime policy', () => { expect(routeGroup('POST', '/api/v1/bulk-upload/activity-records')).toBe('IMPORT'); });

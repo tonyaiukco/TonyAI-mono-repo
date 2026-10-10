@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@tonyai/db';
 import type {
   AuditAction,
@@ -51,10 +52,12 @@ export class AuditService {
     },
     /** Pass the `tx` client from inside a `$transaction` — always prefer this. */
     tx?: Writer,
+    id?: string,
   ): Promise<void> {
     const writer: Writer = tx ?? this.prisma;
     await writer.auditLog.create({
       data: {
+        ...(id ? { id } : {}),
         userId: user.id,
         // Stamped at write time: roles change, and rendering today's role next
         // to a year-old action would misstate who was allowed to do what.
@@ -68,6 +71,29 @@ export class AuditService {
         diff: (entry.diff ?? null) as Prisma.InputJsonValue,
       },
     });
+  }
+
+  /** One stable identity across ambiguous commit acknowledgments. Batch closure
+   * and its audit summary commit together. No UPDATE/DELETE of audit rows. */
+  async finalize(
+    user: RequestUser,
+    entry: Parameters<AuditService['record']>[1],
+    close?: (tx: Prisma.TransactionClient) => Promise<unknown>,
+  ): Promise<void> {
+    const id = randomUUID();
+    let failure: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          const existing = await tx.auditLog.findUnique({ where: { id }, select: { id: true } });
+          if (existing) return;
+          await close?.(tx);
+          await this.record(user, entry, tx, id);
+        }, { timeout: 5_000, maxWait: 5_000 });
+        return;
+      } catch (error) { failure = error; }
+    }
+    throw failure;
   }
 
   /**

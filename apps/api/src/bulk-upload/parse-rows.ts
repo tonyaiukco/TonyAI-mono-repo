@@ -1,3 +1,4 @@
+import { checkParserDeadline } from '../common/work-deadline';
 import { isUtf8 } from 'node:buffer';
 import { BadRequestException } from '@nestjs/common';
 import Papa from 'papaparse';
@@ -295,6 +296,7 @@ function parseCsv(buffer: Buffer): ParsedRow[] {
   // five times a minute, for any user who may import.
   const populated: number[] = [];
   for (let i = 1; i < table.length; i += 1) {
+    checkParserDeadline();
     if (table[i]?.some((cell) => (cell ?? '').trim() !== '')) populated.push(i);
   }
   if (populated.length > BULK_UPLOAD_MAX_ROWS) throw tooManyRows(populated.length);
@@ -473,6 +475,7 @@ export async function parseRows(
   buffer: Buffer,
   fileName: string,
 ): Promise<ParsedRow[]> {
+  checkParserDeadline();
   const extension = extensionOf(fileName);
   if (extension === '.xlsx') return parseXlsx(buffer);
   if (extension === '.csv') return parseCsv(buffer);

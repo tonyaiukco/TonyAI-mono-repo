@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common';
 import { ImportBatchesController } from './import-batches.controller';
-import { UserThrottlerGuard } from './user-throttler.guard';
+import { routeGroup } from '../common/runtime-limits';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 
 /** Route metadata, as `bulk-submit.controller.spec.ts` does it (no testing module). */
@@ -40,10 +40,10 @@ describe('ImportBatchesController — the routes', () => {
   );
 
   it('is throttled per user, and a batch submit has the bulk submit budget', () => {
-    expect(Reflect.getMetadata(GUARDS_METADATA, ImportBatchesController)).toContain(
-      UserThrottlerGuard,
-    );
-    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', proto.submit)).toBe(10);
-    expect(Reflect.getMetadata('THROTTLER:TTLdefault', proto.submit)).toBe(60_000);
+    expect(Reflect.getMetadata(GUARDS_METADATA, ImportBatchesController)).toBeUndefined();
+    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', proto.submit)).toBeUndefined();
+    expect(Reflect.getMetadata('THROTTLER:TTLdefault', proto.submit)).toBeUndefined();
   });
 });
+
+it('uses the global grouped runtime policy', () => { expect(routeGroup('POST', '/api/v1/import-batches/id/submit')).toBe('SUBMIT'); });

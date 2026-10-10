@@ -7,6 +7,8 @@ import sys
 from configure_oidc import az
 from pooler import SafeFailure
 from terraform_run import invoke, validate_release
+from runtime_limits import expected_env, validate_limits
+from drain_api import drain, revisions
 
 
 def verify(inputs, read=az):
@@ -17,6 +19,8 @@ def verify(inputs, read=az):
         app = read('containerapp', 'show', '--subscription', foundation['subscription_id'],
                    '-g', foundation['resource_group'], '-n', stem + '-' + kind)
         properties = app['properties']
+        if len(properties['template']['containers']) != 1:
+            raise SafeFailure('Unexpected application process topology.')
         container = properties['template']['containers'][0]
         expected_image = foundation['registry_name'] + '.azurecr.io/tonyai/' + kind + '@' + release[kind + '_digest']
         if container.get('image') != expected_image:
@@ -31,12 +35,28 @@ def verify(inputs, read=az):
                                  'STORAGE_SWEEP_INTERVAL_SECONDS': str(release['storage_sweep_interval_seconds'])}
             if any(env.get(key, {}).get('value') != value for key, value in expected_settings.items()):
                 raise SafeFailure('Storage operational settings differ from the release.')
+            if any(env.get(k, {}).get('value') != v for k, v in expected_env(release).items()):
+                raise SafeFailure('Runtime limits differ from the reviewed release.')
+            scale = properties['template'].get('scale', {})
+            if scale.get('minReplicas') != 1 or scale.get('maxReplicas') != 1:
+                raise SafeFailure('Process-local quotas require exactly one API replica.')
+            resources = container.get('resources', {})
+            if type(resources.get('cpu')) not in (int, float) or resources.get('cpu') != 1 or resources.get('memory') != '2Gi':
+                raise SafeFailure('API resource bounds differ from the reviewed release.')
+            grace = validate_limits(release.get('runtime_limits', {}))['SHUTDOWN_GRACE_MS']
+            if properties['template'].get('terminationGracePeriodSeconds') != (grace + 999) // 1000:
+                raise SafeFailure('API termination grace differs from the release.')
+            active, _ = revisions(foundation, read)
+            if [r['name'] for r in active if r['properties']['active']] != [stem + '-api--' + release['release_id']]:
+                raise SafeFailure('Unexpected active API revisions.')
             probes = {item['type']: item for item in container.get('probes', [])}
             for probe in ('Startup', 'Liveness', 'Readiness'):
                 path = '/api/v1/health/ready' if probe == 'Readiness' else '/api/v1/health'
                 if probes.get(probe, {}).get('httpGet', {}).get('path') != path:
                     raise SafeFailure('Health probes differ from the release contract.')
         configuration = properties['configuration']
+        if configuration.get('activeRevisionsMode') != 'Single':
+            raise SafeFailure('Application revision mode differs from the release.')
         expected_fqdn = stem + '-' + kind + '.' + foundation['default_domain']
         if (configuration['ingress'].get('allowInsecure') is not False
                 or configuration['ingress'].get('fqdn') != expected_fqdn
@@ -89,11 +109,11 @@ def main():
     validate_release(inputs)
     if not args.verify_only:
         check_hold_transition(inputs, args.ack_clear_storage_hold)
-        if args.approved_apply:
-            invoke('application', args.backend, args.inputs, 'approved-apply')
-        else:
-            invoke('application', args.backend, args.inputs, 'plan')
-            invoke('application', args.backend, args.inputs, 'apply')
+        grace = validate_limits(inputs['release'].get('runtime_limits', {}))['SHUTDOWN_GRACE_MS']
+        invoke('application', args.backend, args.inputs,
+               'approved-apply' if args.approved_apply else 'apply',
+               before_apply=lambda: drain(inputs['foundation'], inputs['release']['release_id'],
+                                          attempts=(grace + 30000 + 1999) // 2000))
     verify(inputs)
 
 

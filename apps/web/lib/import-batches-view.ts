@@ -1,5 +1,6 @@
+import enErrors from '@/messages/en/errors.json';
 import type { BulkSubmitReportDTO, ImportBatchDTO } from '@/lib/types';
-import { SUBMIT_ISSUE_LABEL } from '@/lib/bulk-submit-view';
+import { deadlineSummary, type DeadlineTranslator, SUBMIT_ISSUE_LABEL } from '@/lib/bulk-submit-view';
 import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import { formatNumber } from '@/lib/utils';
 
@@ -28,12 +29,17 @@ export const BATCH_STATE_LABEL: Record<BatchState, string> = {
 };
 
 /** `2 imported · 1 refused`, or what an interrupted batch can still say. */
-export function batchOutcome(batch: Pick<ImportBatchDTO, 'acceptedCount' | 'rejectedCount' | 'totalRows'>): string {
-  if (batch.acceptedCount === null) {
-    return `${formatNumber(batch.totalRows)} ${batch.totalRows === 1 ? 'row' : 'rows'} — outcome not recorded`;
+export function batchOutcome(batch: Pick<ImportBatchDTO, 'acceptedCount' | 'rejectedCount' | 'totalRows'>,
+  translate: (key: `bulkOutcomes.${keyof typeof enErrors.bulkOutcomes}`, values: { count: number }) => string
+    = (key, { count }) => enErrors.bulkOutcomes[key.replace('bulkOutcomes.', '') as keyof typeof enErrors.bulkOutcomes].replace('{count}', formatNumber(count)),
+): string {
+  if (batch.acceptedCount === null || batch.rejectedCount === null) {
+    return translate('bulkOutcomes.unknown', { count: batch.totalRows });
   }
-  const parts = [`${formatNumber(batch.acceptedCount)} imported`];
-  if (batch.rejectedCount) parts.push(`${formatNumber(batch.rejectedCount)} refused`);
+  const parts = [translate('bulkOutcomes.imported', { count: batch.acceptedCount })];
+  if (batch.rejectedCount) parts.push(translate('bulkOutcomes.refused', { count: batch.rejectedCount }));
+  const unstarted = Math.max(0, batch.totalRows - batch.acceptedCount - batch.rejectedCount);
+  if (unstarted) parts.push(translate('bulkOutcomes.notProcessed', { count: unstarted }));
   return parts.join(' · ');
 }
 
@@ -69,11 +75,13 @@ export function awaitingEvidenceNote(
 }
 
 /** Why records a batch submit sent were not moved: `Needs an evidence file · 2`, one line per reason. */
-export function submitFailureDetail(report: BulkSubmitReportDTO): string | null {
+export function submitFailureDetail(report: BulkSubmitReportDTO, deadlineLabel = enErrors.bulkIssues.not_processed_deadline, translate?: DeadlineTranslator): string | null {
+  const deadline = deadlineSummary(report.submitted.length, report.failed, translate);
+  if (deadline) return deadline.detail;
   if (report.failed.length === 0) return null;
   const counts = new Map<string, number>();
   for (const issue of report.failed) {
-    const label = SUBMIT_ISSUE_LABEL[issue.code] ?? issue.code;
+    const label = issue.code === 'not_processed_deadline' ? deadlineLabel : SUBMIT_ISSUE_LABEL[issue.code] ?? issue.code;
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   return [...counts].map(([label, n]) => `${label} · ${formatNumber(n)}`).join('\n');

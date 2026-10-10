@@ -1,3 +1,6 @@
+import { CapacityError } from '../common/runtime-limits';
+import { readRuntimeConfig } from '../common/runtime-config';
+import { QueryTooBroadError } from '../common/api-error';
 import { ForbiddenException, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import type {
@@ -16,7 +19,7 @@ import {
   PENDING_REVIEW_STATUSES,
   REPORT_TEMPLATES,
 } from '@tonyai/shared-types';
-import puppeteer, { type Browser } from 'puppeteer';
+import puppeteer, { TimeoutError, type Browser, type Page } from 'puppeteer';
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -131,6 +134,8 @@ function factorStanding(
 export class ReportsService implements OnModuleDestroy {
   // Memoized launch promise: two concurrent first requests must share ONE
   // Chromium instance (a naive null-check race would leak the loser).
+  private readonly limits = readRuntimeConfig();
+  private pdfActive = false;
   private browserPromise: Promise<Browser> | null = null;
 
   constructor(
@@ -152,6 +157,8 @@ export class ReportsService implements OnModuleDestroy {
     }
     this.browserPromise = puppeteer.launch({
       headless: true,
+      timeout: this.limits.PDF_TIMEOUT_MS,
+      protocolTimeout: this.limits.PDF_TIMEOUT_MS,
       // In containers we use the distro Chromium (PUPPETEER_EXECUTABLE_PATH);
       // locally the var is unset and Puppeteer falls back to its bundled Chrome.
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -197,6 +204,7 @@ export class ReportsService implements OnModuleDestroy {
     const organisationName = org?.tradingName || org?.legalName || 'TonyAI';
     const empty: ReportMeta = {
       status: 'contains_incomplete_data',
+      recordLimit: this.limits.REPORT_RECORD_LIMIT,
       organisationName,
       totalCount: 0,
       committedCount: 0,
@@ -250,6 +258,7 @@ export class ReportsService implements OnModuleDestroy {
 
     return {
       status,
+      recordLimit: this.limits.REPORT_RECORD_LIMIT,
       organisationName,
       totalCount,
       committedCount,
@@ -266,11 +275,12 @@ export class ReportsService implements OnModuleDestroy {
   async assemble(user: RequestUser, q: ReportQueryDto): Promise<ReportData> {
     const ids = this.scopeIds(user, q.subsidiaryId);
 
-    const [summary, meta, subs] = await Promise.all([
-      this.emissions.summary(user, { subsidiaryId: q.subsidiaryId, year: q.year }),
-      this.meta(user, q.year, q.subsidiaryId), // also resolves the org name
+    const meta = await this.meta(user, q.year, q.subsidiaryId);
+    if (meta.committedCount + meta.voidedCount > this.limits.REPORT_RECORD_LIMIT) throw new QueryTooBroadError();
+    const [summary, subs] = await Promise.all([
+      this.emissions.summary(user, { subsidiaryId: q.subsidiaryId, year: q.year }, this.limits.REPORT_RECORD_LIMIT),
       this.prisma.subsidiary.findMany({
-        where: { id: { in: user.accessibleSubsidiaryIds } },
+        where: { id: { in: ids } },
         select: { id: true, legalName: true, tradingName: true },
       }),
     ]);
@@ -282,14 +292,6 @@ export class ReportsService implements OnModuleDestroy {
     // the one every other read path already uses (`ActivityRecordsService.toDTO`)
     // rather than a second way of resolving the same name.
     const include = {
-      evidenceLinks: {
-        select: {
-          evidence: {
-            select: { id: true, fileName: true, _count: { select: { links: true } } },
-          },
-        },
-        orderBy: [{ linkedAt: 'asc' }, { evidenceId: 'asc' }],
-      },
       location: { select: { name: true } },
     } satisfies Prisma.ActivityRecordInclude;
     const orderBy: Prisma.ActivityRecordOrderByWithRelationInput[] = [
@@ -305,7 +307,9 @@ export class ReportsService implements OnModuleDestroy {
           status: { in: statuses },
         },
         include,
+        omit: { input: true },
         orderBy,
+        take: this.limits.REPORT_RECORD_LIMIT + 1,
       });
     type LoadedRecord = Awaited<ReturnType<typeof load>>[number];
     // Two arrays, not one handed to both slots: aliasing them is harmless while
@@ -324,6 +328,30 @@ export class ReportsService implements OnModuleDestroy {
             load(COMMITTED_STATUSES),
             load([ActivityRecordStatus.voided]),
           ]);
+
+    if (records.length + voided.length > this.limits.REPORT_RECORD_LIMIT) throw new QueryTooBroadError();
+    const allRecords = [...records, ...voided];
+    const links = allRecords.length ? await this.prisma.activityRecordEvidence.findMany({
+      where: { activityRecordId: { in: allRecords.map((r) => r.id) }, subsidiaryId: { in: ids } },
+      select: { activityRecordId: true, evidence: {
+        select: { id: true, fileName: true, _count: { select: { links: true } } },
+      } },
+      orderBy: [{ linkedAt: 'asc' }, { evidenceId: 'asc' }],
+      take: this.limits.REPORT_EVIDENCE_LINK_LIMIT + 1,
+    }) : [];
+    if (links.length > this.limits.REPORT_EVIDENCE_LINK_LIMIT) throw new QueryTooBroadError();
+    const byRecord = new Map<string, ReportEvidenceLink[]>();
+    for (const link of links) {
+      const list = byRecord.get(link.activityRecordId) ?? [];
+      list.push({ evidence: link.evidence });
+      byRecord.set(link.activityRecordId, list);
+    }
+    let sourceBytes = 0;
+    for (const record of allRecords) {
+      Object.assign(record, { evidenceLinks: byRecord.get(record.id) ?? [] });
+      sourceBytes += Buffer.byteLength(JSON.stringify(record));
+      if (sourceBytes > this.limits.REPORT_MAX_BYTES) throw new QueryTooBroadError();
+    }
 
     type Snapshot = {
       tCo2e?: number;
@@ -530,22 +558,74 @@ export class ReportsService implements OnModuleDestroy {
 
   async generatePdf(user: RequestUser, q: ReportQueryDto): Promise<Buffer> {
     this.assertCanGenerate(user);
+    // Cancellation kills the shared Chromium process. Keep its ownership
+    // exclusive even when operators allow concurrent CSV/Excel exports.
+    if (this.pdfActive) throw new CapacityError();
+    this.pdfActive = true;
+    try { return await this.renderPdf(user, q); }
+    finally { this.pdfActive = false; }
+  }
+
+  private killBrowser(browser?: Browser): void {
+    const child = browser?.process();
+    if (!child) return;
+    try {
+      if (process.platform === 'win32' || !child.pid) child.kill('SIGKILL');
+      else process.kill(-child.pid, 'SIGKILL');
+    } catch { child.kill('SIGKILL'); }
+  }
+
+  private async renderPdf(user: RequestUser, q: ReportQueryDto): Promise<Buffer> {
     const data = await this.assemble(user, q);
     const html = buildReportHtml(data);
+    this.assertOutputSize(html);
 
-    const browser = await this.getBrowser();
-    const page = await browser.newPage();
+    let browser: Browser | undefined;
+    let page: Page | undefined;
+    let expired = false;
+    const timer = setTimeout(() => {
+      expired = true;
+      // This replica admits one renderer. Killing its process aborts protocol
+      // work too, including a stuck newPage/print command; no detached render.
+      this.killBrowser(browser);
+    }, this.limits.PDF_TIMEOUT_MS);
+    timer.unref();
     try {
-      await page.setContent(html, { waitUntil: 'load' });
-      const pdf = await page.pdf({
-        format: 'A4',
-        printBackground: true,
+      browser = await this.getBrowser();
+      if (expired) throw new QueryTooBroadError();
+      page = await browser.newPage();
+      await page.setContent(html, { waitUntil: 'load', timeout: this.limits.PDF_TIMEOUT_MS });
+      const stream = await page.createPDFStream({
+        timeout: this.limits.PDF_TIMEOUT_MS,
+        format: 'A4', printBackground: true,
         margin: { top: '12mm', bottom: '12mm', left: '10mm', right: '10mm' },
       });
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      const reader = stream.getReader();
+      try {
+        for (;;) {
+          const result = await reader.read();
+          if (result.done) break;
+          size += result.value.byteLength;
+          if (size > this.limits.REPORT_MAX_BYTES) throw new QueryTooBroadError();
+          chunks.push(result.value);
+        }
+      } finally { await reader.cancel().catch(() => undefined); }
+      if (expired) throw new QueryTooBroadError();
+      clearTimeout(timer);
       await this.audit(user, q, 'pdf', data.summary.recordCount, data.withdrawnTotals.count);
-      return Buffer.from(pdf);
+      return Buffer.concat(chunks);
+    } catch (error) {
+      if (expired || error instanceof TimeoutError) throw new QueryTooBroadError();
+      throw error;
     } finally {
-      await page.close();
+      clearTimeout(timer);
+      if (expired && browser) {
+        this.killBrowser(browser);
+        this.browserPromise = null;
+      }
+      await page?.close().catch(() => undefined);
     }
   }
 
@@ -619,6 +699,7 @@ export class ReportsService implements OnModuleDestroy {
     }
 
     const buffer = await wb.xlsx.writeBuffer();
+    this.assertOutputSize(buffer);
     await this.audit(user, q, 'excel', data.summary.recordCount, data.withdrawnTotals.count);
     return Buffer.from(buffer);
   }
@@ -640,7 +721,7 @@ export class ReportsService implements OnModuleDestroy {
       ...data.records.map((r) => csvLedgerRow(r)),
       ...data.withdrawn.map((r) => csvWithdrawnRow(r)),
     ];
-    await this.audit(user, q, 'csv', data.summary.recordCount, data.withdrawnTotals.count);
+
     // U+FEFF, and it belongs HERE rather than in `csvHeader()` or the
     // controller. The response already says `charset=utf-8`, but that header is
     // gone once the file is on disk, and Excel-on-Windows then decodes a
@@ -652,7 +733,10 @@ export class ReportsService implements OnModuleDestroy {
     // Not a security property: a multi-byte UTF-8 sequence misdecoded as any
     // single-byte codepage never yields a byte < 0x80, so it can neither
     // manufacture a formula lead nor break the RFC-4180 framing. Pure fidelity.
-    return '\uFEFF' + lines.join('\n') + '\n';
+    const output = '\uFEFF' + lines.join('\n') + '\n';
+    this.assertOutputSize(output);
+    await this.audit(user, q, 'csv', data.summary.recordCount, data.withdrawnTotals.count);
+    return output;
   }
 
   /** Generation log (report_page.md §10): one audit row per generated artifact.
@@ -662,6 +746,11 @@ export class ReportsService implements OnModuleDestroy {
    *  instant) until WP17 briefly narrowed `recordCount`, at which point two
    *  exports of the same selection wrote different counts into an append-only
    *  compliance log. One expression, so they cannot diverge again. */
+  private assertOutputSize(value: string | Uint8Array | ArrayBuffer): void {
+    const bytes = typeof value === 'string' ? Buffer.byteLength(value) : value.byteLength;
+    if (bytes > this.limits.REPORT_MAX_BYTES) throw new QueryTooBroadError();
+  }
+
   private async audit(
     user: RequestUser,
     q: ReportQueryDto,

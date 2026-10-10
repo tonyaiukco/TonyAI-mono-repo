@@ -28,21 +28,37 @@ RUN pnpm install --frozen-lockfile --filter @tonyai/api...
 RUN pnpm --filter @tonyai/shared-types build \
  && pnpm --filter @tonyai/db run generate \
  && pnpm --filter @tonyai/api build
-# NOTE: `pnpm prune --prod` is NOT safe here — at the workspace root it prunes
-# against the root manifest (no prod deps) and strips the api's runtime deps.
-# Image slimming (turbo prune / selective copy) is a Phase-2 deploy optimization.
+# Install a separate production tree; root pruning would remove workspace deps.
+FROM base AS production-dependencies
+WORKDIR /app
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY packages/db/package.json ./packages/db/package.json
+COPY packages/shared-types/package.json ./packages/shared-types/package.json
+RUN pnpm install --frozen-lockfile --prod --filter @tonyai/api... --ignore-scripts
 
 # ---------------------------------------------------------------------------
 FROM base AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      chromium fonts-liberation \
+      chromium fonts-liberation tini \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    PORT=3001
+    PORT=3001 \
+    NODE_OPTIONS=--max-old-space-size=768
 
 WORKDIR /app
-COPY --from=builder --chown=node:node /app /app
+COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
+COPY --from=production-dependencies --chown=node:node /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=production-dependencies --chown=node:node /app/packages/db/node_modules ./packages/db/node_modules
+COPY --from=builder --chown=node:node /app/apps/api/package.json ./apps/api/package.json
+COPY --from=builder --chown=node:node /app/apps/api/dist ./apps/api/dist
+COPY --from=builder --chown=node:node /app/packages/db/package.json ./packages/db/package.json
+COPY --from=builder --chown=node:node /app/packages/db/generated ./packages/db/generated
+COPY --from=builder --chown=node:node /app/packages/shared-types/package.json ./packages/shared-types/package.json
+COPY --from=builder --chown=node:node /app/packages/shared-types/dist ./packages/shared-types/dist
+COPY --from=builder --chown=node:node /app/infra/certs/prod-ca-2021.crt ./infra/certs/prod-ca-2021.crt
 
 USER node
 WORKDIR /app/apps/api
@@ -51,4 +67,5 @@ EXPOSE 3001
 # configuration is injected as real environment variables.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3001)+'/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "dist/main.js"]

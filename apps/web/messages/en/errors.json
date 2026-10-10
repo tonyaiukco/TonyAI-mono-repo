@@ -48,5 +48,16 @@
     "factor_scope_mismatch": "The emission factor found for this entry is filed under another scope. An administrator must correct the library.",
     "no_conversion": "No sourced unit conversion covers this entry yet.",
     "calorific_basis_mismatch": "A unit conversion exists, but on a different calorific basis than the emission factor."
+  },
+  "bulkOutcomes": {
+    "imported": "{count} imported",
+    "refused": "{count} refused",
+    "notProcessed": "{count} not processed",
+    "unknown": "Rows with no recorded outcome: {count}"
+  },
+  "bulkDeadline": {
+    "title": "Processing stopped at the time limit",
+    "detail": "{accepted} accepted, {refused} refused, {unstarted} not processed. Review the results before retrying; do not resend successful rows.",
+    "previewDetail": "{accepted} valid, {refused} refused, {unstarted} not checked. This was a preview; no records were imported. Split the file and preview every part before importing."
   }
 }

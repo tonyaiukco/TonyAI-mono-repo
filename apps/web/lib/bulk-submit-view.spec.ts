@@ -1,3 +1,6 @@
+import { createTranslator } from 'use-intl/core';
+import en from '@/messages/en/errors.json';
+import tr from '@/messages/tr/errors.json';
 import { describe, it, expect } from 'vitest';
 import { BULK_SUBMIT_ISSUE_CODES, BULK_SUBMIT_MAX_IDS } from '@/lib/types';
 import type {
@@ -661,5 +664,18 @@ describe('the notices select-all owes the user', () => {
       'Selected the first 1,000. 7 more can go in a second submission.',
     ]);
     expect(capRefusedNotice()).toBe('1,000 records is the most one submission can carry.');
+  });
+});
+
+
+describe('translated deadline accounting', () => {
+  it.each([['en', en], ['tr', tr]] as const)('%s distinguishes accepted, refused and unstarted without urging a full retry', (locale, messages) => {
+    const t = createTranslator({ locale, messages });
+    const result = summariseSubmit(report({ requested: 4, submitted: [moved('a')], completion: 'deadline_exceeded',
+      failed: [refused(), refused({ code: 'not_processed_deadline' }), refused({ code: 'not_processed_deadline' })],
+    }), t);
+    expect(result.headline).toBe(messages.bulkDeadline.title);
+    expect(result.detail).toBe(t('bulkDeadline.detail', { accepted: 1, refused: 1, unstarted: 2 }));
+    expect(result.tone).toBe('partial');
   });
 });

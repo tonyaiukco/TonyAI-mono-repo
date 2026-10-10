@@ -48,5 +48,16 @@
     "factor_scope_mismatch": "Bu giriş için bulunan emisyon faktörü başka bir kapsam altında kayıtlı. Bir yöneticinin kütüphaneyi düzeltmesi gerekir.",
     "no_conversion": "Bu giriş için henüz kaynağı belirtilmiş bir birim dönüşümü yok.",
     "calorific_basis_mismatch": "Bir birim dönüşümü var, ancak emisyon faktöründen farklı bir ısıl değer esasına dayanıyor."
+  },
+  "bulkOutcomes": {
+    "imported": "{count} satır içe aktarıldı",
+    "refused": "{count} satır reddedildi",
+    "notProcessed": "{count} satır işlenmedi",
+    "unknown": "{count} satır — sonuç kaydedilmedi"
+  },
+  "bulkDeadline": {
+    "title": "Süre sınırına ulaşıldığı için işlem durdu",
+    "detail": "{accepted} kabul edildi, {refused} reddedildi, {unstarted} işlenmedi. Yeniden denemeden önce sonuçları inceleyin; başarılı satırları tekrar göndermeyin.",
+    "previewDetail": "{accepted} uygun, {refused} reddedildi, {unstarted} kontrol edilmedi. Bu bir önizlemeydi; hiçbir kayıt içe aktarılmadı. Dosyayı bölün ve içe aktarmadan önce her bölümünü önizleyin."
   }
 }

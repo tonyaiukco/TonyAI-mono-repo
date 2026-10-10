@@ -53,6 +53,13 @@ jobs:
       # (a stale dist/ silently green'd six specs once). Every value it needs is
       # already in the job env from the composite action.
       - name: E2E
+        # Harness traffic shares loopback; production defaults are pinned by unit tests.
+        env:
+          RATE_IP_PER_MINUTE: "10000"
+          RATE_READ_PER_MINUTE: "10000"
+          RATE_WRITE_PER_MINUTE: "10000"
+          RATE_EXPORT_PER_MINUTE: "10000"
+          RATE_SUBMIT_PER_MINUTE: "10000"
         run: pnpm e2e
 
       # The RLS layer, re-checked after the whole suite has written and deleted rows.

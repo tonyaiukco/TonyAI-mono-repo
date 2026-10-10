@@ -1,3 +1,7 @@
+import { canApplyPreview } from './bulk-upload-view';
+import { createTranslator } from 'use-intl/core';
+import en from '@/messages/en/errors.json';
+import tr from '@/messages/tr/errors.json';
 import { describe, it, expect } from 'vitest';
 import {
   BULK_UPLOAD_ISSUE_CODES,
@@ -637,5 +641,35 @@ describe('uploadErrorMessage — the remaining branch', () => {
     expect(uploadErrorMessage(new ApiError('Forbidden', 403))).toMatch(
       /cannot import/i,
     );
+  });
+});
+
+
+describe('translated import deadline accounting', () => {
+  it.each([['en', en], ['tr', tr]] as const)('%s labels an unstarted row separately from a refused one', (locale, messages) => {
+    const t = createTranslator({ locale, messages });
+    const errors: BulkUploadRowIssue[] = [
+      { row: 3, column: null, code: 'not_processed_deadline', message: 'Not started' },
+      { row: 4, column: null, code: 'unexpected', message: 'Failed' },
+    ];
+    const result = summarise(report({ totalRows: 3, errors, completion: 'deadline_exceeded' }), t);
+    expect(result.headline).toBe(messages.bulkDeadline.title);
+    expect(result.detail).toBe(t('bulkDeadline.previewDetail', { accepted: 1, refused: 1, unstarted: 1 }));
+    const applied = report({ dryRun: false, totalRows: 3, errors, completion: 'deadline_exceeded' });
+    expect(applyToast(applied, t)).toEqual({ kind: 'warning', message: messages.bulkDeadline.title,
+      description: t('bulkDeadline.detail', { accepted: 1, refused: 1, unstarted: 1 }),
+    });
+    expect(summarise(applied, t).detail).toBe(t('bulkDeadline.detail', { accepted: 1, refused: 1, unstarted: 1 }));
+    expect(groupIssues(errors, t('bulkIssues.not_processed_deadline')).find((group) => group.code === 'not_processed_deadline')?.label).toBe(messages.bulkIssues.not_processed_deadline);
+  });
+});
+
+describe('incomplete preview admission (EN and TR)', () => {
+  it.each(['en', 'tr'])('never enables Apply for incomplete %s previews', () => {
+    const complete = { dryRun: true, accepted: [{}], errors: [], completion: 'completed' } as unknown as BulkUploadReportDTO;
+    expect(canApplyPreview(complete)).toBe(true);
+    expect(canApplyPreview({ ...complete, completion: 'deadline_exceeded' })).toBe(false);
+    expect(canApplyPreview({ ...complete, errors: [{ code: 'not_processed_deadline' }] as never })).toBe(false);
+    expect(canApplyPreview({ ...complete, dryRun: false })).toBe(false);
   });
 });

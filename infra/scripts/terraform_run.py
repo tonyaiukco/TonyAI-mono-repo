@@ -40,7 +40,7 @@ def validate_release(inputs):
         if not isinstance(foundation[key], str) or not re.fullmatch(pattern, foundation[key]):
             raise SafeFailure('Invalid foundation identifier or domain.')
     expected = {'source_sha', 'release_id', 'supabase_project_ref', 'api_digest', 'web_digest', 'database_secret_version', 'backend_secret_version', 'storage_cleanup_hold', 'storage_sweep_interval_seconds'}
-    if set(release) != expected:
+    if set(release) - {'runtime_limits'} != expected:
         raise SafeFailure('Release has missing or unknown fields; secret values are prohibited.')
     patterns = {'source_sha': r'[a-f0-9]{40}', 'release_id': r'[a-z][a-z0-9-]{0,29}',
                 'supabase_project_ref': r'[a-z]{20}', 'api_digest': r'sha256:[a-f0-9]{64}',
@@ -53,10 +53,12 @@ def validate_release(inputs):
     interval = release['storage_sweep_interval_seconds']
     if type(interval) is not int or not 1 <= interval <= 86400:
         raise SafeFailure('Storage sweep interval must be integer seconds from 1 to 86400.')
+    from runtime_limits import validate_limits
+    validate_limits(release.get('runtime_limits', {}))
     return foundation, release
 
 
-def invoke(lane, backend_path, inputs_path, action):
+def invoke(lane, backend_path, inputs_path, action, before_apply=None):
     if action == 'approved-apply' and lane != 'application':
         raise SafeFailure('Unattended apply is restricted to the application root.')
     env = clean_environment()
@@ -88,7 +90,7 @@ def invoke(lane, backend_path, inputs_path, action):
     if action == 'output':
         call(['output', '-json', 'application_contract'])
         return
-    if action == 'approved-apply':
+    if action == 'approved-apply' or (action == 'apply' and before_apply):
         # The protected environment reviewer approves the release before this
         # job starts. Apply exactly this plan; never silently re-plan at apply.
         # A private temporary directory is deleted even after a failed apply.
@@ -96,6 +98,12 @@ def invoke(lane, backend_path, inputs_path, action):
             plan = str(Path(directory) / 'application.tfplan')
             call(['plan', '-input=false', '-lock-timeout=60s',
                   '-var-file=' + str(Path(inputs_path).resolve()), '-out=' + plan])
+            if action != 'approved-apply':
+                call(['show', '-no-color', plan])
+                if input('Apply this saved plan after draining the API? Type yes: ').strip() != 'yes':
+                    raise SafeFailure('Apply declined; API was not drained.')
+            if before_apply:
+                before_apply()
             call(['apply', '-input=false', '-lock-timeout=60s', plan])
         return
     call([action, *([] if action == 'apply' else ['-input=false']), '-lock-timeout=60s', '-var-file=' + str(Path(inputs_path).resolve())])

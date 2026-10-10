@@ -8,6 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from deploy_apps import verify
+from runtime_limits import expected_env
 from terraform_run import validate_release
 from pooler import SafeFailure
 
@@ -28,8 +29,8 @@ def app(kind, contract):
     secrets = [{'name':name,'identity':identity,'keyVaultUrl':'https://vault.vault.azure.net/secrets/'+name+'/'+r[field]}
                for name,field in [('database-url','database_secret_version'),('supabase-service-role-key','backend_secret_version')]] if kind=='api' else []
     return {'properties': {
-        'template': {'containers':[{'env': [{'name': 'STORAGE_CLEANUP_HOLD', 'value': '1' if r.get('storage_cleanup_hold') else '0'}, {'name': 'STORAGE_SWEEP_INTERVAL_SECONDS', 'value': str(r.get('storage_sweep_interval_seconds', 300))}, {'name': 'DATABASE_URL', 'secretRef': 'database-url'}], 'probes': [{'type': t, 'httpGet': {'path': '/api/v1/health/ready' if t == 'Readiness' else '/api/v1/health'}} for t in ('Startup', 'Liveness', 'Readiness')], 'image':'registry.azurecr.io/tonyai/'+kind+'@'+r[kind+'_digest']}]},
-        'configuration': {'ingress': {'allowInsecure':False,'fqdn':'tonyai-staging-'+kind+'.'+f['default_domain']},'secrets':secrets},
+        'template': {'terminationGracePeriodSeconds': 120, 'scale': {'minReplicas': 1, 'maxReplicas': 1}, 'containers':[{'resources': {'cpu': 1, 'memory': '2Gi'}, 'env': [{'name': 'STORAGE_CLEANUP_HOLD', 'value': '1' if r.get('storage_cleanup_hold') else '0'}, {'name': 'STORAGE_SWEEP_INTERVAL_SECONDS', 'value': str(r.get('storage_sweep_interval_seconds', 300))}, {'name': 'DATABASE_URL', 'secretRef': 'database-url'}] + [{'name': k, 'value': v} for k, v in expected_env(r).items()], 'probes': [{'type': t, 'httpGet': {'path': '/api/v1/health/ready' if t == 'Readiness' else '/api/v1/health'}} for t in ('Startup', 'Liveness', 'Readiness')], 'image':'registry.azurecr.io/tonyai/'+kind+'@'+r[kind+'_digest']}]},
+        'configuration': {'activeRevisionsMode': 'Single', 'ingress': {'allowInsecure':False,'fqdn':'tonyai-staging-'+kind+'.'+f['default_domain']},'secrets':secrets},
         'latestReadyRevisionName':'tonyai-staging-'+kind+'--'+r['release_id']}}
 
 
@@ -37,6 +38,7 @@ class DeploymentVersionTests(unittest.TestCase):
     def test_arm_null_value_beside_runtime_secret_reference_is_allowed(self):
         contract = inputs()
         def read(*args):
+            if args[:3] == ('containerapp', 'revision', 'list'): return [{'name': 'tonyai-staging-api--r001', 'properties': {'active': True}}]
             result = app('api' if args[-1].endswith('-api') else 'web', contract)
             for item in result['properties']['template']['containers'][0]['env']:
                 if item['name'] == 'DATABASE_URL': item['value'] = None
@@ -66,7 +68,9 @@ class DeploymentVersionTests(unittest.TestCase):
             if defect == 'http': api['configuration']['ingress']['allowInsecure'] = True
             if defect == 'not-ready': api['latestReadyRevisionName'] = 'old'
             if defect == 'web-secret': web['configuration']['secrets'] = [{'name':'unexpected'}]
-            def read(*args): return state['api' if args[-1].endswith('-api') else 'web']
+            def read(*args):
+                if args[:3] == ('containerapp', 'revision', 'list'): return [{'name': 'tonyai-staging-api--r001', 'properties': {'active': True}}]
+                return state['api' if args[-1].endswith('-api') else 'web']
             with self.subTest(defect=defect), contextlib.redirect_stdout(io.StringIO()):
                 if defect == 'none': verify(contract, read)
                 else:

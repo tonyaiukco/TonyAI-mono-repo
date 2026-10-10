@@ -113,7 +113,11 @@ function build(rows: Record<string, unknown>[] = [candidate()]) {
       .fn()
       .mockImplementation((_user, id: string) => Promise.resolve(record({ id }))),
   };
-  const audit = { record: vi.fn() };
+  const auditRecord = vi.fn();
+  const audit = { record: auditRecord, finalize: vi.fn(async (user, entry, close?) => {
+    if (close) await close(prisma);
+    return auditRecord(user, entry);
+  }) };
   const service = new BulkSubmitService(
     prisma as unknown as PrismaService,
     records as unknown as ActivityRecordsService,
@@ -846,5 +850,35 @@ describe('BulkSubmitService — ids named by an import batch', () => {
     // bulk submit; widening the import cap alone would leave the tail of a
     // large batch unsubmittable from its own button.
     expect(BULK_SUBMIT_MAX_IDS).toBe(BULK_UPLOAD_MAX_ROWS);
+  });
+});
+
+describe('bulk submit cooperative deadline', () => {
+  it('settles a started mutation and returns every unstarted normalized id', async () => {
+    const { performance } = await import('node:perf_hooks');
+    let time = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => time);
+    try {
+      const { service, records, audit } = build([candidate({ id: 'a' }), candidate({ id: 'b' })]);
+      records.submit.mockImplementation(async (_user, id) => { time = 60_000; return record({ id }); });
+      const report = await service.submitMany(dataEntry(), ids('a', 'b'));
+      expect(report.completion).toBe('deadline_exceeded');
+      expect(report.submitted.map((r) => r.recordId)).toEqual(['a']);
+      expect(report.failed).toEqual([{ recordId: 'b', code: 'not_processed_deadline', message: expect.any(String) }]);
+      expect(records.submit).toHaveBeenCalledTimes(1);
+      expect(audit.record.mock.calls[0][1].diff).toMatchObject({ completion: 'deadline_exceeded', notProcessedCount: 1, submittedCount: 1, failedCount: 1 });
+    } finally { clock.mockRestore(); }
+  });
+  it('does not disclose preflight results when the deadline expires during the query', async () => {
+    const { performance } = await import('node:perf_hooks');
+    let time = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => time);
+    try {
+      const { service, prisma, records } = build([]);
+      prisma.activityRecord.findMany.mockImplementation(async () => { time = 60_000; return []; });
+      const report = await service.submitMany(dataEntry(), ids('missing', 'foreign'));
+      expect(report.failed.map((r) => r.code)).toEqual(['not_processed_deadline', 'not_processed_deadline']);
+      expect(records.submit).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); }
   });
 });

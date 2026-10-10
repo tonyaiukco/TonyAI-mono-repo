@@ -127,7 +127,9 @@ bash infra/scripts/deploy-apps.sh --backend .infra-local/staging/backend.json --
 
 No readback failure is recorded as success. Do not restart arbitrary revisions
 or use `az containerapp update/secret set/revision activate`: Terraform is the sole
-application writer. Runbook 05 handles rotation/rollback with another manifest.
+application writer, except the reviewed deploy tool’s drain step, which deactivates
+outgoing API revisions before applying the saved plan. Never manually activate
+a revision. Runbook 05 handles rotation/rollback with another manifest.
 After the first creation, enable foundation `apps_ready` and apply the exact-app
 OIDC grants per runbook 01. Preserve manifest, provider locks, infrastructure SHA,
 image-source SHA, migration evidence and ready revision IDs for the release.
@@ -143,7 +145,8 @@ qualification finishes. The shared concurrency group cancels an earlier run;
 a cancelled release run must be rerun at the exact candidate SHA.
 
 These are **owner-run instructions**, not recorded cloud evidence. Terraform is
-still the only Azure application writer. LP2-01 cloud/fresh-recreation acceptance
+still the application configuration writer; the deploy tool also deactivates
+outgoing API revisions for the single-replica maintenance rollout. LP2-01 cloud/fresh-recreation acceptance
 remains open. LP2-02 is not DONE until the exact deployed candidate passes below.
 
 ### One-time owner setup

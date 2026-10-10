@@ -39,7 +39,7 @@ class RotationRehearsalTests(unittest.TestCase):
             self.assertEqual(selected['release']['api_digest'], deployed['release']['api_digest'])
             self.assertEqual(selected['release']['web_digest'], deployed['release']['web_digest'])
             with contextlib.redirect_stdout(transcript):
-                verify_apps(selected, lambda *args: app('api' if args[-1].endswith('-api') else 'web', selected))
+                verify_apps(selected, lambda *args: [{'name': 'tonyai-staging-api--r002', 'properties': {'active': True}}] if args[:3] == ('containerapp', 'revision', 'list') else app('api' if args[-1].endswith('-api') else 'web', selected))
             stale = copy.deepcopy(selected)
             stale['release']['backend_secret_version'] = deployed['release']['backend_secret_version']
             with self.assertRaises(SafeFailure), contextlib.redirect_stdout(transcript):

@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "use-intl";
+
 import { useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -28,6 +30,7 @@ import {
 } from "@/lib/bulk-submit-view";
 import {
   applyConfirmation,
+  canApplyPreview,
   applyToast,
   BULK_UPLOAD_MAX_ROWS,
   COLUMN_LABEL,
@@ -81,6 +84,7 @@ export function BulkUploadPanel({
   /** Fires after any ATTEMPTED apply, so the page can refresh what is stale. */
   onImported: () => void;
 }) {
+  const tErrors = useTranslations("errors");
   const inputRef = useRef<HTMLInputElement>(null);
   const verdictRef = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -153,6 +157,7 @@ export function BulkUploadPanel({
   }
 
   async function apply() {
+    if (!report || !canApplyPreview(report)) return;
     if (!file || working) return;
     setConfirming(false);
     setBusy("importing");
@@ -162,8 +167,8 @@ export function BulkUploadPanel({
       // import is real — no transaction spans the batch.
       setReport(applied);
       setSubmitReport(null);
-      const outcome = applyToast(applied);
-      toast[outcome.kind](outcome.message);
+      const outcome = applyToast(applied, tErrors);
+      toast[outcome.kind](outcome.message, { description: outcome.description });
       verdictRef.current?.focus();
     } catch (e) {
       toast.error(uploadErrorMessage(e));
@@ -202,15 +207,15 @@ export function BulkUploadPanel({
   // still a card the reader has to parse.
   if (!canManage) return null;
 
-  const summary = report ? summarise(report) : null;
-  const errorGroups = report ? groupIssues(report.errors) : [];
-  const warningGroups = report ? groupIssues(report.warnings) : [];
+  const summary = report ? summarise(report, tErrors) : null;
+  const errorGroups = report ? groupIssues(report.errors.filter((issue) => issue.code !== "not_processed_deadline"), tErrors("bulkIssues.not_processed_deadline")) : [];
+  const warningGroups = report ? groupIssues(report.warnings, tErrors("bulkIssues.not_processed_deadline")) : [];
   // Only after a real import: a dry run's rows carry no id, by contract.
   const eligible =
     report && !report.dryRun
       ? eligibleForSubmit(report.accepted)
       : { recordIds: [], needingEvidence: 0, overCap: 0, blockedReason: null };
-  const submitSummary = submitReport ? summariseSubmit(submitReport) : null;
+  const submitSummary = submitReport ? summariseSubmit(submitReport, tErrors) : null;
 
   return (
     <Card>
@@ -406,9 +411,9 @@ export function BulkUploadPanel({
                       {failuresToShow(submitReport.failed).shown.map((f) => (
                         <li key={f.recordId}>
                           <span className="font-medium">
-                            {SUBMIT_ISSUE_LABEL[f.code]}
+                            {f.code === "not_processed_deadline" ? tErrors("bulkIssues.not_processed_deadline") : SUBMIT_ISSUE_LABEL[f.code]}
                           </span>
-                          <span className="block opacity-80">{f.message}</span>
+                          {f.code !== "not_processed_deadline" && <span className="block opacity-80">{f.message}</span>}
                         </li>
                       ))}
                     </ul>
@@ -442,7 +447,7 @@ export function BulkUploadPanel({
                     : ""}
                 </Button>
               )}
-              {report.dryRun && summary.acceptedCount > 0 && (
+              {canApplyPreview(report) && (
                 <Button
                   size="sm"
                   onClick={() => setConfirming(true)}
@@ -579,13 +584,14 @@ function IssueList({
 }
 
 function IssueItem({ issue }: { issue: BulkUploadRowIssue }) {
+  const tErrors = useTranslations("errors");
   return (
     <li className="text-xs">
       <span className="font-mono opacity-70">Row {issue.row}</span>
       {issue.column && (
         <span className="opacity-70"> · {COLUMN_LABEL[issue.column]}</span>
       )}
-      <span className="block">{issue.message}</span>
+      <span className="block">{issue.code === "not_processed_deadline" ? tErrors("bulkIssues.not_processed_deadline") : issue.message}</span>
     </li>
   );
 }

@@ -1,3 +1,6 @@
+import { createTranslator } from 'use-intl/core';
+import en from '@/messages/en/errors.json';
+import tr from '@/messages/tr/errors.json';
 import { describe, expect, it } from 'vitest';
 import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import {
@@ -35,7 +38,7 @@ describe('batchOutcome', () => {
 
   it('says so when the outcome was never recorded, rather than claiming zero', () => {
     expect(batchOutcome({ acceptedCount: null, rejectedCount: null, totalRows: 3 })).toBe(
-      '3 rows — outcome not recorded',
+      'Rows with no recorded outcome: 3',
     );
   });
 });
@@ -90,4 +93,22 @@ describe('submitFailureDetail', () => {
   it('says nothing when everything moved', () => {
     expect(submitFailureDetail({ requested: 1, submitted: [], failed: [] })).toBeNull();
   });
+});
+
+
+it.each([['en', en], ['tr', tr]] as const)('%s preserves persisted unstarted and unknown outcomes', (locale, messages) => {
+  const t = createTranslator({ locale, messages });
+  expect(batchOutcome({ totalRows: 6, acceptedCount: 2, rejectedCount: 1 }, t)).toBe([
+    t('bulkOutcomes.imported', { count: 2 }), t('bulkOutcomes.refused', { count: 1 }), t('bulkOutcomes.notProcessed', { count: 3 }),
+  ].join(' · '));
+  expect(batchOutcome({ totalRows: 6, acceptedCount: 2, rejectedCount: null }, t)).toBe(t('bulkOutcomes.unknown', { count: 6 }));
+});
+
+
+it.each([['en', en], ['tr', tr]] as const)('%s keeps accepted counts and safe retry guidance in the RecentImports toast', (locale, messages) => {
+  const t = createTranslator({ locale, messages });
+  const detail = submitFailureDetail({ requested: 2, completion: 'deadline_exceeded',
+    submitted: [{ recordId: 'a' } as never], failed: [{ recordId: 'b', code: 'not_processed_deadline', message: 'Not started' }],
+  }, t('bulkIssues.not_processed_deadline'), t);
+  expect(detail).toBe(t('bulkDeadline.detail', { accepted: 1, refused: 0, unstarted: 1 }));
 });

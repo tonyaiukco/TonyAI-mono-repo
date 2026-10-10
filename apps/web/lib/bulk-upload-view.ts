@@ -1,3 +1,4 @@
+import { deadlineSummary, type DeadlineTranslator } from './bulk-submit-view';
 import {
   BULK_UPLOAD_ALLOWED_EXTENSIONS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
@@ -133,7 +134,7 @@ export interface IssueGroup {
  * period that is closed" is a decision; seventeen separate lines scattered
  * through a thousand are a search.
  */
-export function groupIssues(issues: BulkUploadRowIssue[]): IssueGroup[] {
+export function groupIssues(issues: BulkUploadRowIssue[], deadlineLabel = enErrors.bulkIssues.not_processed_deadline): IssueGroup[] {
   const byCode = new Map<BulkUploadIssueCode, BulkUploadRowIssue[]>();
   for (const issue of issues) {
     const list = byCode.get(issue.code) ?? [];
@@ -143,7 +144,7 @@ export function groupIssues(issues: BulkUploadRowIssue[]): IssueGroup[] {
   return [...byCode.entries()]
     .map(([code, rows]) => ({
       code,
-      label: ISSUE_CODE_LABEL[code],
+      label: code === 'not_processed_deadline' ? deadlineLabel : ISSUE_CODE_LABEL[code],
       count: rows.length,
       rows: [...rows].sort((a, b) => a.row - b.row),
     }))
@@ -185,7 +186,7 @@ export interface BulkUploadSummary {
 }
 
 /** The one-glance verdict above the report. */
-export function summarise(report: BulkUploadReportDTO): BulkUploadSummary {
+export function summarise(report: BulkUploadReportDTO, translate?: DeadlineTranslator): BulkUploadSummary {
   const acceptedCount = report.accepted.length;
   // A refused row carries exactly one error today (the API's own rule), but a
   // row can carry several warnings — and `errors.length` is only "rows that
@@ -203,6 +204,9 @@ export function summarise(report: BulkUploadReportDTO): BulkUploadSummary {
     warningCount: report.warnings.length,
     warnedRows,
   };
+
+  const deadline = deadlineSummary(acceptedCount, report.errors, translate, report.dryRun);
+  if (deadline) return { ...counts, ...deadline };
 
   if (acceptedCount === 0) {
     return {
@@ -341,6 +345,12 @@ export function tonnesLabel(rows: BulkUploadAcceptedRow[]): string {
  * statuses nor the review queue's, so an import moves no total and fills no
  * queue until each row is submitted.
  */
+export function canApplyPreview(report: BulkUploadReportDTO): boolean {
+  return report.dryRun && report.accepted.length > 0
+    && report.completion !== 'deadline_exceeded'
+    && !report.errors.some((issue) => issue.code === 'not_processed_deadline');
+}
+
 export function applyConfirmation(report: BulkUploadReportDTO): string {
   const count = report.accepted.length;
   const tonnes = tonnesLabel(report.accepted);
@@ -384,10 +394,13 @@ export function applySuccessMessage(report: BulkUploadReportDTO): string {
  * period locked between the dry run and the apply, say), and the success toast
  * used to fire for it anyway: "0 records imported as drafts".
  */
-export function applyToast(report: BulkUploadReportDTO): {
+export function applyToast(report: BulkUploadReportDTO, translate?: DeadlineTranslator): {
   kind: 'success' | 'warning';
   message: string;
+  description?: string;
 } {
+  const deadline = deadlineSummary(report.accepted.length, report.errors, translate);
+  if (deadline) return { kind: 'warning', message: deadline.headline, description: deadline.detail };
   return report.accepted.length > 0
     ? { kind: 'success', message: applySuccessMessage(report) }
     : { kind: 'warning', message: 'No rows were imported — the report below says why.' };

@@ -1,3 +1,4 @@
+import { installRuntimeShutdown } from './common/runtime-shutdown';
 import 'reflect-metadata';
 import { initSentry } from './observability/sentry';
 import { assertAuthConfig } from './auth/token-verifier';
@@ -6,6 +7,9 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { JsonLogger } from './observability/json-logger';
 import { configureApp } from './app-setup';
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import { configurePool, readRuntimeConfig } from './common/runtime-config';
+import { RuntimeLimits } from './common/runtime-limits';
 
 async function bootstrap() {
   // Sentry first, before Nest builds the app — a no-op unless SENTRY_DSN is
@@ -17,25 +21,15 @@ async function bootstrap() {
   // Likewise on a placeholder-factor flag set where it must not be (K3): read
   // once, here, before any module can price a record.
   const factorPolicy = bootFactorPolicy();
+  const runtime = readRuntimeConfig();
+  configurePool(runtime);
   const logger = new JsonLogger();
-  const app = await NestFactory.create(AppModule, { logger });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger });
   // Prefix, validation, structured request logging and error reporting; every
   // error body carries a code (LP3-01).
-  configureApp(app, logger);
+  configureApp(app, logger, { runtimeLimits: app.get(RuntimeLimits) });
 
-  const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:3000';
-  app.enableCors({
-    origin: webOrigin.split(','),
-    credentials: true,
-    // Content-Disposition is not CORS-safelisted — without exposing it, the
-    // report downloads' server-chosen filenames never reach the browser.
-    // x-request-id lets the client quote an id when reporting a problem.
-    exposedHeaders: ['Content-Disposition', 'x-request-id'],
-  });
-
-  // Graceful shutdown: lets ReportsService.onModuleDestroy close the shared
-  // Chromium instance (otherwise containers leak a zombie browser per restart).
-  app.enableShutdownHooks();
+  installRuntimeShutdown(app, app.get(RuntimeLimits));
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen(port);

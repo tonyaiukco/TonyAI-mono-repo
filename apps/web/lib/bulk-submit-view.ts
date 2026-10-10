@@ -156,7 +156,22 @@ export interface SubmitSummary {
 }
 
 /** The verdict after a bulk submit. */
-export function summariseSubmit(report: BulkSubmitReportDTO): SubmitSummary {
+export type DeadlineTranslator = (key: 'bulkDeadline.title' | 'bulkDeadline.detail' | 'bulkDeadline.previewDetail',
+  values?: { accepted: number; refused: number; unstarted: number }) => string;
+
+export function deadlineSummary(accepted: number, issues: readonly { code: string }[], translate?: DeadlineTranslator, dryRun = false) {
+  const unstarted = issues.filter((i) => i.code === 'not_processed_deadline').length;
+  if (!unstarted) return null;
+  const values = { accepted, refused: issues.length - unstarted, unstarted };
+  const detailKey = dryRun ? 'previewDetail' : 'detail';
+  const detail = translate ? translate(`bulkDeadline.${detailKey}`, values)
+    : Object.entries(values).reduce((text, [key, value]) => text.replace(`{${key}}`, formatNumber(value)), enErrors.bulkDeadline[detailKey]);
+  return { tone: 'partial' as const, headline: translate ? translate('bulkDeadline.title') : enErrors.bulkDeadline.title, detail };
+}
+
+export function summariseSubmit(report: BulkSubmitReportDTO, translate?: DeadlineTranslator): SubmitSummary {
+  const deadline = deadlineSummary(report.submitted.length, report.failed, translate);
+  if (deadline) return deadline;
   const moved = report.submitted.length;
   const failed = report.failed.length;
 

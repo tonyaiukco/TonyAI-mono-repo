@@ -38,7 +38,7 @@ RUN pnpm --filter @tonyai/shared-types build \
 
 # ---------------------------------------------------------------------------
 FROM base AS runtime
-ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 NODE_OPTIONS=--max-old-space-size=512
 WORKDIR /app
 # Standalone server (traced from the monorepo root) + static assets.
 COPY --from=builder --chown=node:node /app/apps/web/.next/standalone ./

@@ -195,7 +195,11 @@ function build() {
       });
     }),
   };
-  const audit = { record: vi.fn() };
+  const auditRecord = vi.fn();
+  const audit = { record: auditRecord, finalize: vi.fn(async (user, entry, close?) => {
+    if (close) await close(prisma);
+    return auditRecord(user, entry);
+  }) };
   const storage = {
     upload: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
@@ -1830,7 +1834,7 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     expect(report.accepted).toHaveLength(2);
     expect(audit.record).toHaveBeenCalledTimes(1);
     expect(logged).toHaveLength(1);
-    expect(logged[0].message).toContain('batch audit row failed to write');
+    expect(logged[0].message).toContain('finalization failed');
   });
 
   it.each([0x01, 0x0a, 0x1f, 0x7f, 0x80, 0x9f, 0xd800])(
@@ -2495,4 +2499,68 @@ describe('BulkUploadService — activity types (LP3-03)', () => {
       expect.objectContaining({ row: 3, code: 'no_factor', message: 'Two releases claim it.' }),
     ]);
   });
+});
+
+describe('import cooperative deadline', () => {
+  it.each([false, true])('accounts for unstarted rows on dryRun=%s', async (dryRun) => {
+    const { performance } = await import('node:perf_hooks');
+    let time = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => time);
+    try {
+      const { service, records, audit, prisma } = build();
+      const original = (dryRun ? records.previewCreate : records.create).getMockImplementation()!;
+      (dryRun ? records.previewCreate : records.create).mockImplementation(async (...args: any[]) => {
+        const result = await (original as (...args: any[]) => unknown)(...args);
+        time = 60_000;
+        return result;
+      });
+      const report = await service.import(dataEntry(), csvFile([row(), row({ periodValue: 'February' })]), { dryRun });
+      expect(report.completion).toBe('deadline_exceeded');
+      expect(report.accepted).toHaveLength(1);
+      expect(report.errors).toMatchObject([{ row: 3, code: 'not_processed_deadline' }]);
+      expect(audit.record.mock.calls[0][1].diff).toMatchObject({ acceptedCount: 1, rejectedCount: 0, notProcessedCount: 1, completion: 'deadline_exceeded' });
+      if (dryRun) expect(prisma.importBatch.update).not.toHaveBeenCalled();
+      else expect(prisma.importBatch.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'failed', acceptedCount: 1, rejectedCount: 0 }) }));
+    } finally { clock.mockRestore(); }
+  });
+});
+
+describe('review regression import', () => {
+  it('M8: a deadline that passes during the final row still reports completed', async () => {
+    const { performance } = await import('node:perf_hooks');
+    let time = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => time);
+    try {
+      const { service, records, audit } = build();
+      const original = records.create.getMockImplementation()!;
+      records.create.mockImplementation(async (...args: Parameters<typeof records.create>) => {
+        const result = await (original as (...a: Parameters<typeof records.create>) => unknown)(...args);
+        time = 60_000;
+        return result;
+      });
+      const report = await service.import(dataEntry(), csvFile([row()]), { dryRun: false });
+      expect(report.errors).toEqual([]);
+      expect(report.completion).toBe('completed');
+      expect(audit.record.mock.calls[0][1].diff).toMatchObject({ completion: 'completed', notProcessedCount: 0 });
+    } finally { clock.mockRestore(); }
+  });
+  it('M12: the import path applies the parser deadline', async () => {
+    const { performance } = await import('node:perf_hooks');
+    let time = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => (time += 1));
+    vi.stubEnv('IMPORT_PARSE_TIMEOUT_MS', '1');
+    try {
+      const { service } = build();
+      await expect(service.import(dataEntry(), csvFile([row()]), { dryRun: true })).rejects.toMatchObject({ status: 400 });
+    } finally { clock.mockRestore(); vi.unstubAllEnvs(); }
+  });
+});
+
+it('closes the import through the final audit transaction client, never the root client', async () => {
+  const { service, audit, prisma } = build();
+  const tx = { importBatch: { update: vi.fn().mockResolvedValue({}) } };
+  audit.finalize.mockImplementation(async (_user, _entry, close) => { await close?.(tx); });
+  await service.import(dataEntry(), csvFile([row()]), { dryRun: false });
+  expect(tx.importBatch.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'completed', acceptedCount: 1, rejectedCount: 0 }) }));
+  expect(prisma.importBatch.update).not.toHaveBeenCalled();
 });

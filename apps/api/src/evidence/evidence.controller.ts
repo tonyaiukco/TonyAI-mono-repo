@@ -1,3 +1,4 @@
+import { RuntimeUploadWorkInterceptor } from '../common/runtime-request';
 import {
   Body,
   Controller,
@@ -12,7 +13,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { EvidenceService } from './evidence.service';
-import { EVIDENCE_MAX_SIZE_BYTES } from '@tonyai/shared-types';
+import { EVIDENCE_MULTIPART_LIMITS, SHARED_EVIDENCE_MULTIPART_LIMITS } from '../common/multipart-limits';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 import { UploadEvidenceForRecordsDto } from './dto/upload-evidence-for-records.dto';
 
@@ -40,9 +41,10 @@ export class EvidenceController {
   @Post('activity-records/:recordId/evidence')
   @UseInterceptors(
     FileInterceptor('file', {
-      limits: { fileSize: EVIDENCE_MAX_SIZE_BYTES },
+      limits: EVIDENCE_MULTIPART_LIMITS,
       defParamCharset: FILE_NAME_CHARSET,
     }),
+    RuntimeUploadWorkInterceptor,
   )
   upload(
     @CurrentUser() user: RequestUser,
@@ -60,17 +62,10 @@ export class EvidenceController {
   @Post('evidence')
   @UseInterceptors(
     FileInterceptor('file', {
-      // busboy defaults `fields` and `parts` to Infinity; one file and one
-      // field is the whole contract. `fieldSize` stays at busboy's 1 MB — a
-      // thousand ids are ~39 KB of JSON.
-      limits: {
-        fileSize: EVIDENCE_MAX_SIZE_BYTES,
-        files: 1,
-        fields: 2,
-        parts: 4,
-      },
+      limits: SHARED_EVIDENCE_MULTIPART_LIMITS,
       defParamCharset: FILE_NAME_CHARSET,
     }),
+    RuntimeUploadWorkInterceptor,
   )
   uploadForRecords(
     @CurrentUser() user: RequestUser,

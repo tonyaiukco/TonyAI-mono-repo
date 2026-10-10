@@ -1,10 +1,8 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
+import { Body, Controller, Post } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { BulkSubmitService } from './bulk-submit.service';
 import { BulkSubmitActivityRecordsDto } from './dto/bulk-submit-activity-records.dto';
-import { UserThrottlerGuard } from './user-throttler.guard';
 
 /**
  * Its own controller, under `activity-records`, even though it lives in the
@@ -19,7 +17,6 @@ import { UserThrottlerGuard } from './user-throttler.guard';
  * fixing it then would be a breaking API change.
  */
 @Controller('activity-records')
-@UseGuards(UserThrottlerGuard)
 export class BulkSubmitController {
   constructor(private readonly service: BulkSubmitService) {}
 
@@ -33,7 +30,6 @@ export class BulkSubmitController {
    * partial result is the normal reason to send a second one.
    */
   @Post('bulk-submit')
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   submitMany(
     @CurrentUser() user: RequestUser,
     @Body() dto: BulkSubmitActivityRecordsDto,

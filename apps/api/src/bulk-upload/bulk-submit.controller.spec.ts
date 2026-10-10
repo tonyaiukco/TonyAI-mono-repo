@@ -8,7 +8,7 @@ import {
 import { RequestMethod } from '@nestjs/common';
 import { BulkSubmitController } from './bulk-submit.controller';
 import { BulkSubmitService } from './bulk-submit.service';
-import { UserThrottlerGuard } from './user-throttler.guard';
+import { routeGroup } from '../common/runtime-limits';
 
 /**
  * Route metadata rather than a Nest testing module, following
@@ -35,18 +35,12 @@ describe('BulkSubmitController — the route', () => {
     );
   });
 
-  it('is rate-limited per USER, with its own budget', () => {
-    // Throttler keys include the handler name, so this and the import never
-    // share a bucket — and the default tracker is `req.ip`, which behind a
-    // reverse proxy is one bucket for the whole product.
+  it('delegates admission to the global runtime guard', () => {
     expect(
       Reflect.getMetadata(GUARDS_METADATA, BulkSubmitController),
-    ).toContain(UserThrottlerGuard);
+    ).toBeUndefined();
     const handler = BulkSubmitController.prototype.submitMany;
-    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler)).toBe(10);
-    // The window too: shrinking it to a second turns ten a minute into six
-    // hundred, and the limit alone would not notice.
-    expect(Reflect.getMetadata('THROTTLER:TTLdefault', handler)).toBe(60_000);
+    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler)).toBeUndefined();
   });
 
   it('hands the service the caller and the body, untouched', async () => {
@@ -67,3 +61,5 @@ describe('BulkSubmitController — the route', () => {
     });
   });
 });
+
+it('uses the global grouped runtime policy', () => { expect(routeGroup('POST', '/api/v1/activity-records/bulk-submit')).toBe('SUBMIT'); });
