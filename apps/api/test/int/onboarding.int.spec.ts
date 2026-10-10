@@ -557,6 +557,41 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     expect(await bannedInAuth(profileId)).toBe(true);
   });
 
+  it('an enable whose sync is still in flight cannot clear the flag delivery armed for the user it just made (qa re-review of be2b8d9)', async () => {
+    const s = services(null);
+    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
+      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    });
+    invitedIds.push(profileId);
+    await s.access.disableMember(A.users.superAdmin, profileId); // no Auth user yet
+    await s.access.enableMember(A.users.superAdmin, profileId);
+    const real = new AuthAdminService();
+    const gated = new AuthAdminService(); // the enable's own sync
+    let reachedUnban!: () => void;
+    const unbanReached = new Promise<void>((r) => (reachedUnban = r));
+    let openGate!: () => void;
+    const gate = new Promise<void>((r) => (openGate = r));
+    // Its unban finds no Auth user (nothing to do) and is held before it clears the flag.
+    vi.spyOn(gated, 'setBanned').mockImplementationOnce(async (id, banned) => {
+      await real.setBanned(id, banned);
+      reachedUnban();
+      await gate;
+    });
+    const enabling = new AuthSyncService(gated).apply(runtime, profileId);
+    await unbanReached;
+    await s.access.reopenInvitation(A.users.superAdmin, profileId); // the re-send…
+    const { sent, transport } = inbox();
+    const delivering = new InvitationDeliveryService(real, new MailService(transport, MAIL), new AuthSyncService(real)).deliver(runtime, profileId);
+    await queuedOnAdvisoryLock(); // …made the user, banned, armed the flag and waits for the enable's sync
+    openGate();
+    expect(await enabling).toBe(false); // the armed flag is newer: not its to clear
+    expect(await delivering).toEqual({ delivered: true });
+    expect(await bannedInAuth(profileId)).toBe(false);
+    expect((await owner.profile.findUniqueOrThrow({ where: { id: profileId } })).authSyncPendingSince).toBeNull();
+    const session = await browser().auth.verifyOtp({ type: 'invite', token_hash: tokenIn(sent[0], 'invite') });
+    expect(session.error).toBeNull();
+  });
+
   it('a disable whose own sync is still in flight cannot clear delivery’s re-armed flag (Codex finding 2, the re-arm moves the generation)', async () => {
     const real = new AuthAdminService();
     const gated = new AuthAdminService(); // the disable's own sync
