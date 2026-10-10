@@ -987,7 +987,7 @@ export class ActivityRecordsService {
       excludeId: id, // the record's own row must not seed its baseline
     });
 
-    const data: Prisma.ActivityRecordUpdateInput = {
+    const data: Prisma.ActivityRecordUncheckedUpdateInput = {
       reportingYear,
       category,
       scope,
@@ -1005,11 +1005,13 @@ export class ActivityRecordsService {
       anomalyBaselineTCo2e: verdict.baseline,
       calculation: calculation as unknown as Prisma.InputJsonValue,
     };
-    if (dto.locationId !== undefined) {
-      data.location = dto.locationId
-        ? { connect: { id: dto.locationId } }
-        : { disconnect: true };
-    }
+    // The site as its own column, never the relation's connect/disconnect:
+    // the site key is (location_id, subsidiary_id) since LP4-01, and Prisma's
+    // relation writes set both columns — `disconnect` would NULL the
+    // subsidiary too (P2011), `connect` would copy the site's subsidiary onto
+    // the record. Written alone, the key holds the site to the record's own
+    // subsidiary (P2003 below) even if the site moved after the check above.
+    if (dto.locationId !== undefined) data.locationId = dto.locationId;
     if (dto.reportingPeriod !== undefined) data.reportingPeriod = dto.reportingPeriod;
     if (dto.activityType !== undefined) data.activityType = dto.activityType;
     // The canonical spelling, not the caller's. Gated on the caller having
@@ -1060,6 +1062,11 @@ export class ActivityRecordsService {
         e.code === 'P2002'
       ) {
         throw new DuplicateActivityRecordError();
+      }
+      // The only key this update can break: the site no longer belongs to the
+      // record's subsidiary — the answer the check above gives.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
+        throw new ResourceNotFoundError('location_not_found');
       }
       const trigger = recordTriggerCode(e);
       if (trigger === 'TA002') throw new ActivityTypeSlotConflictError(activityType !== null);

@@ -362,6 +362,20 @@ function assertLocalTarget(url: string): void {
  * other teardown target. Returns the failure rather than throwing it, like `del`.
  */
 async function deleteRecordsAsOwner(where: Record<string, unknown>): Promise<string | null> {
+  return asOwner('activity_records', (prisma) => prisma.activityRecord.deleteMany({ where }));
+}
+
+/**
+ * Run one teardown step as the database OWNER (DIRECT_URL,
+ * `E2E_OWNER_DATABASE_URL`, local or CI only). Since LP4-01 no foreign key's
+ * action reaches a record — a subsidiary or a site that holds records is
+ * deleted by nobody until its records are — so the teardowns that once let a
+ * service-role delete cascade remove the records here first. Returns the
+ * failure rather than throwing it, like `del`.
+ */
+type OwnerDelete = { deleteMany(args: { where: Record<string, unknown> }): Promise<unknown> };
+type OwnerClient = { activityRecord: OwnerDelete; subsidiary: OwnerDelete; location: OwnerDelete };
+async function asOwner(what: string, step: (prisma: OwnerClient) => Promise<unknown>): Promise<string | null> {
   const ownerUrl = process.env.E2E_OWNER_DATABASE_URL;
   if (!ownerUrl) return 'E2E_OWNER_DATABASE_URL not set (see playwright.config.ts env loader).';
   assertLocalDatabase(ownerUrl);
@@ -370,10 +384,10 @@ async function deleteRecordsAsOwner(where: Record<string, unknown>): Promise<str
   const { PrismaClient } = createRequire(__filename)('../packages/db/generated/client');
   const prisma = new PrismaClient({ datasourceUrl: ownerUrl });
   try {
-    await prisma.activityRecord.deleteMany({ where });
+    await step(prisma);
     return null;
   } catch (e) {
-    return `activity_records owner delete failed — ${(e as Error).message}`;
+    return `${what} owner delete failed — ${(e as Error).message}`;
   } finally {
     await prisma.$disconnect();
   }
@@ -613,9 +627,8 @@ export async function cleanupQuarterly(request: APIRequestContext): Promise<void
 export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
   assertLocalTarget(url);
-  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
-  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
-  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  // The evidence files are still read and removed with the service key.
+  if (!process.env.E2E_SUPABASE_SERVICE_KEY) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   // Files BEFORE rows: the subsidiary delete cascades to the evidence rows it
   // owns, taking the object keys with them, so this is the last moment they
   // can be read. Not covered by the quarterly sweep — a spec is free to put an
@@ -625,9 +638,13 @@ export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promis
     'select=id,storage_path,subsidiaries!inner(legal_name)' +
       '&subsidiaries.legal_name=like.E2E%20Test%20Co*',
   );
+  const e2e = { legalName: { startsWith: 'E2E Test Co' } };
   reportCleanup([
     await removeEvidenceObjects(request, files.map((f) => f.storage_path)),
-    await del(request, `${url}/rest/v1/subsidiaries?legal_name=like.E2E%20Test%20Co*`, headers),
+    // Records, then the subsidiaries, as the owner (LP4-01: a subsidiary that
+    // holds records is deleted by nobody until they are).
+    await deleteRecordsAsOwner({ subsidiary: e2e }),
+    await asOwner('subsidiaries', (prisma) => prisma.subsidiary.deleteMany({ where: e2e })),
   ]);
 }
 
@@ -639,14 +656,15 @@ export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promis
  * re-seeds, shifting the location count the UAT testers see, and invisible to
  * every spec, since nothing asserts an absolute location total.
  */
-export async function cleanupE2ELocations(request: APIRequestContext): Promise<void> {
+export async function cleanupE2ELocations(_request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
   assertLocalTarget(url);
-  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
-  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
-  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
+  const e2e = { name: { startsWith: 'E2E ' } };
   reportCleanup([
-    await del(request, `${url}/rest/v1/locations?name=like.E2E%20*`, headers),
+    // A site's key is RESTRICT (LP4-01): its records go first — before, the
+    // delete silently re-filed them at company level.
+    await deleteRecordsAsOwner({ location: e2e }),
+    await asOwner('locations', (prisma) => prisma.location.deleteMany({ where: e2e })),
   ]);
 }
 

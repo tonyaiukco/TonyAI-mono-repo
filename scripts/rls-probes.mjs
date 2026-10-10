@@ -172,6 +172,23 @@ function svc(method, path, body) {
   });
 }
 
+// The fixtures' teardowns run as the database owner (LP4-01): an organisation
+// is deleted by the owner's session alone (`organisations_delete_owner_only`),
+// and a subsidiary that holds records by nobody until its records are. The
+// same credential the seed uses — DIRECT_URL — and a loopback one only.
+let ownerClient;
+async function ownerDb() {
+  if (ownerClient) return ownerClient;
+  const url = process.env.DIRECT_URL || readVar('packages/db/.env', 'DIRECT_URL') || readVar('apps/api/.env', 'DIRECT_URL');
+  if (!url) throw new Error("DIRECT_URL (the owner) is not set — the fixtures' teardown runs as the owner");
+  const { isLoopbackUrl } = await import('../packages/db/scripts/runtime-role.mjs');
+  if (!isLoopbackUrl(url)) throw new Error('the owner teardown refuses a DIRECT_URL that is not a plain loopback URL');
+  const { createRequire } = await import('node:module');
+  const { PrismaClient } = createRequire(import.meta.url)('../packages/db/generated/client');
+  ownerClient = new PrismaClient({ datasourceUrl: url });
+  return ownerClient;
+}
+
 // period_locks is empty in the seed → seed a temporary pair (one accessible to
 // entry, one not) so the entry>0 and entry<service assertions have data.
 async function seedPeriodLocks() {
@@ -288,8 +305,9 @@ async function seedForeignSubsidiary() {
   if (!res.ok) throw new Error(`foreign subsidiary seed failed: ${res.status} ${await res.text()}`);
 }
 async function cleanupForeignSubsidiary() {
-  await svc('DELETE', `subsidiaries?id=eq.${FOREIGN_SUB_ID}`);
-  await svc('DELETE', `organisations?id=eq.${FOREIGN_ORG}`);
+  const owner = await ownerDb();
+  await owner.subsidiary.deleteMany({ where: { id: FOREIGN_SUB_ID } });
+  await owner.organisation.deleteMany({ where: { id: FOREIGN_ORG } });
 }
 
 // --- LP1-03: two organisations, all four roles, malformed grants ------------
@@ -328,14 +346,15 @@ async function lp103AuthUsers() {
 async function cleanupTwoOrganisations() {
   const users = await lp103AuthUsers();
   const ids = users.map((u) => u.id);
-  if (ids.length) {
-    await svc('DELETE', `user_subsidiary_access?user_id=in.(${ids.join(',')})`);
-    await svc('DELETE', `activity_records?subsidiary_id=in.(${LP103.subX1},${LP103.subX2},${LP103.subY1})`);
-    await svc('DELETE', `profiles?id=in.(${ids.join(',')})`);
+  const owner = await ownerDb();
+  // Records first: their subsidiary's key refuses the delete while they exist.
+  await owner.activityRecord.deleteMany({ where: { subsidiaryId: { in: [LP103.subX1, LP103.subX2, LP103.subY1] } } });
+  if (ids.length) await owner.profile.deleteMany({ where: { id: { in: ids } } }); // their grants cascade
+  await owner.organisation.deleteMany({ where: { id: { in: [LP103.orgX, LP103.orgY] } } });
+  for (const id of ids) {
+    const res = await authAdmin('DELETE', `users/${id}`);
+    if (!res.ok && res.status !== 404) throw new Error(`removing auth user ${id} failed: ${res.status} ${await res.text()}`);
   }
-  await svc('DELETE', `activity_records?subsidiary_id=in.(${LP103.subX1},${LP103.subX2},${LP103.subY1})`);
-  await svc('DELETE', `organisations?id=in.(${LP103.orgX},${LP103.orgY})`);
-  for (const id of ids) await authAdmin('DELETE', `users/${id}`);
 }
 
 async function seedTwoOrganisations() {
@@ -486,6 +505,18 @@ async function probeTwoOrganisations() {
       revokedRows.length === 0 && grantsAfter.length === 1,
       `delete=${revoke.status}, rows=${revokedRows.length}`,
     );
+
+    // LP4-01: no foreign key's action reaches a record. X1 holds one, so the
+    // service role's delete of X1 is refused by the record's key (23503)
+    // instead of cascading the record away.
+    const subDelete = await svc('DELETE', `subsidiaries?id=eq.${LP103.subX1}`);
+    const subDeleteBody = subDelete.ok ? {} : await subDelete.json().catch(() => ({}));
+    const recordLeft = await count('activity_records', { token: SERVICE, key: SERVICE, query: `select=id&id=eq.${LP103.recX1}` });
+    check(
+      'subsidiaries: a delete never cascades into records — refused while it holds one (23503)',
+      !subDelete.ok && subDeleteBody.code === '23503' && recordLeft.total === 1,
+      `delete=${subDelete.status} ${subDeleteBody.code ?? ''}, record left=${recordLeft.total}`,
+    );
   } catch (e) {
     check('LP1-03 two-organisation probe could run', false, e.message);
   } finally {
@@ -592,6 +623,18 @@ async function main() {
       'subsidiaries: a super_admin cannot read another organisation',
       foreignExists.total === 1 && adminSees.total === 0,
       `foreign rows exist=${foreignExists.total}, visible to admin=${adminSees.total}`,
+    );
+
+    // LP4-01: an organisation is the operator's to remove (the owner's
+    // session), not a service-role client's — it would take every subsidiary,
+    // site and file row of the tenant with it.
+    const orgDelete = await svc('DELETE', `organisations?id=eq.${FOREIGN_ORG}`);
+    const orgDeleteBody = orgDelete.ok ? {} : await orgDelete.json().catch(() => ({}));
+    const orgLeft = await count('organisations', { token: SERVICE, key: SERVICE, query: `select=id&id=eq.${FOREIGN_ORG}` });
+    check(
+      'organisations: the service role cannot delete one — the owner alone does (TA004)',
+      !orgDelete.ok && orgDeleteBody.code === 'TA004' && orgLeft.total === 1,
+      `delete=${orgDelete.status} ${orgDeleteBody.code ?? ''}, rows left=${orgLeft.total}`,
     );
   } finally {
     await cleanupPeriodLocks();
@@ -1040,6 +1083,7 @@ async function main() {
     check('runtime role check could run', false, e.message);
   }
 
+  await ownerClient?.$disconnect();
   console.log('');
   if (failures.length) {
     console.error(`FAILED — ${failures.length} check(s): ${failures.join(', ')}`);

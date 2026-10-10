@@ -22,6 +22,7 @@ export interface IntegrityTrigger {
 export declare const INTEGRITY_TRIGGERS: readonly IntegrityTrigger[];
 export declare const INTEGRITY_HELPERS: readonly { fn: string; language: string }[];
 export declare const INTEGRITY_CHECKS: readonly (readonly [table: string, name: string, definitionMd5: string])[];
+export declare const RECORD_FOREIGN_KEYS: readonly (readonly [name: string, definitionMd5: string])[];
 export declare function expectedTriggerFunctionBodies(dir?: string): Map<string, string>;
 export declare function checkTableLevelGrants(query: Query): Promise<string[]>;
 export declare function checkFunctionExecutors(

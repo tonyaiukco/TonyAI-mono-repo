@@ -162,6 +162,9 @@ model Location {
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
 
+  // The target of activity_records' site key (LP4-01): a record's site
+  // belongs to the record's own subsidiary.
+  @@unique([id, subsidiaryId])
   @@index([subsidiaryId])
   @@map("locations")
 }
@@ -176,12 +179,20 @@ model Location {
 // instead of deleting it. `locked` leaves only by UNLOCKING the period, and a
 // void is refused on it: a closed period reopens through its own path or not at
 // all. Child of `subsidiaries`, so it is tenant-scoped by `subsidiary_id`.
+// Every parent key refuses both the parent's delete and a change of its key
+// (LP4-01): no referential action ever writes a record. One would run as the
+// table's owner, whom `activity_records_committed_delete` lets delete a
+// committed record. So a subsidiary, a site or an organisation that holds
+// records is deleted by nobody — the owner included, outside replica mode —
+// until its records are, and a site holding records cannot move to another
+// subsidiary: the site key is (location_id, subsidiary_id), so the database
+// also holds a record's site to its own subsidiary.
 model ActivityRecord {
   id             String               @id @default(uuid()) @db.Uuid
   subsidiaryId   String               @map("subsidiary_id") @db.Uuid
-  subsidiary     Subsidiary           @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  subsidiary     Subsidiary           @relation(fields: [subsidiaryId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   locationId     String?              @map("location_id") @db.Uuid
-  location       Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location       Location?            @relation(fields: [locationId, subsidiaryId], references: [id, subsidiaryId], onDelete: Restrict, onUpdate: Restrict)
   reportingYear  Int                  @map("reporting_year")
   reportingPeriod String              @map("reporting_period") // 'monthly' | 'quarterly' | 'annual'
   // Canonicalised on write to the vocabulary in @tonyai/shared-types
@@ -256,12 +267,13 @@ model ActivityRecord {
   voidedBy       String?              @map("voided_by") @db.Uuid
   voidedAt       DateTime?            @map("voided_at")
   // The bulk import that created this record, or null for one typed on Data
-  // Entry. Written once at create, never by an update. NoAction, not Restrict:
-  // a batch cannot be deleted while records point at it, but an organisation
-  // delete (which cascades to both) still works, because NO ACTION is checked
-  // at the end of the statement.
+  // Entry. Written once at create, never by an update. NoAction both ways: a
+  // batch cannot be deleted, nor its id changed, while records point at it.
+  // Since LP4-01 an organisation that holds records cannot be deleted either
+  // (the record keys above are Restrict), so its batches go after its
+  // records, never with them.
   importBatchId  String?              @map("import_batch_id") @db.Uuid
-  importBatch    ImportBatch?         @relation(fields: [importBatchId], references: [id], onDelete: NoAction)
+  importBatch    ImportBatch?         @relation(fields: [importBatchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   evidenceLinks  ActivityRecordEvidence[]
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")

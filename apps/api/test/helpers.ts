@@ -93,8 +93,9 @@ export function createPrismaMock() {
       updateMany: vi.fn(),
       count: vi.fn(),
     },
-    // Everything hanging off a subsidiary is ON DELETE CASCADE, so the delete
-    // guard has to count all of it. Present here for the same reason as
+    // Everything hanging off a subsidiary but its records is ON DELETE CASCADE
+    // (records are RESTRICT since LP4-01), so the delete guard has to count all
+    // of it. Present here for the same reason as
     // activityRecord above: an unmocked namespace throws a TypeError, which
     // reads as a broken test instead of the missing guard it actually is.
     periodLock: { count: vi.fn() },

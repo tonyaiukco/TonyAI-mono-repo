@@ -234,7 +234,8 @@ export class LocationsService {
   /**
    * Refuse to delete something that committed data still points at.
    *
-   * The FK is `ON DELETE SET NULL`, so a delete used to succeed silently and
+   * The FK was `ON DELETE SET NULL` (RESTRICT since LP4-01, which makes the
+   * database refuse it too), so a delete used to succeed silently and
    * leave every referencing record claiming the SUBSIDIARY's geography while its
    * frozen calculation snapshot was computed from the LOCATION's — measured:
    * subsidiary TR, location UK, record detached with `geographyCode: 'UK'` still
@@ -302,9 +303,19 @@ export class LocationsService {
     const existing = await this.loadScoped(user, id);
     await this.assertNoRecords(id);
     // Delete + audit in one transaction (see subsidiaries.remove).
-    await this.prisma.$transaction((tx) =>
-      this.deleteLocationForTrustedParent(tx, user, existing),
-    );
+    try {
+      await this.prisma.$transaction((tx) =>
+        this.deleteLocationForTrustedParent(tx, user, existing),
+      );
+    } catch (err) {
+      // A record filed here after the check above: the site's key is RESTRICT
+      // (LP4-01), so the delete is refused rather than re-filing it at company
+      // level. The same 409 as the check, with the count as it is now.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+        await this.assertNoRecords(id);
+      }
+      throw err;
+    }
     return { id, deleted: true };
   }
 

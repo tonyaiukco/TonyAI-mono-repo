@@ -109,6 +109,8 @@ export default async function setup(): Promise<void> {
         where: { OR: [{ organisationId: { in: orgIds } }, { userId: { in: profileIds } }] },
       });
       await prisma.profile.deleteMany({ where: { id: { in: profileIds } } });
+      // Records before their organisation (LP4-01: no foreign key's action reaches them).
+      await prisma.activityRecord.deleteMany({ where: { subsidiaryId: { in: subsidiaryIds } } });
       await prisma.organisation.deleteMany({ where: { id: { in: orgIds } } });
     }
   } finally {

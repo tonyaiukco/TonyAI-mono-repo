@@ -644,13 +644,13 @@ export async function platformDefaultPrivileges(query) {
 }
 
 /**
- * The integrity triggers the LP3-03 migration installs: each must exist, be
- * ENABLE ALWAYS (`tgenabled = 'A'`, firing in replica mode too, so a restore
- * cannot slip past it), fire on exactly its events, and run its own function
- * with exactly the body the migrations define. A trigger disabled, dropped,
- * re-created on fewer events or pointed at an emptied function is a silent
- * hole: the snapshot of an approved record becomes editable, or a loaded
- * factor rewritable.
+ * The integrity triggers the LP3-03 and LP4-01 migrations install: each must
+ * exist, be ENABLE ALWAYS (`tgenabled = 'A'`, firing in replica mode too, so a
+ * restore cannot slip past it), fire on exactly its events, and run its own
+ * function with exactly the body the migrations define. A trigger disabled,
+ * dropped, re-created on fewer events or pointed at an emptied function is a
+ * silent hole: the snapshot of an approved record becomes editable, a loaded
+ * factor rewritable, or a tenant deletable by a client.
  *
  * `type` is `pg_trigger.tgtype`: ROW 1, BEFORE 2, INSERT 4, DELETE 8,
  * UPDATE 16, TRUNCATE 32.
@@ -682,6 +682,16 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   { table: 'factor_release_events', trigger: 'factor_release_events_before_update', fn: 'factor_release_events_refuse', type: ROW | BEFORE | ON.update },
   { table: 'factor_release_events', trigger: 'factor_release_events_before_delete', fn: 'factor_release_events_refuse', type: ROW | BEFORE | ON.delete },
   { table: 'factor_release_events', trigger: 'factor_release_events_before_truncate', fn: 'factor_tables_before_truncate', type: BEFORE | ON.truncate },
+  // LP4-01: who may write a record's lifecycle (born a draft; a status moved
+  // only in the API's or the owner's session); an organisation deleted, and a
+  // subsidiary moved, by the owner's session alone. `subsidiaries` is guarded
+  // (a later BEFORE UPDATE trigger could rewrite NEW.organisation_id after the
+  // guard); `organisations` is not: LP1-03's access-removal trigger also lives
+  // there (Open questions, "LP3-03 PR B" (20)), and a later trigger cannot
+  // undo the guard's refusal.
+  { table: 'activity_records', trigger: 'activity_records_lifecycle_writer', fn: 'activity_records_lifecycle_writer', type: ROW | BEFORE | ON.insert | ON.update },
+  { table: 'organisations', trigger: 'organisations_delete_owner_only', fn: 'organisations_delete_owner_only', type: ROW | BEFORE | ON.delete },
+  { table: 'subsidiaries', trigger: 'subsidiaries_stay_in_organisation', fn: 'subsidiaries_stay_in_organisation', type: ROW | BEFORE | ON.update },
 ]);
 
 /**
@@ -771,10 +781,41 @@ export function expectedTriggerFunctionBodies(dir = MIGRATIONS_DIR) {
 
 const md5 = (text) => createHash('md5').update(text, 'utf8').digest('hex');
 
-/** The tables the integrity triggers guard: nothing else may hook into them. */
-const GUARDED_TABLES = Object.freeze(['activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events']);
+/**
+ * The foreign keys of `activity_records` (LP4-01), each with the md5 of its
+ * `pg_get_constraintdef` on a database migrated from this repository — so a
+ * key re-created under its own name on other columns, or with another action,
+ * is a finding. Every key of the table, listed or not, must answer both its
+ * parent's delete and a change of the parent's key with RESTRICT or NO ACTION:
+ * a referential action runs as the table's owner, whom
+ * `activity_records_committed_delete` lets delete a committed record, so an ON
+ * DELETE CASCADE or SET NULL would let whoever may delete the parent (a
+ * service-role client, the API's role with SQL access) remove or re-file
+ * committed records, and an ON UPDATE action would write them. A key dropped
+ * is reported too: records could then outlive their subsidiary, or sit at
+ * another subsidiary's site. So is a key whose enforcement is switched off: a
+ * foreign key is four system triggers — an insert and an update check on
+ * `activity_records`, a delete and a key-change action on the parent — and a
+ * superuser can disable one, or make it replica-only, while the key's
+ * definition and `convalidated` read as before (Codex's review of #159). Each
+ * must be present and fire in an ordinary session: ENABLE, as PostgreSQL makes
+ * them, or ALWAYS.
+ */
+export const RECORD_FOREIGN_KEYS = Object.freeze([
+  ['activity_records_import_batch_id_fkey', '7058a8305daff968e129c1e3f0ab5801'],
+  ['activity_records_location_id_subsidiary_id_fkey', '3221f47aaba83bbcdf1c5a4443e32cd8'],
+  ['activity_records_subsidiary_id_fkey', '8b855abe0326a26240a4a9f99e9146c7'],
+]);
+const REFERENTIAL_ACTIONS = Object.freeze({ a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' });
+/** The suffix of the system function that carries out each action (`RI_FKey_<suffix>_del` / `_upd`). */
+const RI_ACTION_FUNCTIONS = Object.freeze({ a: 'noaction', r: 'restrict', c: 'cascade', n: 'setnull', d: 'setdefault' });
+/** `pg_trigger.tgenabled`: fires in an ordinary session ('O' origin, 'A' always), or does not ('D', 'R'). */
+const TRIGGER_STATES = Object.freeze({ D: 'disabled', R: 'replica-only (it fires in replica mode alone)' });
 
-/** Every integrity trigger and CHECK, present, in force and unaltered. */
+/** The tables the integrity triggers guard: nothing else may hook into them. */
+const GUARDED_TABLES = Object.freeze(['activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events', 'subsidiaries']);
+
+/** Every integrity trigger, CHECK and record key, present, in force and unaltered. */
 export async function checkIntegrityTriggers(query, expectedBodies = expectedTriggerFunctionBodies()) {
   const triggers = await query(
     `SELECT c.relname AS "table", t.tgname AS "trigger", t.tgenabled AS "enabled", t.tgtype::int AS "type",
@@ -804,6 +845,28 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
        JOIN pg_class c ON c.oid = k.conrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND k.contype = 'c'`,
+  );
+  const foreignKeys = await query(
+    `SELECT k.conname AS "name", k.confdeltype AS "onDelete", k.confupdtype AS "onUpdate", k.convalidated AS "validated",
+            md5(pg_get_constraintdef(k.oid)) AS "definitionMd5", pg_get_constraintdef(k.oid) AS "definition",
+            pc.relname AS "parent"
+       FROM pg_constraint k
+       JOIN pg_class c ON c.oid = k.conrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_class pc ON pc.oid = k.confrelid
+      WHERE n.nspname = 'public' AND c.relname = 'activity_records' AND k.contype = 'f'`,
+  );
+  // The system triggers that enforce those keys (the trigger query above
+  // leaves internal triggers out), on both sides, by their constraint.
+  const keyTriggers = await query(
+    `SELECT k.conname AS "key", tc.relname AS "table", p.proname AS "fn", t.tgenabled AS "enabled"
+       FROM pg_trigger t
+       JOIN pg_constraint k ON k.oid = t.tgconstraint
+       JOIN pg_class c ON c.oid = k.conrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_class tc ON tc.oid = t.tgrelid
+       JOIN pg_proc p ON p.oid = t.tgfoid
+      WHERE n.nspname = 'public' AND c.relname = 'activity_records' AND k.contype = 'f'`,
   );
   const rules = await query(
     `SELECT c.relname AS "table", r.rulename AS "rule"
@@ -862,6 +925,44 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
       problems.push(
         `CHECK ${name} on ${table} differs from its migration's definition (md5 ${found.definitionMd5}: ${found.definition})`,
       );
+    }
+  }
+  for (const [name, definitionMd5] of RECORD_FOREIGN_KEYS) {
+    const found = foreignKeys.find((k) => k.name === name);
+    if (!found) problems.push(`foreign key ${name} on activity_records is missing`);
+    else if (!found.validated) problems.push(`foreign key ${name} on activity_records is NOT VALID`);
+    else if (found.definitionMd5 !== definitionMd5) {
+      problems.push(`foreign key ${name} on activity_records differs from its migration's definition (md5 ${found.definitionMd5}: ${found.definition})`);
+    }
+  }
+  for (const k of foreignKeys) {
+    for (const [event, action] of [['delete', k.onDelete], ['key change', k.onUpdate]]) {
+      if (action !== 'r' && action !== 'a') {
+        problems.push(
+          `foreign key ${k.name} on activity_records answers its parent's ${event} with ${REFERENTIAL_ACTIONS[action] ?? action} — ` +
+            'a referential action writes the records as the owner, whom the delete guard lets through; only RESTRICT or NO ACTION',
+        );
+      }
+    }
+    const enforcement = [
+      ['RI_FKey_check_ins', 'activity_records', 'an insert into activity_records'],
+      ['RI_FKey_check_upd', 'activity_records', 'an update of activity_records'],
+      [`RI_FKey_${RI_ACTION_FUNCTIONS[k.onDelete] ?? k.onDelete}_del`, k.parent, `a delete from ${k.parent}`],
+      [`RI_FKey_${RI_ACTION_FUNCTIONS[k.onUpdate] ?? k.onUpdate}_upd`, k.parent, `a key change in ${k.parent}`],
+    ];
+    for (const [fn, table, write] of enforcement) {
+      const found = keyTriggers.filter((t) => t.key === k.name && t.fn === fn && t.table === table);
+      if (found.length === 0) {
+        problems.push(`foreign key ${k.name} on activity_records has no ${fn} trigger on ${table}: ${write} is not checked against it`);
+      }
+      for (const t of found) {
+        if (t.enabled !== 'O' && t.enabled !== 'A') {
+          problems.push(
+            `foreign key ${k.name} on activity_records is not enforced on ${write}: its ${fn} trigger on ${table} is ` +
+              `${TRIGGER_STATES[t.enabled] ?? `in state '${t.enabled}'`} — the key holds nothing for new writes while its definition reads as before`,
+          );
+        }
+      }
     }
   }
   for (const want of INTEGRITY_HELPERS) {
