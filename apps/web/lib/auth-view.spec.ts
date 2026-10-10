@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { MIN_PASSWORD_LENGTH, parseEmailLink, passwordProblem, setPasswordFailureKey, signInFailureKey } from './auth-view';
+import {
+  isPublicPath,
+  isSignedOutOnlyPath,
+  MIN_PASSWORD_LENGTH,
+  parseEmailLink,
+  passwordProblem,
+  setPasswordFailureKey,
+  signInFailureKey,
+} from './auth-view';
 
 describe('signInFailureKey', () => {
   it('words wrong credentials and a banned (disabled) account; everything else is generic', () => {
@@ -45,5 +53,23 @@ describe('setPasswordFailureKey', () => {
     expect(setPasswordFailureKey('weak_password')).toBe('setPassword.weak');
     expect(setPasswordFailureKey('same_password')).toBe('setPassword.same');
     expect(setPasswordFailureKey('session_not_found')).toBe('setPassword.failed');
+  });
+});
+
+describe('the proxy\'s paths (LP4-01)', () => {
+  it('serves sign-in, forgot-password and the email-link pages without a session — and nothing else', () => {
+    for (const path of ['/login', '/forgot-password', '/auth/confirm', '/auth/set-password', '/auth/confirm/x']) {
+      expect(isPublicPath(path), path).toBe(true);
+    }
+    for (const path of ['/', '/users', '/audit', '/auth', '/auth/other', '/login-as', '/forgot-password-x', '/data-entry']) {
+      expect(isPublicPath(path), path).toBe(false);
+    }
+  });
+
+  it('sends a signed-in visitor from sign-in and forgot-password to the dashboard, never from the email-link pages', () => {
+    expect(isSignedOutOnlyPath('/login')).toBe(true);
+    expect(isSignedOutOnlyPath('/forgot-password')).toBe(true);
+    expect(isSignedOutOnlyPath('/auth/confirm')).toBe(false);
+    expect(isSignedOutOnlyPath('/auth/set-password')).toBe(false);
   });
 });

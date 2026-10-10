@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MailConfigError, MailService, readMailConfig, type MailConfig } from './mail.service';
+import { MailConfigError, MailService, readMailConfig, smtpTransport, type MailConfig } from './mail.service';
+
+const createTransport = vi.hoisted(() => vi.fn(() => ({ sendMail: vi.fn() })));
+vi.mock('nodemailer', () => ({ createTransport }));
 
 const env = (over: Record<string, string | undefined>) => over as NodeJS.ProcessEnv;
 const BASE = { SMTP_HOST: 'smtp.example.com', MAIL_FROM: 'TonyAI <no-reply@example.com>', APP_URL: 'https://app.example.com' };
@@ -49,5 +52,18 @@ describe('MailService', () => {
     expect(sendMail.mock.calls[0][0]).toMatchObject({ from: 'x@example.com', to: 'a@b.test', subject: 'Reset your TonyAI password' });
     await expect(mail.send('a@b.test', content)).resolves.toEqual({ ok: false, code: 'smtp_failed' });
     await expect(new MailService(undefined, null).send('a@b.test', content)).resolves.toEqual({ ok: false, code: 'mail_not_configured' });
+  });
+});
+
+describe('smtpTransport', () => {
+  it('requires STARTTLS off loopback, never on mailpit, and leaves implicit TLS to port 465', () => {
+    smtpTransport({ ...CONFIG, host: 'smtp.example.com' });
+    smtpTransport({ ...CONFIG, host: '127.0.0.1', port: 54325 });
+    smtpTransport({ ...CONFIG, host: 'smtp.example.com', port: 465, secure: true, user: 'u', password: 'p' });
+    const options = createTransport.mock.calls.map((c) => (c as unknown[])[0] as Record<string, unknown>);
+    expect(options[0]).toMatchObject({ host: 'smtp.example.com', secure: false, requireTLS: true, auth: undefined });
+    expect(options[1]).toMatchObject({ host: '127.0.0.1', requireTLS: false });
+    expect(options[2]).toMatchObject({ secure: true, requireTLS: false, auth: { user: 'u', pass: 'p' } });
+    for (const o of options) expect(o).toMatchObject({ connectionTimeout: 10_000, socketTimeout: 20_000 });
   });
 });

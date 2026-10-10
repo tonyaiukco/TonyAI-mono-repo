@@ -290,6 +290,61 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     expect(resent).toMatchObject({ status: 'invited', invitation: { status: 'sent' } });
   });
 
+  it('a disable while the Auth user is being created stands: the new Auth user is banned, nothing is sent', async () => {
+    const authAdmin = new AuthAdminService();
+    const real = new AuthAdminService();
+    const s = services(null);
+    vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
+      await real.ensureUser(id, email);
+      await s.access.disableMember(A.users.superAdmin, id); // an administrator, at that moment
+    });
+    const { sent, transport } = inbox();
+    const created = await services(transport, { authAdmin }).lifecycle.invite(A.users.superAdmin, {
+      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    });
+    invitedIds.push(created.id);
+    expect(created).toMatchObject({ status: 'disabled', invitation: { status: 'revoked' } });
+    expect(sent).toHaveLength(0);
+    expect(await bannedInAuth(created.id)).toBe(true);
+  });
+
+  it('a disable while the email is in flight stands: the invitation stays revoked, never marked sent', async () => {
+    const s = services(null);
+    let target = '';
+    const transport: MailTransport = {
+      sendMail: vi.fn(async () => {
+        await s.access.disableMember(A.users.superAdmin, target);
+        return {} as never;
+      }) as never,
+    };
+    const authAdmin = new AuthAdminService();
+    const created = await services(transport, { authAdmin }).access.inviteMember(A.users.superAdmin, {
+      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    });
+    invitedIds.push(created.profileId);
+    target = created.profileId;
+    await new InvitationDeliveryService(authAdmin, new MailService(transport, MAIL)).deliver(runtime, created.profileId);
+    const invitation = await owner.invitation.findUniqueOrThrow({ where: { profileId: created.profileId } });
+    expect(invitation).toMatchObject({ status: InvitationStatus.revoked, sentAt: null });
+  });
+
+  it('a state that changes while the ban is applied keeps the flag for its own run', async () => {
+    const created = await invite(inbox().transport);
+    await services(null).access.disableMember(A.users.superAdmin, created.id);
+    const real = new AuthAdminService();
+    const flipping = new AuthAdminService();
+    vi.spyOn(flipping, 'setBanned').mockImplementation(async (id, banned) => {
+      await real.setBanned(id, banned);
+      // An enable commits while the ban is in flight (it takes no Auth lock).
+      await owner.profile.update({ where: { id }, data: { disabledAt: null, authSyncPendingSince: new Date() } });
+    });
+    expect(await new AuthSyncService(flipping).apply(runtime, created.id)).toBe(false);
+    expect((await owner.profile.findUniqueOrThrow({ where: { id: created.id } })).authSyncPendingSince).not.toBeNull();
+    // The enable's own run then applies the state it reads: unbanned, cleared.
+    expect(await new AuthSyncService(real).apply(runtime, created.id)).toBe(true);
+    expect(await bannedInAuth(created.id)).toBe(false);
+  });
+
   it('nobody disables their own account', async () => {
     await expect(services(null).lifecycle.disable(A.users.superAdmin, A.users.superAdmin.id)).rejects.toMatchObject({
       response: { code: 'own_account_forbidden' },

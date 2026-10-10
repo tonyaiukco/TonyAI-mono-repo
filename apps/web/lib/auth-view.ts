@@ -45,3 +45,28 @@ export function setPasswordFailureKey(code: string | undefined): "setPassword.we
   if (code === "same_password") return "setPassword.same";
   return "setPassword.failed";
 }
+
+/**
+ * Reachable without a session (LP4-01): sign-in, "forgot password", and the
+ * landing pages of the emailed links — `/auth/confirm` runs `verifyOtp` with
+ * the link's token, and `/auth/set-password` works only with the session that
+ * made (it says so when there is none). Exact paths and their sub-paths.
+ */
+export const PUBLIC_PATHS = ["/login", "/forgot-password", "/auth/confirm", "/auth/set-password"] as const;
+/** A signed-in visitor has nothing to do here and goes to the dashboard. The
+ *  email-link pages are not among them: an invitee is signed in by the link. */
+export const SIGNED_OUT_ONLY_PATHS = ["/login", "/forgot-password"] as const;
+
+function matchesPath(path: string, list: readonly string[]): boolean {
+  return list.some((p) => path === p || path.startsWith(`${p}/`));
+}
+
+/** `proxy.ts`: may this path be served without a session? */
+export function isPublicPath(path: string): boolean {
+  return matchesPath(path, PUBLIC_PATHS);
+}
+
+/** `proxy.ts`: does a signed-in visitor go to the dashboard instead? */
+export function isSignedOutOnlyPath(path: string): boolean {
+  return matchesPath(path, SIGNED_OUT_ONLY_PATHS);
+}
