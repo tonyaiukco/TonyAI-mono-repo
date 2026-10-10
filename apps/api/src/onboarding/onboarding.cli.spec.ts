@@ -24,6 +24,8 @@ describe('parseArgs', () => {
     expect(parseArgs(['provision', '--operator=o@x.io', `--organisation-id=${org}`, '--admin-email=a@x.io', '--admin-name=A', '--language=en']))
       .toMatchObject({ organisationId: org, provision: { organisationId: org, organisation: undefined } });
     expect(parseArgs(['offboard', '--operator=o@x.io', `--organisation-id=${org}`, '--apply'])).toMatchObject({ command: 'offboard', apply: true });
+    const mixed = 'AbCdEf12-3456-4789-8ABC-DEF012345678';
+    expect(parseArgs(['offboard', '--operator=o@x.io', `--organisation-id=${mixed}`]).organisationId).toBe(mixed.toLowerCase());
     expect(parseArgs(['reconcile', '--operator=o@x.io'])).toMatchObject({ command: 'reconcile', organisationId: undefined });
   });
 

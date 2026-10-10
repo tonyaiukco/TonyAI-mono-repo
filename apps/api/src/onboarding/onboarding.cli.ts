@@ -108,8 +108,10 @@ export function parseArgs(argv: string[]): Options {
 
   const operator = text('operator')!;
   if (!EMAIL_SHAPE.test(operator)) throw new UsageError('--operator must be the operator\'s email address');
-  const organisationId = text('organisation-id');
-  if (organisationId !== undefined && !UUID_SHAPE.test(organisationId)) throw new UsageError('--organisation-id must be an id');
+  const rawOrganisationId = text('organisation-id');
+  if (rawOrganisationId !== undefined && !UUID_SHAPE.test(rawOrganisationId)) throw new UsageError('--organisation-id must be an id');
+  // The database's spelling, so it compares equal to the ids it reads back.
+  const organisationId = rawOrganisationId?.toLowerCase();
   const options: Options = { command, operator, apply: flags.has('apply'), allowRemote: flags.has('allow-remote'), organisationId };
 
   if (command === 'provision') {
