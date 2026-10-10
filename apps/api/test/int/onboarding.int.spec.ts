@@ -382,25 +382,40 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     expect(invitation).toMatchObject({ status: InvitationStatus.revoked, sentAt: null });
   });
 
-  it('a state that changes while the ban is applied keeps the flag for its own run', async () => {
+  it('an enable that commits while the ban is applied keeps the flag for its own run', async () => {
     const created = await invite(inbox().transport);
-    await services(null).access.disableMember(A.users.superAdmin, created.id);
+    const s = services(null);
+    await s.access.disableMember(A.users.superAdmin, created.id);
     const real = new AuthAdminService();
     const flipping = new AuthAdminService();
-    vi.spyOn(flipping, 'setBanned').mockImplementation(async (id, banned) => {
+    vi.spyOn(flipping, 'setBanned').mockImplementationOnce(async (id, banned) => {
       await real.setBanned(id, banned);
-      // An enable commits while the ban is in flight (it takes no Auth lock) —
-      // the same data `enableMember` writes.
-      await owner.profile.update({
-        where: { id },
-        data: { disabledAt: null, authSyncPendingSince: new Date(), authSyncGeneration: { increment: 1 } },
-      });
+      // The enable commits while the ban is in flight (it takes the tenant lock, not the sync's).
+      await s.access.enableMember(A.users.superAdmin, id);
     });
     expect(await new AuthSyncService(flipping).apply(runtime, created.id)).toBe(false);
     expect((await owner.profile.findUniqueOrThrow({ where: { id: created.id } })).authSyncPendingSince).not.toBeNull();
     // The enable's own run then applies the state it reads: unbanned, cleared.
     expect(await new AuthSyncService(real).apply(runtime, created.id)).toBe(true);
     expect(await bannedInAuth(created.id)).toBe(false);
+  });
+
+  it('a disable that commits while the unban is applied keeps the flag for its own run', async () => {
+    const created = await invite(inbox().transport);
+    const s = services(null);
+    await s.lifecycle.disable(A.users.superAdmin, created.id);
+    await s.access.enableMember(A.users.superAdmin, created.id); // an enable whose sync is about to run
+    const real = new AuthAdminService();
+    const flipping = new AuthAdminService();
+    vi.spyOn(flipping, 'setBanned').mockImplementationOnce(async (id, banned) => {
+      await real.setBanned(id, banned);
+      await s.access.disableMember(A.users.superAdmin, id);
+    });
+    expect(await new AuthSyncService(flipping).apply(runtime, created.id)).toBe(false);
+    expect(await bannedInAuth(created.id)).toBe(false); // the unban landed; the disable is still owed
+    expect((await owner.profile.findUniqueOrThrow({ where: { id: created.id } })).authSyncPendingSince).not.toBeNull();
+    expect(await new AuthSyncService(real).apply(runtime, created.id)).toBe(true);
+    expect(await bannedInAuth(created.id)).toBe(true);
   });
 
   it('a session that existed when the account was disabled does not come back with the enable (security P2-2)', async () => {
@@ -454,6 +469,25 @@ describe('disabling (D19, K4) — the database first, then the Auth ban', () => 
     expect(await delivering).toEqual({ delivered: false, skipped: 'disabled' });
     expect(await bannedInAuth(profileId)).toBe(false);
     expect(await owner.profile.findUniqueOrThrow({ where: { id: profileId } })).toMatchObject({ disabledAt: null, authSyncPendingSince: null });
+  });
+
+  it('a disable whose own sync ran before the Auth user existed is banned by delivery at once (Codex finding 2)', async () => {
+    const s = services(null);
+    const { profileId } = await s.access.inviteMember(A.users.superAdmin, {
+      email: address(), fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+    });
+    invitedIds.push(profileId);
+    const real = new AuthAdminService();
+    const authAdmin = new AuthAdminService();
+    vi.spyOn(authAdmin, 'ensureUser').mockImplementation(async (id, email) => {
+      await s.lifecycle.disable(A.users.superAdmin, id); // finds no Auth user: nothing banned, flag cleared
+      await real.ensureUser(id, email);
+    });
+    const outcome = await new InvitationDeliveryService(authAdmin, new MailService(inbox().transport, MAIL), new AuthSyncService(authAdmin))
+      .deliver(runtime, profileId);
+    expect(outcome).toEqual({ delivered: false, skipped: 'disabled' });
+    expect(await bannedInAuth(profileId)).toBe(true);
+    expect((await owner.profile.findUniqueOrThrow({ where: { id: profileId } })).authSyncPendingSince).toBeNull();
   });
 
   it('a corrective ban that fails stays flagged, and reconcile applies it (Codex finding 2, schedule B)', async () => {
@@ -792,8 +826,13 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
     await expect(operator.provision({ ...input, organisation: { ...input.organisation, legalName: 'Another org' } }, true)).rejects.toBeInstanceOf(OperatorRefusal);
     await expect(operator.provision({ organisationId: orgId, adminEmail: A.users.consultant.email, adminName: 'X', language: 'en' }, true)).rejects.toBeInstanceOf(OperatorRefusal);
 
+    const before = await owner.profile.findUniqueOrThrow({ where: { id: first.admin.id! } });
     const off = await operator.offboard(orgId, true);
     expect(off).toMatchObject({ applied: true, disabled: 1, invitationsRevoked: 1, authPending: [] });
+    // Its sessions end, and an older sync still in flight cannot clear its intent (Codex findings 1, 3).
+    const after = await owner.profile.findUniqueOrThrow({ where: { id: first.admin.id! } });
+    expect(after.sessionsRevokedAt).not.toBeNull();
+    expect(after.authSyncGeneration).toBe(before.authSyncGeneration + 1);
     expect((await owner.organisation.findUniqueOrThrow({ where: { id: orgId } })).offboardedAt).not.toBeNull();
     expect(await bannedInAuth(first.admin.id!)).toBe(true);
     const offRows = await owner.auditLog.findMany({ where: { organisationId: orgId, action: { in: ['offboard', 'disable'] } } });

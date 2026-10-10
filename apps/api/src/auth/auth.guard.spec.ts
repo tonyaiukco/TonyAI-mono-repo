@@ -301,6 +301,11 @@ describe('SupabaseAuthGuard — a disabled account (D19, LP4-01)', () => {
       const outcome = await guard.canActivate(context).then(() => 'admitted', (e: { response?: { code?: string } }) => e.response?.code);
       expect(outcome, label).toBe(admitted ? 'admitted' : 'session_revoked');
     }
+    // A revocation on a whole second and a token stamped with that second: refused.
+    vi.mocked(tokenVerifier.verify).mockResolvedValueOnce({ sub: 'user-1', iat: iatSeconds('2026-10-10T12:00:00Z') } as never);
+    prisma.profile.findUnique.mockResolvedValueOnce(profile({ sessionsRevokedAt: new Date('2026-10-10T12:00:00.000Z') }));
+    const { context } = makeContext();
+    await expect(guard.canActivate(context)).rejects.toMatchObject({ response: { code: 'session_revoked' } });
   });
 
   it('admits an enabled member of an active organisation, reading both in the one profile query', async () => {

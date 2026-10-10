@@ -117,8 +117,14 @@ describe('PasswordResetService — capacity is not an oracle', () => {
     }
     await expect(service.request('192.0.2.1', 'dropped@x.test')).resolves.toBeUndefined();
     release();
-    await limits.settle();
+    // Let the workers drain everything they hold (settle() would stop them early
+    // and hide a queue that admitted the extra request).
+    const admitted = RESET_WORKERS + RESET_QUEUE_MAX;
+    for (let i = 0; i < 20_000 && run.mock.calls.length < admitted; i++) await new Promise((r) => setImmediate(r));
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    expect(run).toHaveBeenCalledTimes(admitted);
     expect(run.mock.calls.map(([e]) => e)).not.toContain('dropped@x.test');
+    await limits.settle();
     limits.onApplicationShutdown();
   });
 });
