@@ -20,7 +20,7 @@ TonyAI uses four primary roles.
 
 | Role | Responsibility | Data Scope |
 | :--- | :--- | :--- |
-| `super_admin` | System governance, factor management, approvals, and configuration | All organisations |
+| `super_admin` | System governance, factor management, approvals, configuration, and the organisation's users | Their own organisation only — there is no platform-wide administrator (D18); organisations and first administrators are provisioned by the operator |
 | `consultant` | Review, anomaly flagging, advisory support | Assigned organisations only |
 | `data_entry` | Activity logging, evidence upload, draft and submission workflows | Assigned subsidiaries and permitted parent organisation context |
 | `executive_viewer` | Dashboard monitoring, report viewing, high level visibility | Assigned organisations only |
@@ -46,8 +46,12 @@ This matrix defines action permissions for UI rendering and backend enforcement.
 | Manage suppliers | ✅ | ❌ | ❌ | ❌ |
 | Override calculation factors | ✅ | ❌ | ❌ | ❌ |
 | Generate and export reports | ✅ | ✅ | ❌ | ✅ |
-| Manage users and roles | ✅ | ❌ | ❌ | ❌ |
+| Manage users and roles — invite, re-send an invitation, change a role, replace a data_entry user's subsidiaries (LP4-01) | ✅ ² | ❌ | ❌ | ❌ |
+| Disable or enable an account (LP4-01, D19) | ✅ ² | ❌ | ❌ | ❌ |
+| Reset one's own password from the sign-in page | ✅ | ✅ | ✅ | ✅ |
 | View audit trail | ✅ | ❌ ¹ | ❌ ¹ | ❌ ¹ |
+
+² Own organisation only, never one's own role or account (ask another `super_admin`), serialised per organisation with the actor re-read; every change audited. Creating an organisation, its first administrator, and offboarding are the operator's (`pnpm onboarding`, §6a).
 
 ### Limited Audit Visibility
 - `data_entry` may view audit history for records they created or are assigned to
@@ -61,7 +65,7 @@ This matrix defines action permissions for UI rendering and backend enforcement.
 The UI must show or hide navigation, pages, buttons, and actions based on role.
 
 ### Sidebar Rules
-- `User Management` must only render for `super_admin`
+- `User Management` (`/users`) is usable only by `super_admin`. Like `Audit Trail`, the item renders for every role and the page tells any other role who may use it — the API refuses them (403) either way, and a missing item read as a bug to testers (LP4-01)
 - `Audit and Approvals` must render for `super_admin`
 - `Audit and Approvals` may render for `consultant` in review mode if enabled
 - `data_entry` and `executive_viewer` must not see admin only navigation items
@@ -199,6 +203,24 @@ by the containment probes in `scripts/rls-probes.mjs`).
 
 ---
 
+## 6a. Account Lifecycle (LP4-01)
+
+How an account starts, recovers access and ends. The design is Decisions 2026-10-10 (second), K3–K6 with sub-decisions S1–S12, in the planning file.
+
+| Step | Who | What happens |
+| :--- | :--- | :--- |
+| Provision an organisation and its first `super_admin` | Operator (`pnpm onboarding provision`, owner connection) | Organisation, profile and invitation created in one transaction, audited with a null `userId` and the operator in the diff; the invitation email follows. Idempotent; a dry run unless `--apply` |
+| Invite | `super_admin` (`/users`) | Profile (role, language), data_entry grants and invitation created first, audited; then the Supabase Auth user (same id) and the TR/EN email. A failed step is recorded on the invitation and shown on the screen; **Re-send** retries it with a fresh link |
+| Accept | The invitee | Opens the emailed link → `/auth/confirm` (a click, then `verifyOtp`) → invitation `accepted` (audited as the invitee) → chooses a password (≥ 12 characters) |
+| Reset a password | Anyone, signed out | `/forgot-password`: the same answer for every address; an enabled account gets a link in its own language, at most once per 5 minutes per address, audited |
+| Change role or access | `super_admin` | Never one's own role. A data_entry user leaving the role loses its grants, each audited |
+| Disable / enable | `super_admin` | Refused from the account's **next request** (401 `account_disabled`; the web signs it out), banned in Supabase Auth; an open invitation is revoked. Never one's own account, so the organisation keeps an active `super_admin`. A Supabase Auth step that fails is retried by `pnpm onboarding reconcile` |
+| Offboard an organisation | Operator (`pnpm onboarding offboard`) | `offboarded_at` set (D21's 90-day clock), every member disabled and banned, audited. Nothing is deleted until the lawyer confirms D21/D24 |
+
+One account per organisation (D17): an address with a profile anywhere cannot be invited again. Known residual (K4, Open questions): a disabled account's live access token can still read its own organisation through PostgREST until it expires (≤ 1 hour); the API refuses it at once.
+
+---
+
 ## 7. Audit Trail Requirements
 
 Every significant action must be logged.
@@ -222,6 +244,7 @@ Every significant action must be logged.
 - `delete`
 - `login`
 - `request_unlock`
+- LP4-01's lifecycle verbs: `invite`, `accept`, `disable`, `enable`, `offboard`, `password_reset` (the current taxonomy is `AUDIT_ACTIONS` in `@tonyai/shared-types`). Rows no person performed — the operator CLI's, a reset link sent through the public endpoint — carry a null `userId`; the operator is named in the diff. A diff never holds an invited person's address or name
 
 ### Example JSON shape
 ```json
