@@ -75,8 +75,10 @@ export class AccessAdminService {
   ) {}
 
   /** Grants `subsidiaryId` to the data_entry user `profileId`. Idempotent. */
-  async grantSubsidiaryAccess(actor: RequestUser, profileId: string, subsidiaryId: string): Promise<void> {
+  async grantSubsidiaryAccess(actor: RequestUser, rawProfileId: string, rawSubsidiaryId: string): Promise<void> {
     const organisationId = assertTenantAdmin(actor);
+    const profileId = canonicalId(rawProfileId);
+    const subsidiaryId = canonicalId(rawSubsidiaryId);
     await this.prisma.$transaction(async (tx) => {
       const admin = await lockAndReadActor(tx, actor, organisationId);
       const target = await findMember(tx, organisationId, profileId);
@@ -116,8 +118,10 @@ export class AccessAdminService {
   }
 
   /** Withdraws `subsidiaryId` from `profileId`. 404 when no such grant exists in the actor's organisation. */
-  async revokeSubsidiaryAccess(actor: RequestUser, profileId: string, subsidiaryId: string): Promise<void> {
+  async revokeSubsidiaryAccess(actor: RequestUser, rawProfileId: string, rawSubsidiaryId: string): Promise<void> {
     const organisationId = assertTenantAdmin(actor);
+    const profileId = canonicalId(rawProfileId);
+    const subsidiaryId = canonicalId(rawSubsidiaryId);
     await this.prisma.$transaction(async (tx) => {
       const admin = await lockAndReadActor(tx, actor, organisationId);
       const { count } = await tx.userSubsidiaryAccess.deleteMany({
@@ -133,8 +137,9 @@ export class AccessAdminService {
   }
 
   /** Changes the role of `profileId`, a member of the actor's organisation other than the actor. */
-  async setRole(actor: RequestUser, profileId: string, role: UserRole): Promise<void> {
+  async setRole(actor: RequestUser, rawProfileId: string, role: UserRole): Promise<void> {
     const organisationId = assertTenantAdmin(actor);
+    const profileId = canonicalId(rawProfileId);
     if (!(Object.values(DbUserRole) as string[]).includes(role)) throw new BadRequestException('Unknown role');
     if (profileId === actor.id) throw new OwnAccountError('role');
     await this.prisma.$transaction(async (tx) => {
@@ -178,9 +183,10 @@ export class AccessAdminService {
    * access screen's whole set, rather than grant/revoke pairs). Each grant
    * added or withdrawn is audited on its own, as with the single calls.
    */
-  async replaceSubsidiaryAccess(actor: RequestUser, profileId: string, subsidiaryIds: string[]): Promise<void> {
+  async replaceSubsidiaryAccess(actor: RequestUser, rawProfileId: string, subsidiaryIds: string[]): Promise<void> {
     const organisationId = assertTenantAdmin(actor);
-    const wanted = [...new Set(subsidiaryIds)].sort();
+    const profileId = canonicalId(rawProfileId);
+    const wanted = [...new Set(subsidiaryIds.map(canonicalId))].sort();
     await this.prisma.$transaction(async (tx) => {
       const admin = await lockAndReadActor(tx, actor, organisationId);
       const target = await findMember(tx, organisationId, profileId);
@@ -233,7 +239,7 @@ export class AccessAdminService {
     if (!(Object.values(DbUserRole) as string[]).includes(input.role)) throw new BadRequestException('Unknown role');
     if (!isLocale(input.language)) throw new BadRequestException('Unsupported language');
     const email = normaliseEmail(input.email);
-    const subsidiaryIds = [...new Set(input.subsidiaryIds)].sort();
+    const subsidiaryIds = [...new Set(input.subsidiaryIds.map(canonicalId))].sort();
     if (input.role !== DbUserRole.data_entry && subsidiaryIds.length) throw new AccessRoleMismatchError();
     const profileId = randomUUID();
     try {
@@ -289,8 +295,9 @@ export class AccessAdminService {
    * enabled) becomes pending again. Refused once accepted, or while the
    * account is disabled.
    */
-  async reopenInvitation(actor: RequestUser, profileId: string): Promise<void> {
+  async reopenInvitation(actor: RequestUser, rawProfileId: string): Promise<void> {
     const organisationId = assertTenantAdmin(actor);
+    const profileId = canonicalId(rawProfileId);
     await this.prisma.$transaction(async (tx) => {
       const admin = await lockAndReadActor(tx, actor, organisationId);
       const target = await findMember(tx, organisationId, profileId);
@@ -316,8 +323,9 @@ export class AccessAdminService {
    * accepted. Flags Supabase Auth's ban as pending in the same transaction
    * (K4); the caller then applies it. Idempotent.
    */
-  async disableMember(actor: RequestUser, profileId: string): Promise<EnabledChange> {
+  async disableMember(actor: RequestUser, rawProfileId: string): Promise<EnabledChange> {
     const organisationId = assertTenantAdmin(actor);
+    const profileId = canonicalId(rawProfileId);
     if (profileId === actor.id) throw new OwnAccountError('disable');
     return this.prisma.$transaction(async (tx) => {
       const admin = await lockAndReadActor(tx, actor, organisationId);
@@ -339,8 +347,9 @@ export class AccessAdminService {
   }
 
   /** Re-enables a disabled member; Auth's unban is flagged pending (K4). Idempotent. */
-  async enableMember(actor: RequestUser, profileId: string): Promise<EnabledChange> {
+  async enableMember(actor: RequestUser, rawProfileId: string): Promise<EnabledChange> {
     const organisationId = assertTenantAdmin(actor);
+    const profileId = canonicalId(rawProfileId);
     return this.prisma.$transaction(async (tx) => {
       const admin = await lockAndReadActor(tx, actor, organisationId);
       const target = await findMember(tx, organisationId, profileId);
@@ -350,6 +359,16 @@ export class AccessAdminService {
       return { changed: true };
     });
   }
+}
+
+/**
+ * An id as the database spells it (lowercase). Postgres matches either case,
+ * but this service compares ids as strings ("the actor's own account?") and
+ * writes them into audit rows, so one spelling is used throughout — an
+ * uppercase spelling of one's own id must not pass for another account's.
+ */
+function canonicalId(id: string): string {
+  return id.toLowerCase();
 }
 
 /** Addresses compare without case or surrounding space; stored lower-case. */

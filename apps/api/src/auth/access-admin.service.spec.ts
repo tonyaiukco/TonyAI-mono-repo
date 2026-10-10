@@ -40,9 +40,11 @@ describe('AccessAdminService — LP4-01 refusals before the database is touched'
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('nobody disables their own account (so the actor always stays an active super_admin)', async () => {
+  it('nobody disables their own account (so the actor always stays an active super_admin) — in any spelling of the id', async () => {
     const { prisma, service } = setup();
     await expect(service.disableMember(user('super_admin'), 'actor')).rejects.toMatchObject({ response: { code: 'own_account_forbidden' } });
+    await expect(service.disableMember(user('super_admin'), 'ACTOR')).rejects.toMatchObject({ response: { code: 'own_account_forbidden' } });
+    await expect(service.setRole(user('super_admin'), 'ACTOR', UserRole.consultant)).rejects.toMatchObject({ response: { code: 'own_account_forbidden' } });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 

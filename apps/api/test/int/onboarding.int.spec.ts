@@ -264,6 +264,22 @@ describe('an invitation — the database first, then Auth, then the email (K4, K
     expect(token ?? '').toBe('');
   });
 
+  it('an address an Auth user already holds (no profile) is recorded unavailable and nothing is mailed — the real GoTrue', async () => {
+    const email = address();
+    const orphan = await admin.createUser({ email, email_confirm: true });
+    try {
+      const { sent, transport } = inbox();
+      const created = await services(transport).lifecycle.invite(A.users.superAdmin, {
+        email, fullName: 'X', role: UserRole.consultant, language: 'en', subsidiaryIds: [],
+      });
+      invitedIds.push(created.id);
+      expect(created.invitation).toMatchObject({ status: 'pending', lastErrorStep: 'auth', lastErrorCode: 'email_unavailable' });
+      expect(sent).toHaveLength(0);
+    } finally {
+      if (orphan.data.user) await admin.deleteUser(orphan.data.user.id);
+    }
+  });
+
   it('an Auth step that fails is recorded at the auth step', async () => {
     const authAdmin = new AuthAdminService();
     vi.spyOn(authAdmin, 'ensureUser').mockRejectedValueOnce(new AuthAdminError('auth_unavailable'));
@@ -718,6 +734,23 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
     } finally {
       await owner.organisation.update({ where: { id: A.organisationId }, data: { offboardedAt: null } });
     }
+  });
+
+  it('an uppercase spelling of one’s own id is still one’s own; another member’s is stored and banned in the one spelling', async () => {
+    const own = A.users.superAdmin.id.toUpperCase();
+    expect(await call('POST', `/users/${own}/disable`, A.users.superAdmin.id)).toMatchObject({ status: 403, body: { code: 'own_account_forbidden' } });
+    expect(await call('PATCH', `/users/${own}/role`, A.users.superAdmin.id, { role: 'executive_viewer' })).toMatchObject({
+      status: 403,
+      body: { code: 'own_account_forbidden' },
+    });
+    expect(await owner.profile.findUniqueOrThrow({ where: { id: A.users.superAdmin.id } })).toMatchObject({ role: 'super_admin', disabledAt: null });
+
+    const created = await invite(inbox().transport, { role: UserRole.consultant });
+    const disabled = await call('POST', `/users/${created.id.toUpperCase()}/disable`, A.users.superAdmin.id);
+    expect(disabled).toMatchObject({ status: 200, body: { id: created.id, status: 'disabled', authSyncPending: false } });
+    expect(await bannedInAuth(created.id)).toBe(true);
+    const rows = await owner.auditLog.findMany({ where: { action: 'disable', entityId: { in: [created.id, created.id.toUpperCase()] } } });
+    expect(rows.map((r) => r.entityId)).toEqual([created.id]);
   });
 
   it('the users routes: super_admin only, ids validated, another tenant’s id answers like none', async () => {

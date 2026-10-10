@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -25,7 +25,11 @@ import {
   type UpdateUserRoleRequest,
   type UserRole,
 } from '@tonyai/shared-types';
-import { UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
+import { canonicalUuid, UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
+
+/** Each id lowercased — the database's spelling, so grants and audit rows carry one. */
+const lowercaseIds = ({ value }: { value: unknown }) =>
+  Array.isArray(value) ? value.map((v) => canonicalUuid(v) ?? v) : value;
 
 /** The canonical `user_role` (CLAUDE.md) — Prisma's enum holds the same four. */
 export const USER_ROLES: readonly UserRole[] = ['super_admin', 'consultant', 'data_entry', 'executive_viewer'];
@@ -54,6 +58,7 @@ export class InviteUserDto implements InviteUserRequest {
   language!: Locale;
 
   @IsOptional()
+  @Transform(lowercaseIds)
   @IsArray()
   @ArrayMaxSize(MAX_GRANTS)
   // The 8-4-4-4-12 shape, not `@IsUUID`: the seed's fixed ids are not RFC 4122
@@ -70,6 +75,7 @@ export class UpdateUserRoleDto implements UpdateUserRoleRequest {
 
 /** PUT /api/v1/users/:id/access — the complete set. */
 export class ReplaceUserAccessDto implements ReplaceUserAccessRequest {
+  @Transform(lowercaseIds)
   @IsArray()
   @ArrayMaxSize(MAX_GRANTS)
   @Matches(UUID_SHAPE, { each: true, message: 'each subsidiaryIds entry must be an id' })

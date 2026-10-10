@@ -30,7 +30,10 @@ export class AuthSyncService {
   constructor(private readonly authAdmin: AuthAdminService) {}
 
   /** True when Auth now matches the database (or nothing was pending). */
-  async apply(db: PrismaClient, profileId: string): Promise<boolean> {
+  async apply(db: PrismaClient, rawProfileId: string): Promise<boolean> {
+    // One spelling for the lock key and the Auth call (supabase-js refuses an
+    // uppercase id): two runs for one account always serialise.
+    const profileId = rawProfileId.toLowerCase();
     try {
       return await db.$transaction(
         async (tx) => {

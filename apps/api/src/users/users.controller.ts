@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, Patch, Post, Put, Query } from 
 import type { CursorPage, UserSummaryDTO } from '@tonyai/shared-types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
-import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
+import { CanonicalIdPipe } from './canonical-id.pipe';
 import { InviteUserDto, ListUsersQueryDto, ReplaceUserAccessDto, UpdateUserRoleDto } from './dto/users.dto';
 import { UserLifecycleService } from './user-lifecycle.service';
 import { UsersQueryService } from './users-query.service';
@@ -40,14 +40,14 @@ export class UsersController {
   /** Re-sends an invitation not yet accepted, with a fresh link (the last one stops working). */
   @Post(':id/invitation/resend')
   @HttpCode(200)
-  resend(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string): Promise<UserSummaryDTO> {
+  resend(@CurrentUser() user: RequestUser, @Param('id', CanonicalIdPipe) id: string): Promise<UserSummaryDTO> {
     return this.lifecycle.resendInvitation(user, id);
   }
 
   @Patch(':id/role')
   setRole(
     @CurrentUser() user: RequestUser,
-    @Param('id', ParseUuidParamPipe) id: string,
+    @Param('id', CanonicalIdPipe) id: string,
     @Body() dto: UpdateUserRoleDto,
   ): Promise<UserSummaryDTO> {
     return this.lifecycle.setRole(user, id, dto.role);
@@ -57,7 +57,7 @@ export class UsersController {
   @Put(':id/access')
   replaceAccess(
     @CurrentUser() user: RequestUser,
-    @Param('id', ParseUuidParamPipe) id: string,
+    @Param('id', CanonicalIdPipe) id: string,
     @Body() dto: ReplaceUserAccessDto,
   ): Promise<UserSummaryDTO> {
     return this.lifecycle.replaceAccess(user, id, dto.subsidiaryIds);
@@ -65,13 +65,13 @@ export class UsersController {
 
   @Post(':id/disable')
   @HttpCode(200)
-  disable(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string): Promise<UserSummaryDTO> {
+  disable(@CurrentUser() user: RequestUser, @Param('id', CanonicalIdPipe) id: string): Promise<UserSummaryDTO> {
     return this.lifecycle.disable(user, id);
   }
 
   @Post(':id/enable')
   @HttpCode(200)
-  enable(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string): Promise<UserSummaryDTO> {
+  enable(@CurrentUser() user: RequestUser, @Param('id', CanonicalIdPipe) id: string): Promise<UserSummaryDTO> {
     return this.lifecycle.enable(user, id);
   }
 }
