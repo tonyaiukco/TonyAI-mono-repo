@@ -19,7 +19,6 @@ import type {
   Paginated,
   ActivityCalculationSnapshot,
   CalculationInput,
-  Category,
   CreateActivityRecordInput,
   CreateDenominatorInput,
   CreateLocationInput,
@@ -37,6 +36,11 @@ import type {
   LocationDTO,
   PeriodLockDTO,
   EmissionsSummary,
+  EmissionsSummaryParams,
+  ReportingContext,
+  ReportingContextResponse,
+  ReportingExportParams,
+  ReportingIntensityData,
   ReportExportType,
   ReportMetaDTO,
   ReportParams,
@@ -57,16 +61,15 @@ import type {
   BulkSubmitReportDTO,
   UpdatePreferencesRequest,
 } from "@tonyai/shared-types";
-import { DEFAULT_PAGE_LIMIT, TARGET_PROGRESS_MAX_IDS, isApiErrorCode, isCursorPage } from "@tonyai/shared-types";
+import {
+  DEFAULT_PAGE_LIMIT, TARGET_PROGRESS_MAX_IDS, isApiErrorCode, isCursorPage,
+  REPORTING_CONTEXT_API_PATHS, REPORTING_CONTEXT_KEYS, GROUP_INTENSITY_METRICS,
+  isReportingContext, matchesReportingContext,
+} from "@tonyai/shared-types";
 import { getSupabaseBrowserClient } from "./supabase";
 
-/** Optional filters for GET /emissions/summary (all AND-combined). */
-export interface EmissionsSummaryParams {
-  subsidiaryId?: string;
-  year?: number;
-  scope?: 1 | 2 | 3;
-  category?: Category;
-}
+// Preserve the old import path; shared-types is the canonical definition.
+export type { EmissionsSummaryParams } from "@tonyai/shared-types";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001/api/v1";
@@ -219,7 +222,119 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   return (await res.json()) as T;
 }
 
+/** Drop view-local status/search/sort/limit/cursor keys, but refuse unsupported
+ * inventory narrowing, including null (company-level in legacy site filters).
+ * Never coerce an invalid/empty selection into an unfiltered request. */
+function reportingContext(params: ReportingContext): ReportingContext {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    throw new ApiError("Invalid reporting context.", 400, "validation_failed");
+  }
+  const wider = params as unknown as Record<string, unknown>;
+  if (["locationId", "period", "periodValue"].some((key) => wider[key] !== undefined)) {
+    throw new ApiError("Unsupported reporting context filter.", 400, "validation_failed");
+  }
+  const context = Object.fromEntries(REPORTING_CONTEXT_KEYS.map((key) => [key, params[key]]));
+  if (!isReportingContext(context)) {
+    throw new ApiError("Invalid reporting context.", 400, "validation_failed");
+  }
+  return context;
+}
+
+async function apiReporting<T>(path: string, params: ReportingContext): Promise<ReportingContextResponse<T>> {
+  // Capture before awaiting auth/network: a caller changing its object cannot
+  // change the context against which this response is checked.
+  const context = reportingContext(params);
+  const result = await apiFetch<ReportingContextResponse<T>>(`${path}${boundedQuery(context, REPORTING_CONTEXT_KEYS)}`);
+  if (!result || !matchesReportingContext(result.context, context) || result.data === undefined || result.data === null) {
+    throw new ApiError("The server returned an incompatible reporting context.", 502, "internal_error");
+  }
+  return result;
+}
+
+/** Verify coverage and D14 at the new client boundary too. This validates the
+ * envelope and coverage, not the server's emissions arithmetic. */
+function validReportingIntensity(data: ReportingIntensityData, context: ReportingContext): boolean {
+  if (!Array.isArray(data.selectedSubsidiaryIds) || !Array.isArray(data.metrics)) return false;
+  const ids = data.selectedSubsidiaryIds;
+  if (ids.some((id) => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length) return false;
+  if (context.subsidiaryId !== undefined && ids.some((id) => id !== context.subsidiaryId)) return false;
+  const validMetrics = data.metrics.every((metric) => metric &&
+    Number.isSafeInteger(metric.uncalculatedRecordCount) && metric.uncalculatedRecordCount >= 0 &&
+    (context.subsidiaryId !== undefined || (GROUP_INTENSITY_METRICS as readonly string[]).includes(metric.metric)) &&
+    Array.isArray(metric.contributingSubsidiaryIds) && metric.contributingSubsidiaryIds.length > 0 &&
+    new Set(metric.contributingSubsidiaryIds).size === metric.contributingSubsidiaryIds.length &&
+    metric.contributingSubsidiaryIds.every((id) => ids.includes(id)));
+  if (!validMetrics) return false;
+  const groups = new Map<string, { units: Set<string>; contributors: Set<string> }>();
+  for (const metric of data.metrics) {
+    const group = groups.get(metric.metric) ?? { units: new Set<string>(), contributors: new Set<string>() };
+    if (group.units.has(metric.unit)) return false;
+    if (metric.contributingSubsidiaryIds.some((id) => group.contributors.has(id))) return false;
+    group.units.add(metric.unit);
+    metric.contributingSubsidiaryIds.forEach((id) => group.contributors.add(id));
+    groups.set(metric.metric, group);
+  }
+  return true;
+}
+
+/** Cheap context invariants, not a replacement for server aggregation tests. */
+function validReportingMatrix(data: TrackingMatrixDTO, context: ReportingContext): boolean {
+  if (data.reportingYear !== context.year || !Array.isArray(data.rows)) return false;
+  return data.rows.every((row) => row &&
+    (context.subsidiaryId === undefined || row.subsidiaryId === context.subsidiaryId) &&
+    Array.isArray(row.cells) && row.cells.every((cell) => cell &&
+      (context.scope === undefined || cell.scope === context.scope) &&
+      (context.category === undefined || cell.category === context.category)));
+}
+
+/** No legacy-route fallback: a pre-LP3-02 API must refuse the new request. */
+async function downloadReportingReport(kind: ReportExportType, params: ReportingExportParams): Promise<void> {
+  const context = reportingContext(params);
+  const query = boundedQuery({ ...context, template: params.template,
+    includeMethodologyNotes: params.includeMethodologyNotes, includeEvidenceSummary: params.includeEvidenceSummary,
+  }, [...REPORTING_CONTEXT_KEYS, "template", "includeMethodologyNotes", "includeEvidenceSummary"]);
+  const res = await fetch(`${BASE_URL}${REPORTING_CONTEXT_API_PATHS[kind]}${query}`, { headers: await authHeaders() });
+  if (!res.ok) throw await apiError(res);
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ??
+    `tonyai-report-${context.year}.${kind === "excel" ? "xlsx" : kind}`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
+  // LP3-02 PR A: dormant until the context routes land. Legacy consumers below
+  // remain unchanged; the implementation PR moves annual screens together.
+  reportingSummary: (params: ReportingContext) =>
+    apiReporting<EmissionsSummary>(REPORTING_CONTEXT_API_PATHS.summary, params),
+  reportingMatrix: async (params: ReportingContext) => {
+    const result = await apiReporting<TrackingMatrixDTO>(REPORTING_CONTEXT_API_PATHS.matrix, params);
+    if (!validReportingMatrix(result.data, result.context)) {
+      throw new ApiError("The server returned incompatible matrix data.", 502, "internal_error");
+    }
+    return result;
+  },
+  reportingMeta: async (params: ReportingContext) => {
+    const result = await apiReporting<ReportMetaDTO>(REPORTING_CONTEXT_API_PATHS.meta, params);
+    if (result.data.recordLimit !== undefined &&
+        (!Number.isSafeInteger(result.data.recordLimit) || result.data.recordLimit < 1)) {
+      throw new ApiError("The server returned an incompatible report limit.", 502, "internal_error");
+    }
+    return result;
+  },
+  reportingIntensity: async (params: ReportingContext) => {
+    const result = await apiReporting<ReportingIntensityData>(REPORTING_CONTEXT_API_PATHS.intensity, params);
+    if (!validReportingIntensity(result.data, result.context)) {
+      throw new ApiError("The server returned incompatible intensity coverage.", 502, "internal_error");
+    }
+    return result;
+  },
+  downloadReportingReport,
   me: () => apiFetch<AuthUser>("/me"),
   /** The caller's own preferences (today the UI language); answers the updated user. */
   updateMyPreferences: (body: UpdatePreferencesRequest) =>

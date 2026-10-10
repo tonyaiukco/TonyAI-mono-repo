@@ -507,26 +507,133 @@ export function mayAuthorRecords(
 export type SubmissionStatus = 'draft' | 'submitted' | 'in_review' | 'approved' | 'revision_requested';
 
 /**
- * The reporting years the product will accept data for, newest first.
- *
- * Round-1 UAT (DE-9) asked for 2015–2026: a group reports history, not just the
- * current year.
- *
- * Listing a year is NOT a promise that it calculates. Factor coverage is a
- * per-year/geography/category question, and the demo library currently covers
- * DEMO_YEAR (plus one prior-year row to prove versioning) — so most selections
- * outside it return "no emission factor for this selection", which the UI states
- * plainly rather than failing silently. Real coverage arrives with the Phase-4
- * factor library.
- *
- * The first entry is what screens default to, and the demo dataset is seeded in
- * that same year so the default is never a year with nothing in it.
+ * Accepted reporting years, independently of factor availability (LP3-02).
+ * Preserve the API's inclusive 2000–2100 range. Selection never promises
+ * coverage: D07 still refuses a calculation without its activity-year factor.
  */
-export const REPORTING_YEARS = [
-  2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015,
-] as const;
-export type ReportingYear = (typeof REPORTING_YEARS)[number];
-export const DEFAULT_REPORTING_YEAR: ReportingYear = REPORTING_YEARS[0];
+export const REPORTING_YEAR_MIN = 2000;
+export const REPORTING_YEAR_MAX = 2100;
+/** A wire number; validate unknown input with isReportingYear, never a cast. */
+export type ReportingYear = number;
+export const REPORTING_YEARS: readonly ReportingYear[] = Object.freeze(
+  Array.from({ length: REPORTING_YEAR_MAX - REPORTING_YEAR_MIN + 1 },
+    (_, index) => REPORTING_YEAR_MAX - index),
+);
+/** D06: first close is 2026; neither list order nor New Year's Day changes it. */
+export const DEFAULT_REPORTING_YEAR: ReportingYear = 2026;
+
+export const isReportingYear = (value: unknown): value is ReportingYear =>
+  typeof value === 'number' && Number.isInteger(value) &&
+  value >= REPORTING_YEAR_MIN && value <= REPORTING_YEAR_MAX;
+
+/**
+ * One annual inventory selection (LP3-02, owner decisions 2026-10-10).
+ * The URL is authoritative; refreshes, navigation and exports retain these
+ * fields. Resolve EACH field in order: a valid explicit URL value; otherwise
+ * its remembered selection, if any; otherwise DEFAULT_REPORTING_YEAR for year,
+ * all accessible subsidiaries for subsidiaryId, and no scope/category filter.
+ * Write the resolved year into the canonical URL. An invalid explicit URL
+ * value is refused, never replaced by remembered state or a default. Duplicate
+ * URL keys and a resolved category/scope conflict are validation failures too.
+ *
+ * Omitted subsidiaryId means ALL ACCESSIBLE subsidiaries, not necessarily the
+ * whole organisation. A selected subsidiary includes its company- and site-
+ * attributed records; it is not a company-only or site selector. Every API
+ * request rechecks access; an inaccessible selection stays empty, never falls
+ * back to the accessible set. Selection is not authorisation.
+ *
+ * Scope/category are AND-combined inventory filters. Search, record status,
+ * sort, target comparison years and export formatting are view-local options,
+ * not inventory filters. D11–D13 attribution, applicability and final/PARTIAL
+ * semantics are not changed by a context or a filtered view.
+ */
+export interface ReportingContext {
+  year: ReportingYear;
+  subsidiaryId?: string;
+  scope?: 1 | 2 | 3;
+  category?: Category;
+}
+
+/** Legacy summary alone permits an omitted year for explicit history views.
+ * Annual consumers use ReportingContext. Targets retain their own baseline,
+ * target and actual progress years and only inherit the subsidiary selection. */
+export type EmissionsSummaryParams = Partial<ReportingContext>;
+
+export const REPORTING_CONTEXT_KEYS = ['year', 'subsidiaryId', 'scope', 'category'] as const satisfies readonly (keyof ReportingContext)[];
+const _noMissingReportingContextKey: never = null as unknown as
+  Exclude<keyof ReportingContext, (typeof REPORTING_CONTEXT_KEYS)[number]>;
+void _noMissingReportingContextKey;
+
+/** Validate the context only, not access or available factor coverage. */
+export const isReportingContext = (value: unknown): value is ReportingContext => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const context = value as Record<string, unknown>;
+  if (Object.keys(context).some((key) => !(REPORTING_CONTEXT_KEYS as readonly string[]).includes(key))) return false;
+  if (!isReportingYear(context.year)) return false;
+  if (context.subsidiaryId !== undefined &&
+      (typeof context.subsidiaryId !== 'string' || !context.subsidiaryId.trim())) return false;
+  if (context.scope !== undefined && ![1, 2, 3].includes(context.scope as number)) return false;
+  if (context.category !== undefined && !(CATEGORIES as readonly unknown[]).includes(context.category)) return false;
+  return context.scope === undefined || context.category === undefined ||
+    CATEGORY_SCOPE_MAP[context.category as Category] === context.scope;
+};
+
+/** Servers echo the request verbatim: absent keys omitted, never null; scope
+ * never derived from category; numbers remain numbers. Strict acknowledgement,
+ * including omitted filters. An omitted subsidiary
+ * must not acknowledge a requested subsidiary, even when its result is empty. */
+export const matchesReportingContext = (value: unknown, expected: ReportingContext): boolean =>
+  isReportingContext(value) && isReportingContext(expected) &&
+  REPORTING_CONTEXT_KEYS.every((key) => value[key] === expected[key]);
+
+/**
+ * Additive, dormant routes until LP3-02's API implementation lands. Separate
+ * paths make an older API refuse with 404 instead of silently ignoring filters
+ * (the legacy intensity controller ignores unknown query keys). Existing
+ * clients/routes keep their old envelopes. No CORS/header negotiation needed
+ * for binary exports: only the new paths implement this contract.
+ * Before activating pdf/excel/csv, classify these paths as EXPORT under #160,
+ * with the export quota and reports concurrency lease. Derive the EXPORT set
+ * from this constant plus the legacy paths, and test routeGroup for both sets.
+ * The legacy exact-path regex would otherwise classify context exports READ.
+ */
+export const REPORTING_CONTEXT_API_PATHS = {
+  summary: '/emissions/context/summary',
+  matrix: '/emissions/context/tracking-matrix',
+  intensity: '/intensity/context',
+  meta: '/reports/context/meta',
+  pdf: '/reports/context/pdf',
+  excel: '/reports/context/excel',
+  csv: '/reports/context/csv',
+} as const;
+
+/** Filter acknowledgement, NOT a database snapshot or completeness guarantee.
+ * Even an empty result echoes the requested context without disclosing whether
+ * a selected subsidiary exists. The data is always tenant-scoped. */
+export interface ReportingContextResponse<T> {
+  context: ReportingContext;
+  data: T;
+}
+
+/** Filter records AND emitted matrix cells by scope/category, then recompute
+ * per row: totalTCo2e, uncalculatedRecordCount, completeCount, categoryCount;
+ * overall totals: { complete, incomplete, missing }.
+ * reportingYear must equal context.year. Filtering records
+ * alone would manufacture missing obligations. Existing cell coverage rules
+ * remain unchanged; a filtered matrix cannot certify a full inventory. */
+export type ReportingMatrixResponse = ReportingContextResponse<TrackingMatrixDTO>;
+export type ReportingSummaryResponse = ReportingContextResponse<EmissionsSummary>;
+export type ReportingMetaResponse = ReportingContextResponse<ReportMetaDTO>;
+
+/** Each format, its preview/meta and its audit apply the same context to
+ * committed AND withdrawn ledgers, totals, notes and labels. No recalculation
+ * of historical snapshots; no all-year export. Legacy ReportParams stay intact
+ * until callers move to the additive context routes. */
+export interface ReportingExportParams extends ReportingContext {
+  template: ReportTemplate;
+  includeMethodologyNotes?: boolean;
+  includeEvidenceSummary?: boolean;
+}
 
 export const REPORTING_PERIODS = ['monthly', 'quarterly', 'annual'] as const;
 export type ReportingPeriod = (typeof REPORTING_PERIODS)[number];
@@ -1070,6 +1177,37 @@ export interface IntensityResponseDTO {
   year: number | null;
   metrics: IntensityMetricResultDTO[]; // empty → Intensity toggle stays disabled
 }
+
+/** D14: revenue is the only monetary metric in the current vocabulary.
+ * Physical metrics require an explicitly selected subsidiary, even when an
+ * all-accessible selection happens to contain only one subsidiary. Different
+ * monetary units are separate groups; this contract performs no FX conversion. */
+export const GROUP_INTENSITY_METRICS = ['revenue'] as const satisfies readonly IntensityMetricKey[];
+
+export interface ReportingIntensityMetric extends IntensityMetricResultDTO {
+  /** Authorized subsidiaries with this exact metric/unit denominator. The
+   * numerator includes ONLY their committed emissions for the selected year,
+   * scope and category. The denominator is annual and is never prorated by
+   * scope/category. Missing denominators exclude a subsidiary, not a zero. */
+  contributingSubsidiaryIds: string[];
+  /** Non-negative safe integer: committed records of the contributing
+   * subsidiaries, for the same year/scope/category, excluded from emissionsTotal
+   * because they have no usable figure. The whole-selection summary's count
+   * cannot substitute for this numerator-specific coverage disclosure. */
+  uncalculatedRecordCount: number;
+}
+
+/** Empty access or an inaccessible selection yields empty ids and metrics.
+ * Every contributing id is unique and belongs to selectedSubsidiaryIds; the
+ * difference names missing denominator coverage for that metric/unit. No
+ * claim that the metric's numerator equals the whole group's absolute total.
+ * Metric/unit pairs are unique. For one metric, contributors cannot overlap
+ * across units: each subsidiary has one denominator per year and metric. */
+export interface ReportingIntensityData {
+  selectedSubsidiaryIds: string[];
+  metrics: ReportingIntensityMetric[];
+}
+export type ReportingIntensityResponse = ReportingContextResponse<ReportingIntensityData>;
 
 // Scope subcategory mappings for Summary chart
 export const SCOPE1_SUBCATEGORIES = [
