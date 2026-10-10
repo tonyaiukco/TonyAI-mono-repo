@@ -140,6 +140,8 @@ describe('the database refuses a grant across organisations', () => {
 
   it('deleting an organisation that still has grants succeeds and takes the grants with it', async () => {
     const left = await withRollback(owner, async (tx) => {
+      // Its records first: no foreign key's action reaches a record (LP4-01).
+      await tx.activityRecord.deleteMany({ where: { subsidiaryId: a.subsidiaryId } });
       await tx.organisation.delete({ where: { id: a.organisationId } });
       return tx.userSubsidiaryAccess.count({ where: { userId: a.users.dataEntry.id } });
     });
@@ -148,6 +150,7 @@ describe('the database refuses a grant across organisations', () => {
 
   it('deleting the subsidiary, or the profile, removes the grant', async () => {
     const afterSubsidiary = await withRollback(owner, async (tx) => {
+      await tx.activityRecord.deleteMany({ where: { subsidiaryId: a.subsidiaryId } });
       await tx.subsidiary.delete({ where: { id: a.subsidiaryId } });
       return tx.userSubsidiaryAccess.count({ where: { userId: a.users.dataEntry.id } });
     });

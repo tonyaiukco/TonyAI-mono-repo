@@ -52,6 +52,9 @@ function sqlstateOf(e: unknown): string | null {
   return /code: "([0-9A-Z]{5})"/.exec(String((e as Error | null)?.message))?.[1] ?? null;
 }
 
+/** A delete a foreign key refused: Prisma's P2003, or a raw query's SQLSTATE 23503. */
+const FK_REFUSED = ['P2003', '23503'];
+
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 let slot = 0;
 /** A fresh monthly slot of the tenant, so no two records here share one (a year back every twelve). */
@@ -112,23 +115,27 @@ describe('K5 — a snapshot that has left draft never changes', () => {
     });
   });
 
-  it('refuses re-pointing an approved record at another site, but lets its site be deleted (ON DELETE SET NULL)', async () => {
+  it("refuses re-pointing or detaching an approved record's site — the owner included — and keeps a site that holds it (LP4-01)", async () => {
     const [siteA, siteB] = await Promise.all(
       ['A', 'B'].map((n) => owner.location.create({ data: { subsidiaryId: tenant.subsidiaryId, name: `Int-test K5 site ${n}`, geographyCode: 'UK' } })),
     );
     const rec = await createRecord(owner, tenant, { ...nextSlot(), locationId: siteA.id, status: ActivityRecordStatus.approved });
-    expect(sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: rec.id }, data: { locationId: siteB.id } })))).toBe('TA001');
-    // Nor detach it by a direct edit: only the foreign key's own action may —
-    // which PostgreSQL runs as the table's owner, so the owner (trusted; it
-    // could disable the trigger) is the one role that can do it directly.
-    expect(sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: rec.id }, data: { locationId: null } })))).toBe('TA001');
-    await withRollback(owner, (tx) => tx.activityRecord.update({ where: { id: rec.id }, data: { locationId: null } }));
-    // Deleting the site as the runtime role: its ON DELETE SET NULL runs as the owner.
-    await withRollback(runtime, (tx) => tx.location.delete({ where: { id: siteA.id } }));
-    expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } })).locationId).toBe(siteA.id);
-    await owner.location.delete({ where: { id: siteA.id } });
-    expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } })).locationId).toBeNull();
-    await owner.location.delete({ where: { id: siteB.id } });
+    try {
+      expect(sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: rec.id }, data: { locationId: siteB.id } })))).toBe('TA001');
+      expect(sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: rec.id }, data: { locationId: null } })))).toBe('TA001');
+      // The exemption K5 had for the site key's ON DELETE SET NULL (an action
+      // runs as the owner) is gone with the action itself.
+      expect(sqlstateOf(await failure(withRollback(owner, (tx) => tx.activityRecord.update({ where: { id: rec.id }, data: { locationId: null } }))))).toBe('TA001');
+      // The site's key is RESTRICT: deleting it no longer re-files the record
+      // at company level — refused to the runtime role and to the owner.
+      expect(FK_REFUSED).toContain(sqlstateOf(await failure(withRollback(runtime, (tx) => tx.location.delete({ where: { id: siteA.id } })))));
+      expect(FK_REFUSED).toContain(sqlstateOf(await failure(withRollback(owner, (tx) => tx.location.delete({ where: { id: siteA.id } })))));
+      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id: rec.id } })).locationId).toBe(siteA.id);
+    } finally {
+      // Teardown order since LP4-01: the record, then its site.
+      await owner.activityRecord.delete({ where: { id: rec.id } });
+      await owner.location.deleteMany({ where: { id: { in: [siteA.id, siteB.id] } } });
+    }
   });
 });
 
@@ -213,17 +220,19 @@ describe('K5 — a committed record is never deleted on its own', () => {
     expect(sqlstateOf(asService)).toBe('TA001');
   });
 
-  it('lets a draft or rejected record go, the owner (teardown) delete any, and a subsidiary take its records with it', async () => {
+  it('lets a draft or rejected record go and the owner (teardown) delete any — but no subsidiary delete takes records with it (LP4-01)', async () => {
     for (const status of [ActivityRecordStatus.draft, ActivityRecordStatus.rejected]) {
       const rec = await createRecord(owner, tenant, { ...nextSlot(), status });
       await runtime.activityRecord.delete({ where: { id: rec.id } });
     }
     const approved = await createRecord(owner, tenant, { ...nextSlot(), status: ActivityRecordStatus.approved });
     await withRollback(owner, (tx) => tx.activityRecord.delete({ where: { id: approved.id } }));
-    // A foreign-key cascade runs as the table's owner: deleting the
-    // subsidiary — here as the runtime role, rolled back — takes its
-    // committed records too.
-    await withRollback(runtime, (tx) => tx.subsidiary.delete({ where: { id: tenant.subsidiaryId } }));
+    // A foreign key's action runs as the table's owner, past this trigger —
+    // so the record's subsidiary key is RESTRICT: deleting the subsidiary is
+    // refused while it holds a record, to the runtime role and to the owner
+    // alike (before LP4-01 both took the approved record with it).
+    expect(FK_REFUSED).toContain(sqlstateOf(await failure(withRollback(runtime, (tx) => tx.subsidiary.delete({ where: { id: tenant.subsidiaryId } })))));
+    expect(FK_REFUSED).toContain(sqlstateOf(await failure(withRollback(owner, (tx) => tx.subsidiary.delete({ where: { id: tenant.subsidiaryId } })))));
     expect(await owner.activityRecord.count({ where: { id: approved.id } })).toBe(1);
   });
 });

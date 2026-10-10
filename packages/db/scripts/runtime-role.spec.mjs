@@ -13,6 +13,7 @@ import {
   INTEGRITY_CHECKS,
   INTEGRITY_HELPERS,
   INTEGRITY_TRIGGERS,
+  RECORD_FOREIGN_KEYS,
   checkIntegrityTriggers,
   expectedTriggerFunctionBodies,
   factorLibraryReport,
@@ -109,10 +110,15 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
   const allHelpers = INTEGRITY_HELPERS.map((h) => ({
     fn: h.fn, bodyMd5: md5(bodies.get(h.fn)), definer: false, config: ['search_path=""'], language: h.language,
   }));
-  const fake = (triggers, constraints, rules = [], helpers = allHelpers) => async (sql) =>
-    sql.includes('pg_rewrite') ? rules : sql.includes('proname IN') ? helpers : sql.includes('pg_trigger') ? triggers : constraints;
-  const check = (triggers, constraints = allChecks, rules = [], bodyMap = bodies, helpers = allHelpers) =>
-    checkIntegrityTriggers(fake(triggers, constraints, rules, helpers), bodyMap);
+  const allKeys = RECORD_FOREIGN_KEYS.map((name) => ({ name, onDelete: name.includes('import_batch') ? 'a' : 'r', validated: true }));
+  const fake = (triggers, constraints, rules = [], helpers = allHelpers, keys = allKeys) => async (sql) =>
+    sql.includes('pg_rewrite') ? rules
+      : sql.includes('proname IN') ? helpers
+        : sql.includes('pg_trigger') ? triggers
+          : sql.includes("contype = 'f'") ? keys
+            : constraints;
+  const check = (triggers, constraints = allChecks, rules = [], bodyMap = bodies, helpers = allHelpers, keys = allKeys) =>
+    checkIntegrityTriggers(fake(triggers, constraints, rules, helpers, keys), bodyMap);
   const tweak = (name, change) => allTriggers.map((t) => (t.trigger === name ? { ...t, ...change } : t));
 
   it('passes when every trigger is ENABLE ALWAYS, on its events, running its own unaltered function', async () => {
@@ -123,8 +129,9 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // + the record: one release trigger, insert/delete on factors and
     // conversions, and the record's own three append-only guards.
     // K5, its delete guard and the slot rule; four guards on each factor
-    // table; the record's writers; the record's four guards.
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4);
+    // table; the record's writers; the record's four guards; LP4-01's
+    // organisation guard.
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 1);
     expect(INTEGRITY_TRIGGERS.filter((t) => t.definer).map((t) => t.trigger).sort()).toEqual([
       'emission_factors_record_delete', 'emission_factors_record_insert', 'factor_releases_record_event',
       'unit_conversions_record_delete', 'unit_conversions_record_insert',
@@ -211,7 +218,9 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
   });
 
   it('watches for rules and stray triggers on every guarded table, not just one', async () => {
-    const guarded = [...new Set(INTEGRITY_TRIGGERS.map((t) => t.table))].sort();
+    // `organisations` carries a registered trigger but is not guarded: LP1-03's
+    // access-removal trigger lives there too (Open questions, "LP3-03 PR B" (20)).
+    const guarded = [...new Set(INTEGRITY_TRIGGERS.map((t) => t.table))].filter((t) => t !== 'organisations').sort();
     expect(guarded).toEqual(['activity_records', 'emission_factors', 'factor_release_events', 'factor_releases', 'unit_conversions']);
     for (const table of guarded) {
       expect(await check(allTriggers, allChecks, [{ table, rule: 'r' }])).toEqual([`unexpected rule r on ${table}`]);
@@ -252,6 +261,45 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     );
     expect(() => expectedTriggerFunctionBodies(dir)).toThrow(/cannot read/);
     rmSync(dir, { recursive: true });
+  });
+
+  it('holds the organisation guard (LP4-01) like every other: ENABLE ALWAYS, before delete, row by row, an invoker', async () => {
+    expect(INTEGRITY_TRIGGERS.find((t) => t.table === 'organisations')).toEqual({
+      table: 'organisations', trigger: 'organisations_delete_owner_only', fn: 'organisations_delete_owner_only', type: 1 | 2 | 8,
+    });
+    expect(await check(tweak('organisations_delete_owner_only', { enabled: 'O' }))).toEqual([
+      "trigger organisations_delete_owner_only on organisations is not ENABLE ALWAYS (tgenabled = 'O')",
+    ]);
+    expect(await check(allTriggers.filter((t) => t.trigger !== 'organisations_delete_owner_only'))).toEqual([
+      'trigger organisations_delete_owner_only on organisations is missing',
+    ]);
+    expect(await check(tweak('organisations_delete_owner_only', { bodyMd5: md5('BEGIN RETURN OLD; END') }))).toEqual([
+      "function public.organisations_delete_owner_only() differs from its migration's definition",
+    ]);
+    expect(expectedTriggerFunctionBodies().get('organisations_delete_owner_only')).toMatch(/IF session_user <> \(SELECT pg_catalog\.pg_get_userbyid/);
+  });
+
+  it('reports a record key that answers its parent\'s delete with an action, or that is gone (LP4-01)', async () => {
+    expect([...RECORD_FOREIGN_KEYS].sort()).toEqual([
+      'activity_records_import_batch_id_fkey', 'activity_records_location_id_fkey', 'activity_records_subsidiary_id_fkey',
+    ]);
+    const keys = (name, change) => allKeys.map((k) => (k.name === name ? { ...k, ...change } : k));
+    for (const [action, word] of [['c', 'CASCADE'], ['n', 'SET NULL'], ['d', 'SET DEFAULT']]) {
+      expect(await check(allTriggers, allChecks, [], bodies, allHelpers, keys('activity_records_subsidiary_id_fkey', { onDelete: action }))).toEqual([
+        `foreign key activity_records_subsidiary_id_fkey on activity_records answers its parent's delete with ${word} — ` +
+          'a referential action runs as the owner, past every record trigger; only RESTRICT or NO ACTION',
+      ]);
+    }
+    expect(await check(allTriggers, allChecks, [], bodies, allHelpers, allKeys.filter((k) => k.name !== 'activity_records_location_id_fkey'))).toEqual([
+      'foreign key activity_records_location_id_fkey on activity_records is missing',
+    ]);
+    expect(await check(allTriggers, allChecks, [], bodies, allHelpers, keys('activity_records_location_id_fkey', { validated: false }))).toEqual([
+      'foreign key activity_records_location_id_fkey on activity_records is NOT VALID',
+    ]);
+    // A further key is held to the same rule; one that refuses passes.
+    const extra = { name: 'activity_records_zz_fkey', onDelete: 'c', validated: true };
+    expect(await check(allTriggers, allChecks, [], bodies, allHelpers, [...allKeys, extra])).toHaveLength(1);
+    expect(await check(allTriggers, allChecks, [], bodies, allHelpers, [...allKeys, { ...extra, onDelete: 'r' }])).toEqual([]);
   });
 
   it('reports a dropped or NOT VALID check', async () => {

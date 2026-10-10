@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { LocationsService, TrustedParent } from './locations.service';
+import { Prisma } from '@tonyai/db';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   createPrismaMock,
@@ -224,8 +225,23 @@ describe('LocationsService', () => {
       );
     });
 
+    it('answers a record filed between the check and the delete with the same 409, not a 500 (LP4-01)', async () => {
+      // The site's key is RESTRICT since LP4-01: the race the check cannot
+      // close (it runs before the transaction) now fails the DELETE with
+      // P2003 instead of re-filing the newcomer at company level.
+      const user = makeSuperAdmin();
+      const existing = makeLocation({ subsidiaryId: 'sub-1' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.activityRecord.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+      prisma.txClient.location.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', { code: 'P2003', clientVersion: 'test' }),
+      );
+
+      await expect(service.remove(user, existing.id)).rejects.toThrow(/1 activity record/);
+    });
+
     it('refuses to delete a location that records are attached to', async () => {
-      // The FK is ON DELETE SET NULL, so this used to succeed and leave every
+      // The FK was ON DELETE SET NULL (RESTRICT since LP4-01), so this used to succeed and leave every
       // referencing record claiming the SUBSIDIARY's geography while its frozen
       // snapshot was computed from the LOCATION's — measured live: subsidiary
       // TR, location UK, record detached with 'UK' still in the snapshot.

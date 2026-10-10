@@ -176,12 +176,16 @@ model Location {
 // instead of deleting it. `locked` leaves only by UNLOCKING the period, and a
 // void is refused on it: a closed period reopens through its own path or not at
 // all. Child of `subsidiaries`, so it is tenant-scoped by `subsidiary_id`.
+// Both parent keys are Restrict (LP4-01): no referential action ever writes a
+// record — one runs as the table's owner, past every record trigger — so a
+// subsidiary, a site or an organisation that holds records is deleted by
+// nobody, the owner included, until its records are.
 model ActivityRecord {
   id             String               @id @default(uuid()) @db.Uuid
   subsidiaryId   String               @map("subsidiary_id") @db.Uuid
-  subsidiary     Subsidiary           @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  subsidiary     Subsidiary           @relation(fields: [subsidiaryId], references: [id], onDelete: Restrict)
   locationId     String?              @map("location_id") @db.Uuid
-  location       Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location       Location?            @relation(fields: [locationId], references: [id], onDelete: Restrict)
   reportingYear  Int                  @map("reporting_year")
   reportingPeriod String              @map("reporting_period") // 'monthly' | 'quarterly' | 'annual'
   // Canonicalised on write to the vocabulary in @tonyai/shared-types
@@ -256,10 +260,10 @@ model ActivityRecord {
   voidedBy       String?              @map("voided_by") @db.Uuid
   voidedAt       DateTime?            @map("voided_at")
   // The bulk import that created this record, or null for one typed on Data
-  // Entry. Written once at create, never by an update. NoAction, not Restrict:
-  // a batch cannot be deleted while records point at it, but an organisation
-  // delete (which cascades to both) still works, because NO ACTION is checked
-  // at the end of the statement.
+  // Entry. Written once at create, never by an update. NoAction: a batch
+  // cannot be deleted while records point at it. Since LP4-01 an organisation
+  // that holds records cannot be deleted either (the record keys above are
+  // Restrict), so its batches go after its records, never with them.
   importBatchId  String?              @map("import_batch_id") @db.Uuid
   importBatch    ImportBatch?         @relation(fields: [importBatchId], references: [id], onDelete: NoAction)
   evidenceLinks  ActivityRecordEvidence[]

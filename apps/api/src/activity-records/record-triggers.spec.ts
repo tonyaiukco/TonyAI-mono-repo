@@ -1,9 +1,10 @@
 /**
- * The LP3-03 migration's `activity_records` triggers, read as text and pinned
- * to the API they back: K5's editable statuses are the service's
- * EDITABLE_STATUSES, the SQLSTATEs are the ones `recordTriggerCode` maps, and
- * the slot-kind check compares exactly the unique index's first six columns.
- * A drift in either place fails here, in `pnpm test`, before `test:int`.
+ * The `activity_records` triggers as the migrations leave them (LP3-03, and
+ * LP4-01's K5 without the location exemption), read as text and pinned to the
+ * API they back: K5's editable statuses are the service's EDITABLE_STATUSES,
+ * the SQLSTATEs are the ones `recordTriggerCode` maps, and the slot-kind check
+ * compares exactly the unique index's first six columns. A drift in either
+ * place fails here, in `pnpm test`, before `test:int`.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -11,17 +12,25 @@ import { describe, expect, it } from 'vitest';
 import { EDITABLE_STATUSES } from './activity-records.service';
 
 const migrations = resolve(__dirname, '../../../../packages/db/prisma/migrations');
-const dir = readdirSync(migrations).find((d) => d.endsWith('_lp3_03_factor_model'));
-const sql = readFileSync(join(migrations, dir ?? 'missing', 'migration.sql'), 'utf8');
+const dirs = readdirSync(migrations).filter((d) => /^\d/.test(d)).sort();
+const read = (d: string) => readFileSync(join(migrations, d, 'migration.sql'), 'utf8');
+const sql = read(dirs.find((d) => d.endsWith('_lp3_03_factor_model')) ?? 'missing');
+const lp401 = read(dirs.find((d) => d.endsWith('_lp4_01_cascade_guard')) ?? 'missing');
 
 /** The guarded table's owner, as the triggers look it up. */
 const OWNER = '(SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID)';
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** The body the LAST migration defining `name` gives it — what the database runs. */
 function functionBody(name: string): string {
-  const start = sql.indexOf(`CREATE FUNCTION "public"."${name}"()`);
-  if (start < 0) throw new Error(`no function ${name}`);
-  return sql.slice(start, sql.indexOf('$fn$;', start));
+  let body: string | undefined;
+  for (const d of dirs) {
+    const text = read(d);
+    const start = text.search(new RegExp(`CREATE (?:OR REPLACE )?FUNCTION "public"\\."${name}"\\(\\)`));
+    if (start >= 0) body = text.slice(start, text.indexOf('$fn$;', start));
+  }
+  if (body === undefined) throw new Error(`no function ${name}`);
+  return body;
 }
 
 describe('the activity_records integrity triggers', () => {
@@ -32,20 +41,45 @@ describe('the activity_records integrity triggers', () => {
     expect(statuses.sort()).toEqual([...EDITABLE_STATUSES].sort());
   });
 
-  it('K5 tests OLD, guards the snapshot and every input it was computed from, and lets location only become NULL', () => {
+  it('K5 tests OLD, and guards the snapshot and every input it was computed from — its site included, for every writer', () => {
     const body = functionBody('activity_records_snapshot_immutable');
+    expect(body).toContain('CREATE OR REPLACE FUNCTION'); // LP4-01's, not LP3-03's
     for (const column of [
       'calculation', 'activity_type', 'category', 'activity_value', 'activity_unit', 'scope',
-      'reporting_year', 'reporting_period', 'period_value', 'subsidiary_id',
+      'reporting_year', 'reporting_period', 'period_value', 'subsidiary_id', 'location_id',
     ]) {
       expect(body).toContain(`NEW."${column}" IS DISTINCT FROM OLD."${column}"`);
     }
-    // A direct edit may not detach a site either: only the foreign key's
-    // ON DELETE SET NULL, which PostgreSQL runs as the table's owner.
-    expect(body).toContain(`NEW."location_id" IS NOT NULL OR current_user <> ${OWNER}`);
-    // The owner lookup is its one query; no SECURITY DEFINER.
-    expect(body.match(/SELECT /g)).toHaveLength(1);
+    // LP4-01: the site's key is RESTRICT, so no ON DELETE SET NULL detaches
+    // it, and no writer — the owner included — is exempt any more.
+    expect(body).not.toContain('current_user');
+    expect(body).not.toContain('SELECT ');
     expect(body).not.toContain('SECURITY DEFINER');
+  });
+
+  it("LP4-01 changes only K5's location test: otherwise LP3-03's body, word for word", () => {
+    const original = sql.slice(
+      sql.indexOf('CREATE FUNCTION "public"."activity_records_snapshot_immutable"()'),
+      sql.indexOf('$fn$;', sql.indexOf('CREATE FUNCTION "public"."activity_records_snapshot_immutable"()')),
+    );
+    const current = functionBody('activity_records_snapshot_immutable');
+    const lines = (text: string) => text.split('\n').slice(1); // past the CREATE line
+    const removed = lines(original).filter((l) => !lines(current).includes(l));
+    const added = lines(current).filter((l) => !lines(original).includes(l));
+    expect(removed).toEqual([
+      '    OR (NEW."location_id" IS DISTINCT FROM OLD."location_id"',
+      `        AND (NEW."location_id" IS NOT NULL OR current_user <> ${OWNER}))`,
+    ]);
+    expect(added).toEqual(['    OR NEW."location_id" IS DISTINCT FROM OLD."location_id"']);
+  });
+
+  it('LP4-01: both parent keys refuse a delete, so no referential action — which runs as the owner — writes a record', () => {
+    expect(lp401).toMatch(
+      /ADD CONSTRAINT "activity_records_location_id_fkey"\s+FOREIGN KEY \("location_id"\) REFERENCES "locations"\("id"\) ON DELETE RESTRICT ON UPDATE CASCADE;/,
+    );
+    expect(lp401).toMatch(
+      /ADD CONSTRAINT "activity_records_subsidiary_id_fkey"\s+FOREIGN KEY \("subsidiary_id"\) REFERENCES "subsidiaries"\("id"\) ON DELETE RESTRICT ON UPDATE CASCADE;/,
+    );
   });
 
   it('K5 freezes the id in every status, before it looks at the status at all', () => {
@@ -55,7 +89,7 @@ describe('the activity_records integrity triggers', () => {
     expect(id).toBeLessThan(body.indexOf('OLD."status" NOT IN'));
   });
 
-  it('never trusts pg_trigger_depth(), which any role can raise with a temp-table trigger — only the owner, as a cascade runs', () => {
+  it('never trusts pg_trigger_depth(), which any role can raise with a temp-table trigger — only the owner itself deletes a committed record', () => {
     for (const name of ['activity_records_snapshot_immutable', 'activity_records_committed_delete', 'activity_records_slot_kind']) {
       expect(functionBody(name), name).not.toContain('pg_trigger_depth');
     }
