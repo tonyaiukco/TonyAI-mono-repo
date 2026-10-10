@@ -240,6 +240,20 @@ describe('LocationsService', () => {
       await expect(service.remove(user, existing.id)).rejects.toThrow(/1 activity record/);
     });
 
+    it('passes any other failure through unchanged, even with a record now at the site', async () => {
+      // Only the key's refusal means "a record arrived": an audit-insert or
+      // connection failure must surface as itself, not as a 409 about records.
+      const user = makeSuperAdmin();
+      const existing = makeLocation({ subsidiaryId: 'sub-1' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.activityRecord.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+      const failure = new Error('audit insert failed');
+      prisma.txClient.location.delete.mockRejectedValue(failure);
+
+      await expect(service.remove(user, existing.id)).rejects.toBe(failure);
+      expect(prisma.activityRecord.count).toHaveBeenCalledTimes(1);
+    });
+
     it('refuses to delete a location that records are attached to', async () => {
       // The FK was ON DELETE SET NULL (RESTRICT since LP4-01), so this used to succeed and leave every
       // referencing record claiming the SUBSIDIARY's geography while its frozen

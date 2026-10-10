@@ -21,13 +21,17 @@ const lp401 = read(dirs.find((d) => d.endsWith('_lp4_01_cascade_guard')) ?? 'mis
 const OWNER = '(SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID)';
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** The body the LAST migration defining `name` gives it — what the database runs. */
+/**
+ * The body the LAST definition of `name` gives it — the last migration that
+ * defines it, and the last definition inside that one: what the database runs,
+ * read the way `runtime-role.mjs`'s `expectedTriggerFunctionBodies` reads it.
+ */
 function functionBody(name: string): string {
   let body: string | undefined;
+  const definition = new RegExp(`CREATE (?:OR REPLACE )?FUNCTION "public"\\."${name}"\\(\\)`, 'g');
   for (const d of dirs) {
     const text = read(d);
-    const start = text.search(new RegExp(`CREATE (?:OR REPLACE )?FUNCTION "public"\\."${name}"\\(\\)`));
-    if (start >= 0) body = text.slice(start, text.indexOf('$fn$;', start));
+    for (const m of text.matchAll(definition)) body = text.slice(m.index, text.indexOf('$fn$;', m.index));
   }
   if (body === undefined) throw new Error(`no function ${name}`);
   return body;
@@ -73,13 +77,31 @@ describe('the activity_records integrity triggers', () => {
     expect(added).toEqual(['    OR NEW."location_id" IS DISTINCT FROM OLD."location_id"']);
   });
 
-  it('LP4-01: both parent keys refuse a delete, so no referential action — which runs as the owner — writes a record', () => {
+  it("LP4-01: every parent key refuses a delete and a key change, so no referential action — which runs as the owner — writes a record", () => {
     expect(lp401).toMatch(
-      /ADD CONSTRAINT "activity_records_location_id_fkey"\s+FOREIGN KEY \("location_id"\) REFERENCES "locations"\("id"\) ON DELETE RESTRICT ON UPDATE CASCADE;/,
+      /ADD CONSTRAINT "activity_records_location_id_subsidiary_id_fkey"\s+FOREIGN KEY \("location_id", "subsidiary_id"\) REFERENCES "locations"\("id", "subsidiary_id"\) ON DELETE RESTRICT ON UPDATE RESTRICT;/,
     );
     expect(lp401).toMatch(
-      /ADD CONSTRAINT "activity_records_subsidiary_id_fkey"\s+FOREIGN KEY \("subsidiary_id"\) REFERENCES "subsidiaries"\("id"\) ON DELETE RESTRICT ON UPDATE CASCADE;/,
+      /ADD CONSTRAINT "activity_records_subsidiary_id_fkey"\s+FOREIGN KEY \("subsidiary_id"\) REFERENCES "subsidiaries"\("id"\) ON DELETE RESTRICT ON UPDATE RESTRICT;/,
     );
+    expect(lp401).toMatch(
+      /ADD CONSTRAINT "activity_records_import_batch_id_fkey"\s+FOREIGN KEY \("import_batch_id"\) REFERENCES "import_batches"\("id"\) ON DELETE NO ACTION ON UPDATE NO ACTION;/,
+    );
+    expect(lp401).toContain('DROP CONSTRAINT "activity_records_location_id_fkey";');
+  });
+
+  it("LP4-01: a record is born with the status the service creates, and only the API's login or the owner moves it", () => {
+    // `create` writes ActivityRecordStatus.draft and nothing else; the
+    // lifecycle's moves (submit, review, approve, reject, void, lock, unlock)
+    // run on the API's DATABASE_URL — the runtime login, `tonyai_runtime`.
+    const body = functionBody('activity_records_lifecycle_writer');
+    const born = [...(/IF NEW\."status" <> '([a-z_]+)'/.exec(body) ?? [])][1];
+    expect(born).toBe('draft');
+    expect([...EDITABLE_STATUSES]).toContain(born);
+    expect(body).toMatch(/AND session_user <> 'tonyai_runtime'/);
+    expect(body).toContain("ERRCODE = 'TA005'");
+    expect(body).not.toContain('current_user');
+    expect(lp401).toContain('ENABLE ALWAYS TRIGGER "activity_records_lifecycle_writer"');
   });
 
   it('K5 freezes the id in every status, before it looks at the status at all', () => {

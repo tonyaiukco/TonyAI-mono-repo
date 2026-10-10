@@ -682,10 +682,14 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   { table: 'factor_release_events', trigger: 'factor_release_events_before_update', fn: 'factor_release_events_refuse', type: ROW | BEFORE | ON.update },
   { table: 'factor_release_events', trigger: 'factor_release_events_before_delete', fn: 'factor_release_events_refuse', type: ROW | BEFORE | ON.delete },
   { table: 'factor_release_events', trigger: 'factor_release_events_before_truncate', fn: 'factor_tables_before_truncate', type: BEFORE | ON.truncate },
-  // LP4-01: an organisation is deleted by the owner's session alone. Its table
-  // is not in GUARDED_TABLES: LP1-03's access-removal trigger also lives there
-  // (Open questions, "LP3-03 PR B" (20)).
+  // LP4-01: who may write a record's lifecycle (born a draft; a status moved
+  // only in the API's or the owner's session); an organisation deleted, and a
+  // subsidiary moved, by the owner's session alone. `organisations` and
+  // `subsidiaries` are not in GUARDED_TABLES: LP1-03's access-removal trigger
+  // also lives on the first (Open questions, "LP3-03 PR B" (20)).
+  { table: 'activity_records', trigger: 'activity_records_lifecycle_writer', fn: 'activity_records_lifecycle_writer', type: ROW | BEFORE | ON.insert | ON.update },
   { table: 'organisations', trigger: 'organisations_delete_owner_only', fn: 'organisations_delete_owner_only', type: ROW | BEFORE | ON.delete },
+  { table: 'subsidiaries', trigger: 'subsidiaries_stay_in_organisation', fn: 'subsidiaries_stay_in_organisation', type: ROW | BEFORE | ON.update },
 ]);
 
 /**
@@ -776,17 +780,23 @@ export function expectedTriggerFunctionBodies(dir = MIGRATIONS_DIR) {
 const md5 = (text) => createHash('md5').update(text, 'utf8').digest('hex');
 
 /**
- * The foreign keys of `activity_records` (LP4-01). Each must refuse its
- * parent's delete — RESTRICT ('r') or NO ACTION ('a'): a referential action
- * runs as the table's owner, past every record trigger, so a CASCADE or SET
- * NULL here would let whoever may delete the parent (a service-role client, the
- * API's role with SQL access) remove or re-file committed records. A key
- * dropped is reported too: records could then outlive their subsidiary.
+ * The foreign keys of `activity_records` (LP4-01), each with the md5 of its
+ * `pg_get_constraintdef` on a database migrated from this repository — so a
+ * key re-created under its own name on other columns, or with another action,
+ * is a finding. Every key of the table, listed or not, must answer both its
+ * parent's delete and a change of the parent's key with RESTRICT or NO ACTION:
+ * a referential action runs as the table's owner, whom
+ * `activity_records_committed_delete` lets delete a committed record, so an ON
+ * DELETE CASCADE or SET NULL would let whoever may delete the parent (a
+ * service-role client, the API's role with SQL access) remove or re-file
+ * committed records, and an ON UPDATE action would write them. A key dropped
+ * is reported too: records could then outlive their subsidiary, or sit at
+ * another subsidiary's site.
  */
 export const RECORD_FOREIGN_KEYS = Object.freeze([
-  'activity_records_import_batch_id_fkey',
-  'activity_records_location_id_fkey',
-  'activity_records_subsidiary_id_fkey',
+  ['activity_records_import_batch_id_fkey', '7058a8305daff968e129c1e3f0ab5801'],
+  ['activity_records_location_id_subsidiary_id_fkey', '3221f47aaba83bbcdf1c5a4443e32cd8'],
+  ['activity_records_subsidiary_id_fkey', '8b855abe0326a26240a4a9f99e9146c7'],
 ]);
 const REFERENTIAL_ACTIONS = Object.freeze({ a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' });
 
@@ -825,7 +835,8 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
       WHERE n.nspname = 'public' AND k.contype = 'c'`,
   );
   const foreignKeys = await query(
-    `SELECT k.conname AS "name", k.confdeltype AS "onDelete", k.convalidated AS "validated"
+    `SELECT k.conname AS "name", k.confdeltype AS "onDelete", k.confupdtype AS "onUpdate", k.convalidated AS "validated",
+            md5(pg_get_constraintdef(k.oid)) AS "definitionMd5", pg_get_constraintdef(k.oid) AS "definition"
        FROM pg_constraint k
        JOIN pg_class c ON c.oid = k.conrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -890,17 +901,22 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
       );
     }
   }
-  for (const name of RECORD_FOREIGN_KEYS) {
+  for (const [name, definitionMd5] of RECORD_FOREIGN_KEYS) {
     const found = foreignKeys.find((k) => k.name === name);
     if (!found) problems.push(`foreign key ${name} on activity_records is missing`);
     else if (!found.validated) problems.push(`foreign key ${name} on activity_records is NOT VALID`);
+    else if (found.definitionMd5 !== definitionMd5) {
+      problems.push(`foreign key ${name} on activity_records differs from its migration's definition (md5 ${found.definitionMd5}: ${found.definition})`);
+    }
   }
   for (const k of foreignKeys) {
-    if (k.onDelete !== 'r' && k.onDelete !== 'a') {
-      problems.push(
-        `foreign key ${k.name} on activity_records answers its parent's delete with ${REFERENTIAL_ACTIONS[k.onDelete] ?? k.onDelete} — ` +
-          'a referential action runs as the owner, past every record trigger; only RESTRICT or NO ACTION',
-      );
+    for (const [event, action] of [['delete', k.onDelete], ['key change', k.onUpdate]]) {
+      if (action !== 'r' && action !== 'a') {
+        problems.push(
+          `foreign key ${k.name} on activity_records answers its parent's ${event} with ${REFERENTIAL_ACTIONS[action] ?? action} — ` +
+            'a referential action writes the records as the owner, whom the delete guard lets through; only RESTRICT or NO ACTION',
+        );
+      }
     }
   }
   for (const want of INTEGRITY_HELPERS) {

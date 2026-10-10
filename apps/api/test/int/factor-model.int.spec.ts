@@ -6,7 +6,7 @@ import { ActivityTypeSlotConflictError, recordTriggerCode } from '../../src/acti
 import { CalculationsService } from '../../src/calculations/calculations.service';
 import { NoEmissionFactorError } from '../../src/calculations/errors';
 import type { PrismaService } from '../../src/prisma/prisma.service';
-import { backendPid, connect, connectOwner, createRecord, createTenant, deferred, settledOrBlocked, withRollback, type Tenant } from './db';
+import { backendPid, connect, connectOwner, createRecord, createTenant, deferred, recordInput, settledOrBlocked, withRollback, type Tenant } from './db';
 import { INT_FACTOR_POLICY, lifecycleServices } from './services';
 import { checkTenantInvariants, factorLibraryReport } from '../../../../packages/db/scripts/runtime-role.mjs';
 
@@ -390,7 +390,9 @@ describe('a slot holds typed records or one untyped record, never both', () => {
     const gasOil = await createRecord(owner, tenant, { ...slot, ...fuel, activityType: 'gas_oil' });
     // gas oil → untyped would leave diesel beside an untyped record.
     expect(sqlstateOf(await failure(runtime.activityRecord.update({ where: { id: gasOil.id }, data: { activityType: null } })))).toBe('TA002');
-    const voided = await createRecord(owner, tenant, { ...slot, ...fuel, status: ActivityRecordStatus.voided });
+    // A restore's state, which no lifecycle reaches (its draft would be refused
+    // in this slot): only the owner inserts a record in a committed status.
+    const voided = await owner.activityRecord.create({ data: recordInput(tenant, { ...slot, ...fuel, status: ActivityRecordStatus.voided }) });
     expect(
       sqlstateOf(await failure(owner.activityRecord.update({ where: { id: voided.id }, data: { status: ActivityRecordStatus.submitted } }))),
     ).toBe('TA002');

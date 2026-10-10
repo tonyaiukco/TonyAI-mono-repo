@@ -1,66 +1,104 @@
--- LP4-01 (Open questions, "LP3-03 PR B" (11); owner, 2026-10-06): no foreign
--- key's action reaches an activity record any more, and an organisation is
--- deleted by the owner's session alone.
+-- LP4-01 (Open questions, "LP3-03 PR B" (11); owner, 2026-10-06; and the
+-- owner's K10, 2026-10-10): a committed activity record is removed, moved or
+-- made by no one but the owner and the API's own lifecycle.
 --
--- Before this, a direct database delete of an organisation, a subsidiary or a
--- location — the service role through PostgREST, or the runtime role with SQL
--- access — removed that tenant's committed records, or re-filed a site's at
--- company level, through the foreign key's action: PostgreSQL runs a
--- referential action as the referencing table's owner, and K5's triggers let
--- the owner through. A removed record could then be re-inserted altered. The
--- API does neither: it refuses to delete a subsidiary or a location that holds
--- any record, and it never deletes an organisation. Nothing here changes what
--- the API does.
+-- Before this, a direct database write — the service role through PostgREST,
+-- or the runtime role with SQL access — could:
+--   * remove a tenant's committed records, or re-file a site's at company
+--     level, by deleting an organisation, a subsidiary or a site: a foreign
+--     key's action runs as the referencing table's owner, and
+--     `activity_records_committed_delete` lets the owner delete a committed
+--     record (K5's site exemption let the owner's SET NULL through);
+--   * move them to another tenant by moving their parent — a subsidiary to
+--     another organisation (the service role), a site to another subsidiary
+--     (either; the runtime role holds UPDATE on `locations`);
+--   * make one: insert a record as approved or locked, or walk a draft up the
+--     lifecycle, with no review and no audit row.
+-- The API does none of these: it refuses to delete a subsidiary or a site that
+-- holds any record, never deletes an organisation, never moves a subsidiary or
+-- a site, creates records as drafts and moves them through its own gates.
+-- Nothing here changes what the API does.
 --
--- 1. `activity_records_location_id_fkey` ON DELETE RESTRICT (was SET NULL), and
---    K5 no longer lets a committed record's location become NULL — the
---    exemption existed only for that SET NULL.
--- 2. `activity_records_subsidiary_id_fkey` ON DELETE RESTRICT (was CASCADE).
---    (1) alone does not stop a subsidiary's delete (independent re-check,
---    2026-10-06, rolled back): PostgreSQL fires foreign-key actions in rounds
---    at the end of the statement — the record key's cascade and the sites'
---    cascade run in the same round, and the site key's RESTRICT check, queued
---    by the latter, runs a round later, when the records are already gone.
---    With (2) no referential action writes `activity_records` at all, so a
---    record is deleted only by a statement on the table itself, where
---    `activity_records_committed_delete` lets the owner alone remove a
---    committed one. A subsidiary, a site or an organisation that holds records
---    is deleted by nobody — the owner included — until its records are.
---    (ON UPDATE CASCADE stays: K5 refuses a committed record's new subsidiary
---    or site whoever writes it, and ids never change.)
--- 3. `organisations_delete_owner_only`: an organisation is created and removed
---    by the operator (D18; D21's offboarding), never by a client. It compares
---    `session_user` — the login, which neither SET ROLE, nor a SECURITY
---    DEFINER function, nor a referential action changes — with the table's
---    owner; `current_user` would not do, since inside a referential action it
---    IS the owner. The runtime role holds no DELETE on `organisations`; the
---    service role did. (TRUNCATE skips row triggers; no client holds it on any
---    table since LP3-03, and `runtime-role.mjs check` reports one that does.)
+-- 1. No referential action writes `activity_records`: each of its keys
+--    refuses both its parent's delete and a change of the parent's key
+--    (RESTRICT, NO ACTION for the import batch's). The subsidiary key too:
+--    with the site key alone, a subsidiary delete still removed its records
+--    (independent re-check, 2026-10-06): PostgreSQL fires foreign-key actions
+--    in rounds at the end of the statement — the record key's cascade and the
+--    sites' cascade run in the same round, and the site key's RESTRICT check,
+--    queued by the latter, a round later, when the records are already gone.
+--    So a subsidiary, a site or an organisation that holds records is deleted
+--    by nobody — the owner included, outside replica mode — until its records
+--    are, and only the owner deletes a committed one.
+-- 2. The site key becomes (location_id, subsidiary_id) → locations(id,
+--    subsidiary_id): a site holding records cannot move to another
+--    subsidiary, and a record's site belongs to the record's own subsidiary —
+--    the API's rule, now the database's for every writer.
+-- 3. K5 no longer exempts a committed record's site becoming NULL — the
+--    exemption existed only for the old key's SET NULL.
+-- 4. Reserved to the owner's session (the operator: D18 provisions, D21's
+--    offboarding retires): deleting an organisation, and changing a
+--    subsidiary's id or organisation (D17 held the runtime role to that by a
+--    column grant; this holds every client). SQLSTATE TA004.
+-- 5. A record is born a draft (TA005), and only the API's role or the owner
+--    moves it through its lifecycle (TA005); K5 already holds every status
+--    change to a step of that lifecycle.
+-- The guards compare `session_user` — the login, which neither SET ROLE, a
+-- SECURITY DEFINER function nor a referential action changes — with the
+-- table's owner; `current_user` would not do, since inside a referential
+-- action it IS the owner. The service role keeps its table privileges
+-- (Supabase's defaults); the triggers are what refuse it. TRUNCATE skips row
+-- triggers: no client holds it on any table since LP3-03, and
+-- `runtime-role.mjs check` reports one that does.
 --
--- `runtime-role.mjs check` (`checkIntegrityTriggers`) holds all three: every
--- foreign key of `activity_records` RESTRICT or NO ACTION on delete, K5's body
--- as defined below, and the organisation guard present, ENABLE ALWAYS and
--- unaltered.
+-- `runtime-role.mjs check` (`checkIntegrityTriggers`) holds it all: each key of
+-- `activity_records` as defined here (RESTRICT or NO ACTION both ways), K5's
+-- body, and the three new triggers present, ENABLE ALWAYS and unaltered.
 
--- Each statement locks `activity_records`, `locations`, `subsidiaries` or
--- `organisations`, which the API reads on every request; queued behind a long
--- transaction, give up rather than stall every request behind it, and let the
--- deploy be retried.
+-- Every statement here locks `activity_records`, `locations`, `subsidiaries`
+-- or `organisations`, which the API reads on every request; queued behind a
+-- long transaction, give up after 5 s rather than stall every request behind
+-- it. Prisma then records the migration as failed: resolve it with
+-- `prisma migrate resolve --rolled-back 20261010120000_lp4_01_cascade_guard`
+-- before deploying again, in a quieter window.
 SET LOCAL lock_timeout = '5s';
 
--- 1 and 2. Same names, same columns, same ON UPDATE.
+-- 2's precondition: no record sits at another subsidiary's site (the API has
+-- refused that since WP16; a direct write may not have). Fail before changing
+-- anything, with the count, rather than half-way through with a key error.
+DO $$
+DECLARE
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n
+    FROM "activity_records" r
+    JOIN "locations" l ON l."id" = r."location_id"
+   WHERE l."subsidiary_id" <> r."subsidiary_id";
+  IF n > 0 THEN
+    RAISE EXCEPTION 'LP4-01: % activity record(s) sit at a site of another subsidiary; re-target or remove them (as the owner) before applying', n;
+  END IF;
+END
+$$;
+
+-- 1 and 2. The keys, as Prisma names them.
+CREATE UNIQUE INDEX "locations_id_subsidiary_id_key" ON "locations"("id", "subsidiary_id");
+
 ALTER TABLE "activity_records" DROP CONSTRAINT "activity_records_location_id_fkey";
-ALTER TABLE "activity_records" ADD CONSTRAINT "activity_records_location_id_fkey"
-  FOREIGN KEY ("location_id") REFERENCES "locations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "activity_records" ADD CONSTRAINT "activity_records_location_id_subsidiary_id_fkey"
+  FOREIGN KEY ("location_id", "subsidiary_id") REFERENCES "locations"("id", "subsidiary_id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 ALTER TABLE "activity_records" DROP CONSTRAINT "activity_records_subsidiary_id_fkey";
 ALTER TABLE "activity_records" ADD CONSTRAINT "activity_records_subsidiary_id_fkey"
-  FOREIGN KEY ("subsidiary_id") REFERENCES "subsidiaries"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  FOREIGN KEY ("subsidiary_id") REFERENCES "subsidiaries"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
--- 1. K5 without the location exemption: a committed record's site is frozen
---    like every other input it was computed from. Otherwise LP3-03's body, word
---    for word; CREATE OR REPLACE keeps the function's owner, its ACL (owner
---    only, LP3-03 and OQ 14) and its trigger.
+ALTER TABLE "activity_records" DROP CONSTRAINT "activity_records_import_batch_id_fkey";
+ALTER TABLE "activity_records" ADD CONSTRAINT "activity_records_import_batch_id_fkey"
+  FOREIGN KEY ("import_batch_id") REFERENCES "import_batches"("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
+
+-- 3. K5 without the site exemption: a committed record's site is frozen like
+--    every other input it was computed from. Otherwise LP3-03's body, word for
+--    word; CREATE OR REPLACE keeps the function's owner, its ACL (owner only,
+--    LP3-03 and OQ 14) and its trigger.
 CREATE OR REPLACE FUNCTION "public"."activity_records_snapshot_immutable"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
@@ -104,10 +142,10 @@ BEGIN
 END
 $fn$;
 
--- 3. The guard fires before LP1-03's `organisations_remove_access_before_delete`
---    (BEFORE triggers fire in name order), so a refused delete removes nothing
---    first — and a refusal undoes the whole statement anyway. SQLSTATE TA004
---    (class `TA`, unused by PostgreSQL; no API path deletes an organisation).
+-- 4. An organisation is deleted by the owner's session alone. It fires before
+--    LP1-03's `organisations_remove_access_before_delete` (BEFORE triggers
+--    fire in name order), so a refused delete removes nothing first — and a
+--    refusal undoes the whole statement anyway. No API path deletes one.
 CREATE FUNCTION "public"."organisations_delete_owner_only"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
@@ -125,13 +163,75 @@ $fn$;
 CREATE TRIGGER "organisations_delete_owner_only"
   BEFORE DELETE ON "organisations"
   FOR EACH ROW EXECUTE FUNCTION "public"."organisations_delete_owner_only"();
--- Fires in replica mode too: a restore's session cannot slip past it.
 ALTER TABLE "organisations" ENABLE ALWAYS TRIGGER "organisations_delete_owner_only";
 
+-- 4. A subsidiary stays in its organisation, under its id (D17), whoever
+--    writes it but the owner. The API's role cannot even try (no column
+--    grant); the service role could. A whole-row trigger, not UPDATE OF: the
+--    integrity check refuses a narrowed one.
+CREATE FUNCTION "public"."subsidiaries_stay_in_organisation"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $fn$
+BEGIN
+  IF (NEW."id" IS DISTINCT FROM OLD."id" OR NEW."organisation_id" IS DISTINCT FROM OLD."organisation_id")
+     AND session_user <> (SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA004',
+      MESSAGE = format('subsidiary %s stays in its organisation under its id: only the database owner (the operator) moves one, not %s', OLD."id", session_user);
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+
+CREATE TRIGGER "subsidiaries_stay_in_organisation"
+  BEFORE UPDATE ON "subsidiaries"
+  FOR EACH ROW EXECUTE FUNCTION "public"."subsidiaries_stay_in_organisation"();
+ALTER TABLE "subsidiaries" ENABLE ALWAYS TRIGGER "subsidiaries_stay_in_organisation";
+
+-- 5. Who writes a record's lifecycle. A record is inserted as a draft — the
+--    only status the API creates — except by the owner (fixtures, a restore)
+--    or in replica mode (a data-only restore, which only the owner may set:
+--    the slot rule's own exemption). A status changes only in the API's
+--    session (`tonyai_runtime`, LP1-03's login: submit, review, approve,
+--    reject, void, the period lock's lock and unlock) or the owner's; K5 holds
+--    each change to a step of the lifecycle. Without the second half a client
+--    could insert a draft and walk it to approved, one valid step at a time.
+CREATE FUNCTION "public"."activity_records_lifecycle_writer"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $fn$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW."status" <> 'draft'
+       AND pg_catalog.current_setting('session_replication_role') <> 'replica'
+       AND session_user <> (SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID) THEN
+      RAISE EXCEPTION USING
+        ERRCODE = 'TA005',
+        MESSAGE = format('activity record %s is created as a draft, not as %s: a committed status comes from the review lifecycle, not an insert', NEW."id", NEW."status");
+    END IF;
+  ELSIF NEW."status" IS DISTINCT FROM OLD."status"
+        AND session_user <> 'tonyai_runtime'
+        AND session_user <> (SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA005',
+      MESSAGE = format('activity record %s moves from %s to %s only through the API, not as %s', OLD."id", OLD."status", NEW."status", session_user);
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+
+CREATE TRIGGER "activity_records_lifecycle_writer"
+  BEFORE INSERT OR UPDATE ON "activity_records"
+  FOR EACH ROW EXECUTE FUNCTION "public"."activity_records_lifecycle_writer"();
+ALTER TABLE "activity_records" ENABLE ALWAYS TRIGGER "activity_records_lifecycle_writer";
+
 -- Born owner-only since OQ 14 (this role's defaults); said explicitly, so the
--- function is owner-only on a database whose defaults differ. A trigger fires
--- without its function's EXECUTE.
+-- functions stay owner-only on a database whose defaults differ. A trigger
+-- fires without its function's EXECUTE.
 REVOKE ALL ON FUNCTION "public"."organisations_delete_owner_only"() FROM PUBLIC;
+REVOKE ALL ON FUNCTION "public"."subsidiaries_stay_in_organisation"() FROM PUBLIC;
+REVOKE ALL ON FUNCTION "public"."activity_records_lifecycle_writer"() FROM PUBLIC;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
@@ -139,5 +239,7 @@ BEGIN
     RETURN;
   END IF;
   REVOKE ALL ON FUNCTION "public"."organisations_delete_owner_only"() FROM anon, authenticated, service_role;
+  REVOKE ALL ON FUNCTION "public"."subsidiaries_stay_in_organisation"() FROM anon, authenticated, service_role;
+  REVOKE ALL ON FUNCTION "public"."activity_records_lifecycle_writer"() FROM anon, authenticated, service_role;
 END
 $$;

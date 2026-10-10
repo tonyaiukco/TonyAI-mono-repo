@@ -216,30 +216,63 @@ export async function countTenantRows(prisma: PrismaService, tenant: Tenant) {
 }
 
 /**
+ * A record row of the tenant's, as given — for the owner's direct insert of a
+ * state the lifecycle cannot reach (a restore's), which only the owner may
+ * write; everyone else goes through `createRecord`.
+ */
+export function recordInput(
+  tenant: Tenant,
+  data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {},
+): Prisma.ActivityRecordUncheckedCreateInput {
+  return {
+    subsidiaryId: tenant.subsidiaryId,
+    reportingYear: 2026,
+    reportingPeriod: 'monthly',
+    periodValue: 'January',
+    category: 'Electricity',
+    scope: 2,
+    activityValue: 100,
+    activityUnit: 'kWh',
+    calculation: { tCo2e: 0, factorId: 'int-test-placeholder' },
+    createdBy: tenant.users.dataEntry.id,
+    status: ActivityRecordStatus.draft,
+    ...data,
+  };
+}
+
+/**
+ * The lifecycle's own steps from draft to each status — K5's transitions, in
+ * the order the API takes them.
+ */
+const PATH_FROM_DRAFT: Record<ActivityRecordStatus, ActivityRecordStatus[]> = {
+  draft: [],
+  submitted: ['submitted'],
+  under_review: ['submitted', 'under_review'],
+  rejected: ['submitted', 'rejected'],
+  approved: ['submitted', 'approved'],
+  locked: ['submitted', 'approved', 'locked'],
+  voided: ['submitted', 'approved', 'voided'],
+};
+
+/**
  * A record in the tenant's subsidiary. The calculation is a structural
  * placeholder (no factor is looked up) — lifecycle tests never read its value.
+ * A record is born a draft (LP4-01's `activity_records_lifecycle_writer`), so
+ * one asked for in another status is inserted as a draft and walked there by
+ * the lifecycle's steps, on the caller's client — the runtime login or the
+ * owner, the two sessions that may move a status.
  */
 export async function createRecord(
   prisma: PrismaService,
   tenant: Tenant,
   data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {},
 ) {
-  return prisma.activityRecord.create({
-    data: {
-      subsidiaryId: tenant.subsidiaryId,
-      reportingYear: 2026,
-      reportingPeriod: 'monthly',
-      periodValue: 'January',
-      category: 'Electricity',
-      scope: 2,
-      activityValue: 100,
-      activityUnit: 'kWh',
-      calculation: { tCo2e: 0, factorId: 'int-test-placeholder' },
-      createdBy: tenant.users.dataEntry.id,
-      status: ActivityRecordStatus.draft,
-      ...data,
-    },
-  });
+  const { status = ActivityRecordStatus.draft, ...rest } = data;
+  let record = await prisma.activityRecord.create({ data: recordInput(tenant, { ...rest, status: ActivityRecordStatus.draft }) });
+  for (const step of PATH_FROM_DRAFT[status]) {
+    record = await prisma.activityRecord.update({ where: { id: record.id }, data: { status: step } });
+  }
+  return record;
 }
 
 // ---------------------------------------------------------------------------

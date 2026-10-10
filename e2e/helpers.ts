@@ -627,6 +627,8 @@ export async function cleanupQuarterly(request: APIRequestContext): Promise<void
 export async function cleanupE2ESubsidiaries(request: APIRequestContext): Promise<void> {
   const { url } = supabaseEnv();
   assertLocalTarget(url);
+  // The evidence files are still read and removed with the service key.
+  if (!process.env.E2E_SUPABASE_SERVICE_KEY) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
   // Files BEFORE rows: the subsidiary delete cascades to the evidence rows it
   // owns, taking the object keys with them, so this is the last moment they
   // can be read. Not covered by the quarterly sweep — a spec is free to put an
