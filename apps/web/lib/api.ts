@@ -222,11 +222,16 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   return (await res.json()) as T;
 }
 
-/** Pick only inventory keys from a wider view/export configuration. Never
- * coerce an invalid/empty selection into an unfiltered request. */
+/** Drop view-local status/search/sort/limit/cursor keys, but refuse unsupported
+ * inventory narrowing, including null (company-level in legacy site filters).
+ * Never coerce an invalid/empty selection into an unfiltered request. */
 function reportingContext(params: ReportingContext): ReportingContext {
   if (!params || typeof params !== "object" || Array.isArray(params)) {
     throw new ApiError("Invalid reporting context.", 400, "validation_failed");
+  }
+  const wider = params as unknown as Record<string, unknown>;
+  if (["locationId", "period", "periodValue"].some((key) => wider[key] !== undefined)) {
+    throw new ApiError("Unsupported reporting context filter.", 400, "validation_failed");
   }
   const context = Object.fromEntries(REPORTING_CONTEXT_KEYS.map((key) => [key, params[key]]));
   if (!isReportingContext(context)) {
@@ -253,11 +258,33 @@ function validReportingIntensity(data: ReportingIntensityData, context: Reportin
   const ids = data.selectedSubsidiaryIds;
   if (ids.some((id) => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length) return false;
   if (context.subsidiaryId !== undefined && ids.some((id) => id !== context.subsidiaryId)) return false;
-  return data.metrics.every((metric) => metric &&
+  const validMetrics = data.metrics.every((metric) => metric &&
+    Number.isSafeInteger(metric.uncalculatedRecordCount) && metric.uncalculatedRecordCount >= 0 &&
     (context.subsidiaryId !== undefined || (GROUP_INTENSITY_METRICS as readonly string[]).includes(metric.metric)) &&
     Array.isArray(metric.contributingSubsidiaryIds) && metric.contributingSubsidiaryIds.length > 0 &&
     new Set(metric.contributingSubsidiaryIds).size === metric.contributingSubsidiaryIds.length &&
     metric.contributingSubsidiaryIds.every((id) => ids.includes(id)));
+  if (!validMetrics) return false;
+  const groups = new Map<string, { units: Set<string>; contributors: Set<string> }>();
+  for (const metric of data.metrics) {
+    const group = groups.get(metric.metric) ?? { units: new Set<string>(), contributors: new Set<string>() };
+    if (group.units.has(metric.unit)) return false;
+    if (metric.contributingSubsidiaryIds.some((id) => group.contributors.has(id))) return false;
+    group.units.add(metric.unit);
+    metric.contributingSubsidiaryIds.forEach((id) => group.contributors.add(id));
+    groups.set(metric.metric, group);
+  }
+  return true;
+}
+
+/** Cheap context invariants, not a replacement for server aggregation tests. */
+function validReportingMatrix(data: TrackingMatrixDTO, context: ReportingContext): boolean {
+  if (data.reportingYear !== context.year || !Array.isArray(data.rows)) return false;
+  return data.rows.every((row) => row &&
+    (context.subsidiaryId === undefined || row.subsidiaryId === context.subsidiaryId) &&
+    Array.isArray(row.cells) && row.cells.every((cell) => cell &&
+      (context.scope === undefined || cell.scope === context.scope) &&
+      (context.category === undefined || cell.category === context.category)));
 }
 
 /** No legacy-route fallback: a pre-LP3-02 API must refuse the new request. */
@@ -285,8 +312,13 @@ export const api = {
   // remain unchanged; the implementation PR moves annual screens together.
   reportingSummary: (params: ReportingContext) =>
     apiReporting<EmissionsSummary>(REPORTING_CONTEXT_API_PATHS.summary, params),
-  reportingMatrix: (params: ReportingContext) =>
-    apiReporting<TrackingMatrixDTO>(REPORTING_CONTEXT_API_PATHS.matrix, params),
+  reportingMatrix: async (params: ReportingContext) => {
+    const result = await apiReporting<TrackingMatrixDTO>(REPORTING_CONTEXT_API_PATHS.matrix, params);
+    if (!validReportingMatrix(result.data, result.context)) {
+      throw new ApiError("The server returned incompatible matrix data.", 502, "internal_error");
+    }
+    return result;
+  },
   reportingMeta: async (params: ReportingContext) => {
     const result = await apiReporting<ReportMetaDTO>(REPORTING_CONTEXT_API_PATHS.meta, params);
     if (result.data.recordLimit !== undefined &&

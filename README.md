@@ -510,13 +510,20 @@ access or factor availability. APIs must recheck access on every request and kee
 an inaccessible selection empty instead of broadening it to the accessible set.
 
 The implementation must make the URL authoritative for this context across
-navigation, refreshes and exports. An explicit URL wins over remembered state;
-an omitted year becomes an explicit 2026 in the canonical URL. Invalid values or
-duplicate context keys must be refused, not silently dropped. Dashboard, absolute
+navigation, refreshes and exports. Resolve **each field** in this order: a valid,
+explicit URL value; otherwise its remembered selection, if one exists; otherwise
+`DEFAULT_REPORTING_YEAR` for year, all accessible subsidiaries for subsidiary,
+and unfiltered scope/category. Write the resolved year into the canonical URL.
+An invalid explicit URL value is refused, never replaced by remembered state or
+a default; duplicate context keys and a resolved scope/category conflict are
+also refused. Dashboard, absolute
 emissions, intensity, the ledger and reports use the selected year. Explicit
 historical comparisons may span years; targets retain their own baseline, target
 and actual progress years and inherit only the subsidiary selection. Search,
-record status, sort and export formatting remain view-local options.
+record status, sort and export formatting remain view-local options. Clients
+strip view-local `status`, `search`, `sort`, `limit` and `cursor`, but refuse a
+defined `locationId`, `period` or `periodValue` (including null) before fetching:
+silently dropping those would broaden the requested inventory.
 
 The following **reserved GET routes are not live in PR A**. Paths are relative to
 `/api/v1`, declared once in `REPORTING_CONTEXT_API_PATHS`; the web calls them only
@@ -531,7 +538,9 @@ through `apps/web/lib/api.ts`:
 | `/reports/context/{pdf,excel,csv}` | `downloadReportingReport` | File bytes; `ReportingExportParams` request |
 
 JSON responses use `{ context, data }`, echoing every requested inventory field
-even for empty results. Clients reject a missing or mismatched acknowledgement.
+verbatim even for empty results: absent keys are omitted, never null; scope is
+never derived from category; numbers remain numbers. Clients reject a missing or
+mismatched acknowledgement.
 The separate paths make an older API refuse instead of silently ignoring new
 filters; clients never fall back to a legacy path. Exports use the same context
 as preview/meta and apply it to totals, committed and withdrawn ledgers, labels
@@ -547,15 +556,54 @@ coverage, and each metric's `contributingSubsidiaryIds` identifies the subset wi
 that exact metric/unit denominator. Only those subsidiaries contribute to its
 filtered numerator; the denominator stays annual, without scope/category
 proration. Missing denominators are disclosed as missing coverage, never zero.
+Each metric also returns a non-negative safe-integer `uncalculatedRecordCount`:
+committed records of its contributing subsidiaries, for the same year/scope/category,
+excluded from `emissionsTotal` because they have no usable figure. The summary's
+count for all selected subsidiaries cannot substitute for this numerator-specific
+disclosure. Metric/unit pairs must be unique, with disjoint contributor sets
+across units of the same metric (one denominator per subsidiary/year/metric).
 PR A validates this response boundary in the new client; server enforcement is
 an implementation obligation, not a change to the legacy intensity endpoint.
+Before LP3-02 closes, legacy `GET /intensity`, which currently computes group
+intensity over physical metrics in violation of D14, must either be removed once
+unused or restricted to D14. Legacy and context report/emissions routes must
+share one service method per computation, so their arithmetic cannot diverge.
 
 The filtered tracking matrix must filter both records and emitted category cells,
-then recompute row and overall counts; filtering records alone would manufacture
-missing obligations. Existing cell coverage rules remain. This contract does not
+then recompute per-row `totalTCo2e`, `uncalculatedRecordCount`, `completeCount` and
+`categoryCount`, and overall `totals: { complete, incomplete, missing }`.
+`reportingYear` must equal `context.year`. Filtering records alone would
+manufacture missing obligations. Clients also reject a mismatched matrix year,
+a row outside the selected subsidiary, or cells outside selected scope/category.
+Existing cell coverage rules remain. This contract does not
 implement D11/D12 attribution/applicability or D13 final/PARTIAL reporting, which
 remain LP3-04/LP4-03 work. Consumers still need request-generation/cancellation
 guards so an older response cannot replace a newer selection.
+
+Implementation obligations before activating the context routes:
+
+- Classify `/reports/context/{pdf,excel,csv}` as **EXPORT** under #160, preserving
+  `RATE_EXPORT_PER_MINUTE` (5) and the `reports` concurrency lease
+  (`REPORT_CONCURRENCY = 1`). The current exact-path matcher would classify them
+  READ (120/min) and take no report lease. Derive the EXPORT set from
+  `REPORTING_CONTEXT_API_PATHS` plus the legacy export paths, with a `routeGroup`
+  test covering both. PR A does not change the runtime classifier.
+- Report meta and the export record-limit pre-check must count the filtered set;
+  the current assembly pre-check counts the whole year. Test each format's
+  context labels, totals against the same-context summary, and filtering of both
+  committed and withdrawn ledgers. Name the append-only generation audit keys
+  `scope` and `category` once, and test that the diff carries those filters.
+- URL parsing must preserve raw values for validation: no `x || undefined` that
+  erases an invalid empty value. Convert valid numeric syntax to wire numbers
+  without coercing empty or malformed input, then use `isReportingContext`.
+  Data Entry deep links must visibly refuse invalid years instead of falling
+  back to the default. Define an explicit URL representation for clearing
+  optional selections and serialize the resolved optional context too, so a
+  shared link cannot inherit the recipient's remembered narrowing filters.
+- Deploy the API before, or together with, the web build that calls these routes.
+- Before implementation starts, obtain owner slots for
+  `apps/api/src/intensity/**` and `apps/api/src/common/runtime-limits.ts`.
+  This PR's shared-contract grant does not authorize edits to either area.
 
 PR A merges alone and first after the required architecture review; LP4-01 and
 the LP3-02 implementation rebase on its merged contract. No migration is needed.

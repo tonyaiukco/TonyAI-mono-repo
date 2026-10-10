@@ -529,10 +529,12 @@ export const isReportingYear = (value: unknown): value is ReportingYear =>
 /**
  * One annual inventory selection (LP3-02, owner decisions 2026-10-10).
  * The URL is authoritative; refreshes, navigation and exports retain these
- * fields. An explicit URL wins over a remembered selection. Invalid values,
- * duplicate URL keys and a category/scope conflict are validation failures,
- * never an instruction to broaden the inventory. A missing URL year defaults
- * to DEFAULT_REPORTING_YEAR and is written into the canonical URL.
+ * fields. Resolve EACH field in order: a valid explicit URL value; otherwise
+ * its remembered selection, if any; otherwise DEFAULT_REPORTING_YEAR for year,
+ * all accessible subsidiaries for subsidiaryId, and no scope/category filter.
+ * Write the resolved year into the canonical URL. An invalid explicit URL
+ * value is refused, never replaced by remembered state or a default. Duplicate
+ * URL keys and a resolved category/scope conflict are validation failures too.
  *
  * Omitted subsidiaryId means ALL ACCESSIBLE subsidiaries, not necessarily the
  * whole organisation. A selected subsidiary includes its company- and site-
@@ -576,7 +578,9 @@ export const isReportingContext = (value: unknown): value is ReportingContext =>
     CATEGORY_SCOPE_MAP[context.category as Category] === context.scope;
 };
 
-/** Strict acknowledgement, including omitted filters. An omitted subsidiary
+/** Servers echo the request verbatim: absent keys omitted, never null; scope
+ * never derived from category; numbers remain numbers. Strict acknowledgement,
+ * including omitted filters. An omitted subsidiary
  * must not acknowledge a requested subsidiary, even when its result is empty. */
 export const matchesReportingContext = (value: unknown, expected: ReportingContext): boolean =>
   isReportingContext(value) && isReportingContext(expected) &&
@@ -588,6 +592,10 @@ export const matchesReportingContext = (value: unknown, expected: ReportingConte
  * (the legacy intensity controller ignores unknown query keys). Existing
  * clients/routes keep their old envelopes. No CORS/header negotiation needed
  * for binary exports: only the new paths implement this contract.
+ * Before activating pdf/excel/csv, classify these paths as EXPORT under #160,
+ * with the export quota and reports concurrency lease. Derive the EXPORT set
+ * from this constant plus the legacy paths, and test routeGroup for both sets.
+ * The legacy exact-path regex would otherwise classify context exports READ.
  */
 export const REPORTING_CONTEXT_API_PATHS = {
   summary: '/emissions/context/summary',
@@ -608,7 +616,9 @@ export interface ReportingContextResponse<T> {
 }
 
 /** Filter records AND emitted matrix cells by scope/category, then recompute
- * row categoryCount/completeCount/totals and overall totals. Filtering records
+ * per row: totalTCo2e, uncalculatedRecordCount, completeCount, categoryCount;
+ * overall totals: { complete, incomplete, missing }.
+ * reportingYear must equal context.year. Filtering records
  * alone would manufacture missing obligations. Existing cell coverage rules
  * remain unchanged; a filtered matrix cannot certify a full inventory. */
 export type ReportingMatrixResponse = ReportingContextResponse<TrackingMatrixDTO>;
@@ -1180,12 +1190,19 @@ export interface ReportingIntensityMetric extends IntensityMetricResultDTO {
    * scope and category. The denominator is annual and is never prorated by
    * scope/category. Missing denominators exclude a subsidiary, not a zero. */
   contributingSubsidiaryIds: string[];
+  /** Non-negative safe integer: committed records of the contributing
+   * subsidiaries, for the same year/scope/category, excluded from emissionsTotal
+   * because they have no usable figure. The whole-selection summary's count
+   * cannot substitute for this numerator-specific coverage disclosure. */
+  uncalculatedRecordCount: number;
 }
 
 /** Empty access or an inaccessible selection yields empty ids and metrics.
  * Every contributing id is unique and belongs to selectedSubsidiaryIds; the
  * difference names missing denominator coverage for that metric/unit. No
- * claim that the metric's numerator equals the whole group's absolute total. */
+ * claim that the metric's numerator equals the whole group's absolute total.
+ * Metric/unit pairs are unique. For one metric, contributors cannot overlap
+ * across units: each subsidiary has one denominator per year and metric. */
 export interface ReportingIntensityData {
   selectedSubsidiaryIds: string[];
   metrics: ReportingIntensityMetric[];
