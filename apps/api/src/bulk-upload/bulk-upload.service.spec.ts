@@ -11,8 +11,11 @@ import {
   ACTIVITY_UNIT_MAX_LENGTH,
   BULK_UPLOAD_MAX_ROWS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
+  BULK_UPLOAD_COLUMNS,
   BULK_UPLOAD_MESSAGE_MAX_LENGTH,
   CATEGORIES,
+  recordActivityTypesFor,
+  type BulkUploadColumn,
   type CalculationResult,
 } from '@tonyai/shared-types';
 import {
@@ -27,9 +30,12 @@ import {
   DUPLICATE_RECORD_MESSAGE,
   DuplicateActivityRecordError,
   PeriodLockedError,
+  SLOT_HOLDS_TYPED_MESSAGE,
+  SLOT_HOLDS_UNTYPED_MESSAGE,
 } from '../activity-records/errors';
 import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { InaccessibleEntityError } from './errors';
+import { QueryTooBroadError } from '../common/api-error';
 import { AuditService } from '../audit/audit.service';
 import { blockedUnitReason } from '../calculations/normalization';
 import { PrismaService } from '../prisma/prisma.service';
@@ -49,7 +55,7 @@ const LOC_A = 'baaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab';
 const LOC_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 const HEADER =
-  'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
+  'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityType,activityValue,activityUnit,varianceReason';
 
 const row = (over: Partial<Record<string, string>> = {}) => {
   const cells = {
@@ -59,6 +65,7 @@ const row = (over: Partial<Record<string, string>> = {}) => {
     reportingPeriod: 'monthly',
     periodValue: 'January',
     category: 'Electricity',
+    activityType: '',
     activityValue: '1200',
     activityUnit: 'kWh',
     varianceReason: '',
@@ -71,6 +78,7 @@ const row = (over: Partial<Record<string, string>> = {}) => {
     cells.reportingPeriod,
     cells.periodValue,
     cells.category,
+    cells.activityType,
     cells.activityValue,
     cells.activityUnit,
     cells.varianceReason,
@@ -411,7 +419,9 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
     expect(prisma.activityRecord.findMany).toHaveBeenCalledTimes(1);
     const [args] = prisma.activityRecord.findMany.mock.calls[0];
     expect(args.where.subsidiaryId).toEqual({ in: [SUB_1] });
-    expect(args.where.reportingYear).toEqual({ in: [2024] });
+    // By the file's own slots — one branch each — not by entity × year.
+    expect(args.where.OR.map((b: { periodValue: string }) => b.periodValue)).toEqual(['January', 'February', 'March']);
+    expect(args.where).not.toHaveProperty('reportingYear');
   });
 });
 
@@ -1001,6 +1011,8 @@ describe('BulkUploadService — the figures that reach the write', () => {
       // The CANONICAL spelling the server will store, not the file's.
       periodValue: 'January',
       category: 'Electricity',
+      // Part of the row's identity since K1; an untyped category names none.
+      activityType: null,
       tCo2e: 0.528,
       anomalous: false,
     });
@@ -1783,6 +1795,9 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
 
     const message = (error as Error).message;
     const fragment = `${'aaa<U+200B>'.repeat(5)}aaa…`;
+    // Four quoted cells since the tenth column (LP4-02): at five the worst
+    // case reached 504.
+    expect(QUOTED_FRAGMENTS).toBe(4);
     // A worst case only if every quote is as long as its bound allows.
     expect([...fragment].length).toBe(CALLER_TEXT_QUOTE_MAX_CODE_POINTS + 1);
     expect(message).toContain(`"${fragment}", "${fragment}"`);
@@ -1790,10 +1805,9 @@ describe('BulkUploadService — what the UAT-prep review passes found', () => {
     const longest = message.replace(' (+1 more)', ` (+${'9'.repeat(digits)} more)`);
 
     expect([...longest].length).toBeLessThanOrEqual(AUDIT_REASON_MAX_LENGTH);
-    // And with room to spare, deliberately. The ceiling is 490 at a 58
-    // code-point quote, 495 at 59 and exactly 500 at 60 — so a bound raised to
-    // 60 would pass the line above while leaving nothing for a reworded
-    // sentence or a tenth column.
+    // And with room to spare, deliberately. With nine columns and five quotes
+    // the ceiling was 490 at a 58 code-point quote, 495 at 59 and exactly 500
+    // at 60; the tenth column cost 14 and was paid for with the fifth quote.
     expect(AUDIT_REASON_MAX_LENGTH - [...longest].length).toBeGreaterThanOrEqual(10);
   });
 
@@ -2426,26 +2440,38 @@ describe('BulkUploadService — a location outside the tenant refuses the whole 
   });
 });
 
-describe('BulkUploadService — activity types (LP3-03)', () => {
-  it('refuses a typed-category row as invalid, before the duplicate check and before any service call', async () => {
-    // Owner decision (b), 2026-10-04: a file carries no activity type until
-    // LP4-02, so a Fuel row could never be written. Reported for what it is —
-    // not as "another row already reports this slot", which the second row
-    // would otherwise be told.
+describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
+  const FUEL = { category: 'Fuel', activityUnit: 'litres' };
+  /** A stored record in the default row's month, of this category and type. */
+  const storedIn = (category: string, activityType: string | null) => ({
+    subsidiaryId: SUB_1,
+    locationId: null,
+    reportingYear: 2024,
+    reportingPeriod: 'monthly',
+    periodValue: 'January',
+    category,
+    activityType,
+  });
+
+  it('refuses a typed-category row that names no activity type, on its column, before the duplicate check', async () => {
+    // Reported for what it is — not as "another row already reports this
+    // slot", which the second row would otherwise be told.
     const { records, service } = build();
-    const fuel = row({ category: 'Fuel', activityUnit: 'litres' });
+    const fuel = row(FUEL);
 
     const report = await service.import(dataEntry(), csvFile([fuel, fuel]), DRY);
 
     expect(report.errors).toEqual([
-      expect.objectContaining({ row: 2, code: 'invalid', column: 'category' }),
-      expect.objectContaining({ row: 3, code: 'invalid', column: 'category' }),
+      expect.objectContaining({ row: 2, code: 'invalid', column: 'activityType' }),
+      expect.objectContaining({ row: 3, code: 'invalid', column: 'activityType' }),
     ]);
-    expect(report.errors[0].message).toMatch(/must name its activity type/);
+    expect(report.errors[0].message).toBe(
+      'A Fuel record must name its activity type in the activityType column (download the current template if the file has none): diesel, gas_oil, fuel_oil, burning_oil or lpg.',
+    );
     expect(records.previewCreate).not.toHaveBeenCalled();
   });
 
-  it('refuses Mobile Combustion and Refrigerants rows the same way', async () => {
+  it('refuses Mobile Combustion and Refrigerants rows without one the same way', async () => {
     const { service } = build();
     const report = await service.import(
       dataEntry(),
@@ -2455,31 +2481,378 @@ describe('BulkUploadService — activity types (LP3-03)', () => {
       ]),
       DRY,
     );
-    expect(report.errors.map((e) => e.code)).toEqual(['invalid', 'invalid']);
+    expect(report.errors.map((e) => [e.code, e.column])).toEqual([
+      ['invalid', 'activityType'],
+      ['invalid', 'activityType'],
+    ]);
+  });
+
+  it('hands a named activity type, trimmed, to the record service — and none for a blank cell', async () => {
+    const { records, service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([
+        row({ ...FUEL, activityType: ' diesel ' }),
+        row({ category: 'Refrigerants', activityType: 'R-410A', activityUnit: 'kg' }),
+        row({ periodValue: 'February' }),
+      ]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([]);
+    const dtos = records.previewCreate.mock.calls.map(([, dto]) => dto);
+    expect(dtos.map((d) => d.activityType)).toEqual(['diesel', 'R-410A', undefined]);
+    // The preview tells a diesel row from a gas oil one in the same month.
+    expect(report.accepted.map((a) => a.activityType)).toEqual(['diesel', 'R-410A', null]);
+  });
+
+  it('applies a typed row through create, with its activity type', async () => {
+    const { records, service } = build();
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ ...FUEL, activityType: 'gas_oil' })]),
+      { dryRun: false },
+    );
+    expect(report.errors).toEqual([]);
+    expect(records.create).toHaveBeenCalledTimes(1);
+    expect(records.create.mock.calls[0][1]).toMatchObject({ category: 'Fuel', activityType: 'gas_oil' });
+    expect(report.accepted).toEqual([expect.objectContaining({ recordId: 'rec-' + seq, activityType: 'gas_oil' })]);
+  });
+
+  it('refuses an activity type its category does not have, on its column, before any service call', async () => {
+    const { records, service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([
+        row({ ...FUEL, activityType: 'R-32' }),
+        row({ ...FUEL, activityType: 'petrol', periodValue: 'February' }),
+        row({ activityType: 'grid_electricity', periodValue: 'March' }),
+      ]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      expect.objectContaining({ row: 2, code: 'invalid', column: 'activityType' }),
+      expect.objectContaining({ row: 3, code: 'invalid', column: 'activityType' }),
+      expect.objectContaining({ row: 4, code: 'invalid', column: 'activityType' }),
+    ]);
+    expect(report.errors[0].message).toBe(
+      '"R-32" is not an activity type of Fuel. Use one of: diesel, gas_oil, fuel_oil, burning_oil or lpg.',
+    );
+    // An implicit category names none: the column stays blank.
+    expect(report.errors[2].message).toBe(
+      '"grid_electricity" is not an activity type of Electricity. Leave the activityType column blank for Electricity.',
+    );
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed activity type through the DTO, on its column', async () => {
+    const { records, service } = build();
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ ...FUEL, activityType: 'diesel;drop' })]),
+      DRY,
+    );
+    expect(report.errors).toEqual([
+      expect.objectContaining({ row: 2, code: 'invalid', column: 'activityType' }),
+    ]);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  it('keys the slot on the activity type: two fuels in one month are two records, one fuel twice a duplicate', async () => {
+    const { records, service } = build();
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([
+        row({ ...FUEL, activityType: 'diesel' }),
+        row({ ...FUEL, activityType: 'gas_oil' }),
+        row({ ...FUEL, activityType: 'diesel' }),
+      ]),
+      DRY,
+    );
+
+    expect(report.accepted.map((a) => a.row)).toEqual([2, 3]);
+    expect(report.errors).toEqual([
+      {
+        row: 4,
+        column: null,
+        code: 'duplicate_in_file',
+        message: 'Another row in this file already reports this entity, period, category and activity type.',
+      },
+    ]);
+    expect(records.previewCreate).toHaveBeenCalledTimes(2);
   });
 
   it('reads the stored slots with their activity type — the seventh key column', async () => {
     const { prisma, records, service } = build();
-    prisma.activityRecord.findMany.mockResolvedValue([
-      {
-        subsidiaryId: SUB_1,
-        locationId: null,
-        reportingYear: 2024,
-        reportingPeriod: 'monthly',
-        periodValue: 'January',
-        category: 'Electricity',
-        // A typed record in the slot is a different key from the file's
-        // untyped row; only the database's slot-kind rule relates the two.
-        activityType: 'grid_electricity',
-      },
-    ]);
+    prisma.activityRecord.findMany.mockResolvedValue([storedIn('Fuel', 'diesel')]);
 
-    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ ...FUEL, activityType: 'diesel' }), row({ ...FUEL, activityType: 'gas_oil' })]),
+      DRY,
+    );
 
     const [args] = prisma.activityRecord.findMany.mock.calls[0];
     expect(args.select).toHaveProperty('activityType', true);
-    expect(report.errors).toEqual([]);
+    expect(report.errors).toEqual([
+      {
+        row: 2,
+        column: null,
+        code: 'duplicate_existing',
+        message:
+          'A record already exists for this entity, period, category and activity type. Edit it instead of importing it again.',
+      },
+    ]);
+    expect(report.accepted.map((a) => a.row)).toEqual([3]);
     expect(records.previewCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a typed row in a slot a stored untyped record holds — the TA002 the dry run could not see', async () => {
+    // A pre-LP3-03 Fuel record names no fuel and holds its month against
+    // typed ones (Open questions, "LP3-03 PR B" (5)). The database refuses the
+    // insert (TA002); the dry run must say so too, with the record service's
+    // own sentence.
+    const { prisma, records, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([storedIn('Fuel', null)]);
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ ...FUEL, activityType: 'diesel' })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      { row: 2, column: null, code: 'duplicate_existing', message: SLOT_HOLDS_UNTYPED_MESSAGE },
+    ]);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  it('reads the slot in its canonical spelling, as the insert would', async () => {
+    // "january" is accepted and stored as "January". Keyed on the cell as
+    // written, the dry run passed this row and the apply hit TA002 — the
+    // disagreement the pre-check exists to remove (qa-auditor, a survivor).
+    const { prisma, records, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([storedIn('Fuel', null)]);
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ ...FUEL, activityType: 'diesel', periodValue: 'january' })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      { row: 2, column: null, code: 'duplicate_existing', message: SLOT_HOLDS_UNTYPED_MESSAGE },
+    ]);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  it('answers the second copy of a row as the file\'s own duplicate, after the slot refused the first', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([storedIn('Fuel', null)]);
+    const typed = row({ ...FUEL, activityType: 'diesel' });
+
+    const report = await service.import(dataEntry(), csvFile([typed, typed]), DRY);
+
+    expect(report.errors.map((e) => [e.row, e.code])).toEqual([
+      [2, 'duplicate_existing'],
+      [3, 'duplicate_in_file'],
+    ]);
+  });
+
+  it('refuses an untyped row in a slot stored typed records hold — the other half of TA002', async () => {
+    const { prisma, records, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([storedIn('Electricity', 'grid_electricity')]);
+
+    const report = await service.import(dataEntry(), csvFile([row()]), DRY);
+
+    expect(report.errors).toEqual([
+      { row: 2, column: null, code: 'duplicate_existing', message: SLOT_HOLDS_TYPED_MESSAGE },
+    ]);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  describe('the stored-slot check covers the file\'s own slots, whole (Codex F1)', () => {
+    type Stored = ReturnType<typeof storedIn> & { status: string };
+    /**
+     * Prisma's `findMany` over an in-memory table, for exactly the operators
+     * the importer uses (`in`, `not`, an `OR` of equalities, `take`), in table
+     * order — so a query that matches too much loses rows the way the real one
+     * would.
+     */
+    const table = (rows: Stored[]) => ({ where, take }: { where: Record<string, any>; take?: number }) => {
+      const holds = (r: Record<string, unknown>, field: string, cond: any): boolean =>
+        field === 'OR'
+          ? cond.some((branch: Record<string, unknown>) => Object.entries(branch).every(([f, v]) => r[f] === v))
+          : cond !== null && typeof cond === 'object' && 'in' in cond
+            ? cond.in.includes(r[field])
+            : cond !== null && typeof cond === 'object' && 'not' in cond
+              ? r[field] !== cond.not
+              : r[field] === cond;
+      const matched = rows.filter((r) => Object.entries(where).every(([f, c]) => holds(r, f, c)));
+      return Promise.resolve(matched.slice(0, take ?? matched.length));
+    };
+    const legacyFuel: Stored = { ...storedIn('Fuel', null), status: 'draft' };
+    /** Records of this entity and year in a slot the file does not claim. */
+    const elsewhere = (n: number): Stored[] =>
+      Array.from({ length: n }, (_, i) => ({
+        ...storedIn('Refrigerants', `t${i}`),
+        periodValue: 'February',
+        status: 'draft',
+      }));
+
+    it('finds the conflict however many unrelated records the entity and year hold', async () => {
+      // Ten thousand records elsewhere used to fill the capped query, and the
+      // legacy record holding this row's slot fell off its end: the dry run
+      // passed the row and the apply hit TA002.
+      const { prisma, records, service } = build();
+      prisma.activityRecord.findMany.mockImplementation(table([...elsewhere(BULK_UPLOAD_MAX_ROWS * 10), legacyFuel]));
+
+      const report = await service.import(
+        dataEntry(),
+        csvFile([row({ ...FUEL, activityType: 'diesel' })]),
+        DRY,
+      );
+
+      expect(report.errors).toEqual([
+        { row: 2, column: null, code: 'duplicate_existing', message: SLOT_HOLDS_UNTYPED_MESSAGE },
+      ]);
+      expect(records.previewCreate).not.toHaveBeenCalled();
+    });
+
+    it('asks for exactly the slots the file claims, in the database\'s spelling', async () => {
+      const { prisma, service } = build();
+
+      await service.import(
+        dataEntry(),
+        csvFile([
+          row({ ...FUEL, activityType: 'diesel', periodValue: ' january ', locationId: LOC_A.toUpperCase() }),
+          row({ ...FUEL, activityType: 'gas_oil', periodValue: 'January', locationId: LOC_A }),
+          row({ periodValue: 'March' }),
+        ]),
+        DRY,
+      );
+
+      expect(prisma.activityRecord.findMany).toHaveBeenCalledTimes(1);
+      const [{ where, take }] = prisma.activityRecord.findMany.mock.calls[0];
+      expect(where.status).toEqual({ not: 'voided' });
+      // One branch per slot: the two fuels of one month share theirs.
+      expect(where.OR).toEqual([
+        { subsidiaryId: SUB_1, locationId: LOC_A, reportingYear: 2024, reportingPeriod: 'monthly', periodValue: 'January', category: 'Fuel' },
+        { subsidiaryId: SUB_1, locationId: null, reportingYear: 2024, reportingPeriod: 'monthly', periodValue: 'March', category: 'Electricity' },
+      ]);
+      // The cap follows the contract: a thousand slots, each holding at most
+      // one record per activity type of its category, or one untyped record.
+      const perSlot = Math.max(...CATEGORIES.map((c) => recordActivityTypesFor(c).length)) + 1;
+      expect(take).toBe(BULK_UPLOAD_MAX_ROWS * perSlot + 1);
+    });
+
+    // Each neighbour differs from X in one slot column only. Folded into X's
+    // branch — by the dedupe key, the scope, or a row the claim skips — X's
+    // stored conflict is never read, the false clean dry run again
+    // (qa-auditor's survivors, re-review).
+    const X = row({ ...FUEL, activityType: 'diesel' });
+    it.each([
+      ['site', { locationId: LOC_A }],
+      ['year', { reportingYear: '2025' }],
+      ['month', { periodValue: 'February' }],
+      ['category', { category: 'Mobile Combustion' }],
+      ['entity', { subsidiaryId: SUB_99 }],
+    ])('keeps a neighbour in another %s apart from the conflicting row, in either order', async (_column, neighbour) => {
+      const Y = row({ ...FUEL, activityType: 'diesel', ...neighbour });
+      for (const [lines, conflictRow] of [[[X, Y], 2], [[Y, X], 3]] as const) {
+        const { prisma, service } = build();
+        prisma.activityRecord.findMany.mockImplementation(table([legacyFuel]));
+
+        const report = await service.import(
+          dataEntry({ accessibleSubsidiaryIds: [SUB_1, SUB_99] }),
+          csvFile([...lines]),
+          DRY,
+        );
+
+        expect(report.errors.filter((e) => e.code === 'duplicate_existing').map((e) => e.row)).toEqual([conflictRow]);
+      }
+    });
+
+    it('claims the slot of a row with a variance reason too', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findMany.mockImplementation(table([legacyFuel]));
+
+      const report = await service.import(
+        dataEntry(),
+        csvFile([row({ ...FUEL, activityType: 'diesel', varianceReason: 'Meter replaced' })]),
+        DRY,
+      );
+
+      expect(report.errors.map((e) => e.code)).toEqual(['duplicate_existing']);
+    });
+
+    it('asks only about entities the caller may read, whatever reaches it', async () => {
+      // The whole-file access check runs first and refuses a foreign id, so
+      // this is defence in depth: were that order ever to change, the query
+      // must still not say whether another entity's slot is taken.
+      const { prisma, service } = build();
+      const cells = (over: Partial<Record<BulkUploadColumn, string>>) =>
+        Object.fromEntries(
+          BULK_UPLOAD_COLUMNS.map((c) => [c, { subsidiaryId: SUB_1, reportingYear: '2024', reportingPeriod: 'monthly', periodValue: 'January', category: 'Electricity', activityValue: '1', activityUnit: 'kWh', ...over }[c] ?? '']),
+        ) as Record<BulkUploadColumn, string>;
+      const load = (service as unknown as {
+        loadStoredSlots(user: RequestUser, rows: { row: number; cells: Record<BulkUploadColumn, string> }[]): Promise<unknown>;
+      }).loadStoredSlots.bind(service);
+
+      await load(dataEntry(), [{ row: 2, cells: cells({ subsidiaryId: SUB_99 }) }]);
+      expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+
+      await load(dataEntry(), [
+        { row: 2, cells: cells({ subsidiaryId: SUB_99 }) },
+        { row: 3, cells: cells({}) },
+      ]);
+      const [{ where }] = prisma.activityRecord.findMany.mock.calls[0];
+      expect(where.subsidiaryId).toEqual({ in: [SUB_1] });
+      expect(where.OR.map((b: { subsidiaryId: string }) => b.subsidiaryId)).toEqual([SUB_1]);
+    });
+
+    it('refuses the whole file rather than check part of it, when its own slots hold more than the cap', async () => {
+      // Through the API a slot holds at most one record per activity type
+      // (nine refrigerants), so this takes records written around it. A
+      // partial answer would be the false clean dry run again.
+      const { prisma, records, service } = build();
+      const junk = elsewhere(BULK_UPLOAD_MAX_ROWS * 10 + 1).map((r) => ({ ...r, periodValue: 'January' }));
+      prisma.activityRecord.findMany.mockImplementation(table(junk));
+
+      for (const options of [DRY, { dryRun: false }]) {
+        await expect(
+          service.import(
+            dataEntry(),
+            csvFile([row({ category: 'Refrigerants', activityType: 'R-32', activityUnit: 'kg' })]),
+            options,
+          ),
+        ).rejects.toBeInstanceOf(QueryTooBroadError);
+      }
+      expect(records.previewCreate).not.toHaveBeenCalled();
+      expect(records.create).not.toHaveBeenCalled();
+      expect(prisma.importBatch.create).not.toHaveBeenCalled();
+    });
+  });
+
+  it('applies the slot-kind rule per slot: an untyped record in another month, site or category refuses nothing', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([
+      { ...storedIn('Fuel', null), periodValue: 'February' },
+      { ...storedIn('Fuel', null), locationId: LOC_1 },
+      { ...storedIn('Natural Gas', null) },
+    ]);
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ ...FUEL, activityType: 'diesel' })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([]);
   });
 
   it('reports every coverage refusal, and a factor-library conflict, as no_factor with its own sentence', async () => {

@@ -16,9 +16,11 @@ import { readFirstWorksheet, type MergedRange } from './xlsx-reader';
  * How many of a refused header's cells the sentence quotes. Each one is
  * bounded by `quoteCallerText`'s own two bounds, and delimited, which is what
  * keeps the longest possible refusal inside the code points an audit row
- * stores whole (`bulk-upload.service.spec.ts` pins that arithmetic).
+ * stores whole (`bulk-upload.service.spec.ts` pins that arithmetic). Four
+ * since LP4-02's tenth column (`activityType`) lengthened the "Expected:" list:
+ * at five the worst case reached 504 of 500.
  */
-export const QUOTED_FRAGMENTS = 5;
+export const QUOTED_FRAGMENTS = 4;
 
 /**
  * One data row as it came out of the file: every cell a string, keyed by the
@@ -142,7 +144,9 @@ function mapHeader(header: readonly string[]): (BulkUploadColumn | null)[] {
  *     one is refused (`invalid Unicode escape value` as a literal, SQLSTATE
  *     22021 as a bound parameter). NOT, to be clear, what keeps
  *     `bulk-upload.service.ts`'s NUL-joined slot key safe — none of that key's
- *     six segments is free text, which is what keeps it safe, and this guard
+ *     seven segments is free text (`activityType` comes from the caller, but
+ *     is shape-checked by the DTO and checked against its category's list
+ *     before the key is built), which is what keeps it safe, and this guard
  *     never runs on the key.
  *   - **An UNPAIRED surrogate.** Refused the same way. A PAIR is a different
  *     thing and must keep working: `_xD83D__xDE00_` is how a workbook spells
@@ -337,7 +341,7 @@ async function parseXlsx(buffer: Buffer): Promise<ParsedRow[]> {
     populated: number;
   } = { columns: null, imported: null, populated: 0 };
   // Kept as the import will read them: the imported cells, plus the column of
-  // the first value no header names. A row then costs nine strings however
+  // the first value no header names. A row then costs ten strings however
   // wide it is — keeping every cell let a 40 KB upload of blank-looking cells
   // grow the heap by over 100 MB (qa-auditor, measured).
   const kept: (ParsedRow & {
@@ -412,7 +416,7 @@ interface ImportedColumn {
   key: BulkUploadColumn;
 }
 
-/** Where the header's imported columns sit — nine at most. */
+/** Where the header's imported columns sit — one per contract column at most. */
 function importedColumns(
   columns: readonly (BulkUploadColumn | null)[],
 ): ImportedColumn[] {

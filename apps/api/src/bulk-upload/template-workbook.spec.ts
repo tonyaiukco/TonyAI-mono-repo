@@ -74,9 +74,10 @@ describe('buildTemplateWorkbook — the importer can read what it writes', () =>
       2024,
       'monthly',
       'January',
-      'Electricity',
+      'Fuel',
+      'diesel',
       45000,
-      'kWh',
+      'litres',
       '',
     ];
     const filled = Buffer.from(await workbook.xlsx.writeBuffer());
@@ -85,6 +86,7 @@ describe('buildTemplateWorkbook — the importer can read what it writes', () =>
 
     expect(rows).toHaveLength(1);
     expect(rows[0].cells.subsidiaryId).toBe(ENTITIES.subsidiaries[0].id);
+    expect(rows[0].cells.activityType).toBe('diesel');
     expect(rows[0].cells.activityValue).toBe('45000');
     expect(rows[0].cells.locationId).toBe('');
   });
@@ -163,6 +165,22 @@ describe('buildTemplateWorkbook — the reference sheet', () => {
 
   it('says how to report for the whole company', async () => {
     expect(await referenceText()).toContain('Whole company');
+  });
+
+  it('lists each typed category\'s activity types, and says the others leave the column blank', async () => {
+    // LP4-02: a Fuel, Mobile Combustion or Refrigerants row names its fuel or
+    // gas. Its valid values depend on the row's category, like the units, so
+    // they are listed per category here rather than offered as one flat list.
+    const text = await referenceText();
+    expect(text).toContain('Every column there is required except locationId, activityType and varianceReason');
+    expect(text).toContain(
+      'Fuel, Mobile Combustion and Refrigerants rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
+    );
+    expect(text).toContain('Activity types, by category\ncategory | Accepted activityType');
+    expect(text).toContain('Fuel | diesel, gas_oil, fuel_oil, burning_oil, lpg');
+    expect(text).toContain('Mobile Combustion | diesel, petrol, lpg, cng');
+    expect(text).toContain('Refrigerants | R-32, R-134a, R-404A, R-407C, R-407F, R-410A, R-448A, R-449A, R-1234yf');
+    expect(text).toContain('Electricity | Leave blank: this category names no activity type.');
   });
 
   it('warns that imported rows arrive as drafts', async () => {
@@ -362,6 +380,8 @@ describe('buildTemplateWorkbook — the worked example', () => {
     expect(rows[0].cells.activityValue).toBe('45000');
     expect(rows[0].cells.activityUnit).toBe('kWh');
     expect(rows[0].cells.category).toBe('Electricity');
+    // Electricity names no activity type: the column stays blank.
+    expect(rows[0].cells.activityType).toBe('');
   });
 });
 

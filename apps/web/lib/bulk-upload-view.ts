@@ -114,6 +114,7 @@ export const COLUMN_LABEL: Record<BulkUploadColumn, string> = {
   reportingPeriod: 'Granularity',
   periodValue: 'Period',
   category: 'Category',
+  activityType: 'Activity type',
   activityValue: 'Activity value',
   activityUnit: 'Unit',
   varianceReason: 'Variance reason',

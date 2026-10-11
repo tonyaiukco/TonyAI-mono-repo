@@ -93,7 +93,7 @@ test('the template downloads, and names only the entities this user can reach', 
     buffer as unknown as ArrayBuffer,
   );
 
-  // Sheet 1 is the importer's contract: exactly the nine columns, and nothing
+  // Sheet 1 is the importer's contract: exactly its columns, and nothing
   // for anyone to fill in yet.
   //
   // POSITION first, then the lookup by name. The importer reads sheet ONE

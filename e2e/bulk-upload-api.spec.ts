@@ -307,9 +307,9 @@ test('the row-level refusals arrive with the codes the contract names', async ({
     { ...LANE, activityValue: 13 },
     { ...LANE, periodValue: 'Q4', activityValue: 'N/A' },
     // Refrigerants in its one unit (kg): a typed category, whose record must
-    // name its gas — and a file cannot carry an activity type until LP4-02
-    // (owner decision (b), 2026-10-04), so the row is refused as `invalid`,
-    // before any factor lookup or duplicate check.
+    // name its gas in the activityType column (LP4-02). This file's header
+    // has no such column, so the row is refused as `invalid`, before any
+    // factor lookup or duplicate check.
     { ...LANE, periodValue: 'Q4', category: 'Refrigerants', activityValue: 5, activityUnit: 'kg' },
     // The same category and unit as row 2, one year earlier. The factor
     // library is year-scoped with no fallback, and the fixture covers

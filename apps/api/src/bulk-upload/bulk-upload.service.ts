@@ -16,6 +16,7 @@ import {
   BULK_UPLOAD_MAX_ROWS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
   BULK_UPLOAD_MESSAGE_MAX_LENGTH,
+  CATEGORIES,
   canonicalPeriodValue,
   isCalculated,
   isEvidenceRequired,
@@ -27,6 +28,7 @@ import {
   type ReportingPeriod,
   type BulkUploadReportDTO,
   type BulkUploadRowIssue,
+  isRecordActivityTypeAllowed,
   mayAuthorRecords,
   recordActivityTypesFor,
 } from '@tonyai/shared-types';
@@ -38,6 +40,8 @@ import {
   ActivityTypeSlotConflictError,
   DuplicateActivityRecordError,
   PeriodLockedError,
+  SLOT_HOLDS_TYPED_MESSAGE,
+  SLOT_HOLDS_UNTYPED_MESSAGE,
 } from '../activity-records/errors';
 import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
@@ -53,6 +57,7 @@ import { StorageIntentsService, type ObjectRef } from '../storage/storage-intent
 import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
 import { InaccessibleEntityError } from './errors';
+import { QueryTooBroadError } from '../common/api-error';
 import {
   extensionOf,
   parseRows,
@@ -82,6 +87,45 @@ const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true } as const;
  * purpose. It keeps the property true if a free-text segment is ever added.
  */
 const KEY_SEPARATOR = '\u0000';
+
+/**
+ * What the stored records hold, read once before the loop: their full keys
+ * (the unique index's seven columns), and which slots — the six columns the
+ * database's slot-kind rule locks on — hold typed records and which an untyped
+ * one (TA002: a slot holds typed records or one untyped record, never both).
+ */
+interface StoredSlots {
+  keys: Set<string>;
+  typed: Set<string>;
+  untyped: Set<string>;
+}
+
+/** A slot as the database stores it: the slot-kind rule's six columns. */
+interface ClaimedSlot {
+  subsidiaryId: string;
+  locationId: string | null;
+  reportingYear: number;
+  reportingPeriod: ReportingPeriod;
+  periodValue: string;
+  category: Category;
+}
+
+/**
+ * How many stored records the slot check reads at most: a file claims at most
+ * `BULK_UPLOAD_MAX_ROWS` slots, and through the API a slot holds one record
+ * per activity type of its category (nine refrigerants today) or one untyped
+ * record — derived, so a longer list in the contract raises it. Past it the
+ * file is refused, never checked in part.
+ */
+const STORED_RECORDS_CAP =
+  BULK_UPLOAD_MAX_ROWS * (Math.max(...CATEGORIES.map((c) => recordActivityTypesFor(c).length)) + 1);
+
+/** `a, b or c` — how a refusal lists the accepted values. */
+function orList(values: readonly string[]): string {
+  return values.length < 2
+    ? values.join('')
+    : `${values.slice(0, -1).join(', ')} or ${values[values.length - 1]}`;
+}
 
 const COLUMN_NAMES = new Set<string>(BULK_UPLOAD_COLUMNS);
 
@@ -173,7 +217,7 @@ export class BulkUploadService {
     });
     const upload = file as Express.Multer.File;
 
-    const storedKeys = await this.loadStoredKeys(rows);
+    const storedSlots = await this.loadStoredSlots(user, rows);
     // An APPLY gets a batch, created BEFORE the loop so every record can carry
     // its id. A dry run gets none: it must provably write nothing.
     const batchId = dryRun
@@ -204,7 +248,7 @@ export class BulkUploadService {
           await this.processRow(
             user,
             parsed,
-            { dryRun, seenInFile, storedKeys, batchId },
+            { dryRun, seenInFile, storedSlots, batchId },
             { accepted, errors, warnings },
           );
         } catch (error) {
@@ -342,7 +386,7 @@ export class BulkUploadService {
     context: {
       dryRun: boolean;
       seenInFile: Set<string>;
-      storedKeys: Set<string>;
+      storedSlots: StoredSlots;
       batchId: string | null;
     },
     out: {
@@ -396,22 +440,35 @@ export class BulkUploadService {
       return;
     }
 
-    // LP3-03, owner decision (b) of 2026-10-04: a file cannot carry an
-    // activity type until LP4-02's contract change adds the column, so a row in
-    // a typed category (Fuel, Mobile Combustion, Refrigerants) is refused as the
-    // record service would refuse it (`activity_type_required`) — HERE, before
-    // the duplicate check, which would otherwise answer for it ("edit the
-    // existing record") about a row that could never be written.
+    // A typed category (Fuel, Mobile Combustion, Refrigerants) names its fuel
+    // or gas in the activityType column (LP4-02, decision (b) of 2026-10-04);
+    // any other category leaves it blank. Refused HERE, on the column, before
+    // the duplicate check — which would otherwise answer for such a row
+    // ("edit the existing record") about a row that could never be written —
+    // and before the slot key, which a misnamed type must not claim.
     const activityType = dto.activityType ?? null;
-    const types = recordActivityTypesFor(dto.category);
+    const types = recordActivityTypesFor(dto.category).map((t) => t.value);
     if (types.length > 0 && activityType === null) {
       out.errors.push({
         row,
-        column: this.asColumn('category'),
+        column: this.asColumn('activityType'),
         code: 'invalid',
         message:
-          `A ${dto.category} record must name its activity type (${types.map((t) => t.value).join(', ')}), ` +
-          `and a bulk file cannot carry one yet. Enter ${dto.category} rows on Data Entry.`,
+          `A ${dto.category} record must name its activity type in the activityType column ` +
+          `(download the current template if the file has none): ${orList(types)}.`,
+      });
+      return;
+    }
+    if (!isRecordActivityTypeAllowed(dto.category, activityType)) {
+      out.errors.push({
+        row,
+        column: this.asColumn('activityType'),
+        code: 'invalid',
+        message:
+          `"${quoteCallerText(activityType ?? '')}" is not an activity type of ${dto.category}. ` +
+          (types.length > 0
+            ? `Use one of: ${orList(types)}.`
+            : `Leave the activityType column blank for ${dto.category}.`),
       });
       return;
     }
@@ -436,18 +493,41 @@ export class BulkUploadService {
           column: null,
           code: 'duplicate_in_file',
           message:
-            'Another row in this file already reports this entity, period and category.',
+            'Another row in this file already reports this entity, period, category and activity type.',
         });
         return;
       }
       context.seenInFile.add(key);
-      if (context.storedKeys.has(key)) {
+      if (context.storedSlots.keys.has(key)) {
         out.errors.push({
           row,
           column: null,
           code: 'duplicate_existing',
           message:
-            'A record already exists for this entity, period and category. Edit it instead of importing it again.',
+            'A record already exists for this entity, period, category and activity type. Edit it instead of importing it again.',
+        });
+        return;
+      }
+      // TA002, which the insert raises and the preview cannot see: a typed
+      // row in a slot a stored untyped record holds (a pre-LP3-03 Fuel
+      // record), or the reverse — answered with the record service's own
+      // sentence. Within one file the two kinds cannot meet: a typed category
+      // refuses a row without a type above, and an untyped one a row with one.
+      const slot = this.slotOf(
+        dto.subsidiaryId,
+        dto.locationId ?? null,
+        dto.reportingYear,
+        dto.reportingPeriod,
+        canonical,
+        dto.category,
+      );
+      const typed = activityType !== null;
+      if ((typed ? context.storedSlots.untyped : context.storedSlots.typed).has(slot)) {
+        out.errors.push({
+          row,
+          column: null,
+          code: 'duplicate_existing',
+          message: typed ? SLOT_HOLDS_UNTYPED_MESSAGE : SLOT_HOLDS_TYPED_MESSAGE,
         });
         return;
       }
@@ -652,59 +732,53 @@ export class BulkUploadService {
   }
 
   /**
-   * Every reporting slot already taken, for the entities and years this file
-   * touches — one query, not one per row.
+   * The stored records in the slots this file claims — one query, not one per
+   * row — read whole or not at all.
    *
-   * `voided` is excluded because the uniqueness index excludes it
-   * (`WHERE status <> 'voided'`): a withdrawn figure does not hold its slot,
-   * and treating it as if it did would refuse the restatement meant to replace
-   * it.
+   * Asked by the file's own slots, not by its entities × years: that
+   * cross-product matched every record of an entity's year, a cap had to
+   * bound it, and a record past the cap was simply missing — a legacy untyped
+   * record holding a row's slot behind ten thousand others let the dry run
+   * pass the row the insert then refused (TA002; Codex F1). Each slot is the
+   * one the row loop below keys on (`claimedSlot`), so the two cannot spell it
+   * differently: ids lowercase through the DTO, the period canonical, a blank
+   * site NULL (`locationId: null` is `IS NULL`).
+   *
+   * `voided` is excluded because the uniqueness index and the slot-kind
+   * trigger exclude it (`status <> 'voided'`): a withdrawn figure does not
+   * hold its slot, and treating it as if it did would refuse the restatement
+   * meant to replace it.
    *
    * This exists because the preview CANNOT see a conflict — Postgres raises it
    * on the insert — so without it a dry run reports a thousand clean rows and
-   * the apply comes back with conflicts.
-   *
-   * Both sides of the comparison are lowercase: Prisma returns the stored
-   * spelling of a `uuid` column, the query below asks by `canonicalUuid` of
-   * the cell, and the in-file key is built from the DTO, whose transform
-   * lowercases the id.
+   * the apply comes back with conflicts. Every entity id reaching here passed
+   * the whole-file access check; the caller's accessible set is applied again
+   * anyway, so a change to that order could not make this query say whether
+   * another entity's slot is taken.
    */
-  private async loadStoredKeys(rows: ParsedRow[]): Promise<Set<string>> {
-    const subsidiaryIds = [
-      ...new Set(
-        rows
-          .map((r) => canonicalUuid(r.cells.subsidiaryId.trim()))
-          // Only ids. A blank or misspelt cell is refused on its own row by
-          // the DTO; sent to Postgres it is not a uuid, and this query runs
-          // OUTSIDE every catch — one such cell raised P2023 and came back as
-          // a 500 with no report. Every id here already passed the access
-          // check in the pre-flight.
-          .filter((id): id is string => id !== null),
-      ),
-    ];
-    const years = [
-      ...new Set(
-        rows
-          .map((r) => strictNumber(r.cells.reportingYear))
-          // Clamped to the DTO's own range before it reaches Prisma. This
-          // query runs OUTSIDE the per-row try/catch, and `strictNumber`
-          // accepts any digit string, so `99999999999` used to surface as a
-          // ConversionError -> 500 with no report and no audit row, from one
-          // cell in one row. Out-of-range years simply match nothing, and the
-          // DTO refuses them as `invalid` on their own row.
-          .filter(
-            (y): y is number =>
-              y !== null && Number.isInteger(y) && y >= 2000 && y <= 2100,
-          ),
-      ),
-    ];
-    if (subsidiaryIds.length === 0 || years.length === 0) return new Set();
+  private async loadStoredSlots(user: RequestUser, rows: ParsedRow[]): Promise<StoredSlots> {
+    const slots: StoredSlots = { keys: new Set(), typed: new Set(), untyped: new Set() };
+    const accessible = new Set(user.accessibleSubsidiaryIds);
+    const claimed = new Map<string, ClaimedSlot>();
+    for (const { cells } of rows) {
+      const slot = this.claimedSlot(cells);
+      if (slot && accessible.has(slot.subsidiaryId)) {
+        claimed.set(
+          this.slotOf(slot.subsidiaryId, slot.locationId, slot.reportingYear, slot.reportingPeriod, slot.periodValue, slot.category),
+          slot,
+        );
+      }
+    }
+    if (claimed.size === 0) return slots;
 
+    const branches = [...claimed.values()];
     const stored = await this.prisma.activityRecord.findMany({
       where: {
-        subsidiaryId: { in: subsidiaryIds },
-        reportingYear: { in: years },
+        // Redundant with the branches, and kept: it states the scope plainly
+        // and lets the planner start from the entity.
+        subsidiaryId: { in: [...new Set(branches.map((b) => b.subsidiaryId))] },
         status: { not: ActivityRecordStatus.voided },
+        OR: branches,
       },
       select: {
         subsidiaryId: true,
@@ -715,16 +789,19 @@ export class BulkUploadService {
         category: true,
         activityType: true,
       },
-      // The two `IN` lists are a cross-product: a 1,000-row file naming many
-      // entities and many years matches far more (entity, year) combinations
-      // than the 1,000 slots it actually claims. Bounded so one cheap request
-      // cannot pull a tenant's whole history into memory once real history
-      // lands. Overflow only costs a false-negative pre-check — the insert
-      // still refuses the duplicate.
-      take: BULK_UPLOAD_MAX_ROWS * 10,
+      take: STORED_RECORDS_CAP + 1,
     });
-    return new Set(
-      stored.map((r) =>
+    // More than the API can store in these slots means records written around
+    // it; checking part of them would be a false clean dry run, so the file is
+    // refused instead — and the operators told, since nothing else would show.
+    if (stored.length > STORED_RECORDS_CAP) {
+      this.logger.warn(
+        `bulk import refused: the ${claimed.size} slot(s) of one file hold more than ${STORED_RECORDS_CAP} stored records — records written around the API`,
+      );
+      throw new QueryTooBroadError();
+    }
+    for (const r of stored) {
+      slots.keys.add(
         this.slotKey(
           r.subsidiaryId,
           r.locationId,
@@ -734,8 +811,40 @@ export class BulkUploadService {
           r.category,
           r.activityType,
         ),
-      ),
-    );
+      );
+      const slot = this.slotOf(
+        r.subsidiaryId,
+        r.locationId,
+        r.reportingYear,
+        r.reportingPeriod,
+        r.periodValue,
+        r.category,
+      );
+      (r.activityType === null ? slots.untyped : slots.typed).add(slot);
+    }
+    return slots;
+  }
+
+  /**
+   * The slot a row will claim in the loop below, by the same steps — the
+   * strict parse, the DTO and its validation, the canonical period — or null
+   * when the row is refused before it claims one. Pure: it writes nothing.
+   */
+  private claimedSlot(cells: Record<BulkUploadColumn, string>): ClaimedSlot | null {
+    const mapped = this.mapRow(cells);
+    if ('issue' in mapped) return null;
+    const dto = plainToInstance(CreateActivityRecordDto, mapped.dto);
+    if (validateSync(dto as object, PIPE_OPTIONS).length > 0) return null;
+    const periodValue = canonicalPeriodValue(dto.reportingPeriod, dto.periodValue);
+    if (periodValue === null) return null;
+    return {
+      subsidiaryId: dto.subsidiaryId,
+      locationId: dto.locationId ?? null,
+      reportingYear: dto.reportingYear,
+      reportingPeriod: dto.reportingPeriod,
+      periodValue,
+      category: dto.category,
+    };
   }
 
   // -- audit -----------------------------------------------------------------
@@ -998,6 +1107,7 @@ export class BulkUploadService {
     reportingPeriod: ReportingPeriod;
     periodValue: string;
     category: Category;
+    activityType: string | null;
   } {
     return {
       subsidiaryId: dto.subsidiaryId,
@@ -1006,6 +1116,7 @@ export class BulkUploadService {
       reportingPeriod: dto.reportingPeriod,
       periodValue: canonicalPeriod,
       category: dto.category,
+      activityType: dto.activityType ?? null,
     };
   }
 
@@ -1032,13 +1143,27 @@ export class BulkUploadService {
     activityType: string | null,
   ): string {
     return [
+      this.slotOf(subsidiaryId, locationId, reportingYear, reportingPeriod, periodValue, category),
+      activityType ?? '',
+    ].join(KEY_SEPARATOR);
+  }
+
+  /** The slot alone — the key without its activity type, as TA002 reads it. */
+  private slotOf(
+    subsidiaryId: string,
+    locationId: string | null,
+    reportingYear: number,
+    reportingPeriod: string,
+    periodValue: string,
+    category: string,
+  ): string {
+    return [
       subsidiaryId,
       locationId ?? '',
       String(reportingYear),
       reportingPeriod,
       periodValue,
       category,
-      activityType ?? '',
     ].join(KEY_SEPARATOR);
   }
 
@@ -1080,6 +1205,7 @@ export class BulkUploadService {
       };
     }
     const locationId = cells.locationId.trim();
+    const activityType = cells.activityType.trim();
     const varianceReason = cells.varianceReason.trim();
     return {
       dto: {
@@ -1091,6 +1217,9 @@ export class BulkUploadService {
         reportingPeriod: cells.reportingPeriod.trim(),
         periodValue: cells.periodValue.trim(),
         category: cells.category.trim(),
+        // Blank means none: an untyped category's record names no type, and a
+        // typed one without it is refused on its own row.
+        ...(activityType === '' ? {} : { activityType }),
         activityValue,
         activityUnit: cells.activityUnit.trim(),
         ...(varianceReason === '' ? {} : { varianceReason }),

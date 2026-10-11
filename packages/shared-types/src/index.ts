@@ -1895,6 +1895,37 @@ export const FACTOR_STATUS_RANK: Readonly<Record<FactorStatus, number>> = {
 };
 
 /**
+ * The two internal publishers, each by the one status it loads with — the
+ * database pairs them the same way (`factor_releases_placeholder_publisher_check`,
+ * `factor_releases_fixture_publisher_check`). Neither ever publishes an
+ * authoritative release.
+ */
+export const INTERNAL_FACTOR_PUBLISHERS = Object.freeze({
+  placeholder: 'TonyAI prototype',
+  fixture: 'TonyAI test fixture',
+} as const);
+
+/**
+ * The closed publisher registry: exactly the names the database's
+ * `factor_releases_publisher_check` admits (a parity spec in `packages/db`
+ * reads the latest migration that defines it). A look-alike name must not
+ * become a second publisher, with its own ordinals and an "ambiguous" key, so
+ * the import refuses an unregistered one before the database does.
+ *
+ * A real publisher joins this list and the CHECK in one change, and only with
+ * its source and licence recorded by the owner (LP4-02, decision L6 of
+ * 2026-10-11). Until then no authoritative release can be loaded. Append-only:
+ * a registered name stays, because stored releases and every snapshot citing
+ * them keep it. Frozen, being the import's default allow-list.
+ */
+export const FACTOR_PUBLISHERS = Object.freeze([
+  INTERNAL_FACTOR_PUBLISHERS.placeholder,
+  INTERNAL_FACTOR_PUBLISHERS.fixture,
+] as const);
+
+export type FactorPublisher = (typeof FACTOR_PUBLISHERS)[number];
+
+/**
  * The calorific-value basis an energy quantity is stated on. Gross (higher)
  * counts the latent heat of the water formed; net (lower) does not — about 10%
  * apart for natural gas, so a factor and the quantity it multiplies must be on
@@ -2360,6 +2391,14 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   slot_holds_typed: 409,
   /** The record has left draft; its figure is frozen (TA001). */
   snapshot_immutable: 409,
+  /** K11: the stored figure is not what the engine computes now from the
+   *  record's stored inputs — a factor release was published or withdrawn
+   *  since the draft was saved, or the figure was rewritten outside the API.
+   *  A refusal while recomputing (a factor withdrawn with no successor, say)
+   *  answers this code too; saving the draft again shows that refusal itself.
+   *  Submit and approve refuse it; the author saves the draft again (a
+   *  reviewer returns a submitted one first). No params. */
+  calculation_stale: 409,
   upload_expired: 409,
   /** A complete read/export exceeds its work or output budget after authorization,
    * over the caller's accessible set only. Inaccessible filters equal empty sets.
@@ -2794,7 +2833,8 @@ const LOADABLE_STATUSES: readonly string[] = ['authoritative', 'placeholder', 'f
  * combining grapheme joiner). An invisible difference in a publisher's name
  * would rank as a SECOND publisher — turning its keys ambiguous and escaping
  * the per-publisher ordinal rule; a bidi override reorders a report.
- * (Look-alike letters from other scripts need a publisher registry — PR B.)
+ * (Look-alike letters from other scripts are refused by the closed registry,
+ * `FACTOR_PUBLISHERS`.)
  */
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}\p{Cs}\p{Default_Ignorable_Code_Point}]/u;
 
@@ -2859,11 +2899,21 @@ function factorActivityTypesFor(category: string, status: string | null): string
 
 /**
  * Every reason this release may not be loaded — empty when it may. Checks what
- * the database cannot: types and vocabulary, the provenance and review an
- * authoritative release must carry, the scope, basis, unit and gas rules, and
- * duplicates within the file.
+ * the database cannot: types and vocabulary, the registered publisher, the
+ * provenance and review an authoritative release must carry, the scope, basis,
+ * unit and gas rules, and duplicates within the file.
+ *
+ * `options.testPublishers` stands in for `FACTOR_PUBLISHERS` so a spec can
+ * check the other rules on an authoritative release before any real publisher
+ * is registered; the loader never passes it (to be removed once one is, in
+ * LP4-02's release PR), and the database's CHECK admits only the registry
+ * either way.
  */
-export function validateFactorReleaseImport(input: unknown): FactorImportIssue[] {
+export function validateFactorReleaseImport(
+  input: unknown,
+  options: { testPublishers?: readonly string[] } = {},
+): FactorImportIssue[] {
+  const publishers = options.testPublishers ?? FACTOR_PUBLISHERS;
   const issues: FactorImportIssue[] = [];
   const fail = (path: string, message: string) => issues.push({ path, message });
   if (
@@ -2885,6 +2935,20 @@ export function validateFactorReleaseImport(input: unknown): FactorImportIssue[]
   for (const field of ['publisher', 'title', 'edition'] as const) {
     const problem = textIssue(release[field], limits[field]);
     if (problem) fail(`release.${field}`, problem);
+  }
+  // The registry, then the pairing the database's CHECKs enforce — refused
+  // here with a reason rather than by a constraint's name.
+  if (textIssue(release.publisher, limits.publisher) === null) {
+    const publisher = release.publisher as string;
+    const internal: readonly string[] = Object.values(INTERNAL_FACTOR_PUBLISHERS);
+    if (!isOneOf(publisher, publishers)) {
+      fail('release.publisher', `is not a registered publisher (${publishers.join(', ')})`);
+    } else if (status === 'authoritative' && internal.includes(publisher)) {
+      fail('release.publisher', 'is an internal publisher, which never publishes an authoritative release');
+    } else if (status === 'placeholder' || status === 'fixture') {
+      const expected = INTERNAL_FACTOR_PUBLISHERS[status];
+      if (publisher !== expected) fail('release.publisher', `must be ${expected} for a ${status} release`);
+    }
   }
   for (const field of ['licence', 'notes', 'reviewedBy', 'sourceUrl'] as const) {
     if (release[field] === null) continue;
@@ -4603,6 +4667,14 @@ export const BULK_UPLOAD_COLUMNS = [
   'reportingPeriod',
   'periodValue',
   'category',
+  /**
+   * The fuel or gas (`CATEGORY_ACTIVITY_TYPES`) — part of a record's identity
+   * since LP3-03 (K1). Required on a row of a typed category (Fuel, Mobile
+   * Combustion, Refrigerants), blank on any other; optional in the header, so
+   * a file from an older template still imports its untyped rows (LP4-02,
+   * the bulk half of decision (b) of 2026-10-04).
+   */
+  'activityType',
   'activityValue',
   'activityUnit',
   'varianceReason',
@@ -4610,7 +4682,10 @@ export const BULK_UPLOAD_COLUMNS = [
 
 export type BulkUploadColumn = (typeof BULK_UPLOAD_COLUMNS)[number];
 
-/** Columns a row cannot omit. `locationId` blank means the whole company. */
+/**
+ * Columns a row cannot omit. `locationId` blank means the whole company;
+ * `activityType` is required by category, not by the header.
+ */
 export const BULK_UPLOAD_REQUIRED_COLUMNS = [
   'subsidiaryId',
   'reportingYear',
@@ -4791,6 +4866,12 @@ export interface BulkUploadAcceptedRow {
   reportingPeriod: ReportingPeriod;
   periodValue: string;
   category: Category;
+  /**
+   * The fuel or gas the row names — part of its identity since LP3-03 (K1),
+   * so a diesel row and a gas oil row of one month preview as two rows. Null
+   * for a category that names none (LP4-02).
+   */
+  activityType: string | null;
   tCo2e: number | null;
   anomalous: boolean;
 }
@@ -5039,6 +5120,13 @@ export const BULK_SUBMIT_ISSUE_CODES = [
    * reviewer judges whether one invoice can honestly cover all of them.
    */
   'evidence_required',
+  /**
+   * The figure is out of date or was rewritten, or could not be recomputed
+   * (K11, `calculation_stale`): the author saves the draft again, which
+   * recalculates it or names the refusal. Checked before the anomaly gate,
+   * which reads the figure.
+   */
+  'calculation_stale',
   /**
    * Anomalous against the baseline as recomputed NOW, with no variance reason.
    * The import's `would_block_submit` warning, arrived at.

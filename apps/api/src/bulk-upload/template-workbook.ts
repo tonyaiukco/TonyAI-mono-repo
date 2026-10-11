@@ -8,6 +8,7 @@ import {
   PERIOD_VALUES,
   REPORTING_PERIODS,
   WHOLE_COMPANY_ENTITY_LABEL,
+  recordActivityTypesFor,
   type BulkUploadColumn,
   type Category,
 } from '@tonyai/shared-types';
@@ -82,7 +83,7 @@ interface RangeValidations {
 /**
  * Build the downloadable import template.
  *
- * **Sheet 1 carries the nine columns and NOTHING else — not even pre-filled
+ * **Sheet 1 carries the importer's columns and NOTHING else — not even pre-filled
  * entity rows.** That is the whole design constraint, and it is not a style
  * choice: `mapHeader` refuses any unrecognised column, so a helpful
  * `subsidiaryName` beside the id would make the template itself un-uploadable;
@@ -111,6 +112,12 @@ interface RangeValidations {
  * produces a number. That is the silent wrong figure `CATEGORY_UNITS` was
  * written to prevent, so the units are listed per category on sheet 2 instead
  * of offered as one flat list.
+ *
+ * `activityType` (LP4-02) gets none for the same reason: which fuels or gases
+ * are valid depends on the row's category. A wrong pick there IS detected —
+ * the importer refuses a type its category does not have, on its column —
+ * but a flat list would still offer `R-32` to a Fuel row, so the types are
+ * listed per category on sheet 2 as well.
  */
 export async function buildTemplateWorkbook(
   entities: TemplateEntities,
@@ -206,7 +213,10 @@ export async function buildTemplateWorkbook(
   const first = reference.addRow(['How to use this template']);
   first.font = { bold: true, size: 14 };
   reference.addRow([
-    `Fill in the "${SHEET_RECORDS}" sheet. Every column there is required except locationId and varianceReason.`,
+    `Fill in the "${SHEET_RECORDS}" sheet. Every column there is required except locationId, activityType and varianceReason.`,
+  ]);
+  reference.addRow([
+    'Fuel, Mobile Combustion and Refrigerants rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
   ]);
   reference.addRow([
     `Leave locationId blank to report for the whole company (shown below as "${WHOLE_COMPANY_ENTITY_LABEL}").`,
@@ -274,6 +284,18 @@ export async function buildTemplateWorkbook(
     ]);
   }
 
+  section('Activity types, by category');
+  head(['category', 'Accepted activityType']);
+  for (const category of CATEGORIES) {
+    const types = recordActivityTypesFor(category).map((t) => t.value);
+    reference.addRow([
+      category,
+      types.length > 0
+        ? types.join(', ')
+        : 'Leave blank: this category names no activity type.',
+    ]);
+  }
+
   section('Periods');
   head(['reportingPeriod', 'Accepted periodValue']);
   for (const period of REPORTING_PERIODS) {
@@ -299,6 +321,7 @@ export async function buildTemplateWorkbook(
     'monthly',
     'January',
     'Electricity',
+    '',
     45000,
     'kWh',
     '',
