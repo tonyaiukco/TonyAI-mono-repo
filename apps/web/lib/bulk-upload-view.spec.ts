@@ -2,6 +2,7 @@ import { canApplyPreview } from './bulk-upload-view';
 import { createTranslator } from 'use-intl/core';
 import en from '@/messages/en/errors.json';
 import tr from '@/messages/tr/errors.json';
+import { MESSAGES } from '@/messages';
 import { describe, it, expect } from 'vitest';
 import {
   BULK_UPLOAD_ISSUE_CODES,
@@ -19,6 +20,7 @@ import {
   applySuccessMessage,
   applyToast,
   COLUMN_LABEL,
+  bulkActivityLabel,
   fileAcceptAttribute,
   groupIssues,
   ISSUE_CODE_LABEL,
@@ -672,5 +674,27 @@ describe('incomplete preview admission (EN and TR)', () => {
     expect(canApplyPreview({ ...complete, completion: 'deadline_exceeded' })).toBe(false);
     expect(canApplyPreview({ ...complete, errors: [{ code: 'not_processed_deadline' }] as never })).toBe(false);
     expect(canApplyPreview({ ...complete, dryRun: false })).toBe(false);
+  });
+});
+
+
+describe('typed bulk preview', () => {
+  it.each(['en', 'tr'] as const)('%s distinguishes same-month fuels and preserves null types', (locale) => {
+    const t = createTranslator({ locale, messages: MESSAGES[locale].dataEntry });
+    const rows = [accepted({ category: 'Fuel', activityType: 'diesel' }),
+      accepted({ row: 3, category: 'Fuel', activityType: 'gas_oil' }), accepted({ row: 4 })];
+    const labels = rows.map((row) => bulkActivityLabel(row.activityType, t));
+    expect(labels).toEqual([MESSAGES[locale].dataEntry.activityTypes.diesel,
+      MESSAGES[locale].dataEntry.activityTypes.gas_oil, MESSAGES[locale].dataEntry.bulkPreview.noActivityType]);
+    expect(new Set(labels).size).toBe(3);
+    expect(bulkActivityLabel('future_type', t)).toBe('future_type');
+  });
+
+  it.each(['en', 'tr'] as const)('%s gives actionable import-only query limit advice', (locale) => {
+    const t = createTranslator({ locale, messages: MESSAGES[locale].errors });
+    expect(uploadErrorMessage(new ApiError('server copy', 422, 'query_too_broad'), t))
+      .toBe(MESSAGES[locale].errors.bulkQueryTooBroad);
+    expect(uploadErrorMessage(new ApiError('unrelated refusal', 422, 'validation_failed'), t))
+      .toBe('unrelated refusal');
   });
 });

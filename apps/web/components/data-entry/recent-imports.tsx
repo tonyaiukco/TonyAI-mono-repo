@@ -100,7 +100,7 @@ export function RecentImports({
       const report = await api.submitImportBatch(batch.id);
       const summary = summariseSubmit(report, tErrors);
       // The panel's "see below" has no list below it here: say why instead.
-      const description = submitFailureDetail(report, tErrors("bulkIssues.not_processed_deadline"), tErrors) ?? undefined;
+      const description = submitFailureDetail(report, tErrors("bulkIssues.not_processed_deadline"), tErrors, tErrors) ?? undefined;
       if (summary.tone === "clean") toast.success(summary.headline);
       else toast.warning(summary.headline, { description });
     } catch (e) {

@@ -45,5 +45,58 @@
   "saveFailedServer": "Kaydedilemedi — sunucu bu kaydı işleyemedi. Yeniden deneyin; sürerse bildirin.",
   "previewYearHint": "Bu prototipin faktör kütüphanesi şu an {year} yılını kapsıyor.",
   "previewTitle": "Canlı emisyon önizlemesi",
-  "previewPrompt": "Canlı tCO₂e tahmini görmek için bir bağlı şirket ve kategori seçip faaliyet değerini girin."
+  "previewPrompt": "Canlı tCO₂e tahmini görmek için bir bağlı şirket ve kategori seçip faaliyet değerini girin.",
+  "bulkColumns": {
+    "subsidiaryId": "Raporlayan şirket",
+    "locationId": "Tesis",
+    "reportingYear": "Yıl",
+    "reportingPeriod": "Dönem türü",
+    "periodValue": "Dönem",
+    "category": "Kategori",
+    "activityType": "Aktivite tipi",
+    "activityValue": "Aktivite değeri",
+    "activityUnit": "Birim",
+    "varianceReason": "Sapma nedeni"
+  },
+  "activityTypes": {
+    "grid_electricity": "Şebeke elektriği",
+    "natural_gas": "Doğal gaz",
+    "water_supply": "Su temini",
+    "diesel": "Dizel",
+    "gas_oil": "Gas oil (kırmızı dizel, yol dışı kullanım)",
+    "fuel_oil": "Fuel oil (ağır yakıt yağı)",
+    "burning_oil": "Gaz yağı (kerosen, ısıtma yakıtı)",
+    "lpg": "LPG",
+    "petrol": "Benzin",
+    "cng": "CNG",
+    "R-32": "R-32",
+    "R-134a": "R-134a",
+    "R-404A": "R-404A",
+    "R-407C": "R-407C",
+    "R-407F": "R-407F",
+    "R-410A": "R-410A",
+    "R-448A": "R-448A",
+    "R-449A": "R-449A",
+    "R-1234yf": "R-1234yf"
+  },
+  "bulkPreview": {
+    "title": "Kabul edilen satırlar",
+    "row": "Dosya satırı",
+    "noActivityType": "Belirtilmemiş"
+  },
+  "conversionNote": {
+    "detail": "{fromUnit} → {toUnit}: ×{multiplier}. Isıl değer temeli: {calorificBasis}. Türetim: {basis}. Referans koşulları: {conditions}. Yayın: {publisher}, {edition} — {status}.",
+    "unknownConditions": "Belirtilmemiş",
+    "basis": {
+      "gross": "Üst ısıl değer",
+      "net": "Alt ısıl değer",
+      "not_applicable": "Uygulanmaz"
+    },
+    "status": {
+      "authoritative": "Yetkili kaynağa dayalı",
+      "placeholder": "Örnek değer — yetkili kaynağa dayalı değil",
+      "fixture": "Test verisi — yetkili kaynağa dayalı değil",
+      "withdrawn": "Geri çekilmiş"
+    }
+  }
 }

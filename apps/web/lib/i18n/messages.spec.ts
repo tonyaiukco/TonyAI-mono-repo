@@ -4,6 +4,11 @@ import {
   API_ERROR_CODES,
   API_ERROR_PARAMS,
   CATEGORIES,
+  CATEGORY_ACTIVITY_TYPES,
+  BULK_SUBMIT_ISSUE_CODES,
+  BULK_UPLOAD_COLUMNS,
+  FACTOR_STATUSES,
+  CALORIFIC_BASES,
   PERIOD_VALUES,
   REPORTING_PERIODS,
   SUPPORTED_LOCALES,
@@ -80,7 +85,10 @@ describe("the catalogues", () => {
     // A sentence identical in both languages is almost always one nobody
     // translated. A key that genuinely reads the same (a unit, a code) goes in
     // this list, deliberately.
-    const SAME_IN_EVERY_LANGUAGE = new Set<string>([]);
+    const SAME_IN_EVERY_LANGUAGE = new Set<string>([
+      ...['lpg', 'cng', 'R-32', 'R-134a', 'R-404A', 'R-407C', 'R-407F',
+        'R-410A', 'R-448A', 'R-449A', 'R-1234yf'].map((key) => `dataEntry.activityTypes.${key}`),
+    ]);
     const other = leaves(MESSAGES[locale]);
     for (const [key, message] of en) {
       if (SAME_IN_EVERY_LANGUAGE.has(key)) continue;
@@ -136,5 +144,19 @@ describe("the canonical vocabularies", () => {
     for (const v of Object.values(PERIOD_VALUES).flat()) {
       expect(MESSAGES.en.periods.values[v as keyof typeof MESSAGES.en.periods.values]).toBe(v);
     }
+  });
+});
+
+
+describe('factor web consumer vocabularies', () => {
+  it.each(SUPPORTED_LOCALES)('%s covers every contract value exactly', (locale) => {
+    const messages = MESSAGES[locale];
+    const activities = [...new Set(Object.values(CATEGORY_ACTIVITY_TYPES)
+      .flatMap((category) => category.types.map((type) => type.value)))];
+    expect(Object.keys(messages.dataEntry.activityTypes).sort()).toEqual(activities.sort());
+    expect(Object.keys(messages.dataEntry.bulkColumns).sort()).toEqual([...BULK_UPLOAD_COLUMNS].sort());
+    expect(Object.keys(messages.errors.bulkIssues).sort()).toEqual([...BULK_SUBMIT_ISSUE_CODES].sort());
+    expect(Object.keys(messages.dataEntry.conversionNote.status).sort()).toEqual([...FACTOR_STATUSES].sort());
+    expect(Object.keys(messages.dataEntry.conversionNote.basis).sort()).toEqual([...CALORIFIC_BASES].sort());
   });
 });

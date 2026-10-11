@@ -1,6 +1,6 @@
 import enErrors from '@/messages/en/errors.json';
 import type { BulkSubmitReportDTO, ImportBatchDTO } from '@/lib/types';
-import { deadlineSummary, type DeadlineTranslator, SUBMIT_ISSUE_LABEL } from '@/lib/bulk-submit-view';
+import { deadlineSummary, type DeadlineTranslator, SUBMIT_ISSUE_LABEL, submitIssueLabel, type SubmitIssueTranslator } from '@/lib/bulk-submit-view';
 import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import { formatNumber } from '@/lib/utils';
 
@@ -75,13 +75,14 @@ export function awaitingEvidenceNote(
 }
 
 /** Why records a batch submit sent were not moved: `Needs an evidence file · 2`, one line per reason. */
-export function submitFailureDetail(report: BulkSubmitReportDTO, deadlineLabel = enErrors.bulkIssues.not_processed_deadline, translate?: DeadlineTranslator): string | null {
+export function submitFailureDetail(report: BulkSubmitReportDTO, deadlineLabel = enErrors.bulkIssues.not_processed_deadline, translate?: DeadlineTranslator, translateIssue?: SubmitIssueTranslator): string | null {
   const deadline = deadlineSummary(report.submitted.length, report.failed, translate);
   if (deadline) return deadline.detail;
   if (report.failed.length === 0) return null;
   const counts = new Map<string, number>();
   for (const issue of report.failed) {
-    const label = issue.code === 'not_processed_deadline' ? deadlineLabel : SUBMIT_ISSUE_LABEL[issue.code] ?? issue.code;
+    const label = translateIssue ? submitIssueLabel(issue.code, translateIssue)
+      : issue.code === 'not_processed_deadline' ? deadlineLabel : SUBMIT_ISSUE_LABEL[issue.code];
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   return [...counts].map(([label, n]) => `${label} · ${formatNumber(n)}`).join('\n');

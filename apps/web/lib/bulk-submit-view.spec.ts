@@ -27,6 +27,8 @@ import {
   submitConfirmation,
   submitErrorMessage,
   SUBMIT_ISSUE_LABEL,
+  submitIssueLabel,
+  submitIssueMessage,
   summariseSubmit,
   toggleSelected,
 } from '@/lib/bulk-submit-view';
@@ -679,4 +681,13 @@ describe('translated deadline accounting', () => {
     expect(result.detail).toBe(t('bulkDeadline.detail', { accepted: 1, refused: 1, unstarted: 2 }));
     expect(result.tone).toBe('partial');
   });
+});
+
+
+it.each([['en', en], ['tr', tr]] as const)('%s localises every submit issue and stale guidance', (locale, messages) => {
+  const t = createTranslator({ locale, messages });
+  for (const code of BULK_SUBMIT_ISSUE_CODES) expect(submitIssueLabel(code, t)).toBe(messages.bulkIssues[code]);
+  expect(submitIssueMessage({ recordId: 'draft', code: 'calculation_stale', message: 'server English' }, t))
+    .toBe(messages.codes.calculation_stale);
+  expect(submitIssueMessage({ recordId: 'draft', code: 'not_processed_deadline', message: 'server English' }, t)).toBeNull();
 });

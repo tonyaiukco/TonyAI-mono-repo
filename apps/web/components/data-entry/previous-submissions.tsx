@@ -41,7 +41,8 @@ import {
   selectAllNotices,
   submitConfirmation,
   submitErrorMessage,
-  SUBMIT_ISSUE_LABEL,
+  submitIssueLabel,
+  submitIssueMessage,
   summariseSubmit,
   toggleSelected,
 } from "@/lib/bulk-submit-view";
@@ -442,9 +443,9 @@ export function PreviousSubmissions({
                   {failuresToShow(report.failed).shown.map((f) => (
                     <li key={f.recordId}>
                       <span className="font-medium">
-                        {f.code === "not_processed_deadline" ? tErrors("bulkIssues.not_processed_deadline") : SUBMIT_ISSUE_LABEL[f.code]}
+                        {submitIssueLabel(f.code, tErrors)}
                       </span>
-                      {f.code !== "not_processed_deadline" && <span className="block opacity-80">{f.message}</span>}
+                      {submitIssueMessage(f, tErrors) && <span className="block opacity-80">{submitIssueMessage(f, tErrors)}</span>}
                     </li>
                   ))}
                 </ul>

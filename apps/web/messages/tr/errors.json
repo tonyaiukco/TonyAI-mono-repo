@@ -2,7 +2,15 @@
   "network": "Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.",
   "unexpected": "Bir şeyler ters gitti.",
   "bulkIssues": {
-    "not_processed_deadline": "Süre sınırı dolduğu için işlenmedi"
+    "not_processed_deadline": "Süre sınırı dolduğu için işlenmedi",
+    "not_found": "Artık erişilemiyor",
+    "not_submittable": "Durumu değişmiş",
+    "not_author": "Başkasının kaydı",
+    "period_locked": "Dönem kapalı",
+    "evidence_required": "Kanıt dosyası gerekiyor",
+    "variance_reason_required": "Sapma nedeni gerekiyor",
+    "calculation_stale": "Hesap güncel değil",
+    "unexpected": "İncelemeye gönderilemedi"
   },
   "codes": {
     "query_too_broad": "Bu istek işleme sınırını aşıyor. Filtreleri daraltın veya daha küçük bir rapor isteyin.",
@@ -68,5 +76,6 @@
     "title": "Süre sınırına ulaşıldığı için işlem durdu",
     "detail": "{accepted} kabul edildi, {refused} reddedildi, {unstarted} işlenmedi. Yeniden denemeden önce sonuçları inceleyin; başarılı satırları tekrar göndermeyin.",
     "previewDetail": "{accepted} uygun, {refused} reddedildi, {unstarted} kontrol edilmedi. Bu bir önizlemeydi; hiçbir kayıt içe aktarılmadı. Dosyayı bölün ve içe aktarmadan önce her bölümünü önizleyin."
-  }
+  },
+  "bulkQueryTooBroad": "Bu dosya, güvenle kontrol edilemeyecek kadar çok mevcut kayıtla eşleşiyor. Her seferinde daha az satır içe aktarmayı deneyin. Küçük bir dosya da reddedilirse yöneticinizden ilgili şirket ve dönemlerin mevcut kayıtlarını kontrol etmesini isteyin."
 }

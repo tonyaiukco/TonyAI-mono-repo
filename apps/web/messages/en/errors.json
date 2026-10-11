@@ -2,7 +2,15 @@
   "network": "Could not reach the server. Check your connection and try again.",
   "unexpected": "Something went wrong.",
   "bulkIssues": {
-    "not_processed_deadline": "Not processed before the time limit"
+    "not_processed_deadline": "Not processed before the time limit",
+    "not_found": "No longer available",
+    "not_submittable": "Already moved on",
+    "not_author": "Someone else’s record",
+    "period_locked": "Period closed",
+    "evidence_required": "Needs an evidence file",
+    "variance_reason_required": "Needs a variance reason",
+    "calculation_stale": "Figure out of date",
+    "unexpected": "Could not be submitted"
   },
   "codes": {
     "bad_request": "The request could not be processed.",
@@ -68,5 +76,6 @@
     "title": "Processing stopped at the time limit",
     "detail": "{accepted} accepted, {refused} refused, {unstarted} not processed. Review the results before retrying; do not resend successful rows.",
     "previewDetail": "{accepted} valid, {refused} refused, {unstarted} not checked. This was a preview; no records were imported. Split the file and preview every part before importing."
-  }
+  },
+  "bulkQueryTooBroad": "This file matches too many existing records to check safely. Try importing fewer rows at a time. If even a small file is refused, ask your administrator to check the existing records for those reporting entities and periods."
 }

@@ -31,18 +31,18 @@ export { BULK_SUBMIT_MAX_IDS, needsEvidenceBeforeSubmit } from '@/lib/types';
 
 /** What each refusal is called on screen. Exhaustive, so a new code is a
  *  compile error here rather than a blank label in front of a user. */
-export const SUBMIT_ISSUE_LABEL: Record<BulkSubmitIssueCode, string> = {
-  not_found: 'No longer available',
-  not_submittable: 'Already moved on',
-  not_author: 'Someone else’s record',
-  period_locked: 'Period closed',
-  evidence_required: 'Needs an evidence file',
-  variance_reason_required: 'Needs a variance reason',
-  calculation_stale: 'Figure out of date',
-  unexpected: 'Could not be submitted',
-  // PR B wires the locale-aware label before the API emits this new code.
-  not_processed_deadline: enErrors.bulkIssues.not_processed_deadline,
-};
+export const SUBMIT_ISSUE_LABEL: Record<BulkSubmitIssueCode, string> = enErrors.bulkIssues;
+
+export type SubmitIssueTranslator = (key: `bulkIssues.${BulkSubmitIssueCode}` | 'codes.calculation_stale') => string;
+
+export function submitIssueLabel(code: BulkSubmitIssueCode, translate: SubmitIssueTranslator): string {
+  return translate(`bulkIssues.${code}`);
+}
+
+export function submitIssueMessage(issue: BulkSubmitIssue, translate: SubmitIssueTranslator): string | null {
+  if (issue.code === 'not_processed_deadline') return null;
+  return issue.code === 'calculation_stale' ? translate('codes.calculation_stale') : issue.message;
+}
 
 export interface SubmitEligibility {
   /** Record ids worth sending. */
