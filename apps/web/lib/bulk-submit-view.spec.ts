@@ -46,6 +46,7 @@ function imported(over: Partial<BulkUploadAcceptedRow> = {}): BulkUploadAccepted
     reportingPeriod: 'monthly',
     periodValue: 'January',
     category: 'Business Travel',
+    activityType: null,
     tCo2e: 1.5,
     anomalous: false,
     ...over,

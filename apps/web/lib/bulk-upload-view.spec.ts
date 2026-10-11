@@ -52,6 +52,7 @@ function accepted(over: Partial<BulkUploadAcceptedRow> = {}): BulkUploadAccepted
     reportingPeriod: 'monthly',
     periodValue: 'January',
     category: 'Electricity',
+    activityType: null,
     tCo2e: 1.5,
     anomalous: false,
     ...over,

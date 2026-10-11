@@ -1067,6 +1067,7 @@ export class BulkUploadService {
     reportingPeriod: ReportingPeriod;
     periodValue: string;
     category: Category;
+    activityType: string | null;
   } {
     return {
       subsidiaryId: dto.subsidiaryId,
@@ -1075,6 +1076,7 @@ export class BulkUploadService {
       reportingPeriod: dto.reportingPeriod,
       periodValue: canonicalPeriod,
       category: dto.category,
+      activityType: dto.activityType ?? null,
     };
   }
 

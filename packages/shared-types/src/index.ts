@@ -4866,6 +4866,12 @@ export interface BulkUploadAcceptedRow {
   reportingPeriod: ReportingPeriod;
   periodValue: string;
   category: Category;
+  /**
+   * The fuel or gas the row names — part of its identity since LP3-03 (K1),
+   * so a diesel row and a gas oil row of one month preview as two rows. Null
+   * for a category that names none (LP4-02).
+   */
+  activityType: string | null;
   tCo2e: number | null;
   anomalous: boolean;
 }

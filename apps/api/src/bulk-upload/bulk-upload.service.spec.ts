@@ -1005,6 +1005,8 @@ describe('BulkUploadService — the figures that reach the write', () => {
       // The CANONICAL spelling the server will store, not the file's.
       periodValue: 'January',
       category: 'Electricity',
+      // Part of the row's identity since K1; an untyped category names none.
+      activityType: null,
       tCo2e: 0.528,
       anomalous: false,
     });
@@ -2495,6 +2497,8 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     expect(report.errors).toEqual([]);
     const dtos = records.previewCreate.mock.calls.map(([, dto]) => dto);
     expect(dtos.map((d) => d.activityType)).toEqual(['diesel', 'R-410A', undefined]);
+    // The preview tells a diesel row from a gas oil one in the same month.
+    expect(report.accepted.map((a) => a.activityType)).toEqual(['diesel', 'R-410A', null]);
   });
 
   it('applies a typed row through create, with its activity type', async () => {
@@ -2507,6 +2511,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     expect(report.errors).toEqual([]);
     expect(records.create).toHaveBeenCalledTimes(1);
     expect(records.create.mock.calls[0][1]).toMatchObject({ category: 'Fuel', activityType: 'gas_oil' });
+    expect(report.accepted).toEqual([expect.objectContaining({ recordId: 'rec-' + seq, activityType: 'gas_oil' })]);
   });
 
   it('refuses an activity type its category does not have, on its column, before any service call', async () => {
