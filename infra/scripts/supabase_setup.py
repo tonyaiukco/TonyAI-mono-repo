@@ -54,8 +54,9 @@ def run(args):
     journal = Journal(args.journal, config)
     try:
         reconcile_only = getattr(args, 'reconcile_auth_only', False)
-        if reconcile_only and not journal.data.get('configured'):
-            raise SafeFailure('Auth-only reconciliation requires a completed setup journal.')
+        if reconcile_only and (journal.data.get('configured') is not True
+                               or not re.fullmatch(r'[a-z]{20}', journal.data.get('project_ref') or '')):
+            raise SafeFailure('Auth-only reconciliation requires a completed journal with its saved project reference.')
         ref = ensure_project(api, vault, journal)
         project = api('/v1/projects/' + ref)
         if project.get('status') != 'ACTIVE_HEALTHY':

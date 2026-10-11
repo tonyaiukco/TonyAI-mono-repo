@@ -124,6 +124,10 @@ class SetupTests(unittest.TestCase):
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             with self.assertRaises(SafeFailure): run(args)
             project.assert_not_called()
+            for missing_ref in (None, '', 'invalid'):
+                journal = Journal(args.journal, TARGET); journal.set(configured=True, project_ref=missing_ref); journal.close()
+                with self.assertRaises(SafeFailure): run(args)
+                project.assert_not_called()
             journal = Journal(args.journal, TARGET); journal.set(configured=True, project_ref=REF); journal.close()
             run(args); run(args)
             self.assertEqual(auth.call_count, 2)
