@@ -12,6 +12,7 @@
  * arrive with LP4-02 as releases of their own.
  */
 import {
+  INTERNAL_FACTOR_PUBLISHERS,
   directCalorificBasisFor,
   factorActivityTypeFor,
   scope2MethodFor,
@@ -38,12 +39,12 @@ export const SEED_ACTIVITY_TYPES: Readonly<Record<string, string>> = { Fuel: 'di
 // ---------------------------------------------------------------------------
 
 /**
- * The two internal publishers of the database's closed publisher registry
- * (`factor_releases_publisher_check`). The migration names them in SQL; a
- * parity spec keeps the spellings identical.
+ * The two internal publishers of the closed publisher registry
+ * (`FACTOR_PUBLISHERS`, and the database's `factor_releases_publisher_check`).
+ * The migration names them in SQL; a parity spec keeps the spellings identical.
  */
-export const PLACEHOLDER_PUBLISHER = 'TonyAI prototype';
-export const FIXTURE_PUBLISHER = 'TonyAI test fixture';
+export const PLACEHOLDER_PUBLISHER = INTERNAL_FACTOR_PUBLISHERS.placeholder;
+export const FIXTURE_PUBLISHER = INTERNAL_FACTOR_PUBLISHERS.fixture;
 
 export const PLACEHOLDER_RELEASE_TITLE =
   'Prototype demo emission factors (calculation_logic.md §3) — NOT authoritative';

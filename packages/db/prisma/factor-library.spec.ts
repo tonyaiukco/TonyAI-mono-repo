@@ -17,8 +17,10 @@ import {
   FACTOR_GASES,
   FACTOR_GAS_COVERAGES,
   FACTOR_IDENTITY_FIELDS,
+  FACTOR_PUBLISHERS,
   FACTOR_STATUSES,
   GWP_SETS,
+  INTERNAL_FACTOR_PUBLISHERS,
   SCOPE2_METHODS,
   UNSPECIFIED_ACTIVITY_TYPE,
   directCalorificBasisFor,
@@ -48,9 +50,24 @@ const migrationDir = readdirSync(migrationsDir).find((d) => d.endsWith('_lp3_03_
 const migration = readFileSync(join(migrationsDir, migrationDir ?? 'missing', 'migration.sql'), 'utf8');
 const schema = readFileSync(join(__dirname, 'schema.prisma'), 'utf8');
 
+/**
+ * The SQL of the newest migration that (re)defines `constraint` — the one in
+ * force. LP4-02 admits a real publisher by redefining the publisher CHECK in a
+ * migration of its own, and the registry must match that one, not LP3-03's.
+ */
+function latestDefinitionOf(constraint: string): string {
+  const defining = readdirSync(migrationsDir)
+    .filter((d) => /^\d{14}_/.test(d))
+    .sort()
+    .map((d) => readFileSync(join(migrationsDir, d, 'migration.sql'), 'utf8'))
+    .filter((sql) => sql.includes(`ADD CONSTRAINT "${constraint}"`));
+  if (defining.length === 0) throw new Error(`no migration defines ${constraint}`);
+  return defining[defining.length - 1];
+}
+
 /** The quoted literals of `CHECK ("<column>" IN (...))` in the migration. */
-function checkVocabulary(column: string): string[] {
-  const match = new RegExp(`"${column}" IN \\(([^)]*)\\)`).exec(migration);
+function checkVocabulary(column: string, sql: string = migration): string[] {
+  const match = new RegExp(`"${column}" IN \\(([^)]*)\\)`).exec(sql);
   if (!match) throw new Error(`no IN-list CHECK for ${column}`);
   return [...match[1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
 }
@@ -84,6 +101,27 @@ describe('the migration and schema agree with the contract', () => {
 
   it('registers exactly the two internal publishers the seed and the e2e fixture use', () => {
     expect(checkVocabulary('publisher')).toEqual([PLACEHOLDER_PUBLISHER, FIXTURE_PUBLISHER]);
+  });
+
+  it('admits exactly the contract\'s publisher registry, in the CHECK now in force', () => {
+    // The import refuses an unregistered publisher before the database does
+    // (LP4-02); the two lists must be one list, or a release the validator
+    // passed is refused by a constraint name — or the reverse.
+    expect(
+      checkVocabulary('publisher', latestDefinitionOf('factor_releases_publisher_check')),
+    ).toEqual([...FACTOR_PUBLISHERS]);
+    expect([PLACEHOLDER_PUBLISHER, FIXTURE_PUBLISHER]).toEqual([
+      INTERNAL_FACTOR_PUBLISHERS.placeholder,
+      INTERNAL_FACTOR_PUBLISHERS.fixture,
+    ]);
+  });
+
+  it('pairs each internal publisher with its status as the contract does', () => {
+    for (const [status, publisher] of Object.entries(INTERNAL_FACTOR_PUBLISHERS)) {
+      const sql = latestDefinitionOf(`factor_releases_${status}_publisher_check`);
+      expect(sql).toContain(`("status" = '${status}') <= ("publisher" = '${publisher}')`);
+      expect(sql).toContain(`("publisher" = '${publisher}') <= ("status" IN ('${status}', 'withdrawn'))`);
+    }
   });
 
   it('creates the legacy placeholder releases with the seed\'s title, notes and ordinal rule', () => {

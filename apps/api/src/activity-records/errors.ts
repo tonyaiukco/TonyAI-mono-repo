@@ -160,6 +160,23 @@ export class SnapshotImmutableError extends ConflictException {
 }
 
 /**
+ * K11 (owner, 2026-10-10; policy L4 of 2026-10-11): submit and approve
+ * recompute a record's figure from its stored inputs and refuse when it is
+ * not the stored one — a factor release published or withdrawn since the
+ * save, or a figure rewritten outside the API. Nothing commits a number the
+ * engine did not compute at that moment and the author did not see; saving
+ * the draft again recalculates it, as an audited update.
+ */
+export const CALCULATION_STALE_MESSAGE =
+  'This record’s figure no longer matches what the current emission factors give for its inputs. Save the draft again to recalculate it, then submit it.';
+
+export class CalculationStaleError extends ConflictException {
+  constructor() {
+    super(errorBody('calculation_stale', CALCULATION_STALE_MESSAGE));
+  }
+}
+
+/**
  * The SQLSTATE an `activity_records` integrity trigger raised, or null. Prisma
  * 6 reports a trigger's RAISE on a model query as an unknown request error
  * whose message carries the PostgreSQL code (measured against PostgreSQL 17;
