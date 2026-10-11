@@ -899,23 +899,39 @@ and persistence happen before rendering; an issuance exists only after the
 immutable dataset and exact PDF bytes are retained. Storage failures require a
 recoverable implementation, not a successful issuance with a missing artifact.
 
-- **Boundary:** `super_admin` owns the per-year decisions. Real operating months
-  replace `createdAt` assumptions. D11 has one company/site attribution and one
-  activity granularity per subsidiary/year/category, across all activity types.
-  Obligations exhaust each source's actual operating months at that cadence,
-  without gaps or overlaps; period intervals are clipped to those months.
-  Named unsupported sources remain explicit. An excluded source has a mandatory
-  reason and no amount. An unknown source remains unresolved. D05's actual
-  pilot source list is still an external input; this PR supplies none.
-- **Review:** the captured records' approval state only. All existing records
-  being approved does not answer whether required records are missing.
-- **Coverage:** each included source's expected activity and evidence periods,
-  matched independently of approval. An annual activity record does not by itself
-  satisfy twelve monthly evidence obligations. The source declares an independent
-  evidence cadence (or explicitly none); assessments retain a result and assigned
-  file IDs for every required evidence period, including missing months.
-  Missing records/evidence,
-  unsupported sources and attribution/period conflicts stay explicit gaps.
+- **Boundary:** `super_admin` owns per-year decisions. A boundary version is
+  immutable once confirmed or captured into any dataset. `entities` retains
+  every boundary company/site operating in any reporting-year month and its
+  actual first/last month; sources at that entity must agree with those months.
+  D11 chooses company or sites and one activity cadence per subsidiary/year/category,
+  across all activity types. For every boundary subsidiary and Scope 1/2 category,
+  every operating site (or the company entity for company attribution) has exactly
+  one `applicability` decision: included, excluded with a nonblank reason, or
+  undetermined. Missing cells raise `applicability_undetermined`, identifying the
+  entity and category even if no source exists, and block final. Included cells
+  name a nonempty set of matching included mapped sources. Included sources are
+  unique by `(subsidiaryId, locationId, category, activityType)`; two named meters
+  sharing a record identity cannot both claim one record. Obligations exhaust
+  active months at the category cadence, without gaps/overlaps, clipped to actual
+  operating months. Named unsupported sources remain explicit and block final;
+  exclusions have a reason and no amount. D05's pilot source list remains external.
+- **Review:** disjoint approved, unapproved and voided sets exhaust captured records.
+  The approved set includes both `approved` and `locked`: a period lock flips
+  approved records to locked. Final requires every satisfying record in that set.
+- **Coverage:** included activity and evidence obligations are assessed separately
+  from review. Voided records never appear in coverage obligation `recordIds` or
+  satisfy activity/evidence periods. Only-voided obligations are `missing` with a
+  `missing_record` gap; after D04 re-entry only the replacement can satisfy them.
+  Evidence references' `recordIds` are a subset of captured `records`. Until an
+  evidence-period schema exists, only a linked non-voided record's own period
+  assigns evidence: an annual link cannot satisfy monthly invoices. The source
+  declares evidence cadence (or none), and each required evidence period retains
+  a result and assigned file IDs. Unknown assignments remain missing.
+  Every non-voided captured record must attach to exactly one included obligation.
+  Otherwise `unmapped_record` blocks final and the record is never counted. This
+  includes records outside boundary subsidiaries, excluded/undetermined/unsupported
+  sources, months outside operation, and D11 attribution mismatches. Conflicting
+  records are listed in gaps, never silently dropped or included in totals.
 - **Provenance:** each non-voided record's calculation standing; both factor and
   conversion participate. Legacy, uncalculated, placeholder, fixture and withdrawn
   paths cannot certify final. Gas coverage and a declared year fallback are
@@ -923,24 +939,35 @@ recoverable implementation, not a successful issuance with a missing artifact.
   D09's inventory-year GWP set must also be consistent across counted records;
   different authoritative GWP sets still block final (`gwp_set_mismatch`).
   CO2-only paths may have null GWP metadata without introducing another set.
-- **Scopes and zero:** Scope 3 is `not_covered` with no numeric amount. Scope 1/2
-  amounts are null when no calculated counted figure exists. Scope 3 records
-  (including Water) are outside the captured Scope 1/2 record assessments; a
-  Scope 3 context yields an empty partial extract and the not-covered disclosure. A measured zero
-  needs an actual record and calculation. Exclusions never manufacture zeroes.
+- **Scopes and zero:** counted records are non-voided, in `COUNTED_STATUSES`,
+  and attached to exactly one included obligation under D11. Attribution-conflicting
+  or unmapped rows are never summed. Scope 1/2 `tCo2e` is the sum of calculated
+  figures from its counted records, or null when none is calculated. An actual
+  calculated zero is distinct from missing data. `covered` requires every included
+  obligation of that scope satisfied, no gap for that scope, and every counted
+  record calculated; otherwise `partial`.
+  Scope 3 is `not_covered` with no amount; its records (including Water) are outside
+  Scope 1/2 assessments. A Scope 3 context yields an empty partial extract.
 
-Final issuance requires a confirmed full declared boundary, every applicable
-obligation satisfied and approved, relevant periods locked, no coverage or
-attribution gap, authoritative calculations and a consistent GWP set. A scope/category-filtered extract
-is partial even when every selected row is approved. `all accessible` does not
-mean the whole organisation: inventory selection must cover the declared
-boundary. Capture and retrieval require access to **every subsidiary referenced
-anywhere**, including boundary-only names/sources/attribution, records, evidence
-and locks, not only `resolvedSubsidiaryIds`. An extract cannot disclose a wider
-boundary through metadata. Refuse inaccessible captures/downloads; never silently
-redact a retained dataset.
-Final has an empty gap list; partial has at least one typed gap. These are producer
-validation requirements, not a browser-side authorization or certification helper.
+Final issuance requires a confirmed complete boundary, every included obligation
+satisfied by approved or locked records, locked periods, no coverage/attribution
+gap, authoritative calculations and consistent GWP sets. Lock keys match exactly
+on `(subsidiaryId, year, reportingPeriod, periodValue)`; an annual obligation needs
+an `Annual` lock, not twelve monthly locks. `selection === 'extract'` always
+produces `partial` with `filtered_extract`, even when selected records are approved.
+Final has no gaps; partial has at least one. These are dormant producer requirements.
+
+For **both dataset and issuance**, every lookup (capture, list, metadata, PDF
+retrieval and CSV/Excel projection) first requires requester `organisationId` to
+match dataset `organisationId` (and issuance `organisationId`). Then require a
+**nonempty** referenced-subsidiary set computed from the built dataset: explicit
+`context.subsidiaryId`, boundary subsidiaries/entities/applicability/sources/
+attribution, records, evidence, locks, coverage-gap entities and resolved IDs.
+Every referenced ID must be within the requester's **current** access on every
+request. Empty sets fail closed. Capturers and issuers have no bypass; `datasetId`,
+`issuanceId`, `artifactId` and fingerprints are never capabilities. Refusals are
+indistinguishable from not-found. Never silently redact retained data. All-accessible
+is not all-owned: an inventory selection covers the entire declared boundary.
 
 `datasetId` identifies retained facts; `issuanceId` identifies a particular
 language/template/renderer output. PDF, CSV and Excel projections of the same
@@ -948,6 +975,11 @@ dataset must carry its identity and fingerprint and reconcile. Re-downloading an
 issuance retrieves the retained PDF bytes, not a regeneration. Later withdrawal
 of a factor release changes neither those bytes nor the retained dataset; a new
 capture discloses its current standing without recalculating historic records.
+An issuance is append-only like `audit_log`: no field is ever updated or
+re-pointed. Creation verifies `datasetFingerprint` against the retained dataset's
+recomputed fingerprint with the same canonicalization tag, and `pdf.fingerprint`
+against SHA-256 of the stored bytes. Status and gaps derive solely from the
+retained dataset; corrections require a new capture or issuance.
 Opaque artifact IDs replace signed URLs in retained metadata. Retention duration
 and erasure/offboarding exceptions remain D20/D21 and legal-owner decisions.
 
@@ -955,15 +987,35 @@ and erasure/offboarding exceptions remain D20/D21 and legal-owner decisions.
 `ReportDataset` except its top-level `datasetId`, `capturedAt` and `fingerprint`.
 All other fields, including boundary versions, actor IDs, record timestamps,
 calculation snapshots, labels, evidence hashes and release standing, participate.
-Reject undefined, nonfinite numbers, non-JSON objects and duplicate entity IDs
-before hashing; optional keys are omitted and null is distinct from omission.
-Recursively sort object keys by JavaScript UTF-16 code-unit order. Recursively
-canonicalize array members and sort their resulting JSON strings by that same
-order (all arrays in this version are semantic sets; preserve multiplicity and
-validate uniqueness where required). Encode keys/strings/numbers with ECMAScript
-`JSON.stringify`, no whitespace, UTF-8, no BOM; negative zero serializes as zero.
-Do not normalize Unicode or round quantities. SHA-256 is encoded as 64 lowercase
-hexadecimal characters. The PDF fingerprint is instead SHA-256 of its exact bytes.
+Normalize typed timestamps to `Date.prototype.toISOString()` spelling (UTC with
+milliseconds, e.g. `2026-10-11T00:00:00.000Z`) before capture; retained calculation
+snapshots remain unchanged and their producer must already supply canonical
+values. Optional absent properties are omitted before canonicalization; a present
+key or array element whose value is `undefined` is rejected, never silently
+removed or changed to null. Null is distinct from omission. Reject nonfinite
+numbers and non-JSON objects: only null, booleans, strings, finite numbers, dense
+arrays and plain objects with `Object.prototype` or null prototype are accepted;
+Date instances, Decimal, Buffer, class instances, accessors, symbol/non-enumerable
+object properties and custom `toJSON` serialization are refused. Arrays permit
+only dense numeric elements and their standard non-enumerable `length` property;
+custom array properties are refused. Null-prototype
+objects use the same own enumerable string-key representation as plain objects.
+
+Reject duplicate record/evidence/release/source IDs within each named collection;
+entity identity is `(subsidiaryId, locationId)`, with null meaning company. Boundary
+subsidiary IDs, entity keys and applicability `(subsidiaryId, locationId, category)`
+keys are unique; obligation IDs are unique across the entire boundary, not only
+one source. Reference-ID lists are sets and cannot repeat IDs. Recursively sort
+object keys by UTF-16 code-unit order. Recursively canonicalize array members and
+sort their resulting JSON strings by that same order (arrays here are semantic
+sets; preserve multiplicity while rejecting forbidden duplicates).
+Encode keys/strings/numbers with ECMAScript `JSON.stringify`, no whitespace,
+UTF-8, no BOM; negative zero becomes zero. Do not normalize Unicode or round
+quantities. For non-JavaScript producers see [RFC 8785 §§3.2.2–3.2.4](https://www.rfc-editor.org/rfc/rfc8785#section-3.2.2)
+and [ECMAScript Number::toString](https://tc39.es/ecma262/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-number-tostring).
+This format differs from RFC 8785 by sorting semantic-set arrays. Compare dataset
+fingerprints only when canonicalization tags match. SHA-256 uses 64 lowercase
+hexadecimal characters; the PDF fingerprint hashes its exact stored bytes.
 Hashing/serialization is a later server implementation; this package introduces
 no hashing runtime or claim of generated fingerprints.
 
@@ -972,6 +1024,13 @@ Contract acceptance examples (not executed database/UAT evidence):
 | Captured facts | Required interpretation |
 | --- | --- |
 | One approved January record, eleven missing months | Approved existing record; incomplete coverage; partial issuance |
+| Approved record voided, not re-entered | Obligation missing; withdrawal disclosed; partial |
+| Voided then re-entered and approved | Satisfied by the replacement only; locks/evidence/provenance still required |
+| Confirmed boundary omits a site/category cell | applicability_undetermined; final blocked |
+| Excluded fleet has an approved diesel record | unmapped_record; not counted; partial |
+| Site opens in July but has an approved March record | unmapped_record outside operating months; not counted; partial |
+| Scope 2 obligations satisfied but one counted record uncalculated | Partial coverage; only calculated figures summed, or null if none |
+| Empty referenced-subsidiary set or a requester from another organisation | Dataset/issuance lookup refused indistinguishably from not-found |
 | Site opens in July | July–December obligations only, independently of when its database row was created |
 | Applicable source lacks a usable factor | Named gap/uncalculated provenance; never zero; partial |
 | No fleet, explicitly excluded with a reason | Named exclusion, no fleet obligations and no fleet amount |

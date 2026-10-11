@@ -5,7 +5,7 @@ import {
   type ActivityCalculationSnapshot, type ActivityRecordDTO,
   type InventorySource, type InventoryAttributionPolicy, type InventoryBoundarySnapshot,
   type ReportDataset, type ReportDatasetRecord, type ReportIssuance,
-  type ReportScopeDisclosure, type ReportUncoveredScope,
+  type ReportScopeDisclosure, type ReportUncoveredScope, type ReportReleaseStanding,
   type ReportCoverageAssessment, type ReportReviewAssessment,
   type ReportProvenanceAssessment, type ReportDatasetFingerprint,
 } from './index';
@@ -58,6 +58,8 @@ describe('the additive report dataset contract', () => {
       id: 'boundary', version: 1, organisationId: 'org', reportingYear: 2026,
       subsidiaryIds: ['subsidiary'], decision: 'unconfirmed', decidedBy: null, decidedAt: null,
       attribution: [{ subsidiaryId: 'subsidiary', category: 'Electricity', level: 'sites', reportingPeriod: 'monthly' }],
+      entities: [entity], applicability: [{ subsidiaryId: 'subsidiary', locationId: 'site',
+        category: 'Electricity', applicability: 'included', sourceIds: ['grid'] }],
       sources: [julySource, noFleet, heat],
     };
     expect(JSON.parse(JSON.stringify(boundary)).sources[0].entity.firstMonth).toBe(7);
@@ -80,8 +82,7 @@ describe('the additive report dataset contract', () => {
     const assessment: ReportCoverageAssessment['obligations'][number] = {
       obligationId: 'annual', state: 'missing', recordIds: ['annual-record'],
       evidencePeriods: annual.obligations[0].evidencePeriods.map((period) => ({ ...period,
-        state: period.periodValue === 'July' ? 'satisfied' : 'missing',
-        evidenceIds: period.periodValue === 'July' ? ['july-invoice'] : [],
+        state: 'missing', evidenceIds: [],
       })),
     };
     expect(assessment.evidencePeriods.find((p) => p.periodValue === 'December'))
@@ -102,7 +103,7 @@ describe('the additive report dataset contract', () => {
     expect(provenance.records[0].standing).toBe('non_authoritative');
   });
 
-  it('can block final for conflicting GWP sets even when each record is authoritative', () => {
+  it('represents conflicting GWP issues on authoritative records without running a finality gate', () => {
     const provenance: ReportProvenanceAssessment = {
       records: ['ar5-record', 'ar6-record'].map((recordId) => ({
         recordId, standing: 'authoritative', issues: ['gwp_set_mismatch'],
@@ -126,7 +127,7 @@ describe('the additive report dataset contract', () => {
 
   it('requires retained PDF metadata and distinguishes dataset identity from language/template issuance', () => {
     const issued: ReportIssuance = {
-      issuanceId: 'issue-en', datasetId: 'dataset', datasetFingerprint: fingerprint,
+      organisationId: 'org', issuanceId: 'issue-en', datasetId: 'dataset', datasetFingerprint: fingerprint,
       issuedAt: '2026-10-11T00:00:00.000Z', issuedBy: 'actor', language: 'en',
       template: 'executive_summary', rendererVersion: 'test-only',
       options: { includeMethodologyNotes: true, includeEvidenceSummary: true },
@@ -138,6 +139,40 @@ describe('the additive report dataset contract', () => {
     expect(translated.datasetFingerprint).toEqual(issued.datasetFingerprint);
     expect(translated.issuanceId).not.toBe(issued.issuanceId);
     expect(translated.pdf.fingerprint.hex).not.toBe(issued.pdf.fingerprint.hex);
+  });
+
+  it('retains missing applicability cells and unmapped record references without inventing sources', () => {
+    const coverage: ReportCoverageAssessment = {
+      obligations: [], excludedSourceIds: ['fleet'], gaps: [
+        { code: 'applicability_undetermined', entity: { subsidiaryId: 'subsidiary', locationId: 'site-b' },
+          category: 'Electricity', sourceIds: [], obligationIds: [], recordIds: [] },
+        { code: 'unmapped_record', sourceIds: ['fleet'], obligationIds: [], recordIds: ['excluded-diesel'] },
+        { code: 'unmapped_record', sourceIds: ['grid'], obligationIds: [], recordIds: ['march-before-opening'] },
+      ],
+    };
+    expect(coverage.gaps[0].entity?.locationId).toBe('site-b');
+    expect(coverage.gaps.flatMap((gap) => gap.recordIds)).toEqual(['excluded-diesel', 'march-before-opening']);
+  });
+
+  it('represents withdrawal as missing and D04 re-entry with only the replacement satisfying coverage', () => {
+    const missing: ReportCoverageAssessment = {
+      obligations: [{ obligationId: 'january', state: 'missing', recordIds: [], evidencePeriods: [] }],
+      excludedSourceIds: [], gaps: [{ code: 'missing_record', sourceIds: ['grid'], obligationIds: ['january'], recordIds: ['withdrawn'] }],
+    };
+    const replacement: ReportCoverageAssessment = {
+      ...missing, gaps: [], obligations: [{ obligationId: 'january', state: 'satisfied', recordIds: ['replacement'], evidencePeriods: [] }],
+    };
+    const review: ReportReviewAssessment = { approvedRecordIds: ['replacement'], unapprovedRecordIds: [], voidedRecordIds: ['withdrawn'] };
+    expect(missing.obligations[0].recordIds).toEqual([]);
+    expect(replacement.obligations[0].recordIds).toEqual(review.approvedRecordIds);
+    expect(replacement.obligations[0].recordIds).not.toContain('withdrawn');
+  });
+
+  it('has one current release identity/status and an organisation-bound issuance', () => {
+    expectTypeOf<ReportReleaseStanding['publication']>().not.toHaveProperty('id');
+    expectTypeOf<ReportReleaseStanding['publication']>().not.toHaveProperty('status');
+    expectTypeOf<ReportIssuance['organisationId']>().toEqualTypeOf<string>();
+    expectTypeOf<InventoryBoundarySnapshot['entities'][number]>().toEqualTypeOf<InventorySource['entity']>();
   });
 
   it('pins the gap vocabularies consumers must handle', () => {
@@ -152,8 +187,10 @@ describe('the additive report dataset contract', () => {
 
 /** tsc must reject misleading wire shapes, including a value introduced by a spread. */
 function invalidContractShapes(issuance: ReportIssuance, record: ReportDatasetRecord) {
-  // @ts-expect-error An uncovered scope cannot be a measured zero.
-  const scope: ReportUncoveredScope = { scope: 3, coverage: 'not_covered', tCo2e: 0 };
+  const measuredScope = { scope: 1 as const, coverage: 'covered' as const, tCo2e: 0 };
+  const widenedScope = { ...measuredScope, scope: 3 as const, coverage: 'not_covered' as const };
+  // @ts-expect-error Even a non-fresh spread cannot attach an amount to Scope 3.
+  const scope: ReportUncoveredScope = widenedScope;
   const measuredExclusion = { ...noFleet, tCo2e: 0 };
   // @ts-expect-error An exclusion never carries a measured amount.
   const exclusion: InventorySource = measuredExclusion;
@@ -168,8 +205,9 @@ function invalidContractShapes(issuance: ReportIssuance, record: ReportDatasetRe
   const noPdf: ReportIssuance = withoutPdf;
   // @ts-expect-error Scope 3 records do not become Scope 1/2 provenance gaps.
   const water: ReportDatasetRecord = { ...record, scope: 3 };
-  // @ts-expect-error Retained record snapshots exclude joined actor names, even through spreads.
-  const personalName: ReportDatasetRecord = { ...record, createdByName: 'A person' };
+  const joinedRecord = { ...record, createdByName: 'A person' };
+  // @ts-expect-error Non-fresh spread assignments cannot retain joined actor names.
+  const personalName: ReportDatasetRecord = joinedRecord;
   void [scope, exclusion, reasonless, final, partial, noPdf, personalName, water];
 }
 void invalidContractShapes;

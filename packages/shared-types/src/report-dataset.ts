@@ -4,7 +4,7 @@ import type {
 } from './index';
 
 /** LP3-04: additive, dormant contracts. No existing route returns these yet.
- * All dates are UTC ISO strings; months are calendar months of reportingYear.
+ * All timestamps use Date.prototype.toISOString() UTC spelling; months are calendar months of reportingYear.
  * Producers validate runtime inputs, referential integrity and the invariants
  * below. TypeScript shapes alone do not certify a complete inventory. */
 export const REPORT_DATASET_SCHEMA_VERSION = 1 as const;
@@ -28,6 +28,18 @@ export interface InventoryEntitySnapshot {
   firstMonth: InventoryMonth;
   lastMonth: InventoryMonth;
 }
+
+/** One D12 decision per entity/category cell selected by the D11 policy.
+ * Included cells name all included mapped sources for that cell; source IDs
+ * cannot be used to satisfy a second cell. Exclusion reasons must be nonblank. */
+export type InventoryApplicabilityDecision = {
+  subsidiaryId: string;
+  locationId: string | null;
+  category: Category;
+} & (
+  | { applicability: 'included'; sourceIds: readonly string[]; reason?: never }
+  | { applicability: 'excluded' | 'undetermined'; reason: string; sourceIds?: never }
+);
 
 /** An unsupported named source must still fit the boundary (D05). A missing
  * mapping is not an exclusion, a made-up category or a measured zero. */
@@ -65,7 +77,7 @@ export type InventorySource = {
   | { applicability: 'excluded' | 'undetermined'; reason: string; obligations?: never }
 );
 
-/** A version is immutable once used by an issuance. New facts create a new
+/** A version is immutable once captured into any dataset or confirmed. New facts create a new
  * version. super_admin owns decisions; reasons must be nonblank. Included
  * sources have obligations that exhaust their operating months exactly once
  * at the source reportingPeriod, matching the category attribution policy
@@ -75,6 +87,19 @@ export type InventorySource = {
  * explicitly means none. Each obligation's evidencePeriods exhaust its active
  * months at that cadence; unknown/legacy period assignments never satisfy them.
  * firstMonth <= lastMonth in every interval.
+ * For every boundary subsidiary, retain every entity operating in any month
+ * of reportingYear. For every Scope 1/2 category, the D11 policy selects either
+ * the company entity or ALL operating site entities. Each resulting entity x
+ * category cell has exactly one applicability decision: included, excluded
+ * with a nonblank reason, or undetermined. A missing cell is a final-blocking
+ * applicability_undetermined gap, never an implicit exclusion. Included cells
+ * reference a nonempty set of matching included mapped sources. Unsupported
+ * named sources remain separately disclosed and block final.
+ * Included mapped sources are unique by (subsidiaryId, locationId, category,
+ * activityType); two meters sharing this key cannot both claim one record.
+ * Every source's entity snapshot agrees with the retained entity, including
+ * firstMonth/lastMonth. Entity keys (subsidiaryId, locationId) and source IDs
+ * are unique, and obligation IDs are unique across the whole boundary.
  * Source mappings must match CATEGORY_SCOPE_MAP and recordActivityTypesFor.
  * Company/site or granularity conflicts are gaps, never double-counted totals. */
 export interface InventoryBoundarySnapshot {
@@ -87,6 +112,9 @@ export interface InventoryBoundarySnapshot {
   decision: 'unconfirmed' | 'confirmed';
   decidedBy: string | null;
   decidedAt: string | null;
+  /** Complete domain, including entities whose categories have no source yet. */
+  entities: readonly InventoryEntitySnapshot[];
+  applicability: readonly InventoryApplicabilityDecision[];
   attribution: readonly InventoryAttributionPolicy[];
   sources: readonly InventorySource[];
 }
@@ -122,6 +150,9 @@ export type ReportEvidenceReference = Pick<EvidenceDTO,
 > & {
   /** null means legacy/unknown content identity, never an empty-file hash. */
   contentFingerprint: Sha256Fingerprint | null;
+  /** Subset of dataset.records IDs. Until an evidence-period schema exists,
+   * only a linked non-voided record's own period assigns evidence to coverage;
+   * an annual link cannot be assigned to a monthly evidence obligation. */
   recordIds: readonly string[];
 };
 
@@ -130,10 +161,12 @@ export type ReportEvidenceReference = Pick<EvidenceDTO,
  * withdrawal never updates this captured disclosure or recalculates a figure. */
 export type ReportReleaseStanding = Pick<FactorReleaseDTO,
   'id' | 'status' | 'withdrawnAt' | 'withdrawnBy' | 'withdrawalReason'
-> & { publication: FactorReleaseSnapshot };
+> & { publication: Omit<FactorReleaseSnapshot, 'id' | 'status'> };
 
 export interface ReportReviewAssessment {
-  /** These three disjoint sets exhaust dataset.records. Empty is not complete. */
+  /** These three disjoint sets exhaust dataset.records. Empty is not complete.
+   * approvedRecordIds includes approved AND locked (period locks flip approved
+   * records to locked). Every record satisfying a final obligation belongs here. */
   approvedRecordIds: readonly string[];
   unapprovedRecordIds: readonly string[];
   voidedRecordIds: readonly string[];
@@ -146,7 +179,15 @@ export const REPORT_COVERAGE_GAP_CODES = [
 ] as const;
 export type ReportCoverageGapCode = (typeof REPORT_COVERAGE_GAP_CODES)[number];
 
+/** Every non-voided captured record must attach to exactly one included
+ * obligation. Otherwise unmapped_record blocks final and the record is never
+ * counted: outside boundary subsidiaries, excluded/undetermined/unsupported
+ * source, outside operating months, or D11 attribution mismatch. Attribution
+ * conflicts also name the conflicting records; none enter totals. */
 export interface ReportCoverageGap {
+  /** Required for a missing applicability cell with no source/obligation ID. */
+  entity?: Pick<InventoryEntitySnapshot, 'subsidiaryId' | 'locationId'>;
+  category?: Category;
   code: ReportCoverageGapCode;
   sourceIds: readonly string[];
   obligationIds: readonly string[];
@@ -156,7 +197,11 @@ export interface ReportCoverageGap {
 export interface ReportCoverageAssessment {
   /** Every included obligation occurs exactly once, whether met or missing.
    * Record/evidence references must agree with source, entity, type and period.
-   * A record can satisfy coverage before approval; review stays independent. */
+   * Voided records NEVER appear in these recordIds or satisfy activity/evidence
+   * coverage. Only-voided obligations are missing and raise missing_record; a
+   * D04 re-entry lists only the replacement. Evidence linked only to a voided
+   * record cannot satisfy evidencePeriods. A non-voided record can satisfy
+   * coverage before approval; final additionally requires approved or locked. */
   obligations: ReadonlyArray<{
     obligationId: string;
     state: 'satisfied' | 'missing';
@@ -198,10 +243,16 @@ export interface ReportProvenanceAssessment {
 
 export type ReportScopeDisclosure<S extends 1 | 2 = 1 | 2> = {
   scope: S;
+  /** covered only when every included obligation of this scope is satisfied,
+   * the scope has no gap, and every counted
+   * record is calculated. Otherwise partial. */
   coverage: 'covered' | 'partial';
-  /** null when no counted record has a calculated figure. Zero requires real
-   * calculated records; exclusions and missing factors never supply zeroes. */
+  /** Sum of calculated figures among countedRecordIds, null if none is
+   * calculated. Zero needs actual calculated records, not missing factors. */
   tCo2e: number | null;
+  /** Exactly the non-voided records in COUNTED_STATUSES attached to exactly
+   * one included obligation under D11. Attribution-conflicting/unmapped rows
+   * are disclosed in gaps and NEVER summed. */
   countedRecordIds: readonly string[];
 };
 
@@ -221,11 +272,16 @@ export interface ReportDatasetFingerprint extends Sha256Fingerprint {
 /** Built and retained from ONE bounded consistent database snapshot; renderers
  * perform no live metadata, evidence, summary or release reads afterwards.
  * This contract does not change today's independent report queries.
- * Capture AND retrieval require access to every subsidiary referenced anywhere
- * in boundary.subsidiaryIds/sources/attribution, records, evidence, periodLocks
- * and resolvedSubsidiaryIds. This includes boundary-only metadata in an extract;
- * never authorize solely from resolvedSubsidiaryIds or silently redact a retained
- * dataset. Refuse the operation if any referenced subsidiary is inaccessible. Signed URLs and credentials never belong in the retained dataset. */
+ * Every lookup (capture, list, metadata, PDF download, CSV/Excel projection)
+ * first requires requester.organisationId === dataset.organisationId. Then
+ * require a NON-EMPTY referenced-subsidiary set derived from the built dataset:
+ * context.subsidiaryId, boundary subsidiaries/entities/applicability/sources/
+ * attribution, records, evidence, periodLocks, coverage gap entities and
+ * resolvedSubsidiaryIds. Every ID must be in the requester's CURRENT access,
+ * checked on every request. Never authorize solely from resolvedSubsidiaryIds,
+ * silently redact, or allow the capturer/issuer a bypass. datasetId, issuanceId,
+ * artifactId and fingerprints are never capabilities. Refusal is indistinguishable
+ * from not-found. Signed URLs and credentials never belong in retained data. */
 export interface ReportDataset {
   schemaVersion: typeof REPORT_DATASET_SCHEMA_VERSION;
   datasetId: string;
@@ -242,6 +298,8 @@ export interface ReportDataset {
    * and the explicit not_covered disclosure, never Water in these assessments. */
   records: readonly ReportDatasetRecord[];
   evidence: readonly ReportEvidenceReference[];
+  /** Match exactly on (subsidiaryId, year, reportingPeriod, periodValue).
+   * An annual obligation needs the Annual lock, not twelve monthly locks. */
   periodLocks: readonly PeriodLockDTO[];
   review: ReportReviewAssessment;
   coverage: ReportCoverageAssessment;
@@ -266,9 +324,23 @@ export interface ReportIssuanceGap {
  * A failed render/upload is not an issuance. A later language/template render
  * gets another issuanceId; its datasetId/content fingerprint may be shared.
  * Export projections of that dataset carry its same identity/fingerprint.
+ * An issuance is append-only like audit_log: no field is ever updated or
+ * re-pointed. Create it only after verifying datasetFingerprint against the
+ * retained dataset's recomputed fingerprint (same canonicalization tag) and
+ * pdf.fingerprint against SHA-256 of the stored bytes. status and gaps derive
+ * solely from the retained dataset; any correction is a new capture or issuance.
+ * selection === 'extract' always yields partial with a filtered_extract gap.
+ * Every lookup (capture, list, metadata, PDF download, CSV/Excel projection)
+ * first requires requester.organisationId === dataset.organisationId ===
+ * issuance.organisationId; then a NON-EMPTY referenced-subsidiary set computed
+ * from the built dataset (including context.subsidiaryId and boundary-only
+ * metadata) wholly inside CURRENT access on every request. Capturer/issuer
+ * have no bypass. datasetId, issuanceId, artifactId and fingerprints are never
+ * capabilities. Refusal is indistinguishable from not-found; never redact.
  * Retention duration and erasure exceptions remain D20/D21 policy decisions. */
 export type ReportIssuance = {
   issuanceId: string;
+  organisationId: string;
   datasetId: string;
   datasetFingerprint: ReportDatasetFingerprint;
   issuedAt: string;
@@ -286,7 +358,7 @@ export type ReportIssuance = {
   };
 } & (
   /** Server proves: confirmed full boundary; all obligations met, approved and
-   * locked; no attribution/evidence gap; authoritative calculations and D09's
+   * locked (satisfying records approved OR locked); no attribution/evidence gap; authoritative calculations and D09's
    * consistent inventory-year GWP set. A missing
    * factor, unknown boundary or unresolved named source always blocks final. */
   | { status: 'final'; gaps: readonly [] }
