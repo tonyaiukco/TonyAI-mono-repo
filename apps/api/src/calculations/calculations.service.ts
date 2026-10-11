@@ -50,6 +50,14 @@ import { storedUnit } from './storable-unit';
 const LIVE_STATUSES: readonly FactorStatus[] = ['authoritative', 'placeholder', 'fixture'];
 
 /**
+ * A release is read once sealed (LP4-02): the loader seals it in the
+ * transaction that loads it, and the database refuses a commit that leaves one
+ * unsealed — so this excludes only what a restore or a disabled guard left
+ * behind, a release whose contents nobody closed.
+ */
+const SEALED = { sealedAt: { not: null } } as const;
+
+/**
  * More candidate rows than one lookup can legitimately have. A lookup is one
  * category, activity type, geography and year; its candidates are that key's
  * factors across releases and units, and its conversions — paths are
@@ -147,7 +155,8 @@ export class CalculationsService {
    * which extends the old DTO): without them a placeholder reads like an
    * authoritative factor, a withdrawn one like a live one, and the `diesel`
    * and `unspecified` Fuel rows like one row listed twice. Ordered by release
-   * ordinal, never by the `version` label.
+   * ordinal, never by the `version` label. Sealed releases only, as pricing
+   * reads them (LP4-02).
    */
   async listFactors(filter: {
     category?: string;
@@ -159,6 +168,7 @@ export class CalculationsService {
         category: filter.category,
         geographyCode: filter.geographyCode,
         reportingYear: filter.year,
+        release: SEALED,
       },
       // Only the snapshot's columns: the release's people and notes never
       // leave the database on this path, by construction.
@@ -195,14 +205,15 @@ export class CalculationsService {
    * would apply another country's calorific value or another year's grid —
    * factors also on the CO2e row of the category's own Scope 2 method, and
    * conversions from the base unit of the record's family. Releases are
-   * filtered by status here, in SQL, as well as by `resolveFactorPath`.
+   * filtered by status here, in SQL, as well as by `resolveFactorPath`, and
+   * to sealed ones.
    */
   private async candidates(
     lookup: { category: string; activityType: string; geographyCode: string; reportingYear: number },
     baseUnit: string,
     statuses: readonly FactorStatus[],
   ): Promise<{ factors: FactorRow[]; conversions: ConversionRow[] }> {
-    const where = { ...lookup, release: { status: { in: [...statuses] } } };
+    const where = { ...lookup, release: { status: { in: [...statuses] }, ...SEALED } };
     const [factors, conversions] = await Promise.all([
       this.prisma.emissionFactor.findMany({
         where: { ...where, gas: CALCULATION_GAS, scope2Method: scope2MethodFor(lookup.category) },
