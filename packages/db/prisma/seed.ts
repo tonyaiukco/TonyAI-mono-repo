@@ -24,6 +24,7 @@ import {
 } from '@tonyai/shared-types';
 import {
   DEMO_YEAR,
+  FIXTURE_PUBLISHER,
   PRIOR_YEAR,
   SEED_CONVERSIONS,
   SEED_FACTORS,
@@ -626,10 +627,11 @@ async function main() {
   // skips its `globalTeardown` on SIGINT or a crash, so an interrupted E2E run
   // can leave its fixture release behind — and while it sits there its
   // category calculates at a made-up rate instead of being refused, freezing
-  // that rate into every snapshot entered against it. Scoped to `fixture`
-  // releases, the only rows the append-only triggers let anyone delete.
+  // that rate into every snapshot entered against it. Scoped to the test
+  // fixture publisher's releases — fixtures, and ones a loader test withdrew —
+  // the only rows the append-only triggers let anyone delete.
   const fixtureReleases = await prisma.factorRelease.findMany({
-    where: { status: 'fixture' },
+    where: { OR: [{ status: 'fixture' }, { status: 'withdrawn', publisher: FIXTURE_PUBLISHER }] },
     select: { id: true, edition: true },
   });
   if (fixtureReleases.length > 0) {

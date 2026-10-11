@@ -1451,6 +1451,24 @@ describe('LP4-02 — a release is sealed in the transaction that loads it, by it
     expect(await owner.factorRelease.count({ where: { id: releaseId, status: 'withdrawn' } })).toBe(0);
   });
 
+  it('lets a test fixture release go with its rows, withdrawn or not — and no other withdrawn release', async () => {
+    const id = randomUUID();
+    const left = await withRollback(owner, async (tx) => {
+      for (const sql of [release(id, await nextFixtureOrdinal(tx)), conversion(id), seal(id), withdraw(id)]) await tx.$executeRawUnsafe(sql);
+      await tx.$executeRawUnsafe(`DELETE FROM unit_conversions WHERE release_id = '${id}'`);
+      await tx.$executeRawUnsafe(`DELETE FROM factor_releases WHERE id = '${id}'`);
+      return tx.factorRelease.count({ where: { id } });
+    });
+    expect(left).toBe(0);
+    const { releaseId } = await owner.emissionFactor.findFirstOrThrow({ where: { release: { status: 'placeholder' } } });
+    expect(
+      await outcomes(owner, [withdraw(releaseId)], [
+        `DELETE FROM emission_factors WHERE release_id = '${releaseId}'`,
+        `DELETE FROM factor_releases WHERE id = '${releaseId}'`,
+      ]),
+    ).toEqual(['TA010', 'TA010']);
+  });
+
   it('refuses a seal or withdrawal by a session that is neither the loader nor the owner, whatever it was granted (TA013)', async () => {
     const { releaseId } = await owner.emissionFactor.findFirstOrThrow({ where: { release: { status: 'placeholder' } } });
     const columns = '"sealed_at", "status", "withdrawn_at", "withdrawn_by", "withdrawal_reason"';

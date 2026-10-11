@@ -211,6 +211,43 @@ BEGIN
 END
 $fn$;
 
+-- Snapshots point at releases, so only a test run's release may go — the
+-- fixture publisher's, now withdrawn ones too: a loader test's erratum
+-- withdraws one, and it must leave nothing behind. (The fixture publisher's
+-- releases are fixtures or withdrawn ones, nothing else — its CHECK.) Its
+-- factors and conversions go first (the foreign keys RESTRICT).
+CREATE OR REPLACE FUNCTION "public"."factor_releases_before_delete"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $fn$
+BEGIN
+  IF OLD."status" <> 'fixture' AND NOT (OLD."status" = 'withdrawn' AND OLD."publisher" = 'TonyAI test fixture') THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA010',
+      MESSAGE = format('factor release %s is %s: only a test fixture release may be deleted', OLD."id", OLD."status");
+  END IF;
+  RETURN OLD;
+END
+$fn$;
+
+CREATE OR REPLACE FUNCTION "public"."factor_rows_before_delete"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $fn$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM "public"."factor_releases" r
+     WHERE r."id" = OLD."release_id"
+       AND (r."status" = 'fixture' OR (r."status" = 'withdrawn' AND r."publisher" = 'TonyAI test fixture'))
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA010',
+      MESSAGE = format('%s is append-only: only a test fixture release''s rows may be deleted', TG_TABLE_NAME);
+  END IF;
+  RETURN OLD;
+END
+$fn$;
+
 -- LP3-03's record, and a seal is recorded as one, not as a withdrawal.
 CREATE OR REPLACE FUNCTION "public"."factor_releases_record_event"() RETURNS trigger
 LANGUAGE plpgsql
