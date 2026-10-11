@@ -3,7 +3,7 @@ import { withParserDeadline } from '../common/work-deadline';
 import { describe, expect, it, vi } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
 import ExcelJS from 'exceljs';
-import { BULK_UPLOAD_MAX_SIZE_BYTES } from '@tonyai/shared-types';
+import { BULK_UPLOAD_COLUMNS, BULK_UPLOAD_MAX_SIZE_BYTES } from '@tonyai/shared-types';
 import {
   OFFICE_RELATIONSHIPS,
   PACKAGE_RELATIONSHIPS,
@@ -15,8 +15,12 @@ import { isUtf8 } from 'node:buffer';
 import { extensionOf, FILE_NOT_UTF8, parseRows, strictNumber } from './parse-rows';
 import { WORKBOOK_NOT_UTF8, XLSX_MAX_UNPACKED_BYTES } from './xlsx-reader';
 
+// A header from a template older than LP4-02: `activityType` is optional, so
+// this is still a complete file, and every row below stays positional on it.
+// Refusals list the contract's columns, which do include it.
 const HEADER =
   'subsidiaryId,locationId,reportingYear,reportingPeriod,periodValue,category,activityValue,activityUnit,varianceReason';
+const EXPECTED = BULK_UPLOAD_COLUMNS.join(', ');
 const ROW = 'sub-1,,2024,monthly,January,Electricity,1200,kWh,';
 
 const csv = (...lines: string[]) => Buffer.from([HEADER, ...lines].join('\n'));
@@ -255,6 +259,19 @@ describe('parseRows — CSV', () => {
     expect(rows[0].cells.activityValue).toBe('1200');
   });
 
+  it('reads the activityType column where the header has it, and leaves it blank where an older one does not', async () => {
+    // LP4-02: the column is optional, so a file from an older template still
+    // parses — its untyped rows import, and a typed one is refused on its row.
+    const typed = await parseRows(
+      Buffer.from([BULK_UPLOAD_COLUMNS.join(','), 'sub-1,,2024,monthly,January,Fuel, diesel ,1200,litres,'].join('\n')),
+      'x.csv',
+    );
+    expect(typed[0].cells).toMatchObject({ category: 'Fuel', activityType: ' diesel ', activityValue: '1200' });
+    const older = await parseRows(csv(ROW), 'x.csv');
+    expect(older[0].cells.activityType).toBe('');
+    expect(older[0].cells.activityValue).toBe('1200');
+  });
+
   it('refuses an unrecognised column instead of dropping it', async () => {
     // Dropping it would import every row with a missing value and look like a
     // data problem rather than a header problem.
@@ -273,7 +290,7 @@ describe('parseRows — CSV', () => {
     );
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): "${'x'.repeat(40)}…", "b", "c", "d", "e" (+2 more). Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "${'x'.repeat(40)}…", "b", "c", "d" (+3 more). Expected: ${EXPECTED}.`,
     );
   });
 
@@ -291,7 +308,7 @@ describe('parseRows — CSV', () => {
     );
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): "tco<U+202E>2<U+200B>e". Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "tco<U+202E>2<U+200B>e". Expected: ${EXPECTED}.`,
     );
   });
 
@@ -340,7 +357,7 @@ describe('parseRows — CSV', () => {
     );
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): "${marker}tco2e". Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "${marker}tco2e". Expected: ${EXPECTED}.`,
     );
   });
 
@@ -362,7 +379,7 @@ describe('parseRows — CSV', () => {
     );
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): "${quoted}". Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "${quoted}". Expected: ${EXPECTED}.`,
     );
   });
 
@@ -377,7 +394,7 @@ describe('parseRows — CSV', () => {
     ).catch((e: unknown) => e);
     const message = (error as Error).message;
     expect(message).toBe(
-      `Unrecognised column(s): "activityValue, category", "a<U+0022>b". Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "activityValue, category", "a<U+0022>b". Expected: ${EXPECTED}.`,
     );
     expect(message).not.toContain(': activityValue, category.');
   });
@@ -392,7 +409,7 @@ describe('parseRows — CSV', () => {
       'x.csv',
     ).catch((e: unknown) => e);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): "${'ababab<U+200B x9>'.repeat(3)}ababab…". Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "${'ababab<U+200B x9>'.repeat(3)}ababab…". Expected: ${EXPECTED}.`,
     );
   });
 
@@ -414,7 +431,7 @@ describe('parseRows — CSV', () => {
       'x.csv',
     ).catch((e: unknown) => e);
     expect((error as Error).message).toBe(
-      `Unrecognised column(s): "tco2e". Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "tco2e". Expected: ${EXPECTED}.`,
     );
   });
 
@@ -555,7 +572,7 @@ describe('parseRows — XLSX', () => {
       ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', 'x'],
     ]);
     expect(await refusal(buffer)).toBe(
-      `Unrecognised column(s): "t<U+0000>co<U+202E>2<U+200B>e". Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "t<U+0000>co<U+202E>2<U+200B>e". Expected: ${EXPECTED}.`,
     );
   });
 
@@ -566,7 +583,7 @@ describe('parseRows — XLSX', () => {
       ['sub-1', '', 2024, 'monthly', 'January', 'Electricity', 1200, 'kWh', '', 'x', 'y'],
     ]);
     expect(await refusal(buffer)).toBe(
-      `Unrecognised column(s): "t${String.fromCodePoint(0x1f600)}", "u<U+DE00 U+D83D>". Expected: ${HEADER.split(',').join(', ')}.`,
+      `Unrecognised column(s): "t${String.fromCodePoint(0x1f600)}", "u<U+DE00 U+D83D>". Expected: ${EXPECTED}.`,
     );
   });
 

@@ -16,9 +16,11 @@ import { readFirstWorksheet, type MergedRange } from './xlsx-reader';
  * How many of a refused header's cells the sentence quotes. Each one is
  * bounded by `quoteCallerText`'s own two bounds, and delimited, which is what
  * keeps the longest possible refusal inside the code points an audit row
- * stores whole (`bulk-upload.service.spec.ts` pins that arithmetic).
+ * stores whole (`bulk-upload.service.spec.ts` pins that arithmetic). Four
+ * since LP4-02's tenth column (`activityType`) lengthened the "Expected:" list:
+ * at five the worst case reached 504 of 500.
  */
-export const QUOTED_FRAGMENTS = 5;
+export const QUOTED_FRAGMENTS = 4;
 
 /**
  * One data row as it came out of the file: every cell a string, keyed by the

@@ -38,6 +38,7 @@ export const SUBMIT_ISSUE_LABEL: Record<BulkSubmitIssueCode, string> = {
   period_locked: 'Period closed',
   evidence_required: 'Needs an evidence file',
   variance_reason_required: 'Needs a variance reason',
+  calculation_stale: 'Figure out of date',
   unexpected: 'Could not be submitted',
   // PR B wires the locale-aware label before the API emits this new code.
   not_processed_deadline: enErrors.bulkIssues.not_processed_deadline,

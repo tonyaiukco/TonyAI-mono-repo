@@ -35,6 +35,7 @@
     "slot_holds_untyped": "A record of this category without a fuel or gas already exists for this reporting entity and period. Edit that record, or void it, before entering one per fuel or gas.",
     "slot_holds_typed": "Records of this category with a fuel or gas already exist for this reporting entity and period, so this one must name its fuel or gas too.",
     "snapshot_immutable": "This record has left draft, so its figure and the inputs it was computed from can no longer change. Reload it.",
+    "calculation_stale": "This record’s figure no longer matches what the current emission factors give for its inputs. Save the draft again to recalculate it; a submitted record is first returned to its author.",
     "upload_expired": "The upload took too long and was discarded. Upload the file again.",
     "query_too_broad": "This request exceeds the processing limit. Narrow the filters or request a smaller report.",
     "unit_unknown": "This unit is not one the calculation engine knows.",

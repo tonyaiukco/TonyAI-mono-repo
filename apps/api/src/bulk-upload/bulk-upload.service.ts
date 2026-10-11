@@ -27,6 +27,7 @@ import {
   type ReportingPeriod,
   type BulkUploadReportDTO,
   type BulkUploadRowIssue,
+  isRecordActivityTypeAllowed,
   mayAuthorRecords,
   recordActivityTypesFor,
 } from '@tonyai/shared-types';
@@ -38,6 +39,8 @@ import {
   ActivityTypeSlotConflictError,
   DuplicateActivityRecordError,
   PeriodLockedError,
+  SLOT_HOLDS_TYPED_MESSAGE,
+  SLOT_HOLDS_UNTYPED_MESSAGE,
 } from '../activity-records/errors';
 import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
@@ -82,6 +85,25 @@ const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true } as const;
  * purpose. It keeps the property true if a free-text segment is ever added.
  */
 const KEY_SEPARATOR = '\u0000';
+
+/**
+ * What the stored records hold, read once before the loop: their full keys
+ * (the unique index's seven columns), and which slots — the six columns the
+ * database's slot-kind rule locks on — hold typed records and which an untyped
+ * one (TA002: a slot holds typed records or one untyped record, never both).
+ */
+interface StoredSlots {
+  keys: Set<string>;
+  typed: Set<string>;
+  untyped: Set<string>;
+}
+
+/** `a, b or c` — how a refusal lists the accepted values. */
+function orList(values: readonly string[]): string {
+  return values.length < 2
+    ? values.join('')
+    : `${values.slice(0, -1).join(', ')} or ${values[values.length - 1]}`;
+}
 
 const COLUMN_NAMES = new Set<string>(BULK_UPLOAD_COLUMNS);
 
@@ -173,7 +195,7 @@ export class BulkUploadService {
     });
     const upload = file as Express.Multer.File;
 
-    const storedKeys = await this.loadStoredKeys(rows);
+    const storedSlots = await this.loadStoredSlots(rows);
     // An APPLY gets a batch, created BEFORE the loop so every record can carry
     // its id. A dry run gets none: it must provably write nothing.
     const batchId = dryRun
@@ -204,7 +226,7 @@ export class BulkUploadService {
           await this.processRow(
             user,
             parsed,
-            { dryRun, seenInFile, storedKeys, batchId },
+            { dryRun, seenInFile, storedSlots, batchId },
             { accepted, errors, warnings },
           );
         } catch (error) {
@@ -342,7 +364,7 @@ export class BulkUploadService {
     context: {
       dryRun: boolean;
       seenInFile: Set<string>;
-      storedKeys: Set<string>;
+      storedSlots: StoredSlots;
       batchId: string | null;
     },
     out: {
@@ -396,22 +418,33 @@ export class BulkUploadService {
       return;
     }
 
-    // LP3-03, owner decision (b) of 2026-10-04: a file cannot carry an
-    // activity type until LP4-02's contract change adds the column, so a row in
-    // a typed category (Fuel, Mobile Combustion, Refrigerants) is refused as the
-    // record service would refuse it (`activity_type_required`) — HERE, before
-    // the duplicate check, which would otherwise answer for it ("edit the
-    // existing record") about a row that could never be written.
+    // A typed category (Fuel, Mobile Combustion, Refrigerants) names its fuel
+    // or gas in the activityType column (LP4-02, decision (b) of 2026-10-04);
+    // any other category leaves it blank. Refused HERE, on the column, before
+    // the duplicate check — which would otherwise answer for such a row
+    // ("edit the existing record") about a row that could never be written —
+    // and before the slot key, which a misnamed type must not claim.
     const activityType = dto.activityType ?? null;
-    const types = recordActivityTypesFor(dto.category);
+    const types = recordActivityTypesFor(dto.category).map((t) => t.value);
     if (types.length > 0 && activityType === null) {
       out.errors.push({
         row,
-        column: this.asColumn('category'),
+        column: this.asColumn('activityType'),
+        code: 'invalid',
+        message: `A ${dto.category} record must name its activity type in the activityType column: ${orList(types)}.`,
+      });
+      return;
+    }
+    if (!isRecordActivityTypeAllowed(dto.category, activityType)) {
+      out.errors.push({
+        row,
+        column: this.asColumn('activityType'),
         code: 'invalid',
         message:
-          `A ${dto.category} record must name its activity type (${types.map((t) => t.value).join(', ')}), ` +
-          `and a bulk file cannot carry one yet. Enter ${dto.category} rows on Data Entry.`,
+          `"${quoteCallerText(activityType ?? '')}" is not an activity type of ${dto.category}. ` +
+          (types.length > 0
+            ? `Use one of: ${orList(types)}.`
+            : `Leave the activityType column blank for ${dto.category}.`),
       });
       return;
     }
@@ -441,13 +474,36 @@ export class BulkUploadService {
         return;
       }
       context.seenInFile.add(key);
-      if (context.storedKeys.has(key)) {
+      if (context.storedSlots.keys.has(key)) {
         out.errors.push({
           row,
           column: null,
           code: 'duplicate_existing',
           message:
             'A record already exists for this entity, period and category. Edit it instead of importing it again.',
+        });
+        return;
+      }
+      // TA002, which the insert raises and the preview cannot see: a typed
+      // row in a slot a stored untyped record holds (a pre-LP3-03 Fuel
+      // record), or the reverse — answered with the record service's own
+      // sentence. Within one file the two kinds cannot meet: a typed category
+      // refuses a row without a type above, and an untyped one a row with one.
+      const slot = this.slotOf(
+        dto.subsidiaryId,
+        dto.locationId ?? null,
+        dto.reportingYear,
+        dto.reportingPeriod,
+        canonical,
+        dto.category,
+      );
+      const typed = activityType !== null;
+      if ((typed ? context.storedSlots.untyped : context.storedSlots.typed).has(slot)) {
+        out.errors.push({
+          row,
+          column: null,
+          code: 'duplicate_existing',
+          message: typed ? SLOT_HOLDS_UNTYPED_MESSAGE : SLOT_HOLDS_TYPED_MESSAGE,
         });
         return;
       }
@@ -669,7 +725,7 @@ export class BulkUploadService {
    * the cell, and the in-file key is built from the DTO, whose transform
    * lowercases the id.
    */
-  private async loadStoredKeys(rows: ParsedRow[]): Promise<Set<string>> {
+  private async loadStoredSlots(rows: ParsedRow[]): Promise<StoredSlots> {
     const subsidiaryIds = [
       ...new Set(
         rows
@@ -698,7 +754,8 @@ export class BulkUploadService {
           ),
       ),
     ];
-    if (subsidiaryIds.length === 0 || years.length === 0) return new Set();
+    const slots: StoredSlots = { keys: new Set(), typed: new Set(), untyped: new Set() };
+    if (subsidiaryIds.length === 0 || years.length === 0) return slots;
 
     const stored = await this.prisma.activityRecord.findMany({
       where: {
@@ -723,8 +780,8 @@ export class BulkUploadService {
       // still refuses the duplicate.
       take: BULK_UPLOAD_MAX_ROWS * 10,
     });
-    return new Set(
-      stored.map((r) =>
+    for (const r of stored) {
+      slots.keys.add(
         this.slotKey(
           r.subsidiaryId,
           r.locationId,
@@ -734,8 +791,18 @@ export class BulkUploadService {
           r.category,
           r.activityType,
         ),
-      ),
-    );
+      );
+      const slot = this.slotOf(
+        r.subsidiaryId,
+        r.locationId,
+        r.reportingYear,
+        r.reportingPeriod,
+        r.periodValue,
+        r.category,
+      );
+      (r.activityType === null ? slots.untyped : slots.typed).add(slot);
+    }
+    return slots;
   }
 
   // -- audit -----------------------------------------------------------------
@@ -1032,13 +1099,27 @@ export class BulkUploadService {
     activityType: string | null,
   ): string {
     return [
+      this.slotOf(subsidiaryId, locationId, reportingYear, reportingPeriod, periodValue, category),
+      activityType ?? '',
+    ].join(KEY_SEPARATOR);
+  }
+
+  /** The slot alone — the key without its activity type, as TA002 reads it. */
+  private slotOf(
+    subsidiaryId: string,
+    locationId: string | null,
+    reportingYear: number,
+    reportingPeriod: string,
+    periodValue: string,
+    category: string,
+  ): string {
+    return [
       subsidiaryId,
       locationId ?? '',
       String(reportingYear),
       reportingPeriod,
       periodValue,
       category,
-      activityType ?? '',
     ].join(KEY_SEPARATOR);
   }
 
@@ -1080,6 +1161,7 @@ export class BulkUploadService {
       };
     }
     const locationId = cells.locationId.trim();
+    const activityType = cells.activityType.trim();
     const varianceReason = cells.varianceReason.trim();
     return {
       dto: {
@@ -1091,6 +1173,9 @@ export class BulkUploadService {
         reportingPeriod: cells.reportingPeriod.trim(),
         periodValue: cells.periodValue.trim(),
         category: cells.category.trim(),
+        // Blank means none: an untyped category's record names no type, and a
+        // typed one without it is refused on its own row.
+        ...(activityType === '' ? {} : { activityType }),
         activityValue,
         activityUnit: cells.activityUnit.trim(),
         ...(varianceReason === '' ? {} : { varianceReason }),

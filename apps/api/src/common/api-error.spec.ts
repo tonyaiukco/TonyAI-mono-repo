@@ -19,6 +19,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ActivityTypeSlotConflictError,
+  CalculationStaleError,
   CreateRoleRefusedError,
   DuplicateActivityRecordError,
   EvidenceRequiredError,
@@ -104,6 +105,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   slot_holds_untyped: () => new ActivityTypeSlotConflictError(true),
   slot_holds_typed: () => new ActivityTypeSlotConflictError(false),
   snapshot_immutable: () => new SnapshotImmutableError(),
+  calculation_stale: () => new CalculationStaleError(),
   upload_expired: () => new UploadExpiredError(),
   query_too_broad: () => new QueryTooBroadError(),
   invitation_not_found: () => new ResourceNotFoundError('invitation_not_found'),

@@ -168,7 +168,7 @@ export class SnapshotImmutableError extends ConflictException {
  * the draft again recalculates it, as an audited update.
  */
 export const CALCULATION_STALE_MESSAGE =
-  'This record’s figure no longer matches what the current emission factors give for its inputs. Save the draft again to recalculate it, then submit it.';
+  'This record’s figure no longer matches what the current emission factors give for its inputs. Save the draft again to recalculate it; a submitted record is first returned to its author.';
 
 export class CalculationStaleError extends ConflictException {
   constructor() {

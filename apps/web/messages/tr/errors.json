@@ -36,6 +36,7 @@
     "slot_holds_untyped": "Bu raporlama birimi ve dönem için bu kategoride yakıt ya da gaz belirtilmemiş bir kayıt zaten var. Yakıt ya da gaz bazında kayıt girmeden önce o kaydı düzenleyin veya geçersiz kılın.",
     "slot_holds_typed": "Bu raporlama birimi ve dönem için bu kategoride yakıt ya da gaz belirtilmiş kayıtlar var; bu kayıt da yakıtını ya da gazını belirtmelidir.",
     "snapshot_immutable": "Bu kayıt taslak aşamasını geçti; değeri ve hesaplandığı girdiler artık değiştirilemez. Kaydı yeniden yükleyin.",
+    "calculation_stale": "Bu kaydın değeri, girdileri için güncel emisyon faktörlerinin verdiği sonuçla artık eşleşmiyor. Yeniden hesaplanması için taslağı tekrar kaydedin; gönderilmiş bir kayıt önce yazarına iade edilir.",
     "upload_expired": "Yükleme çok uzun sürdü ve iptal edildi. Dosyayı yeniden yükleyin.",
     "unit_unknown": "Bu birim, hesaplama motorunun tanıdığı bir birim değil.",
     "unit_blocked": "Bu birimle henüz hesaplama yapılamıyor.",
