@@ -56,6 +56,7 @@ import { StorageIntentsService, type ObjectRef } from '../storage/storage-intent
 import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
 import { InaccessibleEntityError } from './errors';
+import { QueryTooBroadError } from '../common/api-error';
 import {
   extensionOf,
   parseRows,
@@ -97,6 +98,23 @@ interface StoredSlots {
   typed: Set<string>;
   untyped: Set<string>;
 }
+
+/** A slot as the database stores it: the slot-kind rule's six columns. */
+interface ClaimedSlot {
+  subsidiaryId: string;
+  locationId: string | null;
+  reportingYear: number;
+  reportingPeriod: ReportingPeriod;
+  periodValue: string;
+  category: Category;
+}
+
+/**
+ * How many stored records the slot check reads at most: a file claims at most
+ * `BULK_UPLOAD_MAX_ROWS` slots, and through the API a slot holds at most nine
+ * (one per refrigerant). Past it the file is refused, never checked in part.
+ */
+const STORED_RECORDS_CAP = BULK_UPLOAD_MAX_ROWS * 10;
 
 /** `a, b or c` — how a refusal lists the accepted values. */
 function orList(values: readonly string[]): string {
@@ -710,60 +728,45 @@ export class BulkUploadService {
   }
 
   /**
-   * Every reporting slot already taken, for the entities and years this file
-   * touches — one query, not one per row.
+   * The stored records in the slots this file claims — one query, not one per
+   * row — read whole or not at all.
    *
-   * `voided` is excluded because the uniqueness index excludes it
-   * (`WHERE status <> 'voided'`): a withdrawn figure does not hold its slot,
-   * and treating it as if it did would refuse the restatement meant to replace
-   * it.
+   * Asked by the file's own slots, not by its entities × years: that
+   * cross-product matched every record of an entity's year, a cap had to
+   * bound it, and a record past the cap was simply missing — a legacy untyped
+   * record holding a row's slot behind ten thousand others let the dry run
+   * pass the row the insert then refused (TA002; Codex F1). Each slot is the
+   * one the row loop below keys on (`claimedSlot`), so the two cannot spell it
+   * differently: ids lowercase through the DTO, the period canonical, a blank
+   * site NULL (`locationId: null` is `IS NULL`).
+   *
+   * `voided` is excluded because the uniqueness index and the slot-kind
+   * trigger exclude it (`status <> 'voided'`): a withdrawn figure does not
+   * hold its slot, and treating it as if it did would refuse the restatement
+   * meant to replace it.
    *
    * This exists because the preview CANNOT see a conflict — Postgres raises it
    * on the insert — so without it a dry run reports a thousand clean rows and
-   * the apply comes back with conflicts.
-   *
-   * Both sides of the comparison are lowercase: Prisma returns the stored
-   * spelling of a `uuid` column, the query below asks by `canonicalUuid` of
-   * the cell, and the in-file key is built from the DTO, whose transform
-   * lowercases the id.
+   * the apply comes back with conflicts. Every entity id reaching here passed
+   * the whole-file access check.
    */
   private async loadStoredSlots(rows: ParsedRow[]): Promise<StoredSlots> {
-    const subsidiaryIds = [
-      ...new Set(
-        rows
-          .map((r) => canonicalUuid(r.cells.subsidiaryId.trim()))
-          // Only ids. A blank or misspelt cell is refused on its own row by
-          // the DTO; sent to Postgres it is not a uuid, and this query runs
-          // OUTSIDE every catch — one such cell raised P2023 and came back as
-          // a 500 with no report. Every id here already passed the access
-          // check in the pre-flight.
-          .filter((id): id is string => id !== null),
-      ),
-    ];
-    const years = [
-      ...new Set(
-        rows
-          .map((r) => strictNumber(r.cells.reportingYear))
-          // Clamped to the DTO's own range before it reaches Prisma. This
-          // query runs OUTSIDE the per-row try/catch, and `strictNumber`
-          // accepts any digit string, so `99999999999` used to surface as a
-          // ConversionError -> 500 with no report and no audit row, from one
-          // cell in one row. Out-of-range years simply match nothing, and the
-          // DTO refuses them as `invalid` on their own row.
-          .filter(
-            (y): y is number =>
-              y !== null && Number.isInteger(y) && y >= 2000 && y <= 2100,
-          ),
-      ),
-    ];
     const slots: StoredSlots = { keys: new Set(), typed: new Set(), untyped: new Set() };
-    if (subsidiaryIds.length === 0 || years.length === 0) return slots;
+    const claimed = new Map<string, ClaimedSlot>();
+    for (const { cells } of rows) {
+      const slot = this.claimedSlot(cells);
+      if (slot) claimed.set(this.slotOf(slot.subsidiaryId, slot.locationId, slot.reportingYear, slot.reportingPeriod, slot.periodValue, slot.category), slot);
+    }
+    if (claimed.size === 0) return slots;
 
+    const branches = [...claimed.values()];
     const stored = await this.prisma.activityRecord.findMany({
       where: {
-        subsidiaryId: { in: subsidiaryIds },
-        reportingYear: { in: years },
+        // Redundant with the branches, and kept: it states the scope plainly
+        // and lets the planner start from the entity.
+        subsidiaryId: { in: [...new Set(branches.map((b) => b.subsidiaryId))] },
         status: { not: ActivityRecordStatus.voided },
+        OR: branches,
       },
       select: {
         subsidiaryId: true,
@@ -774,14 +777,13 @@ export class BulkUploadService {
         category: true,
         activityType: true,
       },
-      // The two `IN` lists are a cross-product: a 1,000-row file naming many
-      // entities and many years matches far more (entity, year) combinations
-      // than the 1,000 slots it actually claims. Bounded so one cheap request
-      // cannot pull a tenant's whole history into memory once real history
-      // lands. Overflow only costs a false-negative pre-check — the insert
-      // still refuses the duplicate.
-      take: BULK_UPLOAD_MAX_ROWS * 10,
+      take: STORED_RECORDS_CAP + 1,
     });
+    // Through the API a slot holds one untyped record or one per activity type
+    // of its category — nine at most (Refrigerants) — so a thousand slots hold
+    // at most 9,000. More means records written around the API; checking part
+    // of them would be a false clean dry run, so the file is refused instead.
+    if (stored.length > STORED_RECORDS_CAP) throw new QueryTooBroadError();
     for (const r of stored) {
       slots.keys.add(
         this.slotKey(
@@ -805,6 +807,28 @@ export class BulkUploadService {
       (r.activityType === null ? slots.untyped : slots.typed).add(slot);
     }
     return slots;
+  }
+
+  /**
+   * The slot a row will claim in the loop below, by the same steps — the
+   * strict parse, the DTO and its validation, the canonical period — or null
+   * when the row is refused before it claims one. Pure: it writes nothing.
+   */
+  private claimedSlot(cells: Record<BulkUploadColumn, string>): ClaimedSlot | null {
+    const mapped = this.mapRow(cells);
+    if ('issue' in mapped) return null;
+    const dto = plainToInstance(CreateActivityRecordDto, mapped.dto);
+    if (validateSync(dto as object, PIPE_OPTIONS).length > 0) return null;
+    const periodValue = canonicalPeriodValue(dto.reportingPeriod, dto.periodValue);
+    if (periodValue === null) return null;
+    return {
+      subsidiaryId: dto.subsidiaryId,
+      locationId: dto.locationId ?? null,
+      reportingYear: dto.reportingYear,
+      reportingPeriod: dto.reportingPeriod,
+      periodValue,
+      category: dto.category,
+    };
   }
 
   // -- audit -----------------------------------------------------------------

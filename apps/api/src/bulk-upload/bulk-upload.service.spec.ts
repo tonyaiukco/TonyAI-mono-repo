@@ -32,6 +32,7 @@ import {
 } from '../activity-records/errors';
 import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { InaccessibleEntityError } from './errors';
+import { QueryTooBroadError } from '../common/api-error';
 import { AuditService } from '../audit/audit.service';
 import { blockedUnitReason } from '../calculations/normalization';
 import { PrismaService } from '../prisma/prisma.service';
@@ -415,7 +416,9 @@ describe('BulkUploadService — duplicate slots the preview cannot see', () => {
     expect(prisma.activityRecord.findMany).toHaveBeenCalledTimes(1);
     const [args] = prisma.activityRecord.findMany.mock.calls[0];
     expect(args.where.subsidiaryId).toEqual({ in: [SUB_1] });
-    expect(args.where.reportingYear).toEqual({ in: [2024] });
+    // By the file's own slots — one branch each — not by entity × year.
+    expect(args.where.OR.map((b: { periodValue: string }) => b.periodValue)).toEqual(['January', 'February', 'March']);
+    expect(args.where).not.toHaveProperty('reportingYear');
   });
 });
 
@@ -2667,6 +2670,101 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       { row: 2, column: null, code: 'duplicate_existing', message: SLOT_HOLDS_TYPED_MESSAGE },
     ]);
     expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  describe('the stored-slot check covers the file\'s own slots, whole (Codex F1)', () => {
+    type Stored = ReturnType<typeof storedIn> & { status: string };
+    /**
+     * Prisma's `findMany` over an in-memory table, for exactly the operators
+     * the importer uses (`in`, `not`, an `OR` of equalities, `take`), in table
+     * order — so a query that matches too much loses rows the way the real one
+     * would.
+     */
+    const table = (rows: Stored[]) => ({ where, take }: { where: Record<string, any>; take?: number }) => {
+      const holds = (r: Record<string, unknown>, field: string, cond: any): boolean =>
+        field === 'OR'
+          ? cond.some((branch: Record<string, unknown>) => Object.entries(branch).every(([f, v]) => r[f] === v))
+          : cond !== null && typeof cond === 'object' && 'in' in cond
+            ? cond.in.includes(r[field])
+            : cond !== null && typeof cond === 'object' && 'not' in cond
+              ? r[field] !== cond.not
+              : r[field] === cond;
+      const matched = rows.filter((r) => Object.entries(where).every(([f, c]) => holds(r, f, c)));
+      return Promise.resolve(matched.slice(0, take ?? matched.length));
+    };
+    const legacyFuel: Stored = { ...storedIn('Fuel', null), status: 'draft' };
+    /** Records of this entity and year in a slot the file does not claim. */
+    const elsewhere = (n: number): Stored[] =>
+      Array.from({ length: n }, (_, i) => ({
+        ...storedIn('Refrigerants', `t${i}`),
+        periodValue: 'February',
+        status: 'draft',
+      }));
+
+    it('finds the conflict however many unrelated records the entity and year hold', async () => {
+      // Ten thousand records elsewhere used to fill the capped query, and the
+      // legacy record holding this row's slot fell off its end: the dry run
+      // passed the row and the apply hit TA002.
+      const { prisma, records, service } = build();
+      prisma.activityRecord.findMany.mockImplementation(table([...elsewhere(BULK_UPLOAD_MAX_ROWS * 10), legacyFuel]));
+
+      const report = await service.import(
+        dataEntry(),
+        csvFile([row({ ...FUEL, activityType: 'diesel' })]),
+        DRY,
+      );
+
+      expect(report.errors).toEqual([
+        { row: 2, column: null, code: 'duplicate_existing', message: SLOT_HOLDS_UNTYPED_MESSAGE },
+      ]);
+      expect(records.previewCreate).not.toHaveBeenCalled();
+    });
+
+    it('asks for exactly the slots the file claims, in the database\'s spelling', async () => {
+      const { prisma, service } = build();
+
+      await service.import(
+        dataEntry(),
+        csvFile([
+          row({ ...FUEL, activityType: 'diesel', periodValue: ' january ', locationId: LOC_A.toUpperCase() }),
+          row({ ...FUEL, activityType: 'gas_oil', periodValue: 'January', locationId: LOC_A }),
+          row({ periodValue: 'March' }),
+        ]),
+        DRY,
+      );
+
+      expect(prisma.activityRecord.findMany).toHaveBeenCalledTimes(1);
+      const [{ where, take }] = prisma.activityRecord.findMany.mock.calls[0];
+      expect(where.status).toEqual({ not: 'voided' });
+      // One branch per slot: the two fuels of one month share theirs.
+      expect(where.OR).toEqual([
+        { subsidiaryId: SUB_1, locationId: LOC_A, reportingYear: 2024, reportingPeriod: 'monthly', periodValue: 'January', category: 'Fuel' },
+        { subsidiaryId: SUB_1, locationId: null, reportingYear: 2024, reportingPeriod: 'monthly', periodValue: 'March', category: 'Electricity' },
+      ]);
+      expect(take).toBe(BULK_UPLOAD_MAX_ROWS * 10 + 1);
+    });
+
+    it('refuses the whole file rather than check part of it, when its own slots hold more than the cap', async () => {
+      // Through the API a slot holds at most one record per activity type
+      // (nine refrigerants), so this takes records written around it. A
+      // partial answer would be the false clean dry run again.
+      const { prisma, records, service } = build();
+      const junk = elsewhere(BULK_UPLOAD_MAX_ROWS * 10 + 1).map((r) => ({ ...r, periodValue: 'January' }));
+      prisma.activityRecord.findMany.mockImplementation(table(junk));
+
+      for (const options of [DRY, { dryRun: false }]) {
+        await expect(
+          service.import(
+            dataEntry(),
+            csvFile([row({ category: 'Refrigerants', activityType: 'R-32', activityUnit: 'kg' })]),
+            options,
+          ),
+        ).rejects.toBeInstanceOf(QueryTooBroadError);
+      }
+      expect(records.previewCreate).not.toHaveBeenCalled();
+      expect(records.create).not.toHaveBeenCalled();
+      expect(prisma.importBatch.create).not.toHaveBeenCalled();
+    });
   });
 
   it('applies the slot-kind rule per slot: an untyped record in another month, site or category refuses nothing', async () => {
