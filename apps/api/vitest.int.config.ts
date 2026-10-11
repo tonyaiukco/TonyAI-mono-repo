@@ -2,7 +2,14 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { defineConfig, type Plugin } from 'vitest/config';
-import { RUNTIME_ROLE, randomRuntimePassword, runtimeUrlFrom, urlUser } from '../../packages/db/scripts/runtime-role.mjs';
+import {
+  FACTOR_LOADER_ROLE,
+  RUNTIME_ROLE,
+  factorLoaderUrlFrom,
+  randomRuntimePassword,
+  runtimeUrlFrom,
+  urlUser,
+} from '../../packages/db/scripts/runtime-role.mjs';
 
 // PostgreSQL integration tests (LP0-03). They run against a real database with
 // the repository's migrations applied — the local Supabase stack, or in CI the
@@ -30,6 +37,17 @@ process.env.INT_RUNTIME_DATABASE_URL = runtimeGiven
     ? runtimeUrlFrom(ownerUrl, randomRuntimePassword())
     : '';
 process.env.INT_PROVISION_RUNTIME_LOGIN = runtimeGiven ? '' : '1';
+// The factor loader's login (LP4-02), the same way: FACTOR_LOADER_DATABASE_URL
+// when it names the role (a developer's own, kept), else derived from the
+// owner with a password for this run (INT_PROVISION_FACTOR_LOADER_LOGIN).
+const loaderUrl = process.env.FACTOR_LOADER_DATABASE_URL ?? '';
+const loaderGiven = Boolean(loaderUrl) && urlUser(loaderUrl) === FACTOR_LOADER_ROLE;
+process.env.INT_FACTOR_LOADER_DATABASE_URL = loaderGiven
+  ? loaderUrl
+  : ownerUrl
+    ? factorLoaderUrlFrom(ownerUrl, randomRuntimePassword())
+    : '';
+process.env.INT_PROVISION_FACTOR_LOADER_LOGIN = loaderGiven ? '' : '1';
 // The database is local (global-setup refuses any other) and holds the seed's
 // placeholder factor library, so the application the suite boots calculates
 // from placeholders, as the local API does (LP3-03, K3). Specs proving the

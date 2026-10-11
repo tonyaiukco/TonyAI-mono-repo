@@ -3,8 +3,10 @@ import { resolve } from 'node:path';
 import { PrismaClient } from '@tonyai/db';
 import { createClient } from '@supabase/supabase-js';
 import {
+  FACTOR_LOADER_ROLE,
   RUNTIME_ROLE,
   isLoopbackUrl,
+  provisionLocalFactorLoaderLogin,
   provisionLocalRuntimeLogin,
   urlUser,
 } from '../../../../packages/db/scripts/runtime-role.mjs';
@@ -25,7 +27,8 @@ export default async function setup(): Promise<void> {
   // Both derived in vitest.int.config.ts from DATABASE_URL / DIRECT_URL.
   const url = process.env.INT_OWNER_DATABASE_URL;
   const runtimeUrl = process.env.INT_RUNTIME_DATABASE_URL;
-  if (!url || !runtimeUrl) {
+  const loaderUrl = process.env.INT_FACTOR_LOADER_DATABASE_URL;
+  if (!url || !runtimeUrl || !loaderUrl) {
     throw new Error(
       'DATABASE_URL is not set. Start the local stack (`pnpm setup`) so apps/api/.env exists, or export it.',
     );
@@ -42,7 +45,7 @@ export default async function setup(): Promise<void> {
   // `isLoopbackUrl`, not the hostname alone: Prisma honours a `?host=`
   // parameter over the URL's host (LP1-03 `security-rls`).
   const host = new URL(url).hostname;
-  if (!(isLoopbackUrl(url) && isLoopbackUrl(runtimeUrl)) && process.env.INT_TEST_ALLOW_NONLOCAL_DB !== '1') {
+  if (!(isLoopbackUrl(url) && isLoopbackUrl(runtimeUrl) && isLoopbackUrl(loaderUrl)) && process.env.INT_TEST_ALLOW_NONLOCAL_DB !== '1') {
     throw new Error(
       `Refusing to run integration tests against non-local host "${host}". ` +
         'Set INT_TEST_ALLOW_NONLOCAL_DB=1 only for a disposable database.',
@@ -88,6 +91,20 @@ export default async function setup(): Promise<void> {
       throw new Error(`Cannot connect as ${RUNTIME_ROLE}: ${String(err)}`, { cause: err });
     } finally {
       await runtime.$disconnect();
+    }
+
+    // The factor loader's login (LP4-02), likewise.
+    if (process.env.INT_PROVISION_FACTOR_LOADER_LOGIN === '1') {
+      await provisionLocalFactorLoaderLogin(prisma, url, decodeURIComponent(new URL(loaderUrl).password));
+    }
+    const loader = new PrismaClient({ datasourceUrl: loaderUrl });
+    try {
+      const [{ user }] = await loader.$queryRaw<{ user: string }[]>`SELECT session_user AS "user"`;
+      if (user !== FACTOR_LOADER_ROLE) throw new Error(`the loader connection logs in as ${user}, not ${FACTOR_LOADER_ROLE}`);
+    } catch (err) {
+      throw new Error(`Cannot connect as ${FACTOR_LOADER_ROLE}: ${String(err)}`, { cause: err });
+    } finally {
+      await loader.$disconnect();
     }
 
     // LP4-01's tests create real Supabase Auth users (invitations); a run

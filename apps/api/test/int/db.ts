@@ -40,6 +40,14 @@ export function connectOwner(connections = 1): PrismaService {
   return clientFor(process.env.INT_OWNER_DATABASE_URL, connections);
 }
 
+/**
+ * The same, logged in as the factor library's loader (LP4-02): what the
+ * loader CLI connects as, for proving its grants, policies and guards.
+ */
+export function connectLoader(connections = 1): PrismaService {
+  return clientFor(process.env.INT_FACTOR_LOADER_DATABASE_URL, connections);
+}
+
 function clientFor(raw: string | undefined, connections: number): PrismaService {
   const url = new URL(raw ?? '');
   url.searchParams.set('connection_limit', String(connections));
