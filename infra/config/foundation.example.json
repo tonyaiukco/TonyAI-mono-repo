@@ -12,6 +12,7 @@
     "owner_object_id": "<signed-in-owner-object-uuid>",
     "deployer_object_id": "",
     "runtime_secrets_ready": false,
-    "apps_ready": false
+    "apps_ready": false,
+    "smtp_secret_ready": false
   }
 }

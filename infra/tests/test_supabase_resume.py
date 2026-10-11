@@ -100,4 +100,4 @@ class ResumeTests(unittest.TestCase):
         desired=api.call_args_list[1].args[2]
         self.assertFalse(desired['external_github_enabled'])
         self.assertTrue(desired['disable_signup'])
-        self.assertEqual(desired['uri_allow_list'],TARGET['web_origin']+','+TARGET['web_origin']+'/login')
+        self.assertEqual(desired['uri_allow_list'],TARGET['web_origin']+','+TARGET['web_origin']+'/login,'+TARGET['web_origin']+'/auth/confirm')

@@ -293,3 +293,153 @@ run "import_runtime_limit_rejected" {
   }
   expect_failures = [azapi_resource.app]
 }
+
+run "mail_absent_is_unconfigured" {
+  command = plan
+  assert {
+    condition     = !contains([for e in local.api_env : e.name], "APP_URL") && !contains(keys(local.secret_versions), "smtp-password")
+    error_message = "No partial mail settings before the provider decision."
+  }
+}
+run "mail_api_only_exact_reference" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      mail = {
+        host = "smtp.example.invalid", port = 587, secure = false, user = "synthetic-user",
+        from = "sender@example.invalid", password_secret_version = "cccccccccccccccccccccccccccccccc"
+      }
+    }
+  }
+  assert {
+    condition     = alltrue([for k, v in { SMTP_HOST = "smtp.example.invalid", SMTP_PORT = "587", SMTP_SECURE = "false", SMTP_USER = "synthetic-user", MAIL_FROM = "sender@example.invalid", APP_URL = "https://tonyai-staging-web.example.germanywestcentral.azurecontainerapps.io" } : lookup({ for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.name => try(e.value, "") }, k, "missing") == v])
+    error_message = "All plain mail settings must reach the API together, bound to its web origin."
+  }
+  assert {
+    condition     = [for e in azapi_resource.app["api"].body.properties.template.containers[0].env : e.secretRef if e.name == "SMTP_PASSWORD"] == ["smtp-password"] && alltrue([for e in local.mail_env : !can(e.value) if e.name == "SMTP_PASSWORD"])
+    error_message = "SMTP password must only be a secret reference."
+  }
+  assert {
+    condition     = [for s in azapi_resource.app["api"].body.properties.configuration.secrets : s.keyVaultUrl if s.name == "smtp-password"] == ["https://tonyai-staging-kv.vault.azure.net/secrets/smtp-password/cccccccccccccccccccccccccccccccc"] && alltrue([for s in azapi_resource.app["api"].body.properties.configuration.secrets : s.identity == local.identity_ids["api"] && !can(s.value)]) && alltrue([for e in azapi_resource.app["web"].body.properties.template.containers[0].env : !contains(["SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "SMTP_USER", "SMTP_PASSWORD", "MAIL_FROM", "APP_URL"], e.name)]) && length(azapi_resource.app["web"].body.properties.configuration.secrets) == 0
+    error_message = "SMTP stays scoped to the API identity and exact vault version, never the web."
+  }
+}
+
+run "mail_host_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      mail = {
+        host = "127.0.0.1", port = 587, secure = false, user = "synthetic-user",
+        from = "sender@example.invalid", password_secret_version = "cccccccccccccccccccccccccccccccc"
+      }
+    }
+  }
+  expect_failures = [var.release]
+}
+
+run "mail_port_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      mail = {
+        host = "smtp.example.invalid", port = 0, secure = false, user = "synthetic-user",
+        from = "sender@example.invalid", password_secret_version = "cccccccccccccccccccccccccccccccc"
+      }
+    }
+  }
+  expect_failures = [var.release]
+}
+
+run "mail_user_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      mail = {
+        host = "smtp.example.invalid", port = 587, secure = false, user = "",
+        from = "sender@example.invalid", password_secret_version = "cccccccccccccccccccccccccccccccc"
+      }
+    }
+  }
+  expect_failures = [var.release]
+}
+
+run "mail_from_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      mail = {
+        host = "smtp.example.invalid", port = 587, secure = false, user = "synthetic-user",
+        from = "bad", password_secret_version = "cccccccccccccccccccccccccccccccc"
+      }
+    }
+  }
+  expect_failures = [var.release]
+}
+
+run "mail_version_refused" {
+  command = plan
+  variables {
+    release = {
+      source_sha                     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      release_id                     = "r001"
+      supabase_project_ref           = "abcdefghijklmnopqrst"
+      api_digest                     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      web_digest                     = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      database_secret_version        = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      backend_secret_version         = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      storage_cleanup_hold           = false
+      storage_sweep_interval_seconds = 300
+      mail = {
+        host = "smtp.example.invalid", port = 587, secure = false, user = "synthetic-user",
+        from = "sender@example.invalid", password_secret_version = "latest"
+      }
+    }
+  }
+  expect_failures = [var.release]
+}

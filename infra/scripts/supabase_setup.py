@@ -53,10 +53,23 @@ def run(args):
     vault = Vault(config['vault'])
     journal = Journal(args.journal, config)
     try:
+        reconcile_only = getattr(args, 'reconcile_auth_only', False)
+        if reconcile_only and not journal.data.get('configured'):
+            raise SafeFailure('Auth-only reconciliation requires a completed setup journal.')
         ref = ensure_project(api, vault, journal)
         project = api('/v1/projects/' + ref)
         if project.get('status') != 'ACTIVE_HEALTHY':
             raise SafeFailure('Project is still provisioning; wait, then resume the same journal.')
+        if reconcile_only:
+            public, _ = select_keys(api('/v1/projects/' + ref + '/api-keys?reveal=true'), ref)
+            keys = api('/v1/projects/' + ref + '/config/auth/signing-keys')['keys']
+            active = [key for key in keys if key.get('status') == 'in_use'
+                      and key.get('algorithm') in ('ES256', 'RS256')]
+            if len(active) != 1:
+                raise SafeFailure('Auth reconciliation needs exactly one active asymmetric signing key; inspect before rotating.')
+            configure_auth(api, ref, config['web_origin'], public, active[0]['id'])
+            print('PASS: existing hosted Auth policy and public JWKS reconciled; no secret transfer or key rotation.')
+            return
         if journal.data.get('configured'):
             print('PASS: initial setup already completed; use verification/rotation runbooks for subsequent changes.')
             return
@@ -75,6 +88,8 @@ if __name__ == '__main__':
     parser.add_argument('--config', required=True)
     parser.add_argument('--journal', required=True)
     parser.add_argument('--foundation', required=True)
+    parser.add_argument('--reconcile-auth-only', action='store_true',
+                        help='Reconcile Auth on an already configured project; no provisioning or secret transfer.')
     parser.add_argument('--billing-approved', action='store_true', required=True)
     args = parser.parse_args()
     try:

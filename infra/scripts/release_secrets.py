@@ -10,6 +10,7 @@ from secure_transport import Vault
 from foundation_contract import validate_foundation
 import re
 from supabase_keys import validate_backend
+from mail_settings import validate_smtp_password
 from terraform_run import validate_release, clean_environment
 
 
@@ -17,17 +18,22 @@ def verify(inputs):
     foundation, release = validate_release(inputs)
     vault = Vault(foundation['vault_name'])
     project = release['supabase_project_ref']
-    for name, version in [('database-url', release['database_secret_version']),
-                          ('supabase-service-role-key', release['backend_secret_version'])]:
+    versions = {'database-url': release['database_secret_version'],
+                'supabase-service-role-key': release['backend_secret_version']}
+    if 'mail' in release:
+        versions['smtp-password'] = release['mail']['password_secret_version']
+    for name, version in versions.items():
         record = vault.get(name, version)
         if not record:
             raise SafeFailure('Selected secret version is missing.')
         vault.identifier(record, name, version)
         if name == 'database-url':
             validate_pooler(record['value'], project, 6543)
+        elif name == 'smtp-password':
+            validate_smtp_password(record['value'])
         else:
             validate_backend(record['value'], project)
-    print('PASS: selected versions are enabled, project-bound and use strict pooler TLS.')
+    print('PASS: selected versions are enabled; database/backend are project-bound with strict pooler TLS; mail password is nonempty.')
 
 
 def main():
@@ -36,7 +42,7 @@ def main():
     parser.add_argument('--inputs', help='Complete release manifest for verification or rotation.')
     parser.add_argument('--foundation', help='Initial runtime storage only: foundation configuration.')
     parser.add_argument('--project-ref', help='Initial runtime storage only: hosted project reference.')
-    parser.add_argument('--name', choices=['database-url', 'direct-url', 'supabase-service-role-key'])
+    parser.add_argument('--name', choices=['database-url', 'direct-url', 'supabase-service-role-key', 'smtp-password'])
     args = parser.parse_args()
     clean_environment()
     if args.foundation:
@@ -61,6 +67,8 @@ def main():
     value = getpass.getpass('New secret value (hidden, memory only): ')
     if args.name.endswith('url'):
         validate_pooler(value, project, 6543 if args.name == 'database-url' else 5432)
+    elif args.name == 'smtp-password':
+        validate_smtp_password(value)
     else:
         validate_backend(value, project)
     identity = Vault(foundation['vault_name']).put(args.name, value, {'project': project})

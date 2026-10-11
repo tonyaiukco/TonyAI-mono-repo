@@ -15,8 +15,12 @@ variable "release" {
     source_sha              = string, release_id = string, supabase_project_ref = string,
     api_digest              = string, web_digest = string,
     database_secret_version = string, backend_secret_version = string,
-    runtime_limits          = optional(map(number), {})
-    storage_cleanup_hold    = bool, storage_sweep_interval_seconds = number
+    mail = optional(object({
+      host = string, port = number, secure = bool, user = string,
+      from = string, password_secret_version = string
+    }))
+    runtime_limits       = optional(map(number), {})
+    storage_cleanup_hold = bool, storage_sweep_interval_seconds = number
   })
   validation {
     condition     = alltrue([for digest in [var.release.api_digest, var.release.web_digest] : can(regex("^sha256:[a-f0-9]{64}$", digest))]) && alltrue([for version in [var.release.database_secret_version, var.release.backend_secret_version] : can(regex("^[a-f0-9]{32}$", version))]) && can(regex("^[a-z]{20}$", var.release.supabase_project_ref)) && can(regex("^[a-f0-9]{40}$", var.release.source_sha)) && can(regex("^[a-z][a-z0-9-]{0,29}$", var.release.release_id))
@@ -34,6 +38,18 @@ variable "release" {
     error_message = "Runtime limits accept only registered positive integer budgets."
   }
 
+  validation {
+    condition = var.release.mail == null ? true : (
+      can(regex("^[a-z0-9][a-z0-9.-]*[a-z0-9]$", var.release.mail.host)) &&
+      strcontains(var.release.mail.host, ".") && !endswith(var.release.mail.host, ".localhost") &&
+      !can(regex("^[0-9.]+$", var.release.mail.host)) && length(var.release.mail.host) <= 253 &&
+      var.release.mail.port >= 1 && var.release.mail.port <= 65535 && floor(var.release.mail.port) == var.release.mail.port &&
+      can(regex("^[^\\s<>]{1,256}$", var.release.mail.user)) &&
+      can(regex("^[^\\s<>@]+@[^\\s<>@]+\\.[^\\s<>@]+$", var.release.mail.from)) &&
+      can(regex("^[a-f0-9]{32}$", var.release.mail.password_secret_version))
+    )
+    error_message = "Mail needs a provider DNS host, valid port, username, sender and exact Key Vault password version."
+  }
 }
 # Operational settings are plain values, never Key Vault secrets.
 locals {
@@ -44,8 +60,17 @@ locals {
   web_origin      = "https://${local.stem}-web.${var.foundation.default_domain}"
   supabase_url    = "https://${var.release.supabase_project_ref}.supabase.co"
   identity_ids    = { for kind in ["api", "web"] : kind => "${local.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${local.stem}-${kind}" }
-  secret_versions = { database-url = var.release.database_secret_version, supabase-service-role-key = var.release.backend_secret_version }
+  secret_versions = merge({ database-url = var.release.database_secret_version, supabase-service-role-key = var.release.backend_secret_version }, var.release.mail == null ? {} : { smtp-password = var.release.mail.password_secret_version })
   runtime_limits  = merge(jsondecode(file("${path.module}/../../config/runtime-limits.json")), var.release.runtime_limits)
+  mail_env = var.release.mail == null ? [] : [
+    { name = "SMTP_HOST", value = var.release.mail.host },
+    { name = "SMTP_PORT", value = tostring(var.release.mail.port) },
+    { name = "SMTP_SECURE", value = tostring(var.release.mail.secure) },
+    { name = "SMTP_USER", value = var.release.mail.user },
+    { name = "SMTP_PASSWORD", secretRef = "smtp-password" },
+    { name = "MAIL_FROM", value = var.release.mail.from },
+    { name = "APP_URL", value = local.web_origin }
+  ]
   api_env = concat([
     { name = "NODE_ENV", value = "production" }, { name = "PORT", value = "3001" },
     { name = "NODE_OPTIONS", value = "--max-old-space-size=768" },
@@ -56,7 +81,7 @@ locals {
     { name = "SUPABASE_JWT_SCHEME", value = "jwks" }, { name = "WEB_ORIGIN", value = local.web_origin },
     { name = "DATABASE_URL", secretRef = "database-url" },
     { name = "SUPABASE_SERVICE_ROLE_KEY", secretRef = "supabase-service-role-key" }
-  ], [for k, v in local.runtime_limits : { name = k, value = tostring(v) }])
+  ], local.mail_env, [for k, v in local.runtime_limits : { name = k, value = tostring(v) }])
   web_env = [
     { name = "NODE_ENV", value = "production" }, { name = "PORT", value = "3000" },
     { name = "HOSTNAME", value = "0.0.0.0" }, { name = "SUPABASE_URL_INTERNAL", value = local.supabase_url }

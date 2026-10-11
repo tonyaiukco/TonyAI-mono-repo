@@ -16,9 +16,9 @@ az role assignment list --scope "$(foundation_output vaultId)" --all --query '[]
 ```
 
 Expected: Germany West Central; ACR Basic/admin false; Key Vault RBAC/purge
-protection true; API's two **references** with API identity; no web secrets.
+protection true; API's two database/backend **references**, plus `smtp-password` when configured, with API identity; no web secrets.
 Inspect the secret-level role assignments in the portal as well: API has Secrets
-User on the two runtime secrets only; `direct-url` has no API/web/deployer grant.
+User on the two runtime secrets and, when enabled, `smtp-password` only; `direct-url` has no API/web/deployer grant.
 Confirm the selected `database-url` uses `tonyai_runtime.<project-ref>` and the
 owner `direct-url` is absent from every API/job environment and secret reference.
 Run runbook 05's [Runtime connection and privilege evidence](05-rotation.md#runtime-connection-and-privilege-evidence)
@@ -310,3 +310,166 @@ shared keys, SAS/access keys or inline Container App secrets. Never attach raw
 state, plans, token-bearing responses or diagnostic logs as evidence. Record a
 sanitized assertion and reviewer, not secret material. Refresh/read behavior is
 configuration-reviewed offline; this live check closes that separate evidence gap.
+
+## 4.6 LP4-01 hosted Auth and first organisation (owner-run)
+
+These are **unexecuted acceptance steps**, not results from local GoTrue or mock
+CI. Record each result against the deployed source SHA, image digests, project ref,
+UTC time and named operator in the private release evidence. No JWT, refresh token,
+password, API key, action link, address list or raw Auth response belongs in that
+record. Repeat after an Auth upgrade or project recreation. A failed check blocks
+hosted lifecycle acceptance; do not change the API guard or weaken Auth settings
+to make it pass.
+
+### Auth configuration and independent policy readback
+
+Re-run runbook 02's `supabase_setup.py` with **`--reconcile-auth-only`**, the same
+completed journal and origin (without this flag completed setup returns early):
+
+```bash
+python3 infra/scripts/supabase_setup.py --config .infra-local/staging/supabase.json \
+  --foundation .infra-local/staging/foundation.json --journal .infra-local/staging/supabase-journal.json \
+  --billing-approved --reconcile-auth-only
+```
+
+Use the actual private paths selected in runbook 02. The flag refuses an incomplete
+journal and does not provision, transfer credentials or rotate signing keys.
+ Its `configure_auth` performs a management PATCH only on drift, then
+`auth_settings.py` checks a fresh management GET, public settings and public JWKS.
+Keep management responses in process memory (they may contain credentials).
+Record PASS only after both probes succeed. Confirm these dashboard values too:
+
+| Setting | Required result |
+|---|---|
+| Public signup / email provider | Off / **on** (turning off the provider breaks password sign-in) |
+| Minimum password / email OTP expiry | 12 characters / 3600 seconds |
+| Confirm email changes / email confirmations | Double confirmation / off |
+| Secure password change / password-changed notification | Off / off (disable/enable rotates the password) |
+| Site URL / allowed redirects | Exact web origin / origin, `/login`, `/auth/confirm`, no wildcard |
+
+The management API calls the password setting `password_min_length`, expiry
+`mailer_otp_exp`, and disabled confirmations `mailer_autoconfirm=true`.
+See [Supabase's management config contract](https://supabase.com/docs/reference/api/v1-update-auth-service-config)
+and [notification settings](https://supabase.com/docs/guides/auth/auth-email-templates).
+Public `/auth/v1/settings` exposes only part of this policy; it cannot prove the
+password/expiry/notification settings. K5's two emails come from the API renderer,
+never GoTrue's template delivery.
+
+### Hosted database collation (before the onboarding migration)
+
+Using runbook 05's exact-version `owner-psql`, run these read-only queries:
+
+```sql
+SELECT current_database(), version();
+SELECT datlocprovider, datcollate, datctype,
+       to_jsonb(d)->>'datlocale' AS locale,
+       to_jsonb(d)->>'daticulocale' AS icu_locale,
+       datcollversion
+  FROM pg_database d WHERE datname = current_database();
+SELECT a.attcollation::regcollation AS email_collation,
+       c.collprovider, c.collcollate, c.collctype, c.collversion
+  FROM pg_attribute a JOIN pg_collation c ON c.oid = a.attcollation
+ WHERE a.attrelid = 'public.profiles'::regclass AND a.attname = 'email';
+SELECT lower(U&'\0130') = U&'i\0307' AS dotted_i_matches_js,
+       lower(U&'\1E9E') = U&'\00DF' AS capital_sharp_s_matches_js,
+       lower(btrim(' Example@INVALID ')) = 'example@invalid' AS ascii_matches;
+```
+
+On a brand-new project run the database query before migration and the column
+query once `profiles` exists. Record the effective provider/locale and versions,
+including whether the column uses the database default (`collprovider=d`). The
+`profiles_email_normalised` CHECK was measured under **ICU**, not libc or `C`.
+All three probes must be true; they are examples, not exhaustive Unicode proof.
+If the effective provider is not ICU (`i`), or any probe disagrees, stop and have
+the schema owner qualify that hosted collation against JS `normaliseEmail` before
+onboarding. Do not alter collation or normalise customer data speculatively.
+
+### Hosted GoTrue ban-on-create and refresh AMR
+
+Use a disposable **staging-only Auth identity**, with a unique owner-controlled
+address, no tenant/profile, and a random password of at least 12 characters
+including all character classes. Use the reviewed `@supabase/supabase-js` client
+in a private owner process (`persistSession:false`, `autoRefreshToken:false`),
+loading the selected backend key and public browser key privately; never paste
+either into this document, a command argument or a JWT inspection website.
+
+1. With the admin client call `auth.admin.createUser({ email, password,
+   email_confirm: true, ban_duration: '876000h' })` (the application's born-banned
+   duration). Retain the returned ID privately for exact cleanup. Read it back with
+   `auth.admin.getUserById(id)` and require `banned_until` in the future. Try
+   `auth.signInWithPassword({ email, password })` using a separate public client:
+   require failure with `user_banned` and no session. No invitation or reset is
+   sent by this probe. If creation's response is lost, reconcile this exact unique
+   address privately before proceeding; never delete by a broad prefix.
+2. Unban with `auth.admin.updateUserById(id, { ban_duration: 'none', password:
+   newRandomPassword })`, then sign in with that new password. Require a session;
+   read the JWT payload **locally in memory** and select numeric
+   `claims.amr[].timestamp` values (the guard uses the earliest). Require a
+   nonempty numeric set and retain its minimum, `iat`, and `session_id` privately.
+3. Wait at least two seconds so a fresh `iat` can be distinguished, then call
+   `auth.refreshSession({ refresh_token: session.refresh_token })`. Require the
+   same `sub` and `session_id`, a strictly newer numeric `iat`, and the **same
+   nonempty earliest numeric AMR timestamp**. Repeat using the newly returned
+   refresh token, after another two seconds. Do not reuse the old refresh token.
+   Record only the AMR timestamps, `iat` timestamps, equality booleans and PASS/FAIL,
+   not the payload or tokens. Missing, string-valued or reshaped timestamps fail
+   this check: the guard would otherwise silently fall back to `iat` (F1,
+   follow-up (19)), allowing a refresh to hide a session's original sign-in time.
+4. In a `finally` cleanup, delete **only** the ID created by this probe with
+   `auth.admin.deleteUser(id)`, and verify it is absent. Record cleanup success;
+   on failure preserve the exact ID privately for owner retry and do not call the
+   probe complete. Never reuse a real person's account for this check.
+
+### First organisation and delivered mail
+
+After the processor decision, runbook 03's mail wiring, migrations and the checks
+above succeed, follow README [Account lifecycle](../../README.md#account-lifecycle-lp4-01).
+On Node 22, in a private owner shell at the deployed source SHA, load the selected
+**owner session** URL into `DIRECT_URL` (strict TLS and the repository CA), together
+with `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and the seven API SMTP settings.
+Use hidden input/approved secret injection, never URLs or passwords in shell
+arguments/history. `APP_URL` must equal the deployed web origin. This is the D18
+operator CLI, never the runtime API login or the seed.
+
+First run the same command without `--apply` to inspect the dry run, then:
+
+```bash
+pnpm onboarding provision --apply --allow-remote --operator='<operator-email>' \
+  --legal-name='<holding-legal-name>' --country='<ISO-country>' \
+  --geography-code='<approved-geography>' --admin-email='<first-admin-email>' \
+  --admin-name='<first-admin-name>' --language=en
+```
+
+Choose `tr` for a Turkish first invitation. Use the real approved metadata in the
+private terminal only. The CLI reads `DIRECT_URL`, audits `diff.operator`, and a
+re-run completes partial work/re-sends an unaccepted invitation. Inspect its report;
+an Auth/SMTP failure is not success. For an existing organisation use the returned
+`--organisation-id` as documented in README. Never grant a customer the operator
+connection or run the local demo seed.
+
+Open the delivered invitation at `<web-origin>/auth/confirm`, choose a password
+(at least 12 characters), then verify a fresh sign-in and organisation access.
+Request password reset through the web, open the delivered recovery link, change
+the password and sign in again. Exercise both TR and EN using dedicated acceptance
+users, and the four roles as LP4-01 requires. Record message kind/language, verified
+sender/domain, delivery time, one-hour expiry policy, final sign-in outcome and
+sanitised audit correlation; no link/token/address. Check a disabled disposable
+member cannot sign in or use a pre-disable/refreshed token after re-enable, and
+that disabling does **not** send a GoTrue password-change notification. Run the
+operator's `reconcile` if Auth sync remains pending; preserve the failure evidence.
+
+| Evidence item | Result to record (initially NOT RUN) |
+|---|---|
+| Exact Auth policy and repeated reconciliation | PASS/FAIL, same origin/providers, no second write |
+| Effective hosted collation | Provider, locale/version, boolean probes, schema-owner qualification if needed |
+| Born-banned createUser | Future ban, `user_banned`, no session, exact-ID cleanup |
+| Two refreshes keep sign-in AMR | Numeric AMR present, same earliest value and session, newer iat each time |
+| First organisation | Dry-run/apply outcome, audited operator and organisation correlation privately |
+| Invitation + reset, TR + EN | Delivered from verified sender, correct origin, password/sign-in outcomes |
+| Disable/enable | Old-session refusal, fresh sign-in, no password-change notification |
+
+The current CI stack starts with `-x studio,mailpit,realtime,edge-runtime,supavisor`.
+No existing check needs mailpit: `onboarding.int.spec.ts` supplies an in-memory
+`MAIL_TRANSPORT`. The future emailed-link browser E2E is still follow-up (2);
+mock mail does not establish SMTP delivery. Do not enable mailpit until a check
+actually consumes it, and do not label this table PASS from an infra CI run.

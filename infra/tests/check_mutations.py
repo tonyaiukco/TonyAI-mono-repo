@@ -11,6 +11,11 @@ import tempfile
 
 INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
+    ('mail env drift check skipped', 'deploy_apps.py', "        verify_mail_environment(container.get('env', []), foundation, release, kind)", '        pass'),
+    ('mail password validation skipped', 'mail_settings.py', "    if not isinstance(value, str) or not value.strip() or '\\n' in value or '\\r' in value:", '    if False:'),
+    ('auth lifecycle readback skipped', 'supabase_auth.py', '    validate_managed_auth_settings(actual, origin)', '    pass'),
+    ('completed auth reconciliation skipped', 'supabase_setup.py', '        if reconcile_only:', '        if False:'),
+
     ('runtime drain callback skipped', 'terraform_run.py', '                before_apply()', '                pass'),
     ('runtime confirmation skipped', 'terraform_run.py', "            if action != 'approved-apply':", '            if False:'),
     ('runtime deploy drain skipped', 'deploy_apps.py', "before_apply=lambda: drain(inputs['foundation'], inputs['release']['release_id'],\n                                          attempts=(grace + 30000 + 1999) // 2000)", 'before_apply=lambda: None'),
@@ -167,7 +172,7 @@ def main():
             # New provenance tests read the actual migration/lockfile inputs; the
             # local-only guard test executes its copied script, never the original.
             root = INFRA.parent
-            for relative in ('pnpm-lock.yaml', 'scripts/rls-probes.mjs', 'scripts/compose-dev.sh', 'packages/db/scripts/runtime-role.mjs',
+            for relative in ('supabase/config.toml', 'pnpm-lock.yaml', 'scripts/rls-probes.mjs', 'scripts/compose-dev.sh', 'packages/db/scripts/runtime-role.mjs',
                              'apps/api/src/common/runtime-config.ts', 'apps/api/Dockerfile', 'apps/web/Dockerfile', 'docker-compose.yml'):
                 destination = target.parent / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -180,7 +185,9 @@ def main():
                         'release_checks.py':'test_candidate_path.py', 'smoke-contract.mjs':'test_candidate_path.py',
                         'build-images.sh':'test_build_images.py',
                         'release_secrets.py':'test_rotation_rehearsal.py',
-                        'cloud_ops.py':'test_security_failures.py'}
+                        'cloud_ops.py':'test_security_failures.py',
+                        'supabase_auth.py':'test_auth_lifecycle_settings.py',
+                        'supabase_setup.py':'test_setup_orchestration.py'}
             if filename.startswith('.github/'): pattern = 'test_workflow_security.py'
             else: pattern = targeted.get(filename, pattern)
             # Keep a full suite control above; run each mutant against its direct
@@ -195,6 +202,7 @@ def main():
                 'bucket MIME readback removed': 'test_review_boundaries.py',
             }
             pattern = overrides.get(name, pattern)
+            if name.startswith('mail '): pattern = 'test_mail_settings.py'
             if name.startswith('runtime ') and filename != 'cloud_ops.py': pattern = 'test_runtime_[dl]*.py'
             control = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(target / 'tests'), '-p', pattern],
                                      cwd=target.parent, capture_output=True)

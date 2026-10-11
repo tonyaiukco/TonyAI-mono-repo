@@ -40,7 +40,7 @@ def validate_release(inputs):
         if not isinstance(foundation[key], str) or not re.fullmatch(pattern, foundation[key]):
             raise SafeFailure('Invalid foundation identifier or domain.')
     expected = {'source_sha', 'release_id', 'supabase_project_ref', 'api_digest', 'web_digest', 'database_secret_version', 'backend_secret_version', 'storage_cleanup_hold', 'storage_sweep_interval_seconds'}
-    if set(release) - {'runtime_limits'} != expected:
+    if set(release) - {'runtime_limits', 'mail'} != expected:
         raise SafeFailure('Release has missing or unknown fields; secret values are prohibited.')
     patterns = {'source_sha': r'[a-f0-9]{40}', 'release_id': r'[a-z][a-z0-9-]{0,29}',
                 'supabase_project_ref': r'[a-z]{20}', 'api_digest': r'sha256:[a-f0-9]{64}',
@@ -55,6 +55,8 @@ def validate_release(inputs):
         raise SafeFailure('Storage sweep interval must be integer seconds from 1 to 86400.')
     from runtime_limits import validate_limits
     validate_limits(release.get('runtime_limits', {}))
+    from mail_settings import validate_mail
+    validate_mail(release)
     return foundation, release
 
 

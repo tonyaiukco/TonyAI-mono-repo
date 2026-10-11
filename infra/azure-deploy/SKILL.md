@@ -18,7 +18,7 @@ Preserve these project-specific traps:
   and origins; promote API only with qualified immutable digests.
 - Use Supavisor transaction mode for runtime, session mode for migrations. Cloud
   JWT scheme is `jwks`; omit the legacy secret and insecure-local bypass.
-- API and web identities are separate. Only API's two named secrets get data-plane
+- API and web identities are separate. Only API's named runtime secrets (plus `smtp-password` when enabled) get data-plane
   read grants. `database-url` uses `tonyai_runtime.<project-ref>`; owner `direct-url`
   is reserved for migrations and controlled fixture provisioning, never workloads.
   Bootstrap writes only the owner URL; finish runbook 05's runtime handoff before

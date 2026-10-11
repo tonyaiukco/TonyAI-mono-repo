@@ -87,6 +87,66 @@ scheduled Storage verification job). It takes ACCESS EXCLUSIVE locks with a
 5-second `lock_timeout`, and gives up rather than queue behind a long
 transaction.
 
+### LP4-01 migration window and recovery
+
+Both migrations below use `SET LOCAL lock_timeout = '5s'`: **each lock wait**
+gives up after five seconds, not the whole migration after five seconds. Pause
+writes and the scheduled Storage verification job, and avoid long transactions
+(reads included). A failed migration rolls back whole but leaves a failed Prisma
+row; the next deploy refuses with P3009 until the owner resolves that row. Never
+mark these failed migrations applied or bypass their preconditions.
+
+- `20261010120000_lp4_01_cascade_guard` holds **ACCESS EXCLUSIVE** on
+  `activity_records`, `locations`, `subsidiaries` and `import_batches`, with
+  lighter locks on `organisations`, until commit. Its precondition refuses any
+  activity record whose location belongs to a different subsidiary. Before
+  applying to an existing database, inspect this count in owner-psql:
+
+  ```sql
+  SELECT count(*) AS mismatched_sites
+    FROM activity_records r JOIN locations l ON l.id = r.location_id
+   WHERE l.subsidiary_id <> r.subsidiary_id;
+  ```
+
+  Require zero. If a lock timeout or precondition fails, inspect the cause and
+  run `pnpm --filter @tonyai/db exec prisma migrate resolve --rolled-back
+  20261010120000_lp4_01_cascade_guard` with the selected owner session URL supplied
+  privately as both `DATABASE_URL` and `DIRECT_URL`. Correct mismatches under the
+  owner's reviewed integrity procedure (a draft may be re-targeted; never rewrite
+  a committed snapshot), then repeat normal migration deployment in a quiet window.
+
+- `20261010180000_lp4_01_onboarding` holds ACCESS EXCLUSIVE on `profiles` and
+  `organisations` until commit. It refuses existing untrimmed or mixed-case profile
+  emails before adding `profiles_email_normalised`; Prisma reports **P3018** and
+  the database **HINT** says to resolve, check duplicates, normalise and redeploy.
+  Before deployment, check the hosted collation under runbook 04 and run:
+
+  ```sql
+  SELECT lower(btrim(email)), count(*) FROM profiles GROUP BY 1 HAVING count(*) > 1;
+  SELECT count(*) AS unnormalised FROM profiles WHERE email <> lower(btrim(email));
+  ```
+
+  Keep addresses and row-level diagnostics private. Resolve any duplicate identity
+  manually under D17 (one account per address); do not merge/delete people blindly.
+  If the migration fails, use **resolve → normalise → redeploy**:
+
+  ```bash
+  pnpm --filter @tonyai/db exec prisma migrate resolve --rolled-back 20261010180000_lp4_01_onboarding
+  ```
+
+  Then recheck duplicates in owner-psql and, after the owner resolves any collision:
+
+  ```sql
+  UPDATE profiles SET email = lower(btrim(email)) WHERE email <> lower(btrim(email));
+  ```
+
+  Repeat `cloud_ops.py migrate` normally from the reviewed source SHA. A lock-only
+  failure still needs `resolve --rolled-back` before retry; no normalisation is
+  needed when the second query is zero. Initial empty projects have no tables
+  before their first deploy: skip only these preflight queries there, never the
+  migration's checks. Record the migration names, counts, timeout outcome,
+  resolve/redeploy result and resulting migration status, with no email addresses.
+
 Before applying the LP1-03 migration, perform the hosted owner privilege checks in runbook 05. Expected:
 `prisma migrate deploy` then `prisma migrate status` succeed using only the
 explicitly selected owner session URL and the repository CA. For initial setup,
@@ -380,3 +440,67 @@ promoted to staging; staging's own digests require the owner-run smoke above.
 Runner prerequisites: [GitHub runner security](https://docs.github.com/en/actions/reference/security/secure-use),
 [larger runner availability](https://docs.github.com/en/actions/how-tos/manage-runners/larger-runners/use-larger-runners),
 and [fork approval API](https://docs.github.com/en/rest/actions/permissions#get-fork-pr-contributor-approval-permissions-for-a-repository).
+
+## 3.5 API SMTP parameters (LP4-01; production preparation for LP2-04)
+
+**Dependency: the owner must select the SMTP processor under LP0-02.** No provider
+is selected here. After that decision the owner verifies its sending domain and
+sender (SPF/DKIM/DMARC as required by that provider), obtains SMTP credentials,
+and confirms the provider's supported TLS port. Supabase does not deliver the
+pilot's invitation/reset templates: the API uses `generateLink` and its TR/EN
+renderer (K5). Do not enter these credentials into Supabase SMTP settings.
+
+The optional `release.mail` object in `infra/config/application.example.json` is
+all-or-none. Replace every placeholder with the selected provider's public
+`host`, integer `port`, boolean `secure`, `user`, `from`, and exact
+`password_secret_version`. `user` must be a nonsecret username: the manifest is
+shown to release reviewers. Passwords belong only in Key Vault. Remove the entire
+`mail` object until the processor is approved; no SMTP or `APP_URL` environment
+field is then emitted, and API invitation/reset attempts fail observably with
+`mail_not_configured`. That state does **not** pass onboarding acceptance.
+
+Owner sequence, after foundation creation and before an SMTP-enabled release:
+
+1. Store the password through a private interactive terminal, using an existing
+   valid release manifest without `mail` for initial storage:
+
+   ```bash
+   python3 infra/scripts/release_secrets.py store --inputs .infra-local/staging/release-r001.json --name smtp-password
+   ```
+
+   Hidden input is memory-only. Copy only the returned version ID's final segment
+   into a **new** release manifest's `mail.password_secret_version`.
+2. Set `config.smtp_secret_ready=true` in the private foundation input and apply
+   the foundation through runbook 01 (owner-run). This grants only the API identity
+   Secrets User on `smtp-password`; web, deployer and the Storage job receive none.
+   Keep `runtime_secrets_ready` and other existing grants unchanged.
+3. Verify selected versions with `release_secrets.py verify --inputs <new-manifest>`;
+   deploy through this runbook's existing path with a new `release_id`. Independent
+   ARM readback requires all seven mail env fields, no inline password, the exact
+   vault version and API identity, and no mail env fields on web.
+4. Run runbook 04's invitation/reset smoke and retain sanitised delivery evidence.
+
+Container parameters are `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`,
+`SMTP_PASSWORD` (a Key Vault reference), `MAIL_FROM`, and `APP_URL` (derived from
+this foundation's exact web origin, never a separately supplied redirect).
+`secure=false` uses **mandatory STARTTLS** off loopback; `secure=true` uses implicit
+TLS (normally port 465). Never disable certificate validation or point cloud SMTP
+at loopback. The API's `readMailConfig` requires `SMTP_HOST`, `MAIL_FROM`, `APP_URL`
+together and pairs the username/password. The optional per-IP quota is unchanged:
+`AUTH_EMAIL_PER_IP_PER_MINUTE` stays at the API default; this manifest exposes no
+override pending LP4-05 PR C's registered limits contract.
+
+**Production (LP2-04):** the same release contract supports
+`foundation.environment=production`, with the production subscription/resource
+identities, vault, Supabase ref and environment domain. Rebuild web for that origin,
+store a distinct password in the production vault and set its own
+`smtp_secret_ready` flag. `APP_URL` derives the production web origin automatically.
+If LP2-04 adopts a custom web domain, extend the reviewed origin contract before
+using it; the current inputs deliberately pin the ACA origin. Production applies,
+Auth reconciliation and delivery evidence remain LP2-04 owner-run gates.
+
+For SMTP rotation, repeat hidden storage, select the new exact version in a new
+release, deploy/read back and smoke it; retain the previous enabled version only
+for the approved rollback window. For image rollback preserve compatible mail
+parameters, secret versions and Auth policy. Removing `mail` disables delivery;
+it is never evidence of successful onboarding or a reason to enable GoTrue email.
