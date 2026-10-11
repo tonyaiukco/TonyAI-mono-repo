@@ -753,6 +753,32 @@ describe('EmissionsService.trackingMatrix', () => {
     service = new EmissionsService(prisma as unknown as PrismaService);
   });
 
+  it('filters records and matrix cells together, recomputing totals for the selected category', async () => {
+    prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary()]);
+    prisma.activityRecord.findMany.mockResolvedValue([
+      makeRecord(),
+      makeRecord({ periodValue: 'February', calculation: { reasonCode: 'no_emission_factor' } }),
+      makeRecord({ periodValue: 'March', status: ActivityRecordStatus.draft }),
+    ]);
+    const matrix = await service.trackingMatrix(superAdmin(), { year: 2027, subsidiaryId: 'sub-1', scope: 2, category: 'Electricity' });
+    expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { subsidiaryId: 'sub-1', reportingYear: 2027, scope: 2, category: 'Electricity' },
+    }));
+    expect(matrix.reportingYear).toBe(2027);
+    expect(matrix.rows[0]).toMatchObject({ categoryCount: 1, completeCount: 0, totalTCo2e: 10, uncalculatedRecordCount: 1 });
+    expect(matrix.rows[0].cells.map((cell) => cell.category)).toEqual(['Electricity']);
+    expect(matrix.totals).toEqual({ complete: 0, incomplete: 1, missing: 0 });
+  });
+
+  it('emits only categories belonging to a selected scope, with no phantom missing cells', async () => {
+    prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary()]);
+    prisma.activityRecord.findMany.mockResolvedValue([makeRecord()]);
+    const matrix = await service.trackingMatrix(superAdmin(), { year: 2027, scope: 2 });
+    expect(matrix.rows[0]).toMatchObject({ categoryCount: 1, completeCount: 1, totalTCo2e: 10, uncalculatedRecordCount: 0 });
+    expect(matrix.rows[0].cells.map((cell) => cell.category)).toEqual(['Electricity']);
+    expect(matrix.totals).toEqual({ complete: 1, incomplete: 0, missing: 0 });
+  });
+
   it('counts committed records the anomaly rule never ran on, without capping the cell', async () => {
     const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
     prisma.subsidiary.findMany.mockResolvedValue([
