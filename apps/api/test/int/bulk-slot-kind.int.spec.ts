@@ -74,14 +74,21 @@ function file(...rows: Cells[]): Express.Multer.File {
 const FUEL = { category: 'Fuel', scope: 1, activityUnit: 'litres' } as const;
 const typedFuelRow = { category: 'Fuel', activityType: 'diesel', activityValue: '10', activityUnit: 'litres' };
 
-/** The trigger's own answer for a record inserted into the slot. */
-async function insertCode(data: Parameters<typeof createRecord>[2]): Promise<string | null> {
+/**
+ * The database's own answer for a record inserted into the slot: `inserted`,
+ * with the row read back, or `TA002`. Any other failure is rethrown — a
+ * positive control must not pass on an unrelated error (Codex R1).
+ */
+async function insertCode(data: Parameters<typeof createRecord>[2]): Promise<'inserted' | 'TA002'> {
+  let id: string;
   try {
-    await createRecord(runtime, tenant, data);
-    return null;
+    ({ id } = await createRecord(runtime, tenant, data));
   } catch (e) {
-    return recordTriggerCode(e);
+    if (recordTriggerCode(e) === 'TA002') return 'TA002';
+    throw e;
   }
+  expect(await owner.activityRecord.findUnique({ where: { id }, select: { id: true } })).toEqual({ id });
+  return 'inserted';
 }
 
 async function fuelRecordsInJanuary(): Promise<number> {
@@ -130,7 +137,15 @@ describe('the bulk slot-kind pre-check agrees with TA002 (LP4-02, Codex F1)', ()
 
     const dry = await importer().import(tenant.users.dataEntry, file(typedFuelRow), { dryRun: true });
     expect(dry.errors.filter((e) => e.code === 'duplicate_existing')).toEqual([]);
-    expect(await insertCode({ ...FUEL, activityType: 'diesel' })).toBeNull();
+    expect(await insertCode({ ...FUEL, activityType: 'diesel' })).toBe('inserted');
+  });
+
+  it('does not read an unrelated insert failure as an insert (Codex R1)', async () => {
+    // The helper behind the positive controls: an insert refused for any
+    // reason but TA002 — here the uniqueness index, the same fuel twice in one
+    // slot — must fail the test, not pass as "inserted".
+    await createRecord(owner, tenant, { ...FUEL, activityType: 'diesel' });
+    await expect(insertCode({ ...FUEL, activityType: 'diesel' })).rejects.toThrow();
   });
 
   it('reads another month as another slot', async () => {
@@ -138,6 +153,6 @@ describe('the bulk slot-kind pre-check agrees with TA002 (LP4-02, Codex F1)', ()
 
     const dry = await importer().import(tenant.users.dataEntry, file(typedFuelRow), { dryRun: true });
     expect(dry.errors.filter((e) => e.code === 'duplicate_existing')).toEqual([]);
-    expect(await insertCode({ ...FUEL, activityType: 'diesel' })).toBeNull();
+    expect(await insertCode({ ...FUEL, activityType: 'diesel' })).toBe('inserted');
   });
 });
