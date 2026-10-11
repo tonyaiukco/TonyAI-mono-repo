@@ -404,8 +404,8 @@ describe('POST /bulk-upload/activity-records (dry run): rows naming B are refuse
     const csv = (subsidiaryId: string, locationId: string) =>
       [
         BULK_UPLOAD_COLUMNS.join(','),
-        `${subsidiaryId},,2026,monthly,September,Electricity,10,kWh,`,
-        `${A.subsidiaryId},${locationId},2026,monthly,October,Electricity,10,kWh,`,
+        `${subsidiaryId},,2026,monthly,September,Electricity,,10,kWh,`,
+        `${A.subsidiaryId},${locationId},2026,monthly,October,Electricity,,10,kWh,`,
       ].join('\n');
     const form = (body: string) => {
       const f = new FormData();
