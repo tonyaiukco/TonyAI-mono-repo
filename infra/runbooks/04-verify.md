@@ -425,7 +425,8 @@ either into this document, a command argument or a JWT inspection website.
    ```
 
    Require `earliestAmr <=` the **sign-in token's** `iat`. Retain the sign-in
-   proof's `guardMs`, `earliestAmr`, `iat`, `sub` and `session_id` privately.
+   proof's `guardMs`, `earliestAmr` and `iat`, together with the sign-in claims'
+   `sub` and `session_id`, privately.
 3. Wait at least two seconds so a fresh `iat` can be distinguished, then call
    `auth.refreshSession({ refresh_token: session.refresh_token })`. Require the
    same `sub` and `session_id`, `iat` strictly newer than the preceding token's,
