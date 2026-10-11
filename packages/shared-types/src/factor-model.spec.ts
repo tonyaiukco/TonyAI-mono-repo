@@ -14,9 +14,11 @@ import {
   DIMENSION_BASE_UNIT,
   FACTOR_GASES,
   FACTOR_IMPORT_TEXT_LIMITS,
+  FACTOR_PUBLISHERS,
   FACTOR_IDENTITY_FIELDS,
   FACTOR_STATUSES,
   FACTOR_STATUS_RANK,
+  INTERNAL_FACTOR_PUBLISHERS,
   STANDARD_REFERENCE_CONDITIONS,
   UNIT_DIMENSIONS,
   UNSPECIFIED_ACTIVITY_TYPE,
@@ -40,6 +42,7 @@ import {
   type ConversionPathCandidate,
   type FactorPathCandidate,
   type Category,
+  type FactorImportIssue,
   type FactorImportRow,
   type FactorReleaseImport,
   type FactorStatus,
@@ -105,20 +108,38 @@ function conversionRow(
   };
 }
 
+/**
+ * The registry plus `TEST_RELEASE`'s publisher: no real publisher is
+ * registered before its licence is (LP4-02, L6), and the authoritative rules
+ * below still need an authoritative release to run on. The registry's own
+ * refusals are pinned against the real `FACTOR_PUBLISHERS` further down.
+ */
+const TEST_PUBLISHERS: readonly string[] = [...FACTOR_PUBLISHERS, TEST_RELEASE.publisher];
+
+function validate(input: unknown): FactorImportIssue[] {
+  return validateFactorReleaseImport(input, { publishers: TEST_PUBLISHERS });
+}
+
+/** A release; a placeholder or fixture one is published by its internal publisher. */
 function release(
   over: Partial<FactorReleaseImport> & {
     meta?: Partial<FactorReleaseImport['release']>;
   } = {},
 ): FactorReleaseImport {
+  const status = over.meta?.status;
+  const internal =
+    status === 'placeholder' || status === 'fixture'
+      ? { publisher: INTERNAL_FACTOR_PUBLISHERS[status] }
+      : {};
   return {
-    release: { ...TEST_RELEASE, ...over.meta },
+    release: { ...TEST_RELEASE, ...internal, ...over.meta },
     factors: over.factors ?? [factorRow()],
     conversions: over.conversions ?? [],
   };
 }
 
 function issuesAt(input: FactorReleaseImport): string[] {
-  return validateFactorReleaseImport(input).map((issue) => issue.path);
+  return validate(input).map((issue) => issue.path);
 }
 
 describe('units for the factor model (LP3-03)', () => {
@@ -521,7 +542,7 @@ describe('calculation refusals', () => {
 describe('validateFactorReleaseImport', () => {
   it('accepts a complete authoritative release', () => {
     expect(
-      validateFactorReleaseImport(
+      validate(
         release({
           factors: [
             factorRow(),
@@ -1074,7 +1095,7 @@ describe('validateFactorReleaseImport — review round 1', () => {
       { release: {}, factors: [], conversions: null },
       { release: null, factors: [], conversions: [] },
     ]) {
-      expect(validateFactorReleaseImport(bad)).toEqual([
+      expect(validate(bad)).toEqual([
         { path: '', message: expect.stringContaining('release, factors[] and conversions[]') },
       ]);
     }
@@ -1102,7 +1123,7 @@ describe('validateFactorReleaseImport — review round 1', () => {
 
   it('never echoes an unrecognised status', () => {
     const status = `${RLO}${'x'.repeat(10_000)}`;
-    const issues = validateFactorReleaseImport(
+    const issues = validate(
       release({ meta: { status }, factors: [factorRow({ activityType: 'diesel' })] }),
     );
     expect(issues.map((i) => i.path)).toContain('release.status');
@@ -1162,7 +1183,7 @@ describe('validateFactorReleaseImport — review round 1', () => {
     const meta = { ...omitted.release } as Record<string, unknown>;
     delete meta.licence;
     delete meta.reviewedBy;
-    const issues = validateFactorReleaseImport({ ...omitted, release: meta });
+    const issues = validate({ ...omitted, release: meta });
     for (const field of ['licence', 'reviewedBy']) {
       expect(issues).toContainEqual({
         path: `release.${field}`,
@@ -1173,7 +1194,7 @@ describe('validateFactorReleaseImport — review round 1', () => {
     const placeholder = release({ meta: { status: 'placeholder' } });
     const notesGone = { ...placeholder.release } as Record<string, unknown>;
     delete notesGone.notes;
-    expect(validateFactorReleaseImport({ ...placeholder, release: notesGone }).map((i) => i.path)).toContain(
+    expect(validate({ ...placeholder, release: notesGone }).map((i) => i.path)).toContain(
       'release.notes',
     );
   });
@@ -1644,5 +1665,63 @@ describe('validateFactorReleaseImport — every rule has a negative and a positi
     expect(
       issuesAt(release({ conversions: [conversionRow(), conversionRow({ geographyCode: 'TR' })] })),
     ).toEqual([]);
+  });
+});
+
+describe('validateFactorReleaseImport — the publisher registry (LP4-02)', () => {
+  const placeholder = INTERNAL_FACTOR_PUBLISHERS.placeholder;
+  const fixture = INTERNAL_FACTOR_PUBLISHERS.fixture;
+  /** The loader's call: the real registry, no stand-in. */
+  const atPublisher = (input: FactorReleaseImport) =>
+    validateFactorReleaseImport(input).filter((issue) => issue.path === 'release.publisher');
+
+  it('registers no real publisher before its licence is recorded', () => {
+    expect([...FACTOR_PUBLISHERS]).toEqual(['TonyAI prototype', 'TonyAI test fixture']);
+    expect(Object.isFrozen(INTERNAL_FACTOR_PUBLISHERS)).toBe(true);
+    // So a complete, reviewed authoritative release is still refused — on its
+    // publisher alone.
+    expect(validateFactorReleaseImport(release())).toEqual([
+      {
+        path: 'release.publisher',
+        message: 'is not a registered publisher (TonyAI prototype, TonyAI test fixture)',
+      },
+    ]);
+  });
+
+  it('refuses a look-alike of a registered name', () => {
+    for (const name of ['TonyAI Prototype', 'tonyai prototype', 'TonyAI  prototype', 'TonyAl prototype']) {
+      expect(atPublisher(release({ meta: { status: 'placeholder', publisher: name } })), name).toEqual([
+        { path: 'release.publisher', message: expect.stringContaining('is not a registered publisher') },
+      ]);
+    }
+  });
+
+  it('pairs each internal publisher with its own status, as the database does', () => {
+    expect(validateFactorReleaseImport(release({ meta: { status: 'placeholder' } }))).toEqual([]);
+    expect(validateFactorReleaseImport(release({ meta: { status: 'fixture' } }))).toEqual([]);
+    expect(atPublisher(release({ meta: { status: 'placeholder', publisher: fixture } }))).toEqual([
+      { path: 'release.publisher', message: `must be ${placeholder} for a placeholder release` },
+    ]);
+    expect(atPublisher(release({ meta: { status: 'fixture', publisher: placeholder } }))).toEqual([
+      { path: 'release.publisher', message: `must be ${fixture} for a fixture release` },
+    ]);
+  });
+
+  it('never lets an internal publisher publish an authoritative release', () => {
+    for (const name of [placeholder, fixture]) {
+      expect(atPublisher(release({ meta: { publisher: name } })), name).toEqual([
+        {
+          path: 'release.publisher',
+          message: 'is an internal publisher, which never publishes an authoritative release',
+        },
+      ]);
+    }
+  });
+
+  it('reports a malformed name once, as text, not also as unregistered', () => {
+    const issues: FactorImportIssue[] = atPublisher(release({ meta: { publisher: ' TonyAI prototype' } }));
+    expect(issues).toEqual([
+      { path: 'release.publisher', message: 'has leading or trailing white space' },
+    ]);
   });
 });

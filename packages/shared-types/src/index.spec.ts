@@ -615,19 +615,22 @@ describe('bulk upload — the column contract', () => {
       'reportingPeriod',
       'periodValue',
       'category',
+      'activityType',
       'activityValue',
       'activityUnit',
       'varianceReason',
     ]);
   });
 
-  it('requires everything except the two that mean something when blank', () => {
+  it('requires everything except the three that mean something when blank', () => {
     // A blank `locationId` is the whole company — a real reporting entity, not
-    // a missing value — and most records carry no variance reason at all.
+    // a missing value — most records carry no variance reason at all, and an
+    // untyped category (Electricity, Natural Gas, Water) names no activity
+    // type: the header may omit it, so an older template still imports.
     const optional = BULK_UPLOAD_COLUMNS.filter(
       (c) => !(BULK_UPLOAD_REQUIRED_COLUMNS as readonly string[]).includes(c),
     );
-    expect(optional).toEqual(['locationId', 'varianceReason']);
+    expect(optional).toEqual(['locationId', 'activityType', 'varianceReason']);
   });
 
   it('keeps errors and warnings disjoint', () => {
@@ -651,6 +654,7 @@ describe('bulk submit — the code list', () => {
       'period_locked',
       'evidence_required',
       'variance_reason_required',
+      'calculation_stale',
       'unexpected',
       'not_processed_deadline',
     ]);
