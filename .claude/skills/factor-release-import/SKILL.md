@@ -55,9 +55,11 @@ migration `20261011120000_lp4_02_loader` (the seal, the role, its guards) and
 7. **Only the loader's login.** `FACTOR_LOADER_DATABASE_URL` logs in as
    `tonyai_factor_loader`; the loader refuses the owner, the runtime role and
    anything else. Off a loopback database `--apply` needs `--allow-remote`.
+   In a deployed environment the login never reaches the API's environment or
+   its Key Vault references, and the role goes back to `NOLOGIN` between loads.
 8. **A load moves every draft.** Submit and approve recompute a draft's figure
-   with the current library and refuse a stale one (`calculation_stale`, K11):
-   tell the users whose drafts it touches to save them again.
+   with the current library and refuse a stale one (`calculation_stale`, K11 —
+   from LP4-02 PR B2): tell the users whose drafts it touches to save them again.
 9. **Fixtures are labelled.** A test release is published by
    `INTERNAL_FACTOR_PUBLISHERS.fixture` with status `fixture`, and its title,
    `methodology` and `source` say it is not an emission factor; it is removed

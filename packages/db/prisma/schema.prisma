@@ -649,7 +649,7 @@ model FactorReleaseEvent {
   publisher     String
   edition       String
   releaseStatus String   @map("release_status") // the release's status at the event
-  event         String // loaded | rows_added | withdrawn | rows_deleted | deleted
+  event         String // loaded | rows_added | sealed | withdrawn | rows_deleted | deleted
   tableName     String?  @map("table_name") // rows_added / rows_deleted: which table
   rowCount      Int?     @map("row_count")
   detail        Json? // withdrawn: who, when, why
