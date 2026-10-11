@@ -118,25 +118,24 @@ Since LP3-03 the snapshot (`CalculationResultV2`, schema 2) also stores where ev
 
 This information must be viewable in the Emissions History detail panel.
 
+### 5.1 How a release reaches the engine (LP4-02)
+
+A factor release is loaded, whole, by the factor-release loader (`pnpm --filter @tonyai/api factor-release`), which connects as its own database role, `tonyai_factor_loader`, and nothing else writes the library (the seed loads the local placeholder library alone). The loader checks the release file against the import contract (`validateFactorReleaseImport`: a registered publisher, an authoritative release's source, licence and review) and loads the release, its factors and conversions and its **seal** in one transaction. The engine prices from sealed releases only; a sealed release takes no row, and a seal is never undone — so what a snapshot cites is exactly what was reviewed. A correction is an **erratum**: a new edition with the next ordinal, which outranks what it corrects, loaded with `--supersedes`, which withdraws the old edition in the same transaction. A withdrawn release never prices a new record; a committed snapshot keeps citing it (history is immutable).
+
+### 5.2 A draft's figure is recomputed before it is committed (K11)
+
+A draft stores the figure the engine computed when it was saved. Only the API (and the database owner) may change a draft's figure or the inputs it was computed from; the database refuses any other writer. Submit and approve recompute the figure from the record's stored inputs with the current library and refuse a mismatch — a factor, a conversion or an input that changed since the draft was saved, including a release loaded or withdrawn in between — with `calculation_stale`: the author saves the draft again (an audited update showing the old and new figure), and a reviewer returns a submitted record first. *(The recompute lands in LP4-02 PR B2.)*
+
 ---
 
 ## 6. Global Warming Potential Logic
 
-The engine may use **IPCC AR6** global warming potential values where category level calculations require gas specific treatment.
-
-### Example GWP Values
-- `CO2 = 1`
-- `CH4 = 27.9`
-- `N2O = 273`
+**One GWP set per inventory year (decision D09):** the set the year's chosen factor sources declare — IPCC AR4, AR5 or AR6 — verified by `data-factors` and recorded on each release as its `gwpSet` (`GWP_SETS` in `@tonyai/shared-types`). The engine does not convert between sets and holds no GWP table of its own: a `CO2e` factor already carries its source's GWP, and a release states which. Mixing sets within one inventory year is refused at review, not converted.
 
 ### Usage Note
-These GWP values are most relevant for:
-- refrigerants
-- fugitive emissions
-- process emissions
-- gas specific calculations
+A gas-specific GWP becomes relevant only where a category is calculated per gas — refrigerants, other fugitive and process emissions — and then from the release's declared set, never from a value typed here. The values are cited from the source (for example AR5 and AR6 differ for CH₄ and N₂O), not reproduced in this document.
 
-They are not required for every standard electricity or fuel record where an aggregated `kgCo2e` factor is already used.
+They are not required for a standard electricity or fuel record, where an aggregated `kgCo2e` factor is already used.
 
 ---
 
