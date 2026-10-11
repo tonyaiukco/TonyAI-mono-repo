@@ -1,19 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaService } from '../../src/prisma/prisma.service';
 import {
+  FACTOR_LOADER_ROLE,
   INTEGRITY_CHECKS,
   INTEGRITY_TRIGGERS,
   RUNTIME_ROLE,
+  checkFactorLoaderRole,
   checkIntegrityTriggers,
+  checkLibraryWriters,
   checkRuntimeRole,
   checkFunctionExecutors,
   checkTableLevelGrants,
   checkTenantInvariants,
   factorLibraryReport,
+  factorLoaderExposures,
   platformDefaultPrivileges,
   runtimeRoleExposures,
 } from '../../../../packages/db/scripts/runtime-role.mjs';
-import { connect, connectOwner, createTenant, withRollback } from './db';
+import { connect, connectLoader, connectOwner, createTenant, withRollback } from './db';
 
 /**
  * LP1-03 (F06): the least-privileged runtime role. Every other spec in this
@@ -201,6 +205,101 @@ describe('the factor model is in force on this database (LP3-03)', () => {
  * Locally `pnpm db:reset` has dropped Supabase's per-schema defaults, so the
  * negative cases set the defaults they need themselves; CI keeps Supabase's.
  */
+describe('the factor loader role (LP4-02)', () => {
+  let loader: PrismaService;
+  beforeAll(() => {
+    loader = connectLoader();
+  });
+  afterAll(async () => {
+    await loader.$disconnect();
+  });
+
+  it('is a login of its own — what the loader CLI connects as, never the owner or the runtime role', async () => {
+    const [who] = await loader.$queryRaw<{ session: string; current: string }[]>`SELECT session_user AS "session", current_user AS "current"`;
+    expect(who).toEqual({ session: FACTOR_LOADER_ROLE, current: FACTOR_LOADER_ROLE });
+  });
+
+  it('holds exactly the intended privileges, and is the library\'s one writer besides the owner (the checks `check` runs)', async () => {
+    for (const client of [loader, runtime, owner]) {
+      const query = (sql: string) => client.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      expect(await checkFactorLoaderRole(query)).toEqual([]);
+      expect(await checkLibraryWriters(query)).toEqual([]);
+    }
+    for (const e of await factorLoaderExposures((sql) => loader.$queryRawUnsafe(sql))) expect(e).toMatch(/\(via PUBLIC\)$/);
+  });
+
+  it('notices the loader given more — a delete, another column, another table, a membership, BYPASSRLS, a setting', async () => {
+    const problems = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(`GRANT DELETE ON emission_factors TO ${FACTOR_LOADER_ROLE}`);
+      await tx.$executeRawUnsafe(`GRANT UPDATE (title) ON factor_releases TO ${FACTOR_LOADER_ROLE}`);
+      await tx.$executeRawUnsafe(`REVOKE UPDATE (sealed_at) ON factor_releases FROM ${FACTOR_LOADER_ROLE}`);
+      await tx.$executeRawUnsafe(`GRANT SELECT ON profiles TO ${FACTOR_LOADER_ROLE}`);
+      await tx.$executeRawUnsafe(`GRANT ${RUNTIME_ROLE} TO ${FACTOR_LOADER_ROLE}`);
+      await tx.$executeRawUnsafe(`ALTER ROLE ${FACTOR_LOADER_ROLE} BYPASSRLS`);
+      await tx.$executeRawUnsafe(
+        `DO $$ BEGIN EXECUTE format('ALTER ROLE ${FACTOR_LOADER_ROLE} IN DATABASE %I SET search_path = public', current_database()); END $$`,
+      );
+      return checkFactorLoaderRole((sql) => tx.$queryRawUnsafe(sql));
+    });
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        `${FACTOR_LOADER_ROLE} has DELETE on public.emission_factors`,
+        `${FACTOR_LOADER_ROLE} can UPDATE public.factor_releases.title`,
+        `${FACTOR_LOADER_ROLE} cannot UPDATE public.factor_releases.sealed_at`,
+        `${FACTOR_LOADER_ROLE} has SELECT on public.profiles`,
+        `${FACTOR_LOADER_ROLE} is a member of ${RUNTIME_ROLE}`,
+        `${FACTOR_LOADER_ROLE} has BYPASSRLS — its policies would no longer bound it`,
+        `${FACTOR_LOADER_ROLE} carries role settings for a database: search_path=public`,
+      ]),
+    );
+  });
+
+  it('names every other writer of the library, at table or column level — and a client that can act as the loader', async () => {
+    const { writers, executors, loaderCheck } = await withRollback(owner, async (tx) => {
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      await tx.$executeRawUnsafe('GRANT INSERT ON emission_factors TO service_role');
+      await tx.$executeRawUnsafe('GRANT UPDATE (status) ON factor_releases TO authenticated');
+      await tx.$executeRawUnsafe(`GRANT DELETE ON unit_conversions TO ${RUNTIME_ROLE}`);
+      await tx.$executeRawUnsafe(`GRANT ${FACTOR_LOADER_ROLE} TO anon`);
+      return { writers: await checkLibraryWriters(query), executors: await checkFunctionExecutors(query), loaderCheck: await checkFactorLoaderRole(query) };
+    });
+    const alone = 'the factor library is written by its loader and the owner alone';
+    expect(writers).toEqual([
+      `service_role may INSERT public.emission_factors — ${alone}`,
+      `authenticated may UPDATE public.factor_releases (column-level) — ${alone}`,
+      `${RUNTIME_ROLE} may DELETE public.unit_conversions — ${alone}`,
+    ]);
+    expect(executors).toContain(
+      `anon can act as ${FACTOR_LOADER_ROLE} (a member — inherited, by SET ROLE or by ADMIN), the factor library's loader — it loads, seals and withdraws releases; no client may be`,
+    );
+    expect(loaderCheck).toContain(`anon may act as ${FACTOR_LOADER_ROLE} (INHERIT or SET)`);
+  });
+
+  it('reports a release left unsealed (a restore), and a seal check no longer deferred to the commit', async () => {
+    const library = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('SET LOCAL session_replication_role = replica');
+      await tx.$executeRawUnsafe(
+        `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status) VALUES (gen_random_uuid(), 'TonyAI test fixture', 'x', 'int-unsealed', 999999, 'fixture')`,
+      );
+      return (await factorLibraryReport((sql) => tx.$queryRawUnsafe(sql))).problems;
+    });
+    // Apart: a table with a pending deferred event cannot have its triggers altered.
+    const triggers = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('DROP TRIGGER factor_releases_sealed_at_commit ON factor_releases');
+      await tx.$executeRawUnsafe(
+        `CREATE CONSTRAINT TRIGGER factor_releases_sealed_at_commit AFTER INSERT ON factor_releases DEFERRABLE INITIALLY IMMEDIATE
+         FOR EACH ROW EXECUTE FUNCTION public.factor_releases_sealed_at_commit()`,
+      );
+      await tx.$executeRawUnsafe('ALTER TABLE factor_releases ENABLE ALWAYS TRIGGER factor_releases_sealed_at_commit');
+      return checkIntegrityTriggers((sql) => tx.$queryRawUnsafe(sql));
+    });
+    expect(library).toContain('1 factor release(s) not sealed — a release is sealed in the transaction that loads it, and pricing ignores an unsealed one');
+    expect(triggers).toEqual([
+      'trigger factor_releases_sealed_at_commit on factor_releases is not DEFERRABLE INITIALLY DEFERRED — it must run at the commit, once the load is in',
+    ]);
+  });
+});
+
 describe('no function in public is born executable by a client (OQ 14)', () => {
   const probe = `CREATE FUNCTION public.oq14_probe() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
     AS $$ BEGIN RETURN NULL; END $$`;
@@ -425,13 +524,19 @@ describe('no function in public is born executable by a client (OQ 14)', () => {
       return {
         problems: [
           ...(await checkRuntimeRole(query)),
+          ...(await checkFactorLoaderRole(query)),
+          ...(await checkLibraryWriters(query)),
           ...(await checkTenantInvariants(query)),
           ...(await checkTableLevelGrants(query)),
           ...(await checkFunctionExecutors(query)),
           ...(await checkIntegrityTriggers(query)),
           ...(await factorLibraryReport(query)).problems,
         ],
-        notices: [...(await platformDefaultPrivileges(query)), ...(await runtimeRoleExposures(query))],
+        notices: [
+          ...(await platformDefaultPrivileges(query)),
+          ...(await runtimeRoleExposures(query)),
+          ...(await factorLoaderExposures(query)),
+        ],
       };
     });
     expect(problems).toEqual([]);
@@ -517,6 +622,7 @@ describe('the runtime role is refused', () => {
       `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status) VALUES (gen_random_uuid(), 'TonyAI test fixture', 'x', 'x', 999999, 'fixture')`,
     ],
     ['withdrawing a factor release', `UPDATE factor_releases SET status = 'withdrawn' WHERE false`],
+    ['sealing a factor release (LP4-02: the loader and the owner do)', 'UPDATE factor_releases SET sealed_at = now() WHERE false'],
     ['deleting a factor release', 'DELETE FROM factor_releases WHERE false'],
     [
       'loading a factor',
