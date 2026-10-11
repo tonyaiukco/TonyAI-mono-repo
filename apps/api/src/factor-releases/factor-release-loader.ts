@@ -189,6 +189,11 @@ export class FactorReleaseLoader {
     });
 
     const stored = await this.find(release.publisher, release.edition);
+    if (stored?.status === 'withdrawn') {
+      throw new LoaderRefusal(
+        `${release.publisher} ${release.edition} is withdrawn (${stored.withdrawalReason ?? 'no reason recorded'}) — a withdrawn edition is never loaded again; an erratum is a new edition with the next ordinal`,
+      );
+    }
     if (stored) {
       await this.assertSameContent(stored, release, factors, conversions);
       if (superseded && superseded.status !== 'withdrawn') {

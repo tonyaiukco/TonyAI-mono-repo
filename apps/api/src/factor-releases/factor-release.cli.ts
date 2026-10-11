@@ -42,7 +42,6 @@
 import { statSync, readFileSync } from 'node:fs';
 import { Logger } from '@nestjs/common';
 import { PrismaClient } from '@tonyai/db';
-import { isLoopback } from '../onboarding/onboarding.cli';
 import { FactorReleaseLoader, LoaderRefusal, type LoadReport, type WithdrawReport } from './factor-release-loader';
 
 export class UsageError extends Error {}
@@ -134,6 +133,29 @@ export function parseArgs(argv: string[]): Options {
   return options;
 }
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+/** What a local URL may carry — `runtime-role.mjs`'s list: anything else (`host`, `hostaddr`, `options`) could send it elsewhere. */
+const LOCAL_URL_PARAMS = new Set([
+  'schema', 'connection_limit', 'pool_timeout', 'connect_timeout', 'socket_timeout',
+  'statement_cache_size', 'pgbouncer', 'sslmode', 'application_name',
+]);
+
+/**
+ * True only when `url` plainly points at this machine: a loopback host and no
+ * parameter that could redirect it (Prisma honours `?host=` over the URL's
+ * host). An allowlist, as `runtime-role.mjs`'s `isLoopbackUrl`. A guard
+ * against a typo, not proof: a tunnel to production is "localhost" too.
+ */
+export function isLocalDatabase(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return LOOPBACK_HOSTS.has(parsed.hostname) && [...parsed.searchParams.keys()].every((key) => LOCAL_URL_PARAMS.has(key));
+  } catch {
+    return false;
+  }
+}
+
 /** The run's refusals that depend on where it points — testable alone. */
 export function refuseUnsafe(options: Options, local: boolean): void {
   if (options.apply && !local && !options.allowRemote) {
@@ -167,7 +189,7 @@ export function readReleaseFile(path: string): unknown {
 export async function run(options: Options): Promise<LoadReport | WithdrawReport> {
   const url = process.env.FACTOR_LOADER_DATABASE_URL;
   if (!url) throw new UsageError("FACTOR_LOADER_DATABASE_URL (the factor loader's own login) is required");
-  refuseUnsafe(options, isLoopback(url));
+  refuseUnsafe(options, isLocalDatabase(url));
   const input = options.command === 'load' ? readReleaseFile(options.file!) : undefined;
   const db = new PrismaClient({ datasourceUrl: url });
   try {
@@ -181,27 +203,31 @@ export async function run(options: Options): Promise<LoadReport | WithdrawReport
   }
 }
 
+// The exit code is set, never forced: `process.exit()` right after a large
+// write to a pipe drops what the pipe has not taken yet (a refusal naming
+// thousands of issues), and the process ends on its own once stdout drains.
 async function main(): Promise<void> {
   let options: Options;
   try {
     options = parseArgs(process.argv.slice(2));
   } catch (error) {
     process.stderr.write(`${(error as Error).message}\n`);
-    process.exit(2);
+    process.exitCode = 2;
+    return;
   }
   try {
     process.stdout.write(`${JSON.stringify(await run(options), null, 2)}\n`);
-    process.exit(0);
+    process.exitCode = 0;
   } catch (error) {
+    process.exitCode = 2;
     if (error instanceof LoaderRefusal) {
       process.stdout.write(`${JSON.stringify({ outcome: 'refused', message: error.message, issues: error.issues }, null, 2)}\n`);
-      process.exit(2);
+      return;
     }
     new Logger('factor-release').error(
       error instanceof Error ? error.message : String(error),
       error instanceof Error && !(error instanceof UsageError) ? error.stack : undefined,
     );
-    process.exit(2);
   }
 }
 

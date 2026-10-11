@@ -159,6 +159,21 @@ describe('the factor loader (LP4-02 PR B1)', () => {
     expect(await failure(loader.load(third, { apply: true, supersedes: first.release.edition, reason }))).toBeInstanceOf(LoaderRefusal);
   });
 
+  it('loads an erratum and its withdrawal together or not at all — a refused withdrawal leaves the erratum unloaded', async () => {
+    const loader = new FactorReleaseLoader(loaderDb, OPERATOR);
+    const first = await fixtureFile(0.2);
+    await loader.load(first, { apply: true });
+    const erratum = await fixtureFile(0.25);
+    // Longer than the release's text CHECK admits (the CLI refuses it first):
+    // the database refuses the withdrawal inside the load's transaction.
+    const refusal = await failure(loader.load(erratum, { apply: true, supersedes: first.release.edition, reason: 'x'.repeat(2001) }));
+    expect(refusal).not.toBeNull();
+    expect(await owner.factorRelease.count({ where: { publisher: FIXTURE, edition: erratum.release.edition } })).toBe(0);
+    expect(await owner.factorRelease.findUniqueOrThrow({ where: { publisher_edition: { publisher: FIXTURE, edition: first.release.edition } } })).toMatchObject({
+      status: 'fixture',
+    });
+  });
+
   it('withdraws a release with no replacement, once, as the loader', async () => {
     const loader = new FactorReleaseLoader(loaderDb, OPERATOR);
     const file = await fixtureFile();

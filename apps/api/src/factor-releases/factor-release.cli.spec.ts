@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { FACTOR_RELEASE_FILE_MAX_BYTES, parseArgs, readReleaseFile, refuseUnsafe, UsageError } from './factor-release.cli';
+import { FACTOR_RELEASE_FILE_MAX_BYTES, isLocalDatabase, parseArgs, readReleaseFile, refuseUnsafe, UsageError } from './factor-release.cli';
 
 const LOAD = ['load', '--file=release.json', '--operator=TonyAI data team'];
 
@@ -76,6 +76,29 @@ describe('refuseUnsafe', () => {
   });
 });
 
+describe('isLocalDatabase — an allowlist, as runtime-role.mjs reads a local URL', () => {
+  it('admits a loopback host with only the parameters a local URL carries', () => {
+    expect(isLocalDatabase('postgresql://u:p@127.0.0.1:54322/postgres')).toBe(true);
+    expect(isLocalDatabase('postgresql://u:p@localhost:54322/postgres?schema=public&connection_limit=1')).toBe(true);
+    expect(isLocalDatabase('postgresql://u:p@[::1]:54322/postgres')).toBe(true);
+  });
+
+  it('refuses another host, and any parameter that could redirect it — whatever its case', () => {
+    for (const url of [
+      'postgresql://u:p@db.example.com:5432/postgres',
+      'postgresql://u:p@localhost:54322/postgres?host=staging.example',
+      'postgresql://u:p@localhost:54322/postgres?HOST=staging.example',
+      'postgresql://u:p@localhost:54322/postgres?hostaddr=10.0.0.1',
+      'postgresql://u:p@localhost:54322/postgres?options=-c%20x',
+      'postgresql://u:p@db.localhost:54322/postgres',
+      'not a url',
+      undefined,
+    ]) {
+      expect(isLocalDatabase(url), String(url)).toBe(false);
+    }
+  });
+});
+
 describe('readReleaseFile', () => {
   const dir = mkdtempSync(join(tmpdir(), 'factor-release-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -96,5 +119,10 @@ describe('readReleaseFile', () => {
     expect(() => readReleaseFile(join(dir, 'missing.json'))).toThrow(UsageError);
     expect(() => readReleaseFile(dir)).toThrow(UsageError);
     expect(() => readReleaseFile(file('big.json', Buffer.alloc(FACTOR_RELEASE_FILE_MAX_BYTES + 1, 32)))).toThrow(/larger than/);
+  });
+
+  it('reads a file of exactly the cap — the cap is the largest size allowed', () => {
+    // All spaces: past the size check, refused only as JSON.
+    expect(() => readReleaseFile(file('cap.json', Buffer.alloc(FACTOR_RELEASE_FILE_MAX_BYTES, 32)))).toThrow(/is not JSON/);
   });
 });

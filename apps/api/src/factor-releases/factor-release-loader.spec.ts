@@ -97,6 +97,37 @@ describe('FactorReleaseLoader.load', () => {
     expect(raw.$transaction).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['the owner logged in, acting as the loader', { session: 'postgres', current: 'tonyai_factor_loader' }],
+    ['the loader logged in, acting as another role', { session: 'tonyai_factor_loader', current: 'postgres' }],
+  ])('refuses %s — its login and its role must both be the loader', async (_label, who) => {
+    const { db, raw } = fakeDb();
+    raw.$queryRaw.mockResolvedValueOnce([who]);
+    const refusal = await new FactorReleaseLoader(db, 'TonyAI data team').load(fixtureRelease(), { apply: true }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(refusal).toBeInstanceOf(LoaderRefusal);
+    expect((refusal as Error).message).toMatch(/connect as tonyai_factor_loader/);
+    expect(raw.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses to load an edition again once it is withdrawn — naming the withdrawal, not other content', async () => {
+    const input = fixtureRelease();
+    const withdrawn = {
+      id: 'old', ...input.release, publishedAt: null, reviewedAt: null, status: 'withdrawn', sealedAt: new Date(),
+      withdrawnAt: new Date(), withdrawnBy: 'TonyAI data team', withdrawalReason: 'Erratum', createdAt: new Date(),
+    };
+    const { db, raw } = fakeDb(withdrawn);
+    const refusal = await new FactorReleaseLoader(db, 'TonyAI data team').load(input, { apply: true }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(refusal).toBeInstanceOf(LoaderRefusal);
+    expect((refusal as Error).message).toMatch(/is withdrawn \(Erratum\) — a withdrawn edition is never loaded again/);
+    expect(raw.$transaction).not.toHaveBeenCalled();
+  });
+
   it("maps the file's rows column by column — a stray key never reaches the database — and seals what it loads", async () => {
     const { db, tx, created } = fakeDb();
     const input = fixtureRelease();
