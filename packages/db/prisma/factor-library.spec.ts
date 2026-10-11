@@ -81,16 +81,23 @@ function parenthesised(sql: string, open: number): string {
  * comments (block comments nest in PostgreSQL), and `bare` without string
  * literals or dollar-quoted bodies either. Statements are found in `bare`; a
  * CHECK's body is read from `code`, where its literals are intact. `hidden`
- * lists the literals and dollar-quoted bodies blanked from `bare`: text there
- * is not a statement of the migration's own, but a DO block or an EXECUTE
- * runs it all the same, so the reader refuses to read past a mention there.
+ * lists the literals and dollar-quoted bodies blanked from `bare`, each with
+ * its text decoded: it is not a statement of the migration's own, but a DO
+ * block or an EXECUTE runs it all the same, so the reader refuses to read past
+ * a mention there.
  */
-function lexed(sql: string): { code: string; bare: string; hidden: [number, number][] } {
+interface Hidden {
+  from: number;
+  /** The literal's value, or the body between its tags. */
+  text: string;
+  dollar: boolean;
+}
+
+function lexed(sql: string): { code: string; bare: string; hidden: Hidden[] } {
   const code = sql.split('');
   const bare = sql.split('');
-  const hidden: [number, number][] = [];
+  const hidden: Hidden[] = [];
   const blank = (from: number, to: number, both: boolean) => {
-    if (!both || sql[from] === '$') hidden.push([from, to]);
     for (let k = from; k < to; k += 1) {
       if (sql[k] === '\n') continue;
       bare[k] = ' ';
@@ -101,8 +108,9 @@ function lexed(sql: string): { code: string; bare: string; hidden: [number, numb
   while (i < sql.length) {
     const two = sql.slice(i, i + 2);
     if (two === '--') {
-      const end = sql.indexOf('\n', i);
-      const to = end < 0 ? sql.length : end;
+      // PostgreSQL ends a line comment at a line feed or a carriage return.
+      const end = sql.slice(i).search(/[\r\n]/);
+      const to = end < 0 ? sql.length : i + end;
       blank(i, to, true);
       i = to;
     } else if (two === '/*') {
@@ -123,8 +131,10 @@ function lexed(sql: string): { code: string; bare: string; hidden: [number, numb
       blank(i, j, true);
       i = j;
     } else if (sql[i] === "'") {
-      // An E'…' string escapes with a backslash; a plain one doubles the quote.
+      // An E'…' string escapes with a backslash; a plain one, and a U&'…' one,
+      // doubles the quote.
       const escaped = /[eE]/.test(sql[i - 1] ?? '') && !/[\w$]/.test(sql[i - 2] ?? '');
+      const unicode = sql[i - 1] === '&' && /[uU]/.test(sql[i - 2] ?? '') && !/[\w$]/.test(sql[i - 3] ?? '');
       let j = i + 1;
       while (j < sql.length) {
         if (escaped && sql[j] === '\\') j += 2;
@@ -133,6 +143,9 @@ function lexed(sql: string): { code: string; bare: string; hidden: [number, numb
         else j += 1;
       }
       if (j >= sql.length) throw new Error('unterminated string literal');
+      const raw = sql.slice(i + 1, j);
+      const text = escaped ? decodeEscapes(raw) : raw.replace(/''/g, "'");
+      hidden.push({ from: i, text: unicode ? decodeUnicode(text) : text, dollar: false });
       blank(i, j + 1, false);
       i = j + 1;
     } else if (sql[i] === '"') {
@@ -147,6 +160,7 @@ function lexed(sql: string): { code: string; bare: string; hidden: [number, numb
       }
       const end = sql.indexOf(tag, i + tag.length);
       if (end < 0) throw new Error(`unterminated ${tag} body`);
+      hidden.push({ from: i, text: sql.slice(i + tag.length, end), dollar: true });
       blank(i, end + tag.length, true);
       i = end + tag.length;
     } else {
@@ -156,7 +170,63 @@ function lexed(sql: string): { code: string; bare: string; hidden: [number, numb
   return { code: code.join(''), bare: bare.join(''), hidden };
 }
 
-const IDENTIFIER = String.raw`(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)`;
+/** An E'…' string's backslash escapes, decoded (`\x63`, `\143`, `c`, `\U00000063`, `\n`, `\"`, …). */
+function decodeEscapes(raw: string): string {
+  const named: Record<string, string> = {
+    b: String.fromCharCode(8),
+    f: String.fromCharCode(12),
+    n: String.fromCharCode(10),
+    r: String.fromCharCode(13),
+    t: String.fromCharCode(9),
+  };
+  return raw
+    .replace(/''/g, "'")
+    .replace(/\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[0-7]{1,3}|[\s\S])/g, (_, e: string) =>
+      /^[xuU][0-9A-Fa-f]/.test(e)
+        ? String.fromCodePoint(parseInt(e.slice(1), 16))
+        : /^[0-7]/.test(e)
+          ? String.fromCodePoint(parseInt(e, 8))
+          : (named[e] ?? e),
+    );
+}
+
+/** A U&'…' string's or U&"…" identifier's escapes, with the default escape character. */
+function decodeUnicode(raw: string): string {
+  return raw.replace(/\\(\+[0-9A-Fa-f]{6}|[0-9A-Fa-f]{4}|\\)/g, (_, e: string) =>
+    e === '\\' ? '\\' : String.fromCodePoint(parseInt(e.replace('+', ''), 16)),
+  );
+}
+
+const IDENTIFIER = String.raw`(?:[uU]&"(?:[^"]|"")*"|"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)`;
+
+/**
+ * Whether decoded text names `constraint` as a word — inside a DO block's body
+ * or an EXECUTE's string, any spelling the statement would run as.
+ */
+function mentions(text: string, constraint: string): boolean {
+  return new RegExp(`(?:^|[^A-Za-z0-9_$])${constraint}(?:$|[^A-Za-z0-9_$])`, 'i').test(text);
+}
+
+/** Refuse a mention in a literal or a dollar-quoted body — and in the literals of a body, decoded. */
+function assertNotHidden(constraint: string, hidden: readonly Hidden[]): void {
+  for (const h of hidden) {
+    if (mentions(h.text, constraint)) {
+      throw new Error(`${constraint} is named inside a string or a dollar-quoted body — read that migration by hand`);
+    }
+    if (!h.dollar) continue;
+    // A function body or DO block is SQL, and its own literals may spell the
+    // name in escapes. A body that does not lex is a plain dollar-quoted
+    // string (`$$it's$$`): nothing would run it as SQL, and its raw text was
+    // checked above.
+    let inner: Hidden[];
+    try {
+      inner = lexed(h.text).hidden;
+    } catch {
+      continue;
+    }
+    assertNotHidden(constraint, inner);
+  }
+}
 
 /**
  * The body of the CHECK named `constraint` now in force: the newest statement
@@ -166,23 +236,24 @@ const IDENTIFIER = String.raw`(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)`;
  * gone. Comments are not statements; the name is matched quoted (exactly) or
  * unquoted (folded, as PostgreSQL does); any other statement naming it — one
  * this reader does not understand — fails closed, and so does a mention inside
- * a string literal or a dollar-quoted body (a DO block, an EXECUTE). LP4-02 admits a real publisher by redefining the publisher CHECK in
- * a migration of its own; the registry must match that one, not LP3-03's.
+ * a string literal or a dollar-quoted body (a DO block, an EXECUTE), its
+ * escapes decoded. A `UESCAPE` clause, which changes the escape character, is
+ * refused rather than decoded. LP4-02 admits a real publisher by redefining
+ * the publisher CHECK in a migration of its own; the registry must match that
+ * one, not LP3-03's.
  */
 function constraintInForce(constraint: string, sqls: readonly string[] = migrationSqls()): string {
   const named = (token: string) =>
-    token.startsWith('"') ? token.slice(1, -1).replace(/""/g, '"') === constraint : token.toLowerCase() === constraint;
+    /^[uU]&"/.test(token)
+      ? decodeUnicode(token.slice(3, -1).replace(/""/g, '"')) === constraint
+      : token.startsWith('"')
+        ? token.slice(1, -1).replace(/""/g, '"') === constraint
+        : token.toLowerCase() === constraint;
   let body: string | null = null;
   for (const sql of sqls) {
     const { code, bare, hidden } = lexed(sql);
-    for (const [from, to] of hidden) {
-      const text = sql.slice(from, to);
-      for (const m of text.matchAll(new RegExp(IDENTIFIER, 'g'))) {
-        if (named(m[0])) {
-          throw new Error(`${constraint} is named inside a string or a dollar-quoted body — read that migration by hand`);
-        }
-      }
-    }
+    if (/\bUESCAPE\b/i.test(bare)) throw new Error('a UESCAPE clause — read that migration by hand');
+    assertNotHidden(constraint, hidden);
     for (const m of bare.matchAll(new RegExp(IDENTIFIER, 'g'))) {
       if (!named(m[0])) continue;
       const before = bare.slice(Math.max(0, m.index - 200), m.index);
@@ -370,6 +441,35 @@ describe('constraintInForce — the parity spec\'s own reader', () => {
     expect(() => read(add("'a'"), `DO $$ BEGIN EXECUTE 'ALTER TABLE "t" DROP CONSTRAINT "c"'; END $$;`)).toThrow(inside);
     expect(() => read(add("'a'"), 'CREATE FUNCTION f() RETURNS void AS $fn$ BEGIN ALTER TABLE t DROP CONSTRAINT c; END $fn$;')).toThrow(inside);
     expect(() => read(add("'a'"), `SELECT format('ALTER TABLE %I DROP CONSTRAINT c', 't');`)).toThrow(inside);
+  });
+
+  it('ends a line comment at a carriage return as well as a line feed (Codex R2)', () => {
+    // PostgreSQL's scanner ends `--` at either; a DROP after a lone CR is a statement.
+    for (const eol of ['\r', '\n', '\r\n']) {
+      expect(() => read(add("'a'"), `-- note${eol}ALTER TABLE "t" DROP CONSTRAINT "c";`), JSON.stringify(eol)).toThrow(/no CHECK named c/);
+      expect(() => read(add("'a'"), `-- note${eol}ALTER TABLE "t" RENAME CONSTRAINT c TO gone;`), JSON.stringify(eol)).toThrow(/no CHECK named c/);
+    }
+  });
+
+  it('decodes an escaped name, or refuses what it cannot decode (Codex R3)', () => {
+    const name = 'factor_releases_publisher_check';
+    const addReal = `ALTER TABLE "factor_releases" ADD CONSTRAINT "${name}" CHECK ("publisher" IN ('a'));`;
+    const readReal = (...sqls: string[]) => inList(constraintInForce(name, [addReal, ...sqls]), 'publisher');
+    const inside = /inside a string or a dollar-quoted body/;
+    // Codex's two: an E-string's \" inside a DO block's EXECUTE, and a
+    // Unicode-escaped identifier (\0063 is "c").
+    expect(() => readReal(`DO $$ BEGIN\n  EXECUTE E'ALTER TABLE "factor_releases"\n    DROP CONSTRAINT \\"${name}\\"';\nEND $$;`)).toThrow(inside);
+    expect(() => readReal(`ALTER TABLE factor_releases\nDROP CONSTRAINT U&"factor_releases_publisher_\\0063heck";`)).toThrow(/no CHECK named/);
+    // The same letter through an E-string's hex, octal or \u escape, inside a
+    // body, and through a U& string.
+    for (const escape of ['\\x63', '\\143', '\\u0063']) {
+      expect(() => readReal(`DO $fn$ BEGIN EXECUTE E'ALTER TABLE t DROP CONSTRAINT factor_releases_publisher_${escape}heck'; END $fn$;`), escape).toThrow(inside);
+    }
+    expect(() => readReal(`SELECT U&'factor_releases_publisher_\\+000063heck';`)).toThrow(inside);
+    // A UESCAPE clause changes the escape character: refused, not decoded.
+    expect(() => readReal(`ALTER TABLE t DROP CONSTRAINT U&"factor_releases_publisher_!0063heck" UESCAPE '!';`)).toThrow(/UESCAPE/);
+    // A U&"…" spelling of the name is read as the name everywhere else too.
+    expect(readReal(`COMMENT ON CONSTRAINT U&"factor_releases_publisher_\\0063heck" ON "factor_releases" IS 'kept';`)).toEqual(['a']);
   });
 
   it('lexes the rest of PostgreSQL\'s quoting, or refuses input it cannot', () => {
