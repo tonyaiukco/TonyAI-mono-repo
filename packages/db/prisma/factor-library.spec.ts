@@ -80,12 +80,17 @@ function parenthesised(sql: string, open: number): string {
  * `sql` with what is not executable blanked, positions kept: `code` without
  * comments (block comments nest in PostgreSQL), and `bare` without string
  * literals or dollar-quoted bodies either. Statements are found in `bare`; a
- * CHECK's body is read from `code`, where its literals are intact.
+ * CHECK's body is read from `code`, where its literals are intact. `hidden`
+ * lists the literals and dollar-quoted bodies blanked from `bare`: text there
+ * is not a statement of the migration's own, but a DO block or an EXECUTE
+ * runs it all the same, so the reader refuses to read past a mention there.
  */
-function lexed(sql: string): { code: string; bare: string } {
+function lexed(sql: string): { code: string; bare: string; hidden: [number, number][] } {
   const code = sql.split('');
   const bare = sql.split('');
+  const hidden: [number, number][] = [];
   const blank = (from: number, to: number, both: boolean) => {
+    if (!both || sql[from] === '$') hidden.push([from, to]);
     for (let k = from; k < to; k += 1) {
       if (sql[k] === '\n') continue;
       bare[k] = ' ';
@@ -148,7 +153,7 @@ function lexed(sql: string): { code: string; bare: string } {
       i += 1;
     }
   }
-  return { code: code.join(''), bare: bare.join('') };
+  return { code: code.join(''), bare: bare.join(''), hidden };
 }
 
 const IDENTIFIER = String.raw`(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)`;
@@ -158,10 +163,10 @@ const IDENTIFIER = String.raw`(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)`;
  * that adds it (`ADD CONSTRAINT`, or an inline `CONSTRAINT … CHECK`), unless a
  * later one drops it or renames it away — then none is in force and this
  * throws, so the parity below fails rather than vouching for a CHECK that is
- * gone. Comments, string literals and function bodies are not statements; the
- * name is matched quoted (exactly) or unquoted (folded, as PostgreSQL does);
- * any other statement naming it — one this reader does not understand — fails
- * closed. LP4-02 admits a real publisher by redefining the publisher CHECK in
+ * gone. Comments are not statements; the name is matched quoted (exactly) or
+ * unquoted (folded, as PostgreSQL does); any other statement naming it — one
+ * this reader does not understand — fails closed, and so does a mention inside
+ * a string literal or a dollar-quoted body (a DO block, an EXECUTE). LP4-02 admits a real publisher by redefining the publisher CHECK in
  * a migration of its own; the registry must match that one, not LP3-03's.
  */
 function constraintInForce(constraint: string, sqls: readonly string[] = migrationSqls()): string {
@@ -169,7 +174,15 @@ function constraintInForce(constraint: string, sqls: readonly string[] = migrati
     token.startsWith('"') ? token.slice(1, -1).replace(/""/g, '"') === constraint : token.toLowerCase() === constraint;
   let body: string | null = null;
   for (const sql of sqls) {
-    const { code, bare } = lexed(sql);
+    const { code, bare, hidden } = lexed(sql);
+    for (const [from, to] of hidden) {
+      const text = sql.slice(from, to);
+      for (const m of text.matchAll(new RegExp(IDENTIFIER, 'g'))) {
+        if (named(m[0])) {
+          throw new Error(`${constraint} is named inside a string or a dollar-quoted body — read that migration by hand`);
+        }
+      }
+    }
     for (const m of bare.matchAll(new RegExp(IDENTIFIER, 'g'))) {
       if (!named(m[0])) continue;
       const before = bare.slice(Math.max(0, m.index - 200), m.index);
@@ -311,7 +324,7 @@ describe('constraintInForce — the parity spec\'s own reader', () => {
 
   it('reads the newest definition, across migrations and within one', () => {
     expect(read(add("'a'"), add("'a', 'b'"))).toEqual(['a', 'b']);
-    expect(read(add("'a'"), `ALTER TABLE "t" DROP CONSTRAINT "c", ${add("'a', 'c'").slice('ALTER TABLE "t" '.length)}`)).toEqual(['a', 'c']);
+    expect(read(add("'a'"), `ALTER TABLE "t" DROP CONSTRAINT "c", ${add("'a', 'd'").slice('ALTER TABLE "t" '.length)}`)).toEqual(['a', 'd']);
   });
 
   it('refuses a CHECK dropped, or renamed away, after its last definition', () => {
@@ -336,14 +349,39 @@ describe('constraintInForce — the parity spec\'s own reader', () => {
   it('reads no comment as SQL — a commented-out ADD after a DROP restores nothing (Codex F2)', () => {
     const drop = 'ALTER TABLE "t" DROP CONSTRAINT "c";';
     expect(() => read(add("'a'"), `${drop}\n-- ${add("'a'")}`)).toThrow(/no CHECK named c/);
-    expect(() => read(add("'a'"), `${drop}\n/* ${add("'a'")} /* nested */ still a comment */`)).toThrow(/no CHECK named c/);
+    // Block comments nest: the ADD after the inner `*/` is still inside the outer one.
+    expect(() => read(add("'a'"), `${drop}\n/* outer /* inner */ ${add("'a'")} */`)).toThrow(/no CHECK named c/);
     // And a comment never hides a statement after it.
     expect(() => read(add("'a'"), `-- the CHECK is going\n${drop}`)).toThrow(/no CHECK named c/);
   });
 
-  it('reads neither a string literal nor a function body as SQL', () => {
-    expect(read(add("'a'"), `SELECT 'ALTER TABLE "t" DROP CONSTRAINT "c"';`)).toEqual(['a']);
-    expect(read(add("'a'"), `CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $fn$ BEGIN RAISE NOTICE 'c'; END $fn$;`)).toEqual(['a']);
+  it('reads neither a string literal nor a dollar-quoted body as SQL', () => {
+    expect(read(add("'a'"), `SELECT 'x -- not a comment', 'ALTER TABLE "t" DROP CONSTRAINT "d"';`)).toEqual(['a']);
+    expect(read(add("'a'"), `CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $fn$ BEGIN DROP TABLE d; END $fn$;`)).toEqual(['a']);
+    // A comment inside the CHECK is not part of its list, apostrophes and all.
+    expect(read(`ALTER TABLE "t" ADD CONSTRAINT "c" CHECK ("publisher" IN ('a' -- it's 'old'\n, 'b'));`)).toEqual(['a', 'b']);
+  });
+
+  it('fails closed when a DO block, dynamic SQL or any literal names the constraint (re-review)', () => {
+    // A DO block runs as the migration applies, and EXECUTE runs its string:
+    // blanked as text, a DROP there would leave the old list "in force".
+    const inside = /inside a string or a dollar-quoted body/;
+    expect(() => read(add("'a'"), 'DO $$ BEGIN ALTER TABLE "t" DROP CONSTRAINT "c"; END $$;')).toThrow(inside);
+    expect(() => read(add("'a'"), `DO $$ BEGIN EXECUTE 'ALTER TABLE "t" DROP CONSTRAINT "c"'; END $$;`)).toThrow(inside);
+    expect(() => read(add("'a'"), 'CREATE FUNCTION f() RETURNS void AS $fn$ BEGIN ALTER TABLE t DROP CONSTRAINT c; END $fn$;')).toThrow(inside);
+    expect(() => read(add("'a'"), `SELECT format('ALTER TABLE %I DROP CONSTRAINT c', 't');`)).toThrow(inside);
+  });
+
+  it('lexes the rest of PostgreSQL\'s quoting, or refuses input it cannot', () => {
+    // Each would swallow the ADD after it if lexed wrongly.
+    expect(read(`SELECT E'it\\'s here';\n${add("'a'")}`)).toEqual(['a']);
+    expect(read(`SELECT type'D:\\';\n${add("'a'")}`)).toEqual(['a']);
+    expect(read(`SELECT 1 AS "we""ird";\n${add("'a'")}`)).toEqual(['a']);
+    expect(read(`SELECT x$y$z FROM "t";\n${add("'a'")}`)).toEqual(['a']);
+    expect(read(`SELECT $tag$ it's $ here $tag$;\n${add("'a'")}`)).toEqual(['a']);
+    expect(() => read(add("'a'"), "SELECT 'oops")).toThrow(/unterminated string literal/);
+    expect(() => read(add("'a'"), 'SELECT 1; /* oops')).toThrow(/unterminated block comment/);
+    expect(() => read(add("'a'"), 'SELECT $x$ oops')).toThrow(/unterminated \$x\$ body/);
   });
 
   it('fails closed on any other statement that names the constraint', () => {

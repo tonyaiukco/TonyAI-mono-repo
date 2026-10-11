@@ -16,6 +16,7 @@ import {
   BULK_UPLOAD_MAX_ROWS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
   BULK_UPLOAD_MESSAGE_MAX_LENGTH,
+  CATEGORIES,
   canonicalPeriodValue,
   isCalculated,
   isEvidenceRequired,
@@ -111,10 +112,13 @@ interface ClaimedSlot {
 
 /**
  * How many stored records the slot check reads at most: a file claims at most
- * `BULK_UPLOAD_MAX_ROWS` slots, and through the API a slot holds at most nine
- * (one per refrigerant). Past it the file is refused, never checked in part.
+ * `BULK_UPLOAD_MAX_ROWS` slots, and through the API a slot holds one record
+ * per activity type of its category (nine refrigerants today) or one untyped
+ * record — derived, so a longer list in the contract raises it. Past it the
+ * file is refused, never checked in part.
  */
-const STORED_RECORDS_CAP = BULK_UPLOAD_MAX_ROWS * 10;
+const STORED_RECORDS_CAP =
+  BULK_UPLOAD_MAX_ROWS * (Math.max(...CATEGORIES.map((c) => recordActivityTypesFor(c).length)) + 1);
 
 /** `a, b or c` — how a refusal lists the accepted values. */
 function orList(values: readonly string[]): string {
@@ -213,7 +217,7 @@ export class BulkUploadService {
     });
     const upload = file as Express.Multer.File;
 
-    const storedSlots = await this.loadStoredSlots(rows);
+    const storedSlots = await this.loadStoredSlots(user, rows);
     // An APPLY gets a batch, created BEFORE the loop so every record can carry
     // its id. A dry run gets none: it must provably write nothing.
     const batchId = dryRun
@@ -748,14 +752,22 @@ export class BulkUploadService {
    * This exists because the preview CANNOT see a conflict — Postgres raises it
    * on the insert — so without it a dry run reports a thousand clean rows and
    * the apply comes back with conflicts. Every entity id reaching here passed
-   * the whole-file access check.
+   * the whole-file access check; the caller's accessible set is applied again
+   * anyway, so a change to that order could not make this query say whether
+   * another entity's slot is taken.
    */
-  private async loadStoredSlots(rows: ParsedRow[]): Promise<StoredSlots> {
+  private async loadStoredSlots(user: RequestUser, rows: ParsedRow[]): Promise<StoredSlots> {
     const slots: StoredSlots = { keys: new Set(), typed: new Set(), untyped: new Set() };
+    const accessible = new Set(user.accessibleSubsidiaryIds);
     const claimed = new Map<string, ClaimedSlot>();
     for (const { cells } of rows) {
       const slot = this.claimedSlot(cells);
-      if (slot) claimed.set(this.slotOf(slot.subsidiaryId, slot.locationId, slot.reportingYear, slot.reportingPeriod, slot.periodValue, slot.category), slot);
+      if (slot && accessible.has(slot.subsidiaryId)) {
+        claimed.set(
+          this.slotOf(slot.subsidiaryId, slot.locationId, slot.reportingYear, slot.reportingPeriod, slot.periodValue, slot.category),
+          slot,
+        );
+      }
     }
     if (claimed.size === 0) return slots;
 
@@ -779,11 +791,15 @@ export class BulkUploadService {
       },
       take: STORED_RECORDS_CAP + 1,
     });
-    // Through the API a slot holds one untyped record or one per activity type
-    // of its category — nine at most (Refrigerants) — so a thousand slots hold
-    // at most 9,000. More means records written around the API; checking part
-    // of them would be a false clean dry run, so the file is refused instead.
-    if (stored.length > STORED_RECORDS_CAP) throw new QueryTooBroadError();
+    // More than the API can store in these slots means records written around
+    // it; checking part of them would be a false clean dry run, so the file is
+    // refused instead — and the operators told, since nothing else would show.
+    if (stored.length > STORED_RECORDS_CAP) {
+      this.logger.warn(
+        `bulk import refused: the ${claimed.size} slot(s) of one file hold more than ${STORED_RECORDS_CAP} stored records — records written around the API`,
+      );
+      throw new QueryTooBroadError();
+    }
     for (const r of stored) {
       slots.keys.add(
         this.slotKey(

@@ -19,9 +19,11 @@ import { lifecycleServices, storageStub } from './services';
  * (`TA002`, a trigger the insert raises); the preview cannot see it, so the
  * importer reads the stored records of the file's own slots first. Here a dry
  * run, an apply and the trigger itself are asked about the same slot, and must
- * agree — the unit specs prove the logic over a mocked store, this proves the
- * query reads the columns the trigger compares (the slot's six, `voided`
- * excluded, a blank site as NULL, the period as stored).
+ * agree — the unit specs prove the logic over a mocked store and pin the
+ * query's shape (every slot column, a blank site as NULL); this proves, against
+ * the trigger, both directions, `voided` excluded, another month apart, and the
+ * period as stored (the file spells it "january"). Every record here is at
+ * company level.
  */
 
 let runtime: PrismaService;

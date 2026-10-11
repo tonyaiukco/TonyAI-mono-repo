@@ -11,8 +11,11 @@ import {
   ACTIVITY_UNIT_MAX_LENGTH,
   BULK_UPLOAD_MAX_ROWS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
+  BULK_UPLOAD_COLUMNS,
   BULK_UPLOAD_MESSAGE_MAX_LENGTH,
   CATEGORIES,
+  recordActivityTypesFor,
+  type BulkUploadColumn,
   type CalculationResult,
 } from '@tonyai/shared-types';
 import {
@@ -2741,7 +2744,75 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
         { subsidiaryId: SUB_1, locationId: LOC_A, reportingYear: 2024, reportingPeriod: 'monthly', periodValue: 'January', category: 'Fuel' },
         { subsidiaryId: SUB_1, locationId: null, reportingYear: 2024, reportingPeriod: 'monthly', periodValue: 'March', category: 'Electricity' },
       ]);
-      expect(take).toBe(BULK_UPLOAD_MAX_ROWS * 10 + 1);
+      // The cap follows the contract: a thousand slots, each holding at most
+      // one record per activity type of its category, or one untyped record.
+      const perSlot = Math.max(...CATEGORIES.map((c) => recordActivityTypesFor(c).length)) + 1;
+      expect(take).toBe(BULK_UPLOAD_MAX_ROWS * perSlot + 1);
+    });
+
+    // Each neighbour differs from X in one slot column only. Folded into X's
+    // branch — by the dedupe key, the scope, or a row the claim skips — X's
+    // stored conflict is never read, the false clean dry run again
+    // (qa-auditor's survivors, re-review).
+    const X = row({ ...FUEL, activityType: 'diesel' });
+    it.each([
+      ['site', { locationId: LOC_A }],
+      ['year', { reportingYear: '2025' }],
+      ['month', { periodValue: 'February' }],
+      ['category', { category: 'Mobile Combustion' }],
+      ['entity', { subsidiaryId: SUB_99 }],
+    ])('keeps a neighbour in another %s apart from the conflicting row, in either order', async (_column, neighbour) => {
+      const Y = row({ ...FUEL, activityType: 'diesel', ...neighbour });
+      for (const [lines, conflictRow] of [[[X, Y], 2], [[Y, X], 3]] as const) {
+        const { prisma, service } = build();
+        prisma.activityRecord.findMany.mockImplementation(table([legacyFuel]));
+
+        const report = await service.import(
+          dataEntry({ accessibleSubsidiaryIds: [SUB_1, SUB_99] }),
+          csvFile([...lines]),
+          DRY,
+        );
+
+        expect(report.errors.filter((e) => e.code === 'duplicate_existing').map((e) => e.row)).toEqual([conflictRow]);
+      }
+    });
+
+    it('claims the slot of a row with a variance reason too', async () => {
+      const { prisma, service } = build();
+      prisma.activityRecord.findMany.mockImplementation(table([legacyFuel]));
+
+      const report = await service.import(
+        dataEntry(),
+        csvFile([row({ ...FUEL, activityType: 'diesel', varianceReason: 'Meter replaced' })]),
+        DRY,
+      );
+
+      expect(report.errors.map((e) => e.code)).toEqual(['duplicate_existing']);
+    });
+
+    it('asks only about entities the caller may read, whatever reaches it', async () => {
+      // The whole-file access check runs first and refuses a foreign id, so
+      // this is defence in depth: were that order ever to change, the query
+      // must still not say whether another entity's slot is taken.
+      const { prisma, service } = build();
+      const cells = (over: Partial<Record<BulkUploadColumn, string>>) =>
+        Object.fromEntries(
+          BULK_UPLOAD_COLUMNS.map((c) => [c, { subsidiaryId: SUB_1, reportingYear: '2024', reportingPeriod: 'monthly', periodValue: 'January', category: 'Electricity', activityValue: '1', activityUnit: 'kWh', ...over }[c] ?? '']),
+        ) as Record<BulkUploadColumn, string>;
+      const load = (service as unknown as {
+        loadStoredSlots(user: RequestUser, rows: { row: number; cells: Record<BulkUploadColumn, string> }[]): Promise<unknown>;
+      }).loadStoredSlots.bind(service);
+
+      await load(dataEntry(), [{ row: 2, cells: cells({ subsidiaryId: SUB_99 }) }]);
+      expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+
+      await load(dataEntry(), [
+        { row: 2, cells: cells({ subsidiaryId: SUB_99 }) },
+        { row: 3, cells: cells({}) },
+      ]);
+      const [{ where }] = prisma.activityRecord.findMany.mock.calls[0];
+      expect(where.subsidiaryId).toEqual({ in: [SUB_1] });
+      expect(where.OR.map((b: { subsidiaryId: string }) => b.subsidiaryId)).toEqual([SUB_1]);
     });
 
     it('refuses the whole file rather than check part of it, when its own slots hold more than the cap', async () => {
