@@ -77,27 +77,117 @@ function parenthesised(sql: string, open: number): string {
 }
 
 /**
+ * `sql` with what is not executable blanked, positions kept: `code` without
+ * comments (block comments nest in PostgreSQL), and `bare` without string
+ * literals or dollar-quoted bodies either. Statements are found in `bare`; a
+ * CHECK's body is read from `code`, where its literals are intact.
+ */
+function lexed(sql: string): { code: string; bare: string } {
+  const code = sql.split('');
+  const bare = sql.split('');
+  const blank = (from: number, to: number, both: boolean) => {
+    for (let k = from; k < to; k += 1) {
+      if (sql[k] === '\n') continue;
+      bare[k] = ' ';
+      if (both) code[k] = ' ';
+    }
+  };
+  let i = 0;
+  while (i < sql.length) {
+    const two = sql.slice(i, i + 2);
+    if (two === '--') {
+      const end = sql.indexOf('\n', i);
+      const to = end < 0 ? sql.length : end;
+      blank(i, to, true);
+      i = to;
+    } else if (two === '/*') {
+      let depth = 0;
+      let j = i;
+      do {
+        if (sql.startsWith('/*', j)) {
+          depth += 1;
+          j += 2;
+        } else if (sql.startsWith('*/', j)) {
+          depth -= 1;
+          j += 2;
+        } else {
+          j += 1;
+        }
+      } while (depth > 0 && j < sql.length);
+      if (depth > 0) throw new Error('unterminated block comment');
+      blank(i, j, true);
+      i = j;
+    } else if (sql[i] === "'") {
+      // An E'…' string escapes with a backslash; a plain one doubles the quote.
+      const escaped = /[eE]/.test(sql[i - 1] ?? '') && !/[\w$]/.test(sql[i - 2] ?? '');
+      let j = i + 1;
+      while (j < sql.length) {
+        if (escaped && sql[j] === '\\') j += 2;
+        else if (sql[j] === "'" && sql[j + 1] === "'") j += 2;
+        else if (sql[j] === "'") break;
+        else j += 1;
+      }
+      if (j >= sql.length) throw new Error('unterminated string literal');
+      blank(i, j + 1, false);
+      i = j + 1;
+    } else if (sql[i] === '"') {
+      let j = i + 1;
+      while (j < sql.length && !(sql[j] === '"' && sql[j + 1] !== '"')) j += sql[j] === '"' ? 2 : 1;
+      i = j + 1;
+    } else if (sql[i] === '$' && !/[\w$]/.test(sql[i - 1] ?? '')) {
+      const tag = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i))?.[0];
+      if (!tag) {
+        i += 1;
+        continue;
+      }
+      const end = sql.indexOf(tag, i + tag.length);
+      if (end < 0) throw new Error(`unterminated ${tag} body`);
+      blank(i, end + tag.length, true);
+      i = end + tag.length;
+    } else {
+      i += 1;
+    }
+  }
+  return { code: code.join(''), bare: bare.join('') };
+}
+
+const IDENTIFIER = String.raw`(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)`;
+
+/**
  * The body of the CHECK named `constraint` now in force: the newest statement
  * that adds it (`ADD CONSTRAINT`, or an inline `CONSTRAINT … CHECK`), unless a
  * later one drops it or renames it away — then none is in force and this
  * throws, so the parity below fails rather than vouching for a CHECK that is
- * gone. LP4-02 admits a real publisher by redefining the publisher CHECK in a
- * migration of its own; the registry must match that one, not LP3-03's.
+ * gone. Comments, string literals and function bodies are not statements; the
+ * name is matched quoted (exactly) or unquoted (folded, as PostgreSQL does);
+ * any other statement naming it — one this reader does not understand — fails
+ * closed. LP4-02 admits a real publisher by redefining the publisher CHECK in
+ * a migration of its own; the registry must match that one, not LP3-03's.
  */
 function constraintInForce(constraint: string, sqls: readonly string[] = migrationSqls()): string {
-  const name = `"${constraint}"`;
-  const event = new RegExp(
-    `(DROP\\s+CONSTRAINT(?:\\s+IF\\s+EXISTS)?\\s+${name})` +
-      `|(RENAME\\s+CONSTRAINT\\s+${name}\\s+TO)` +
-      `|(\\bTO\\s+${name})` +
-      `|((?:ADD\\s+)?CONSTRAINT\\s+${name}\\s+CHECK\\s*\\()`,
-    'gi',
-  );
+  const named = (token: string) =>
+    token.startsWith('"') ? token.slice(1, -1).replace(/""/g, '"') === constraint : token.toLowerCase() === constraint;
   let body: string | null = null;
   for (const sql of sqls) {
-    for (const m of sql.matchAll(event)) {
-      if (m[3]) throw new Error(`a constraint is renamed to ${constraint} — read that migration by hand`);
-      body = m[4] ? parenthesised(sql, m.index! + m[0].length) : null;
+    const { code, bare } = lexed(sql);
+    for (const m of bare.matchAll(new RegExp(IDENTIFIER, 'g'))) {
+      if (!named(m[0])) continue;
+      const before = bare.slice(Math.max(0, m.index - 200), m.index);
+      const after = bare.slice(m.index + m[0].length);
+      const check = /^\s+CHECK\s*\(/i.exec(after);
+      if (/\bCONSTRAINT\s+$/i.test(before) && check && !/\b(?:DROP|RENAME|VALIDATE|ALTER|ON)\s+CONSTRAINT\s+$/i.test(before)) {
+        body = parenthesised(code, m.index + m[0].length + check[0].length);
+      } else if (/\bDROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?$/i.test(before)) {
+        body = null;
+      } else if (/\bRENAME\s+CONSTRAINT\s+$/i.test(before) && /^\s+TO\b/i.test(after)) {
+        body = null;
+      } else if (new RegExp(String.raw`\bRENAME\s+CONSTRAINT\s+${IDENTIFIER}\s+TO\s+$`, 'i').test(before)) {
+        throw new Error(`a constraint is renamed to ${constraint} — read that migration by hand`);
+      } else if (/\b(?:COMMENT\s+ON|VALIDATE)\s+CONSTRAINT\s+$/i.test(before)) {
+        // Neither changes what the CHECK admits.
+      } else {
+        throw new Error(`an unrecognised statement names ${constraint} — read that migration by hand`);
+      }
     }
   }
   if (body === null) throw new Error(`no CHECK named ${constraint} is in force`);
@@ -233,6 +323,32 @@ describe('constraintInForce — the parity spec\'s own reader', () => {
   it('keeps a parenthesis or a doubled quote inside a name, and reads only the constraint\'s own list', () => {
     expect(read(add("'Pub (UK)', 'O''Brien'"))).toEqual(['Pub (UK)', "O'Brien"]);
     expect(read(`UPDATE "t" SET "x" = 1 WHERE "publisher" IN ('stale');\n${add("'a'")}`)).toEqual(['a']);
+  });
+
+  it('reads an unquoted name as the same constraint — a DROP or RENAME without quotes removes it (Codex F2)', () => {
+    expect(() => read(add("'a'"), 'ALTER TABLE "t"\n  DROP CONSTRAINT c;')).toThrow(/no CHECK named c/);
+    expect(() => read(add("'a'"), 'ALTER TABLE "t" RENAME CONSTRAINT C TO gone;')).toThrow(/no CHECK named c/);
+    expect(read(`ALTER TABLE t ADD CONSTRAINT c CHECK ("publisher" IN ('a'));`)).toEqual(['a']);
+    // A quoted name keeps its case: "C" is another constraint.
+    expect(read(add("'a'"), 'ALTER TABLE "t" DROP CONSTRAINT "C";')).toEqual(['a']);
+  });
+
+  it('reads no comment as SQL — a commented-out ADD after a DROP restores nothing (Codex F2)', () => {
+    const drop = 'ALTER TABLE "t" DROP CONSTRAINT "c";';
+    expect(() => read(add("'a'"), `${drop}\n-- ${add("'a'")}`)).toThrow(/no CHECK named c/);
+    expect(() => read(add("'a'"), `${drop}\n/* ${add("'a'")} /* nested */ still a comment */`)).toThrow(/no CHECK named c/);
+    // And a comment never hides a statement after it.
+    expect(() => read(add("'a'"), `-- the CHECK is going\n${drop}`)).toThrow(/no CHECK named c/);
+  });
+
+  it('reads neither a string literal nor a function body as SQL', () => {
+    expect(read(add("'a'"), `SELECT 'ALTER TABLE "t" DROP CONSTRAINT "c"';`)).toEqual(['a']);
+    expect(read(add("'a'"), `CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $fn$ BEGIN RAISE NOTICE 'c'; END $fn$;`)).toEqual(['a']);
+  });
+
+  it('fails closed on any other statement that names the constraint', () => {
+    expect(() => read(add("'a'"), 'ALTER TABLE "t" ALTER CONSTRAINT "c" DEFERRABLE;')).toThrow(/unrecognised/);
+    expect(read(add("'a'"), `COMMENT ON CONSTRAINT "c" ON "t" IS 'why';`, 'ALTER TABLE "t" VALIDATE CONSTRAINT c;')).toEqual(['a']);
   });
 
   it('reads an inline CONSTRAINT … CHECK as a definition', () => {
