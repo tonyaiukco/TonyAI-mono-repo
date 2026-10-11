@@ -1,0 +1,10 @@
+{
+  "subsidiary": "Subsidiary filter",
+  "scope": "Scope filter",
+  "category": "Category filter",
+  "allSubsidiaries": "All accessible subsidiaries",
+  "allScopes": "All scopes",
+  "allCategories": "All categories",
+  "selectedSubsidiary": "Selected subsidiary ({id})",
+  "selectedScope": "Scope {scope}"
+}

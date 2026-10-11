@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIMIT_DEFAULTS, configurePool, readRuntimeConfig } from './runtime-config';
 import { CapacityError, routeGroup, RuntimeLimits } from './runtime-limits';
+import { REPORTING_CONTEXT_API_PATHS } from '@tonyai/shared-types';
 import { WorkDeadline } from './work-deadline';
 
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
@@ -79,6 +80,14 @@ describe('bounded admission', () => {
     ['POST', '/api/v1/activity-records/id/submit', 'WRITE'],
     ['GET', '/api/v1/reports/meta', 'READ'],
   ])('groups %s %s', (method, path, group) => expect(routeGroup(method, path)).toBe(group));
+  it.each(['GET', 'HEAD'])('classifies every legacy and context export as EXPORT for %s', (method) => {
+    for (const path of [REPORTING_CONTEXT_API_PATHS.pdf, REPORTING_CONTEXT_API_PATHS.excel, REPORTING_CONTEXT_API_PATHS.csv,
+      '/reports/pdf', '/reports/excel', '/reports/csv']) {
+      expect(routeGroup(method, `/api/v1${path}`)).toBe('EXPORT');
+      expect(routeGroup(method, `/api/v1${path.toUpperCase()}/?year=2027`)).toBe('EXPORT');
+    }
+    expect(routeGroup(method, `/api/v1${REPORTING_CONTEXT_API_PATHS.meta}`)).toBe('READ');
+  });
   it('stops new work at the exact monotonic deadline', () => {
     let clock = 10;
     const deadline = new WorkDeadline(60, () => clock);

@@ -1,3 +1,4 @@
+import { REPORTING_CONTEXT_API_PATHS } from '@tonyai/shared-types';
 import { HttpException, Injectable, OnApplicationShutdown } from '@nestjs/common';
 import { ThrottlerStorageService } from '@nestjs/throttler';
 import { errorBody } from './api-error';
@@ -9,13 +10,19 @@ export class CapacityError extends HttpException {
   }
 }
 
+const EXPORT_PATHS = new Set([
+  ...['pdf', 'excel', 'csv'].map((format) => `/api/v1/reports/${format}`),
+  ...[REPORTING_CONTEXT_API_PATHS.pdf, REPORTING_CONTEXT_API_PATHS.excel, REPORTING_CONTEXT_API_PATHS.csv]
+    .map((path) => `/api/v1${path}`),
+]);
+
 export type RouteGroup = 'READ' | 'WRITE' | 'IMPORT' | 'EXPORT' | 'SUBMIT';
 export const routeGroup = (method: string, path: string): RouteGroup => {
   const route = path.split('?')[0].toLowerCase().replace(/\/+$/, '');
   if (method === 'POST' && route === '/api/v1/bulk-upload/activity-records') return 'IMPORT';
   if (method === 'POST' && (route === '/api/v1/activity-records/bulk-submit'
     || /^\/api\/v1\/import-batches\/[^/]+\/submit$/.test(route))) return 'SUBMIT';
-  if (['GET', 'HEAD'].includes(method) && /^\/api\/v1\/reports\/(pdf|excel|csv)$/.test(route)) return 'EXPORT';
+  if (['GET', 'HEAD'].includes(method) && EXPORT_PATHS.has(route)) return 'EXPORT';
   return ['GET', 'HEAD', 'OPTIONS'].includes(method) ? 'READ' : 'WRITE';
 };
 

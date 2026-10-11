@@ -27,7 +27,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import type { RequestUser } from '../auth/auth.types';
 import type { ReportQueryDto } from './dto/report-query.dto';
-import type { ActivityRecordStatus, EmissionsSummary } from '@tonyai/shared-types';
+import type { ActivityRecordStatus, EmissionsSummary, ReportingContext } from '@tonyai/shared-types';
 
 import { AuditService } from '../audit/audit.service';
 
@@ -180,7 +180,7 @@ function stubRecords(prisma: PrismaMock, records: Record<string, unknown>[]): vo
         .map((link) => ({ activityRecordId: r.id, evidence: link.evidence }))));
   prisma.activityRecord.findMany.mockImplementation((args: unknown) => {
     const q = args as {
-      where?: { status?: { in?: string[] } };
+      where?: { status?: { in?: string[] }; subsidiaryId?: string | { in: string[] }; reportingYear?: number; scope?: number; category?: string };
       include?: { evidenceLinks?: unknown; location?: unknown };
     };
     const wanted = q?.where?.status?.in ?? [];
@@ -188,6 +188,14 @@ function stubRecords(prisma: PrismaMock, records: Record<string, unknown>[]): vo
     return Promise.resolve(
       records
         .filter((r) => wanted.includes(r.status as string))
+        .filter((r) => {
+          const where = q.where!;
+          const ids = typeof where.subsidiaryId === 'string' ? [where.subsidiaryId] : where.subsidiaryId?.in;
+          return (!ids || ids.includes(r.subsidiaryId as string)) &&
+            (where.reportingYear === undefined || r.reportingYear === where.reportingYear) &&
+            (where.scope === undefined || r.scope === where.scope) &&
+            (where.category === undefined || r.category === where.category);
+        })
         .map((r) => ({
           ...r,
           // Prisma hands back a relation only when the query ASKED for it.
@@ -232,6 +240,85 @@ describe('ReportsService', () => {
       emissions as unknown as EmissionsService,
       auditMock(),
     );
+  });
+
+  it('uses one context for metadata, summary, both ledgers, appendices, artifact labels and audit', async () => {
+    const context: ReportingContext = { year: 2024, subsidiaryId: 'sub-1', scope: 2, category: 'Electricity' };
+    const selected = { ...q, ...context, includeEvidenceSummary: true };
+    const records = [
+      makeRecord({ id: 'selected' }),
+      makeRecord({ id: 'withdrawn', periodValue: 'February', status: 'voided', voidedAt: now, voidReason: 'Correction', voidedBy: 'admin-1' }),
+      makeRecord({ id: 'other-year', reportingYear: 2023 }),
+      makeRecord({ id: 'other-subsidiary', subsidiaryId: 'sub-2' }),
+      makeRecord({ id: 'foreign', subsidiaryId: 'foreign' }),
+      makeRecord({ id: 'other-category', category: 'Fuel', scope: 1,
+        calculation: { ...makeRecord().calculation, factorId: 'excluded-factor', source: 'excluded-source' },
+        evidenceLinks: [{ evidence: { id: 'excluded-evidence', fileName: 'excluded.pdf', _count: { links: 1 } } }],
+      }),
+      makeRecord({ id: 'other-withdrawal', category: 'Fuel', scope: 1, status: 'voided' }),
+    ];
+    stubRecords(prisma, records);
+    prisma.activityRecord.groupBy.mockResolvedValue([
+      { status: 'approved', _count: { _all: 1 } }, { status: 'voided', _count: { _all: 1 } },
+    ]);
+    const realEmissions = new EmissionsService(prisma as unknown as PrismaService);
+    emissions.summary.mockImplementation((user, query, cap) => realEmissions.summary(user, query, cap));
+    const data = await service.assemble(admin, selected);
+    expect(data.context).toEqual(context);
+    expect(data.records.map((row) => row.periodValue)).toEqual(['January']);
+    expect(data.withdrawn.map((row) => row.periodValue)).toEqual(['February']);
+    expect(data.summary.recordCount).toBe(1);
+    expect(data.summary.totals.total).toBe(0.44);
+    expect(data.withdrawnTotals.count).toBe(1);
+    expect(data.evidenceSummary).toHaveLength(1);
+    expect(data.evidenceSummary.flatMap((row) => row.fileNames)).toEqual(['invoice-jan.pdf']);
+    expect(data.factors.map((factor) => factor.source)).not.toContain('excluded-source');
+    expect(prisma.activityRecord.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: { subsidiaryId: { in: ['sub-1'] }, reportingYear: 2024, scope: 2, category: 'Electricity' },
+    }));
+    for (const [args] of prisma.activityRecord.findMany.mock.calls) {
+      expect(args.where).toMatchObject({ reportingYear: 2024, scope: 2, category: 'Electricity' });
+    }
+    const html = buildReportHtml(data);
+    expect(html).toContain('Scope filter: Scope 2');
+    expect(html).toContain('Category filter: Electricity');
+    expect(html).toContain('Subsidiary filter: Energy');
+    const bytes = await service.generateExcel(admin, selected);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes as unknown as Parameters<typeof workbook.xlsx.load>[0]);
+    const rows: unknown[][] = [];
+    workbook.getWorksheet('Summary')!.eachRow((row) => rows.push(row.values as unknown[]));
+    expect(rows).toContainEqual([undefined, 'Scope filter', 'Scope 2']);
+    expect(rows).toContainEqual([undefined, 'Category filter', 'Electricity']);
+    const csv = await service.generateCsv(admin, selected);
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+    expect(csv.trim().split('\n')).toHaveLength(3);
+    expect(csv.trim().split('\n')[0]).toBe(csvHeader());
+    for (const [, event] of audit.record.mock.calls) {
+      expect(event.diff).toMatchObject({ year: 2024, subsidiaryId: 'sub-1', scope: 2, category: 'Electricity', recordCount: 1, voidedCount: 1 });
+    }
+  });
+
+  it('labels an empty legacy subsidiary selector as all accessible in HTML, XLSX and audit', async () => {
+    stubRecords(prisma, [makeRecord()]);
+    const query = { ...q, subsidiaryId: '' };
+    const data = await service.assemble(admin, query);
+    expect(data.context).toEqual({ year: 2024 });
+    expect(buildReportHtml(data)).toContain('Subsidiary filter: All accessible subsidiaries');
+    const bytes = await service.generateExcel(admin, query);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes as unknown as Parameters<typeof workbook.xlsx.load>[0]);
+    expect(workbook.getWorksheet('Summary')!.getRow(4).getCell(2).value).toBe('All accessible subsidiaries');
+    expect(audit.record).toHaveBeenCalledWith(admin, expect.objectContaining({ diff: expect.objectContaining({ subsidiaryId: null }) }));
+  });
+
+  it('preserves an inaccessible requested selection in labels instead of claiming all subsidiaries', async () => {
+    prisma.subsidiary.findMany.mockResolvedValue([]);
+    const data = await service.assemble(admin, { ...q, subsidiaryId: 'foreign', category: 'Fuel' });
+    expect(data.context).toEqual({ year: 2024, subsidiaryId: 'foreign', category: 'Fuel' });
+    expect(buildReportHtml(data)).toContain('Selected subsidiary (foreign)');
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+    expect(prisma.activityRecord.groupBy).not.toHaveBeenCalled();
   });
 
   // --- meta / status --------------------------------------------------------

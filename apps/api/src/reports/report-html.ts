@@ -1,3 +1,4 @@
+import { contextLabels } from './context-labels';
 import type { ReportData, ReportFactorRow } from './report-data';
 import { recordActivityTypesFor } from '@tonyai/shared-types';
 import {
@@ -160,6 +161,7 @@ export function buildReportHtml(data: ReportData): string {
     <div>
       <h1>${esc(data.organisationName)}</h1>
       <div>${esc(data.templateName)} · Reporting year ${data.year}${data.subsidiaryName ? ` · ${esc(data.subsidiaryName)}` : ''}</div>
+      ${contextLabels(data.context, data.subsidiaryName).map(([label, value]) => `<div>${esc(label)}: ${esc(value)}</div>`).join('')}
     </div>
     <div class="meta">
       <span class="badge">${s.text}</span><br/>
