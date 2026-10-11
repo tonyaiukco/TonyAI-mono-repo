@@ -17,11 +17,14 @@
 --    deployed environment's operator with psql's `\password`), never here.
 -- 3. K11 (L4, P5): a record's calculation and the inputs it was computed from
 --    change, while it is a draft (or rejected), in the API's session or the
---    owner's only (TA006); its free-form `input` in theirs at any status. A
---    direct writer (the service role through PostgREST) rewrote a draft's
---    figure, and the author's ordinary submit committed it. The runtime
---    login's own SQL is caught by the API, which recomputes at submit and
---    approve (PR B2).
+--    owner's only (TA006); its free-form `input` and who wrote it
+--    (`created_by`, which the self-approval rule reads) in theirs at any
+--    status; and a draft or rejected record is deleted in theirs only — else
+--    a direct writer deletes it and re-inserts it, same id, forged figure.
+--    A direct writer (the service role through PostgREST) rewrote a draft's
+--    figure, and the author's ordinary submit committed it. Not closed here:
+--    a NEW draft inserted with a forged figure (P5), and the runtime login's
+--    own SQL — the API catches both, recomputing at submit and approve (PR B2).
 -- 4. A release is sealed and withdrawn by the loader's session or the
 --    owner's alone (TA013) — before this, the service role could withdraw any
 --    release (independent review F6). The service role loses INSERT, UPDATE
@@ -29,9 +32,19 @@
 --    use the owner.
 --
 -- SQLSTATEs added to LP3-03's list:
---   TA006  a record's calculation or inputs changed outside the API (K11)
+--   TA006  a record's calculation, inputs or author changed, or a draft
+--          deleted, outside the API (K11)
 --   TA013  a release sealed or withdrawn by a session other than the loader's
 --          or the owner's
+
+-- The migration holds ACCESS EXCLUSIVE on the three library tables (the
+-- column, the CHECKs, the policies) and on `factor_release_events` until it
+-- commits, and every save or preview prices from the library — so each lock
+-- wait gives up after 5 s rather than stall them behind a long read. Then
+-- Prisma records the migration as failed and rolls it back whole: resolve it
+-- with `prisma migrate resolve --rolled-back 20261011120000_lp4_02_loader`
+-- before deploying again, in a quieter window.
+SET LOCAL lock_timeout = '5s';
 
 -- ---------------------------------------------------------------------------
 -- 1. The seal
@@ -48,8 +61,9 @@ ALTER TABLE "factor_release_events"
   ADD CONSTRAINT "factor_release_events_event_check"
     CHECK ("event" IN ('loaded', 'rows_added', 'sealed', 'withdrawn', 'rows_deleted', 'deleted'));
 
--- LP3-03's body, and a release is loaded unsealed: its seal is a change of
--- its own, made once its rows are in.
+-- LP3-03's body, and a release is loaded unsealed — its seal is a change of
+-- its own, made once its rows are in — and stamped with the database's clock,
+-- as its rows are, never the loader's.
 CREATE OR REPLACE FUNCTION "public"."factor_releases_before_insert"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
@@ -80,6 +94,7 @@ BEGIN
       ERRCODE = 'TA011',
       MESSAGE = 'a release is loaded unsealed: its seal closes it once its rows are in, in the same transaction';
   END IF;
+  NEW."created_at" := pg_catalog.now();
   PERFORM pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtext('tonyai.factor_release_publisher'),
     pg_catalog.hashtext(NEW."publisher"));
@@ -386,8 +401,9 @@ CREATE POLICY "unit_conversions_loader_insert" ON "unit_conversions" FOR INSERT 
 
 -- LP4-01's body, and what a draft (or a rejected record) says — its
 -- calculation and every input K5 freezes once it is committed — changes in
--- the API's session or the owner's alone; its free-form `input` too, at any
--- status (K5 does not hold it). A committed record's other columns stay K5's
+-- the API's session or the owner's alone; its free-form `input` and its
+-- author (`created_by`: the self-approval rule compares it) too, at any
+-- status (K5 holds neither). A committed record's other columns stay K5's
 -- (TA001, for every writer).
 CREATE OR REPLACE FUNCTION "public"."activity_records_lifecycle_writer"() RETURNS trigger
 LANGUAGE plpgsql
@@ -410,6 +426,7 @@ BEGIN
         MESSAGE = format('activity record %s moves from %s to %s only through the API, not as %s', OLD."id", OLD."status", NEW."status", session_user);
     END IF;
     IF NEW."input" IS DISTINCT FROM OLD."input"
+       OR NEW."created_by" IS DISTINCT FROM OLD."created_by"
        OR (OLD."status" IN ('draft', 'rejected') AND (
             NEW."calculation" IS DISTINCT FROM OLD."calculation"
          OR NEW."activity_type" IS DISTINCT FROM OLD."activity_type"
@@ -425,10 +442,38 @@ BEGIN
        )) THEN
       RAISE EXCEPTION USING
         ERRCODE = 'TA006',
-        MESSAGE = format('activity record %s keeps the figure the API computed and the inputs it computed it from: only the API changes them, not %s', OLD."id", session_user);
+        MESSAGE = format('activity record %s keeps the figure the API computed, the inputs it computed it from and who wrote it: only the API changes them, not %s', OLD."id", session_user);
     END IF;
   END IF;
   RETURN NEW;
+END
+$fn$;
+
+-- LP3-03's body, and a draft or rejected record is deleted by the API's
+-- session or the owner's alone (TA006): deleting it and inserting it again
+-- under its id is a rewrite of its figure. (A committed record stays the
+-- owner's — `current_user`, which a foreign-key action runs as; nothing
+-- cascades into this table since LP4-01, so the draft rule can read the
+-- login.)
+CREATE OR REPLACE FUNCTION "public"."activity_records_committed_delete"() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $fn$
+BEGIN
+  IF OLD."status" NOT IN ('draft', 'rejected')
+     AND current_user <> (SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA001',
+      MESSAGE = format('activity record %s is %s: a committed record is never deleted on its own', OLD."id", OLD."status");
+  END IF;
+  IF OLD."status" IN ('draft', 'rejected')
+     AND session_user <> 'tonyai_runtime'
+     AND session_user <> (SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA006',
+      MESSAGE = format('activity record %s is %s: the API deletes it, not %s', OLD."id", OLD."status", session_user);
+  END IF;
+  RETURN OLD;
 END
 $fn$;
 

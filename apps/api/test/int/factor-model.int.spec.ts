@@ -1326,9 +1326,12 @@ describe('LP4-02 — a release is sealed in the transaction that loads it, by it
         `UPDATE factor_releases SET sealed_at = NULL WHERE id = '${id}'`,
         seal(id, `now() + interval '1 day'`),
         `UPDATE factor_releases SET title = 'rewritten' WHERE id = '${id}'`,
+        // A withdrawal never moves the seal: not backdated, not undone.
+        `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'x', withdrawal_reason = 'x', sealed_at = '2001-01-01' WHERE id = '${id}'`,
+        `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'x', withdrawal_reason = 'x', sealed_at = NULL WHERE id = '${id}'`,
         withdraw(id),
       ]),
-    ).toEqual(['TA012', 'TA010', 'TA010', 'TA010', null]);
+    ).toEqual(['TA012', 'TA010', 'TA010', 'TA010', 'TA010', 'TA010', null]);
     // Before its seal a release accepts nothing else: not a withdrawal, not
     // its seal and another change in one statement.
     expect(
@@ -1339,6 +1342,18 @@ describe('LP4-02 — a release is sealed in the transaction that loads it, by it
         seal(id),
       ]),
     ).toEqual(['TA010', 'TA010', 'TA010', null]);
+  });
+
+  it("stamps a release with the time it was loaded, whatever the writer says — as its rows", async () => {
+    const id = randomUUID();
+    const stamped = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(
+        `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, created_at)
+         VALUES ('${id}', '${FIXTURE_PUBLISHER}', 'Int clock test', 'int-${id}', ${await nextFixtureOrdinal(tx)}, 'fixture', '2001-01-01')`,
+      );
+      return tx.$queryRawUnsafe<{ fresh: boolean }[]>(`SELECT created_at > now() - interval '1 hour' AS fresh FROM factor_releases WHERE id = '${id}'`);
+    });
+    expect(stamped[0].fresh).toBe(true);
   });
 
   it('refuses a release loaded sealed (TA011), and a commit that leaves one unsealed (TA011, at the commit)', async () => {

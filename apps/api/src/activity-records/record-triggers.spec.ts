@@ -114,8 +114,14 @@ describe('the activity_records integrity triggers', () => {
     // The same editable statuses the service writes in, and the free-form input at any status.
     const editable = /OLD\."status" IN \(([^)]*)\)/.exec(body)?.[1].split(',').map((s) => s.trim().replace(/'/g, ''));
     expect(editable?.sort()).toEqual([...EDITABLE_STATUSES].sort());
-    expect(body).toMatch(/IF NEW\."input" IS DISTINCT FROM OLD\."input"\s+OR \(OLD\."status" IN/);
+    expect(body).toMatch(/IF NEW\."input" IS DISTINCT FROM OLD\."input"\s+OR NEW\."created_by" IS DISTINCT FROM OLD\."created_by"\s+OR \(OLD\."status" IN/);
     expect(body).toContain("ERRCODE = 'TA006'");
+    // Nor deletes one to insert it again under its id: a draft or rejected
+    // record goes through the API (or the owner) only.
+    const del = functionBody('activity_records_committed_delete');
+    expect(del).toMatch(
+      new RegExp(`IF OLD\\."status" IN \\('draft', 'rejected'\\)\\s+AND session_user <> 'tonyai_runtime'\\s+AND session_user <> ${escape(OWNER)} THEN\\s+RAISE EXCEPTION USING\\s+ERRCODE = 'TA006'`),
+    );
   });
 
   it('K5 freezes the id in every status, before it looks at the status at all', () => {

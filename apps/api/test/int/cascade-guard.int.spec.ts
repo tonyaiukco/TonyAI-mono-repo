@@ -225,7 +225,11 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
         { category: 'Natural Gas' },
         { scope: 1 },
         { reporting_year: 2025 },
+        { reporting_period: 'quarterly' },
         { period_value: 'November' },
+        { activity_type: 'grid_electricity' },
+        { subsidiary_id: randomUUID() },
+        { location_id: randomUUID() },
       ]) {
         expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, change)), JSON.stringify(change)).toEqual({ ok: false, code: 'TA006' });
       }
@@ -250,6 +254,52 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
       expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { calculation: forged }))).toEqual({ ok: false, code: 'TA001' });
     } finally {
       await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
+  it('refuses the service role deleting a draft or a rejected record — the delete-and-re-insert rewrite (TA006)', async () => {
+    const id = randomUUID();
+    try {
+      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'October'))).ok).toBe(true);
+      expect(await refusal(await serviceRest('DELETE', `activity_records?id=eq.${id}`))).toEqual({ ok: false, code: 'TA006' });
+      // So its id cannot be re-used for a forged figure.
+      expect((await serviceRest('POST', 'activity_records', { ...recordRow(id, 'draft', 'October'), calculation: forged })).ok).toBe(false);
+      await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.submitted } });
+      await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.rejected } });
+      expect(await refusal(await serviceRest('DELETE', `activity_records?id=eq.${id}`))).toEqual({ ok: false, code: 'TA006' });
+      expect(await owner.activityRecord.findUniqueOrThrow({ where: { id } })).toMatchObject({ calculation: { factorId: 'forged' }, activityValue: 99 });
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
+  it('refuses the service role rewriting who wrote a record, at any status — the self-approval rule reads it (TA006)', async () => {
+    const id = randomUUID();
+    try {
+      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'October'))).ok).toBe(true);
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { created_by: tenant.users.superAdmin.id }))).toEqual({
+        ok: false,
+        code: 'TA006',
+      });
+      await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.submitted } });
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { created_by: tenant.users.superAdmin.id }))).toEqual({
+        ok: false,
+        code: 'TA006',
+      });
+      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).createdBy).toBe(tenant.users.dataEntry.id);
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
+  it("lets the API's login and the owner delete a draft (the API's delete; a teardown)", async () => {
+    for (const client of [runtime, owner]) {
+      const left = await withRollback(client, async (tx) => {
+        const rec = await createRecord(tx as unknown as PrismaService, tenant, { periodValue: 'October' });
+        await tx.activityRecord.delete({ where: { id: rec.id } });
+        return tx.activityRecord.count({ where: { id: rec.id } });
+      });
+      expect(left).toBe(0);
     }
   });
 
