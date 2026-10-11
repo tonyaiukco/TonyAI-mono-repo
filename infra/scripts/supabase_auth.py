@@ -42,8 +42,9 @@ def configure_auth(api, ref, origin, public_key, signing_id):
     current = api(path)  # May contain secrets: stays in process memory, never saved.
     desired = {key: False for key in current if key.startswith('external_') and key.endswith('_enabled')}
     desired.update(managed_auth_settings(origin))
-    if any(type(current.get(key)) is not type(value) or current[key] != value
-           for key, value in desired.items()):
+    changed = any(type(current.get(key)) is not type(value) or current[key] != value
+                  for key, value in desired.items())
+    if changed:
         api(path, 'PATCH', desired)
     actual = api(path)
     validate_managed_auth_settings(actual, origin)
@@ -54,3 +55,6 @@ def configure_auth(api, ref, origin, public_key, signing_id):
     if not any(k.get('kid') == signing_id and k.get('alg') in ('ES256', 'RS256')
                and k.get('kty') in ('EC', 'RSA') and not any(x in k for x in ('d', 'k', 'p', 'q')) for k in jwks):
         raise SafeFailure('Active public JWKS key not visible yet; wait for propagation and resume.')
+    # No settings/credentials are logged; emit evidence only after every probe.
+    print('PASS: Auth policy updated; all readbacks passed.' if changed
+          else 'PASS: Auth policy unchanged (no PATCH); all readbacks passed.')

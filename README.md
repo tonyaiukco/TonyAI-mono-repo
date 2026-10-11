@@ -361,7 +361,7 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local`, reuses an existing 
 
 LP4-01's [Auth and SMTP handoff](infra/runbooks/03-deploy.md#35-api-smtp-parameters-lp4-01-production-preparation-for-lp2-04)
 aligns hosted Auth with the local lifecycle policy (12-character passwords,
-one-hour links, signup off while email/password sign-in stays enabled). API mail
+one-hour links and access tokens, signup off while email/password sign-in stays enabled). API mail
 is an optional complete release configuration with a versioned Key Vault password
 and an API-only grant; the owner must still choose the LP0-02 SMTP processor.
 The same parameters support the LP2-04 production foundation. Runbook 03 documents

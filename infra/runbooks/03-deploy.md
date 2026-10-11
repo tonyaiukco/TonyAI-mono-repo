@@ -109,11 +109,21 @@ mark these failed migrations applied or bypass their preconditions.
   ```
 
   Require zero. If a lock timeout or precondition fails, inspect the cause and
-  run `pnpm --filter @tonyai/db exec prisma migrate resolve --rolled-back
-  20261010120000_lp4_01_cascade_guard` with the selected owner session URL supplied
-  privately as both `DATABASE_URL` and `DIRECT_URL`. Correct mismatches under the
-  owner's reviewed integrity procedure (a draft may be re-targeted; never rewrite
-  a committed snapshot), then repeat normal migration deployment in a quiet window.
+  prepare the selected owner session URL using runbook 05's
+  [Owner reconciliation check](05-rotation.md#owner-reconciliation-check): hidden
+  input into exported `DATABASE_URL`, replacing **only** `sslcert`'s container path
+  with the absolute local repository CA path. Preserve strict TLS and export that
+  same adjusted value as `DIRECT_URL` too; never print either URL or put it in a
+  command argument. Then run:
+
+  ```bash
+  pnpm --filter @tonyai/db exec prisma migrate resolve --rolled-back 20261010120000_lp4_01_cascade_guard
+  ```
+
+  Clear both exported URLs after use. Correct mismatches under the owner's
+  reviewed integrity procedure (a draft's `location_id` may point to a site in
+  its **existing** subsidiary; never change its `subsidiary_id` or rewrite a
+  committed snapshot), then repeat normal migration deployment in a quiet window.
 
 - `20261010180000_lp4_01_onboarding` holds ACCESS EXCLUSIVE on `profiles` and
   `organisations` until commit. It refuses existing untrimmed or mixed-case profile
@@ -128,13 +138,19 @@ mark these failed migrations applied or bypass their preconditions.
 
   Keep addresses and row-level diagnostics private. Resolve any duplicate identity
   manually under D17 (one account per address); do not merge/delete people blindly.
-  If the migration fails, use **resolve → normalise → redeploy**:
+  If the migration fails, use **resolve → normalise → redeploy**. Before the
+  resolve command, follow runbook 05's
+  [Owner reconciliation check](05-rotation.md#owner-reconciliation-check): load
+  the exact-version owner session URL through hidden input, replace **only**
+  `sslcert`'s container path with the absolute local repository CA path, and
+  export the adjusted URL as **both `DATABASE_URL` and `DIRECT_URL`**. Preserve
+  strict TLS; never print the URLs or place them in command arguments.
 
   ```bash
   pnpm --filter @tonyai/db exec prisma migrate resolve --rolled-back 20261010180000_lp4_01_onboarding
   ```
 
-  Then recheck duplicates in owner-psql and, after the owner resolves any collision:
+  Clear both exported URLs after the command. Then recheck duplicates in owner-psql and, after the owner resolves any collision:
 
   ```sql
   UPDATE profiles SET email = lower(btrim(email)) WHERE email <> lower(btrim(email));
@@ -472,7 +488,12 @@ Owner sequence, after foundation creation and before an SMTP-enabled release:
    into a **new** release manifest's `mail.password_secret_version`.
 2. Set `config.smtp_secret_ready=true` in the private foundation input and apply
    the foundation through runbook 01 (owner-run). This grants only the API identity
-   Secrets User on `smtp-password`; web, deployer and the Storage job receive none.
+   Secrets User on the named `smtp-password` secret. Web and deployer have no
+   direct secret grant. The Storage verification job **shares the API identity**
+   and therefore can read this secret, although its template does not reference
+   it. The deployer's existing Managed Identity Operator permission also permits
+   indirect use of the API identity and its secrets. These are existing trust
+   boundaries, not isolation supplied by the missing template reference.
    Keep `runtime_secrets_ready` and other existing grants unchanged.
 3. Verify selected versions with `release_secrets.py verify --inputs <new-manifest>`;
    deploy through this runbook's existing path with a new `release_id`. Independent

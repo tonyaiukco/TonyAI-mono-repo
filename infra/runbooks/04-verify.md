@@ -337,12 +337,16 @@ journal and does not provision, transfer credentials or rotate signing keys.
  Its `configure_auth` performs a management PATCH only on drift, then
 `auth_settings.py` checks a fresh management GET, public settings and public JWKS.
 Keep management responses in process memory (they may contain credentials).
-Record PASS only after both probes succeed. Confirm these dashboard values too:
+Record PASS only after all probes succeed. After all management/public/JWKS
+checks pass, the helper prints `Auth policy updated` or `Auth policy unchanged
+(no PATCH)` (no setting values). Run it twice and require the second result to be
+`unchanged` for the no-second-write evidence. Confirm these dashboard values too:
 
 | Setting | Required result |
 |---|---|
 | Public signup / email provider | Off / **on** (turning off the provider breaks password sign-in) |
 | Minimum password / email OTP expiry | 12 characters / 3600 seconds |
+| Access-token lifetime (`jwt_exp`) | 3600 seconds (separate from email OTP expiry; K4 PostgREST residual) |
 | Confirm email changes / email confirmations | Double confirmation / off |
 | Secure password change / password-changed notification | Off / off (disable/enable rotates the password) |
 | Site URL / allowed redirects | Exact web origin / origin, `/login`, `/auth/confirm`, no wildcard |
@@ -403,18 +407,38 @@ either into this document, a command argument or a JWT inspection website.
    address privately before proceeding; never delete by a broad prefix.
 2. Unban with `auth.admin.updateUserById(id, { ban_duration: 'none', password:
    newRandomPassword })`, then sign in with that new password. Require a session;
-   read the JWT payload **locally in memory** and select numeric
-   `claims.amr[].timestamp` values (the guard uses the earliest). Require a
-   nonempty numeric set and retain its minimum, `iat`, and `session_id` privately.
+   read the JWT payload **locally in memory**. The guard takes the earliest
+   **finite numeric value across `iat` and the AMR timestamps**, then converts
+   seconds to milliseconds (`sessionStartedAt` in `auth.guard.ts`). Use this
+   computation on the sign-in claims and each refresh's claims:
+
+   ```javascript
+   const sessionProof = (claims) => {
+     const finite = (value) => typeof value === 'number' && Number.isFinite(value);
+     const amr = Array.isArray(claims.amr)
+       ? claims.amr.map((entry) => entry?.timestamp).filter(finite) : [];
+     if (!finite(claims.iat) || amr.length === 0) throw new Error('Missing numeric session timestamps');
+     const earliestAmr = Math.min(...amr);
+     if (earliestAmr > claims.iat) throw new Error('AMR is later than iat; check timestamp units/shape');
+     return { iat: claims.iat, earliestAmr, guardMs: Math.min(claims.iat, ...amr) * 1000 };
+   };
+   ```
+
+   Require `earliestAmr <=` the **sign-in token's** `iat`. Retain the sign-in
+   proof's `guardMs`, `earliestAmr`, `iat`, `sub` and `session_id` privately.
 3. Wait at least two seconds so a fresh `iat` can be distinguished, then call
    `auth.refreshSession({ refresh_token: session.refresh_token })`. Require the
-   same `sub` and `session_id`, a strictly newer numeric `iat`, and the **same
-   nonempty earliest numeric AMR timestamp**. Repeat using the newly returned
-   refresh token, after another two seconds. Do not reuse the old refresh token.
-   Record only the AMR timestamps, `iat` timestamps, equality booleans and PASS/FAIL,
-   not the payload or tokens. Missing, string-valued or reshaped timestamps fail
-   this check: the guard would otherwise silently fall back to `iat` (F1,
-   follow-up (19)), allowing a refresh to hide a session's original sign-in time.
+   same `sub` and `session_id`, `iat` strictly newer than the preceding token's,
+   and `sessionProof(refreshedClaims).earliestAmr` equal to the sign-in value.
+   **Also require the refreshed proof's `guardMs` to equal the sign-in
+   `guardMs`.** Repeat using the newly returned refresh token after another two
+   seconds, applying every comparison again. Do not reuse the old refresh token.
+   Stable AMR alone cannot pass: a milliseconds-valued AMR with seconds-valued
+   `iat` must fail because it exceeds the sign-in `iat` and the guard would use
+   the refresh's advancing `iat` instead. An absent set of finite numeric AMR
+   timestamps also fails. This tests the guard's effective value, not just a
+   claim's presence (F1, follow-up (19)). Record only the timestamp/proof numbers,
+   equality booleans and PASS/FAIL, never payloads, identifiers or tokens.
 4. In a `finally` cleanup, delete **only** the ID created by this probe with
    `auth.admin.deleteUser(id)`, and verify it is absent. Record cleanup success;
    on failure preserve the exact ID privately for owner retry and do not call the
@@ -425,11 +449,24 @@ either into this document, a command argument or a JWT inspection website.
 After the processor decision, runbook 03's mail wiring, migrations and the checks
 above succeed, follow README [Account lifecycle](../../README.md#account-lifecycle-lp4-01).
 On Node 22, in a private owner shell at the deployed source SHA, load the selected
-**owner session** URL into `DIRECT_URL` (strict TLS and the repository CA), together
-with `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and the seven API SMTP settings.
+**owner session** URL using runbook 05's
+[Owner reconciliation check](05-rotation.md#owner-reconciliation-check): hidden
+input, and replace **only** `sslcert`'s container path with the absolute local
+repository CA path, preserving strict TLS. Export this adjusted URL as
+`DIRECT_URL` for the CLI (a URL copied unchanged from the vault has the container
+CA path and does not work on the owner's machine). Also load `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and the seven API SMTP settings.
 Use hidden input/approved secret injection, never URLs or passwords in shell
 arguments/history. `APP_URL` must equal the deployed web origin. This is the D18
 operator CLI, never the runtime API login or the seed.
+
+The real first-customer command below creates only that customer's intended
+first administrator. **All acceptance identities and role/disable/re-enable
+exercises belong to a separate, dedicated synthetic acceptance organisation,
+never a customer tenant**, in staging and in any LP2-04 production rehearsal.
+For that rehearsal, use synthetic organisation metadata and unique
+owner-controlled test addresses in the same provisioning command, and retain the
+returned synthetic organisation's exact ID privately for retirement. Do not
+reuse customer addresses: D17 binds addresses permanently.
 
 First run the same command without `--apply` to inspect the dry run, then:
 
@@ -450,23 +487,46 @@ connection or run the local demo seed.
 Open the delivered invitation at `<web-origin>/auth/confirm`, choose a password
 (at least 12 characters), then verify a fresh sign-in and organisation access.
 Request password reset through the web, open the delivered recovery link, change
-the password and sign in again. Exercise both TR and EN using dedicated acceptance
-users, and the four roles as LP4-01 requires. Record message kind/language, verified
+the password and sign in again. Run these acceptance invitation/reset steps in
+the **synthetic organisation**, with its own TR/EN users and all four roles as
+LP4-01 requires. The real customer's first administrator follows only their
+intended invitation/password/sign-in journey; do not add test members there. Record message kind/language, verified
 sender/domain, delivery time, one-hour expiry policy, final sign-in outcome and
 sanitised audit correlation; no link/token/address. Check a disabled disposable
 member cannot sign in or use a pre-disable/refreshed token after re-enable, and
 that disabling does **not** send a GoTrue password-change notification. Run the
 operator's `reconcile` if Auth sync remains pending; preserve the failure evidence.
 
+Retire the synthetic organisation **even if an acceptance step fails**. With the
+same privately loaded local-CA owner URL and Auth settings, dry-run the following
+command without `--apply`, confirm the exact synthetic organisation ID (never the
+customer's), and then apply:
+
+```bash
+pnpm onboarding offboard --apply --allow-remote --operator='<operator-email>' \
+  --organisation-id='<synthetic-organisation-id>'
+```
+
+Require `applied=true`, a non-null `offboardedAt` and `authPending=[]` in the
+report. If pending is nonempty, retain the failure evidence and run
+`pnpm onboarding reconcile --apply --allow-remote --operator='<operator-email>'
+--organisation-id='<synthetic-organisation-id>'`, then re-run offboard and require
+those outcomes before marking retirement complete. Record the outcome and audit
+correlation privately. Offboarding disables members and revokes pending
+invitations; it **does not delete** the organisation or Auth identities and does
+not free addresses for reuse (D17/D21). No synthetic active administrator may be
+left behind. Clear the loaded owner URL and other credential variables after use.
+
 | Evidence item | Result to record (initially NOT RUN) |
 |---|---|
-| Exact Auth policy and repeated reconciliation | PASS/FAIL, same origin/providers, no second write |
+| Exact Auth policy and repeated reconciliation | PASS/FAIL, same origin/providers and 3600 s JWT lifetime; second run explicitly reports `unchanged (no PATCH)` |
 | Effective hosted collation | Provider, locale/version, boolean probes, schema-owner qualification if needed |
 | Born-banned createUser | Future ban, `user_banned`, no session, exact-ID cleanup |
-| Two refreshes keep sign-in AMR | Numeric AMR present, same earliest value and session, newer iat each time |
+| Two refreshes keep sign-in AMR | Finite numeric AMR ≤ sign-in iat; same earliest AMR, session and guardMs; newer iat each time |
 | First organisation | Dry-run/apply outcome, audited operator and organisation correlation privately |
 | Invitation + reset, TR + EN | Delivered from verified sender, correct origin, password/sign-in outcomes |
 | Disable/enable | Old-session refusal, fresh sign-in, no password-change notification |
+| Synthetic organisation retirement (including failed runs) | Exact synthetic ID checked; applied=true, offboardedAt set, authPending=[]; audit correlation retained privately |
 
 The current CI stack starts with `-x studio,mailpit,realtime,edge-runtime,supavisor`.
 No existing check needs mailpit: `onboarding.int.spec.ts` supplies an in-memory

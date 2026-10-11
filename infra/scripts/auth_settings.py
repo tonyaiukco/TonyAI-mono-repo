@@ -27,6 +27,8 @@ def managed_auth_settings(origin):
         'external_anonymous_users_enabled': False,
         'saml_enabled': False,
         'passkey_enabled': False,
+        # K4's accepted direct-PostgREST residual lasts at most one hour.
+        'jwt_exp': 3600,
         'password_min_length': 12,
         'mailer_otp_exp': 3600,
         'mailer_secure_email_change_enabled': True,
