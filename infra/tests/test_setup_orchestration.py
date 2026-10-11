@@ -103,6 +103,43 @@ class SetupTests(unittest.TestCase):
                 self.assertEqual(auth.call_count,2)
                 self.assertTrue(all(c.args[0]=='https://api.supabase.com/v1/projects/'+REF for c in api.call_args_list))
 
+    def test_auth_only_requires_completed_journal_and_never_transfers_or_rotates(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            config = Path(directory) / 'config.json'; config.write_text(json.dumps(TARGET))
+            foundation = Path(directory) / 'foundation.json'; foundation.write_text('{}')
+            args = SimpleNamespace(config=config, foundation=foundation, journal=Path(directory) / 'j.json', reconcile_auth_only=True)
+            stack.enter_context(patch('terraform_run.clean_environment'))
+            stack.enter_context(patch('foundation_contract.validate_foundation', return_value={'subscription_id':'sub','resource_group':'group','tenant_id':'tenant'}))
+            stack.enter_context(patch('session_resources.restore', return_value={'VAULT_NAME':TARGET['vault'],'WEB_ORIGIN':TARGET['web_origin'],'AZURE_TENANT_ID':'tenant'}))
+            stack.enter_context(patch('supabase_setup.getpass.getpass', return_value='synthetic'))
+            stack.enter_context(patch('supabase_setup.sys.stdin.isatty', return_value=True))
+            stack.enter_context(patch('supabase_setup.Vault'))
+            project = stack.enter_context(patch('supabase_setup.ensure_project', return_value=REF))
+            active = {'id': 'kid', 'status': 'in_use', 'algorithm': 'ES256'}
+            api = stack.enter_context(patch('supabase_setup.json_request', side_effect=lambda url, *args: {'keys':[active]} if url.endswith('signing-keys') else {'status':'ACTIVE_HEALTHY'}))
+            stack.enter_context(patch('supabase_setup.select_keys', return_value=('public','backend')))
+            transfer = stack.enter_context(patch('supabase_setup.transfer_runtime'))
+            signing = stack.enter_context(patch('supabase_setup.ensure_signing_key'))
+            auth = stack.enter_context(patch('supabase_setup.configure_auth'))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            with self.assertRaises(SafeFailure): run(args)
+            project.assert_not_called()
+            for missing_ref in (None, '', 'invalid'):
+                journal = Journal(args.journal, TARGET); journal.set(configured=True, project_ref=missing_ref); journal.close()
+                with self.assertRaises(SafeFailure): run(args)
+                project.assert_not_called()
+            journal = Journal(args.journal, TARGET); journal.set(configured=True, project_ref=REF); journal.close()
+            run(args); run(args)
+            self.assertEqual(auth.call_count, 2)
+            auth.assert_called_with(unittest.mock.ANY, REF, TARGET['web_origin'], 'public', 'kid')
+            transfer.assert_not_called(); signing.assert_not_called()
+            self.assertTrue(all(call.args[1] == 'GET' for call in api.call_args_list))
+            auth.side_effect = SafeFailure('Drift')
+            with self.assertRaises(SafeFailure): run(args)
+            auth.side_effect = None
+            active['status'] = 'standby'
+            with self.assertRaises(SafeFailure): run(args)
+
 
 class JournalSessionTests(unittest.TestCase):
     def test_session_uses_completed_bound_journal_and_ignores_obsolete_tags(self):

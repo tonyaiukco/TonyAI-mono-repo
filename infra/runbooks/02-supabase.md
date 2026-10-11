@@ -38,14 +38,18 @@ Enter the token at the hidden prompt. The helper:
    setup and independent rotation are in runbook 05.
 6. Reconciles both private buckets (`evidence`, `import-sources`), limits/MIME types
    and readback. Disables signup/anonymous/phone/SAML/passkeys/unused providers,
-   pins site URL and redirects to exactly `WEB_ORIGIN` and `WEB_ORIGIN/login`.
+   keeps the email provider enabled for password sign-in, sets the LP4-01 password/
+   link/email policy, and pins site URL and redirects to `WEB_ORIGIN`,
+   `WEB_ORIGIN/login` and `WEB_ORIGIN/auth/confirm`.
 7. Uses an existing active ES256/RS256 key or creates one journaled ES256 standby,
    activates it and verifies the active public JWKS ID. Ambiguous signing-key
    creation stops; subsequent runs reconcile the recorded key, never POST blindly.
 
 Expected final `PASS`, public project reference and exact vault versions in the
 journal. Secret values never enter the journal. A completed initial setup is a
-no-op on retry; future credential changes use runbook 05. Preserve the journal
+no-op on ordinary retry. For existing-project Auth policy changes use
+`--reconcile-auth-only` and the [runbook 04 verification](04-verify.md#46-lp4-01-hosted-auth-and-first-organisation-owner-run);
+future credential changes use runbook 05. Preserve the journal
 before closing the terminal and prohibit simultaneous setup from different
 machines/journal copies; the helper locks its local journal, not the remote account.
 

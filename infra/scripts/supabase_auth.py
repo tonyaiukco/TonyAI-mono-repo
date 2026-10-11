@@ -1,7 +1,7 @@
 """Reconcile exact Auth settings and activate a recoverable asymmetric signing key."""
 import json
 import re
-from auth_settings import validate_auth_settings
+from auth_settings import managed_auth_settings, validate_auth_settings, validate_managed_auth_settings
 from cloud_ops import request, require_success
 from pooler import SafeFailure
 
@@ -41,13 +41,13 @@ def configure_auth(api, ref, origin, public_key, signing_id):
     path = '/v1/projects/' + ref + '/config/auth'
     current = api(path)  # May contain secrets: stays in process memory, never saved.
     desired = {key: False for key in current if key.startswith('external_') and key.endswith('_enabled')}
-    desired.update(site_url=origin, uri_allow_list=origin + ',' + origin + '/login',
-                   disable_signup=True, external_email_enabled=True, external_phone_enabled=False,
-                   external_anonymous_users_enabled=False, saml_enabled=False, passkey_enabled=False)
-    api(path, 'PATCH', desired)
+    desired.update(managed_auth_settings(origin))
+    changed = any(type(current.get(key)) is not type(value) or current[key] != value
+                  for key, value in desired.items())
+    if changed:
+        api(path, 'PATCH', desired)
     actual = api(path)
-    if any(actual.get(key) != value for key, value in desired.items()):
-        raise SafeFailure('Auth exact-origin/provider policy did not read back.')
+    validate_managed_auth_settings(actual, origin)
     base = 'https://' + ref + '.supabase.co/auth/v1'
     settings = json.loads(require_success(request(base + '/settings', key=public_key)))
     validate_auth_settings(settings)
@@ -55,3 +55,6 @@ def configure_auth(api, ref, origin, public_key, signing_id):
     if not any(k.get('kid') == signing_id and k.get('alg') in ('ES256', 'RS256')
                and k.get('kty') in ('EC', 'RSA') and not any(x in k for x in ('d', 'k', 'p', 'q')) for k in jwks):
         raise SafeFailure('Active public JWKS key not visible yet; wait for propagation and resume.')
+    # No settings/credentials are logged; emit evidence only after every probe.
+    print('PASS: Auth policy updated; all readbacks passed.' if changed
+          else 'PASS: Auth policy unchanged (no PATCH); all readbacks passed.')

@@ -13,6 +13,7 @@ variable "config" {
     owner_object_id       = string
     deployer_object_id    = optional(string, "")
     runtime_secrets_ready = optional(bool, false)
+    smtp_secret_ready     = optional(bool, false)
     apps_ready            = optional(bool, false)
     monitoring = optional(object({
       operator_name           = string, operator_email = string,

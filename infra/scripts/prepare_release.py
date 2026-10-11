@@ -28,7 +28,7 @@ def preview(env=os.environ):
                      + 'Source SHA: `' + env['GITHUB_SHA'] + '`\n\n'
                      + 'Canonical manifest SHA-256: `' + digest + '`\n\n'
                      + '```json\n' + json.dumps(inputs, sort_keys=True, indent=2) + '\n```\n'
-                     + '\nReview every field, including both secret version IDs. '
+                     + '\nReview every field, including all secret version IDs (including SMTP when configured). '
                      + 'This is a manifest review; no Terraform plan or cloud validation has run.\n')
     with open(env['GITHUB_OUTPUT'], 'a') as stream:
         stream.write('release_sha256=' + digest + '\n')
