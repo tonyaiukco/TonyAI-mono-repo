@@ -8,6 +8,7 @@
     "start": "node dist/main.js",
     "storage:reconcile": "node dist/storage/reconcile.cli.js",
     "onboarding": "node dist/onboarding/onboarding.cli.js",
+    "factor-release": "node dist/factor-releases/factor-release.cli.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
