@@ -31,7 +31,11 @@ export interface InventoryEntitySnapshot {
 
 /** One D12 decision per entity/category cell selected by the D11 policy.
  * Included cells name all included mapped sources for that cell; source IDs
- * cannot be used to satisfy a second cell. Exclusion reasons must be nonblank. */
+ * cannot be used to satisfy a second cell. Every included mapped source is named
+ * by exactly one selected included cell with matching subsidiaryId/locationId/category.
+ * Excluded and undetermined cells hold no included source. A breach is an invalid
+ * boundary (attribution_conflict); its affected records are unmapped and never counted.
+ * Exclusion reasons must be nonblank. */
 export type InventoryApplicabilityDecision = {
   subsidiaryId: string;
   locationId: string | null;
@@ -88,13 +92,22 @@ export type InventorySource = {
  * months at that cadence; unknown/legacy period assignments never satisfy them.
  * firstMonth <= lastMonth in every interval.
  * For every boundary subsidiary, retain every entity operating in any month
- * of reportingYear. For every Scope 1/2 category, the D11 policy selects either
+ * of reportingYear. attribution holds exactly one policy per boundary subsidiary
+ * x Scope 1/2 category. A missing or duplicate policy, or a sites policy with no
+ * operating site entity, is a final-blocking applicability_undetermined gap naming
+ * the company entity and category. For every Scope 1/2 category, the D11 policy selects either
  * the company entity or ALL operating site entities. Each resulting entity x
  * category cell has exactly one applicability decision: included, excluded
  * with a nonblank reason, or undetermined. A missing cell is a final-blocking
  * applicability_undetermined gap, never an implicit exclusion. Included cells
- * reference a nonempty set of matching included mapped sources. Unsupported
- * named sources remain separately disclosed and block final.
+ * reference a nonempty set of matching included mapped sources. Every included
+ * mapped source is named by exactly one included cell selected by D11, with matching
+ * (subsidiaryId, locationId, category). Excluded and undetermined cells hold no
+ * included source. A breach is an invalid boundary (attribution_conflict); its
+ * affected records raise unmapped_record and are never counted.
+ * Unsupported sources that are included or undetermined raise unsupported_source
+ * and block final. Unsupported sources excluded with a nonblank reason are named
+ * exclusions: disclosed, never counted, and do not block final.
  * Included mapped sources are unique by (subsidiaryId, locationId, category,
  * activityType); two meters sharing this key cannot both claim one record.
  * Every source's entity snapshot agrees with the retained entity, including
@@ -166,7 +179,7 @@ export type ReportReleaseStanding = Pick<FactorReleaseDTO,
 export interface ReportReviewAssessment {
   /** These three disjoint sets exhaust dataset.records. Empty is not complete.
    * approvedRecordIds includes approved AND locked (period locks flip approved
-   * records to locked). Every record satisfying a final obligation belongs here. */
+   * records to locked). For final issuance, every satisfying record belongs here. */
   approvedRecordIds: readonly string[];
   unapprovedRecordIds: readonly string[];
   voidedRecordIds: readonly string[];
@@ -200,8 +213,11 @@ export interface ReportCoverageAssessment {
    * Voided records NEVER appear in these recordIds or satisfy activity/evidence
    * coverage. Only-voided obligations are missing and raise missing_record; a
    * D04 re-entry lists only the replacement. Evidence linked only to a voided
-   * record cannot satisfy evidencePeriods. A non-voided record can satisfy
-   * coverage before approval; final additionally requires approved or locked. */
+   * record cannot satisfy evidencePeriods. Only non-voided records in COUNTED_STATUSES
+   * (submitted, under_review, approved, locked) satisfy ACTIVITY coverage and appear
+   * in these recordIds. Draft/rejected-only slots remain missing with missing_record.
+   * Evidence coverage remains independent, using a linked non-voided record's own
+   * period. Final additionally requires every satisfying record approved or locked. */
   obligations: ReadonlyArray<{
     obligationId: string;
     state: 'satisfied' | 'missing';
@@ -278,8 +294,8 @@ export interface ReportDatasetFingerprint extends Sha256Fingerprint {
  * context.subsidiaryId, boundary subsidiaries/entities/applicability/sources/
  * attribution, records, evidence, periodLocks, coverage gap entities and
  * resolvedSubsidiaryIds. Every ID must be in the requester's CURRENT access,
- * checked on every request. Never authorize solely from resolvedSubsidiaryIds,
- * silently redact, or allow the capturer/issuer a bypass. datasetId, issuanceId,
+ * checked on every request. Never redact, authorize solely from resolvedSubsidiaryIds,
+ * or allow the capturer/issuer a bypass. datasetId, issuanceId,
  * artifactId and fingerprints are never capabilities. Refusal is indistinguishable
  * from not-found. Signed URLs and credentials never belong in retained data. */
 export interface ReportDataset {
@@ -298,7 +314,7 @@ export interface ReportDataset {
    * and the explicit not_covered disclosure, never Water in these assessments. */
   records: readonly ReportDatasetRecord[];
   evidence: readonly ReportEvidenceReference[];
-  /** Match exactly on (subsidiaryId, year, reportingPeriod, periodValue).
+  /** Match exactly on (subsidiaryId, reportingYear, reportingPeriod, periodValue).
    * An annual obligation needs the Annual lock, not twelve monthly locks. */
   periodLocks: readonly PeriodLockDTO[];
   review: ReportReviewAssessment;
@@ -360,7 +376,10 @@ export type ReportIssuance = {
   /** Server proves: confirmed full boundary; all obligations met, approved and
    * locked (satisfying records approved OR locked); no attribution/evidence gap; authoritative calculations and D09's
    * consistent inventory-year GWP set. A missing
-   * factor, unknown boundary or unresolved named source always blocks final. */
+   * factor or unknown boundary always blocks final. Unsupported included or
+   * undetermined sources raise unsupported_source and block final. Unsupported
+   * sources excluded with a nonblank reason are disclosed, never counted, and
+   * do not block final. */
   | { status: 'final'; gaps: readonly [] }
   | { status: 'partial'; gaps: readonly [ReportIssuanceGap, ...ReportIssuanceGap[]] }
 );

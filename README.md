@@ -904,17 +904,27 @@ recoverable implementation, not a successful issuance with a missing artifact.
   every boundary company/site operating in any reporting-year month and its
   actual first/last month; sources at that entity must agree with those months.
   D11 chooses company or sites and one activity cadence per subsidiary/year/category,
-  across all activity types. For every boundary subsidiary and Scope 1/2 category,
+  across all activity types. `attribution` holds exactly one policy per boundary
+  subsidiary × Scope 1/2 category. A missing or duplicate policy, or a `sites`
+  policy with no operating site entity, raises a final-blocking
+  `applicability_undetermined` gap naming the company entity and category.
+  For every boundary subsidiary and Scope 1/2 category,
   every operating site (or the company entity for company attribution) has exactly
   one `applicability` decision: included, excluded with a nonblank reason, or
   undetermined. Missing cells raise `applicability_undetermined`, identifying the
   entity and category even if no source exists, and block final. Included cells
-  name a nonempty set of matching included mapped sources. Included sources are
+  name a nonempty set of matching included mapped sources. Every included mapped
+  source is named by exactly one included cell selected by D11, with matching
+  `(subsidiaryId, locationId, category)`. Excluded and undetermined cells hold no
+  included source. A breach is an invalid boundary (`attribution_conflict`); its
+  affected records raise `unmapped_record` and are never counted. Included sources are
   unique by `(subsidiaryId, locationId, category, activityType)`; two named meters
   sharing a record identity cannot both claim one record. Obligations exhaust
   active months at the category cadence, without gaps/overlaps, clipped to actual
-  operating months. Named unsupported sources remain explicit and block final;
-  exclusions have a reason and no amount. D05's pilot source list remains external.
+  operating months. Unsupported included or undetermined sources raise
+  `unsupported_source` and block final. Unsupported sources excluded with a
+  nonblank reason are named exclusions: disclosed, never counted, and do not
+  block final. Exclusions have no amount. D05's pilot source list remains external.
 - **Review:** disjoint approved, unapproved and voided sets exhaust captured records.
   The approved set includes both `approved` and `locked`: a period lock flips
   approved records to locked. Final requires every satisfying record in that set.
@@ -922,6 +932,10 @@ recoverable implementation, not a successful issuance with a missing artifact.
   from review. Voided records never appear in coverage obligation `recordIds` or
   satisfy activity/evidence periods. Only-voided obligations are `missing` with a
   `missing_record` gap; after D04 re-entry only the replacement can satisfy them.
+  Only non-voided records in `COUNTED_STATUSES` (`submitted`, `under_review`,
+  `approved`, `locked`) satisfy **activity** coverage and appear in obligation
+  `recordIds`. Draft/rejected-only slots remain missing with `missing_record`.
+  Evidence coverage remains independent of this activity-status requirement.
   Evidence references' `recordIds` are a subset of captured `records`. Until an
   evidence-period schema exists, only a linked non-voided record's own period
   assigns evidence: an annual link cannot satisfy monthly invoices. The source
@@ -952,7 +966,7 @@ recoverable implementation, not a successful issuance with a missing artifact.
 Final issuance requires a confirmed complete boundary, every included obligation
 satisfied by approved or locked records, locked periods, no coverage/attribution
 gap, authoritative calculations and consistent GWP sets. Lock keys match exactly
-on `(subsidiaryId, year, reportingPeriod, periodValue)`; an annual obligation needs
+on `(subsidiaryId, reportingYear, reportingPeriod, periodValue)`; an annual obligation needs
 an `Annual` lock, not twelve monthly locks. `selection === 'extract'` always
 produces `partial` with `filtered_extract`, even when selected records are approved.
 Final has no gaps; partial has at least one. These are dormant producer requirements.
@@ -966,7 +980,7 @@ attribution, records, evidence, locks, coverage-gap entities and resolved IDs.
 Every referenced ID must be within the requester's **current** access on every
 request. Empty sets fail closed. Capturers and issuers have no bypass; `datasetId`,
 `issuanceId`, `artifactId` and fingerprints are never capabilities. Refusals are
-indistinguishable from not-found. Never silently redact retained data. All-accessible
+indistinguishable from not-found. Never redact retained data. All-accessible
 is not all-owned: an inventory selection covers the entire declared boundary.
 
 `datasetId` identifies retained facts; `issuanceId` identifies a particular
@@ -997,14 +1011,15 @@ numbers and non-JSON objects: only null, booleans, strings, finite numbers, dens
 arrays and plain objects with `Object.prototype` or null prototype are accepted;
 Date instances, Decimal, Buffer, class instances, accessors, symbol/non-enumerable
 object properties and custom `toJSON` serialization are refused. Arrays permit
-only dense numeric elements and their standard non-enumerable `length` property;
+only own index properties 0…length−1 with no holes, plus the standard `length`;
 custom array properties are refused. Null-prototype
 objects use the same own enumerable string-key representation as plain objects.
 
 Reject duplicate record/evidence/release/source IDs within each named collection;
 entity identity is `(subsidiaryId, locationId)`, with null meaning company. Boundary
-subsidiary IDs, entity keys and applicability `(subsidiaryId, locationId, category)`
-keys are unique; obligation IDs are unique across the entire boundary, not only
+subsidiary IDs, entity keys, attribution `(subsidiaryId, category)` keys and
+applicability `(subsidiaryId, locationId, category)` keys are unique;
+obligation IDs are unique across the entire boundary, not only
 one source. Reference-ID lists are sets and cannot repeat IDs. Recursively sort
 object keys by UTF-16 code-unit order. Recursively canonicalize array members and
 sort their resulting JSON strings by that same order (arrays here are semantic
@@ -1024,9 +1039,12 @@ Contract acceptance examples (not executed database/UAT evidence):
 | Captured facts | Required interpretation |
 | --- | --- |
 | One approved January record, eleven missing months | Approved existing record; incomplete coverage; partial issuance |
+| Jan–Nov approved and calculated, December a calculated draft | December activity missing; missing_record; total covers Jan–Nov; Scope 2 partial and partial issuance |
 | Approved record voided, not re-entered | Obligation missing; withdrawal disclosed; partial |
 | Voided then re-entered and approved | Satisfied by the replacement only; locks/evidence/provenance still required |
 | Confirmed boundary omits a site/category cell | applicability_undetermined; final blocked |
+| Missing attribution policy for a boundary subsidiary/category | applicability_undetermined naming the company entity and category; final blocked |
+| Included source under an excluded cell | Invalid boundary: attribution_conflict; affected records unmapped_record and never counted; partial |
 | Excluded fleet has an approved diesel record | unmapped_record; not counted; partial |
 | Site opens in July but has an approved March record | unmapped_record outside operating months; not counted; partial |
 | Scope 2 obligations satisfied but one counted record uncalculated | Partial coverage; only calculated figures summed, or null if none |
@@ -1034,6 +1052,7 @@ Contract acceptance examples (not executed database/UAT evidence):
 | Site opens in July | July–December obligations only, independently of when its database row was created |
 | Applicable source lacks a usable factor | Named gap/uncalculated provenance; never zero; partial |
 | No fleet, explicitly excluded with a reason | Named exclusion, no fleet obligations and no fleet amount |
+| Unsupported source excluded with reason (heat: "No purchased heat") | Named exclusion disclosed, never counted; no unsupported_source gap and does not block final |
 | Approved calculated zero-consumption record | Measured zero; approval, evidence, lock and provenance rules still apply |
 | Authoritative factor plus placeholder conversion | Non-authoritative calculation; final blocked |
 | Factor release withdrawn after an issuance | Old PDF unchanged; next capture discloses withdrawal |
