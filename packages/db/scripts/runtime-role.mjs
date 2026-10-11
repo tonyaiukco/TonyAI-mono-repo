@@ -560,9 +560,10 @@ const LIBRARY_TABLES = Object.freeze(['factor_releases', 'emission_factors', 'un
  * named by `checkFactorLoaderRole`.
  */
 export async function checkLibraryWriters(query) {
-  // And any table that references a release — a library table added later is
-  // born writable by the service role (the owner's default privileges), and
-  // must be named here before it is trusted.
+  // And any table in public with a key to a release — a library table added
+  // later is born writable by the service role (the owner's default
+  // privileges), so it is held to the library's writers until someone decides
+  // otherwise. (Only direct references; Open questions, "LP4-02 follow-ups".)
   const referencing = await query(
     `SELECT DISTINCT c.relname AS "table"
        FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class c ON c.oid = k.conrelid
