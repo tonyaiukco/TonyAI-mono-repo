@@ -206,6 +206,17 @@ export class FactorReleaseLoader {
     if (superseded?.status === 'withdrawn') {
       throw new LoaderRefusal(`${release.publisher} ${superseded.edition} is already withdrawn — load the new edition without --supersedes`);
     }
+    // The database refuses an ordinal that does not exceed every one the
+    // publisher has (TA011, under the publisher's lock — races included); asked
+    // here too, so a dry run never plans what the load would be refused.
+    // Every release counts, a withdrawn one too.
+    const latest = await this.db.factorRelease.aggregate({ where: { publisher: release.publisher }, _max: { ordinal: true } });
+    const highest = latest._max.ordinal;
+    if (highest !== null && release.ordinal <= highest) {
+      throw new LoaderRefusal(
+        `ordinal ${release.ordinal} of ${release.publisher} does not exceed its latest, ${highest} — an erratum is a new release with the next ordinal`,
+      );
+    }
     if (!options.apply) return report('would_load');
 
     await this.db.$transaction(

@@ -38,7 +38,7 @@ function fixtureRelease(): FactorReleaseImport {
 }
 
 /** Just enough of the client for `load`: the identity check, the reads, one transaction. */
-function fakeDb(existing: Record<string, unknown> | null = null) {
+function fakeDb(existing: Record<string, unknown> | null = null, highestOrdinal: number | null = null) {
   const created = { release: [] as unknown[], factors: [] as unknown[], conversions: [] as unknown[], sealed: [] as unknown[] };
   const tx = {
     $executeRaw: vi.fn(async () => 1),
@@ -51,7 +51,10 @@ function fakeDb(existing: Record<string, unknown> | null = null) {
   };
   const db = {
     $queryRaw: vi.fn(async () => [{ session: 'tonyai_factor_loader', current: 'tonyai_factor_loader' }]),
-    factorRelease: { findUnique: vi.fn(async () => existing) },
+    factorRelease: {
+      findUnique: vi.fn(async () => existing),
+      aggregate: vi.fn(async () => ({ _max: { ordinal: highestOrdinal } })),
+    },
     emissionFactor: { findMany: vi.fn(async () => []) },
     unitConversion: { findMany: vi.fn(async () => []) },
     $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
@@ -83,6 +86,36 @@ describe('FactorReleaseLoader.load', () => {
     expect((refusal as LoaderRefusal).issues.map((i) => i.path)).toContain('release.publisher');
     expect(raw.$queryRaw).not.toHaveBeenCalled();
     expect(raw.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['lower than', 1],
+    ['equal to', 10],
+  ])("refuses, on a dry run too, an ordinal %s the publisher's latest — withdrawn releases included", async (_label, ordinal) => {
+    const { db, raw } = fakeDb(null, 10);
+    const input = fixtureRelease();
+    const refusal = await new FactorReleaseLoader(db, 'TonyAI data team')
+      .load({ ...input, release: { ...input.release, ordinal } }, { apply: false })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(refusal).toBeInstanceOf(LoaderRefusal);
+    expect((refusal as Error).message).toMatch(new RegExp(`ordinal ${ordinal} of TonyAI test fixture does not exceed its latest, 10`));
+    // Every release of the publisher, whatever its status.
+    expect(raw.factorRelease.aggregate).toHaveBeenCalledWith({ where: { publisher: INTERNAL_FACTOR_PUBLISHERS.fixture }, _max: { ordinal: true } });
+    expect(raw.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('plans an ordinal above the latest, and the first release of a publisher', async () => {
+    const input = fixtureRelease();
+    for (const [highest, ordinal] of [[10, 11], [null, 1]] as const) {
+      const report = await new FactorReleaseLoader(fakeDb(null, highest).db, 'TonyAI data team').load(
+        { ...input, release: { ...input.release, ordinal } },
+        { apply: false },
+      );
+      expect(report.outcome).toBe('would_load');
+    }
   });
 
   it('writes nothing on a dry run, and says what it would load', async () => {
