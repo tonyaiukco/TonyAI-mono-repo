@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
+import { INTERNAL_FACTOR_PUBLISHERS } from '@tonyai/shared-types';
 
 export const PASSWORD = 'TonyAI!2026';
 export const ADMIN_EMAIL = 'admin@tonyai.local';
@@ -376,18 +377,33 @@ async function deleteRecordsAsOwner(where: Record<string, unknown>): Promise<str
 type OwnerDelete = { deleteMany(args: { where: Record<string, unknown> }): Promise<unknown> };
 type OwnerClient = { activityRecord: OwnerDelete; subsidiary: OwnerDelete; location: OwnerDelete };
 async function asOwner(what: string, step: (prisma: OwnerClient) => Promise<unknown>): Promise<string | null> {
-  const ownerUrl = process.env.E2E_OWNER_DATABASE_URL;
-  if (!ownerUrl) return 'E2E_OWNER_DATABASE_URL not set (see playwright.config.ts env loader).';
-  assertLocalDatabase(ownerUrl);
-  // The generated client the seed and the RLS probes use, resolved by path:
-  // the e2e suite does not depend on @tonyai/db.
-  const { PrismaClient } = createRequire(__filename)('../packages/db/generated/client');
-  const prisma = new PrismaClient({ datasourceUrl: ownerUrl });
   try {
-    await step(prisma);
+    await withOwner((prisma) => step(prisma as unknown as OwnerClient));
     return null;
   } catch (e) {
     return `${what} owner delete failed — ${(e as Error).message}`;
+  }
+}
+
+/**
+ * Runs `step` on the owner's connection (`E2E_OWNER_DATABASE_URL`, local or CI
+ * only), disconnecting after, and throws what it throws. The generated client
+ * the seed and the RLS probes use, resolved by path: the e2e suite does not
+ * depend on @tonyai/db.
+ */
+type OwnerSql = {
+  $queryRawUnsafe<T = unknown>(sql: string, ...values: unknown[]): Promise<T>;
+  $executeRawUnsafe(sql: string, ...values: unknown[]): Promise<number>;
+  $transaction<T>(fn: (tx: OwnerSql) => Promise<T>): Promise<T>;
+};
+async function withOwner<T>(step: (prisma: OwnerSql) => Promise<T>): Promise<T> {
+  const ownerUrl = process.env.E2E_OWNER_DATABASE_URL;
+  if (!ownerUrl) throw new Error('E2E_OWNER_DATABASE_URL not set (see playwright.config.ts env loader).');
+  assertLocalDatabase(ownerUrl);
+  const { PrismaClient } = createRequire(__filename)('../packages/db/generated/client');
+  const prisma = new PrismaClient({ datasourceUrl: ownerUrl });
+  try {
+    return await step(prisma);
   } finally {
     await prisma.$disconnect();
   }
@@ -759,9 +775,8 @@ export const E2E_BULK_UNIT = 'tonnes';
  * the first.
  */
 export const E2E_FACTOR_VERSION = '0000-E2E-FIXTURE';
-/** The closed registry's test-fixture publisher (= FIXTURE_PUBLISHER in
- *  packages/db/prisma/factor-library.ts); the database refuses any other name. */
-export const E2E_FIXTURE_PUBLISHER = 'TonyAI test fixture';
+/** The closed registry's test-fixture publisher; the database refuses any other name. */
+export const E2E_FIXTURE_PUBLISHER = INTERNAL_FACTOR_PUBLISHERS.fixture;
 
 /**
  * A fixture release holding one factor row per geography for a
@@ -777,74 +792,26 @@ export const E2E_FIXTURE_PUBLISHER = 'TonyAI test fixture';
  * outrank a sourced factor and a teardown that removes it.
  *
  * Insert-if-absent, failing on divergence (LP3-03): the factor tables are
- * append-only, so a row already present must be this one, never "merged".
+ * append-only, so a release already present must be this one, never "merged".
+ * Loaded through the owner (LP4-02: the service role writes nothing in the
+ * library), whole, in one transaction — the release, its rows, its seal: the
+ * database refuses a commit that leaves a release unsealed, and a sealed one
+ * takes no row, so a present release missing a row is a stale database.
  */
-export async function seedE2EFactor(request: APIRequestContext): Promise<void> {
-  const { url } = supabaseEnv();
-  assertLocalTarget(url);
-  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
-  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
-  const headers = {
-    apikey: service,
-    Authorization: `Bearer ${service}`,
-    'Content-Type': 'application/json',
-    Prefer: 'return=representation',
-  };
-  const get = async (path: string) => {
-    const res = await request.get(`${url}/rest/v1/${path}`, { headers });
-    if (!res.ok()) throw new Error(`seedE2EFactor read failed: ${res.status()} ${await res.text()}`);
-    return (await res.json()) as Array<Record<string, unknown>>;
-  };
-  const post = async (table: string, data: unknown) => {
-    const res = await request.post(`${url}/rest/v1/${table}`, { headers, data });
-    if (!res.ok()) throw new Error(`seedE2EFactor failed (${table}): ${res.status()} ${await res.text()}`);
-    return (await res.json()) as Array<Record<string, unknown>>;
-  };
-
-  // Looked up first, never upserted: the release's insert trigger checks the
-  // ordinal before any ON CONFLICT clause could ignore a duplicate.
-  const releaseKey = `publisher=eq.${encodeURIComponent(E2E_FIXTURE_PUBLISHER)}&edition=eq.${encodeURIComponent(E2E_FACTOR_VERSION)}`;
-  let [release] = await get(`factor_releases?select=id,status&${releaseKey}`);
-  if (release && release.status !== 'fixture') {
-    throw new Error(`The e2e fixture release exists with status ${String(release.status)} — reset the database.`);
-  }
-  // Above every ordinal the publisher already has — the database refuses any
-  // other (an interrupted integration run can leave a fixture release of its
-  // own behind until the next `pnpm db:seed` sweeps it).
-  const [latest] = await get(
-    `factor_releases?select=ordinal&publisher=eq.${encodeURIComponent(E2E_FIXTURE_PUBLISHER)}&order=ordinal.desc&limit=1`,
-  );
-  release ??= (
-    await post('factor_releases', {
-      id: randomUUID(),
-      publisher: E2E_FIXTURE_PUBLISHER,
-      title: 'End-to-end test fixture factors',
-      edition: E2E_FACTOR_VERSION,
-      ordinal: Number(latest?.ordinal ?? 0) + 1,
-      status: 'fixture',
-      notes: 'Written by the e2e suite and deleted by its teardown. Not a source.',
-    })
-  )[0];
-
-  // `updated_at` is Prisma's `@updatedAt`, which Prisma fills in — the column
-  // itself has no database default, unlike `created_at`. A raw PostgREST
-  // insert bypasses Prisma entirely, so it has to be supplied here or the row
-  // is refused with a not-null violation.
-  const now = new Date().toISOString();
+export async function seedE2EFactor(_request: APIRequestContext): Promise<void> {
   const wanted = ['TR', 'UK', 'EU'].map((geographyCode) => ({
-    release_id: release.id,
     category: E2E_BULK_CATEGORY,
     // Waste has no activity types: its lookup is `unspecified`, which only a
     // non-authoritative release may carry.
-    activity_type: 'unspecified',
+    activityType: 'unspecified',
     gas: 'CO2e',
-    gas_coverage: 'all_ghg',
-    geography_code: geographyCode,
-    reporting_year: E2E_YEAR,
-    data_year: E2E_YEAR,
+    gasCoverage: 'all_ghg',
+    geographyCode,
+    reportingYear: E2E_YEAR,
+    dataYear: E2E_YEAR,
     scope: 3,
-    scope2_method: 'not_applicable',
-    calorific_basis: 'not_applicable',
+    scope2Method: 'not_applicable',
+    calorificBasis: 'not_applicable',
     // Per kg — a factor is quoted per ONE base unit of its family, and mass's
     // is kg (LP3-03); the rows are entered in tonnes and normalised ×1000
     // first. 0.007 per kg is the 7 per tonne the suite always used, so
@@ -852,58 +819,93 @@ export async function seedE2EFactor(request: APIRequestContext): Promise<void> {
     // step and the factor multiply observable. Its magnitude is no safeguard —
     // 7 kg per tonne is close to real composting factors — the labelling is: a
     // `fixture` release, and a source and methodology that say so.
-    factor_value: 0.007,
+    factorValue: 0.007,
     // Display-only — printed verbatim into the record drawer and the PDF
     // appendix; `normalized_unit` is the one the calculator matches on.
-    factor_unit: 'kgCO2e/kg',
-    normalized_unit: 'kg',
+    factorUnit: 'kgCO2e/kg',
+    normalizedUnit: 'kg',
     methodology: 'E2E fixture — not a methodology',
     source: 'E2E FIXTURE — not a real emission factor, not for reporting',
-    version: E2E_FACTOR_VERSION,
   }));
-  const stored = await get(
-    `emission_factors?select=geography_code,factor_value,normalized_unit,factor_unit,scope&release_id=eq.${String(release.id)}`,
-  );
-  const missing = wanted.filter((w) => {
-    const row = stored.find((r) => r.geography_code === w.geography_code);
-    if (!row) return true;
-    if (row.factor_value !== w.factor_value || row.normalized_unit !== w.normalized_unit || row.scope !== w.scope) {
-      throw new Error(`The e2e fixture factor for ${w.geography_code} differs from the suite's — reset the database.`);
-    }
-    return false;
-  });
-  if (missing.length > 0) {
-    await post(
-      'emission_factors',
-      missing.map((row) => ({ ...row, id: randomUUID(), created_at: now, updated_at: now })),
+  await withOwner(async (owner) => {
+    const [release] = await owner.$queryRawUnsafe<Array<{ id: string; status: string }>>(
+      'SELECT id::text, status FROM factor_releases WHERE publisher = $1 AND edition = $2',
+      E2E_FIXTURE_PUBLISHER,
+      E2E_FACTOR_VERSION,
     );
-  }
+    if (release) {
+      if (release.status !== 'fixture') {
+        throw new Error(`The e2e fixture release exists with status ${release.status} — reset the database.`);
+      }
+      const stored = await owner.$queryRawUnsafe<Array<{ geography_code: string; factor_value: number; normalized_unit: string; scope: number }>>(
+        'SELECT geography_code, factor_value, normalized_unit, scope FROM emission_factors WHERE release_id = $1::uuid',
+        release.id,
+      );
+      for (const w of wanted) {
+        const row = stored.find((r) => r.geography_code === w.geographyCode);
+        if (!row || row.factor_value !== w.factorValue || row.normalized_unit !== w.normalizedUnit || row.scope !== w.scope) {
+          throw new Error(`The e2e fixture factor for ${w.geographyCode} is missing or differs from the suite's — reset the database.`);
+        }
+      }
+      return;
+    }
+    await owner.$transaction(async (tx) => {
+      const id = randomUUID();
+      // Above every ordinal the publisher already has — the database refuses
+      // any other (an interrupted integration run can leave a fixture release
+      // of its own behind until the next `pnpm db:seed` sweeps it).
+      await tx.$executeRawUnsafe(
+        `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, notes)
+         SELECT $1::uuid, $2, 'End-to-end test fixture factors', $3, COALESCE(max(ordinal), 0) + 1, 'fixture',
+                'Written by the e2e suite and deleted by its teardown. Not a source.'
+           FROM factor_releases WHERE publisher = $2`,
+        id,
+        E2E_FIXTURE_PUBLISHER,
+        E2E_FACTOR_VERSION,
+      );
+      // One statement, so the library's record shows one load of rows.
+      const columns = (w: (typeof wanted)[number]) => [
+        w.category, w.activityType, w.gas, w.gasCoverage, w.geographyCode, w.reportingYear, w.dataYear, w.scope,
+        w.scope2Method, w.calorificBasis, w.factorValue, w.factorUnit, w.normalizedUnit, w.methodology, w.source,
+      ];
+      const width = columns(wanted[0]).length;
+      const rows = wanted.map(
+        (_, r) => `(gen_random_uuid(), $1::uuid, ${Array.from({ length: width }, (_c, c) => `$${3 + r * width + c}`).join(', ')}, $2, now())`,
+      );
+      await tx.$executeRawUnsafe(
+        `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year,
+           data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+         VALUES ${rows.join(', ')}`,
+        id,
+        E2E_FACTOR_VERSION,
+        ...wanted.flatMap(columns),
+      );
+      // The database's clock replaces the value given.
+      await tx.$executeRawUnsafe('UPDATE factor_releases SET sealed_at = now() WHERE id = $1::uuid', id);
+    });
+  });
 }
 
 /**
  * Remove the fixture release and its factors — the one release the
- * append-only triggers let anyone delete. Factors first: the release key
- * RESTRICTs.
+ * append-only triggers let anyone delete — through the owner (LP4-02).
+ * Factors first: the release key RESTRICTs.
  */
-export async function cleanupE2EFactors(request: APIRequestContext): Promise<void> {
-  const { url } = supabaseEnv();
-  assertLocalTarget(url);
-  const service = process.env.E2E_SUPABASE_SERVICE_KEY;
-  if (!service) throw new Error('E2E_SUPABASE_SERVICE_KEY not set (see playwright.config.ts env loader).');
-  const headers = { apikey: service, Authorization: `Bearer ${service}`, Prefer: 'return=minimal' };
-  const res = await request.get(
-    `${url}/rest/v1/factor_releases?select=id&status=eq.fixture&publisher=eq.${encodeURIComponent(E2E_FIXTURE_PUBLISHER)}&edition=eq.${encodeURIComponent(E2E_FACTOR_VERSION)}`,
-    { headers },
+export async function cleanupE2EFactors(_request: APIRequestContext): Promise<void> {
+  await withOwner((owner) =>
+    owner.$transaction(async (tx) => {
+      const releases = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT id::text FROM factor_releases WHERE status = 'fixture' AND publisher = $1 AND edition = $2`,
+        E2E_FIXTURE_PUBLISHER,
+        E2E_FACTOR_VERSION,
+      );
+      for (const { id } of releases) {
+        await tx.$executeRawUnsafe('DELETE FROM emission_factors WHERE release_id = $1::uuid', id);
+        await tx.$executeRawUnsafe('DELETE FROM unit_conversions WHERE release_id = $1::uuid', id);
+        await tx.$executeRawUnsafe('DELETE FROM factor_releases WHERE id = $1::uuid', id);
+      }
+    }),
   );
-  if (!res.ok()) throw new Error(`cleanupE2EFactors read failed: ${res.status()} ${await res.text()}`);
-  const releases = (await res.json()) as Array<{ id: string }>;
-  const results = [];
-  for (const { id } of releases) {
-    results.push(await del(request, `${url}/rest/v1/emission_factors?release_id=eq.${id}`, headers));
-    results.push(await del(request, `${url}/rest/v1/unit_conversions?release_id=eq.${id}`, headers));
-    results.push(await del(request, `${url}/rest/v1/factor_releases?id=eq.${id}`, headers));
-  }
-  reportCleanup(results);
 }
 
 /** One row of a bulk-upload file, in the importer's own column order. */
