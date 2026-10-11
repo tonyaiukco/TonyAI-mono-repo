@@ -848,10 +848,12 @@ describe('checkAll — the one list `runtime-role.mjs check` runs', () => {
     // from it does not matter here — which questions they ask does.
     const row = {
       rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolreplication: false, rolbypassrls: false, rolconfig: null,
-      usage: true, create_: false, createdb_obj: false, n: 0, unsealed: 0, readable: false, who: 'tonyai_runtime', replica: false,
+      usage: true, create_: false, createdb_obj: false, n: 0, unsealed: 3, readable: false, who: 'tonyai_runtime', replica: false,
       any: false, exists: false,
     };
-    await checkAll(async (sql) => (seen.push(sql), [row]));
+    const { problems } = await checkAll(async (sql) => (seen.push(sql), [row]));
+    // The library report's problems are among them — it is read apart from the rest.
+    expect(problems).toContain('3 factor release(s) not sealed — a release is sealed in the transaction that loads it, and pricing ignores an unsealed one');
     const asked = seen.join('\n');
     for (const [check, sql] of [
       ['checkRuntimeRole', "has_schema_privilege('tonyai_runtime', 'public', 'USAGE')"],
