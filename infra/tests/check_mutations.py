@@ -13,7 +13,6 @@ INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
     ('mail env drift check skipped', 'deploy_apps.py', "        verify_mail_environment(container.get('env', []), foundation, release, kind)", '        pass'),
     ('mail password validation skipped', 'mail_settings.py', "    if not isinstance(value, str) or not value.strip() or '\\n' in value or '\\r' in value:", '    if False:'),
-    ('auth lifecycle readback skipped', 'supabase_auth.py', '    validate_managed_auth_settings(actual, origin)', '    pass'),
     ('completed auth reconciliation skipped', 'supabase_setup.py', '        if reconcile_only:', '        if False:'),
 
     ('runtime drain callback skipped', 'terraform_run.py', '                before_apply()', '                pass'),
@@ -110,8 +109,8 @@ MUTANTS = [
      "if lane == 'application' and config['application_object_id']:", "if config['application_object_id']:"),
     ('deployed secret identity readback removed', 'deploy_apps.py',
      " or actual[name].get('identity') != identity", ''),
-    ('Auth exact-origin readback removed', 'supabase_auth.py',
-     "if any(actual.get(key) != value for key, value in desired.items()):", 'if False:'),
+    ('Auth exact-origin and lifecycle readback removed', 'supabase_auth.py',
+     '    validate_managed_auth_settings(actual, origin)', '    pass'),
     ('unrecorded app adoption restored', 'configure_oidc.py',
      "        if apps:\n            raise SafeFailure('Unrecorded Entra app already uses the staging name; refusing adoption.')\n        app = az(",
      "        app = apps[0] if apps else az("),
