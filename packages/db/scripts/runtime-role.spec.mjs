@@ -29,6 +29,7 @@ import {
   provisionLocalRuntimeLogin,
   provisionLocalFactorLoaderLogin,
   checkLibraryWriters,
+  checkFactorLoaderRole,
 } from './runtime-role.mjs';
 
 // The database half — that PostgreSQL accepts the verifier and the privileges
@@ -754,6 +755,38 @@ describe('the factor loader role (LP4-02)', () => {
       await expect(provision(client, runtimeUrlFrom(owner, 'x'), 'x')).rejects.toThrow(/owner connection/);
       expect(sent).toHaveLength(1);
     }
+  });
+});
+
+describe('checkFactorLoaderRole — the loader as the runtime role is checked, and no replica mode (LP4-02)', () => {
+  // Just enough catalogue to get through: the role, USAGE on public, no
+  // tables (so each listed one is reported missing), and the setting.
+  const fake = ({ replica = false, bypassrls = false } = {}) => async (sql) =>
+    sql.includes('SELECT rolsuper')
+      ? [{ rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolreplication: false, rolbypassrls: bypassrls, rolconfig: null }]
+      : sql.includes(`has_schema_privilege('${FACTOR_LOADER_ROLE}', 'public', 'USAGE') AS usage`)
+        ? [{ usage: true, create_: false, createdb_obj: false }]
+        : sql.includes('has_parameter_privilege') ? [{ replica }] : [];
+  const missing = ['factor_releases', 'emission_factors', 'unit_conversions'].map(
+    (t) => `${FACTOR_LOADER_ROLE}'s table privileges list public.${t}, which does not exist`,
+  );
+
+  it('names a loader that may SET session_replication_role — replica mode turns the load-time triggers off', async () => {
+    expect(await checkFactorLoaderRole(fake())).toEqual(missing);
+    expect(await checkFactorLoaderRole(fake({ replica: true }))).toEqual([
+      ...missing,
+      `${FACTOR_LOADER_ROLE} may SET session_replication_role — replica mode turns the library's load-time triggers off`,
+    ]);
+    const seen = [];
+    await checkFactorLoaderRole(async (sql) => (seen.push(sql), (await fake()(sql))));
+    expect(seen).toContain(`SELECT pg_catalog.has_parameter_privilege('${FACTOR_LOADER_ROLE}', 'session_replication_role', 'SET') AS replica`);
+  });
+
+  it('names a loader with BYPASSRLS — its policies would no longer bound it — and a missing one plainly', async () => {
+    expect(await checkFactorLoaderRole(fake({ bypassrls: true }))).toContain(`${FACTOR_LOADER_ROLE} has BYPASSRLS — its policies would no longer bound it`);
+    expect(await checkFactorLoaderRole(async () => [])).toEqual([
+      `role ${FACTOR_LOADER_ROLE} does not exist — is the LP4-02 migration applied?`,
+    ]);
   });
 });
 
