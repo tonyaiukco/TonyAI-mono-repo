@@ -880,6 +880,113 @@ its queries (the client already rejects extraneous, duplicate or unordered respo
 cover every legacy list call in e2e fixtures. Deadline finalization must write
 the batch audit row after settled work, including the `failed` closing path.
 
+
+## Inventory coverage and report datasets (LP3-04 contract)
+
+`ReportDataset`, `InventoryBoundarySnapshot` and `ReportIssuance` are additive,
+**dormant** contracts exported by `@tonyai/shared-types`. Existing `ReportStatus`,
+`ReportMetaDTO`, context routes and report assembly are unchanged. No boundary
+storage, dataset capture, final-issuance gate or retained-PDF endpoint is shipped
+by this contract PR. In particular, today's count-based "approved" badge does
+not certify a complete inventory.
+
+The dataset records one bounded, consistent capture of the declared boundary,
+records and their unchanged calculation snapshots, evidence references, period
+locks and factor/conversion release standing. Future assembly must read these in
+one consistent database snapshot, retain the result, and derive every total and
+format from it. Renderers must not query current metadata separately. Capture
+and persistence happen before rendering; an issuance exists only after the
+immutable dataset and exact PDF bytes are retained. Storage failures require a
+recoverable implementation, not a successful issuance with a missing artifact.
+
+- **Boundary:** `super_admin` owns the per-year decisions. Real operating months
+  replace `createdAt` assumptions. D11 has one company/site attribution and one
+  activity granularity per subsidiary/year/category, across all activity types.
+  Obligations exhaust each source's actual operating months at that cadence,
+  without gaps or overlaps; period intervals are clipped to those months.
+  Named unsupported sources remain explicit. An excluded source has a mandatory
+  reason and no amount. An unknown source remains unresolved. D05's actual
+  pilot source list is still an external input; this PR supplies none.
+- **Review:** the captured records' approval state only. All existing records
+  being approved does not answer whether required records are missing.
+- **Coverage:** each included source's expected activity and evidence periods,
+  matched independently of approval. An annual activity record does not by itself
+  satisfy twelve monthly evidence obligations. The source declares an independent
+  evidence cadence (or explicitly none); assessments retain a result and assigned
+  file IDs for every required evidence period, including missing months.
+  Missing records/evidence,
+  unsupported sources and attribution/period conflicts stay explicit gaps.
+- **Provenance:** each non-voided record's calculation standing; both factor and
+  conversion participate. Legacy, uncalculated, placeholder, fixture and withdrawn
+  paths cannot certify final. Gas coverage and a declared year fallback are
+  disclosed separately; an approved sourced fallback is not automatically an error.
+  D09's inventory-year GWP set must also be consistent across counted records;
+  different authoritative GWP sets still block final (`gwp_set_mismatch`).
+  CO2-only paths may have null GWP metadata without introducing another set.
+- **Scopes and zero:** Scope 3 is `not_covered` with no numeric amount. Scope 1/2
+  amounts are null when no calculated counted figure exists. Scope 3 records
+  (including Water) are outside the captured Scope 1/2 record assessments; a
+  Scope 3 context yields an empty partial extract and the not-covered disclosure. A measured zero
+  needs an actual record and calculation. Exclusions never manufacture zeroes.
+
+Final issuance requires a confirmed full declared boundary, every applicable
+obligation satisfied and approved, relevant periods locked, no coverage or
+attribution gap, authoritative calculations and a consistent GWP set. A scope/category-filtered extract
+is partial even when every selected row is approved. `all accessible` does not
+mean the whole organisation: inventory selection must cover the declared
+boundary. Capture and retrieval require access to **every subsidiary referenced
+anywhere**, including boundary-only names/sources/attribution, records, evidence
+and locks, not only `resolvedSubsidiaryIds`. An extract cannot disclose a wider
+boundary through metadata. Refuse inaccessible captures/downloads; never silently
+redact a retained dataset.
+Final has an empty gap list; partial has at least one typed gap. These are producer
+validation requirements, not a browser-side authorization or certification helper.
+
+`datasetId` identifies retained facts; `issuanceId` identifies a particular
+language/template/renderer output. PDF, CSV and Excel projections of the same
+dataset must carry its identity and fingerprint and reconcile. Re-downloading an
+issuance retrieves the retained PDF bytes, not a regeneration. Later withdrawal
+of a factor release changes neither those bytes nor the retained dataset; a new
+capture discloses its current standing without recalculating historic records.
+Opaque artifact IDs replace signed URLs in retained metadata. Retention duration
+and erasure/offboarding exceptions remain D20/D21 and legal-owner decisions.
+
+**Fingerprint encoding, version `tonyai-report-dataset-v1`:** take the complete
+`ReportDataset` except its top-level `datasetId`, `capturedAt` and `fingerprint`.
+All other fields, including boundary versions, actor IDs, record timestamps,
+calculation snapshots, labels, evidence hashes and release standing, participate.
+Reject undefined, nonfinite numbers, non-JSON objects and duplicate entity IDs
+before hashing; optional keys are omitted and null is distinct from omission.
+Recursively sort object keys by JavaScript UTF-16 code-unit order. Recursively
+canonicalize array members and sort their resulting JSON strings by that same
+order (all arrays in this version are semantic sets; preserve multiplicity and
+validate uniqueness where required). Encode keys/strings/numbers with ECMAScript
+`JSON.stringify`, no whitespace, UTF-8, no BOM; negative zero serializes as zero.
+Do not normalize Unicode or round quantities. SHA-256 is encoded as 64 lowercase
+hexadecimal characters. The PDF fingerprint is instead SHA-256 of its exact bytes.
+Hashing/serialization is a later server implementation; this package introduces
+no hashing runtime or claim of generated fingerprints.
+
+Contract acceptance examples (not executed database/UAT evidence):
+
+| Captured facts | Required interpretation |
+| --- | --- |
+| One approved January record, eleven missing months | Approved existing record; incomplete coverage; partial issuance |
+| Site opens in July | July–December obligations only, independently of when its database row was created |
+| Applicable source lacks a usable factor | Named gap/uncalculated provenance; never zero; partial |
+| No fleet, explicitly excluded with a reason | Named exclusion, no fleet obligations and no fleet amount |
+| Approved calculated zero-consumption record | Measured zero; approval, evidence, lock and provenance rules still apply |
+| Authoritative factor plus placeholder conversion | Non-authoritative calculation; final blocked |
+| Factor release withdrawn after an issuance | Old PDF unchanged; next capture discloses withdrawal |
+| Annual record but missing monthly invoices | Evidence gap remains; annual granularity does not close it |
+| Filtered subset of an otherwise complete inventory | Partial extract, never a final whole-inventory claim |
+
+Implementation follows the shared-contract merge. Any schema slot follows
+Claude Code's LP4-02 PR B (L8). Coverage must consume one public calculation
+lookup supporting the capture transaction and PR B's sealed-release rules; it
+must not copy private candidate SQL/diagnostic selection a third time. Boundary
+schema, dataset/issuance assembly and render consumers are separate later PRs.
+
 ## Localisation and error codes
 
 LP3-01 laid the foundation the remaining screens (LP4-04), onboarding (LP4-01) and reports (LP4-03) build on. Turkish UI copy lives **only** in the `tr` catalogue (CLAUDE.md's one exception); keys, code and docs stay English. Recipes: the [`localise-ui`](.claude/skills/localise-ui/SKILL.md) skill.

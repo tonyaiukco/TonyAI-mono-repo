@@ -5215,3 +5215,5 @@ export interface BulkSubmitReportDTO {
 }
 
 export * from './bounded-access';
+
+export * from './report-dataset';
