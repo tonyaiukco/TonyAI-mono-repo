@@ -24,6 +24,12 @@ describe('report context boundary', () => {
   ])('refuses malformed export options %j', async (override) => {
     await expect(parse({ ...query, ...override })).rejects.toMatchObject({ response: { code: 'validation_failed' } });
   });
+  it.each(['includeMethodologyNotes', 'includeEvidenceSummary'].flatMap((field) =>
+    [1, 0, '1', '0', 'TRUE', '', 'garbage'].map((value) => ({ field, value })),
+  ))('refuses $field=$value with 400 rather than coercing booleans', async ({ field, value }) => {
+    await expect(parse({ ...query, [field]: value }))
+      .rejects.toMatchObject({ status: 400, response: { code: 'validation_failed' } });
+  });
   it('echoes exact meta context separately from the selected data', async () => {
     const meta = vi.fn().mockResolvedValue({ totalCount: 0 });
     const controller = new ReportsController({ meta } as unknown as ReportsService);

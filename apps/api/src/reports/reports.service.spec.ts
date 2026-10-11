@@ -265,6 +265,9 @@ describe('ReportsService', () => {
     emissions.summary.mockImplementation((user, query, cap) => realEmissions.summary(user, query, cap));
     const data = await service.assemble(admin, selected);
     expect(data.context).toEqual(context);
+    expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['sub-1'] } }, select: { id: true, legalName: true, tradingName: true },
+    });
     expect(data.records.map((row) => row.periodValue)).toEqual(['January']);
     expect(data.withdrawn.map((row) => row.periodValue)).toEqual(['February']);
     expect(data.summary.recordCount).toBe(1);
@@ -317,8 +320,29 @@ describe('ReportsService', () => {
     const data = await service.assemble(admin, { ...q, subsidiaryId: 'foreign', category: 'Fuel' });
     expect(data.context).toEqual({ year: 2024, subsidiaryId: 'foreign', category: 'Fuel' });
     expect(buildReportHtml(data)).toContain('Selected subsidiary (foreign)');
+    expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
+      where: { id: { in: [] } }, select: { id: true, legalName: true, tradingName: true },
+    });
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
     expect(prisma.activityRecord.groupBy).not.toHaveBeenCalled();
+  });
+
+  it('escapes hostile subsidiary labels in PDF HTML and stores them as XLSX string cells', async () => {
+    const hostile = '=HYPERLINK("https://example.invalid","<script>alert(1)</script>")\r\nInjected';
+    prisma.subsidiary.findMany.mockResolvedValue([{ id: 'sub-1', legalName: hostile, tradingName: hostile }]);
+    const selected = { ...q, subsidiaryId: 'sub-1' };
+    const data = await service.assemble(admin, selected);
+    const html = buildReportHtml(data);
+    expect(html).toContain('Subsidiary filter: =HYPERLINK("https://example.invalid","&lt;script&gt;alert(1)&lt;/script&gt;")\r\nInjected');
+    expect(html).not.toContain('<script>');
+    const bytes = await service.generateExcel(admin, selected);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes as unknown as Parameters<typeof workbook.xlsx.load>[0]);
+    const cell = workbook.getWorksheet('Summary')!.getRow(4).getCell(2);
+    expect(cell.type).toBe(ExcelJS.ValueType.String);
+    // XLSX XML normalizes CRLF to LF on readback; it must remain string data.
+    expect(cell.value).toBe(hostile.replace('\r\n', '\n'));
+    expect(cell.formula).toBeUndefined();
   });
 
   // --- meta / status --------------------------------------------------------

@@ -592,7 +592,11 @@ with no metadata preamble: its filename and generation audit carry the selection
 including an empty export. Tests inspect artifacts and filter predicates.
 New selection labels have EN/TR server catalogues; current writers use English
 consistently with the existing whole report. LP4-03 still owns whole-report
-language selection, category labels and language audit attribution. A JSON acknowledgement likewise
+language selection, category labels and language audit attribution.
+This also changes legacy artifact layout: Excel Summary now has subsidiary,
+scope and category filter rows 4–6 (Status moves from row 5 to row 7); the old
+"Scope filter" row named a subsidiary, while the new one names the actual scope.
+The legacy PDF header gains the same three filter label lines. A JSON acknowledgement likewise
 does not prove arithmetic, tenant isolation or a consistent database snapshot.
 
 For **D14 intensity**, the new contract permits only `revenue` for an
