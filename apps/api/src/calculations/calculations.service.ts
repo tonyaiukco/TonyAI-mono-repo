@@ -5,7 +5,7 @@ import {
   NoEmissionFactorError,
   type CoverageRefusalCode,
 } from './errors';
-import type { EmissionFactor, FactorRelease, UnitConversion } from '@tonyai/db';
+import { Prisma, type EmissionFactor, type FactorRelease, type UnitConversion } from '@tonyai/db';
 import {
   CALCULATION_GAS,
   CATEGORY_SCOPE_MAP,
@@ -207,6 +207,15 @@ export class CalculationsService {
    * conversions from the base unit of the record's family. Releases are
    * filtered by status here, in SQL, as well as by `resolveFactorPath`, and
    * to sealed ones.
+   *
+   * Both reads see ONE snapshot of the library (a REPEATABLE READ, read-only
+   * transaction): read apart, an erratum committed between them — the new
+   * release loaded, the old withdrawn, atomically — priced the old factor
+   * with the new conversion (measured: 400 kgCO2e where either library alone
+   * gives 200 or 600; Codex's B9 review of LP4-02 PR B1, F2, a gap older than
+   * the loader). The engine runs outside the record writers' transactions,
+   * whose triggers require READ COMMITTED (TA003): it is never called inside
+   * one.
    */
   private async candidates(
     lookup: { category: string; activityType: string; geographyCode: string; reportingYear: number },
@@ -214,20 +223,23 @@ export class CalculationsService {
     statuses: readonly FactorStatus[],
   ): Promise<{ factors: FactorRow[]; conversions: ConversionRow[] }> {
     const where = { ...lookup, release: { status: { in: [...statuses] }, ...SEALED } };
-    const [factors, conversions] = await Promise.all([
-      this.prisma.emissionFactor.findMany({
-        where: { ...where, gas: CALCULATION_GAS, scope2Method: scope2MethodFor(lookup.category) },
-        include: { release: true },
-        orderBy: { id: 'asc' },
-        take: FACTOR_CANDIDATE_CAP + 1,
-      }),
-      this.prisma.unitConversion.findMany({
-        where: { ...where, fromUnit: baseUnit },
-        include: { release: true },
-        orderBy: { id: 'asc' },
-        take: FACTOR_CANDIDATE_CAP + 1,
-      }),
-    ]);
+    const [factors, conversions] = await this.prisma.$transaction(
+      [
+        this.prisma.emissionFactor.findMany({
+          where: { ...where, gas: CALCULATION_GAS, scope2Method: scope2MethodFor(lookup.category) },
+          include: { release: true },
+          orderBy: { id: 'asc' },
+          take: FACTOR_CANDIDATE_CAP + 1,
+        }),
+        this.prisma.unitConversion.findMany({
+          where: { ...where, fromUnit: baseUnit },
+          include: { release: true },
+          orderBy: { id: 'asc' },
+          take: FACTOR_CANDIDATE_CAP + 1,
+        }),
+      ],
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
     if (factors.length > FACTOR_CANDIDATE_CAP || conversions.length > FACTOR_CANDIDATE_CAP) {
       throw new FactorLibraryConflictError(
         'ambiguous_factor',

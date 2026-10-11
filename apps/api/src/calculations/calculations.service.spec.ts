@@ -68,6 +68,8 @@ function createFactorPrismaMock() {
   const library = { factors: [] as FactorRow[], conversions: [] as ConversionRow[] };
   return {
     library,
+    // The batch form the engine reads both in: one snapshot (see `candidates`).
+    $transaction: vi.fn(async (reads: Promise<unknown>[], _options?: unknown) => Promise.all(reads)),
     emissionFactor: {
       findMany: vi.fn(async (args: { where: Record<string, unknown>; take?: number }) =>
         library.factors.filter((f) => matchesWhere(f, args.where)).slice(0, args.take),
@@ -647,6 +649,15 @@ describe('CalculationsService.compute', () => {
         unit: 'kWh',
       }),
     ).rejects.toBeInstanceOf(NoEmissionFactorError);
+  });
+
+  it('reads factors and conversions in one REPEATABLE READ snapshot — an erratum between two reads would mix libraries (Codex F2)', async () => {
+    useFactor(prisma, makeFactor({ geographyCode: 'UK', reportingYear: 2024 }));
+    await service.compute({ category: 'Electricity', geographyCode: 'UK', reportingYear: 2024, value: 1, unit: 'kWh' });
+    expect(prisma.$transaction).toHaveBeenCalledWith([expect.anything(), expect.anything()], { isolationLevel: 'RepeatableRead' });
+    // Both reads go through that one call — none apart from it.
+    expect(prisma.emissionFactor.findMany).toHaveBeenCalledTimes(prisma.$transaction.mock.calls.length);
+    expect(prisma.unitConversion.findMany).toHaveBeenCalledTimes(prisma.$transaction.mock.calls.length);
   });
 
   it('never prices from an unsealed release (LP4-02): its factor and its conversion are not candidates', async () => {

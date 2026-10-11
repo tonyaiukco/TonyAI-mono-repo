@@ -174,6 +174,94 @@ describe('the factor loader (LP4-02 PR B1)', () => {
     });
   });
 
+  it("refuses, on a dry run too, an ordinal the database would refuse — a withdrawn release's counts (Codex F1)", async () => {
+    const loader = new FactorReleaseLoader(loaderDb, OPERATOR);
+    const first = await fixtureFile();
+    // One above the next free ordinal, so the one below it is free of every other release.
+    const top = first.release.ordinal + 1;
+    await loader.load({ ...first, release: { ...first.release, ordinal: top } }, { apply: true });
+    const dryRun = async (ordinal: number) => {
+      const file = await fixtureFile();
+      return failure(loader.load({ ...file, release: { ...file.release, ordinal } }, { apply: false }));
+    };
+    for (const ordinal of [top - 1, top]) {
+      const refusal = await dryRun(ordinal);
+      expect(refusal).toBeInstanceOf(LoaderRefusal);
+      expect((refusal as Error).message).toMatch(new RegExp(`ordinal ${ordinal} of ${FIXTURE} does not exceed its latest, ${top}`));
+    }
+    await loader.withdraw({ publisher: FIXTURE, edition: first.release.edition, reason: 'Withdrawn for an ordinal test' }, true);
+    expect(await dryRun(top)).toBeInstanceOf(LoaderRefusal);
+    const next = await fixtureFile();
+    expect(await loader.load({ ...next, release: { ...next.release, ordinal: top + 1 } }, { apply: false })).toMatchObject({ outcome: 'would_load' });
+  });
+
+  it("prices a converted input from one library — an erratum committed between the engine's reads mixes nothing (Codex F2)", async () => {
+    const loader = new FactorReleaseLoader(loaderDb, OPERATOR);
+    // A: 0.2 kgCO2e/kWh at 10 kWh/m³ → 200 kgCO2e for 100 m³; B: 0.3 at 20 → 600; a mix: 400 or 300.
+    const a = await fixtureFile(0.2);
+    await loader.load(a, { apply: true });
+    const b = await fixtureFile(0.3);
+    const reader = connect(2);
+    const erratum = connectOwner(1);
+    const engine = new CalculationsService(reader, INT_FACTOR_POLICY);
+    const input = { category: 'Natural Gas', geographyCode: 'UK', reportingYear: 2031, value: 100, unit: 'cubic_metres' };
+    try {
+      expect(await engine.compute(input)).toMatchObject({ kgCo2e: 200 });
+      let priced: Promise<unknown> = Promise.resolve();
+      await erratum.$transaction(
+        async (tx) => {
+          // The engine's conversion read waits on this lock — after its factor read.
+          await tx.$executeRawUnsafe('LOCK TABLE unit_conversions IN ACCESS EXCLUSIVE MODE');
+          priced = engine.compute(input).catch((e: unknown) => e);
+          for (let waited = 0; ; waited += 25) {
+            const [{ n }] = await owner.$queryRawUnsafe<{ n: number }[]>(
+              `SELECT count(*)::int AS n FROM pg_locks WHERE relation = 'public.unit_conversions'::regclass AND NOT granted`,
+            );
+            if (n > 0) break;
+            if (waited > 10_000) throw new Error('the engine never reached the conversion read');
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          // B loaded and sealed, A withdrawn — committed while the engine is between its reads.
+          const rel = b.release;
+          await tx.$executeRawUnsafe(
+            `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, notes) VALUES (gen_random_uuid(), $1, $2, $3, $4, 'fixture', $5)`,
+            rel.publisher, rel.title, rel.edition, rel.ordinal, rel.notes,
+          );
+          const f = b.factors[0];
+          await tx.$executeRawUnsafe(
+            `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year, data_year, scope,
+               scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
+             SELECT gen_random_uuid(), id, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, edition, now()
+               FROM factor_releases WHERE publisher = $16 AND edition = $17`,
+            f.category, f.activityType, f.gas, f.gasCoverage, f.geographyCode, f.reportingYear, f.dataYear, f.scope,
+            f.scope2Method, f.calorificBasis, f.factorValue, f.factorUnit, f.normalizedUnit, f.methodology, f.source, rel.publisher, rel.edition,
+          );
+          const c = b.conversions[0];
+          await tx.$executeRawUnsafe(
+            `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit,
+               multiplier, calorific_basis, reference_conditions, basis)
+             SELECT gen_random_uuid(), id, $1, $2, $3, $4, $5, $6, $7, 20, $8, $9, $10 FROM factor_releases WHERE publisher = $11 AND edition = $12`,
+            c.category, c.activityType, c.geographyCode, c.reportingYear, c.dataYear, c.fromUnit, c.toUnit, c.calorificBasis,
+            c.referenceConditions, c.basis, rel.publisher, rel.edition,
+          );
+          await tx.$executeRawUnsafe(`UPDATE factor_releases SET sealed_at = now() WHERE publisher = $1 AND edition = $2`, rel.publisher, rel.edition);
+          await tx.$executeRawUnsafe(
+            `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = $1, withdrawal_reason = 'Erratum (interleaving test)' WHERE publisher = $2 AND edition = $3`,
+            OPERATOR, a.release.publisher, a.release.edition,
+          );
+        },
+        { timeout: 30_000 },
+      );
+      // Read before the erratum: A whole — its factor with its conversion.
+      expect(await priced).toMatchObject({ kgCo2e: 200, factorValue: 0.2, conversionFactor: 10 });
+      // Read after it: B whole.
+      expect(await engine.compute(input)).toMatchObject({ kgCo2e: 600, factorValue: 0.3, conversionFactor: 20 });
+    } finally {
+      await Promise.all([reader.$disconnect(), erratum.$disconnect()]);
+    }
+  });
+
   it('withdraws a release with no replacement, once, as the loader', async () => {
     const loader = new FactorReleaseLoader(loaderDb, OPERATOR);
     const file = await fixtureFile();
