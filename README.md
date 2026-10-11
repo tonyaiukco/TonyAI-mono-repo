@@ -606,6 +606,8 @@ across units of the same metric (one denominator per subsidiary/year/metric).
 The summary, matrix and intensity context routes require a valid year and refuse
 unknown fields, repeated parameters and conflicting scope/category filters with
 `validation_failed`. Legacy and context reads share their aggregation methods.
+The service uses one nonblank-subsidiary predicate for access selection and D14,
+including internal callers; context HTTP validation still rejects blank selectors.
 Both `GET /intensity` and `GET /intensity/context` now enforce D14; the legacy
 route retains its existing response envelope. Report context routes remain
 reserved until their context filtering and EXPORT classification ship together.

@@ -202,6 +202,13 @@ describe('IntensityService', () => {
     }
   });
 
+  it.each(['', '  '])('uses the group predicate consistently for a blank internal selector %j', async (subsidiaryId) => {
+    await service.contextIntensity(admin, { year: 2027, subsidiaryId });
+    expect(prisma.subsidiaryDenominator.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, year: 2027, metric: { in: ['revenue'] } },
+    }));
+  });
+
   it('keeps denominators annual and numerator coverage specific to each unit and contributing set', async () => {
     prisma.subsidiaryDenominator.findMany.mockResolvedValue([
       makeDenominator({ value: 20, unit: 'M EUR' }),

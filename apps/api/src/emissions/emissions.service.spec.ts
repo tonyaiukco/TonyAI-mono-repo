@@ -753,6 +753,18 @@ describe('EmissionsService.trackingMatrix', () => {
     service = new EmissionsService(prisma as unknown as PrismaService);
   });
 
+  it('filters category-only Fuel cells without relying on the scope filter', async () => {
+    prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary()]);
+    prisma.activityRecord.findMany.mockResolvedValue([makeRecord({ category: 'Fuel', scope: 1 })]);
+    const matrix = await service.trackingMatrix(superAdmin(), { year: 2027, category: 'Fuel' });
+    expect(prisma.activityRecord.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ reportingYear: 2027, category: 'Fuel' }),
+    }));
+    expect(matrix.rows[0].cells.map((cell) => cell.category)).toEqual(['Fuel']);
+    expect(matrix.rows[0]).toMatchObject({ categoryCount: 1, completeCount: 1, totalTCo2e: 10, uncalculatedRecordCount: 0 });
+    expect(matrix.totals).toEqual({ complete: 1, incomplete: 0, missing: 0 });
+  });
+
   it('filters records and matrix cells together, recomputing totals for the selected category', async () => {
     prisma.subsidiary.findMany.mockResolvedValue([makeSubsidiary()]);
     prisma.activityRecord.findMany.mockResolvedValue([

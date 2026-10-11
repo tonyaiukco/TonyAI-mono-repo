@@ -22,6 +22,9 @@ import { EmissionsService } from '../emissions/emissions.service';
 import { CreateDenominatorDto } from './dto/create-denominator.dto';
 import { UpdateDenominatorDto } from './dto/update-denominator.dto';
 
+const hasSelectedSubsidiary = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0;
+
 @Injectable()
 export class IntensityService {
   constructor(
@@ -51,7 +54,7 @@ export class IntensityService {
   }
 
   private scopeIds(user: RequestUser, subsidiaryId?: string): string[] {
-    if (subsidiaryId) {
+    if (hasSelectedSubsidiary(subsidiaryId)) {
       return user.accessibleSubsidiaryIds.includes(subsidiaryId)
         ? [subsidiaryId]
         : [];
@@ -204,7 +207,7 @@ export class IntensityService {
     if (year === undefined) return { year: null, metrics: [] };
     const data = await this.computeIntensity(user, {
       year,
-      ...(subsidiaryId ? { subsidiaryId } : {}),
+      ...(hasSelectedSubsidiary(subsidiaryId) ? { subsidiaryId } : {}),
     });
     return {
       year,
@@ -231,7 +234,7 @@ export class IntensityService {
       where: {
         subsidiaryId: { in: selectedSubsidiaryIds },
         year: context.year,
-        ...(context.subsidiaryId === undefined ? { metric: { in: [...GROUP_INTENSITY_METRICS] } } : {}),
+        ...(!hasSelectedSubsidiary(context.subsidiaryId) ? { metric: { in: [...GROUP_INTENSITY_METRICS] } } : {}),
       },
       orderBy: [{ metric: 'asc' }, { unit: 'asc' }, { subsidiaryId: 'asc' }],
     });
