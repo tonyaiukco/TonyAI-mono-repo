@@ -150,7 +150,11 @@ export function isLocalDatabase(url: string | undefined): boolean {
   if (!url) return false;
   try {
     const parsed = new URL(url);
-    return LOOPBACK_HOSTS.has(parsed.hostname) && [...parsed.searchParams.keys()].every((key) => LOCAL_URL_PARAMS.has(key));
+    return (
+      (parsed.protocol === 'postgresql:' || parsed.protocol === 'postgres:') &&
+      LOOPBACK_HOSTS.has(parsed.hostname) &&
+      [...parsed.searchParams.keys()].every((key) => LOCAL_URL_PARAMS.has(key))
+    );
   } catch {
     return false;
   }
@@ -203,32 +207,47 @@ export async function run(options: Options): Promise<LoadReport | WithdrawReport
   }
 }
 
-// The exit code is set, never forced: `process.exit()` right after a large
-// write to a pipe drops what the pipe has not taken yet (a refusal naming
-// thousands of issues), and the process ends on its own once stdout drains.
-async function main(): Promise<void> {
+type Sink = { write(chunk: string): boolean };
+
+/**
+ * The CLI, its exit code returned: 0 when done (or planned), 2 on a usage
+ * error, a refusal (its report on `out`, every issue) or a failure. The code
+ * is set, never forced: `process.exit()` right after a large write to a pipe
+ * drops what the pipe has not taken yet, and the process ends on its own once
+ * stdout drains.
+ */
+export async function main(
+  argv: string[] = process.argv.slice(2),
+  out: Sink = process.stdout,
+  err: Sink = process.stderr,
+  execute: (options: Options) => Promise<LoadReport | WithdrawReport> = run,
+): Promise<number> {
   let options: Options;
   try {
-    options = parseArgs(process.argv.slice(2));
+    options = parseArgs(argv);
   } catch (error) {
-    process.stderr.write(`${(error as Error).message}\n`);
-    process.exitCode = 2;
-    return;
+    err.write(`${(error as Error).message}\n`);
+    return 2;
   }
   try {
-    process.stdout.write(`${JSON.stringify(await run(options), null, 2)}\n`);
-    process.exitCode = 0;
+    out.write(`${JSON.stringify(await execute(options), null, 2)}\n`);
+    return 0;
   } catch (error) {
-    process.exitCode = 2;
     if (error instanceof LoaderRefusal) {
-      process.stdout.write(`${JSON.stringify({ outcome: 'refused', message: error.message, issues: error.issues }, null, 2)}\n`);
-      return;
+      out.write(`${JSON.stringify({ outcome: 'refused', message: error.message, issues: error.issues }, null, 2)}\n`);
+      return 2;
     }
-    new Logger('factor-release').error(
-      error instanceof Error ? error.message : String(error),
-      error instanceof Error && !(error instanceof UsageError) ? error.stack : undefined,
-    );
+    if (error instanceof UsageError) {
+      err.write(`${error.message}\n`);
+      return 2;
+    }
+    new Logger('factor-release').error(error instanceof Error ? error.message : String(error), error instanceof Error ? error.stack : undefined);
+    return 2;
   }
 }
 
-if (require.main === module) void main();
+if (require.main === module) {
+  void main().then((code) => {
+    process.exitCode = code;
+  });
+}

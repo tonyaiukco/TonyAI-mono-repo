@@ -283,6 +283,15 @@ describe('the factor loader role (LP4-02)', () => {
     expect(all).toEqual(expect.arrayContaining([...writers, ...executors.filter((e) => e.includes(FACTOR_LOADER_ROLE)), ...loaderCheck]));
   });
 
+  it('holds a table that references a release to the library\'s writers — one added later is born writable by the service role', async () => {
+    const writers = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('CREATE TABLE public.int_factor_notes (id uuid PRIMARY KEY, release_id uuid NOT NULL REFERENCES factor_releases (id))');
+      await tx.$executeRawUnsafe('GRANT INSERT ON public.int_factor_notes TO service_role');
+      return checkLibraryWriters((sql) => tx.$queryRawUnsafe(sql));
+    });
+    expect(writers).toContain('service_role may INSERT public.int_factor_notes — the factor library is written by its loader and the owner alone');
+  });
+
   it('names PUBLIC as a writer of the library, table or column level', async () => {
     const writers = await withRollback(owner, async (tx) => {
       await tx.$executeRawUnsafe('GRANT DELETE ON emission_factors TO PUBLIC');

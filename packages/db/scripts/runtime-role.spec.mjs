@@ -30,6 +30,7 @@ import {
   provisionLocalFactorLoaderLogin,
   checkLibraryWriters,
   checkFactorLoaderRole,
+  checkAll,
 } from './runtime-role.mjs';
 
 // The database half — that PostgreSQL accepts the verifier and the privileges
@@ -837,5 +838,33 @@ describe('checkLibraryWriters — the factor library has two writers: its loader
     expect(sql).toContain('pg_catalog.aclexplode(a.attacl)');
     expect(sql).toContain("('INSERT', 'UPDATE', 'DELETE')");
     expect(sql).toContain('x.grantee <> c.relowner');
+  });
+});
+
+describe('checkAll — the one list `runtime-role.mjs check` runs', () => {
+  it('runs every check: both roles, the library writers, the data, the table verbs, the executors, the triggers, the library', async () => {
+    const seen = [];
+    // One row that satisfies every reader's shape; what the checks conclude
+    // from it does not matter here — which questions they ask does.
+    const row = {
+      rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolreplication: false, rolbypassrls: false, rolconfig: null,
+      usage: true, create_: false, createdb_obj: false, n: 0, unsealed: 0, readable: false, who: 'tonyai_runtime', replica: false,
+      any: false, exists: false,
+    };
+    await checkAll(async (sql) => (seen.push(sql), [row]));
+    const asked = seen.join('\n');
+    for (const [check, sql] of [
+      ['checkRuntimeRole', "has_schema_privilege('tonyai_runtime', 'public', 'USAGE')"],
+      ['checkFactorLoaderRole', "has_parameter_privilege('tonyai_factor_loader', 'session_replication_role', 'SET')"],
+      ['checkLibraryWriters', "k.confrelid = 'public.factor_releases'::pg_catalog.regclass"],
+      ['checkTenantInvariants', 'FROM user_subsidiary_access usa'],
+      ['checkTableLevelGrants', "('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')"],
+      ['checkFunctionExecutors', 'AS "signature"'],
+      ['checkIntegrityTriggers', 't.tginitdeferred AS "initiallyDeferred"'],
+      ['factorLibraryReport', 'FROM factor_releases WHERE sealed_at IS NULL'],
+      ['platformDefaultPrivileges', 'pg_default_acl'],
+    ]) {
+      expect(asked, check).toContain(sql);
+    }
   });
 });

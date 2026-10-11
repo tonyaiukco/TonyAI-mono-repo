@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { FACTOR_RELEASE_FILE_MAX_BYTES, isLocalDatabase, parseArgs, readReleaseFile, refuseUnsafe, UsageError } from './factor-release.cli';
+import { FACTOR_RELEASE_FILE_MAX_BYTES, isLocalDatabase, main, parseArgs, readReleaseFile, refuseUnsafe, UsageError } from './factor-release.cli';
+import { LoaderRefusal } from './factor-release-loader';
 
 const LOAD = ['load', '--file=release.json', '--operator=TonyAI data team'];
 
@@ -81,6 +82,7 @@ describe('isLocalDatabase — an allowlist, as runtime-role.mjs reads a local UR
     expect(isLocalDatabase('postgresql://u:p@127.0.0.1:54322/postgres')).toBe(true);
     expect(isLocalDatabase('postgresql://u:p@localhost:54322/postgres?schema=public&connection_limit=1')).toBe(true);
     expect(isLocalDatabase('postgresql://u:p@[::1]:54322/postgres')).toBe(true);
+    expect(isLocalDatabase('postgres://u:p@127.0.0.1:54322/postgres')).toBe(true);
   });
 
   it('refuses another host, and any parameter that could redirect it — whatever its case', () => {
@@ -91,6 +93,7 @@ describe('isLocalDatabase — an allowlist, as runtime-role.mjs reads a local UR
       'postgresql://u:p@localhost:54322/postgres?hostaddr=10.0.0.1',
       'postgresql://u:p@localhost:54322/postgres?options=-c%20x',
       'postgresql://u:p@db.localhost:54322/postgres',
+      'http://localhost:54322/postgres',
       'not a url',
       undefined,
     ]) {
@@ -124,5 +127,34 @@ describe('readReleaseFile', () => {
   it('reads a file of exactly the cap — the cap is the largest size allowed', () => {
     // All spaces: past the size check, refused only as JSON.
     expect(() => readReleaseFile(file('cap.json', Buffer.alloc(FACTOR_RELEASE_FILE_MAX_BYTES, 32)))).toThrow(/is not JSON/);
+  });
+});
+
+describe('main — the exit code an operator script reads', () => {
+  const sink = () => {
+    const chunks: string[] = [];
+    return { chunks, write: (chunk: string) => (chunks.push(chunk), true) };
+  };
+
+  it('answers a refusal with 2 and the whole report as JSON — every issue, however many', async () => {
+    const out = sink();
+    const issues = Array.from({ length: 20_000 }, (_, i) => ({ path: `factors[${i}].gas`, message: 'is not a gas' }));
+    const code = await main([...LOAD], out, sink(), async () => {
+      throw new LoaderRefusal('the release file has 20000 issue(s) — nothing was written', issues);
+    });
+    expect(code).toBe(2);
+    expect(JSON.parse(out.chunks.join(''))).toMatchObject({ outcome: 'refused', issues: { length: 20_000 } });
+  });
+
+  it('answers a usage error with 2, a done or planned run with 0, and a failure with 2', async () => {
+    const err = sink();
+    expect(await main(['load'], sink(), err, async () => ({}) as never)).toBe(2);
+    expect(err.chunks.join('')).toMatch(/load needs --file/);
+    const out = sink();
+    expect(await main([...LOAD], out, sink(), async () => ({ command: 'load', outcome: 'would_load' }) as never)).toBe(0);
+    expect(JSON.parse(out.chunks.join(''))).toMatchObject({ outcome: 'would_load' });
+    expect(await main([...LOAD], sink(), sink(), async () => {
+      throw new Error('connection refused');
+    })).toBe(2);
   });
 });

@@ -1356,6 +1356,19 @@ describe('LP4-02 — a release is sealed in the transaction that loads it, by it
     expect(stamped[0].fresh).toBe(true);
   });
 
+  it("keeps a restored release's own load time — the clock stamps a load, not a restore (replica mode)", async () => {
+    const id = randomUUID();
+    const restored = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('SET LOCAL session_replication_role = replica');
+      await tx.$executeRawUnsafe(
+        `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, created_at, sealed_at)
+         VALUES ('${id}', '${FIXTURE_PUBLISHER}', 'Int restore clock test', 'int-${id}', ${await nextFixtureOrdinal(tx)}, 'fixture', '2001-01-01', '2001-01-02')`,
+      );
+      return tx.$queryRawUnsafe<{ year: number }[]>(`SELECT extract(year FROM created_at)::int AS year FROM factor_releases WHERE id = '${id}'`);
+    });
+    expect(restored[0].year).toBe(2001);
+  });
+
   it('refuses a release loaded sealed (TA011), and a commit that leaves one unsealed (TA011, at the commit)', async () => {
     const id = randomUUID();
     expect(await outcomes(owner, [], [release(id, await nextFixtureOrdinal(owner), 'now()')])).toEqual(['TA011']);
