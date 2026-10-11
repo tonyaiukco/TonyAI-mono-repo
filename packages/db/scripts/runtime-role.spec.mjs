@@ -340,7 +340,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     expect(writer).toMatch(/IF NEW\."status" <> 'draft'\s+AND pg_catalog\.current_setting\('session_replication_role'\) <> 'replica'\s+AND session_user <> \(SELECT/);
     expect(writer).toMatch(new RegExp(`ELSIF session_user <> '${RUNTIME_ROLE}'\\s+AND session_user <> \\(SELECT`));
     expect(writer).toMatch(/IF NEW\."status" IS DISTINCT FROM OLD\."status" THEN\s+RAISE EXCEPTION USING\s+ERRCODE = 'TA005'/);
-    expect(writer).toMatch(/IF NEW\."input" IS DISTINCT FROM OLD\."input"\s+OR \(OLD\."status" IN \('draft', 'rejected'\) AND \(/);
+    expect(writer).toMatch(/IF NEW\."input" IS DISTINCT FROM OLD\."input"\s+OR NEW\."created_by" IS DISTINCT FROM OLD\."created_by"\s+OR \(OLD\."status" IN \('draft', 'rejected'\) AND \(/);
     const frozen = [...real.get('activity_records_snapshot_immutable').matchAll(/NEW\."([a-z_]+)" IS DISTINCT FROM OLD\."\1"/g)]
       .map((m) => m[1])
       .filter((col) => col !== 'id' && col !== 'status');
@@ -791,7 +791,18 @@ describe('checkFactorLoaderRole — the loader as the runtime role is checked, a
 });
 
 describe('checkLibraryWriters — the factor library has two writers: its loader and the owner (LP4-02)', () => {
-  const fake = (rows) => async () => rows;
+  const fake = (rows, referencing = []) => async (sql) => (sql.includes('confrelid') ? referencing : rows);
+
+  it('checks a table that references a release too — a library table added later is born writable by the service role', async () => {
+    const seen = [];
+    await checkLibraryWriters(async (sql) => (seen.push(sql), sql.includes('confrelid') ? [{ table: 'factor_notes' }] : []));
+    expect(seen[0]).toContain("k.confrelid = 'public.factor_releases'::pg_catalog.regclass");
+    expect(seen[1]).toContain("'public.factor_notes'::pg_catalog.regclass");
+    expect(seen[1]).toContain("'public.unit_conversions'::pg_catalog.regclass");
+    expect(
+      await checkLibraryWriters(fake([{ table: 'factor_notes', grantee: 'service_role', priv: 'INSERT', columnLevel: false }], [{ table: 'factor_notes' }])),
+    ).toEqual(['service_role may INSERT public.factor_notes — the factor library is written by its loader and the owner alone']);
+  });
 
   it("passes on the loader's grants, and names every other writer — table or column level, PUBLIC included", async () => {
     expect(

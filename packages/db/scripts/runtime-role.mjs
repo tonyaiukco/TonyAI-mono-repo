@@ -560,7 +560,16 @@ const LIBRARY_TABLES = Object.freeze(['factor_releases', 'emission_factors', 'un
  * named by `checkFactorLoaderRole`.
  */
 export async function checkLibraryWriters(query) {
-  const tables = LIBRARY_TABLES.map((t) => `'public.${t}'::pg_catalog.regclass`).join(', ');
+  // And any table that references a release — a library table added later is
+  // born writable by the service role (the owner's default privileges), and
+  // must be named here before it is trusted.
+  const referencing = await query(
+    `SELECT DISTINCT c.relname AS "table"
+       FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class c ON c.oid = k.conrelid
+      WHERE k.contype = 'f' AND k.confrelid = 'public.factor_releases'::pg_catalog.regclass`,
+  );
+  const names = [...new Set([...LIBRARY_TABLES, ...referencing.map((r) => r.table)])];
+  const tables = names.map((t) => `'public.${t}'::pg_catalog.regclass`).join(', ');
   const rows = await query(
     `SELECT c.relname AS "table", CASE x.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(x.grantee) END AS "grantee",
             x.privilege_type AS "priv", false AS "columnLevel"
@@ -1280,6 +1289,34 @@ async function provisionLocalLogin(client, ownerUrl, role, password) {
   await client.$executeRawUnsafe(`ALTER ROLE "${role}" WITH LOGIN PASSWORD '${scramVerifier(password)}'`);
 }
 
+/**
+ * Everything `check` runs, in one place — the CLI, the integration suite and
+ * any operator script read the same list. `problems` fail the check; the rest
+ * are warnings (what PUBLIC grants, another creator's defaults, the library's
+ * non-authoritative releases and what this connection could not reconcile).
+ */
+export async function checkAll(query) {
+  const library = await factorLibraryReport(query);
+  return {
+    problems: [
+      ...(await checkRuntimeRole(query)),
+      ...(await checkFactorLoaderRole(query)),
+      ...(await checkLibraryWriters(query)),
+      ...(await checkTenantInvariants(query)),
+      ...(await checkTableLevelGrants(query)),
+      ...(await checkFunctionExecutors(query)),
+      ...(await checkIntegrityTriggers(query)),
+      ...library.problems,
+    ],
+    exposures: [
+      ...(await runtimeRoleExposures(query)).map((e) => `${RUNTIME_ROLE} can also reach ${e}`),
+      ...(await factorLoaderExposures(query)).map((e) => `${FACTOR_LOADER_ROLE} can also reach ${e}`),
+    ],
+    platformDefaults: await platformDefaultPrivileges(query),
+    library,
+  };
+}
+
 async function main() {
   const command = process.argv[2];
   const { PrismaClient } = await import('../generated/client/index.js');
@@ -1330,31 +1367,13 @@ async function main() {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error('Set DATABASE_URL to the database to check.');
     const client = new PrismaClient({ datasourceUrl: url });
-    let problems;
-    let exposures;
-    let platformDefaults;
-    let library;
+    let report;
     try {
-      const query = (sql) => client.$queryRawUnsafe(sql);
-      library = await factorLibraryReport(query);
-      problems = [
-        ...(await checkRuntimeRole(query)),
-        ...(await checkFactorLoaderRole(query)),
-        ...(await checkLibraryWriters(query)),
-        ...(await checkTenantInvariants(query)),
-        ...(await checkTableLevelGrants(query)),
-        ...(await checkFunctionExecutors(query)),
-        ...(await checkIntegrityTriggers(query)),
-        ...library.problems,
-      ];
-      exposures = [
-        ...(await runtimeRoleExposures(query)).map((e) => `${RUNTIME_ROLE} can also reach ${e}`),
-        ...(await factorLoaderExposures(query)).map((e) => `${FACTOR_LOADER_ROLE} can also reach ${e}`),
-      ];
-      platformDefaults = await platformDefaultPrivileges(query);
+      report = await checkAll((sql) => client.$queryRawUnsafe(sql));
     } finally {
       await client.$disconnect();
     }
+    const { problems, exposures, platformDefaults, library } = report;
     for (const e of exposures) console.warn(`  ! ${e}`);
     for (const d of platformDefaults) console.warn(`  ! ${d} (another creator's default, not the migrations' role)`);
     // Not a failure here — local and CI databases hold the seed's placeholder

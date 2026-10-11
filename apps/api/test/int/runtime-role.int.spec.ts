@@ -5,6 +5,7 @@ import {
   INTEGRITY_CHECKS,
   INTEGRITY_TRIGGERS,
   RUNTIME_ROLE,
+  checkAll,
   checkFactorLoaderRole,
   checkIntegrityTriggers,
   checkLibraryWriters,
@@ -255,13 +256,18 @@ describe('the factor loader role (LP4-02)', () => {
   });
 
   it('names every other writer of the library, at table or column level — and a client that can act as the loader', async () => {
-    const { writers, executors, loaderCheck } = await withRollback(owner, async (tx) => {
+    const { writers, executors, loaderCheck, all } = await withRollback(owner, async (tx) => {
       const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
       await tx.$executeRawUnsafe('GRANT INSERT ON emission_factors TO service_role');
       await tx.$executeRawUnsafe('GRANT UPDATE (status) ON factor_releases TO authenticated');
       await tx.$executeRawUnsafe(`GRANT DELETE ON unit_conversions TO ${RUNTIME_ROLE}`);
       await tx.$executeRawUnsafe(`GRANT ${FACTOR_LOADER_ROLE} TO anon`);
-      return { writers: await checkLibraryWriters(query), executors: await checkFunctionExecutors(query), loaderCheck: await checkFactorLoaderRole(query) };
+      return {
+        writers: await checkLibraryWriters(query),
+        executors: await checkFunctionExecutors(query),
+        loaderCheck: await checkFactorLoaderRole(query),
+        all: (await checkAll(query)).problems,
+      };
     });
     const alone = 'the factor library is written by its loader and the owner alone';
     expect(writers).toEqual([
@@ -273,6 +279,21 @@ describe('the factor loader role (LP4-02)', () => {
       `anon can act as ${FACTOR_LOADER_ROLE} (a member — inherited, by SET ROLE or by ADMIN), the factor library's loader — it loads, seals and withdraws releases; no client may be`,
     );
     expect(loaderCheck).toContain(`anon may act as ${FACTOR_LOADER_ROLE} (INHERIT or SET)`);
+    // And `check` runs them all.
+    expect(all).toEqual(expect.arrayContaining([...writers, ...executors.filter((e) => e.includes(FACTOR_LOADER_ROLE)), ...loaderCheck]));
+  });
+
+  it('names PUBLIC as a writer of the library, table or column level', async () => {
+    const writers = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('GRANT DELETE ON emission_factors TO PUBLIC');
+      await tx.$executeRawUnsafe('GRANT UPDATE (title) ON factor_releases TO PUBLIC');
+      return checkLibraryWriters((sql) => tx.$queryRawUnsafe(sql));
+    });
+    const alone = 'the factor library is written by its loader and the owner alone';
+    expect(writers).toEqual([
+      `PUBLIC may DELETE public.emission_factors — ${alone}`,
+      `PUBLIC may UPDATE public.factor_releases (column-level) — ${alone}`,
+    ]);
   });
 
   it('reports a release left unsealed (a restore), and a seal check no longer deferred to the commit', async () => {
@@ -518,29 +539,13 @@ describe('no function in public is born executable by a client (OQ 14)', () => {
   });
 
   it('reads only: every reader `check` runs works in a READ ONLY transaction, as the runtime role', async () => {
-    const { problems, notices } = await withRollback(runtime, async (tx) => {
+    // `checkAll` — the list `runtime-role.mjs check` runs, and no other.
+    const { problems, exposures, platformDefaults } = await withRollback(runtime, async (tx) => {
       await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
-      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
-      return {
-        problems: [
-          ...(await checkRuntimeRole(query)),
-          ...(await checkFactorLoaderRole(query)),
-          ...(await checkLibraryWriters(query)),
-          ...(await checkTenantInvariants(query)),
-          ...(await checkTableLevelGrants(query)),
-          ...(await checkFunctionExecutors(query)),
-          ...(await checkIntegrityTriggers(query)),
-          ...(await factorLibraryReport(query)).problems,
-        ],
-        notices: [
-          ...(await platformDefaultPrivileges(query)),
-          ...(await runtimeRoleExposures(query)),
-          ...(await factorLoaderExposures(query)),
-        ],
-      };
+      return checkAll((sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql));
     });
     expect(problems).toEqual([]);
-    expect(Array.isArray(notices)).toBe(true);
+    expect(Array.isArray(exposures) && Array.isArray(platformDefaults)).toBe(true);
   });
 
   it('covers every function in public — not only the integrity functions it names', async () => {

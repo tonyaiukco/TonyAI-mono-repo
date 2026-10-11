@@ -42,6 +42,12 @@ export declare const CLIENT_CALLABLE_FUNCTIONS: Readonly<Record<string, readonly
 export declare function platformDefaultPrivileges(query: Query): Promise<string[]>;
 export declare function checkIntegrityTriggers(query: Query, expectedBodies?: Map<string, string>): Promise<string[]>;
 export declare function factorLibraryReport(query: Query): Promise<{ problems: string[]; notices: string[]; skipped: string[] }>;
+export declare function checkAll(query: Query): Promise<{
+  problems: string[];
+  exposures: string[];
+  platformDefaults: string[];
+  library: { problems: string[]; notices: string[]; skipped: string[] };
+}>;
 export declare function provisionLocalRuntimeLogin(
   client: { $executeRawUnsafe(sql: string): Promise<unknown> },
   ownerUrl: string,
