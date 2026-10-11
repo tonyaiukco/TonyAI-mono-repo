@@ -431,7 +431,9 @@ export class BulkUploadService {
         row,
         column: this.asColumn('activityType'),
         code: 'invalid',
-        message: `A ${dto.category} record must name its activity type in the activityType column: ${orList(types)}.`,
+        message:
+          `A ${dto.category} record must name its activity type in the activityType column ` +
+          `(download the current template if the file has none): ${orList(types)}.`,
       });
       return;
     }
@@ -469,7 +471,7 @@ export class BulkUploadService {
           column: null,
           code: 'duplicate_in_file',
           message:
-            'Another row in this file already reports this entity, period and category.',
+            'Another row in this file already reports this entity, period, category and activity type.',
         });
         return;
       }
@@ -480,7 +482,7 @@ export class BulkUploadService {
           column: null,
           code: 'duplicate_existing',
           message:
-            'A record already exists for this entity, period and category. Edit it instead of importing it again.',
+            'A record already exists for this entity, period, category and activity type. Edit it instead of importing it again.',
         });
         return;
       }

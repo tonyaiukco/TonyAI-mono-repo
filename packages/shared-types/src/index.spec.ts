@@ -653,8 +653,8 @@ describe('bulk submit — the code list', () => {
       'not_author',
       'period_locked',
       'evidence_required',
-      'variance_reason_required',
       'calculation_stale',
+      'variance_reason_required',
       'unexpected',
       'not_processed_deadline',
     ]);

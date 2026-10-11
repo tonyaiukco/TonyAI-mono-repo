@@ -83,7 +83,7 @@ interface RangeValidations {
 /**
  * Build the downloadable import template.
  *
- * **Sheet 1 carries the nine columns and NOTHING else — not even pre-filled
+ * **Sheet 1 carries the importer's columns and NOTHING else — not even pre-filled
  * entity rows.** That is the whole design constraint, and it is not a style
  * choice: `mapHeader` refuses any unrecognised column, so a helpful
  * `subsidiaryName` beside the id would make the template itself un-uploadable;

@@ -173,6 +173,9 @@ describe('buildTemplateWorkbook — the reference sheet', () => {
     // they are listed per category here rather than offered as one flat list.
     const text = await referenceText();
     expect(text).toContain('Every column there is required except locationId, activityType and varianceReason');
+    expect(text).toContain(
+      'Fuel, Mobile Combustion and Refrigerants rows name their fuel or gas in activityType (listed below); leave it blank for every other category.',
+    );
     expect(text).toContain('Activity types, by category\ncategory | Accepted activityType');
     expect(text).toContain('Fuel | diesel, gas_oil, fuel_oil, burning_oil, lpg');
     expect(text).toContain('Mobile Combustion | diesel, petrol, lpg, cng');

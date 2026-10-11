@@ -2458,7 +2458,7 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       expect.objectContaining({ row: 3, code: 'invalid', column: 'activityType' }),
     ]);
     expect(report.errors[0].message).toBe(
-      'A Fuel record must name its activity type in the activityType column: diesel, gas_oil, fuel_oil, burning_oil or lpg.',
+      'A Fuel record must name its activity type in the activityType column (download the current template if the file has none): diesel, gas_oil, fuel_oil, burning_oil or lpg.',
     );
     expect(records.previewCreate).not.toHaveBeenCalled();
   });
@@ -2564,7 +2564,14 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
     );
 
     expect(report.accepted.map((a) => a.row)).toEqual([2, 3]);
-    expect(report.errors).toEqual([expect.objectContaining({ row: 4, code: 'duplicate_in_file' })]);
+    expect(report.errors).toEqual([
+      {
+        row: 4,
+        column: null,
+        code: 'duplicate_in_file',
+        message: 'Another row in this file already reports this entity, period, category and activity type.',
+      },
+    ]);
     expect(records.previewCreate).toHaveBeenCalledTimes(2);
   });
 
@@ -2580,7 +2587,15 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
 
     const [args] = prisma.activityRecord.findMany.mock.calls[0];
     expect(args.select).toHaveProperty('activityType', true);
-    expect(report.errors).toEqual([expect.objectContaining({ row: 2, code: 'duplicate_existing' })]);
+    expect(report.errors).toEqual([
+      {
+        row: 2,
+        column: null,
+        code: 'duplicate_existing',
+        message:
+          'A record already exists for this entity, period, category and activity type. Edit it instead of importing it again.',
+      },
+    ]);
     expect(report.accepted.map((a) => a.row)).toEqual([3]);
     expect(records.previewCreate).toHaveBeenCalledTimes(1);
   });
@@ -2603,6 +2618,38 @@ describe('BulkUploadService — activity types (LP3-03, LP4-02)', () => {
       { row: 2, column: null, code: 'duplicate_existing', message: SLOT_HOLDS_UNTYPED_MESSAGE },
     ]);
     expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  it('reads the slot in its canonical spelling, as the insert would', async () => {
+    // "january" is accepted and stored as "January". Keyed on the cell as
+    // written, the dry run passed this row and the apply hit TA002 — the
+    // disagreement the pre-check exists to remove (qa-auditor, a survivor).
+    const { prisma, records, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([storedIn('Fuel', null)]);
+
+    const report = await service.import(
+      dataEntry(),
+      csvFile([row({ ...FUEL, activityType: 'diesel', periodValue: 'january' })]),
+      DRY,
+    );
+
+    expect(report.errors).toEqual([
+      { row: 2, column: null, code: 'duplicate_existing', message: SLOT_HOLDS_UNTYPED_MESSAGE },
+    ]);
+    expect(records.previewCreate).not.toHaveBeenCalled();
+  });
+
+  it('answers the second copy of a row as the file\'s own duplicate, after the slot refused the first', async () => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findMany.mockResolvedValue([storedIn('Fuel', null)]);
+    const typed = row({ ...FUEL, activityType: 'diesel' });
+
+    const report = await service.import(dataEntry(), csvFile([typed, typed]), DRY);
+
+    expect(report.errors.map((e) => [e.row, e.code])).toEqual([
+      [2, 'duplicate_existing'],
+      [3, 'duplicate_in_file'],
+    ]);
   });
 
   it('refuses an untyped row in a slot stored typed records hold — the other half of TA002', async () => {

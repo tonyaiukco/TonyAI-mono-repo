@@ -117,7 +117,7 @@ function conversionRow(
 const TEST_PUBLISHERS: readonly string[] = [...FACTOR_PUBLISHERS, TEST_RELEASE.publisher];
 
 function validate(input: unknown): FactorImportIssue[] {
-  return validateFactorReleaseImport(input, { publishers: TEST_PUBLISHERS });
+  return validateFactorReleaseImport(input, { testPublishers: TEST_PUBLISHERS });
 }
 
 /** A release; a placeholder or fixture one is published by its internal publisher. */
@@ -1678,6 +1678,8 @@ describe('validateFactorReleaseImport — the publisher registry (LP4-02)', () =
   it('registers no real publisher before its licence is recorded', () => {
     expect([...FACTOR_PUBLISHERS]).toEqual(['TonyAI prototype', 'TonyAI test fixture']);
     expect(Object.isFrozen(INTERNAL_FACTOR_PUBLISHERS)).toBe(true);
+    // The validator's default allow-list: a push would admit a publisher.
+    expect(Object.isFrozen(FACTOR_PUBLISHERS)).toBe(true);
     // So a complete, reviewed authoritative release is still refused — on its
     // publisher alone.
     expect(validateFactorReleaseImport(release())).toEqual([

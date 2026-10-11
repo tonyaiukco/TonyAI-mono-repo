@@ -1914,12 +1914,14 @@ export const INTERNAL_FACTOR_PUBLISHERS = Object.freeze({
  *
  * A real publisher joins this list and the CHECK in one change, and only with
  * its source and licence recorded by the owner (LP4-02, decision L6 of
- * 2026-10-11). Until then no authoritative release can be loaded.
+ * 2026-10-11). Until then no authoritative release can be loaded. Append-only:
+ * a registered name stays, because stored releases and every snapshot citing
+ * them keep it. Frozen, being the import's default allow-list.
  */
-export const FACTOR_PUBLISHERS = [
+export const FACTOR_PUBLISHERS = Object.freeze([
   INTERNAL_FACTOR_PUBLISHERS.placeholder,
   INTERNAL_FACTOR_PUBLISHERS.fixture,
-] as const;
+] as const);
 
 export type FactorPublisher = (typeof FACTOR_PUBLISHERS)[number];
 
@@ -2392,8 +2394,10 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** K11: the stored figure is not what the engine computes now from the
    *  record's stored inputs — a factor release was published or withdrawn
    *  since the draft was saved, or the figure was rewritten outside the API.
+   *  A refusal while recomputing (a factor withdrawn with no successor, say)
+   *  answers this code too; saving the draft again shows that refusal itself.
    *  Submit and approve refuse it; the author saves the draft again (a
-   *  reviewer returns a submitted one first). */
+   *  reviewer returns a submitted one first). No params. */
   calculation_stale: 409,
   upload_expired: 409,
   /** A complete read/export exceeds its work or output budget after authorization,
@@ -2829,7 +2833,8 @@ const LOADABLE_STATUSES: readonly string[] = ['authoritative', 'placeholder', 'f
  * combining grapheme joiner). An invisible difference in a publisher's name
  * would rank as a SECOND publisher — turning its keys ambiguous and escaping
  * the per-publisher ordinal rule; a bidi override reorders a report.
- * (Look-alike letters from other scripts need a publisher registry — PR B.)
+ * (Look-alike letters from other scripts are refused by the closed registry,
+ * `FACTOR_PUBLISHERS`.)
  */
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}\p{Cs}\p{Default_Ignorable_Code_Point}]/u;
 
@@ -2898,16 +2903,17 @@ function factorActivityTypesFor(category: string, status: string | null): string
  * provenance and review an authoritative release must carry, the scope, basis,
  * unit and gas rules, and duplicates within the file.
  *
- * `options.publishers` stands in for `FACTOR_PUBLISHERS` so a spec can check
- * the other rules on an authoritative release before any real publisher is
- * registered; the loader never passes it, and the database's CHECK admits
- * only the registry either way.
+ * `options.testPublishers` stands in for `FACTOR_PUBLISHERS` so a spec can
+ * check the other rules on an authoritative release before any real publisher
+ * is registered; the loader never passes it (to be removed once one is, in
+ * LP4-02's release PR), and the database's CHECK admits only the registry
+ * either way.
  */
 export function validateFactorReleaseImport(
   input: unknown,
-  options: { publishers?: readonly string[] } = {},
+  options: { testPublishers?: readonly string[] } = {},
 ): FactorImportIssue[] {
-  const publishers = options.publishers ?? FACTOR_PUBLISHERS;
+  const publishers = options.testPublishers ?? FACTOR_PUBLISHERS;
   const issues: FactorImportIssue[] = [];
   const fail = (path: string, message: string) => issues.push({ path, message });
   if (
@@ -5109,15 +5115,17 @@ export const BULK_SUBMIT_ISSUE_CODES = [
    */
   'evidence_required',
   /**
+   * The figure is out of date or was rewritten, or could not be recomputed
+   * (K11, `calculation_stale`): the author saves the draft again, which
+   * recalculates it or names the refusal. Checked before the anomaly gate,
+   * which reads the figure.
+   */
+  'calculation_stale',
+  /**
    * Anomalous against the baseline as recomputed NOW, with no variance reason.
    * The import's `would_block_submit` warning, arrived at.
    */
   'variance_reason_required',
-  /**
-   * The figure is out of date or was rewritten (K11, `calculation_stale`):
-   * the author saves the draft again, which recalculates it.
-   */
-  'calculation_stale',
   /** Anything the server did not anticipate. The record was NOT submitted. */
   'unexpected',
   /** No operation started for this id before the deadline; no existence or
