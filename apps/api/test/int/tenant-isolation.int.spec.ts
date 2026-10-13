@@ -906,6 +906,9 @@ describe("context exports with B's selection, as each of A's roles: the same fil
           expect(foreign.res.text, context).toContain(`Selected subsidiary (${B.subsidiaryId})`);
           expect(foreign.res.text, context).not.toContain('All accessible subsidiaries');
         }
+        // Nor does it fall back to A's own ledger: A's record is listed under
+        // its subsidiary's name, which an empty selection never prints.
+        if (method === 'GET') expect(foreign.res.text, context).not.toContain(subsidiaryNameA);
       }
       expect(await snapshotB(), `${method} ${path} changed B's data`).toBe(before);
 
