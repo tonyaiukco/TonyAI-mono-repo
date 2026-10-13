@@ -6,7 +6,14 @@ only after both apps exist and runbook 01 grants their exact scopes.
 
 ## 3.1 Build and verify immutable images
 
-Select a clean, reviewed source checkout. The script refuses dirty trees and a
+Select a clean, reviewed source checkout. **B1 staging gate:** no staging candidate
+containing LP4-02 B1 (#169, `2ed5dea`, migration
+`20261011120000_lp4_02_loader`) may be built/promoted for staging without B2's
+K11 recompute at submit/approve and bulk `toIssue`, unless the owner explicitly
+accepts that gap. Record B2's integrated SHA and acceptance evidence, or the
+owner's explicit exception with the candidate. B1 alone still admits a newly
+inserted forged draft; its database guard is not B2's recompute. Green build/CI
+does not waive this gate. The script refuses dirty trees and a
 SHA differing from HEAD. From that checkout, with restored foundation variables:
 
 ```bash
@@ -163,6 +170,74 @@ mark these failed migrations applied or bypass their preconditions.
   migration's checks. Record the migration names, counts, timeout outcome,
   resolve/redeploy result and resulting migration status, with no email addresses.
 
+### LP4-02 B1 migration window and recovery (owner-run, NOT RUN here)
+
+`20261011120000_lp4_02_loader` follows
+`20261010180000_lp4_01_onboarding`. Review the full selected candidate's chain,
+including the staging gate in §3.1. Pause writes, scheduled jobs and long reads;
+finish or cancel ongoing loads before migration. Its **ACCESS EXCLUSIVE** locks
+on `factor_releases`, `emission_factors`, `unit_conversions` and
+`factor_release_events` last until commit (briefly in an uncontended window).
+Creating the constraint trigger requires **SHARE ROW EXCLUSIVE**; function
+replacements take no table lock themselves. `SET LOCAL lock_timeout = '5s'`
+bounds each lock wait, not the total migration duration. Capture the actual
+window/timeout outcome; do not claim a hosted timing from local tests.
+
+Preflight through the owner's own `owner-psql` login:
+
+```sql
+SELECT current_user, session_user, rolcreaterole
+  FROM pg_roles WHERE rolname = current_user;
+SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+  FROM pg_roles WHERE rolname = 'tonyai_factor_loader';
+SELECT granted.rolname AS member_of
+  FROM pg_auth_members m JOIN pg_roles granted ON granted.oid = m.roleid
+  JOIN pg_roles member ON member.oid = m.member
+ WHERE member.rolname = 'tonyai_factor_loader';
+```
+
+Require the migrating owner to have CREATEROLE. A loader role absent before the
+migration is normal; if present it must have none of SUPERUSER, CREATEDB,
+CREATEROLE, REPLICATION or BYPASSRLS and no memberships. The migration aborts on
+unsafe existing attributes/memberships; investigate with the owner, never strip
+privileges from an unrecognised cluster-wide role merely to pass.
+
+The migration seals **every existing release**, with no back-filled `sealed`
+event (the migration itself is the record). `service_role` loses INSERT/UPDATE/
+DELETE on the library. TA006 becomes live: the service role can no longer rewrite
+or delete a draft/rejected record, rewrite its calculation inputs, or rewrite
+`created_by` at any status. Sealing/withdrawal uses the loader's or owner's
+session (TA013). Existing API draft edits/submits must still succeed.
+
+On a lock/precondition failure, the migration rolls back but Prisma records a
+failed row (P3018; next deploy P3009). Inspect/correct the cause, then use the
+private owner URL preparation described above: strict TLS, exact selected
+`direct-url` version, local CA path, exported as both DATABASE_URL and DIRECT_URL.
+
+```bash
+pnpm --filter @tonyai/db exec prisma migrate resolve --rolled-back 20261011120000_lp4_02_loader
+```
+
+Clear both URLs, then repeat normal migration deployment in a quiet window.
+Never resolve a failed migration as applied. After success, require:
+
+```sql
+SELECT count(*) FROM factor_releases WHERE sealed_at IS NULL;
+```
+
+The count is **0**. From the deployed checkout run `runtime-role.mjs check`
+through the owner per [runbook 05](05-rotation.md#owner-reconciliation-check):
+exit 0, both roles' final line, no problems, event reconciliation completed.
+Perform an ordinary authenticated **API draft edit and submit** and record both
+results before reopening traffic. Do not use a service-role SQL edit as proof.
+
+This is **forward-only**: a seal cannot be undone, revoked library grants are not
+restored by image rollback, and the role is **cluster-wide** (not scoped to one
+database). Do not drop it as rollback. Any image rollback needs compatibility
+with sealed-only pricing, TA006 and the restricted writers; restore uses the
+matching-chain procedure in runbook 04. Provision and then disable the loader
+login per runbook 05; do not leave it enabled after these checks.
+
 Before applying the LP1-03 migration, perform the hosted owner privilege checks in runbook 05. Expected:
 `prisma migrate deploy` then `prisma migrate status` succeed using only the
 explicitly selected owner session URL and the repository CA. For initial setup,
@@ -304,7 +379,9 @@ remains open. LP2-02 is not DONE until the exact deployed candidate passes below
 
 ### Candidate → migration → approval → deployment
 
-1. Merge with owner approval, then select a clean **main SHA**. Dispatch both `gh workflow run e2e.yml --ref main` and
+1. Merge with owner approval, then select a clean **main SHA**. Apply the §3.1
+   B1 staging gate here too: record B2's inclusion or the owner's explicit gap
+   acceptance before dispatching a candidate. Dispatch both `gh workflow run e2e.yml --ref main` and
    `gh workflow run integration.yml --ref main`. Verify their `headSha` equals
    the selected SHA; `main` can move between commands. Manual flow-changing PR
    E2E runs remain required by D22. CI, full E2E and the real-PostgreSQL Integration

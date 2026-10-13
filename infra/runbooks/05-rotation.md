@@ -124,8 +124,7 @@ node infra/scripts/runtime-identity.mjs && node packages/db/scripts/runtime-role
 The first command executes **`SELECT current_user, session_user`** through that URL
 and refuses unless both are **`tonyai_runtime`**. It must print
 `PASS: current_user=tonyai_runtime; session_user=tonyai_runtime`. A login failure or
-owner session fails this step and prevents the second command. The unchanged
-`runtime-role.mjs check` checks the named role's grants, not the caller identity;
+owner session fails this step and prevents the second command. `runtime-role.mjs check` now runs `checkAll` for **both roles**, not the caller identity;
 **"privileges as intended" alone is not sufficient evidence**.
 
 Require both commands to pass. Attach full stdout **and stderr**, including every
@@ -161,7 +160,7 @@ it. Through the owner, the check also compares every factor release's held rows 
 replica-mode restore bypasses. It does not repeat the others or foreign keys
 (runbook 04). Expected:
 
-- exit 0 and the final line `tonyai_runtime on <host>: privileges as intended`;
+- exit 0 and the final line `tonyai_runtime and tonyai_factor_loader on <host>: privileges as intended`;
 - **no** `- …` problem line;
 - **no** `the library's record was not reconciled` line (if it appears, the URL
   is not the owner's);
@@ -169,8 +168,10 @@ replica-mode restore bypasses. It does not repeat the others or foreign keys
   or `… fixture release` line. Neither environment ever holds one (K3), so such a
   line is a finding even though the exit code stays 0.
 
-Record the `! tonyai_runtime can also reach …` PUBLIC warnings as in the runtime
-procedure. Attach full stdout and stderr with the source SHA and clear
+Record **both** `! tonyai_runtime can also reach …` and
+`! tonyai_factor_loader can also reach …` PUBLIC warnings as in the runtime
+procedure. These are warnings, not a reason to discard stderr or assume the
+loader is confined; review every exposure. Attach full stdout and stderr with the source SHA and clear
 `DATABASE_URL` afterwards. Three limits apply (independent review F5):
 
 1. Its CHECK pins are md5 hashes of PostgreSQL 17 output. Confirm `SHOW
@@ -178,10 +179,212 @@ procedure. Attach full stdout and stderr with the source SHA and clear
 2. It reads its integrity-function bodies from the checkout's migrations. Run it
    only from the deployed SHA; any other checkout can report false drift or miss
    real drift.
-3. On a database without migration `20261004120000_lp3_03_factor_model` it exits 1
-   with `relation "factor_releases" does not exist` and prints no privilege result
-   at all. That is not a privilege finding; the check is usable only once that
-   migration is applied.
+3. Use the checker from the schema's matching source SHA. This B1 checker needs
+   `20261011120000_lp4_02_loader`, including `sealed_at` and the loader role.
+   An older schema may fail before producing any privilege result. During a
+   restore at an older migration head, first use that head's checker, then the
+   new checker after migrating forward; never treat a missing-relation/column
+   error as a successful privilege check.
+
+## Both-role evidence and refusal lines
+
+For runtime and owner checks require exit 0 and the exact final line:
+
+```text
+tonyai_runtime and tonyai_factor_loader on <host>: privileges as intended
+```
+
+Keep stdout **and** stderr. Exit 0 can coexist with PUBLIC exposure warnings and
+skipped event reconciliation. Require the owner check to close that reconciliation;
+the loader identity probe alone is not a grants or integrity check. A `- …`
+problem line and exit 1 stop the handoff. Examples from the current checker:
+
+```text
+  ! tonyai_factor_loader can also reach …
+  - tonyai_factor_loader has BYPASSRLS — its policies would no longer bound it
+  - tonyai_factor_loader has DELETE on public.factor_releases
+  - <grantee> may INSERT public.<table> — the factor library is written by its loader and the owner alone
+  - tonyai_factor_loader may SET session_replication_role — replica mode turns the library's load-time triggers off
+  - <n> factor release(s) not sealed — a release is sealed in the transaction that loads it, and pricing ignores an unsealed one
+  - release <id> holds <n> <table> row(s) but factor_release_events records <n>
+```
+
+These illustrate loader privileges, unexpected library writers, replica-mode
+privilege, unsealed releases and event mismatches; the list is not exhaustive.
+Do not widen grants or patch seals/events to make it green. `check` does not prove
+LOGIN is disabled or sessions are closed: collect the separate SQL evidence below.
+
+## Provision the loader login per environment
+
+**Hosted procedure — NOT RUN by this PR.** After the B1 migration, in the private
+owner terminal open `owner-psql` with the exact selected `direct-url` version
+(command under Initial LP1-03 handoff above). Confirm current_user and session_user
+are both the project's owner (`postgres`), and review the both-role owner check.
+Do not grant memberships: TA013 expects the loader's **own** session login.
+
+Generate `openssl rand -hex 32` privately and store the 64-character hex password
+and URL as a separate, versioned **password-manager secret**, named for this
+project/environment and loader role. Use an unrecorded terminal; no shell tracing,
+clipboard recording, terminal capture or logs. No Azure resources are introduced.
+Never copy this secret to a release manifest, API Container App environment,
+`database-url`, `direct-url` or any API-readable Key Vault reference. Never reuse
+an owner/runtime password. In owner-psql, enter it only at the hidden prompts:
+
+```text
+\password tonyai_factor_loader
+ALTER ROLE tonyai_factor_loader LOGIN;
+```
+
+Never use a cleartext `ALTER ROLE … PASSWORD` statement. Store this session URL:
+
+```text
+postgresql://tonyai_factor_loader.<project-ref>:<64-character-hex-password>@aws-N-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&sslaccept=strict&sslcert=<absolute-repository-path>/infra/certs/prod-ca-2021.crt&connection_limit=1&connect_timeout=15
+```
+
+Use the actual project's Frankfurt pooler host and URL-encode the absolute CA
+path if needed. The private workstation checker deliberately accepts only that
+local CA, session port 5432, the exact project-qualified username and these five
+query parameters. No `host`, `options`, `pgbouncer` or TLS downgrade is accepted.
+The wire username has the project suffix; PostgreSQL must return the **bare**
+role for both identities. A direct endpoint is an alternative requiring separate
+endpoint qualification; transaction port 6543 is not approved by this procedure.
+
+Before the first apply, retain hosted proof that this session endpoint and its
+server/proxy timeouts permit one transaction of **up to 300 seconds** (the CLI's
+transaction timeout). In a private loader psql session, use the same host, 5432,
+project-qualified loader user, `PGSSLMODE=verify-full` and the repository
+`PGSSLROOTCERT`; supply the password at `psql -X -W`, never argv. Check
+`SHOW statement_timeout`, then a read-only transaction with
+`SELECT current_user, session_user`, `SELECT pg_sleep(300)`, the identities again,
+and `ROLLBACK`. Do not override timeouts just for the probe: it must reflect what
+the CLI inherits. A failure stops qualification; resolve platform limits before
+loading, without granting extra role settings/privileges to bypass the check.
+This is owner-run evidence, **NOT RUN** here; the identity unit tests prove no
+hosted timeout or pooler behaviour.
+
+## Load or withdraw from the owner workstation
+
+**Recommendation:** use a private owner workstation, Node 22, and a clean checkout
+of the deployed source SHA. Build with `pnpm install --frozen-lockfile`,
+`pnpm db:generate`, `pnpm --filter @tonyai/api... build` (including workspace
+dependencies) **before** introducing the
+loader secret. Mount the approved release directory read-only from private
+storage, and point `RELEASE_FILE` at its JSON file (maximum **16 MiB**). Keep the
+file unchanged from dry run through apply; record its SHA-256 and source/licence
+approval privately. No fixture/placeholder release belongs on staging/production.
+At B1 the registry holds no real publisher: an authoritative load waits for PR C's
+approved source/licence and publisher registration. Review GWP sets across the
+inventory year and follow-up (12)'s erratum ordering before that first load.
+
+A one-off job using the deployed API **image digest** is the alternative: read-only
+release mount, separate identity/private loader secret and private reports,
+working directory `/app/apps/api`, entry point
+`node dist/factor-releases/factor-release.cli.js load|withdraw`. It must have no
+owner URL or API secret references. **Proposal only:** ask the owner before adding
+job/Key Vault/Azure resources; none are implemented here. Never exec a load inside
+the running API Container App or add the loader secret to it.
+
+For the recommended workstation route, use a private Bash shell without tracing
+or recording, from the repository root. Set nonsecret `SUPABASE_PROJECT_REF`,
+`RELEASE_FILE` (absolute read-only mount path) and `EVIDENCE_DIR` (a new private
+operation directory). Use restrictive permissions and new filenames:
+
+```bash
+set +x
+umask 077
+set -o noclobber
+unset DATABASE_URL DIRECT_URL
+read -rs -p 'Loader URL: ' FACTOR_LOADER_DATABASE_URL
+export FACTOR_LOADER_DATABASE_URL SUPABASE_PROJECT_REF
+node infra/scripts/loader-identity.mjs
+node infra/scripts/loader-command.mjs load --file="$RELEASE_FILE" --operator='Factor operations' > "$EVIDENCE_DIR/dry-run.json"
+```
+
+Require identity output
+`PASS: current_user=tonyai_factor_loader; session_user=tonyai_factor_loader`
+and a successful dry-run exit with `would_load` (or a reviewed `already_loaded`).
+The identity checker and CLI both refuse the owner, runtime or member login.
+`loader-command.mjs` invokes the built CLI from `apps/api`; its child receives
+only the loader URL and fixed nonsecret Node settings. It captures raw diagnostics,
+withholds them on failure, and prints only a successful JSON report. Do not run
+or `tee` the raw CLI in a recorded shell: unexpected driver errors can contain
+connection details. Keep successful reports private too (publisher/operator data).
+
+**Stop and review the dry-run report before the next command.** Keep it as evidence
+with the source SHA, file hash, project, endpoint, private secret version reference
+and operator's **firm or role, never a person** (P8). On approval of that report:
+
+```bash
+node infra/scripts/loader-command.mjs load --file="$RELEASE_FILE" --operator='Factor operations' --apply --allow-remote > "$EVIDENCE_DIR/apply.json"
+unset FACTOR_LOADER_DATABASE_URL
+```
+
+For an erratum add the same `--supersedes='<old edition>' --reason='<reason>'`
+to **both** commands; the replacement's higher ordinal and old withdrawal commit
+in one transaction. A withdrawal uses `withdraw --publisher='<publisher>'
+--edition='<edition>' --reason='<reason>' --operator='Factor operations'`, first
+without apply, then with `--apply --allow-remote`, retaining both reports.
+There is no root wrapper (P9). Never use DIRECT_URL for a load: the CLI refuses it.
+
+A nonzero exit, interrupted command, timeout (the wrapper bounds the child to
+360 seconds), missing report or unexpected outcome means **stop**: an apply may
+have committed before its response was lost. Disable/close the loader below,
+reconcile through the owner, then re-enable only for a reviewed idempotent retry
+with a fresh dry run. Never infer rollback from a missing report. After success,
+disable/close it too, run the owner reconciliation check, verify the release via
+`GET /api/v1/factors`, and retain both-role evidence. Users may need to save drafts
+again; B2's stale-calculation refusal is required by the staging gate.
+
+## Disable, rotate or revoke the loader credential
+
+After **every** operation (successful, refused or interrupted), use the owner's
+own login. Set NOLOGIN **before** closing existing sessions, in autocommit:
+
+```sql
+ALTER ROLE tonyai_factor_loader NOLOGIN;
+SELECT pid, pg_terminate_backend(pid) AS terminated
+  FROM pg_stat_activity WHERE usename = 'tonyai_factor_loader';
+SELECT rolcanlogin FROM pg_roles WHERE rolname = 'tonyai_factor_loader';
+SELECT count(*) AS open_loader_sessions FROM pg_stat_activity
+ WHERE usename = 'tonyai_factor_loader';
+```
+
+Require every termination to succeed, `rolcanlogin = false`, and zero remaining
+sessions; repeat the session check from a fresh owner transaction. NOLOGIN and
+`VALID UNTIL` do not terminate open sessions. The role is cluster-wide, so do not
+restrict termination to the current database. A pooled backend can outlive its
+client. Require an explicit refusal of a fresh loader connection at the chosen
+endpoint (private `psql -X -W` with strict libpq TLS as above); a network/TLS error
+is not revocation proof. If cached authentication still works or termination is
+refused, stop and resolve with the platform owner before declaring closure.
+Record only sanitized outcomes, identities, counts and secret version references.
+
+To rotate, first disable/terminate and verify closure as above. Save a **new**
+private password-manager version, then owner-psql `\password tonyai_factor_loader`
+and `ALTER ROLE tonyai_factor_loader LOGIN`. Prove the new version with
+`loader-identity.mjs`; require an explicit authentication refusal for the **old**
+password through a fresh strict-TLS session-pooler connection, followed by another
+successful new-version identity check. Only then retire the old secret version.
+Run the owner both-role check; disable/terminate again when finished. Do not retire
+an old vault/password-manager copy as a substitute for revoking its DB password.
+The API/runtime credential and release manifest do not change. After interruption,
+recover forward with another private password reset, not an old secret selection.
+
+For permanent revocation, disable and terminate first, then as owner
+`ALTER ROLE tonyai_factor_loader PASSWORD NULL;`, verify fresh-login refusal and
+retire its stored credential. Do not drop the cluster-wide role or its policies.
+A new project requires provisioning again; a data-only restore carries no role
+password. All these hosted steps remain **NOT RUN** until the owner records them.
+
+## Owner draft clean-up
+
+Any owner-approved draft/rejected-record clean-up uses the owner's **own login**
+from selected `DIRECT_URL` via `owner-psql`, verifying `session_user = current_user
+= postgres`. A dashboard session that `SET ROLE`s to the owner is insufficient:
+the draft-delete guard reads `session_user` (TA006), whereas a committed record's
+existing delete rule reads `current_user`. Do not bypass the guard, use the loader,
+or disable triggers to clean up drafts. Preserve the audited record-lifecycle
+procedure and never rewrite a committed snapshot.
 
 ## Rotate the runtime credential
 
