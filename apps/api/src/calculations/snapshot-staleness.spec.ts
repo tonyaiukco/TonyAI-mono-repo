@@ -1,0 +1,207 @@
+import { describe, it, expect } from 'vitest';
+import type { CalculationResultV2, UncalculatedSnapshot } from '@tonyai/shared-types';
+import { compareSnapshots } from './snapshot-staleness';
+
+/**
+ * K11's comparison (Decisions 2026-10-11 (second), P6): the stored snapshot
+ * against the one the engine computes now from the record's stored inputs.
+ * The values are labelled fixtures — not factors from any publication.
+ */
+const RECOMPUTED: CalculationResultV2 = {
+  snapshotSchema: 2,
+  category: 'Natural Gas',
+  geographyCode: 'GB',
+  reportingYear: 2031,
+  scope: 1,
+  inputValue: 250,
+  inputUnit: 'cubic_metres',
+  normalizedValue: 2840,
+  normalizedUnit: 'kWh',
+  conversionApplied: true,
+  conversionFactor: 11.36,
+  conversionBasis: 'fixture conversion (not a real publication)',
+  kgCo2e: 520,
+  tCo2e: 0.52,
+  factorId: 'factor-fixture',
+  factorValue: 0.1831,
+  factorUnit: 'kgCO2e/kWh',
+  methodology: 'fixture',
+  source: 'fixture publisher',
+  version: '2031-fixture',
+  activityType: 'natural_gas',
+  gas: 'CO2e',
+  gasCoverage: 'co2e_total',
+  calorificBasis: 'gross',
+  scope2Method: null,
+  dataYear: 2031,
+  yearPolicy: 'same_year',
+  factorRelease: {
+    id: 'release-fixture',
+    publisher: 'fixture',
+    title: 'Fixture release',
+    edition: '2031-fixture',
+    ordinal: 1,
+    status: 'active',
+    sourceUrl: null,
+    licence: null,
+    publishedAt: null,
+    gwpSet: null,
+  },
+  conversion: {
+    id: 'conversion-fixture',
+    fromUnit: 'm3',
+    toUnit: 'kWh',
+    multiplier: 11.36,
+    calorificBasis: 'gross',
+    referenceConditions: null,
+    basis: 'fixture conversion (not a real publication)',
+    dataYear: 2031,
+    release: {
+      id: 'release-fixture',
+      publisher: 'fixture',
+      title: 'Fixture release',
+      edition: '2031-fixture',
+      ordinal: 1,
+      status: 'active',
+      sourceUrl: null,
+      licence: null,
+      publishedAt: null,
+      gwpSet: null,
+    },
+  },
+} as unknown as CalculationResultV2;
+
+/** The snapshot as `calculation` (jsonb) hands it back: a parsed copy, keys reordered. */
+function stored(snapshot: object): unknown {
+  const copy = JSON.parse(JSON.stringify(snapshot)) as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(copy).reverse());
+}
+
+const UNCALCULATED: UncalculatedSnapshot = {
+  snapshotSchema: 1,
+  category: 'Water',
+  geographyCode: 'GB',
+  reportingYear: 2031,
+  scope: 3,
+  inputValue: 100,
+  inputUnit: 'cubic_metres',
+  reasonCode: 'no_emission_factor',
+  reason: 'No emission factor is available for "Water" (GB, 2031), …',
+};
+
+describe('compareSnapshots — K11 (P6)', () => {
+  it('a stored copy of the recomputed snapshot is fresh, whatever its key order', () => {
+    expect(compareSnapshots(stored(RECOMPUTED), RECOMPUTED)).toEqual({
+      stale: false,
+      classes: [],
+      legacy: false,
+    });
+  });
+
+  it('the unit as entered and as stored is one unit (inputUnit compared canonically)', () => {
+    const entered = { ...RECOMPUTED, inputUnit: 'm3' };
+    expect(compareSnapshots(stored(entered), RECOMPUTED).stale).toBe(false);
+    const kwh = { ...RECOMPUTED, inputUnit: 'kWh' };
+    expect(compareSnapshots(stored({ ...kwh, inputUnit: 'kwh' }), kwh).stale).toBe(false);
+  });
+
+  it('a different unit is an input mismatch, not a spelling', () => {
+    const r = compareSnapshots(stored({ ...RECOMPUTED, inputUnit: 'kWh' }), RECOMPUTED);
+    expect(r).toEqual({ stale: true, classes: ['input'], legacy: false });
+  });
+
+  it.each([
+    ['figure', { tCo2e: 0.0001 }],
+    ['figure', { kgCo2e: 0.1 }],
+    ['factor', { factorValue: 0.2 }],
+    ['factor', { factorId: 'factor-other' }],
+    ['factor', { yearPolicy: 'fallback_prior_year' }],
+    ['conversion', { normalizedValue: 2500 }],
+    ['conversion', { conversionFactor: 10 }],
+    ['conversion', { conversionApplied: false }],
+    ['input', { inputValue: 251 }],
+    ['input', { geographyCode: 'TR' }],
+    ['input', { reportingYear: 2030 }],
+    ['input', { category: 'Fuel' }],
+    ['input', { activityType: 'diesel' }],
+  ] as const)('classifies a changed field as %s (%o)', (cls, change) => {
+    const r = compareSnapshots(stored({ ...RECOMPUTED, ...change }), RECOMPUTED);
+    expect(r).toEqual({ stale: true, classes: [cls], legacy: false });
+  });
+
+  it('a nested change classifies by its top-level field', () => {
+    const erratum = {
+      ...RECOMPUTED,
+      factorRelease: { ...RECOMPUTED.factorRelease, ordinal: 2 },
+      conversion: { ...RECOMPUTED.conversion!, multiplier: 10.5 },
+    };
+    expect(compareSnapshots(stored(erratum), RECOMPUTED)).toEqual({
+      stale: true,
+      classes: ['conversion', 'factor'],
+      legacy: false,
+    });
+  });
+
+  it('a figure rewritten together with its factor names both, in a fixed order', () => {
+    const forged = { ...RECOMPUTED, tCo2e: 0.0001, kgCo2e: 0.1, factorValue: 0.0000002, inputValue: 9 };
+    expect(compareSnapshots(stored(forged), RECOMPUTED).classes).toEqual(['input', 'figure', 'factor']);
+  });
+
+  it('an extra or a missing key is a mismatch; an unknown key counts with the factor', () => {
+    expect(compareSnapshots(stored({ ...RECOMPUTED, note: 'x' }), RECOMPUTED).classes).toEqual(['factor']);
+    const { conversionBasis: _drop, ...without } = RECOMPUTED;
+    expect(compareSnapshots(stored(without), RECOMPUTED).classes).toEqual(['conversion']);
+  });
+
+  it('a pre-LP3-03 snapshot (no snapshotSchema) is stale, even with the same figure', () => {
+    const legacy = { ...RECOMPUTED } as Record<string, unknown>;
+    delete legacy.snapshotSchema;
+    const r = compareSnapshots(stored(legacy), RECOMPUTED);
+    expect(r.stale).toBe(true);
+    expect(r.legacy).toBe(true);
+    // Equal in every field the old shape had: legacy alone makes it stale.
+    const sameLegacy = compareSnapshots(stored(legacy), legacy as unknown as CalculationResultV2);
+    expect(sameLegacy).toEqual({ stale: true, classes: [], legacy: true });
+  });
+
+  it('the integration harness placeholder is a legacy figure', () => {
+    const r = compareSnapshots({ tCo2e: 0, factorId: 'int-test-placeholder' }, RECOMPUTED);
+    expect(r.stale).toBe(true);
+    expect(r.legacy).toBe(true);
+  });
+
+  it('an uncalculated record compares as uncalculated', () => {
+    expect(compareSnapshots(stored(UNCALCULATED), UNCALCULATED).stale).toBe(false);
+    // A factor loaded since: the recompute has a figure now.
+    const nowPriced = compareSnapshots(stored(UNCALCULATED), RECOMPUTED);
+    expect(nowPriced.stale).toBe(true);
+    expect(nowPriced.legacy).toBe(false);
+    // And back: a stored figure whose factor is gone.
+    expect(compareSnapshots(stored(RECOMPUTED), UNCALCULATED).stale).toBe(true);
+  });
+
+  it('the code-authored reason is compared too (C5-A)', () => {
+    const reworded = { ...UNCALCULATED, reason: 'Another sentence' };
+    expect(compareSnapshots(stored(reworded), UNCALCULATED)).toEqual({
+      stale: true,
+      classes: ['factor'],
+      legacy: false,
+    });
+  });
+
+  it.each([null, undefined, 'x', 42, [], [RECOMPUTED]])('a stored value that is no snapshot (%o) is stale', (value) => {
+    const r = compareSnapshots(value, RECOMPUTED);
+    expect(r.stale).toBe(true);
+    expect(r.classes).toEqual(['input', 'conversion', 'figure', 'factor']);
+  });
+
+  it('numbers compare exactly: no tolerance', () => {
+    const r = compareSnapshots(stored({ ...RECOMPUTED, tCo2e: 0.52 + Number.EPSILON }), RECOMPUTED);
+    expect(r.stale).toBe(true);
+  });
+
+  it('a number stored as text is a mismatch', () => {
+    const r = compareSnapshots(stored({ ...RECOMPUTED, tCo2e: '0.52' }), RECOMPUTED);
+    expect(r.classes).toEqual(['figure']);
+  });
+});

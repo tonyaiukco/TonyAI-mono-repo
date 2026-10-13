@@ -15,6 +15,7 @@ import {
 import { BulkSubmitService } from './bulk-submit.service';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import {
+  CalculationStaleError,
   EVIDENCE_REFUSAL_FRAGMENT,
   EvidenceRequiredError,
   PeriodLockedError,
@@ -497,6 +498,10 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     [new SubmitAuthorRefusedError(true), 'not_author', /resubmit/i],
     // Changed by someone else between the batch's read and the record's lock.
     [new RecordChangedError(), 'not_submittable', /reload it and try again/i],
+    // K11 (LP4-02 B2): a ConflictException, which the fallbacks below would
+    // read as `unexpected` — and a recompute that refused (a 404 or a 400 from
+    // the engine) arrives as this class too, never as `not_found`.
+    [new CalculationStaleError(), 'calculation_stale', /save the draft again/i],
     [new NotFoundException('Activity record not found'), 'not_found', /does not exist/i],
   ])('%s', async (error, code, messagePattern) => {
     // The MESSAGE is asserted as well as the code: the panel renders it
@@ -510,6 +515,21 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     expect(report.failed[0].code).toBe(code);
     expect(report.failed[0].message).toMatch(messagePattern);
     expect(report.submitted).toEqual([]);
+  });
+
+  it('a stale record is one issue: the batch goes on, and nothing is logged as unexpected', async () => {
+    const { records, service } = build([candidate({ id: 'a' }), candidate({ id: 'b' })]);
+    records.submit.mockImplementation((_user, id: string) =>
+      id === 'a' ? Promise.reject(new CalculationStaleError()) : Promise.resolve(record({ id })),
+    );
+    const { result: report, logged } = await captureErrors(() =>
+      service.submitMany(dataEntry(), ids('a', 'b')),
+    );
+    expect(report.failed).toEqual([
+      { recordId: 'a', code: 'calculation_stale', message: expect.stringMatching(/save the draft again/i) },
+    ]);
+    expect(report.submitted.map((r) => r.recordId)).toEqual(['b']);
+    expect(logged).toEqual([]);
   });
 
   it('sends an unrecognised Forbidden to `unexpected`, not to `not_author`', async () => {

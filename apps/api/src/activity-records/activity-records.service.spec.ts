@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
@@ -10,9 +11,11 @@ import { isCalculated, PENDING_REVIEW_STATUSES,
   CATEGORIES,
   needsEvidenceBeforeSubmit,
 } from '@tonyai/shared-types';
-import type { CalculationResult } from '@tonyai/shared-types';
+import type { CalculationResult, CalculationResultV2, UncalculatedSnapshot } from '@tonyai/shared-types';
 import { ActivityRecordsService, evidenceReadyWhere } from './activity-records.service';
 import {
+  CALCULATION_STALE_MESSAGE,
+  CalculationStaleError,
   CreateRoleRefusedError,
   DuplicateActivityRecordError,
   EVIDENCE_REFUSAL_FRAGMENT,
@@ -34,7 +37,12 @@ import {
 } from './errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { CalculationsService } from '../calculations/calculations.service';
-import { CalculationInputError } from '../calculations/errors';
+import {
+  CalculationInputError,
+  FactorLibraryConflictError,
+  NoEmissionFactorError,
+} from '../calculations/errors';
+import { ResourceNotFoundError } from '../common/api-error';
 import type { RequestUser } from '../auth/auth.types';
 
 import { AuditService } from '../audit/audit.service';
@@ -69,8 +77,11 @@ function createPrismaMock() {
       update: vi.fn(),
       delete: vi.fn(),
     },
+    // Default: the record's subsidiary resolves, so K11's recompute at submit
+    // and approve (LP4-02 B2) reaches the engine stub. Tests about a missing
+    // subsidiary stub `null`.
     subsidiary: {
-      findUnique: vi.fn(),
+      findUnique: vi.fn(async () => makeSubsidiary()),
     },
     location: {
       findUnique: vi.fn(),
@@ -107,27 +118,57 @@ function createPrismaMock() {
 }
 type PrismaMock = ReturnType<typeof createPrismaMock>;
 
+/**
+ * The engine's v2 snapshot for `makeRecord`'s default inputs — a labelled
+ * fixture, no publication's factor. A record stores what the engine computed,
+ * so the stub's default answer and the fixture's default `calculation` are
+ * the same snapshot: K11's recompute at submit and approve (LP4-02 B2) finds
+ * every default record fresh, and a test that rewrites one finds it stale.
+ */
+const FRESH_SNAPSHOT: CalculationResultV2 = {
+  snapshotSchema: 2,
+  category: 'Electricity',
+  geographyCode: 'TR',
+  reportingYear: 2024,
+  scope: 2,
+  inputValue: 45000,
+  inputUnit: 'kWh',
+  normalizedValue: 45000,
+  normalizedUnit: 'kWh',
+  conversionApplied: false,
+  kgCo2e: 19800,
+  tCo2e: 19.8,
+  factorId: 'factor-1',
+  factorValue: 0.44,
+  factorUnit: 'kgCO2e/kWh',
+  methodology: 'location-based',
+  source: 'fixture (not an authoritative source)',
+  version: '2024.1',
+  activityType: 'unspecified',
+  gas: 'CO2e',
+  gasCoverage: 'co2e_total',
+  calorificBasis: null,
+  scope2Method: 'location',
+  dataYear: 2024,
+  yearPolicy: 'same_year',
+  factorRelease: {
+    id: 'release-1',
+    publisher: 'fixture',
+    title: 'Unit-test fixture release',
+    edition: '2024.1',
+    ordinal: 1,
+    status: 'active',
+    sourceUrl: null,
+    licence: null,
+    publishedAt: null,
+    gwpSet: null,
+  },
+  conversion: null,
+} as unknown as CalculationResultV2;
+
 /** A calc engine stub: compute() returns a fixed snapshot and records calls. */
 function createCalcMock(scope = 2) {
-  const snapshot: CalculationResult = {
-    category: 'Electricity',
-    geographyCode: 'TR',
-    reportingYear: 2024,
-    scope,
-    inputValue: 45000,
-    inputUnit: 'kWh',
-    normalizedValue: 45000,
-    normalizedUnit: 'kWh',
-    conversionApplied: false,
-    kgCo2e: 19800,
-    tCo2e: 19.8,
-    factorId: 'factor-1',
-    factorValue: 0.44,
-    factorUnit: 'kgCO2e/kWh',
-    methodology: 'location-based',
-    source: 'demo',
-    version: '2024.1',
-  };
+  const snapshot: CalculationResultV2 = { ...FRESH_SNAPSHOT, scope };
   return {
     snapshot,
     compute: vi.fn().mockResolvedValue(snapshot),
@@ -172,8 +213,9 @@ function makeRecord(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     // carries one, and `isCalculated()` keys on it to decide whether the record
     // has a figure worth comparing. Without it here the fixture describes a
     // record that cannot exist, and the anomaly gate silently skipped every
-    // spec in this file.
-    calculation: { tCo2e: 19.8, factorId: 'factor-1' } as unknown,
+    // spec in this file. The whole v2 snapshot since K11, which recomputes it
+    // at submit and approve: a figure alone would be a stale legacy record.
+    calculation: FRESH_SNAPSHOT as unknown,
     createdBy: 'user-entry',
     anomalyFlag: false,
     // Defaulted for the same reason `factorId` is (see above): a fixture that
@@ -2280,10 +2322,9 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
       status: ActivityRecordStatus.draft,
       reportingPeriod: 'monthly',
       periodValue: 'March',
-      // Same reason as makeRecord's default: the submit gate only evaluates a
-      // record that HAS a figure, and a stored calculated record always carries
-      // the factor it used.
-      calculation: { tCo2e: 19.8, factorId: 'factor-1' },
+      // makeRecord's default calculation: the submit gate only evaluates a
+      // record that HAS a figure, and K11 refuses one the engine would not
+      // give again.
       varianceReason: null,
       ...over,
     });
@@ -2379,26 +2420,26 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
   });
 
   it('a record with no calculated figure is never anomalous, so submit is not blocked', async () => {
-    const { prisma, service } = build(2);
+    const { prisma, calc, service } = build(2);
     // An invoice-tracked category with no factor (WP17): the snapshot carries
     // no tCO₂e at all. Substituting 0 — what a plain `?? 0` does — reads as a
     // 100% drop against this baseline and would demand a variance comment for a
     // value that was never computed.
+    const uncalculated = {
+      snapshotSchema: 1 as const,
+      category: 'Water',
+      geographyCode: 'TR',
+      reportingYear: 2024,
+      scope: 3,
+      inputValue: 100,
+      inputUnit: 'cubic_metres',
+      reasonCode: 'no_emission_factor' as const,
+      reason: 'No emission factor is available for "Water"',
+    };
+    // Still uncalculated when K11 recomputes it at submit.
+    calc.compute.mockResolvedValue(uncalculated);
     prisma.activityRecord.findUnique.mockResolvedValue(
-      draftForSubmit({
-        category: 'Water',
-        varianceReason: null,
-        calculation: {
-          category: 'Water',
-          geographyCode: 'TR',
-          reportingYear: 2024,
-          scope: 3,
-          inputValue: 100,
-          inputUnit: 'cubic_metres',
-          reasonCode: 'no_emission_factor',
-          reason: 'No emission factor is available for "Water"',
-        },
-      }),
+      draftForSubmit({ category: 'Water', varianceReason: null, calculation: uncalculated }),
     );
     prisma.activityRecord.findMany.mockResolvedValue([
       priorMonth('January', 500),
@@ -3608,9 +3649,17 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
   });
 
   it("re-derives the submit gate's anomaly verdict against the record's own activity type", async () => {
-    const { prisma, service } = build(1);
+    const { prisma, calc, service } = build(1);
     prisma.activityRecord.findUnique.mockResolvedValue(
-      makeRecord({ id: 'rec-s', category: 'Fuel', activityType: 'diesel', activityUnit: 'litres', status: ActivityRecordStatus.draft }),
+      makeRecord({
+        id: 'rec-s',
+        category: 'Fuel',
+        activityType: 'diesel',
+        activityUnit: 'litres',
+        status: ActivityRecordStatus.draft,
+        // What the engine stub gives for it, so K11 finds it fresh.
+        calculation: calc.snapshot as unknown as Prisma.JsonValue,
+      }),
     );
     prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ id: 'rec-s', status: data.status }));
     await service.submit(dataEntry(), 'rec-s');
@@ -3622,6 +3671,296 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
     arrangeUpdate(prisma, {});
     prisma.activityRecord.update.mockRejectedValue(triggerError('TA001'));
     await expect(service.update(dataEntry(), 'rec-t', { activityValue: 5 })).rejects.toBeInstanceOf(SnapshotImmutableError);
+  });
+});
+
+describe('ActivityRecordsService — K11: submit and approve recompute the figure (LP4-02 B2)', () => {
+  // Decisions 2026-10-11 (L4, P6) and 2026-10-13 (C1–C7): the figure is
+  // recomputed from the stored inputs with the current library before the
+  // lock and compared inside it — after the tenant load, the role and the
+  // record's own gates, before the anomaly gate.
+  const STALE_FIGURE = { ...FRESH_SNAPSHOT, tCo2e: 0.0001, kgCo2e: 0.1 };
+  // The whole body: no `params` — nothing about the figure, the factor or the
+  // refusal reaches the caller (follow-up (1)).
+  const STALE_BODY = {
+    statusCode: 409,
+    error: 'Conflict',
+    code: 'calculation_stale',
+    message: CALCULATION_STALE_MESSAGE,
+  };
+  const WATER: UncalculatedSnapshot = {
+    snapshotSchema: 1,
+    category: 'Water',
+    geographyCode: 'TR',
+    reportingYear: 2024,
+    scope: 3,
+    inputValue: 100,
+    inputUnit: 'cubic_metres',
+    reasonCode: 'no_emission_factor',
+    reason: 'No emission factor is available for "Water" (TR, 2024), …',
+  };
+
+  // A snapshot is a typed object here and `JsonValue` on the row.
+  type RecordOver = Omit<Partial<ActivityRecord>, 'calculation'> & { calculation?: unknown };
+  const draft = (over: RecordOver = {}) =>
+    makeRecord({ id: 'rec-k', status: ActivityRecordStatus.draft, createdBy: 'user-entry', ...over } as Partial<ActivityRecord>);
+  const submitted = (over: RecordOver = {}) =>
+    makeRecord({ id: 'rec-k', status: ActivityRecordStatus.submitted, createdBy: 'user-entry', ...over } as Partial<ActivityRecord>);
+
+  function arrange(record: ActivityRecord) {
+    const ctx = build(2);
+    ctx.prisma.activityRecord.findUnique.mockResolvedValue(record);
+    ctx.prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary());
+    ctx.prisma.activityRecord.update.mockImplementation(({ data }: any) =>
+      makeRecord({ ...record, ...data }),
+    );
+    return ctx;
+  }
+
+  async function staleBody(promise: Promise<unknown>) {
+    const error = await promise.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(CalculationStaleError);
+    return (error as CalculationStaleError).getResponse();
+  }
+
+  it('submit recomputes from the stored inputs — the inherited unit, the site’s geography — and commits a fresh record', async () => {
+    const record = draft({ locationId: 'loc-1' });
+    const { prisma, calc, service } = arrange(record);
+    prisma.location.findUnique.mockResolvedValue({ id: 'loc-1', subsidiaryId: 'sub-1', geographyCode: 'TR' });
+
+    const dto = await service.submit(dataEntry(), 'rec-k');
+
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+    expect(calc.compute).toHaveBeenCalledTimes(1);
+    expect(calc.compute).toHaveBeenCalledWith(
+      {
+        category: 'Electricity',
+        activityType: null,
+        geographyCode: 'TR',
+        reportingYear: 2024,
+        value: 45000,
+        unit: 'kWh',
+      },
+      { enforceCategoryUnit: false },
+    );
+    expect(prisma.location.findUnique).toHaveBeenCalledWith({ where: { id: 'loc-1' } });
+  });
+
+  it('approve recomputes too, and commits a fresh record', async () => {
+    const { calc, service } = arrange(submitted());
+    const dto = await service.approve(superAdmin(), 'rec-k');
+    expect(dto.status).toBe(ActivityRecordStatus.approved);
+    expect(calc.compute).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a rewritten figure: 409 calculation_stale with no params, nothing written or audited', async () => {
+    const { prisma, service } = arrange(draft({ calculation: STALE_FIGURE }));
+    const body = await staleBody(service.submit(dataEntry(), 'rec-k'));
+    expect(body).toEqual(STALE_BODY);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('approve refuses a submitted record the library has moved under (an erratum), and leaves it untouched', async () => {
+    const { prisma, calc, service } = arrange(submitted());
+    calc.compute.mockResolvedValue({ ...FRESH_SNAPSHOT, factorValue: 0.5, kgCo2e: 22500, tCo2e: 22.5 });
+    await staleBody(service.approve(superAdmin(), 'rec-k'));
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('a pre-LP3-03 snapshot is stale even when its figure matches', async () => {
+    const { service } = arrange(draft({ calculation: { tCo2e: 19.8, factorId: 'factor-1' } }));
+    await staleBody(service.submit(dataEntry(), 'rec-k'));
+  });
+
+  it('a snapshot that kept the unit as entered (`kwh`) is the same unit as the stored `kWh`', async () => {
+    const { service } = arrange(draft({ calculation: { ...FRESH_SNAPSHOT, inputUnit: 'kwh' } }));
+    const dto = await service.submit(dataEntry(), 'rec-k');
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it('an uncalculated record recomputed as uncalculated is fresh — and is not scored', async () => {
+    const record = draft({ category: 'Water', activityUnit: 'cubic_metres', activityValue: 100, calculation: WATER });
+    const { prisma, calc, service } = arrange(record);
+    calc.compute.mockResolvedValue(WATER);
+    const dto = await service.submit(dataEntry(), 'rec-k');
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+  });
+
+  it('an uncalculated record a factor has since covered is stale', async () => {
+    const record = draft({ category: 'Water', activityUnit: 'cubic_metres', activityValue: 100, calculation: WATER });
+    const { service } = arrange(record);
+    await staleBody(service.submit(dataEntry(), 'rec-k'));
+  });
+
+  it.each([
+    ['no factor (404)', () => new NoEmissionFactorError('No emission factor found', { code: 'no_factor' })],
+    ['a withdrawn release’s gap (404)', () => new NoEmissionFactorError('No emission factor found', { code: 'placeholder_refused' })],
+    ['an input refusal (400)', () => new CalculationInputError('unit_not_for_category', 'Unit "x" is not valid')],
+    ['a library conflict (409)', () => new FactorLibraryConflictError('ambiguous_factor', 'Two releases claim it')],
+    ['a site that no longer resolves (404)', () => new ResourceNotFoundError('location_not_found')],
+  ])('a recompute that refuses — %s — answers calculation_stale, never its own code', async (_label, refusal) => {
+    const onSubmit = arrange(draft());
+    onSubmit.calc.compute.mockRejectedValue(refusal());
+    expect(await staleBody(onSubmit.service.submit(dataEntry(), 'rec-k'))).toEqual(STALE_BODY);
+    const onApprove = arrange(submitted());
+    onApprove.calc.compute.mockRejectedValue(refusal());
+    expect(await staleBody(onApprove.service.approve(superAdmin(), 'rec-k'))).toEqual(STALE_BODY);
+    expect(onApprove.prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('an engine defect (a plain Error) is not stale: it propagates', async () => {
+    const { prisma, calc, service } = arrange(draft());
+    calc.compute.mockRejectedValue(new Error('Engine defect: kWh normalised to m3'));
+    await expect(service.submit(dataEntry(), 'rec-k')).rejects.toThrow(/Engine defect/);
+    await expect(service.submit(dataEntry(), 'rec-k')).rejects.not.toBeInstanceOf(CalculationStaleError);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  // --- Order (follow-up (1)): a stale figure never answers for another gate.
+
+  it('a record outside the caller’s subsidiaries answers 404 and is never recomputed', async () => {
+    const { calc, service } = arrange(draft({ subsidiaryId: 'sub-9', calculation: STALE_FIGURE }));
+    await expect(service.submit(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.approve(superAdmin({ accessibleSubsidiaryIds: ['sub-1'] }), 'rec-k')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(calc.compute).not.toHaveBeenCalled();
+  });
+
+  it('a role refusal comes before the recompute', async () => {
+    const { calc, service } = arrange(submitted({ calculation: STALE_FIGURE }));
+    await expect(service.submit(consultant(), 'rec-k')).rejects.toBeInstanceOf(SubmitRoleRefusedError);
+    await expect(service.approve(consultant(), 'rec-k')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.approve(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(calc.compute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'submit by someone other than the author',
+      (s: ActivityRecordsService) => s.submit(dataEntry({ id: 'user-other' }), 'rec-k'),
+      draft,
+      SubmitAuthorRefusedError,
+    ],
+    ['submit of an approved record', (s: ActivityRecordsService) => s.submit(dataEntry(), 'rec-k'), (o: RecordOver) => draft({ ...o, status: ActivityRecordStatus.approved }), BadRequestException],
+    ['approve of a draft', (s: ActivityRecordsService) => s.approve(superAdmin(), 'rec-k'), draft, BadRequestException],
+    ['approve of one’s own record', (s: ActivityRecordsService) => s.approve(superAdmin({ id: 'user-entry' }), 'rec-k'), submitted, SelfApprovalRefusedError],
+  ] as const)('%s keeps its own answer over a stale figure', async (_label, act, fixture, refusal) => {
+    const { prisma, service } = arrange(fixture({ calculation: STALE_FIGURE }));
+    await expect(act(service)).rejects.toBeInstanceOf(refusal);
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('a locked period keeps its own answer over a stale figure, on submit and on approve', async () => {
+    for (const [record, act] of [
+      [draft({ calculation: STALE_FIGURE }), (s: ActivityRecordsService) => s.submit(dataEntry(), 'rec-k')],
+      [submitted({ calculation: STALE_FIGURE }), (s: ActivityRecordsService) => s.approve(superAdmin(), 'rec-k')],
+    ] as const) {
+      const { prisma, service } = arrange(record);
+      prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+      await expect(act(service)).rejects.toBeInstanceOf(PeriodLockedError);
+    }
+  });
+
+  it('a missing evidence file is named before a stale figure (the contract’s order)', async () => {
+    const { prisma, service } = arrange(draft({ calculation: STALE_FIGURE }));
+    prisma.activityRecordEvidence.count.mockResolvedValue(0);
+    await expect(service.submit(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(EvidenceRequiredError);
+  });
+
+  it('a stale anomalous record answers 409, and its baseline is never queried', async () => {
+    const { prisma, service } = arrange(
+      draft({ reportingPeriod: 'monthly', periodValue: 'March', calculation: STALE_FIGURE }),
+    );
+    prisma.activityRecord.findMany.mockResolvedValue([{ tCo2e: 1 }]);
+    await staleBody(service.submit(dataEntry(), 'rec-k'));
+    expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+  });
+
+  // --- Between the recompute and the lock (C1-a, C2-A).
+
+  it('inputs changed between the read and the lock: record_changed, not a verdict on the new inputs', async () => {
+    const seen = draft();
+    const { prisma, calc, service } = arrange(seen);
+    prisma.activityRecord.findUnique
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValueOnce({ ...seen, activityValue: 50000, updatedAt: new Date('2026-02-01T00:00:00.000Z') });
+    await expect(service.submit(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(RecordChangedError);
+    expect(calc.compute).toHaveBeenCalledWith(expect.objectContaining({ value: 45000 }), { enforceCategoryUnit: false });
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['subsidiaryId', 'sub-2'],
+    ['locationId', 'loc-2'],
+    ['category', 'Natural Gas'],
+    ['activityType', 'natural_gas'],
+    ['reportingYear', 2025],
+    ['activityUnit', 'MWh'],
+  ] as const)('a change of %s between the read and the lock is a change of inputs', async (field, value) => {
+    const seen = submitted();
+    const { prisma, service } = arrange(seen);
+    prisma.activityRecord.findUnique.mockResolvedValueOnce(seen).mockResolvedValueOnce({ ...seen, [field]: value });
+    await expect(service.approve(superAdmin(), 'rec-k')).rejects.toBeInstanceOf(RecordChangedError);
+  });
+
+  it('a status-only change between the read and the lock is not a change of inputs', async () => {
+    const seen = submitted();
+    const { prisma, service } = arrange(seen);
+    prisma.activityRecord.findUnique
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValueOnce({ ...seen, status: ActivityRecordStatus.under_review, updatedAt: new Date('2026-02-01T00:00:00.000Z') });
+    const dto = await service.approve(superAdmin(), 'rec-k');
+    expect(dto.status).toBe(ActivityRecordStatus.approved);
+  });
+
+  it('a figure re-saved fresh between the read and the lock is judged as locked', async () => {
+    // The stored figure was stale when read, and an audited save recomputed
+    // it before the lock: the record as locked is what commits.
+    const seen = draft({ calculation: STALE_FIGURE });
+    const { prisma, service } = arrange(seen);
+    prisma.activityRecord.findUnique.mockResolvedValueOnce(seen).mockResolvedValueOnce(draft());
+    const dto = await service.submit(dataEntry(), 'rec-k');
+    expect(dto.status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  // --- The log line (follow-up (6)): which part, never the values.
+
+  it('logs the operation, the record and which part mismatched — never a figure or an input', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { service } = arrange(draft({ calculation: { ...STALE_FIGURE, factorValue: 0.0000022 } }));
+      await staleBody(service.submit(dataEntry(), 'rec-k'));
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0][0]);
+      expect(line).toBe('calculation_stale: submit of record rec-k refused — figure, factor differ');
+      expect(line).not.toMatch(/0\.0001|19\.8|45000|0\.44/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('logs a legacy snapshot and a refusal by name', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const legacy = arrange(submitted({ calculation: { tCo2e: 19.8, factorId: 'factor-1' } }));
+      await staleBody(legacy.service.approve(superAdmin(), 'rec-k'));
+      const refused = arrange(draft());
+      refused.calc.compute.mockRejectedValue(new NoEmissionFactorError('No emission factor found', { code: 'no_factor' }));
+      await staleBody(refused.service.submit(dataEntry(), 'rec-k'));
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        expect.stringMatching(/^calculation_stale: approve of record rec-k refused — legacy snapshot/),
+        'calculation_stale: submit of record rec-k refused — recompute refused (no_factor)',
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
