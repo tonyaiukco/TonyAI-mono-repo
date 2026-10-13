@@ -104,6 +104,31 @@ describe('createTenant', () => {
   });
 });
 
+describe('createRecord — priced (LP4-02 B2)', () => {
+  // `qa-auditor` D1/D2 (B2 review): the priced option must keep a figure a
+  // test chose, and price at the site's geography, as the API does.
+  it("keeps an explicit calculation, and prices at the site's geography when it has one", async () => {
+    const tenant = await createTenant();
+    const owner = connectOwner();
+    try {
+      const chosen = { tCo2e: 7, factorId: 'chosen-by-the-test' };
+      const kept = await createRecord(a, tenant, { periodValue: 'February', calculation: chosen }, { priced: true });
+      expect(kept.calculation).toEqual(chosen);
+
+      const site = await owner.location.create({
+        data: { subsidiaryId: tenant.subsidiaryId, name: 'Int-test TR site', geographyCode: 'TR' },
+      });
+      const atSite = await createRecord(a, tenant, { periodValue: 'March', locationId: site.id }, { priced: true });
+      const atCompany = await createRecord(a, tenant, { periodValue: 'April' }, { priced: true });
+      expect(atSite.calculation).toMatchObject({ geographyCode: 'TR', snapshotSchema: 2 });
+      expect(atCompany.calculation).toMatchObject({ geographyCode: 'UK', snapshotSchema: 2 });
+    } finally {
+      await owner.$disconnect();
+      await tenant.cleanup();
+    }
+  });
+});
+
 describe('interleaving', () => {
   let tenant: Tenant;
 

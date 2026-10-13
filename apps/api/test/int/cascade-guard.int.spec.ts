@@ -20,10 +20,23 @@
  * let the owner through.
  */
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { Logger } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma } from '@tonyai/db';
+import { CalculationStaleError } from '../../src/activity-records/errors';
 import type { PrismaService } from '../../src/prisma/prisma.service';
-import { connect, connectOwner, createRecord, createTenant, refusal, serviceRest, withRollback, type Tenant } from './db';
+import {
+  attachEvidence,
+  connect,
+  connectOwner,
+  createRecord,
+  createTenant,
+  pricedCalculation,
+  refusal,
+  serviceRest,
+  withRollback,
+  type Tenant,
+} from './db';
 import { lifecycleServices } from './services';
 
 let runtime: PrismaService;
@@ -288,6 +301,69 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
       });
       expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).createdBy).toBe(tenant.users.dataEntry.id);
     } finally {
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
+  // INSERT stays outside the guard (Decisions 2026-10-11 (third)): the e2e and
+  // `rls:probe` fixtures POST drafts. So the service role can still POST a NEW
+  // draft with any figure, and K11's recompute at the API's submit is what
+  // refuses to commit it ("LP4-02 follow-ups" (13), LP4-02 B2).
+  it("refuses at the API's submit a NEW draft the service role POSTed with a forged figure (calculation_stale); it stays a draft, unaudited", async () => {
+    const id = randomUUID();
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      // Well-shaped: the engine's own snapshot for these inputs, its figure
+      // alone rewritten — the forgery a reader of the snapshot cannot see.
+      const engine = (await pricedCalculation(owner, tenant, { periodValue: 'September', activityValue: 99 })) as Record<string, unknown>;
+      const row = { ...recordRow(id, 'draft', 'September'), calculation: { ...engine, tCo2e: 0.0001, kgCo2e: 0.1 } };
+      expect((await serviceRest('POST', 'activity_records', row)).ok).toBe(true);
+      await attachEvidence(owner, tenant, [id]);
+
+      const outcome = await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, id));
+      expect(outcome).toBeInstanceOf(CalculationStaleError);
+      expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+        `calculation_stale: submit of record ${id} refused — figure differ`,
+      );
+      expect(await owner.activityRecord.findUniqueOrThrow({ where: { id } })).toMatchObject({
+        status: ActivityRecordStatus.draft,
+        calculation: { tCo2e: 0.0001 },
+      });
+      expect(await owner.auditLog.count({ where: { entityId: id } })).toBe(0);
+    } finally {
+      warn.mockRestore();
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
+  // `security-rls` P2-1 (B2 review): the totals group by the record's own
+  // `scope` column, which no snapshot carries — filed under another scope, an
+  // honest figure moved between Scope 2 and Scope 3.
+  it("refuses at the API's submit a NEW draft the service role POSTed under a scope that is not its category's", async () => {
+    const id = randomUUID();
+    try {
+      const engine = await pricedCalculation(owner, tenant, { periodValue: 'September', activityValue: 99 });
+      const row = { ...recordRow(id, 'draft', 'September'), scope: 3, calculation: engine };
+      expect((await serviceRest('POST', 'activity_records', row)).ok).toBe(true);
+      await attachEvidence(owner, tenant, [id]);
+      const outcome = await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, id));
+      expect(outcome).toBeInstanceOf(CalculationStaleError);
+      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).status).toBe(ActivityRecordStatus.draft);
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
+  it("submits a draft POSTed with the engine's own snapshot for its inputs — K11 checks the figure, not who wrote the row", async () => {
+    const id = randomUUID();
+    try {
+      const engine = await pricedCalculation(owner, tenant, { periodValue: 'September', activityValue: 99 });
+      expect((await serviceRest('POST', 'activity_records', { ...recordRow(id, 'draft', 'September'), calculation: engine })).ok).toBe(true);
+      await attachEvidence(owner, tenant, [id]);
+      await lifecycleServices(runtime).records.submit(tenant.users.dataEntry, id);
+      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).status).toBe(ActivityRecordStatus.submitted);
+    } finally {
+      // Its audit row goes with the tenant (`cleanup()`).
       await owner.activityRecord.deleteMany({ where: { id } });
     }
   });

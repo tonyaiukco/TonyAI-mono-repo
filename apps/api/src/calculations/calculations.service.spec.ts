@@ -416,6 +416,20 @@ describe('CalculationsService.compute', () => {
     expect(result.conversionApplied).toBe(false);
   });
 
+  // `security-rls` re-review of LP4-02 B2: a finite input can overflow —
+  // 1e308 MWh is Infinity kWh — and a stored Infinity is JSON `null`, a
+  // figure that silently reads as uncalculated. Refused, as a non-finite
+  // input already is.
+  it('refuses an input whose figure overflows a double', async () => {
+    useFactor(prisma, makeFactor({ geographyCode: 'TR', factorValue: 0.44, reportingYear: 2024 }));
+    await expect(
+      service.compute({ category: 'Electricity', geographyCode: 'TR', reportingYear: 2024, value: 1e308, unit: 'MWh' }),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.compute({ category: 'Electricity', geographyCode: 'TR', reportingYear: 2024, value: 1e306, unit: 'kWh' }),
+    ).resolves.toMatchObject({ kgCo2e: 0.44e306 });
+  });
+
   it('doc worked example: 5 MWh electricity TR = 2.20 tCO2e (normalizes MWh->kWh)', async () => {
     useFactor(prisma, 
       makeFactor({ geographyCode: 'TR', factorValue: 0.44 }),

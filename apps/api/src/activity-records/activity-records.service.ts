@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import { ResourceNotFoundError } from '../common/api-error';
 import {
@@ -10,6 +12,7 @@ import {
   type ActivityRecord,
 } from '@tonyai/db';
 import {
+  CalculationStaleError,
   CreateRoleRefusedError,
   DuplicateActivityRecordError,
   EvidenceRequiredError,
@@ -53,6 +56,7 @@ import {
 } from '../common/resolve-profiles';
 import { CalculationsService } from '../calculations/calculations.service';
 import { storedUnit } from '../calculations/storable-unit';
+import { compareSnapshots } from '../calculations/snapshot-staleness';
 import { CalculationInputError } from '../calculations/errors';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
@@ -75,6 +79,9 @@ import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.d
  * A record in a typed category (Fuel, Mobile Combustion, Refrigerants) names
  * its fuel or gas (`activity_type_required`, LP3-03). Whether the category
  * HAS the named type is the engine's check (`activity_type_not_for_category`).
+ * Asked at create, at an edit that is not a pre-LP3-03 record staying untyped
+ * in its own category, and — with no exemption — at submit and approve
+ * (decision C8, LP4-02 B2).
  */
 function assertActivityTypeNamed(category: string, activityType: string | null): void {
   const types = recordActivityTypesFor(category);
@@ -84,6 +91,43 @@ function assertActivityTypeNamed(category: string, activityType: string | null):
       `A ${category} record must name its activity type. Accepted: ${types.map((t) => t.value).join(', ')}.`,
     );
   }
+}
+
+/**
+ * K11's recompute (Decisions 2026-10-11, L4 and P6; LP4-02 B2): the snapshot
+ * the engine gives NOW for a record's stored inputs, or the name of the
+ * refusal it gave instead.
+ */
+type Recomputed =
+  | { ok: true; calculation: ActivityCalculationSnapshot }
+  | { ok: false; refusal: string };
+
+/**
+ * The record's columns the engine reads — with the geography of its subsidiary
+ * or site, which lives on those rows. Equal on the row as read and as locked,
+ * they prove a recompute taken from the first still describes the second,
+ * whoever wrote in between (decision C1-a, 2026-10-13): `updatedAt` is Prisma's
+ * own stamp, which a direct writer neither sets nor is stopped from setting.
+ */
+const ENGINE_INPUT_COLUMNS = [
+  'subsidiaryId',
+  'locationId',
+  'category',
+  'activityType',
+  'reportingYear',
+  'activityValue',
+  'activityUnit',
+] as const satisfies readonly (keyof ActivityRecord)[];
+
+function sameEngineInputs(read: ActivityRecord, locked: ActivityRecord): boolean {
+  return ENGINE_INPUT_COLUMNS.every((column) => (read[column] ?? null) === (locked[column] ?? null));
+}
+
+/** A refusal's stable code for the log — never its sentence, which may quote input. */
+function refusalName(error: HttpException): string {
+  const body = error.getResponse();
+  const code = typeof body === 'object' && body !== null ? (body as { code?: unknown }).code : undefined;
+  return typeof code === 'string' ? code : error.constructor.name;
 }
 
 /** Inputs to the VAR §4 rolling-baseline check, minus the figure itself. */
@@ -275,6 +319,8 @@ type ActivityRecordAuditSnapshot = Omit<ActivityRecordDTO, ResolvedRecordFields>
 
 @Injectable()
 export class ActivityRecordsService {
+  private readonly logger = new Logger(ActivityRecordsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly calculations: CalculationsService,
@@ -543,6 +589,97 @@ export class ActivityRecordsService {
       { enforceCategoryUnit: unitChosenNow },
     );
     return { calculation, scope };
+  }
+
+  /**
+   * K11, first half: recompute a record's snapshot from its stored inputs with
+   * the current library — the unit as stored, so the category map is not
+   * re-applied (as an edit that leaves the unit, `update`). A refusal is kept,
+   * not thrown: every 4xx the engine or the entity lookups raise here means the
+   * stored figure can no longer be reproduced, which `assertFresh` answers as
+   * `calculation_stale` (C5-A) once the record's own gates have run — never as
+   * `not_found`, which would read as "not yours". A 5xx or a plain `Error` is
+   * a defect and propagates.
+   *
+   * Called BEFORE `withLockedRecord`, never inside it: the engine reads the
+   * library in one REPEATABLE READ snapshot (`CalculationsService.candidates`),
+   * and a transaction's isolation level is fixed by its first statement — the
+   * lock protocol's transaction is READ COMMITTED and must stay so. Nor is the
+   * engine ever handed a transaction client ("LP4-02 follow-ups" (26)).
+   */
+  private async recompute(user: RequestUser, record: ActivityRecord): Promise<Recomputed> {
+    try {
+      const { calculation } = await this.computeSnapshot(
+        record.subsidiaryId,
+        user.accessibleSubsidiaryIds,
+        record.category as Category,
+        record.reportingYear,
+        record.activityValue,
+        record.activityUnit,
+        record.locationId,
+        record.activityType ?? null,
+        false,
+      );
+      return { ok: true, calculation };
+    } catch (e) {
+      if (e instanceof HttpException && e.getStatus() < 500) {
+        return { ok: false, refusal: refusalName(e) };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * K11, second half, under the record's lock: the recompute taken from `read`
+   * must still describe `locked` — the same engine inputs, else a writer got
+   * in between and the answer is the lost race, `record_changed` (C2-A) — and
+   * the stored snapshot must be the recomputed one (`compareSnapshots`, P6).
+   * Otherwise nothing commits: `calculation_stale`, 409, no params. The log
+   * line names the part that differs, so a library change is told from a
+   * direct writer's rewrite ("LP4-02 follow-ups" (6)) — never a value.
+   *
+   * The record's own `scope` and period columns are inputs too: the snapshot
+   * carries neither and the engine reads neither, but every total groups by
+   * them — so a scope that is not its category's (`security-rls` P2-1, B2
+   * review), or a period value not in its canonical spelling, which the
+   * period lock's exact lookup would miss while the totals still count it
+   * (re-review P2-B), is a mismatch of inputs.
+   *
+   * What it does not see: the site's or subsidiary's geography, or the
+   * library, changing in the milliseconds between the recompute and the
+   * commit — the same as a change landing just after it (accepted, C1-a).
+   */
+  private assertFresh(
+    operation: 'submit' | 'approve',
+    read: ActivityRecord,
+    locked: ActivityRecord,
+    recomputed: Recomputed,
+  ): void {
+    if (!sameEngineInputs(read, locked)) throw new RecordChangedError();
+    let why: string | null = null;
+    if (!recomputed.ok) {
+      why = `recompute refused (${recomputed.refusal})`;
+    } else {
+      const comparison = compareSnapshots(locked.calculation, recomputed.calculation);
+      const columnsAgree =
+        locked.scope === CATEGORY_SCOPE_MAP[locked.category as Category] &&
+        canonicalPeriodValue(locked.reportingPeriod, locked.periodValue) === locked.periodValue;
+      if (comparison.stale || !columnsAgree) {
+        // `input` leads the classes' fixed order, so it is prepended.
+        const classes = columnsAgree
+          ? comparison.classes
+          : ['input', ...comparison.classes.filter((c) => c !== 'input')];
+        why = [
+          comparison.legacy ? 'legacy snapshot' : null,
+          classes.length > 0 ? `${classes.join(', ')} differ` : null,
+        ]
+          .filter((part) => part !== null)
+          .join('; ');
+      }
+    }
+    if (why === null) return;
+    this.logger.warn(`calculation_stale: ${operation} of record ${locked.id} refused — ${why}`);
+    throw new CalculationStaleError();
   }
 
   /**
@@ -1134,12 +1271,22 @@ export class ActivityRecordsService {
   // runs its state gates and its write inside `withLockedRecord`: against the
   // row as locked, never as first read. A status gate that fails only because
   // someone else moved the record first answers `RecordChangedError` (409).
+  //
+  // Submit and approve also hold K11 (LP4-02 B2): nothing commits a figure the
+  // engine would not compute now from the record's stored inputs. The
+  // recompute runs between the role check and the lock; its verdict is read
+  // inside the lock after the record's own gates — tenant, role, status,
+  // author, period, evidence — so a stale figure never answers for any of
+  // them (a foreign id stays a 404, "LP4-02 follow-ups" (1)), and before the
+  // anomaly gate, which reads the figure. Just before it, C8: a typed
+  // category's record names its activity type before it is committed.
 
   async submit(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
     if (!mayAuthorRecords(user)) {
       throw new SubmitRoleRefusedError();
     }
+    const recomputed = await this.recompute(user, seen);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
         if (!SUBMITTABLE_STATUSES.has(record.status)) {
@@ -1175,6 +1322,14 @@ export class ActivityRecordsService {
       if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
         throw new EvidenceRequiredError(record.category);
       }
+      // C8: a typed category's record is committed only once it names its
+      // fuel or gas. A pre-LP3-03 record may be edited untyped, and a direct
+      // writer may insert one; neither is submitted so. Before K11, so the
+      // answer names the remedy — choose the type — not "save again".
+      assertActivityTypeNamed(record.category, record.activityType ?? null);
+      // K11: the figure the anomaly gate reads, and the one this submit hands
+      // to review, is the one the engine gives now — or nothing moves.
+      this.assertFresh('submit', seen, record, recomputed);
       // Anomaly gate (VAR §2.2 / §4.3 / §8): re-evaluate against the baseline as of
       // submit time — a comparable period may have been committed since the draft
       // was saved. The API is the final enforcement layer, so it recomputes rather
@@ -1249,6 +1404,7 @@ export class ActivityRecordsService {
     if (!APPROVE_ROLES.has(user.role)) {
       throw new ForbiddenException('Only a super_admin may approve records');
     }
+    const recomputed = await this.recompute(user, seen);
     const updated = await this.withLockedRecord(seen, async (tx, record) => {
       regate(seen, record, () => {
         if (
@@ -1270,6 +1426,13 @@ export class ActivityRecordsService {
       // Period-lock gate (defense-in-depth): no review transitions in a closed
       // period.
       await this.assertPeriodNotLocked(periodOf(record), tx);
+      // C8, as at submit: an untyped record of a typed category — one
+      // submitted before the rule — is returned to its author to name its type.
+      assertActivityTypeNamed(record.category, record.activityType ?? null);
+      // K11: a factor release published or withdrawn since the submit, or a
+      // figure rewritten outside the API, is refused here — the reviewer
+      // returns the record and its author saves it again (L4).
+      this.assertFresh('approve', seen, record, recomputed);
       // Clear any earlier rejection note: an approved record showing last
       // round's rejection reason would misread as "approved, but rejected".
       return this.transition(tx, user, record, ActivityRecordStatus.approved, {

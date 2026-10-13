@@ -2,6 +2,7 @@ import { WorkDeadline } from '../common/work-deadline';
 import { readRuntimeConfig } from '../common/runtime-config';
 import {
   BadRequestException,
+  type HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -22,6 +23,7 @@ import {
   periodOrdinal,
 } from '../activity-records/activity-records.service';
 import {
+  CalculationStaleError,
   EvidenceRequiredError,
   PeriodLockedError,
   RecordChangedError,
@@ -390,6 +392,17 @@ export class BulkSubmitService {
         message: this.messageOf(error),
       };
     }
+    // K11: the figure is out of date or was rewritten — or the recompute
+    // refused, which `submit` raises as this class too. Before the fallbacks
+    // below: a ConflictException would read as `unexpected`, and a refusal
+    // must never read as `not_found`.
+    if (error instanceof CalculationStaleError) {
+      return {
+        recordId,
+        code: 'calculation_stale',
+        message: this.messageOf(error),
+      };
+    }
     if (error instanceof VarianceReasonRequiredError) {
       return {
         recordId,
@@ -427,7 +440,7 @@ export class BulkSubmitService {
     };
   }
 
-  private messageOf(error: BadRequestException): string {
+  private messageOf(error: HttpException): string {
     const response = error.getResponse();
     const message =
       typeof response === 'string'

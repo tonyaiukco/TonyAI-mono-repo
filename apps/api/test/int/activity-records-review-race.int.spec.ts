@@ -107,10 +107,13 @@ function chainEnd(transitions: Transition[], start: string): string | null {
  * A holds, A is released as soon as that is observed.
  */
 async function interleaveStartReviewWithApprove() {
-  const record = await createRecord(a, tenant, {
-    status: ActivityRecordStatus.submitted,
-    submittedAt: new Date(),
-  });
+  // Priced: the approve recomputes the figure (K11, LP4-02 B2).
+  const record = await createRecord(
+    a,
+    tenant,
+    { status: ActivityRecordStatus.submitted, submittedAt: new Date() },
+    { priced: true },
+  );
   // Both write shapes a fix might use: `update`, or `updateMany` with the
   // expected status in its WHERE.
   const hold = holdBefore(a, 'ActivityRecord', ['update', 'updateMany']);
@@ -138,10 +141,13 @@ async function interleaveStartReviewWithApprove() {
 
 /** The other order: super_admin A's approve is held before its write; consultant B starts review. */
 async function interleaveApproveWithStartReview() {
-  const record = await createRecord(a, tenant, {
-    status: ActivityRecordStatus.submitted,
-    submittedAt: new Date(),
-  });
+  // Priced: the approve recomputes the figure (K11, LP4-02 B2).
+  const record = await createRecord(
+    a,
+    tenant,
+    { status: ActivityRecordStatus.submitted, submittedAt: new Date() },
+    { priced: true },
+  );
   const hold = holdBefore(a, 'ActivityRecord', ['update', 'updateMany']);
   const pidB = await backendPid(b);
 
