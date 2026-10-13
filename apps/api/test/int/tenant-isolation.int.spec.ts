@@ -691,6 +691,8 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
       calculation: { tCo2e: UNGRANTED_TCO2E, factorId: 'int-test-placeholder' },
     });
     const hidden = [ungranted.legalName, ...printed(UNGRANTED_TCO2E)];
+    // Committed data where data_entry is granted: a widened selection would count it.
+    await recordIn(ActivityRecordStatus.approved)();
     const missingId = randomUUID();
     for (const { path, empty } of CONTEXT_READS) {
       const selecting = (id: string) => call('dataEntry', 'GET', `${path}?year=2026&subsidiaryId=${id}`);
@@ -834,6 +836,9 @@ describe("the reporting context's answers to B's selection, as each of A's roles
   it.each(CONTEXT_FILTERS.flatMap((filter) => CONTEXT_READS.map((read) => [`GET ${read.path}?subsidiaryId=${filter}`, read, filter] as const)))(
     '%s',
     async (_name, { path, empty }, filter) => {
+      // A has committed data in the selected year, scope and category: an
+      // inaccessible selection widened to A's accessible set would not be empty.
+      await recordIn(ActivityRecordStatus.approved)();
       const missingId = randomUUID();
       const echo = (subsidiaryId: string) => ({ year: 2026, subsidiaryId, ...(filter ? { scope: 2, category: 'Electricity' } : {}) });
       for (const role of ROLES) {
@@ -868,6 +873,9 @@ describe("context exports with B's selection, as each of A's roles: the same fil
   it.each(CONTEXT_EXPORTS.flatMap(([path, rest]) => (['GET', 'HEAD'] as const).map((method) => [method, path, rest] as const)))(
     '%s %s',
     async (method, path, rest) => {
+      // A's committed record in the selection's year, scope and category: a
+      // selection widened to A's accessible set would count it (recordCount 1).
+      await recordIn(ActivityRecordStatus.approved)();
       const missingId = randomUUID();
       const url = (id: string) => `${path}?year=2026&subsidiaryId=${id}&scope=2&category=Electricity${rest}`;
       const before = await snapshotB();
@@ -902,7 +910,6 @@ describe("context exports with B's selection, as each of A's roles: the same fil
       expect(await snapshotB(), `${method} ${path} changed B's data`).toBe(before);
 
       // Control: A's own selection lists A's record under its name, and audits it as counted.
-      await recordIn(ActivityRecordStatus.approved)();
       const own = await audited(() => call('consultant', method, url(A.subsidiaryId)));
       expect(own.res.status, own.res.text.slice(0, 200)).toBe(200);
       expect(own.rows.map((r) => r.diff), `${method} ${path}`).toEqual([expect.objectContaining({ subsidiaryId: A.subsidiaryId, recordCount: 1 })]);
