@@ -311,3 +311,61 @@ describe('C8 — an untyped record of a typed category is not committed', () => 
     expect(await row(draft.id)).toMatchObject({ status: ActivityRecordStatus.submitted, activityType: 'diesel' });
   });
 });
+
+describe('K11 — an honest save is fresh, whatever its digits (qa-auditor P0, B2 review)', () => {
+  // Prisma's write path rounds a double to 16 significant digits, in a float8
+  // column and inside jsonb alike (measured: 0.30000000000000004 is stored as
+  // 0.3, 2147.2799999999997 as 2147.28). The snapshot stored at save and the
+  // one recomputed from the stored, rounded activity value then differ in
+  // their last digits — an exact comparison refused a third to all of the
+  // honest records on these paths, and saving again could not clear it.
+  const SAVES = [
+    ['Electricity', null, 0.1, 'kWh', null],
+    ['Electricity', null, 123456.789, 'MWh', null],
+    ['Natural Gas', null, 1, 'gj', null],
+    ['Natural Gas', null, 1200, 'cubic_metres', 'TR'],
+    ['Fuel', 'diesel', 800, 'litres', 'TR'],
+    ['Fuel', 'diesel', 123456.789, 'us_gallons', null],
+  ] as const;
+
+  async function savedAt(category: string, activityType: string | null, value: number, unit: string, siteGeography: string | null) {
+    const location = siteGeography
+      ? await owner.location.create({
+          data: { subsidiaryId: tenant.subsidiaryId, name: `K11 site ${randomUUID().slice(0, 8)}`, geographyCode: siteGeography },
+        })
+      : null;
+    const record = await lifecycleServices(runtime).records.create(tenant.users.dataEntry, {
+      subsidiaryId: tenant.subsidiaryId,
+      ...(location ? { locationId: location.id } : {}),
+      reportingYear: 2026,
+      reportingPeriod: 'monthly',
+      periodValue: 'May',
+      category,
+      ...(activityType ? { activityType } : {}),
+      activityValue: value,
+      activityUnit: unit,
+    } as Parameters<ReturnType<typeof lifecycleServices>['records']['create']>[1]);
+    await attachEvidence(runtime, tenant, [record.id]);
+    return record;
+  }
+
+  it.each(SAVES)('%s (%s) %s %s, at a %s site: saved, submitted and approved', async (category, activityType, value, unit, site) => {
+    const record = await savedAt(category, activityType, value, unit, site);
+    const { records } = lifecycleServices(runtime);
+    await records.submit(tenant.users.dataEntry, record.id);
+    await records.approve(tenant.users.superAdmin, record.id);
+    expect((await row(record.id)).status).toBe(ActivityRecordStatus.approved);
+    expect(logged()).toEqual([]);
+  });
+
+  it('a record returned and saved again with another value is fresh too', async () => {
+    const record = await savedAt('Electricity', null, 123456.789, 'MWh', null);
+    const { records } = lifecycleServices(runtime);
+    await records.submit(tenant.users.dataEntry, record.id);
+    await records.reject(tenant.users.consultant, record.id, 'Please check the meter reading again');
+    await records.update(tenant.users.dataEntry, record.id, { activityValue: 0.30000000000000004 });
+    await records.submit(tenant.users.dataEntry, record.id);
+    await records.approve(tenant.users.superAdmin, record.id);
+    expect((await row(record.id)).status).toBe(ActivityRecordStatus.approved);
+  });
+});

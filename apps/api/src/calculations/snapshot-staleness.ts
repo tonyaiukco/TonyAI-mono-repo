@@ -39,6 +39,24 @@ export interface SnapshotComparison {
   legacy: boolean;
 }
 
+/**
+ * How far apart, relative to the larger, two numbers may be and still be the
+ * same number. Prisma's write path rounds a double to 16 significant digits —
+ * in a float8 column and inside jsonb alike (measured: 0.30000000000000004 is
+ * stored as 0.3) — so a snapshot saved from the caller's value and the one
+ * recomputed from the stored, rounded `activity_value` differ by a few parts
+ * in 10^16 (`qa-auditor` P0, B2 review). Exact comparison refused a third to
+ * all of the honest records on real paths, and saving again could not clear
+ * it. 10^-12 is four orders above that noise and far below any change a
+ * factor release or a rewrite makes — no published factor is stated to
+ * twelve significant digits, and a figure moved by less is no figure moved.
+ */
+export const NUMBER_TOLERANCE = 1e-12;
+
+function sameNumber(a: number, b: number): boolean {
+  return a === b || Math.abs(a - b) <= NUMBER_TOLERANCE * Math.max(Math.abs(a), Math.abs(b));
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -56,11 +74,12 @@ function own(object: Record<string, unknown>, key: string): unknown {
 /**
  * Structural equality of two JSON values. Key order is irrelevant — `jsonb`
  * reorders keys — and a key holding `undefined` is an absent key, as it is
- * once serialised. Numbers compare exactly: the engine is deterministic and
- * `activity_value` is a double, so the same inputs give the same bits.
+ * once serialised. Numbers compare within `NUMBER_TOLERANCE`; everything else
+ * exactly.
  */
 function sameJson(a: unknown, b: unknown): boolean {
   if (a === b) return true;
+  if (typeof a === 'number' && typeof b === 'number') return sameNumber(a, b);
   if (Array.isArray(a) || Array.isArray(b)) {
     return (
       Array.isArray(a) &&

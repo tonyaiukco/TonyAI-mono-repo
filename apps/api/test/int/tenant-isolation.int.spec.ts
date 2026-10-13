@@ -72,9 +72,11 @@ beforeAll(async () => {
 
   owner = connectOwner(2);
   B = await createTenant();
-  // B's record keeps the placeholder figure, which K11 refuses as stale (409):
-  // B's ids answering A's submit, approve and bulk submit as an unknown id
-  // does (404) is then the proof that the tenant check runs first.
+  // B's record keeps the placeholder figure, which K11 refuses as stale (409).
+  // The matrix holds A's answer for B's id to an unknown id's (404) for
+  // submit, approve and bulk submit; were the tenant check to slip, another
+  // gate (author 403, status 400) or K11's 409 would answer instead and the
+  // responses would differ.
   dataB = await createTenantData(owner, B);
   // B's approved figure: a number no response to A may contain.
   const approvedB = await createRecord(owner, B, {

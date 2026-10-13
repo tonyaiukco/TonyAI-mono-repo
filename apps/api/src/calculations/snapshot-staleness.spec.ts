@@ -129,6 +129,11 @@ describe('compareSnapshots — K11 (P6)', () => {
     expect(r).toEqual({ stale: true, classes: [cls], legacy: false });
   });
 
+  it('a nested key only the recomputed snapshot has is a mismatch', () => {
+    const recomputed = { ...RECOMPUTED, factorRelease: { ...RECOMPUTED.factorRelease, newField: 'x' } };
+    expect(compareSnapshots(stored(RECOMPUTED), recomputed as unknown as CalculationResultV2).classes).toEqual(['factor']);
+  });
+
   it('a nested change classifies by its top-level field', () => {
     const erratum = {
       ...RECOMPUTED,
@@ -195,9 +200,29 @@ describe('compareSnapshots — K11 (P6)', () => {
     expect(r.classes).toEqual(['input', 'conversion', 'figure', 'factor']);
   });
 
-  it('numbers compare exactly: no tolerance', () => {
-    const r = compareSnapshots(stored({ ...RECOMPUTED, tCo2e: 0.52 + Number.EPSILON }), RECOMPUTED);
-    expect(r.stale).toBe(true);
+  // `qa-auditor` P0 (B2 review): Prisma's write path rounds a double to 16
+  // significant digits, in a float8 column and in jsonb (measured), so an
+  // honest save comes back from the database a few units in its last digit
+  // away from the recompute. Exact comparison refused it — forever.
+  it.each([
+    [0.3, 0.30000000000000004],
+    [2147.28, 2147.2799999999997],
+    [277.7777777777778, 277.77777777777777],
+    [2.4932928, 2.4932928000000003],
+  ])('a number the database rounded (%s, recomputed %s) is the same number', (storedValue, recomputedValue) => {
+    const recomputed = { ...RECOMPUTED, kgCo2e: recomputedValue, normalizedValue: recomputedValue };
+    const r = compareSnapshots(stored({ ...recomputed, kgCo2e: storedValue, normalizedValue: storedValue }), recomputed);
+    expect(r).toEqual({ stale: false, classes: [], legacy: false });
+  });
+
+  it('a change of one part in a hundred billion is a mismatch; one part in ten trillion is rounding', () => {
+    const t = RECOMPUTED.tCo2e;
+    expect(compareSnapshots(stored({ ...RECOMPUTED, tCo2e: t * (1 + 1e-11) }), RECOMPUTED).classes).toEqual(['figure']);
+    expect(compareSnapshots(stored({ ...RECOMPUTED, tCo2e: t * (1 + 1e-13) }), RECOMPUTED).stale).toBe(false);
+    // Relative, not absolute: a small figure is held to the same share of itself.
+    const small = { ...RECOMPUTED, tCo2e: 1e-9 };
+    expect(compareSnapshots(stored({ ...small, tCo2e: 1.0001e-9 }), small).classes).toEqual(['figure']);
+    expect(compareSnapshots(stored({ ...RECOMPUTED, conversionFactor: 0 }), { ...RECOMPUTED, conversionFactor: 1e-300 }).stale).toBe(true);
   });
 
   // `security-rls` P2-2 (B2 review): a key named after an `Object.prototype`

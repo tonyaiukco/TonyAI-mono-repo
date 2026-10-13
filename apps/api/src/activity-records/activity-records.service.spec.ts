@@ -3,8 +3,10 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
 import { isCalculated, PENDING_REVIEW_STATUSES,
@@ -3816,9 +3818,14 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     expect(onApprove.prisma.activityRecord.update).not.toHaveBeenCalled();
   });
 
-  it('an engine defect (a plain Error) is not stale: it propagates', async () => {
+  it.each([
+    ['a plain Error', () => new Error('Engine defect: kWh normalised to m3')],
+    // `qa-auditor` A1/A2: a 5xx is the server's fault, never the record's.
+    ['a 500', () => new InternalServerErrorException('Engine defect')],
+    ['a 503', () => new ServiceUnavailableException('Engine defect')],
+  ])('an engine defect (%s) is not stale: it propagates', async (_label, defect) => {
     const { prisma, calc, service } = arrange(draft());
-    calc.compute.mockRejectedValue(new Error('Engine defect: kWh normalised to m3'));
+    calc.compute.mockRejectedValue(defect());
     await expect(service.submit(dataEntry(), 'rec-k')).rejects.toThrow(/Engine defect/);
     await expect(service.submit(dataEntry(), 'rec-k')).rejects.not.toBeInstanceOf(CalculationStaleError);
     expect(prisma.activityRecord.update).not.toHaveBeenCalled();
@@ -4060,6 +4067,12 @@ describe('ActivityRecordsService — a typed category’s record names its type 
       untyped('Fuel', { activityType: 'diesel', calculation: typed.calc.snapshot }),
     );
     expect((await typed.service.submit(dataEntry(), 'rec-t')).status).toBe(ActivityRecordStatus.submitted);
+    // The record's own type reaches the engine (`qa-auditor` A5): priced as
+    // `unspecified` instead, a diesel record would be refused by every recompute.
+    expect(typed.calc.compute).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'Fuel', activityType: 'diesel', unit: 'litres' }),
+      { enforceCategoryUnit: false },
+    );
     const water = arrange(untyped('Water', { activityUnit: 'cubic_metres' }));
     water.prisma.activityRecord.findUnique.mockResolvedValue(
       untyped('Water', { activityUnit: 'cubic_metres', calculation: water.calc.snapshot }),
