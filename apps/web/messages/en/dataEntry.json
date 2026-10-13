@@ -45,5 +45,58 @@
   "saveFailedServer": "Could not save — the server failed to process this record. Try again, and report it if it persists.",
   "previewYearHint": "This prototype's factor library currently covers {year}.",
   "previewTitle": "Live emissions preview",
-  "previewPrompt": "Pick a subsidiary and category, then enter an activity value to see a live tCO₂e estimate."
+  "previewPrompt": "Pick a subsidiary and category, then enter an activity value to see a live tCO₂e estimate.",
+  "bulkColumns": {
+    "subsidiaryId": "Reporting entity",
+    "locationId": "Site",
+    "reportingYear": "Year",
+    "reportingPeriod": "Granularity",
+    "periodValue": "Period",
+    "category": "Category",
+    "activityType": "Activity type",
+    "activityValue": "Activity value",
+    "activityUnit": "Unit",
+    "varianceReason": "Variance reason"
+  },
+  "activityTypes": {
+    "grid_electricity": "Grid electricity",
+    "natural_gas": "Natural gas",
+    "water_supply": "Water supply",
+    "diesel": "Diesel",
+    "gas_oil": "Gas oil (red diesel)",
+    "fuel_oil": "Fuel oil",
+    "burning_oil": "Burning oil (kerosene, heating oil)",
+    "lpg": "LPG",
+    "petrol": "Petrol",
+    "cng": "CNG",
+    "R-32": "R-32",
+    "R-134a": "R-134a",
+    "R-404A": "R-404A",
+    "R-407C": "R-407C",
+    "R-407F": "R-407F",
+    "R-410A": "R-410A",
+    "R-448A": "R-448A",
+    "R-449A": "R-449A",
+    "R-1234yf": "R-1234yf"
+  },
+  "bulkPreview": {
+    "title": "Accepted rows",
+    "row": "File row",
+    "noActivityType": "Not specified"
+  },
+  "conversionNote": {
+    "detail": "{fromUnit} → {toUnit}: ×{multiplier}. Calorific basis: {calorificBasis}. Derivation: {basis}. Reference conditions: {conditions}. Release: {publisher}, {edition} — {status}.",
+    "unknownConditions": "Not stated",
+    "basis": {
+      "gross": "Gross",
+      "net": "Net",
+      "not_applicable": "Not applicable"
+    },
+    "status": {
+      "authoritative": "Authoritative",
+      "placeholder": "Placeholder — not authoritative",
+      "fixture": "Test fixture — not authoritative",
+      "withdrawn": "Withdrawn"
+    }
+  }
 }

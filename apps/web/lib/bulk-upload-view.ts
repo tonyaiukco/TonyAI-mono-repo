@@ -13,6 +13,7 @@ import type {
 import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
 import { formatNumber } from '@/lib/utils';
 import enErrors from '@/messages/en/errors.json';
+import enEntry from '@/messages/en/dataEntry.json';
 
 /**
  * The client half of bulk upload: whether a file is worth sending, what the
@@ -107,18 +108,19 @@ export const ISSUE_CODE_LABEL: Record<BulkUploadIssueCode, string> = {
 };
 
 /** The column names as a person reads them. Exhaustive for the same reason. */
-export const COLUMN_LABEL: Record<BulkUploadColumn, string> = {
-  subsidiaryId: 'Reporting entity',
-  locationId: 'Site',
-  reportingYear: 'Year',
-  reportingPeriod: 'Granularity',
-  periodValue: 'Period',
-  category: 'Category',
-  activityType: 'Activity type',
-  activityValue: 'Activity value',
-  activityUnit: 'Unit',
-  varianceReason: 'Variance reason',
-};
+export const COLUMN_LABEL: Record<BulkUploadColumn, string> = enEntry.bulkColumns;
+
+export const ACTIVITY_TYPE_LABEL = enEntry.activityTypes;
+
+export function bulkActivityLabel(activityType: string | null,
+  translate: (key: `activityTypes.${keyof typeof ACTIVITY_TYPE_LABEL}` | 'bulkPreview.noActivityType') => string,
+): string {
+  if (activityType === null) return translate('bulkPreview.noActivityType');
+  // Unknown future values remain visible instead of silently reading as blank.
+  return Object.hasOwn(ACTIVITY_TYPE_LABEL, activityType)
+    ? translate(`activityTypes.${activityType as keyof typeof ACTIVITY_TYPE_LABEL}`)
+    : activityType;
+}
 
 export interface IssueGroup {
   code: BulkUploadIssueCode;
@@ -416,8 +418,9 @@ export function applyToast(report: BulkUploadReportDTO, translate?: DeadlineTran
  * Everything else already carries the server's own sentence, which is written
  * for the person reading it.
  */
-export function uploadErrorMessage(error: unknown): string {
+export function uploadErrorMessage(error: unknown, translate?: (key: 'bulkQueryTooBroad') => string): string {
   if (error instanceof ApiError) {
+    if (error.code === 'query_too_broad') return translate ? translate('bulkQueryTooBroad') : enErrors.bulkQueryTooBroad;
     if (error.status === 401) return SESSION_EXPIRED_MESSAGE;
     if (error.status === 429) {
       return 'Too many import attempts. Wait a minute and try again — a dry run and an import each count towards the limit.';

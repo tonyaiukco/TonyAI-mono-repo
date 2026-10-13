@@ -1,5 +1,6 @@
 "use client";
 
+import { conversionNote } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -64,7 +65,6 @@ import { RecentImports } from "@/components/data-entry/recent-imports";
 import { PreviousSubmissions } from "@/components/data-entry/previous-submissions";
 import {
   ACTIVITY_UNITS,
-  appliesUnitConversion,
   CATEGORY_ACTIVITY_TYPES,
   CATEGORIES,
   GEOGRAPHY_LABELS,
@@ -149,6 +149,7 @@ function DataEntryPageInner() {
   const searchParams = useSearchParams();
   const { user, setUser } = useAuthStore();
   const t = useTranslations("dataEntry");
+  const locale = useLocale();
   const tCategories = useTranslations("categories");
   const tPeriods = useTranslations("periods");
   const tCommon = useTranslations("common");
@@ -551,6 +552,8 @@ function DataEntryPageInner() {
       return;
     }
 
+    let active = true;
+    setPreview(null);
     setPreviewing(true);
     debounceRef.current = setTimeout(async () => {
       try {
@@ -562,17 +565,20 @@ function DataEntryPageInner() {
           value: numericValue,
           unit: activityUnit,
         });
+        if (!active) return;
         setPreview(result);
         setPreviewError(null);
       } catch (e) {
+        if (!active) return;
         setPreview(null);
         setPreviewError({ error: e, year: reportingYear });
       } finally {
-        setPreviewing(false);
+        if (active) setPreviewing(false);
       }
     }, 400);
 
     return () => {
+      active = false;
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1224,44 +1230,8 @@ function DataEntryPageInner() {
                         </p>
                       );
                     }
-                    // Keyed on the unit AND the category. On the unit alone this
-                    // note was correct only while m³ meant natural gas: for a
-                    // category with no factor nothing is converted at all, and
-                    // the note was telling the user their water meter had been
-                    // multiplied by the natural-gas calorific value.
-                    if (
-                      activityUnit === "cubic_metres" &&
-                      appliesUnitConversion(activityUnit, category)
-                    ) {
-                      // The 11.36 in calculation_logic.md §2.1 has no citation
-                      // and no stated reference conditions. Since LP3-03 it is a
-                      // labelled placeholder conversion row of the seed's
-                      // release (K4), not code; on a compliance product the user
-                      // is still entitled to know the number rests on an
-                      // assumption.
-                      return (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          m³ is converted to kWh by the factor library&rsquo;s
-                          placeholder conversion, &times;11.36 — a prototype
-                          assumption with no cited source, no stated calorific basis
-                          (gross is reconstructed, not stated) and no stated
-                          reference conditions, refused wherever placeholder
-                          factors are. A
-                          sourced conversion replaces it with the authoritative
-                          factor library.
-                        </p>
-                      );
-                    }
-                    if (activityUnit === "cubic_metres") {
-                      return (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          Recorded exactly as entered, in m³. No conversion is
-                          applied, because {category} has no emission factor to
-                          convert towards.
-                        </p>
-                      );
-                    }
-                    return null;
+                    const note = conversionNote(preview, previewing || !hasValidInput || !!previewError, locale, t);
+                    return note ? <p className="mt-2 text-xs text-muted-foreground">{note}</p> : null;
                   })()}
                 </CardContent>
               </Card>

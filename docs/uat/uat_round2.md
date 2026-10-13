@@ -99,8 +99,8 @@ is a round-2 finding: quote the round-1 ID.
 | **DE-1** | Long subsidiary names overlap the location field | ✅ closed | Create a company with a very long legal name (the form requires at least one operational location too), then open Data Entry and select it: the control truncates inside its own column and never covers the Location field. | |
 | **DE-2** | Status must stay yellow until everything is in | ✅ closed | §4.3 — this is now a rule on **every** cell, not just invoice-tracked ones. | |
 | **DE-3** | Add "standard cubic metres" | ✅ closed | Data Entry → **Natural Gas** → Unit offers **Sm³**. Picking it refuses the calculation *and* the save: Sm³ needs a sourced calorific value that arrives with the Phase-4 factor library. | |
-| **DE-4** | Refrigerants — expand reporting scope | ⏳ **Phase 4** | Not built. Refrigerants still reports "no emission factor for this selection". We do not have sourced factor values, and inventing them is not an option in a compliance product. | |
-| **DE-5** | Mobile combustion — factors + on-road/off-road | ⏳ **Phase 4** | Same reason as DE-4. | |
+| **DE-4** | Refrigerants — expand reporting scope | ⏳ **Phase 4** | Typed form/import contract delivered; authoritative factor coverage still awaits LP4-02 PR C. Import Refrigerants with an allowed `activityType` from the current template. A missing or foreign type is `invalid` on that column; a valid type still needs a permitted factor path. See the typed-import checks below. | |
+| **DE-5** | Mobile combustion — factors + on-road/off-road | ⏳ **Phase 4** | Typed form/import contract delivered, including Fuel and Mobile Combustion types; authoritative factor coverage still awaits LP4-02 PR C. Same-period diesel and gas-oil Fuel rows must remain distinct in the dry-run table. See the typed-import checks below. | |
 | **DE-6** | Electricity — add Turkey grid region | ✅ closed | Data Entry shows a **Factor geography** line (e.g. `TR — Türkiye, from … (subsidiary)`) instead of a Grid Region picker. | |
 | **DE-7** | Standardise grid regions to UK + Turkey | ✅ closed | Geography choices are **United Kingdom (UK)** and **Türkiye (TR)** only; the Munich subsidiary keeps its existing **European Union (EU)** value and does not blank on save. | |
 | **DE-8** | Evidence upload must read Turkish characters | ✅ closed | Upload `Şubat-Faturası-İĞÜÖÇ.pdf` — the name is intact in the vault, on download and in `/review`. For the PDF appendix: the record must be **approved** first, and you must tick **Evidence summary** on `/reports` — it is off by default. | |
@@ -274,6 +274,22 @@ and its authorization refusal occurs before parsing and is audited. Run **§4.9
 last**, after the other UAT cases: XLSX-03/04 leave drafts occupying reporting
 slots. Save the evidence, then restore the disposable local dataset with
 **`pnpm db:reset`**; do not reset a shared session while another operator is using it.
+
+### Typed import expectations after LP4-02 PR A
+
+These are expected outcomes, not recorded UAT passes. Run in both English and
+Turkish on the selected candidate and record its SHA. Use only an available,
+permitted factor library; PR A did not load authoritative factors. Do not add
+made-up factor values to make a case pass.
+
+| ID | Action | Expected result | P/F |
+| --- | --- | --- | --- |
+| TYPE-01 | Use the current template with Fuel `diesel` and `gas_oil` in the same unused month and slot | With both factor paths available, both rows are accepted and every accepted row is shown with its file-row number, year, period, category and translated activity type. Diesel and gas oil remain distinguishable before apply. | |
+| TYPE-02 | Supply allowed activity types for Fuel, Mobile Combustion and Refrigerants | Type validation passes; import succeeds only where a permitted factor path exists. Missing factors remain a `no_factor` refusal, not a zero or a claimed authoritative result. | |
+| TYPE-03 | Leave the type blank in each typed category, then use a type from another category (for example `R-410A` in Fuel) | Each row is `invalid` on `activityType`; its column label follows the selected UI language. | |
+| TYPE-04 | Upload an old nine-column template, without `activityType`, with Electricity or another category that needs no explicit type | The file remains supported; otherwise-valid rows import and preview the type as not specified. A Fuel/Mobile Combustion/Refrigerants row in the same old format is still `invalid` on `activityType`, with advice to download the current template. | |
+| TYPE-05 | Exercise an import-level `query_too_broad` refusal in a controlled fixture | EN/TR copy suggests fewer rows per file and administrator help if a small file still fails. The test needs an abnormal stored-slot population; ordinary API-created records may not reach this guard. | |
+| TYPE-06 | Submit a draft whose calculation is stale, once LP4-02 PR B supplies the guard | Bulk upload, Previous submissions and Recent imports show the catalogue's stale label; detailed failures show the translated remedy, not the raw English server sentence. | |
 
 Go to **`/data-entry` → Bulk upload card → Download template**. Use valid rows
 with accessible entities and a fresh unused reporting slot for each successful

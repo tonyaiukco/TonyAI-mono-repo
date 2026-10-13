@@ -112,3 +112,11 @@ it.each([['en', en], ['tr', tr]] as const)('%s keeps accepted counts and safe re
   }, t('bulkIssues.not_processed_deadline'), t);
   expect(detail).toBe(t('bulkDeadline.detail', { accepted: 1, refused: 0, unstarted: 1 }));
 });
+
+
+it.each([['en', en], ['tr', tr]] as const)('%s localises stale records in recent imports', (locale, messages) => {
+  const t = createTranslator({ locale, messages });
+  expect(submitFailureDetail({ requested: 1, submitted: [], failed: [
+    { recordId: 'draft', code: 'calculation_stale', message: 'server English' },
+  ] }, messages.bulkIssues.not_processed_deadline, t, t)).toBe(`${messages.bulkIssues.calculation_stale} · 1`);
+});

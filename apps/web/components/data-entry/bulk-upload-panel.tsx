@@ -25,7 +25,8 @@ import {
   failuresToShow,
   submitConfirmation,
   submitErrorMessage,
-  SUBMIT_ISSUE_LABEL,
+  submitIssueLabel,
+  submitIssueMessage,
   summariseSubmit,
 } from "@/lib/bulk-submit-view";
 import {
@@ -33,7 +34,6 @@ import {
   canApplyPreview,
   applyToast,
   BULK_UPLOAD_MAX_ROWS,
-  COLUMN_LABEL,
   fileAcceptAttribute,
   groupIssues,
   MAX_ISSUE_ROWS_PER_GROUP,
@@ -46,6 +46,7 @@ import {
   uploadErrorMessage,
   type IssueGroup,
 } from "@/lib/bulk-upload-view";
+import { AcceptedRows } from "@/components/data-entry/bulk-accepted-rows";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -150,7 +151,7 @@ export function BulkUploadPanel({
       // Rendered in the card, not only as a toast: a whole-file refusal names
       // the column or up to ten offending rows, which is not something anyone
       // reads in four seconds.
-      setRefusal(uploadErrorMessage(e) || "The import failed.");
+      setRefusal(uploadErrorMessage(e, tErrors) || "The import failed.");
     } finally {
       setBusy("none");
     }
@@ -171,7 +172,7 @@ export function BulkUploadPanel({
       toast[outcome.kind](outcome.message, { description: outcome.description });
       verdictRef.current?.focus();
     } catch (e) {
-      toast.error(uploadErrorMessage(e));
+      toast.error(uploadErrorMessage(e, tErrors));
     } finally {
       setBusy("none");
       // In `finally`, because an apply that FAILED may still have written
@@ -358,6 +359,8 @@ export function BulkUploadPanel({
               </div>
             </div>
 
+            <AcceptedRows rows={report.accepted} />
+
             {errorGroups.length > 0 && (
               <IssueList groups={errorGroups} tone="error" />
             )}
@@ -411,9 +414,9 @@ export function BulkUploadPanel({
                       {failuresToShow(submitReport.failed).shown.map((f) => (
                         <li key={f.recordId}>
                           <span className="font-medium">
-                            {f.code === "not_processed_deadline" ? tErrors("bulkIssues.not_processed_deadline") : SUBMIT_ISSUE_LABEL[f.code]}
+                            {submitIssueLabel(f.code, tErrors)}
                           </span>
-                          {f.code !== "not_processed_deadline" && <span className="block opacity-80">{f.message}</span>}
+                          {submitIssueMessage(f, tErrors) && <span className="block opacity-80">{submitIssueMessage(f, tErrors)}</span>}
                         </li>
                       ))}
                     </ul>
@@ -585,11 +588,12 @@ function IssueList({
 
 function IssueItem({ issue }: { issue: BulkUploadRowIssue }) {
   const tErrors = useTranslations("errors");
+  const tEntry = useTranslations("dataEntry");
   return (
     <li className="text-xs">
       <span className="font-mono opacity-70">Row {issue.row}</span>
       {issue.column && (
-        <span className="opacity-70"> · {COLUMN_LABEL[issue.column]}</span>
+        <span className="opacity-70"> · {tEntry(`bulkColumns.${issue.column}`)}</span>
       )}
       <span className="block">{issue.code === "not_processed_deadline" ? tErrors("bulkIssues.not_processed_deadline") : issue.message}</span>
     </li>
