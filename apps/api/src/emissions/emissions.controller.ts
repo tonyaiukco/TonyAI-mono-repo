@@ -1,4 +1,6 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import type { ReportingSummaryResponse, ReportingMatrixResponse } from '@tonyai/shared-types';
+import { ReportingContextQueryDto, reportingContext } from '../common/reporting-context-query.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { EmissionsService } from './emissions.service';
@@ -9,6 +11,24 @@ import { CompletenessQueryDto } from './dto/completeness-query.dto';
 @Controller('emissions')
 export class EmissionsController {
   constructor(private readonly service: EmissionsService) {}
+
+  @Get('context/summary')
+  async contextSummary(
+    @CurrentUser() user: RequestUser,
+    @Query() query: ReportingContextQueryDto,
+  ): Promise<ReportingSummaryResponse> {
+    const context = reportingContext(query);
+    return { context, data: await this.service.summary(user, context) };
+  }
+
+  @Get('context/tracking-matrix')
+  async contextMatrix(
+    @CurrentUser() user: RequestUser,
+    @Query() query: ReportingContextQueryDto,
+  ): Promise<ReportingMatrixResponse> {
+    const context = reportingContext(query);
+    return { context, data: await this.service.trackingMatrix(user, context) };
+  }
 
   /** Tenant-scoped aggregation of activity records for the analytics workspace. */
   @Get('summary')

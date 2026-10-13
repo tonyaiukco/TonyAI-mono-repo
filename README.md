@@ -535,8 +535,9 @@ Period locking (FR §4.2): a `super_admin` closes one subsidiary's reporting per
 
 ### Reporting context contract (LP3-02 PR A)
 
-**PR A publishes the shared contract and unused web clients; it does not implement
-the new API routes or connect the annual screens.** Existing routes and clients
+**PR A publishes the shared contract. The summary, tracking-matrix and intensity
+context read routes are implemented; report context routes and annual screen
+wiring remain pending.** Existing routes and clients
 retain their response shapes. The expanded `REPORTING_YEARS` list already affects
 existing year selectors: the accepted range is **2000–2100 inclusive**, matching
 the API's existing DTO bounds. `DEFAULT_REPORTING_YEAR` stays **2026** (D06),
@@ -569,7 +570,7 @@ strip view-local `status`, `search`, `sort`, `limit` and `cursor`, but refuse a
 defined `locationId`, `period` or `periodValue` (including null) before fetching:
 silently dropping those would broaden the requested inventory.
 
-The following **reserved GET routes are not live in PR A**. Paths are relative to
+The following GET paths are relative to
 `/api/v1`, declared once in `REPORTING_CONTEXT_API_PATHS`; the web calls them only
 through `apps/web/lib/api.ts`:
 
@@ -606,12 +607,14 @@ excluded from `emissionsTotal` because they have no usable figure. The summary's
 count for all selected subsidiaries cannot substitute for this numerator-specific
 disclosure. Metric/unit pairs must be unique, with disjoint contributor sets
 across units of the same metric (one denominator per subsidiary/year/metric).
-PR A validates this response boundary in the new client; server enforcement is
-an implementation obligation, not a change to the legacy intensity endpoint.
-Before LP3-02 closes, legacy `GET /intensity`, which currently computes group
-intensity over physical metrics in violation of D14, must either be removed once
-unused or restricted to D14. Legacy and context report/emissions routes must
-share one service method per computation, so their arithmetic cannot diverge.
+The summary, matrix and intensity context routes require a valid year and refuse
+unknown fields, repeated parameters and conflicting scope/category filters with
+`validation_failed`. Legacy and context reads share their aggregation methods.
+The service uses one nonblank-subsidiary predicate for access selection and D14,
+including internal callers; context HTTP validation still rejects blank selectors.
+Both `GET /intensity` and `GET /intensity/context` now enforce D14; the legacy
+route retains its existing response envelope. Report context routes remain
+reserved until their context filtering and EXPORT classification ship together.
 
 The filtered tracking matrix must filter both records and emitted category cells,
 then recompute per-row `totalTCo2e`, `uncalculatedRecordCount`, `completeCount` and

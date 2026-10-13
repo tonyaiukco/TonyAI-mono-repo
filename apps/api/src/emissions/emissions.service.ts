@@ -13,6 +13,7 @@ import {
   INVOICE_TRACKED_CATEGORIES,
   isEvidenceRequired,
   isInvoiceTracked,
+  type ReportingContext,
   type ActivityCalculationSnapshot,
   type Category,
   type DataStatus,
@@ -542,7 +543,7 @@ export class EmissionsService {
    */
   async trackingMatrix(
     user: RequestUser,
-    query: TrackingMatrixQueryDto,
+    query: TrackingMatrixQueryDto & Pick<ReportingContext, 'scope' | 'category'>,
   ): Promise<TrackingMatrixDTO> {
     const empty: TrackingMatrixDTO = {
       reportingYear: query.year ?? null,
@@ -578,6 +579,8 @@ export class EmissionsService {
         where: {
           subsidiaryId: subsidiaryFilter,
           reportingYear: query.year,
+          scope: query.scope,
+          category: query.category,
         },
         include: { _count: { select: { evidenceLinks: true } } },
       }),
@@ -623,6 +626,10 @@ export class EmissionsService {
       else byCell.set(key, [r]);
     }
 
+    const categories = CATEGORIES.filter((category) =>
+      (query.category === undefined || category === query.category) &&
+      (query.scope === undefined || CATEGORY_SCOPE_MAP[category] === query.scope),
+    );
     const totals = { complete: 0, incomplete: 0, missing: 0 };
     const matrixRows: TrackingMatrixRow[] = subs.map((sub) => {
       let totalTCo2e = 0;
@@ -633,7 +640,7 @@ export class EmissionsService {
 
       let uncalculatedRowCount = 0;
 
-      const cells: TrackingMatrixCell[] = CATEGORIES.map((category) => {
+      const cells: TrackingMatrixCell[] = categories.map((category) => {
         const recs = byCell.get(`${sub.id}\u0000${category}`) ?? [];
 
         let coverage: InvoiceCoverage | null = null;
@@ -772,7 +779,7 @@ export class EmissionsService {
         designatedPerson: sub.designatedPerson,
         totalTCo2e,
         completeCount,
-        categoryCount: CATEGORIES.length,
+        categoryCount: categories.length,
         trackingGranularity: sub.trackingGranularity,
         locationCount,
         uncalculatedRecordCount: uncalculatedRowCount,

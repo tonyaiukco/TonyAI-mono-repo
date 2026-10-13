@@ -5,10 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, type SubsidiaryDenominator } from '@tonyai/db';
+import { GROUP_INTENSITY_METRICS } from '@tonyai/shared-types';
 import type {
+  ReportingContext,
+  ReportingIntensityResponse,
+  ReportingIntensityData,
+  ReportingIntensityMetric,
   DenominatorDTO,
   IntensityMetricKey,
-  IntensityMetricResultDTO,
   IntensityResponseDTO,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,6 +21,9 @@ import { AuditService } from '../audit/audit.service';
 import { EmissionsService } from '../emissions/emissions.service';
 import { CreateDenominatorDto } from './dto/create-denominator.dto';
 import { UpdateDenominatorDto } from './dto/update-denominator.dto';
+
+const hasSelectedSubsidiary = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0;
 
 @Injectable()
 export class IntensityService {
@@ -47,7 +54,7 @@ export class IntensityService {
   }
 
   private scopeIds(user: RequestUser, subsidiaryId?: string): string[] {
-    if (subsidiaryId) {
+    if (hasSelectedSubsidiary(subsidiaryId)) {
       return user.accessibleSubsidiaryIds.includes(subsidiaryId)
         ? [subsidiaryId]
         : [];
@@ -197,15 +204,41 @@ export class IntensityService {
     year?: number,
     subsidiaryId?: string,
   ): Promise<IntensityResponseDTO> {
-    const ids = this.scopeIds(user, subsidiaryId);
-    if (ids.length === 0 || year === undefined) {
-      return { year: year ?? null, metrics: [] };
-    }
-
-    const denoms = await this.prisma.subsidiaryDenominator.findMany({
-      where: { subsidiaryId: { in: ids }, year },
+    if (year === undefined) return { year: null, metrics: [] };
+    const data = await this.computeIntensity(user, {
+      year,
+      ...(hasSelectedSubsidiary(subsidiaryId) ? { subsidiaryId } : {}),
     });
-    if (denoms.length === 0) return { year, metrics: [] };
+    return {
+      year,
+      metrics: data.metrics.map(({ metric, unit, emissionsTotal, denominatorTotal, intensity }) =>
+        ({ metric, unit, emissionsTotal, denominatorTotal, intensity })),
+    };
+  }
+
+  async contextIntensity(
+    user: RequestUser,
+    context: ReportingContext,
+  ): Promise<ReportingIntensityResponse> {
+    return { context, data: await this.computeIntensity(user, context) };
+  }
+
+  private async computeIntensity(
+    user: RequestUser,
+    context: ReportingContext,
+  ): Promise<ReportingIntensityData> {
+    const selectedSubsidiaryIds = [...new Set(this.scopeIds(user, context.subsidiaryId))].sort();
+    const empty = { selectedSubsidiaryIds, metrics: [] };
+    if (selectedSubsidiaryIds.length === 0) return empty;
+    const denoms = await this.prisma.subsidiaryDenominator.findMany({
+      where: {
+        subsidiaryId: { in: selectedSubsidiaryIds },
+        year: context.year,
+        ...(!hasSelectedSubsidiary(context.subsidiaryId) ? { metric: { in: [...GROUP_INTENSITY_METRICS] } } : {}),
+      },
+      orderBy: [{ metric: 'asc' }, { unit: 'asc' }, { subsidiaryId: 'asc' }],
+    });
+    if (denoms.length === 0) return empty;
 
     // Group by metric AND unit — summing different units for the same metric
     // (e.g. "M EUR" + "M USD") would produce a meaningless intensity, so mixed
@@ -227,18 +260,22 @@ export class IntensityService {
       byMetricUnit.set(key, e);
     }
 
-    const metrics: IntensityMetricResultDTO[] = [];
+    const metrics: ReportingIntensityMetric[] = [];
     for (const e of byMetricUnit.values()) {
       // Emissions numerator: only the subsidiaries that have this denominator.
       let emissionsTotal = 0;
+      let uncalculatedRecordCount = 0;
       for (const sid of e.subIds) {
         const summary = await this.emissions.summary(user, {
+          ...context,
           subsidiaryId: sid,
-          year,
         });
         emissionsTotal += summary.totals.total;
+        uncalculatedRecordCount += summary.uncalculatedRecordCount;
       }
       metrics.push({
+        contributingSubsidiaryIds: [...e.subIds].sort(),
+        uncalculatedRecordCount,
         metric: e.metric as IntensityMetricKey,
         unit: e.unit,
         emissionsTotal,
@@ -247,7 +284,7 @@ export class IntensityService {
           e.denominatorTotal > 0 ? emissionsTotal / e.denominatorTotal : 0,
       });
     }
-    return { year, metrics };
+    return { selectedSubsidiaryIds, metrics };
   }
 
 }

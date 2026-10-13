@@ -2,10 +2,19 @@ import { Controller, Get, ParseIntPipe, Query } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { IntensityService } from './intensity.service';
+import { ReportingContextQueryDto, reportingContext } from '../common/reporting-context-query.dto';
 
 @Controller('intensity')
 export class IntensityController {
   constructor(private readonly service: IntensityService) {}
+
+  @Get('context')
+  contextIntensity(
+    @CurrentUser() user: RequestUser,
+    @Query() query: ReportingContextQueryDto,
+  ) {
+    return this.service.contextIntensity(user, reportingContext(query));
+  }
 
   /**
    * Emissions intensity for a year (tenant-scoped): one entry per configured

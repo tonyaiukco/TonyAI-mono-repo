@@ -155,8 +155,8 @@ describe('IntensityService', () => {
     ]);
     // emissions: sub-1 = 200, sub-2 = 600 → total 800
     emissions.summary
-      .mockResolvedValueOnce({ totals: { total: 200 } })
-      .mockResolvedValueOnce({ totals: { total: 600 } });
+      .mockResolvedValueOnce({ totals: { total: 200 }, uncalculatedRecordCount: 0 })
+      .mockResolvedValueOnce({ totals: { total: 600 }, uncalculatedRecordCount: 0 });
     const res = await service.intensity(admin, 2024);
     expect(res.metrics).toHaveLength(1);
     const revenue = res.metrics[0];
@@ -171,9 +171,75 @@ describe('IntensityService', () => {
       makeDenominator({ subsidiaryId: 'sub-1', value: 320, unit: 'M EUR' }),
       makeDenominator({ id: 'den-2', subsidiaryId: 'sub-2', value: 480, unit: 'M USD' }),
     ]);
-    emissions.summary.mockResolvedValue({ totals: { total: 100 } });
+    emissions.summary.mockResolvedValue({ totals: { total: 100 }, uncalculatedRecordCount: 0 });
     const res = await service.intensity(admin, 2024);
     expect(res.metrics).toHaveLength(2);
     expect(new Set(res.metrics.map((m) => m.unit))).toEqual(new Set(['M EUR', 'M USD']));
   });
+  it.each([{ ids: [] }, { ids: ['sub-1'] }])('keeps empty or inaccessible context selections empty (%j)', async ({ ids }) => {
+    const context = { year: 2027, subsidiaryId: 'foreign', scope: 1 as const, category: 'Fuel' as const };
+    expect(await service.contextIntensity({ ...admin, accessibleSubsidiaryIds: ids }, context)).toEqual({
+      context, data: { selectedSubsidiaryIds: [], metrics: [] },
+    });
+    expect(prisma.subsidiaryDenominator.findMany).not.toHaveBeenCalled();
+    expect(emissions.summary).not.toHaveBeenCalled();
+  });
+
+  it('discloses the authorized selection even with no configured denominator', async () => {
+    expect(await service.contextIntensity(admin, { year: 2027 })).toEqual({
+      context: { year: 2027 }, data: { selectedSubsidiaryIds: ['sub-1', 'sub-2'], metrics: [] },
+    });
+  });
+
+  it('restricts group intensity to revenue, including a single accessible subsidiary and the legacy route', async () => {
+    const user = { ...admin, accessibleSubsidiaryIds: ['sub-1'] };
+    await service.contextIntensity(user, { year: 2027 });
+    await service.intensity(user, 2027);
+    await service.intensity(user, 2027, '');
+    expect(prisma.subsidiaryDenominator.findMany).toHaveBeenCalledTimes(3);
+    for (const [query] of prisma.subsidiaryDenominator.findMany.mock.calls) {
+      expect(query.where).toEqual({ subsidiaryId: { in: ['sub-1'] }, year: 2027, metric: { in: ['revenue'] } });
+    }
+  });
+
+  it.each(['', '  '])('uses the group predicate consistently for a blank internal selector %j', async (subsidiaryId) => {
+    await service.contextIntensity(admin, { year: 2027, subsidiaryId });
+    expect(prisma.subsidiaryDenominator.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { subsidiaryId: { in: ['sub-1', 'sub-2'] }, year: 2027, metric: { in: ['revenue'] } },
+    }));
+  });
+
+  it('keeps denominators annual and numerator coverage specific to each unit and contributing set', async () => {
+    prisma.subsidiaryDenominator.findMany.mockResolvedValue([
+      makeDenominator({ value: 20, unit: 'M EUR' }),
+      makeDenominator({ id: 'den-2', subsidiaryId: 'sub-2', value: 40, unit: 'M USD' }),
+    ]);
+    emissions.summary
+      .mockResolvedValueOnce({ totals: { total: 100 }, uncalculatedRecordCount: 2 })
+      .mockResolvedValueOnce({ totals: { total: 120 }, uncalculatedRecordCount: 1 });
+    const context = { year: 2027, scope: 1 as const, category: 'Fuel' as const };
+    const result = await service.contextIntensity({ ...admin, accessibleSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3'] }, context);
+    expect(result).toEqual({ context, data: {
+      selectedSubsidiaryIds: ['sub-1', 'sub-2', 'sub-3'],
+      metrics: [
+        { metric: 'revenue', unit: 'M EUR', denominatorTotal: 20, emissionsTotal: 100, intensity: 5, contributingSubsidiaryIds: ['sub-1'], uncalculatedRecordCount: 2 },
+        { metric: 'revenue', unit: 'M USD', denominatorTotal: 40, emissionsTotal: 120, intensity: 3, contributingSubsidiaryIds: ['sub-2'], uncalculatedRecordCount: 1 },
+      ],
+    } });
+    expect(emissions.summary.mock.calls.map(([, query]) => query)).toEqual([
+      { ...context, subsidiaryId: 'sub-1' }, { ...context, subsidiaryId: 'sub-2' },
+    ]);
+  });
+
+  it('permits physical intensity only for an explicit subsidiary', async () => {
+    prisma.subsidiaryDenominator.findMany.mockResolvedValue([makeDenominator({ metric: 'employees', value: 10, unit: 'FTE' })]);
+    emissions.summary.mockResolvedValue({ totals: { total: 30 }, uncalculatedRecordCount: 0 });
+    const result = await service.contextIntensity(admin, { year: 2027, subsidiaryId: 'sub-1', scope: 2 });
+    expect(prisma.subsidiaryDenominator.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { subsidiaryId: { in: ['sub-1'] }, year: 2027 },
+    }));
+    expect(result.data.selectedSubsidiaryIds).toEqual(['sub-1']);
+    expect(result.data.metrics[0]).toMatchObject({ metric: 'employees', intensity: 3, contributingSubsidiaryIds: ['sub-1'] });
+  });
+
 });
