@@ -4,6 +4,7 @@ import { QueryTooBroadError } from '../common/api-error';
 import { ForbiddenException, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import type {
+  ReportingContext,
   ActivityCalculationSnapshot,
   FactorStatus,
   ReportExportType,
@@ -46,11 +47,14 @@ import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { COUNTED_STATUSES, EmissionsService } from '../emissions/emissions.service';
 import { ReportQueryDto } from './dto/report-query.dto';
+import { reportingContext } from '../common/reporting-context-query.dto';
+import { contextLabels } from './context-labels';
 import { buildReportHtml } from './report-html';
 
 // Single source of truth for "committed": imported from the emissions service so
 // a report's summary tables and its own ledger can never silently diverge.
 const COMMITTED_STATUSES = COUNTED_STATUSES;
+type SelectedReportQuery = ReportQueryDto & Pick<ReportingContext, 'scope' | 'category'>;
 
 // Re-exported so every existing importer keeps working; the definitions moved
 // to `report-data.ts` to break the value-import cycle the descriptors create.
@@ -193,6 +197,7 @@ export class ReportsService implements OnModuleDestroy {
     user: RequestUser,
     year: number,
     subsidiaryId?: string,
+    filters: Pick<ReportingContext, 'scope' | 'category'> = {},
   ): Promise<ReportMeta> {
     const ids = this.scopeIds(user, subsidiaryId);
     const org = user.organisationId
@@ -217,7 +222,7 @@ export class ReportsService implements OnModuleDestroy {
 
     const grouped = await this.prisma.activityRecord.groupBy({
       by: ['status'],
-      where: { subsidiaryId: { in: ids }, reportingYear: year },
+      where: { subsidiaryId: { in: ids }, reportingYear: year, scope: filters.scope, category: filters.category },
       _count: { _all: true },
     });
     const count = (statuses: ActivityRecordStatus[]) =>
@@ -272,13 +277,15 @@ export class ReportsService implements OnModuleDestroy {
   }
 
   /** Assemble everything a report needs — shared by PDF/Excel/CSV. */
-  async assemble(user: RequestUser, q: ReportQueryDto): Promise<ReportData> {
+  async assemble(user: RequestUser, q: SelectedReportQuery): Promise<ReportData> {
     const ids = this.scopeIds(user, q.subsidiaryId);
+    // Legacy routes accept an empty selector as all accessible subsidiaries.
+    const context = reportingContext({ ...q, subsidiaryId: q.subsidiaryId || undefined });
 
-    const meta = await this.meta(user, q.year, q.subsidiaryId);
+    const meta = await this.meta(user, q.year, q.subsidiaryId, q);
     if (meta.committedCount + meta.voidedCount > this.limits.REPORT_RECORD_LIMIT) throw new QueryTooBroadError();
     const [summary, subs] = await Promise.all([
-      this.emissions.summary(user, { subsidiaryId: q.subsidiaryId, year: q.year }, this.limits.REPORT_RECORD_LIMIT),
+      this.emissions.summary(user, context, this.limits.REPORT_RECORD_LIMIT),
       this.prisma.subsidiary.findMany({
         where: { id: { in: ids } },
         select: { id: true, legalName: true, tradingName: true },
@@ -304,6 +311,8 @@ export class ReportsService implements OnModuleDestroy {
         where: {
           subsidiaryId: { in: ids },
           reportingYear: q.year,
+          scope: q.scope,
+          category: q.category,
           status: { in: statuses },
         },
         include,
@@ -532,6 +541,7 @@ export class ReportsService implements OnModuleDestroy {
       : [];
 
     return {
+      context,
       template: q.template,
       templateName:
         REPORT_TEMPLATES.find((t) => t.id === q.template)?.name ?? q.template,
@@ -556,7 +566,7 @@ export class ReportsService implements OnModuleDestroy {
     };
   }
 
-  async generatePdf(user: RequestUser, q: ReportQueryDto): Promise<Buffer> {
+  async generatePdf(user: RequestUser, q: SelectedReportQuery): Promise<Buffer> {
     this.assertCanGenerate(user);
     // Cancellation kills the shared Chromium process. Keep its ownership
     // exclusive even when operators allow concurrent CSV/Excel exports.
@@ -575,7 +585,7 @@ export class ReportsService implements OnModuleDestroy {
     } catch { child.kill('SIGKILL'); }
   }
 
-  private async renderPdf(user: RequestUser, q: ReportQueryDto): Promise<Buffer> {
+  private async renderPdf(user: RequestUser, q: SelectedReportQuery): Promise<Buffer> {
     const data = await this.assemble(user, q);
     const html = buildReportHtml(data);
     this.assertOutputSize(html);
@@ -629,7 +639,7 @@ export class ReportsService implements OnModuleDestroy {
     }
   }
 
-  async generateExcel(user: RequestUser, q: ReportQueryDto): Promise<Buffer> {
+  async generateExcel(user: RequestUser, q: SelectedReportQuery): Promise<Buffer> {
     this.assertCanGenerate(user);
     const data = await this.assemble(user, q);
     const wb = new ExcelJS.Workbook();
@@ -641,7 +651,7 @@ export class ReportsService implements OnModuleDestroy {
       ['TonyAI emissions report', data.templateName],
       ['Organisation', data.organisationName],
       ['Reporting year', data.year],
-      ['Scope filter', data.subsidiaryName ?? 'All accessible subsidiaries'],
+      ...contextLabels(data.context, data.subsidiaryName),
       ['Status', data.status],
       // Stated here and not only on the Withdrawn Records sheet: a reader who
       // opens Summary and nothing else must still learn that figures left, and
@@ -704,7 +714,7 @@ export class ReportsService implements OnModuleDestroy {
     return Buffer.from(buffer);
   }
 
-  async generateCsv(user: RequestUser, q: ReportQueryDto): Promise<string> {
+  async generateCsv(user: RequestUser, q: SelectedReportQuery): Promise<string> {
     this.assertCanGenerate(user);
     const data = await this.assemble(user, q);
     // `reporting_entity` is INSERTED at position 2, so column ORDER changed:
@@ -753,7 +763,7 @@ export class ReportsService implements OnModuleDestroy {
 
   private async audit(
     user: RequestUser,
-    q: ReportQueryDto,
+    q: SelectedReportQuery,
     exportType: ReportExportType,
     recordCount: number,
     voidedCount: number,
@@ -766,7 +776,9 @@ export class ReportsService implements OnModuleDestroy {
       diff: {
         template: q.template,
         year: q.year,
-        subsidiaryId: q.subsidiaryId ?? null,
+        subsidiaryId: q.subsidiaryId || null,
+        ...(q.scope !== undefined ? { scope: q.scope } : {}),
+        ...(q.category !== undefined ? { category: q.category } : {}),
         exportType,
         recordCount,
         // What the artifact disclosed, recorded with it. The record set moves

@@ -1,22 +1,47 @@
+import type { ReportingContext, ReportingMetaResponse } from '@tonyai/shared-types';
+import { ReportingContextQueryDto, reportingContext } from '../common/reporting-context-query.dto';
 import { Controller, Get, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { ReportsService } from './reports.service';
-import { ReportMetaQueryDto, ReportQueryDto } from './dto/report-query.dto';
+import { ReportMetaQueryDto, ReportQueryDto, ReportingExportQueryDto } from './dto/report-query.dto';
 
-function filename(q: ReportQueryDto, ext: string): string {
+export function filename(q: ReportQueryDto & Pick<ReportingContext, 'scope' | 'category'>, ext: string): string {
   // Sanitize: subsidiaryId is only @IsString-validated (seed ids aren't RFC-4122
   // UUIDs), and a quote/CRLF here would corrupt the Content-Disposition header.
   const sub = q.subsidiaryId
     ? `-${q.subsidiaryId.replace(/[^A-Za-z0-9-]/g, '').slice(0, 8)}`
     : '';
-  return `tonyai-${q.template}-${q.year}${sub}.${ext}`;
+  const scope = q.scope !== undefined ? `-scope${q.scope}` : '';
+  const category = q.category ? `-${q.category.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '';
+  return `tonyai-${q.template}-${q.year}${sub}${scope}${category}.${ext}`;
 }
 
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly service: ReportsService) {}
+
+  @Get('context/meta')
+  async contextMeta(@CurrentUser() user: RequestUser, @Query() q: ReportingContextQueryDto): Promise<ReportingMetaResponse> {
+    const context = reportingContext(q);
+    return { context, data: await this.service.meta(user, q.year, q.subsidiaryId, context) };
+  }
+
+  @Get('context/pdf')
+  contextPdf(@CurrentUser() user: RequestUser, @Query() q: ReportingExportQueryDto, @Res() res: Response) {
+    return this.pdf(user, q, res);
+  }
+
+  @Get('context/excel')
+  contextExcel(@CurrentUser() user: RequestUser, @Query() q: ReportingExportQueryDto, @Res() res: Response) {
+    return this.excel(user, q, res);
+  }
+
+  @Get('context/csv')
+  contextCsv(@CurrentUser() user: RequestUser, @Query() q: ReportingExportQueryDto, @Res() res: Response) {
+    return this.csv(user, q, res);
+  }
 
   /** Completeness/status meta for the preview badge + data warning. */
   @Get('meta')
