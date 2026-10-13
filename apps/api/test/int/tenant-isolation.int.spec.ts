@@ -249,7 +249,12 @@ interface Res {
   text: string;
   /** An export's `Content-Disposition` — its file name carries the selection. */
   disposition: string | null;
+  /** Every response header but those that differ between any two calls, sorted — compared like the body. */
+  headers: string;
 }
+
+/** Headers that differ between two identical requests; a workbook's length moves with its zip (`qa-auditor` P3-2). */
+const VOLATILE_HEADERS = new Set(['date', 'etag', 'x-request-id', 'keep-alive', 'connection']);
 
 async function call(role: Role, method: string, path: string, body?: unknown): Promise<Res> {
   const headers: Record<string, string> = { authorization: `Bearer ${await tokenFor(A.users[role].id)}` };
@@ -261,21 +266,36 @@ async function call(role: Role, method: string, path: string, body?: unknown): P
   }
   const res = await fetch(`${base}${path}`, { method, headers, body: payload });
   const disposition = res.headers.get('content-disposition');
-  if (method !== 'HEAD' && res.headers.get('content-type')?.includes('spreadsheetml')) {
+  const workbook = res.headers.get('content-type')?.includes('spreadsheetml') ?? false;
+  const kept = JSON.stringify(
+    [...res.headers]
+      .filter(([name]) => !VOLATILE_HEADERS.has(name) && !(workbook && name === 'content-length'))
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+  if (method !== 'HEAD' && workbook) {
     // A workbook is a zip stamped with the time it was built: compare and
     // search what its cells say instead (`qa-auditor`).
-    return { status: res.status, text: await workbookText(Buffer.from(await res.arrayBuffer())), disposition };
+    return { status: res.status, text: await workbookText(Buffer.from(await res.arrayBuffer())), disposition, headers: kept };
   }
-  return { status: res.status, text: await res.text(), disposition };
+  return { status: res.status, text: await res.text(), disposition, headers: kept };
 }
 
 async function workbookText(buffer: Buffer): Promise<string> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
-  const lines: string[] = [];
+  // Besides the cells, what else a workbook can say — its properties (not
+  // its build times), defined names, each sheet's header and footer, cell
+  // notes (`security-rls` P3-2).
+  const { creator, lastModifiedBy, title, subject, keywords, category, description, company, manager } = workbook;
+  const lines = [JSON.stringify({ creator, lastModifiedBy, title, subject, keywords, category, description, company, manager }), JSON.stringify(workbook.definedNames.model)];
   workbook.eachSheet((sheet) => {
-    lines.push(`# ${sheet.name}`);
-    sheet.eachRow((row) => lines.push(JSON.stringify(row.values)));
+    lines.push(`# ${sheet.name}`, JSON.stringify(sheet.headerFooter));
+    sheet.eachRow((row) => {
+      lines.push(JSON.stringify(row.values));
+      row.eachCell((cell) => {
+        if (cell.note) lines.push(JSON.stringify(cell.note));
+      });
+    });
   });
   return lines.join('\n');
 }
@@ -309,9 +329,10 @@ async function snapshotB(): Promise<string> {
 type Ids = TenantData & { subsidiaryId: string; organisationId: string };
 
 const normalise = (res: Res, ids: Ids) => {
+  const swap = (text: string) => Object.values(ids).reduce((t, id) => t.split(id).join('<id>'), text);
   // An export's file name carries the first 8 characters of the selected subsidiary's id.
-  const file = Object.values(ids).reduce((t, id) => t.split(id.slice(0, 8)).join('<id>'), res.disposition ?? '');
-  return `${res.status} ${file} ${withoutTimes(Object.values(ids).reduce((t, id) => t.split(id).join('<id>'), res.text))}`;
+  const headers = Object.values(ids).reduce((t, id) => t.split(id.slice(0, 8)).join('<id>'), swap(res.headers));
+  return `${res.status} ${headers} ${withoutTimes(swap(res.text))}`;
 };
 
 interface Route {
@@ -336,6 +357,16 @@ const recordIn = (status: ActivityRecordStatus, extra: Record<string, unknown> =
   await attachEvidence(owner, A, [record.id]);
   return { recordId: record.id };
 };
+
+/** A's withdrawn 2026 Electricity record: the withdrawn ledger's and `voidedCount`'s side of a widened selection (`qa-auditor` P2-2). */
+const voidedIn = () =>
+  createRecord(owner, A, {
+    status: ActivityRecordStatus.voided,
+    periodValue: 'November',
+    voidReason: 'Int-test withdrawal A gave',
+    voidedBy: A.users.superAdmin.id,
+    voidedAt: new Date(),
+  }, { priced: true });
 
 const created = (res: Res) => res.status === 200 || res.status === 201;
 const differs = (res: Res, foreign: Res) => res.status !== foreign.status || res.text !== foreign.text;
@@ -369,7 +400,7 @@ const CONTEXT_READS: ContextRead[] = [
       && d.metrics.some((m) => m.contributingSubsidiaryIds.includes(A.subsidiaryId)),
     (d) => d.selectedSubsidiaryIds.length === 0 && d.metrics.length === 0,
   ),
-  contextRead<ReportingMetaResponse['data']>('/reports/context/meta', (d) => d.committedCount > 0, (d) => d.totalCount === 0),
+  contextRead<ReportingMetaResponse['data']>('/reports/context/meta', (d) => d.committedCount > 0, (d) => d.totalCount === 0 && d.voidedCount === 0),
 ];
 /** The context exports, each with the options that put the most of the report on the page. */
 const CONTEXT_EXPORTS = [
@@ -377,8 +408,13 @@ const CONTEXT_EXPORTS = [
   ['/reports/context/excel', '&template=ghg_protocol_detail'],
   ['/reports/context/csv', '&template=executive_summary'],
 ] as const;
-/** Unfiltered, and narrowed to the scope and category of B's figure and of `recordIn`'s record. */
-const CONTEXT_FILTERS = ['', '&scope=2&category=Electricity'] as const;
+/** Unfiltered, and narrowed by the scope, the category or both of B's figure and of `recordIn`'s record (`qa-auditor` P3-1). */
+const CONTEXT_FILTERS = ['', '&scope=2', '&category=Electricity', '&scope=2&category=Electricity'] as const;
+/** The context fields a filter sets, as the API echoes and audits them. */
+const filterContext = (filter: string): { scope?: number; category?: string } => ({
+  ...(filter.includes('scope=2') ? { scope: 2 } : {}),
+  ...(filter.includes('category=Electricity') ? { category: 'Electricity' } : {}),
+});
 const dataOf = (res: Res): unknown => (JSON.parse(res.text) as { data?: unknown }).data;
 
 const ID_ROUTES: Route[] = [
@@ -446,7 +482,7 @@ const ID_ROUTES: Route[] = [
       ['/reports/meta', '&year=2026'],
       ['/reports/csv', '&year=2026&template=executive_summary'],
       ['/reports/excel', '&year=2026&template=executive_summary'],
-      ['/reports/pdf', '&year=2026&template=executive_summary'],
+      ['/reports/pdf', '&year=2026&template=ghg_protocol_detail&includeEvidenceSummary=true'],
     ] as const
   ).map(
     ([path, rest]): Route => ({
@@ -471,8 +507,10 @@ const ID_ROUTES: Route[] = [
         name: `${method} ${path}?subsidiaryId=${filter}`,
         method,
         path: (i) => `${path}?year=2026&subsidiaryId=${i.subsidiaryId}${filter}${rest}`,
-        // A's record is listed under its subsidiary's name — which no export for
-        // B's selection may print (it names an unresolved selection by its id).
+        // A's own selection is named — in the label, and in the ledger where the
+        // template has one (the route is live; the export block below counts the
+        // records) — which no export for B's selection may print: it names an
+        // unresolved selection by its id.
         own: {
           role: 'consultant',
           prepare: recordIn(ActivityRecordStatus.approved),
@@ -507,7 +545,7 @@ describe("B's ids, through the API, as each of A's roles: the same refusal as an
       // anything else of B's may not.
       const sent = new Set(Object.values(foreignIds));
       for (const marker of markersB.filter((m) => !sent.has(m))) {
-        expect(`${foreign.disposition ?? ''} ${foreign.text}`, `${context} — leaks ${marker}`).not.toContain(marker);
+        expect(`${foreign.headers} ${foreign.text}`, `${context} — leaks ${marker}`).not.toContain(marker);
       }
     }
     expect(await snapshotB(), `${route.name} changed B's data`).toBe(before);
@@ -518,6 +556,8 @@ describe("B's ids, through the API, as each of A's roles: the same refusal as an
     const foreign = await call(route.own.role, route.method, route.path(foreignIds), route.body?.(foreignIds));
     const ok = route.own.ok ?? ((res: Res) => res.status === 200);
     expect(ok(own, foreign), `${route.name} positive control: ${own.status} ${own.text.slice(0, 300)}`).toBe(true);
+    // A's own answer carries nothing of B either (`security-rls` P3-3).
+    for (const marker of markersB) expect(`${own.headers} ${own.text}`, `${route.name} positive control leaks ${marker}`).not.toContain(marker);
   });
 });
 
@@ -574,14 +614,9 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
   });
 
   it("the report sections B's markers sit in are printed for A's own data (control: those checks above can fail)", async () => {
-    await recordIn(ActivityRecordStatus.approved)(); // backed by A's "int-test.pdf"
-    await createRecord(owner, A, {
-      status: ActivityRecordStatus.voided,
-      periodValue: 'November',
-      voidReason: 'Int-test withdrawal A gave',
-      voidedBy: A.users.superAdmin.id,
-      voidedAt: new Date(),
-    }, { priced: true });
+    // At A's site, backed by A's "int-test.pdf".
+    await recordIn(ActivityRecordStatus.approved, { locationId: dataA.locationId })();
+    await voidedIn();
     await owner.subsidiaryDenominator.create({
       data: { subsidiaryId: A.subsidiaryId, year: 2026, metric: 'revenue', value: 500000, unit: 'EUR', createdBy: A.users.dataEntry.id },
     });
@@ -590,6 +625,7 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
       expect(res.status, `${path}: ${res.text.slice(0, 200)}`).toBe(200);
       expect(res.text, `${path}: the withdrawn ledger`).toContain('Int-test withdrawal A gave');
       expect(res.text, `${path}: the ledger`).toContain(subsidiaryNameA);
+      expect(res.text, `${path}: the reporting entity`).toContain('Int-test site');
       // The PDF alone names evidence files (the workbook and the CSV count them).
       if (path.endsWith('pdf')) expect(res.text, `${path}: the evidence appendix`).toContain('int-test.pdf');
       for (const marker of markersB) expect(res.text, `${path} leaks ${marker}`).not.toContain(marker);
@@ -680,6 +716,21 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
   });
 
   it('the reporting context answers a subsidiary it is not granted as one that does not exist, and never counts it', async () => {
+    // Committed data where data_entry is granted: a widened selection would count it.
+    await recordIn(ActivityRecordStatus.approved)();
+    // Its whole accessible set, read before the ungranted subsidiary and its
+    // record exist — and after: a count carries no marker (`security-rls` P2-1).
+    const unfiltered = [...CONTEXT_READS.map(({ path }) => `${path}?year=2026`), '/reports/meta?year=2026'];
+    const answers = async () => {
+      const out: string[] = [];
+      for (const path of unfiltered) {
+        const res = await call('dataEntry', 'GET', path);
+        expect(res.status, path).toBe(200);
+        out.push(`${path} ${res.text}`);
+      }
+      return out;
+    };
+    const before = await answers();
     const ungranted = await owner.subsidiary.create({
       data: { organisationId: A.organisationId, legalName: 'Int-test subsidiary only consultants see', geographyCode: 'UK' },
     });
@@ -690,9 +741,8 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
       periodValue: 'March',
       calculation: { tCo2e: UNGRANTED_TCO2E, factorId: 'int-test-placeholder' },
     });
+    expect(await answers()).toStrictEqual(before);
     const hidden = [ungranted.legalName, ...printed(UNGRANTED_TCO2E)];
-    // Committed data where data_entry is granted: a widened selection would count it.
-    await recordIn(ActivityRecordStatus.approved)();
     const missingId = randomUUID();
     for (const { path, empty } of CONTEXT_READS) {
       const selecting = (id: string) => call('dataEntry', 'GET', `${path}?year=2026&subsidiaryId=${id}`);
@@ -701,11 +751,8 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
       expect(foreign.status, `${path}: ${foreign.text.slice(0, 200)}`).toBe(200);
       expect(dataOf(foreign), path).toStrictEqual(dataOf(missing));
       expect(empty(dataOf(foreign)), path).toBe(true);
-      // Its whole accessible set: the granted subsidiary alone.
-      const all = await call('dataEntry', 'GET', `${path}?year=2026`);
-      expect(all.status, path).toBe(200);
       for (const marker of [...hidden, ungranted.id]) {
-        expect(`${foreign.text} ${all.text}`.replaceAll(`"subsidiaryId":"${ungranted.id}"`, ''), `${path} shows ${marker}`).not.toContain(marker);
+        expect(foreign.text.replaceAll(`"subsidiaryId":"${ungranted.id}"`, ''), `${path} shows ${marker}`).not.toContain(marker);
       }
     }
     // data_entry exports nothing, whatever it selects.
@@ -799,10 +846,22 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
       await approved(2026, 'April', 2222),
       await approved(2027, 'January', 3333),
       await createRecord(owner, B, { reportingYear: 2026, periodValue: 'May' }),
+      // Withdrawals in both of A's years: a withdrawn count carries no marker (`qa-auditor` P2-1).
+      ...(await Promise.all(
+        [2025, 2026].map((reportingYear) =>
+          createRecord(owner, B, {
+            status: ActivityRecordStatus.voided,
+            reportingYear,
+            periodValue: 'August',
+            calculation: { tCo2e: 4444, factorId: 'int-test-placeholder' },
+            voidReason: 'Int-test later withdrawal B gave',
+            voidedBy: B.users.superAdmin.id,
+            voidedAt: new Date(),
+          }),
+        ),
+      )),
     ];
     const by = B.users.dataEntry.id;
-    // B's 2026 revenue exists (beforeAll): it changes; a 2025 one is new.
-    await owner.subsidiaryDenominator.update({ where: { id: revenueBId }, data: { value: 1e6 } });
     const denominators = [
       await owner.subsidiaryDenominator.create({ data: { subsidiaryId: B.subsidiaryId, year: 2025, metric: 'revenue', value: 2e6, unit: 'EUR', createdBy: by } }),
       await owner.subsidiaryDenominator.create({ data: { subsidiaryId: B.subsidiaryId, year: 2025, metric: 'headcount', value: 77, unit: 'FTE', createdBy: by } }),
@@ -817,6 +876,9 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
     const audit = await owner.auditLog.create({
       data: { userId: B.users.superAdmin.id, organisationId: B.organisationId, role: 'super_admin', action: 'update', entity: 'subsidiary', entityId: B.subsidiaryId },
     });
+    // B's 2026 revenue exists (beforeAll): it changes, last, so a failed create
+    // above cannot leave it changed for the rest of the file.
+    await owner.subsidiaryDenominator.update({ where: { id: revenueBId }, data: { value: 1e6 } });
     try {
       const after = await answers();
       for (const key of Object.keys(before)) expect(after[key], key).toBe(before[key]);
@@ -836,11 +898,12 @@ describe("the reporting context's answers to B's selection, as each of A's roles
   it.each(CONTEXT_FILTERS.flatMap((filter) => CONTEXT_READS.map((read) => [`GET ${read.path}?subsidiaryId=${filter}`, read, filter] as const)))(
     '%s',
     async (_name, { path, empty }, filter) => {
-      // A has committed data in the selected year, scope and category: an
-      // inaccessible selection widened to A's accessible set would not be empty.
+      // A has committed and withdrawn data in the selected year, scope and category:
+      // an inaccessible selection widened to A's accessible set would not be empty.
       await recordIn(ActivityRecordStatus.approved)();
+      await voidedIn();
       const missingId = randomUUID();
-      const echo = (subsidiaryId: string) => ({ year: 2026, subsidiaryId, ...(filter ? { scope: 2, category: 'Electricity' } : {}) });
+      const echo = (subsidiaryId: string) => ({ year: 2026, subsidiaryId, ...filterContext(filter) });
       for (const role of ROLES) {
         const answer = async (id: string) => {
           const res = await call(role, 'GET', `${path}?year=2026&subsidiaryId=${id}${filter}`);
@@ -870,14 +933,20 @@ describe("context exports with B's selection, as each of A's roles: the same fil
     return { res, rows: (await reportRows()).filter((r) => !seen.has(r.id)) };
   };
 
-  it.each(CONTEXT_EXPORTS.flatMap(([path, rest]) => (['GET', 'HEAD'] as const).map((method) => [method, path, rest] as const)))(
-    '%s %s',
-    async (method, path, rest) => {
-      // A's committed record in the selection's year, scope and category: a
-      // selection widened to A's accessible set would count it (recordCount 1).
+  it.each(
+    CONTEXT_FILTERS.flatMap((filter) =>
+      CONTEXT_EXPORTS.flatMap(([path, rest]) => (['GET', 'HEAD'] as const).map((method) => [method, path, filter, rest] as const)),
+    ),
+  )(
+    '%s %s?subsidiaryId=%s',
+    async (method, path, filter, rest) => {
+      // A's committed and withdrawn records in the selection's year, scope and
+      // category: a selection widened to A's accessible set would count them.
       await recordIn(ActivityRecordStatus.approved)();
+      await voidedIn();
       const missingId = randomUUID();
-      const url = (id: string) => `${path}?year=2026&subsidiaryId=${id}&scope=2&category=Electricity${rest}`;
+      const url = (id: string) => `${path}?year=2026&subsidiaryId=${id}${filter}${rest}`;
+      const filters = filterContext(filter);
       const before = await snapshotB();
       for (const role of ROLES) {
         const foreign = await audited(() => call(role, method, url(B.subsidiaryId)));
@@ -892,13 +961,14 @@ describe("context exports with B's selection, as each of A's roles: the same fil
         expect([foreign.res.status, missing.res.status], `${context}: ${foreign.res.text.slice(0, 200)}`).toStrictEqual([200, 200]);
         // The file name carries the selection, by its first 8 characters.
         expect(foreign.res.disposition, context).toBe(missing.res.disposition?.replace(missingId.slice(0, 8), B.subsidiaryId.slice(0, 8)));
-        expect(foreign.res.disposition, context).toContain(`-${B.subsidiaryId.slice(0, 8)}-scope2-electricity.`);
+        expect(foreign.res.disposition, context).toContain(`-${B.subsidiaryId.slice(0, 8)}${filters.scope ? '-scope2' : ''}${filters.category ? '-electricity' : ''}.`);
         // One generation row each, in A's organisation, by the caller — the
         // same row but for the selection it records.
         expect([foreign.rows.length, missing.rows.length], context).toStrictEqual([1, 1]);
         const [row] = foreign.rows;
         expect(row, context).toMatchObject({ organisationId: A.organisationId, userId: A.users[role].id, action: 'generate', entity: 'report' });
-        expect(missing.rows[0].diff, context).toMatchObject({ subsidiaryId: missingId, scope: 2, category: 'Electricity', recordCount: 0, voidedCount: 0 });
+        expect(missing.rows[0].diff, context).toMatchObject({ subsidiaryId: missingId, ...filters, recordCount: 0, voidedCount: 0 });
+        expect(Object.keys(missing.rows[0].diff as object).filter((k) => k === 'scope' || k === 'category').sort(), context).toStrictEqual(Object.keys(filters).sort());
         expect(row.diff, context).toStrictEqual({ ...(missing.rows[0].diff as object), subsidiaryId: B.subsidiaryId });
         // A PDF and a workbook name the filters: the selection is named by
         // the id it was given, never as every subsidiary (and never by B's name).
@@ -906,20 +976,31 @@ describe("context exports with B's selection, as each of A's roles: the same fil
           expect(foreign.res.text, context).toContain(`Selected subsidiary (${B.subsidiaryId})`);
           expect(foreign.res.text, context).not.toContain('All accessible subsidiaries');
         }
-        // Nor does it fall back to A's own ledger: A's record is listed under
-        // its subsidiary's name, which an empty selection never prints.
-        if (method === 'GET') expect(foreign.res.text, context).not.toContain(subsidiaryNameA);
+        // Nor does it fall back to A's own ledgers: A's records are listed under
+        // its subsidiary's name, which an empty selection never prints, and its
+        // withdrawal under its reason.
+        if (method === 'GET') {
+          expect(foreign.res.text, context).not.toContain(subsidiaryNameA);
+          expect(foreign.res.text, context).not.toContain('Int-test withdrawal A gave');
+        }
       }
       expect(await snapshotB(), `${method} ${path} changed B's data`).toBe(before);
 
-      // Control: A's own selection lists A's record under its name, and audits it as counted.
+      // Control: A's own selection names A's subsidiary (in its label, and in
+      // its ledger where the template has one), audits its record as counted
+      // and its withdrawal as withdrawn, and lists the withdrawal's reason.
       const own = await audited(() => call('consultant', method, url(A.subsidiaryId)));
       expect(own.res.status, own.res.text.slice(0, 200)).toBe(200);
-      expect(own.rows.map((r) => r.diff), `${method} ${path}`).toEqual([expect.objectContaining({ subsidiaryId: A.subsidiaryId, recordCount: 1 })]);
+      expect(own.rows.map((r) => r.diff), `${method} ${path}`).toEqual([
+        expect.objectContaining({ subsidiaryId: A.subsidiaryId, recordCount: 1, voidedCount: 1 }),
+      ]);
       if (method === 'GET') {
         expect(own.res.text).toContain(subsidiaryNameA);
+        expect(own.res.text).toContain('Int-test withdrawal A gave');
         expect(own.res.text).not.toContain('Selected subsidiary (');
       }
+      // A's own selection carries nothing of B either (`security-rls` P3-3).
+      for (const marker of markersB) expect(`${own.res.headers} ${own.res.text}`, `${method} ${path} leaks ${marker}`).not.toContain(marker);
     },
   );
 });
@@ -954,7 +1035,13 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
     pdf.entered = () => entered.resolve();
     try {
       const rendering = call('consultant', 'GET', '/reports/context/pdf?year=2026&template=executive_summary');
-      await entered.promise;
+      // A render refused before the printer says why, instead of timing out (`qa-auditor` P3-3).
+      let reached = false;
+      const refusedEarly = rendering.then((res) => {
+        if (!reached) throw new Error(`the render answered ${res.status} before reaching the printer: ${res.text.slice(0, 200)}`);
+      });
+      refusedEarly.catch(() => undefined); // the race reports it; once the printer is reached it is moot
+      await Promise.race([entered.promise.then(() => (reached = true)), refusedEarly]);
       for (const path of [
         csv,
         '/reports/context/excel?year=2026&template=executive_summary',
@@ -966,6 +1053,18 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
           expect(res.status, `${method} ${path}: ${res.text.slice(0, 200)}`).toBe(429);
           if (method === 'GET') expect((JSON.parse(res.text) as { code?: unknown }).code, path).toBe('rate_limited');
         }
+      }
+      // A spelling the router still answers is EXPORT work too (the trailing
+      // slash, the case: 429); the others reach no route (404). None generates
+      // a file outside the lease (`security-rls`, unverified there).
+      for (const [variant, status] of [
+        ['/reports/context/csv/', 429],
+        ['/REPORTS/CONTEXT/CSV', 429],
+        ['/reports//context/csv', 404],
+        ['/reports/context/c%73v', 404],
+      ] as const) {
+        const res = await call('superAdmin', 'GET', `${variant}?year=2026&template=executive_summary`);
+        expect(res.status, `${variant}: ${res.text.slice(0, 120)}`).toBe(status);
       }
       for (const path of ['/reports/context/meta?year=2026', ...CONTEXT_READS.map((r) => `${r.path}?year=2026`)]) {
         expect((await call('superAdmin', 'GET', path)).status, path).toBe(200);
