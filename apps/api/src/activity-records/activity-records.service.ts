@@ -638,6 +638,11 @@ export class ActivityRecordsService {
    * line names the part that differs, so a library change is told from a
    * direct writer's rewrite ("LP4-02 follow-ups" (6)) — never a value.
    *
+   * The record's own `scope` column is an input too: the snapshot does not
+   * carry it and the engine does not read it, but every total groups by it,
+   * so a scope that is not its category's is a mismatch of inputs
+   * (`security-rls` P2-1, B2 review).
+   *
    * What it does not see: the site's or subsidiary's geography, or the
    * library, changing in the milliseconds between the recompute and the
    * commit — the same as a change landing just after it (accepted, C1-a).
@@ -654,10 +659,15 @@ export class ActivityRecordsService {
       why = `recompute refused (${recomputed.refusal})`;
     } else {
       const comparison = compareSnapshots(locked.calculation, recomputed.calculation);
-      if (comparison.stale) {
+      const scopeAgrees = locked.scope === CATEGORY_SCOPE_MAP[locked.category as Category];
+      if (comparison.stale || !scopeAgrees) {
+        // `input` leads the classes' fixed order, so it is prepended.
+        const classes = scopeAgrees
+          ? comparison.classes
+          : ['input', ...comparison.classes.filter((c) => c !== 'input')];
         why = [
           comparison.legacy ? 'legacy snapshot' : null,
-          comparison.classes.length > 0 ? `${comparison.classes.join(', ')} differ` : null,
+          classes.length > 0 ? `${classes.join(', ')} differ` : null,
         ]
           .filter((part) => part !== null)
           .join('; ');

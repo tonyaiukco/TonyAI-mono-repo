@@ -336,6 +336,24 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
     }
   });
 
+  // `security-rls` P2-1 (B2 review): the totals group by the record's own
+  // `scope` column, which no snapshot carries — filed under another scope, an
+  // honest figure moved between Scope 2 and Scope 3.
+  it("refuses at the API's submit a NEW draft the service role POSTed under a scope that is not its category's", async () => {
+    const id = randomUUID();
+    try {
+      const engine = await pricedCalculation(owner, tenant, { periodValue: 'September', activityValue: 99 });
+      const row = { ...recordRow(id, 'draft', 'September'), scope: 3, calculation: engine };
+      expect((await serviceRest('POST', 'activity_records', row)).ok).toBe(true);
+      await attachEvidence(owner, tenant, [id]);
+      const outcome = await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, id));
+      expect(outcome).toBeInstanceOf(CalculationStaleError);
+      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).status).toBe(ActivityRecordStatus.draft);
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
   it("submits a draft POSTed with the engine's own snapshot for its inputs — K11 checks the figure, not who wrote the row", async () => {
     const id = randomUUID();
     try {

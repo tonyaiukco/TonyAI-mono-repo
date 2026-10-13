@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ActivityRecordStatus, Prisma, UserRole } from '@tonyai/db';
+import { CATEGORY_SCOPE_MAP, type Category } from '@tonyai/shared-types';
 import type { RequestUser } from '../../src/auth/auth.types';
 import { CalculationsService } from '../../src/calculations/calculations.service';
 import type { FactorPolicy } from '../../src/calculations/factor-policy';
@@ -266,7 +267,8 @@ export async function countTenantRows(prisma: PrismaService, tenant: Tenant) {
 /**
  * A record row of the tenant's, as given — for the owner's direct insert of a
  * state the lifecycle cannot reach (a restore's), which only the owner may
- * write; everyone else goes through `createRecord`.
+ * write; everyone else goes through `createRecord`. The scope is the
+ * category's unless given, as the API derives it (K11 refuses any other).
  */
 export function recordInput(
   tenant: Tenant,
@@ -278,7 +280,7 @@ export function recordInput(
     reportingPeriod: 'monthly',
     periodValue: 'January',
     category: 'Electricity',
-    scope: 2,
+    scope: CATEGORY_SCOPE_MAP[(data.category ?? 'Electricity') as Category] ?? 2,
     activityValue: 100,
     activityUnit: 'kWh',
     calculation: { tCo2e: 0, factorId: 'int-test-placeholder' },

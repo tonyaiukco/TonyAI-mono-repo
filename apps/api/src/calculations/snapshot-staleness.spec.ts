@@ -200,6 +200,27 @@ describe('compareSnapshots — K11 (P6)', () => {
     expect(r.stale).toBe(true);
   });
 
+  // `security-rls` P2-2 (B2 review): a key named after an `Object.prototype`
+  // member looked up a class — or a value — through the prototype, so an
+  // honest snapshot carrying `toString` or `__proto__` compared fresh.
+  it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__'])(
+    'an extra key named %s is a mismatch, at the top level and nested',
+    (key) => {
+      const withKey = (json: string) => JSON.parse(json) as Record<string, unknown>;
+      const top = withKey(`{"${key}": "x"}`);
+      expect(compareSnapshots({ ...(stored(RECOMPUTED) as object), ...top }, RECOMPUTED)).toEqual({
+        stale: true,
+        classes: ['factor'],
+        legacy: false,
+      });
+      const objectValued = withKey(`{"${key}": {}}`);
+      expect(compareSnapshots({ ...(stored(RECOMPUTED) as object), ...objectValued }, RECOMPUTED).stale).toBe(true);
+      const nested = stored(RECOMPUTED) as Record<string, Record<string, unknown>>;
+      nested.factorRelease = { ...nested.factorRelease, ...withKey(`{"${key}": {}}`) };
+      expect(compareSnapshots(nested, RECOMPUTED)).toEqual({ stale: true, classes: ['factor'], legacy: false });
+    },
+  );
+
   it('a number stored as text is a mismatch', () => {
     const r = compareSnapshots(stored({ ...RECOMPUTED, tCo2e: '0.52' }), RECOMPUTED);
     expect(r.classes).toEqual(['figure']);

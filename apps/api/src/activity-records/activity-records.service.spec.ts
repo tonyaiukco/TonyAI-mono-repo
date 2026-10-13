@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma, type ActivityRecord, type Subsidiary } from '@tonyai/db';
 import { isCalculated, PENDING_REVIEW_STATUSES,
+  CATEGORY_SCOPE_MAP,
   CATEGORIES,
   needsEvidenceBeforeSubmit,
 } from '@tonyai/shared-types';
@@ -2439,7 +2440,7 @@ describe('ActivityRecordsService — anomaly detection (VAR §4)', () => {
     // Still uncalculated when K11 recomputes it at submit.
     calc.compute.mockResolvedValue(uncalculated);
     prisma.activityRecord.findUnique.mockResolvedValue(
-      draftForSubmit({ category: 'Water', varianceReason: null, calculation: uncalculated }),
+      draftForSubmit({ category: 'Water', scope: 3, varianceReason: null, calculation: uncalculated }),
     );
     prisma.activityRecord.findMany.mockResolvedValue([
       priorMonth('January', 500),
@@ -3654,6 +3655,7 @@ describe('ActivityRecordsService — activity type (LP3-03)', () => {
       makeRecord({
         id: 'rec-s',
         category: 'Fuel',
+        scope: 1,
         activityType: 'diesel',
         activityUnit: 'litres',
         status: ActivityRecordStatus.draft,
@@ -3784,7 +3786,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
   });
 
   it('an uncalculated record recomputed as uncalculated is fresh — and is not scored', async () => {
-    const record = draft({ category: 'Water', activityUnit: 'cubic_metres', activityValue: 100, calculation: WATER });
+    const record = draft({ category: 'Water', scope: 3, activityUnit: 'cubic_metres', activityValue: 100, calculation: WATER });
     const { prisma, calc, service } = arrange(record);
     calc.compute.mockResolvedValue(WATER);
     const dto = await service.submit(dataEntry(), 'rec-k');
@@ -3793,7 +3795,7 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
   });
 
   it('an uncalculated record a factor has since covered is stale', async () => {
-    const record = draft({ category: 'Water', activityUnit: 'cubic_metres', activityValue: 100, calculation: WATER });
+    const record = draft({ category: 'Water', scope: 3, activityUnit: 'cubic_metres', activityValue: 100, calculation: WATER });
     const { service } = arrange(record);
     await staleBody(service.submit(dataEntry(), 'rec-k'));
   });
@@ -3881,6 +3883,25 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     prisma.activityRecord.findMany.mockResolvedValue([{ tCo2e: 1 }]);
     await staleBody(service.submit(dataEntry(), 'rec-k'));
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
+  });
+
+  // `security-rls` P2-1 (B2 review): the totals group by the record's own
+  // `scope` column, which the snapshot does not carry and the engine does not
+  // read — so a direct writer's Electricity row filed under Scope 3 passed
+  // K11 with an honest figure and moved its tCO₂e between scopes.
+  it.each([
+    ['submit', 3, (s: ActivityRecordsService) => s.submit(dataEntry(), 'rec-k'), draft],
+    ['approve', 1, (s: ActivityRecordsService) => s.approve(superAdmin(), 'rec-k'), submitted],
+  ] as const)('%s refuses a record whose scope is not its category’s (Electricity filed as Scope %s)', async (op, scope, act, fixture) => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { prisma, service } = arrange(fixture({ scope }));
+      await staleBody(act(service));
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(String(warn.mock.calls[0][0])).toBe(`calculation_stale: ${op} of record rec-k refused — input differ`);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   // --- Between the recompute and the lock (C1-a, C2-A).
@@ -3977,6 +3998,8 @@ describe('ActivityRecordsService — a typed category’s record names its type 
     makeRecord({
       id: 'rec-t',
       category,
+      // The category's own scope: K11 refuses any other (P2-1).
+      scope: CATEGORY_SCOPE_MAP[category as keyof typeof CATEGORY_SCOPE_MAP],
       activityType: null,
       activityUnit: 'litres',
       status: ActivityRecordStatus.draft,

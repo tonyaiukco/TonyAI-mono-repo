@@ -44,6 +44,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * A key's OWN value, never one inherited from `Object.prototype`: a stored
+ * key named `toString`, `constructor` or `__proto__` (`JSON.parse` makes it an
+ * own property) must read as itself, not as the prototype's member — or it
+ * compares equal to it, or looks a class up (`security-rls` P2-2, B2 review).
+ */
+function own(object: Record<string, unknown>, key: string): unknown {
+  return Object.prototype.hasOwnProperty.call(object, key) ? object[key] : undefined;
+}
+
+/**
  * Structural equality of two JSON values. Key order is irrelevant — `jsonb`
  * reorders keys — and a key holding `undefined` is an absent key, as it is
  * once serialised. Numbers compare exactly: the engine is deterministic and
@@ -62,7 +72,7 @@ function sameJson(a: unknown, b: unknown): boolean {
   if (!isPlainObject(a) || !isPlainObject(b)) return false;
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const key of keys) {
-    if (!sameJson(a[key], b[key])) return false;
+    if (!sameJson(own(a, key), own(b, key))) return false;
   }
   return true;
 }
@@ -99,13 +109,13 @@ export function compareSnapshots(
   const differing = new Set<StalenessClass>();
   const keys = new Set([...Object.keys(storedObject), ...Object.keys(recomputedObject)]);
   for (const key of keys) {
-    if (!sameField(key, storedObject[key], recomputedObject[key])) {
-      differing.add(CLASS_OF[key] ?? 'factor');
+    if (!sameField(key, own(storedObject, key), own(recomputedObject, key))) {
+      differing.add((own(CLASS_OF as Record<string, unknown>, key) as StalenessClass | undefined) ?? 'factor');
     }
   }
   const legacy =
     isCalculated(storedObject as unknown as ActivityCalculationSnapshot) &&
     storedObject.snapshotSchema === undefined;
   const classes = CLASS_ORDER.filter((c) => differing.has(c));
-  return { stale: legacy || classes.length > 0, classes, legacy };
+  return { stale: legacy || differing.size > 0, classes, legacy };
 }
