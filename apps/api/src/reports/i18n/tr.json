@@ -1,0 +1,10 @@
+{
+  "subsidiary": "Bağlı şirket filtresi",
+  "scope": "Kapsam filtresi",
+  "category": "Kategori filtresi",
+  "allSubsidiaries": "Erişilebilen tüm bağlı şirketler",
+  "allScopes": "Tüm kapsamlar",
+  "allCategories": "Tüm kategoriler",
+  "selectedSubsidiary": "Seçili bağlı şirket ({id})",
+  "selectedScope": "Kapsam {scope}"
+}

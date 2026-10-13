@@ -531,9 +531,9 @@ Period locking (FR §4.2): a `super_admin` closes one subsidiary's reporting per
 
 ### Reporting context contract (LP3-02 PR A)
 
-**PR A publishes the shared contract. The summary, tracking-matrix and intensity
-context read routes are implemented; report context routes and annual screen
-wiring remain pending.** Existing routes and clients
+**PR A publishes the shared contract. Context summary, tracking-matrix, intensity,
+report metadata and PDF/Excel/CSV routes are implemented. Annual screen and URL
+wiring remains pending.** Existing routes and clients
 retain their response shapes. The expanded `REPORTING_YEARS` list already affects
 existing year selectors: the accepted range is **2000–2100 inclusive**, matching
 the API's existing DTO bounds. `DEFAULT_REPORTING_YEAR` stays **2026** (D06),
@@ -585,8 +585,18 @@ mismatched acknowledgement.
 The separate paths make an older API refuse instead of silently ignoring new
 filters; clients never fall back to a legacy path. Exports use the same context
 as preview/meta and apply it to totals, committed and withdrawn ledgers, labels
-and the generation audit. Binary responses have no context acknowledgement: their
-implementation needs artifact-content tests. A JSON acknowledgement likewise
+and the generation audit. Binary responses have no context acknowledgement. PDF and Excel display the
+selected subsidiary, scope and category; context filenames include scope/category
+alongside year/subsidiary. CSV retains its rectangular English machine-key ledger,
+with no metadata preamble: its filename and generation audit carry the selection,
+including an empty export. Tests inspect artifacts and filter predicates.
+New selection labels have EN/TR server catalogues; current writers use English
+consistently with the existing whole report. LP4-03 still owns whole-report
+language selection, category labels and language audit attribution.
+This also changes legacy artifact layout: Excel Summary now has subsidiary,
+scope and category filter rows 4–6 (Status moves from row 5 to row 7); the old
+"Scope filter" row named a subsidiary, while the new one names the actual scope.
+The legacy PDF header gains the same three filter label lines. A JSON acknowledgement likewise
 does not prove arithmetic, tenant isolation or a consistent database snapshot.
 
 For **D14 intensity**, the new contract permits only `revenue` for an
@@ -609,8 +619,8 @@ unknown fields, repeated parameters and conflicting scope/category filters with
 The service uses one nonblank-subsidiary predicate for access selection and D14,
 including internal callers; context HTTP validation still rejects blank selectors.
 Both `GET /intensity` and `GET /intensity/context` now enforce D14; the legacy
-route retains its existing response envelope. Report context routes remain
-reserved until their context filtering and EXPORT classification ship together.
+route retains its existing response envelope. Report context routes are
+implemented with context filtering and EXPORT classification shipped together.
 
 The filtered tracking matrix must filter both records and emitted category cells,
 then recompute per-row `totalTCo2e`, `uncalculatedRecordCount`, `completeCount` and

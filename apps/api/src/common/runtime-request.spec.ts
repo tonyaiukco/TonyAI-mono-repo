@@ -24,6 +24,9 @@ describe('verified-user runtime admission', () => {
     ['RATE_IMPORT_PER_MINUTE', 'POST', '/api/v1/bulk-upload/activity-records'],
     ['RATE_SUBMIT_PER_MINUTE', 'POST', '/api/v1/activity-records/bulk-submit'],
     ['RATE_EXPORT_PER_MINUTE', 'GET', '/api/v1/reports/pdf'],
+    ['RATE_EXPORT_PER_MINUTE', 'GET', '/api/v1/reports/context/pdf'],
+    ['RATE_EXPORT_PER_MINUTE', 'HEAD', '/api/v1/reports/context/excel'],
+    ['RATE_EXPORT_PER_MINUTE', 'GET', '/api/v1/reports/context/csv'],
   ])('%s accepts its full budget and refuses the next request independently per verified user', async (key, method, path) => {
     vi.stubEnv(key, '2');
     const guard = new RuntimeAuthGuard(auth as never, policy());
@@ -34,6 +37,29 @@ describe('verified-user runtime admission', () => {
     await expect(guard.canActivate(extra.context)).rejects.toBeInstanceOf(CapacityError);
     expect(extra.res.setHeader).toHaveBeenCalledWith('Retry-After', 60);
     const other = request(path, method, 'b'); expect(await guard.canActivate(other.context)).toBe(true); other.req.runtimeLease.release();
+  });
+  it('shares one export quota across alternating context and legacy paths for the same user', async () => {
+    vi.stubEnv('RATE_EXPORT_PER_MINUTE', '2');
+    const guard = new RuntimeAuthGuard(auth as never, policy());
+    for (const path of ['/api/v1/reports/context/csv', '/api/v1/reports/pdf']) {
+      const admitted = request(path, 'GET', 'same-user');
+      expect(await guard.canActivate(admitted.context)).toBe(true);
+      admitted.req.runtimeLease.release();
+    }
+    const third = request('/api/v1/reports/context/excel', 'GET', 'same-user');
+    await expect(guard.canActivate(third.context)).rejects.toBeInstanceOf(CapacityError);
+    expect(third.res.setHeader).toHaveBeenCalledWith('Retry-After', 60);
+  });
+  it('shares the reports concurrency lease across legacy and context exports', async () => {
+    vi.stubEnv('REPORT_CONCURRENCY', '1');
+    const guard = new RuntimeAuthGuard(auth as never, policy());
+    const first = request('/api/v1/reports/context/csv', 'GET', 'a');
+    expect(await guard.canActivate(first.context)).toBe(true);
+    await expect(guard.canActivate(request('/api/v1/reports/pdf', 'GET', 'b').context)).rejects.toBeInstanceOf(CapacityError);
+    first.req.runtimeLease.release();
+    const next = request('/api/v1/reports/context/excel', 'GET', 'b');
+    expect(await guard.canActivate(next.context)).toBe(true);
+    next.req.runtimeLease.release();
   });
   it('holds global and per-user mutation permits until the work settles, even after client disconnect', async () => {
     const guard = new RuntimeAuthGuard(auth as never, policy());

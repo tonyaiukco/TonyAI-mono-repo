@@ -1,4 +1,5 @@
 import type {
+  ReportingContext,
   ActivityRecordStatus,
   EmissionsSummary,
   FactorStatus,
@@ -193,6 +194,7 @@ export interface ReportWithdrawnTotals {
 
 /** Everything a report renders — assembled once, shared by PDF/Excel/CSV. */
 export interface ReportData {
+  context: ReportingContext;
   template: ReportTemplate;
   templateName: string;
   organisationName: string;

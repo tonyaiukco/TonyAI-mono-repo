@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { ReportingContextQueryDto } from '../../common/reporting-context-query.dto';
 import type { ReportTemplate } from '@tonyai/shared-types';
 
 const TEMPLATES: ReportTemplate[] = ['executive_summary', 'ghg_protocol_detail'];
@@ -42,4 +43,21 @@ export class ReportMetaQueryDto {
   @IsOptional()
   @IsString()
   subsidiaryId?: string;
+}
+
+/** Additive context exports: strict booleans, with the canonical required context. */
+export class ReportingExportQueryDto extends ReportingContextQueryDto {
+  @IsString()
+  @IsIn(TEMPLATES)
+  template!: ReportTemplate;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' ? true : value === 'false' ? false : value)
+  @IsBoolean()
+  includeMethodologyNotes?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' ? true : value === 'false' ? false : value)
+  @IsBoolean()
+  includeEvidenceSummary?: boolean;
 }
