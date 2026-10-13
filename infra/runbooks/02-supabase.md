@@ -94,3 +94,32 @@ plain Consumption. SMTP/invitation and production PITR are LP2-04.
 API contract reviewed against [Supabase Management API](https://supabase.com/docs/reference/api/introduction)
 and its public OpenAPI schema on 2026-10-03. Region availability, actual API
 responses, key propagation and the bundled CA chain remain owner-run evidence.
+
+## LP4-02 loader handoff (per environment; owner-run, NOT RUN here)
+
+After `20261011120000_lp4_02_loader`, provision the separate
+`tonyai_factor_loader` login using [runbook 05](05-rotation.md#provision-the-loader-login-per-environment).
+The owner uses `\password tonyai_factor_loader`, then
+`ALTER ROLE tonyai_factor_loader LOGIN`; no member login or `SET ROLE` substitute
+satisfies the session-based TA013 guard. The migration creates it NOLOGIN and
+NOBYPASSRLS. Never run the loopback-only `provision-loader` helper against hosted
+projects or a tunnel to one.
+
+Use the project's Frankfurt **session pooler, port 5432**, with user
+`tonyai_factor_loader.<project-ref>` and the same strict CA verification as the
+runtime URL. Qualify the chosen endpoint with runbook 05's read-only transaction
+lasting at least 300 seconds through many short statements, recording statement,
+idle-in-transaction and transaction timeouts without overriding them. A single
+300-second statement does not represent a loader transaction. Transaction port
+6543 is not qualified for this procedure. Verify the two bare identities with `infra/scripts/loader-identity.mjs`
+before any load; retain hosted timeout/endpoint evidence separately.
+
+Store each environment's credential as its **own private password-manager
+secret**, separate from the owner and runtime entries. There is no new Azure
+resource. Never put it in `database-url`, `direct-url`, a release manifest, the
+API Container App environment, or any Key Vault reference the API can read.
+Never log it. Runbook 05 covers strict TLS, the read-only release mount, dry-run
+and apply evidence, rotation and revocation. Between loads set NOLOGIN, terminate
+all open loader sessions and verify fresh-login refusal; password expiry or
+NOLOGIN alone does not close an existing session. Provision again after moving
+to a new Supabase project; a data-only dump does not carry this login/password.

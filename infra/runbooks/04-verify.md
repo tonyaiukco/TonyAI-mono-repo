@@ -21,6 +21,8 @@ Inspect the secret-level role assignments in the portal as well: API has Secrets
 User on the two runtime secrets and, when enabled, `smtp-password` only; `direct-url` has no API/web/deployer grant.
 Confirm the selected `database-url` uses `tonyai_runtime.<project-ref>` and the
 owner `direct-url` is absent from every API/job environment and secret reference.
+Confirm the loader credential is also absent from the API environment and every
+Key Vault reference it can read; it stays in its own private operator secret.
 Run runbook 05's [Runtime connection and privilege evidence](05-rotation.md#runtime-connection-and-privilege-evidence)
 procedure: `runtime-identity.mjs && runtime-role.mjs check` using the same
 `DATABASE_URL`. Require both checks to pass and attach their full output,
@@ -157,8 +159,22 @@ objects and never replaces the private post-restore report review.
 A logical restore never goes into a database that already holds data. The target
 is a newly created, isolated Supabase project in the source's region, prepared through runbook 02
 (including both buckets from its reconciliation) and migrated through runbook 03
-§3.2 **at the source's deployed SHA**. Its schema comes only from the committed
-migration chain, never from a dump. Nothing else may write to it before the load.
+§3.2 **at the dump's own migration head**, using the source SHA recorded when the
+dump was taken, not today's latest schema. Its schema comes only from that
+committed migration chain, never from a dump. Nothing else may write to it before
+the load. Restore the data first, reconcile with that matching head's checker,
+then migrate forward to the chosen deployment candidate and reconcile again.
+
+**LP4-02 boundary:** a pre-B1 data-only dump loaded into a post-B1 schema lacks
+`sealed_at`. Nonwithdrawn releases remain unsealed (nothing prices); withdrawn
+releases fail `factor_releases_withdrawn_sealed_check`, even in replica mode.
+Never patch seals or invent events to force a mismatched restore. Load into its
+own schema head, then apply `20261011120000_lp4_02_loader` in order: it seals
+existing releases without back-filled `sealed` events. A B1-or-later dump must
+restore its original seals and `factor_release_events` together, through the
+owner in the **same replica-mode transaction** below. Do not run the loader CLI
+for a restore, load events separately or reseal restored releases. All hosted
+restore steps in this handoff are **NOT RUN**.
 
 Use one PostgreSQL 17 client installation, 17.6 or newer, for `pg_dump`,
 `pg_restore` and `psql`: an older `psql` cannot read the `\restrict` lines that a
@@ -232,14 +248,14 @@ rules stepped aside:
 ```bash
 psql -X -At -c "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name" | diff source-migrations.txt -
 pg_restore --file=tonyai-data.sql tonyai-data.dump
-psql -X -v ON_ERROR_STOP=1 --single-transaction -c 'SET session_replication_role = replica' -f tonyai-data.sql
+psql -X -v ON_ERROR_STOP=1 --single-transaction -c 'SET LOCAL session_replication_role = replica' -f tonyai-data.sql
 psql -X -At -f row-counts.sql | diff source-counts.txt -
 ```
 
 - **Both `diff`s must print nothing.** A different migration list means the target
   was not migrated at the source's SHA: stop before loading. A different row count
   means the load is incomplete.
-- **`session_replication_role = replica`** may be set only by the owner. It lets
+- **`SET LOCAL session_replication_role = replica`** may be set only by the owner. It lets
   the load write what the dump holds: the factor library's load rules, its record's
   writers and the slot rule step aside, while the update, delete and truncate
   guards do not. Afterwards the owner reconciliation check scans for mixed record
@@ -261,8 +277,30 @@ psql -X -At -f row-counts.sql | diff source-counts.txt -
   cleaned.
 
 Then run the [owner reconciliation check](05-rotation.md#owner-reconciliation-check)
-on the target from the deployed SHA. It must exit 0 with no problem line and no
-"not reconciled" line. Continue with steps 2–4 above (Storage reconciliation and
+on the target from the dump's matching source SHA. It must exit 0 with no problem
+line and no "not reconciled" line. Migrate forward through runbook 03 to the
+selected candidate (B1 requires B2 or the owner's explicit gap acceptance), then
+repeat the check from that candidate's SHA. After B1, require zero from
+`SELECT count(*) FROM factor_releases WHERE sealed_at IS NULL` and final line:
+
+```text
+tonyai_runtime and tonyai_factor_loader on <host>: privileges as intended
+```
+
+Retain both roles' stdout/stderr, including
+`! tonyai_factor_loader can also reach …` warnings. Any `- …` problem for loader
+privileges, another library writer, `session_replication_role` privilege, unsealed
+releases or an event mismatch blocks reopening. See the exact examples in
+[runbook 05](05-rotation.md#both-role-evidence-and-refusal-lines). Exit 0 through
+the runtime alone may say the library's record was not reconciled; that is not
+restore acceptance. The owner's check must read `factor_release_events` and
+complete reconciliation **before traffic reopens**. It compares recorded counts,
+not every restored value/timestamp; it does not close follow-up (14).
+
+Provision the loader login again on the **new project** using runbooks 02/05,
+with a fresh, separate private credential and its own identity evidence. Then
+set it NOLOGIN, terminate its sessions and prove closure; a data-only dump does
+not restore role passwords. Continue with steps 2–4 above (Storage reconciliation and
 sign-off), with the reconcile CLI's environment pointing at the **target** project.
 A shell still holding the source's credentials would run `--forget-uploads`
 against the live database.
