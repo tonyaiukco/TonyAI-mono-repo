@@ -3932,6 +3932,34 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     }
   });
 
+  it('the scope is judged on the record as LOCKED, not as first read; a period moved meanwhile is a lost race', async () => {
+    // The scope is no engine input, so a change between the read and the
+    // lock is caught only because the locked row is read (`qa-auditor`
+    // re-review, mutant S2). A period that changed is the lock protocol's
+    // own lost race (`withLockedRecord`), before K11.
+    const seen = draft();
+    const scope = arrange(seen);
+    scope.prisma.activityRecord.findUnique.mockResolvedValueOnce(seen).mockResolvedValueOnce({ ...seen, scope: 3 });
+    await staleBody(scope.service.submit(dataEntry(), 'rec-k'));
+    const period = arrange(seen);
+    period.prisma.activityRecord.findUnique.mockResolvedValueOnce(seen).mockResolvedValueOnce({ ...seen, periodValue: 'annual' });
+    await expect(period.service.submit(dataEntry(), 'rec-k')).rejects.toBeInstanceOf(RecordChangedError);
+  });
+
+  it('a scope mismatch beside a figure mismatch logs both, input first', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { service } = arrange(draft({ scope: 3, calculation: STALE_FIGURE }));
+      await staleBody(service.submit(dataEntry(), 'rec-k'));
+      expect(String(warn.mock.calls[0][0])).toBe('calculation_stale: submit of record rec-k refused — input, figure differ');
+      const both = arrange(draft({ scope: 3, calculation: { ...FRESH_SNAPSHOT, inputValue: 1 } }));
+      await staleBody(both.service.submit(dataEntry(), 'rec-k'));
+      expect(String(warn.mock.calls[1][0])).toBe('calculation_stale: submit of record rec-k refused — input differ');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   // --- Between the recompute and the lock (C1-a, C2-A).
 
   it('inputs changed between the read and the lock: record_changed, not a verdict on the new inputs', async () => {
@@ -4099,6 +4127,22 @@ describe('ActivityRecordsService — a typed category’s record names its type 
       untyped('Water', { activityUnit: 'cubic_metres', calculation: water.calc.snapshot }),
     );
     expect((await water.service.submit(dataEntry(), 'rec-t')).status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it('is checked before K11 at approve too: the reviewer is told the record lacks its type, not to have it saved again', async () => {
+    // The real pre-LP3-03 case (`qa-auditor` re-review): an untyped submitted
+    // record whose snapshot is the old, untagged one.
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { prisma, service } = build(1);
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        untyped('Fuel', { status: ActivityRecordStatus.submitted, calculation: { tCo2e: 2.6, factorId: 'factor-1' } }),
+      );
+      await refusalOf(service.approve(superAdmin(), 'rec-t'));
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('is checked before K11: an untyped record with a stale figure is told to name its type, and nothing is logged stale', async () => {

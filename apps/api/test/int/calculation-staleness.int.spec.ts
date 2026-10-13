@@ -287,6 +287,23 @@ describe('K11 — a snapshot from before LP3-03', () => {
 });
 
 describe('C8 — an untyped record of a typed category is not committed', () => {
+  it('refuses at approve an untyped Fuel record submitted before the rule, its snapshot the old one — named its type, not stale', async () => {
+    const record = await createRecord(owner, tenant, {
+      reportingYear: 2026,
+      periodValue: 'June',
+      category: 'Fuel',
+      activityValue: 10,
+      activityUnit: 'litres',
+      calculation: { tCo2e: 0.026841, factorId: 'pre-lp3-03' },
+      status: ActivityRecordStatus.submitted,
+    });
+    const refused = await failure(lifecycleServices(runtime).records.approve(tenant.users.superAdmin, record.id));
+    expect(refused).toBeInstanceOf(CalculationInputError);
+    expect((refused as CalculationInputError).code).toBe('activity_type_required');
+    expect(logged()).toEqual([]);
+    expect((await row(record.id)).status).toBe(ActivityRecordStatus.submitted);
+  });
+
   it("refuses at submit an untyped Fuel draft a direct writer inserted with the engine's own figure; named its type and saved, it submits", async () => {
     // The seed prices untyped Fuel (`unspecified`, a placeholder), so the
     // recompute alone finds this draft fresh: C8 is what refuses it.
