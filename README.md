@@ -884,6 +884,191 @@ its queries (the client already rejects extraneous, duplicate or unordered respo
 cover every legacy list call in e2e fixtures. Deadline finalization must write
 the batch audit row after settled work, including the `failed` closing path.
 
+
+## Inventory coverage and report datasets (LP3-04 contract)
+
+`ReportDataset`, `InventoryBoundarySnapshot` and `ReportIssuance` are additive,
+**dormant** contracts exported by `@tonyai/shared-types`. Existing `ReportStatus`,
+`ReportMetaDTO`, context routes and report assembly are unchanged. No boundary
+storage, dataset capture, final-issuance gate or retained-PDF endpoint is shipped
+by this contract PR. In particular, today's count-based "approved" badge does
+not certify a complete inventory.
+
+The dataset records one bounded, consistent capture of the declared boundary,
+records and their unchanged calculation snapshots, evidence references, period
+locks and factor/conversion release standing. Future assembly must read these in
+one consistent database snapshot, retain the result, and derive every total and
+format from it. Renderers must not query current metadata separately. Capture
+and persistence happen before rendering; an issuance exists only after the
+immutable dataset and exact PDF bytes are retained. Storage failures require a
+recoverable implementation, not a successful issuance with a missing artifact.
+
+- **Boundary:** `super_admin` owns per-year decisions. A boundary version is
+  immutable once confirmed or captured into any dataset. `entities` retains
+  every boundary company/site operating in any reporting-year month and its
+  actual first/last month; sources at that entity must agree with those months.
+  D11 chooses company or sites and one activity cadence per subsidiary/year/category,
+  across all activity types. `attribution` holds exactly one policy per boundary
+  subsidiary × Scope 1/2 category. A missing or duplicate policy, or a `sites`
+  policy with no operating site entity, raises a final-blocking
+  `applicability_undetermined` gap naming the company entity and category.
+  For every boundary subsidiary and Scope 1/2 category,
+  every operating site (or the company entity for company attribution) has exactly
+  one `applicability` decision: included, excluded with a nonblank reason, or
+  undetermined. Missing cells raise `applicability_undetermined`, identifying the
+  entity and category even if no source exists, and block final. Included cells
+  name a nonempty set of matching included mapped sources. Every included mapped
+  source is named by exactly one included cell selected by D11, with matching
+  `(subsidiaryId, locationId, category)`. Excluded and undetermined cells hold no
+  included source. A breach is an invalid boundary (`attribution_conflict`); its
+  affected records raise `unmapped_record` and are never counted. Included sources are
+  unique by `(subsidiaryId, locationId, category, activityType)`; two named meters
+  sharing a record identity cannot both claim one record. Obligations exhaust
+  active months at the category cadence, without gaps/overlaps, clipped to actual
+  operating months. Unsupported included or undetermined sources raise
+  `unsupported_source` and block final. Unsupported sources excluded with a
+  nonblank reason are named exclusions: disclosed, never counted, and do not
+  block final. Exclusions have no amount. D05's pilot source list remains external.
+- **Review:** disjoint approved, unapproved and voided sets exhaust captured records.
+  The approved set includes both `approved` and `locked`: a period lock flips
+  approved records to locked. Final requires every satisfying record in that set.
+- **Coverage:** included activity and evidence obligations are assessed separately
+  from review. Voided records never appear in coverage obligation `recordIds` or
+  satisfy activity/evidence periods. Only-voided obligations are `missing` with a
+  `missing_record` gap; after D04 re-entry only the replacement can satisfy them.
+  Only non-voided records in `COUNTED_STATUSES` (`submitted`, `under_review`,
+  `approved`, `locked`) satisfy **activity** coverage and appear in obligation
+  `recordIds`. Draft/rejected-only slots remain missing with `missing_record`.
+  Evidence coverage remains independent of this activity-status requirement.
+  Evidence references' `recordIds` are a subset of captured `records`. Until an
+  evidence-period schema exists, only a linked non-voided record's own period
+  assigns evidence: an annual link cannot satisfy monthly invoices. The source
+  declares evidence cadence (or none), and each required evidence period retains
+  a result and assigned file IDs. Unknown assignments remain missing.
+  Every non-voided captured record must attach to exactly one included obligation.
+  Otherwise `unmapped_record` blocks final and the record is never counted. This
+  includes records outside boundary subsidiaries, excluded/undetermined/unsupported
+  sources, months outside operation, and D11 attribution mismatches. Conflicting
+  records are listed in gaps, never silently dropped or included in totals.
+- **Provenance:** each non-voided record's calculation standing; both factor and
+  conversion participate. Legacy, uncalculated, placeholder, fixture and withdrawn
+  paths cannot certify final. Gas coverage and a declared year fallback are
+  disclosed separately; an approved sourced fallback is not automatically an error.
+  D09's inventory-year GWP set must also be consistent across counted records;
+  different authoritative GWP sets still block final (`gwp_set_mismatch`).
+  CO2-only paths may have null GWP metadata without introducing another set.
+- **Scopes and zero:** counted records are non-voided, in `COUNTED_STATUSES`,
+  and attached to exactly one included obligation under D11. Attribution-conflicting
+  or unmapped rows are never summed. Scope 1/2 `tCo2e` is the sum of calculated
+  figures from its counted records, or null when none is calculated. An actual
+  calculated zero is distinct from missing data. `covered` requires every included
+  obligation of that scope satisfied, no gap for that scope, and every counted
+  record calculated; otherwise `partial`.
+  Scope 3 is `not_covered` with no amount; its records (including Water) are outside
+  Scope 1/2 assessments. A Scope 3 context yields an empty partial extract.
+
+Final issuance requires a confirmed complete boundary, every included obligation
+satisfied by approved or locked records, locked periods, no coverage/attribution
+gap, authoritative calculations and consistent GWP sets. Lock keys match exactly
+on `(subsidiaryId, reportingYear, reportingPeriod, periodValue)`; an annual obligation needs
+an `Annual` lock, not twelve monthly locks. `selection === 'extract'` always
+produces `partial` with `filtered_extract`, even when selected records are approved.
+Final has no gaps; partial has at least one. These are dormant producer requirements.
+
+For **both dataset and issuance**, every lookup (capture, list, metadata, PDF
+retrieval and CSV/Excel projection) first requires requester `organisationId` to
+match dataset `organisationId` (and issuance `organisationId`). Then require a
+**nonempty** referenced-subsidiary set computed from the built dataset: explicit
+`context.subsidiaryId`, boundary subsidiaries/entities/applicability/sources/
+attribution, records, evidence, locks, coverage-gap entities and resolved IDs.
+Every referenced ID must be within the requester's **current** access on every
+request. Empty sets fail closed. Capturers and issuers have no bypass; `datasetId`,
+`issuanceId`, `artifactId` and fingerprints are never capabilities. Refusals are
+indistinguishable from not-found. Never redact retained data. All-accessible
+is not all-owned: an inventory selection covers the entire declared boundary.
+
+`datasetId` identifies retained facts; `issuanceId` identifies a particular
+language/template/renderer output. PDF, CSV and Excel projections of the same
+dataset must carry its identity and fingerprint and reconcile. Re-downloading an
+issuance retrieves the retained PDF bytes, not a regeneration. Later withdrawal
+of a factor release changes neither those bytes nor the retained dataset; a new
+capture discloses its current standing without recalculating historic records.
+An issuance is append-only like `audit_log`: no field is ever updated or
+re-pointed. Creation verifies `datasetFingerprint` against the retained dataset's
+recomputed fingerprint with the same canonicalization tag, and `pdf.fingerprint`
+against SHA-256 of the stored bytes. Status and gaps derive solely from the
+retained dataset; corrections require a new capture or issuance.
+Opaque artifact IDs replace signed URLs in retained metadata. Retention duration
+and erasure/offboarding exceptions remain D20/D21 and legal-owner decisions.
+
+**Fingerprint encoding, version `tonyai-report-dataset-v1`:** take the complete
+`ReportDataset` except its top-level `datasetId`, `capturedAt` and `fingerprint`.
+All other fields, including boundary versions, actor IDs, record timestamps,
+calculation snapshots, labels, evidence hashes and release standing, participate.
+Normalize typed timestamps to `Date.prototype.toISOString()` spelling (UTC with
+milliseconds, e.g. `2026-10-11T00:00:00.000Z`) before capture; retained calculation
+snapshots remain unchanged and their producer must already supply canonical
+values. Optional absent properties are omitted before canonicalization; a present
+key or array element whose value is `undefined` is rejected, never silently
+removed or changed to null. Null is distinct from omission. Reject nonfinite
+numbers and non-JSON objects: only null, booleans, strings, finite numbers, dense
+arrays and plain objects with `Object.prototype` or null prototype are accepted;
+Date instances, Decimal, Buffer, class instances, accessors, symbol/non-enumerable
+object properties and custom `toJSON` serialization are refused. Arrays permit
+only own index properties 0…length−1 with no holes, plus the standard `length`;
+custom array properties are refused. Null-prototype
+objects use the same own enumerable string-key representation as plain objects.
+
+Reject duplicate record/evidence/release/source IDs within each named collection;
+entity identity is `(subsidiaryId, locationId)`, with null meaning company. Boundary
+subsidiary IDs, entity keys, attribution `(subsidiaryId, category)` keys and
+applicability `(subsidiaryId, locationId, category)` keys are unique;
+obligation IDs are unique across the entire boundary, not only
+one source. Reference-ID lists are sets and cannot repeat IDs. Recursively sort
+object keys by UTF-16 code-unit order. Recursively canonicalize array members and
+sort their resulting JSON strings by that same order (arrays here are semantic
+sets; preserve multiplicity while rejecting forbidden duplicates).
+Encode keys/strings/numbers with ECMAScript `JSON.stringify`, no whitespace,
+UTF-8, no BOM; negative zero becomes zero. Do not normalize Unicode or round
+quantities. For non-JavaScript producers see [RFC 8785 §§3.2.2–3.2.4](https://www.rfc-editor.org/rfc/rfc8785#section-3.2.2)
+and [ECMAScript Number::toString](https://tc39.es/ecma262/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-number-tostring).
+This format differs from RFC 8785 by sorting semantic-set arrays. Compare dataset
+fingerprints only when canonicalization tags match. SHA-256 uses 64 lowercase
+hexadecimal characters; the PDF fingerprint hashes its exact stored bytes.
+Hashing/serialization is a later server implementation; this package introduces
+no hashing runtime or claim of generated fingerprints.
+
+Contract acceptance examples (not executed database/UAT evidence):
+
+| Captured facts | Required interpretation |
+| --- | --- |
+| One approved January record, eleven missing months | Approved existing record; incomplete coverage; partial issuance |
+| Jan–Nov approved and calculated, December a calculated draft | December activity missing; missing_record; total covers Jan–Nov; Scope 2 partial and partial issuance |
+| Approved record voided, not re-entered | Obligation missing; withdrawal disclosed; partial |
+| Voided then re-entered and approved | Satisfied by the replacement only; locks/evidence/provenance still required |
+| Confirmed boundary omits a site/category cell | applicability_undetermined; final blocked |
+| Missing attribution policy for a boundary subsidiary/category | applicability_undetermined naming the company entity and category; final blocked |
+| Included source under an excluded cell | Invalid boundary: attribution_conflict; affected records unmapped_record and never counted; partial |
+| Excluded fleet has an approved diesel record | unmapped_record; not counted; partial |
+| Site opens in July but has an approved March record | unmapped_record outside operating months; not counted; partial |
+| Scope 2 obligations satisfied but one counted record uncalculated | Partial coverage; only calculated figures summed, or null if none |
+| Empty referenced-subsidiary set or a requester from another organisation | Dataset/issuance lookup refused indistinguishably from not-found |
+| Site opens in July | July–December obligations only, independently of when its database row was created |
+| Applicable source lacks a usable factor | Named gap/uncalculated provenance; never zero; partial |
+| No fleet, explicitly excluded with a reason | Named exclusion, no fleet obligations and no fleet amount |
+| Unsupported source excluded with reason (heat: "No purchased heat") | Named exclusion disclosed, never counted; no unsupported_source gap and does not block final |
+| Approved calculated zero-consumption record | Measured zero; approval, evidence, lock and provenance rules still apply |
+| Authoritative factor plus placeholder conversion | Non-authoritative calculation; final blocked |
+| Factor release withdrawn after an issuance | Old PDF unchanged; next capture discloses withdrawal |
+| Annual record but missing monthly invoices | Evidence gap remains; annual granularity does not close it |
+| Filtered subset of an otherwise complete inventory | Partial extract, never a final whole-inventory claim |
+
+Implementation follows the shared-contract merge. Any schema slot follows
+Claude Code's LP4-02 PR B (L8). Coverage must consume one public calculation
+lookup supporting the capture transaction and PR B's sealed-release rules; it
+must not copy private candidate SQL/diagnostic selection a third time. Boundary
+schema, dataset/issuance assembly and render consumers are separate later PRs.
+
 ## Localisation and error codes
 
 LP3-01 laid the foundation the remaining screens (LP4-04), onboarding (LP4-01) and reports (LP4-03) build on. Turkish UI copy lives **only** in the `tr` catalogue (CLAUDE.md's one exception); keys, code and docs stay English. Recipes: the [`localise-ui`](.claude/skills/localise-ui/SKILL.md) skill.
