@@ -141,7 +141,8 @@ const cases: Case[] = [
   {
     name: 'submit',
     arrange: async () => {
-      const r = await createRecord(prisma, tenant);
+      // Priced: K11 recomputes the figure at submit (LP4-02 B2).
+      const r = await createRecord(prisma, tenant, {}, { priced: true });
       await attachEvidence(prisma, tenant, [r.id]);
       return { record: r.id };
     },
@@ -160,7 +161,7 @@ const cases: Case[] = [
   {
     name: 'approve',
     arrange: async () => {
-      const r = await createRecord(prisma, tenant, { status: ActivityRecordStatus.submitted });
+      const r = await createRecord(prisma, tenant, { status: ActivityRecordStatus.submitted }, { priced: true });
       return { record: r.id };
     },
     act: (s, ids) => s.records.approve(tenant.users.superAdmin, ids.record),
@@ -300,7 +301,7 @@ describe('F02 — a mutation and its audit row are one transaction', () => {
 
 describe('F02 — the importer reuses these paths (bulk submit)', () => {
   it('an audit failure leaves the record untouched and reports it; the retry submits it once', async () => {
-    const record = await createRecord(prisma, tenant);
+    const record = await createRecord(prisma, tenant, {}, { priced: true });
     await attachEvidence(prisma, tenant, [record.id]);
     const failing = failingAuditClient(prisma);
     const bulk = (client: PrismaService) =>

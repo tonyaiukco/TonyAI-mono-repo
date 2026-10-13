@@ -72,6 +72,9 @@ beforeAll(async () => {
 
   owner = connectOwner(2);
   B = await createTenant();
+  // B's record keeps the placeholder figure, which K11 refuses as stale (409):
+  // B's ids answering A's submit, approve and bulk submit as an unknown id
+  // does (404) is then the proof that the tenant check runs first.
   dataB = await createTenantData(owner, B);
   // B's approved figure: a number no response to A may contain.
   const approvedB = await createRecord(owner, B, {
@@ -116,7 +119,9 @@ afterAll(async () => {
 
 beforeEach(async () => {
   A = await createTenant();
-  dataA = await createTenantData(owner, A);
+  // Priced: A's own record is the positive control's, and the API recomputes
+  // it at submit (K11).
+  dataA = await createTenantData(owner, A, { priced: true });
 });
 
 afterEach(async () => {
@@ -214,7 +219,7 @@ const pdfForm = (recordIds?: string[]) => {
 };
 
 const recordIn = (status: ActivityRecordStatus, extra: Record<string, unknown> = {}) => async () => {
-  const record = await createRecord(owner, A, { status, periodValue: 'June', ...extra });
+  const record = await createRecord(owner, A, { status, periodValue: 'June', ...extra }, { priced: true });
   await attachEvidence(owner, A, [record.id]);
   return { recordId: record.id };
 };

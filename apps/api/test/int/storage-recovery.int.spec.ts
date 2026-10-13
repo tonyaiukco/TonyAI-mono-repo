@@ -121,8 +121,9 @@ async function evidenceObjects() {
   return (await tenantObjects(observer, tenant)).filter((o) => o.bucket === EVIDENCE_BUCKET);
 }
 
+/** A draft with the engine's own figure, which a submit's recompute accepts (K11). */
 async function draft(data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {}) {
-  return createRecord(a, tenant, data);
+  return createRecord(a, tenant, data, { priced: true });
 }
 
 const IMPORT_HEADER =

@@ -120,9 +120,12 @@ const january = {
 const lockJanuary = (s: Services) =>
   s.periodLocks.lock(tenant.users.superAdmin, { subsidiaryId: tenant.subsidiaryId, ...january });
 
-/** A draft the data-entry user can submit: an evidence-required category with its file. */
+/**
+ * A draft the data-entry user can submit: an evidence-required category with
+ * its file, and the engine's own figure (K11 recomputes it at submit).
+ */
 async function submittableDraft(data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {}) {
-  const record = await createRecord(a, tenant, data);
+  const record = await createRecord(a, tenant, data, { priced: true });
   const file = await attachEvidence(a, tenant, [record.id]);
   return { record, file };
 }
@@ -133,7 +136,7 @@ describe('F03 — edit, submit and approve', () => {
   // depend on the seed's factor library.
   const water = { category: 'Water', activityUnit: 'cubic_metres' };
 
-  it('an edit held before its write: the submit waits, then validates and submits the edited figure', async () => {
+  it('an edit held before its write: the submit waits, then is a lost race — the author submits the edited figure again', async () => {
     const { record } = await submittableDraft(water);
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
@@ -141,8 +144,15 @@ describe('F03 — edit, submit and approve', () => {
       (s) => s.records.submit(tenant.users.dataEntry, record.id),
     );
     expect(r.how).toBe('blocked');
-    expect(r).toMatchObject({ first: 'ok', second: 'ok' });
+    expect(r.first).toBe('ok');
+    // K11 (LP4-02 B2, C2-A): the submit recomputed the figure it READ, before
+    // the lock; the edit changed the inputs under it, so that verdict does not
+    // describe the record as locked. Before K11 this submit went ahead with
+    // the edited figure; now it is a lost race and nothing moves.
+    expect(r.second).toBeInstanceOf(RecordChangedError);
+    expect(await statusOf(record.id)).toBe(ActivityRecordStatus.draft);
 
+    await lifecycleServices(b).records.submit(tenant.users.dataEntry, record.id);
     await lifecycleServices(b).records.approve(tenant.users.superAdmin, record.id);
     const final = await observer.activityRecord.findUniqueOrThrow({ where: { id: record.id } });
     expect(final.status).toBe(ActivityRecordStatus.approved);
@@ -271,8 +281,8 @@ describe('F03 — detach and submit', () => {
 
 describe('F03 — deleting a shared file while one of its records goes to approval', () => {
   async function sharedFile() {
-    const first = await createRecord(a, tenant);
-    const second = await createRecord(a, tenant, { periodValue: 'February' });
+    const first = await createRecord(a, tenant, {}, { priced: true });
+    const second = await createRecord(a, tenant, { periodValue: 'February' }, { priced: true });
     const file = await attachEvidence(a, tenant, [first.id, second.id]);
     return { first, second, file };
   }
@@ -312,7 +322,7 @@ describe('F03 — deleting a shared file while one of its records goes to approv
 
 describe('F03 — void and period lock', () => {
   it('a lock held before its write: the void waits, then is refused — a locked figure is never voided', async () => {
-    const record = await createRecord(a, tenant, { status: ActivityRecordStatus.approved });
+    const record = await createRecord(a, tenant, { status: ActivityRecordStatus.approved }, { priced: true });
     const r = await race(['PeriodLock', 'create'], lockJanuary, (s) =>
       s.records.void(tenant.users.superAdmin, record.id, 'Entered in error'),
     );
@@ -323,7 +333,7 @@ describe('F03 — void and period lock', () => {
   });
 
   it('a void held before its write: the lock waits, then closes the period without the voided figure', async () => {
-    const record = await createRecord(a, tenant, { status: ActivityRecordStatus.approved });
+    const record = await createRecord(a, tenant, { status: ActivityRecordStatus.approved }, { priced: true });
     const r = await race(
       ['ActivityRecord', ['update', 'updateMany']],
       (s) => s.records.void(tenant.users.superAdmin, record.id, 'Entered in error'),
@@ -344,7 +354,7 @@ describe('F03 — a record moved to another period between an upload\'s read and
     // nothing stops a lock of FEBRUARY committing before the link does: a
     // draft would gain a file inside a closed period. The locked re-read has
     // to notice the move and refuse.
-    const record = await createRecord(a, tenant);
+    const record = await createRecord(a, tenant, {}, { priced: true });
     const storage = storageStub();
     const blobStored = deferred();
     const letUploadContinue = deferred();
@@ -425,7 +435,7 @@ describe('F03 — a REJECTED record moved into a period being locked (D03)', () 
 });
 
 describe('F03 — approve, reject and submit, against each other', () => {
-  const underReview = () => createRecord(a, tenant, { status: ActivityRecordStatus.under_review });
+  const underReview = () => createRecord(a, tenant, { status: ActivityRecordStatus.under_review }, { priced: true });
 
   it('a reject held before its write: the approve waits, then is a lost race — nothing is approved unresubmitted', async () => {
     const record = await underReview();
@@ -475,8 +485,8 @@ describe('F03 — two requests unlinking the last links of one shared file', () 
   // lock is what serialises them; held here just before the first one's audit
   // row, i.e. after its unlink and its "any links left?" read.
   async function sharedFile() {
-    const first = await createRecord(a, tenant);
-    const second = await createRecord(a, tenant, { periodValue: 'February' });
+    const first = await createRecord(a, tenant, {}, { priced: true });
+    const second = await createRecord(a, tenant, { periodValue: 'February' }, { priced: true });
     const file = await attachEvidence(a, tenant, [first.id, second.id]);
     return { first, second, file };
   }

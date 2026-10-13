@@ -1,7 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { ActivityRecordStatus, Prisma, UserRole } from '@tonyai/db';
 import type { RequestUser } from '../../src/auth/auth.types';
+import { CalculationsService } from '../../src/calculations/calculations.service';
+import type { FactorPolicy } from '../../src/calculations/factor-policy';
 import { PrismaService } from '../../src/prisma/prisma.service';
+
+/**
+ * The integration suite runs on a local database holding the seed's
+ * placeholder library, as CI's does: placeholders are allowed, as
+ * `ALLOW_PLACEHOLDER_FACTORS=true` allows them for the local API. Specs that
+ * prove the refusal construct their own policy.
+ */
+export const INT_FACTOR_POLICY: FactorPolicy = Object.freeze({ allowPlaceholders: true });
 
 /**
  * PostgreSQL integration-test helpers (LP0-03).
@@ -293,8 +303,48 @@ const PATH_FROM_DRAFT: Record<ActivityRecordStatus, ActivityRecordStatus[]> = {
 };
 
 /**
+ * The snapshot the engine computes for a record of these inputs — what the
+ * API would have stored on saving it — read on `prisma` with the suite's
+ * factor policy (the seed's placeholder library; a fixture release where a
+ * spec loads one). The geography is the site's, else the subsidiary's, as
+ * `ActivityRecordsService` resolves it; the unit is taken as stored.
+ */
+export async function pricedCalculation(
+  prisma: PrismaService,
+  tenant: Tenant,
+  data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {},
+): Promise<Prisma.InputJsonValue> {
+  const row = recordInput(tenant, data);
+  const site = row.locationId ? await prisma.location.findUniqueOrThrow({ where: { id: row.locationId } }) : null;
+  const subsidiary = await prisma.subsidiary.findUniqueOrThrow({ where: { id: row.subsidiaryId } });
+  const calculation = await new CalculationsService(prisma, INT_FACTOR_POLICY).compute(
+    {
+      category: row.category,
+      activityType: row.activityType ?? null,
+      geographyCode: site?.geographyCode ?? subsidiary.geographyCode,
+      reportingYear: row.reportingYear,
+      value: row.activityValue,
+      unit: row.activityUnit,
+    },
+    { enforceCategoryUnit: false },
+  );
+  return calculation as unknown as Prisma.InputJsonValue;
+}
+
+export interface CreateRecordOptions {
+  /**
+   * Store the engine's own snapshot instead of the placeholder — for a record
+   * the test submits or approves through the API, which recomputes it and
+   * refuses a placeholder as stale (K11, LP4-02 B2). Opt-in (decision C4-a,
+   * 2026-10-13): a spec that forgets it fails loudly with `calculation_stale`.
+   * An explicit `calculation` in `data` still wins — a figure a test chose.
+   */
+  priced?: boolean;
+}
+
+/**
  * A record in the tenant's subsidiary. The calculation is a structural
- * placeholder (no factor is looked up) — lifecycle tests never read its value.
+ * placeholder (no factor is looked up) unless `priced` — then the engine's.
  * A record is born a draft (LP4-01's `activity_records_lifecycle_writer`), so
  * one asked for in another status is inserted as a draft and walked there by
  * the lifecycle's steps, on the caller's client — the runtime login or the
@@ -304,8 +354,12 @@ export async function createRecord(
   prisma: PrismaService,
   tenant: Tenant,
   data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {},
+  options: CreateRecordOptions = {},
 ) {
   const { status = ActivityRecordStatus.draft, ...rest } = data;
+  if (options.priced && rest.calculation === undefined) {
+    rest.calculation = await pricedCalculation(prisma, tenant, rest);
+  }
   let record = await prisma.activityRecord.create({ data: recordInput(tenant, { ...rest, status: ActivityRecordStatus.draft }) });
   for (const step of PATH_FROM_DRAFT[status]) {
     record = await prisma.activityRecord.update({ where: { id: record.id }, data: { status: step } });
@@ -472,11 +526,17 @@ export interface TenantData {
  * naming its subsidiary — for isolation tests that must find each of them
  * visible to the tenant and invisible to everyone else. Owner-written;
  * `cleanup()` removes the record, then the organisation cascades to the rest.
+ * `priced` as `createRecord`'s: the tenant whose own record a positive control
+ * submits takes it; the other keeps a placeholder, so its ids stay stale.
  */
-export async function createTenantData(prisma: PrismaService, tenant: Tenant): Promise<TenantData> {
+export async function createTenantData(
+  prisma: PrismaService,
+  tenant: Tenant,
+  options: CreateRecordOptions = {},
+): Promise<TenantData> {
   const by = tenant.users.dataEntry.id;
   const subsidiaryId = tenant.subsidiaryId;
-  const record = await createRecord(prisma, tenant);
+  const record = await createRecord(prisma, tenant, {}, options);
   const evidence = await attachEvidence(prisma, tenant, [record.id]);
   const location = await prisma.location.create({
     data: { subsidiaryId, name: 'Int-test site', geographyCode: 'UK' },

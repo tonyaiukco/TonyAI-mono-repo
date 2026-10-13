@@ -43,7 +43,7 @@ async function statusOf(id: string) {
 
 describe('D01 — the approver is neither the creator nor the submitter', () => {
   it('a super_admin cannot approve a record they created and submitted', async () => {
-    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.superAdmin.id });
+    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.superAdmin.id }, { priced: true });
     await attachEvidence(prisma, tenant, [record.id]);
     await s.records.submit(tenant.users.superAdmin, record.id);
 
@@ -54,7 +54,7 @@ describe('D01 — the approver is neither the creator nor the submitter', () => 
   });
 
   it('another super_admin can', async () => {
-    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.superAdmin.id });
+    const record = await createRecord(prisma, tenant, { createdBy: tenant.users.superAdmin.id }, { priced: true });
     await attachEvidence(prisma, tenant, [record.id]);
     await s.records.submit(tenant.users.superAdmin, record.id);
     // Profiles are the owner's to create (the runtime role reads them).
@@ -90,7 +90,7 @@ describe('D02 — only the author submits', () => {
 
 describe('D03 — a period cannot be locked while it holds a rejected record', () => {
   it('the lock is refused, naming the rejected record; after the author resubmits and it is approved, it locks', async () => {
-    const record = await createRecord(prisma, tenant, { status: ActivityRecordStatus.rejected });
+    const record = await createRecord(prisma, tenant, { status: ActivityRecordStatus.rejected }, { priced: true });
     await attachEvidence(prisma, tenant, [record.id]);
     const lock = () =>
       s.periodLocks.lock(tenant.users.superAdmin, { subsidiaryId: tenant.subsidiaryId, ...january });
