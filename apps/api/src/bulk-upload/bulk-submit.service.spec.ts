@@ -13,6 +13,7 @@ import {
   BULK_UPLOAD_MAX_ROWS,
 } from '@tonyai/shared-types';
 import { BulkSubmitService } from './bulk-submit.service';
+import { CalculationInputError } from '../calculations/errors';
 import { ActivityRecordsService } from '../activity-records/activity-records.service';
 import {
   CalculationStaleError,
@@ -502,6 +503,13 @@ describe('BulkSubmitService — every refusal maps to its own code and sentence'
     // read as `unexpected` — and a recompute that refused (a 404 or a 400 from
     // the engine) arrives as this class too, never as `not_found`.
     [new CalculationStaleError(), 'calculation_stale', /save the draft again/i],
+    // C8 (LP4-02 B2): an untyped record of a typed category is not committed;
+    // its sentence names the remedy.
+    [
+      new CalculationInputError('activity_type_required', 'A Fuel record must name its activity type. Accepted: diesel.'),
+      'not_submittable',
+      /must name its activity type/i,
+    ],
     [new NotFoundException('Activity record not found'), 'not_found', /does not exist/i],
   ])('%s', async (error, code, messagePattern) => {
     // The MESSAGE is asserted as well as the code: the panel renders it

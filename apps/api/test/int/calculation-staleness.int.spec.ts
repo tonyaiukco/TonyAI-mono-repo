@@ -9,6 +9,7 @@ import {
 } from '@tonyai/shared-types';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { CalculationStaleError } from '../../src/activity-records/errors';
+import { CalculationInputError } from '../../src/calculations/errors';
 import { AuditService } from '../../src/audit/audit.service';
 import { BulkSubmitService } from '../../src/bulk-upload/bulk-submit.service';
 import { FactorReleaseLoader } from '../../src/factor-releases/factor-release-loader';
@@ -282,5 +283,31 @@ describe('K11 — a snapshot from before LP3-03', () => {
       CalculationStaleError,
     );
     expect(logged()[0]).toMatch(new RegExp(`^calculation_stale: submit of record ${legacy.id} refused — legacy snapshot`));
+  });
+});
+
+describe('C8 — an untyped record of a typed category is not committed', () => {
+  it("refuses at submit an untyped Fuel draft a direct writer inserted with the engine's own figure; named its type and saved, it submits", async () => {
+    // The seed prices untyped Fuel (`unspecified`, a placeholder), so the
+    // recompute alone finds this draft fresh: C8 is what refuses it.
+    const draft = await createRecord(
+      owner,
+      tenant,
+      { reportingYear: 2026, periodValue: 'April', category: 'Fuel', scope: 1, activityValue: 10, activityUnit: 'litres' },
+      { priced: true },
+    );
+    await attachEvidence(owner, tenant, [draft.id]);
+    const { records } = lifecycleServices(runtime);
+
+    const refused = await failure(records.submit(tenant.users.dataEntry, draft.id));
+    expect(refused).toBeInstanceOf(CalculationInputError);
+    expect((refused as CalculationInputError).code).toBe('activity_type_required');
+    expect(logged()).toEqual([]);
+    expect((await row(draft.id)).status).toBe(ActivityRecordStatus.draft);
+    expect(await auditActions(draft.id)).toEqual([]);
+
+    await records.update(tenant.users.dataEntry, draft.id, { activityType: 'diesel' });
+    await records.submit(tenant.users.dataEntry, draft.id);
+    expect(await row(draft.id)).toMatchObject({ status: ActivityRecordStatus.submitted, activityType: 'diesel' });
   });
 });

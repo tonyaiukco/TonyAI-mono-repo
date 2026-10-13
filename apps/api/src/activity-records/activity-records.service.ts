@@ -79,6 +79,9 @@ import { ListActivityRecordsQueryDto } from './dto/list-activity-records-query.d
  * A record in a typed category (Fuel, Mobile Combustion, Refrigerants) names
  * its fuel or gas (`activity_type_required`, LP3-03). Whether the category
  * HAS the named type is the engine's check (`activity_type_not_for_category`).
+ * Asked at create, at an edit that is not a pre-LP3-03 record staying untyped
+ * in its own category, and — with no exemption — at submit and approve
+ * (decision C8, LP4-02 B2).
  */
 function assertActivityTypeNamed(category: string, activityType: string | null): void {
   const types = recordActivityTypesFor(category);
@@ -1261,7 +1264,8 @@ export class ActivityRecordsService {
   // inside the lock after the record's own gates — tenant, role, status,
   // author, period, evidence — so a stale figure never answers for any of
   // them (a foreign id stays a 404, "LP4-02 follow-ups" (1)), and before the
-  // anomaly gate, which reads the figure.
+  // anomaly gate, which reads the figure. Just before it, C8: a typed
+  // category's record names its activity type before it is committed.
 
   async submit(user: RequestUser, id: string): Promise<ActivityRecordDTO> {
     const seen = await this.loadScoped(user, id);
@@ -1304,6 +1308,11 @@ export class ActivityRecordsService {
       if (needsEvidenceBeforeSubmit({ category: record.category, evidenceCount })) {
         throw new EvidenceRequiredError(record.category);
       }
+      // C8: a typed category's record is committed only once it names its
+      // fuel or gas. A pre-LP3-03 record may be edited untyped, and a direct
+      // writer may insert one; neither is submitted so. Before K11, so the
+      // answer names the remedy — choose the type — not "save again".
+      assertActivityTypeNamed(record.category, record.activityType ?? null);
       // K11: the figure the anomaly gate reads, and the one this submit hands
       // to review, is the one the engine gives now — or nothing moves.
       this.assertFresh('submit', seen, record, recomputed);
@@ -1403,6 +1412,9 @@ export class ActivityRecordsService {
       // Period-lock gate (defense-in-depth): no review transitions in a closed
       // period.
       await this.assertPeriodNotLocked(periodOf(record), tx);
+      // C8, as at submit: an untyped record of a typed category — one
+      // submitted before the rule — is returned to its author to name its type.
+      assertActivityTypeNamed(record.category, record.activityType ?? null);
       // K11: a factor release published or withdrawn since the submit, or a
       // figure rewritten outside the API, is refused here — the reviewer
       // returns the record and its author saves it again (L4).

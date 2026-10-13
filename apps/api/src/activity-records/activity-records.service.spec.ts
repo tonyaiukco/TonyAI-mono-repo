@@ -3964,6 +3964,127 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
   });
 });
 
+describe('ActivityRecordsService — a typed category’s record names its type before it is committed (LP4-02 B2, C8)', () => {
+  // Decision C8 (owner, 2026-10-13): a record of Fuel, Mobile Combustion or
+  // Refrigerants with no activity type is refused `activity_type_required`
+  // at submit and approve — whoever wrote it. A pre-LP3-03 record may still
+  // be EDITED untyped in its own category, but names its fuel or gas before
+  // it is committed; a draft a direct writer inserted untyped never is. The
+  // check runs under the lock after the record's own gates and before K11,
+  // so the answer names the remedy (choose the type), not "save again".
+  type RecordOver = Omit<Partial<ActivityRecord>, 'calculation'> & { calculation?: unknown };
+  const untyped = (category: string, over: RecordOver = {}) =>
+    makeRecord({
+      id: 'rec-t',
+      category,
+      activityType: null,
+      activityUnit: 'litres',
+      status: ActivityRecordStatus.draft,
+      createdBy: 'user-entry',
+      ...over,
+    } as Partial<ActivityRecord>);
+
+  function arrange(record: ActivityRecord) {
+    const ctx = build(1);
+    ctx.prisma.activityRecord.findUnique.mockResolvedValue(record);
+    ctx.prisma.activityRecord.update.mockImplementation(({ data }: any) => makeRecord({ ...record, ...data }));
+    return ctx;
+  }
+
+  async function refusalOf(promise: Promise<unknown>) {
+    const error = await promise.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(CalculationInputError);
+    expect((error as CalculationInputError).code).toBe('activity_type_required');
+    return error as CalculationInputError;
+  }
+
+  it.each(['Fuel', 'Mobile Combustion', 'Refrigerants'])(
+    'submit refuses an untyped %s draft whose figure is otherwise fresh — 400 activity_type_required, nothing written',
+    async (category) => {
+      const { prisma, calc, service } = build(1);
+      const record = untyped(category, { calculation: calc.snapshot });
+      prisma.activityRecord.findUnique.mockResolvedValue(record);
+      const error = await refusalOf(service.submit(dataEntry(), 'rec-t'));
+      expect(error.getStatus()).toBe(400);
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    },
+  );
+
+  it('approve refuses an untyped Fuel record submitted before the rule — the reviewer returns it', async () => {
+    const { prisma, calc, service } = build(1);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      untyped('Fuel', { status: ActivityRecordStatus.submitted, calculation: calc.snapshot }),
+    );
+    await refusalOf(service.approve(superAdmin(), 'rec-t'));
+    expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('a rejected pre-LP3-03 record is not resubmitted untyped', async () => {
+    const { prisma, calc, service } = build(1);
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      untyped('Fuel', { status: ActivityRecordStatus.rejected, calculation: calc.snapshot }),
+    );
+    await refusalOf(service.submit(dataEntry(), 'rec-t'));
+  });
+
+  it('named the type, the record submits; an untyped record of an untyped category is unaffected', async () => {
+    const typed = arrange(untyped('Fuel', { activityType: 'diesel' }));
+    typed.prisma.activityRecord.findUnique.mockResolvedValue(
+      untyped('Fuel', { activityType: 'diesel', calculation: typed.calc.snapshot }),
+    );
+    expect((await typed.service.submit(dataEntry(), 'rec-t')).status).toBe(ActivityRecordStatus.submitted);
+    const water = arrange(untyped('Water', { activityUnit: 'cubic_metres' }));
+    water.prisma.activityRecord.findUnique.mockResolvedValue(
+      untyped('Water', { activityUnit: 'cubic_metres', calculation: water.calc.snapshot }),
+    );
+    expect((await water.service.submit(dataEntry(), 'rec-t')).status).toBe(ActivityRecordStatus.submitted);
+  });
+
+  it('is checked before K11: an untyped record with a stale figure is told to name its type, and nothing is logged stale', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { prisma, service } = build(1);
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        untyped('Fuel', { calculation: { ...FRESH_SNAPSHOT, tCo2e: 0.0001 } }),
+      );
+      await refusalOf(service.submit(dataEntry(), 'rec-t'));
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it.each([
+    ['a submit by someone else', (s: ActivityRecordsService) => s.submit(dataEntry({ id: 'user-other' }), 'rec-t'), ActivityRecordStatus.draft, SubmitAuthorRefusedError],
+    ['a submit of an approved record', (s: ActivityRecordsService) => s.submit(dataEntry(), 'rec-t'), ActivityRecordStatus.approved, BadRequestException],
+    ['an approve of one’s own record', (s: ActivityRecordsService) => s.approve(superAdmin({ id: 'user-entry' }), 'rec-t'), ActivityRecordStatus.submitted, SelfApprovalRefusedError],
+  ] as const)('%s keeps its own answer over a missing type', async (_label, act, status, refusal) => {
+    const { prisma, calc, service } = build(1);
+    prisma.activityRecord.findUnique.mockResolvedValue(untyped('Fuel', { status, calculation: calc.snapshot }));
+    const error = await act(service).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(refusal);
+    if (refusal === BadRequestException) expect(error).not.toBeInstanceOf(CalculationInputError);
+  });
+
+  it('a locked period and a missing evidence file are named before a missing type', async () => {
+    const locked = build(1);
+    locked.prisma.activityRecord.findUnique.mockResolvedValue(untyped('Fuel', { calculation: locked.calc.snapshot }));
+    locked.prisma.periodLock.findFirst.mockResolvedValue({ id: 'lock-1' });
+    await expect(locked.service.submit(dataEntry(), 'rec-t')).rejects.toBeInstanceOf(PeriodLockedError);
+    const bare = build(1);
+    bare.prisma.activityRecord.findUnique.mockResolvedValue(untyped('Fuel', { calculation: bare.calc.snapshot }));
+    bare.prisma.activityRecordEvidence.count.mockResolvedValue(0);
+    await expect(bare.service.submit(dataEntry(), 'rec-t')).rejects.toBeInstanceOf(EvidenceRequiredError);
+  });
+});
+
 describe('recordTriggerCode', () => {
   it('reads the SQLSTATE of an activity_records trigger from either Prisma error shape', () => {
     const unknown = (code: string) =>
