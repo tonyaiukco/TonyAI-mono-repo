@@ -2,12 +2,29 @@ import 'reflect-metadata';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { ActivityRecordStatus } from '@tonyai/db';
-import { BULK_UPLOAD_COLUMNS, isApiErrorCode } from '@tonyai/shared-types';
+import {
+  BULK_UPLOAD_COLUMNS,
+  isApiErrorCode,
+  type ReportingIntensityData,
+  type ReportingMatrixResponse,
+  type ReportingMetaResponse,
+  type ReportingSummaryResponse,
+} from '@tonyai/shared-types';
 import ExcelJS from 'exceljs';
 import { SignJWT } from 'jose';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RuntimeLimits } from '../../src/common/runtime-limits';
 import { PrismaService } from '../../src/prisma/prisma.service';
-import { attachEvidence, connectOwner, createRecord, createTenant, createTenantData, type Tenant, type TenantData } from './db';
+import {
+  attachEvidence,
+  connectOwner,
+  createRecord,
+  createTenant,
+  createTenantData,
+  deferred,
+  type Tenant,
+  type TenantData,
+} from './db';
 
 /**
  * LP1-03 (F06): the externally reachable tenant paths, through the REAL API —
@@ -26,9 +43,50 @@ import { attachEvidence, connectOwner, createRecord, createTenant, createTenantD
  * (Nest answers 404 to those too) cannot pass for a refusal. Every list and
  * aggregate, unfiltered, carries no trace of B for any of A's roles, and —
  * because a leak into a SUM carries no marker — every answer A gets must stay
- * the same while B's data changes underneath it. Not covered here: `GET
- * /reports/pdf` (Puppeteer) and the global `/factors` and `/calculations/preview`.
+ * the same while B's data changes underneath it. LP3-02's reporting-context
+ * routes (#167, #168) take B's subsidiary as their selection, and must answer
+ * it as they answer an unknown one — the echoed context aside, an empty answer,
+ * the same file name and the same generation audit row. Not covered here: the
+ * global `/factors` and `/calculations/preview`, and Chromium's rendering — the
+ * PDF routes run with Puppeteer replaced (below; e2e renders for real).
  */
+
+/**
+ * A "PDF" is the HTML Puppeteer was handed, so what the document says is
+ * searched and compared like any other answer. `hold` keeps a render in
+ * flight (the report lease's test); `entered` hears that one reached the
+ * printer. Everything around the printer — the data, the audit row, the lease,
+ * the single-renderer guard — is the application's own.
+ */
+const pdf = vi.hoisted(() => ({ hold: undefined as Promise<void> | undefined, entered: undefined as (() => void) | undefined }));
+vi.mock('puppeteer', () => {
+  const page = () => {
+    let html = '';
+    return {
+      setContent: async (content: string) => {
+        html = content;
+      },
+      createPDFStream: async () => {
+        pdf.entered?.();
+        await pdf.hold;
+        const bytes = new TextEncoder().encode(`%PDF-int-test\n${html}`);
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        });
+      },
+      close: async () => undefined,
+    };
+  };
+  return {
+    TimeoutError: class TimeoutError extends Error {},
+    default: {
+      launch: async () => ({ connected: true, newPage: async () => page(), close: async () => undefined, process: () => null }),
+    },
+  };
+});
 
 const JWT_SECRET = randomBytes(32).toString('hex');
 let app: INestApplication;
@@ -40,10 +98,18 @@ let dataA: TenantData;
 let dataB: TenantData;
 /** Markers of B: no response to A may contain one. */
 let markersB: string[];
+/** B's 2026 revenue — the one denominator a group intensity reads (D14). */
+let revenueBId: string;
+/** A's subsidiary's name: a report that lists A's records names it. */
+let subsidiaryNameA: string;
+let limits: RuntimeLimits;
 
-// An integer, so rounding cannot hide it; also searched for in the grouped
-// forms a CSV or a Turkish locale would print.
+// Integers, so rounding cannot hide them; each is also searched for in the
+// grouped forms a CSV or a Turkish locale would print.
 const B_TCO2E = 987654;
+const B_VOIDED_TCO2E = 864213;
+const B_REVENUE = 24681357;
+const printed = (n: number) => [String(n), n.toLocaleString('en-GB'), n.toLocaleString('tr-TR')];
 const ROLES = ['superAdmin', 'consultant', 'dataEntry', 'executiveViewer'] as const;
 type Role = (typeof ROLES)[number];
 
@@ -59,12 +125,16 @@ beforeAll(async () => {
   const { AppModule } = await import('../../src/app.module');
   const { configureApp } = await import('../../src/app-setup');
   const { JsonLogger } = await import('../../src/observability/json-logger');
+  const { RuntimeLimits } = await import('../../src/common/runtime-limits');
   app = await NestFactory.create(AppModule, { logger: ['error'] });
   // The deployed app's prefix, pipe and exception filter (LP3-01): the bodies
   // compared below are the ones a client receives, codes included. Its
   // request and refusal log lines are silenced — hundreds of expected 4xx.
+  // One set of runtime limits for the HTTP layer and the guard, as `main.ts`
+  // wires it: the export tests below hold its lease and spend its quota.
   const quiet = Object.assign(new JsonLogger(), { event: () => undefined });
-  configureApp(app, quiet, { requestLogging: false });
+  limits = app.get(RuntimeLimits);
+  configureApp(app, quiet, { requestLogging: false, runtimeLimits: limits });
   await app.listen(0, '127.0.0.1');
   base = `${await app.getUrl()}/api/v1`.replace('[::1]', '127.0.0.1');
   const [{ user }] = await app.get(PrismaService).$queryRaw<{ user: string }[]>`SELECT current_user AS "user"`;
@@ -78,12 +148,42 @@ beforeAll(async () => {
   // gate (author 403, status 400) or K11's 409 would answer instead and the
   // responses would differ.
   dataB = await createTenantData(owner, B);
-  // B's approved figure: a number no response to A may contain.
+  // B's site gets a name of its own (A's is "Int-test site" too), and B's
+  // approved figure sits there: a number no response to A may contain.
+  await owner.location.update({ where: { id: dataB.locationId }, data: { name: 'Int-test site only B has' } });
   const approvedB = await createRecord(owner, B, {
     status: ActivityRecordStatus.approved,
     periodValue: 'March',
+    locationId: dataB.locationId,
     calculation: { tCo2e: B_TCO2E, factorId: 'int-test-placeholder' },
   });
+  // What else of B a report section reads (#168): a withdrawn record for the
+  // withdrawn ledger, an evidence file for the appendix, and the revenue a
+  // group intensity divides by — each a marker, each controlled for A below.
+  const voidedB = await createRecord(owner, B, {
+    status: ActivityRecordStatus.voided,
+    periodValue: 'November',
+    calculation: { tCo2e: B_VOIDED_TCO2E, factorId: 'int-test-placeholder' },
+    voidReason: 'Int-test withdrawal only B gave',
+    voidedBy: B.users.superAdmin.id,
+    voidedAt: new Date(),
+  });
+  const evidenceB = await owner.evidence.create({
+    data: {
+      subsidiaryId: B.subsidiaryId,
+      storagePath: `${B.subsidiaryId}/${randomUUID()}-int-test-only-b.pdf`,
+      fileName: 'int-test-only-b.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 4,
+      uploadedBy: B.users.dataEntry.id,
+    },
+  });
+  await owner.activityRecordEvidence.create({
+    data: { activityRecordId: approvedB.id, evidenceId: evidenceB.id, subsidiaryId: B.subsidiaryId, linkedBy: B.users.dataEntry.id },
+  });
+  ({ id: revenueBId } = await owner.subsidiaryDenominator.create({
+    data: { subsidiaryId: B.subsidiaryId, year: 2026, metric: 'revenue', value: B_REVENUE, unit: 'EUR', createdBy: B.users.dataEntry.id },
+  }));
   await owner.auditLog.create({
     data: {
       userId: B.users.superAdmin.id,
@@ -104,9 +204,13 @@ beforeAll(async () => {
     orgB.legalName,
     ...profilesB.map((p) => p.fullName),
     approvedB.id,
-    String(B_TCO2E),
-    '987,654',
-    '987.654',
+    voidedB.id,
+    ...[B_TCO2E, B_VOIDED_TCO2E, B_REVENUE].flatMap(printed),
+    'Int-test site only B has',
+    'Int-test withdrawal only B gave',
+    'int-test-only-b.pdf',
+    evidenceB.id,
+    revenueBId,
     ...Object.values(dataB),
     ...B.profileIds,
     ...Object.values(B.users).map((u) => u.email),
@@ -124,6 +228,7 @@ beforeEach(async () => {
   // Priced: A's own record is the positive control's, and the API recomputes
   // it at submit (K11).
   dataA = await createTenantData(owner, A, { priced: true });
+  ({ legalName: subsidiaryNameA } = await owner.subsidiary.findUniqueOrThrow({ where: { id: A.subsidiaryId } }));
 });
 
 afterEach(async () => {
@@ -142,6 +247,8 @@ async function tokenFor(userId: string): Promise<string> {
 interface Res {
   status: number;
   text: string;
+  /** An export's `Content-Disposition` — its file name carries the selection. */
+  disposition: string | null;
 }
 
 async function call(role: Role, method: string, path: string, body?: unknown): Promise<Res> {
@@ -153,12 +260,13 @@ async function call(role: Role, method: string, path: string, body?: unknown): P
     payload = JSON.stringify(body);
   }
   const res = await fetch(`${base}${path}`, { method, headers, body: payload });
-  if (res.headers.get('content-type')?.includes('spreadsheetml')) {
+  const disposition = res.headers.get('content-disposition');
+  if (method !== 'HEAD' && res.headers.get('content-type')?.includes('spreadsheetml')) {
     // A workbook is a zip stamped with the time it was built: compare and
     // search what its cells say instead (`qa-auditor`).
-    return { status: res.status, text: await workbookText(Buffer.from(await res.arrayBuffer())) };
+    return { status: res.status, text: await workbookText(Buffer.from(await res.arrayBuffer())), disposition };
   }
-  return { status: res.status, text: await res.text() };
+  return { status: res.status, text: await res.text(), disposition };
 }
 
 async function workbookText(buffer: Buffer): Promise<string> {
@@ -200,12 +308,15 @@ async function snapshotB(): Promise<string> {
 /** A response with every id of `ids` replaced, so B's answer and a random id's answer compare as text. */
 type Ids = TenantData & { subsidiaryId: string; organisationId: string };
 
-const normalise = (res: Res, ids: Ids) =>
-  `${res.status} ${withoutTimes(Object.values(ids).reduce((t, id) => t.split(id).join('<id>'), res.text))}`;
+const normalise = (res: Res, ids: Ids) => {
+  // An export's file name carries the first 8 characters of the selected subsidiary's id.
+  const file = Object.values(ids).reduce((t, id) => t.split(id.slice(0, 8)).join('<id>'), res.disposition ?? '');
+  return `${res.status} ${file} ${withoutTimes(Object.values(ids).reduce((t, id) => t.split(id).join('<id>'), res.text))}`;
+};
 
 interface Route {
   name: string;
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method: 'GET' | 'HEAD' | 'POST' | 'PATCH' | 'DELETE';
   path: (ids: Ids) => string;
   body?: (ids: Ids) => unknown;
   /** The role and the state A needs for the positive control; returns the ids it should use. */
@@ -228,6 +339,47 @@ const recordIn = (status: ActivityRecordStatus, extra: Record<string, unknown> =
 
 const created = (res: Res) => res.status === 200 || res.status === 201;
 const differs = (res: Res, foreign: Res) => res.status !== foreign.status || res.text !== foreign.text;
+
+/**
+ * LP3-02's reporting-context reads (#167, #168): `{ context, data }`, a
+ * required year, the subsidiary as the selection. `live` is the positive
+ * control's reading of A's own data (an approved record of `recordIn`, A's
+ * 2026 headcount); `empty` is what an inaccessible selection must answer.
+ */
+interface ContextRead {
+  path: string;
+  live: (data: unknown) => boolean;
+  empty: (data: unknown) => boolean;
+}
+const contextRead = <T,>(path: string, live: (data: T) => boolean, empty: (data: T) => boolean): ContextRead => ({
+  path,
+  live: (data) => live(data as T),
+  empty: (data) => empty(data as T),
+});
+const CONTEXT_READS: ContextRead[] = [
+  contextRead<ReportingSummaryResponse['data']>('/emissions/context/summary', (d) => d.recordCount > 0, (d) => d.recordCount === 0),
+  contextRead<ReportingMatrixResponse['data']>(
+    '/emissions/context/tracking-matrix',
+    (d) => d.rows.length === 1 && d.rows[0].subsidiaryId === A.subsidiaryId && d.rows[0].totalTCo2e > 0,
+    (d) => d.rows.length === 0,
+  ),
+  contextRead<ReportingIntensityData>(
+    '/intensity/context',
+    (d) => d.selectedSubsidiaryIds.length === 1 && d.selectedSubsidiaryIds[0] === A.subsidiaryId
+      && d.metrics.some((m) => m.contributingSubsidiaryIds.includes(A.subsidiaryId)),
+    (d) => d.selectedSubsidiaryIds.length === 0 && d.metrics.length === 0,
+  ),
+  contextRead<ReportingMetaResponse['data']>('/reports/context/meta', (d) => d.committedCount > 0, (d) => d.totalCount === 0),
+];
+/** The context exports, each with the options that put the most of the report on the page. */
+const CONTEXT_EXPORTS = [
+  ['/reports/context/pdf', '&template=ghg_protocol_detail&includeEvidenceSummary=true'],
+  ['/reports/context/excel', '&template=ghg_protocol_detail'],
+  ['/reports/context/csv', '&template=executive_summary'],
+] as const;
+/** Unfiltered, and narrowed to the scope and category of B's figure and of `recordIn`'s record. */
+const CONTEXT_FILTERS = ['', '&scope=2&category=Electricity'] as const;
+const dataOf = (res: Res): unknown => (JSON.parse(res.text) as { data?: unknown }).data;
 
 const ID_ROUTES: Route[] = [
   // subsidiaries
@@ -294,6 +446,7 @@ const ID_ROUTES: Route[] = [
       ['/reports/meta', '&year=2026'],
       ['/reports/csv', '&year=2026&template=executive_summary'],
       ['/reports/excel', '&year=2026&template=executive_summary'],
+      ['/reports/pdf', '&year=2026&template=executive_summary'],
     ] as const
   ).map(
     ([path, rest]): Route => ({
@@ -303,6 +456,31 @@ const ID_ROUTES: Route[] = [
       own: { role: 'consultant', ok: (res) => res.status === 200 },
     }),
   ),
+  // the reporting context (LP3-02): B's subsidiary as the selection
+  ...CONTEXT_FILTERS.flatMap((filter): Route[] => [
+    ...CONTEXT_READS.map(({ path, live }): Route => ({
+      name: `GET ${path}?subsidiaryId=${filter}`,
+      method: 'GET',
+      path: (i) => `${path}?year=2026&subsidiaryId=${i.subsidiaryId}${filter}`,
+      own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.approved), ok: (res) => res.status === 200 && live(dataOf(res)) },
+    })),
+    // HEAD too: Express answers it with the GET handler, which generates the
+    // file and audits it ("LP3-02 context-route follow-ups" (15)).
+    ...CONTEXT_EXPORTS.flatMap(([path, rest]) =>
+      (['GET', 'HEAD'] as const).map((method): Route => ({
+        name: `${method} ${path}?subsidiaryId=${filter}`,
+        method,
+        path: (i) => `${path}?year=2026&subsidiaryId=${i.subsidiaryId}${filter}${rest}`,
+        // A's record is listed under its subsidiary's name — which no export for
+        // B's selection may print (it names an unresolved selection by its id).
+        own: {
+          role: 'consultant',
+          prepare: recordIn(ActivityRecordStatus.approved),
+          ok: (res) => res.status === 200 && (method === 'HEAD' || res.text.includes(subsidiaryNameA)),
+        },
+      })),
+    ),
+  ]),
 ];
 
 describe("B's ids, through the API, as each of A's roles: the same refusal as an id that does not exist", () => {
@@ -319,7 +497,8 @@ describe("B's ids, through the API, as each of A's roles: the same refusal as an
       expect(normalise(foreign, foreignIds), context).toBe(normalise(missing, missingIds));
       // Every refusal carries a registered code (LP3-01), and a 404's names a
       // kind of thing — the same for B's id as for none, by the line above.
-      if (foreign.status >= 400) {
+      // (A HEAD refusal has no body to carry one.)
+      if (foreign.status >= 400 && route.method !== 'HEAD') {
         const { code } = JSON.parse(foreign.text) as { code?: unknown };
         expect(isApiErrorCode(code), `${context} — code ${String(code)}`).toBe(true);
         if (foreign.status === 404) expect(code, context).toMatch(/(^|_)not_found$/);
@@ -328,7 +507,7 @@ describe("B's ids, through the API, as each of A's roles: the same refusal as an
       // anything else of B's may not.
       const sent = new Set(Object.values(foreignIds));
       for (const marker of markersB.filter((m) => !sent.has(m))) {
-        expect(foreign.text, `${context} — leaks ${marker}`).not.toContain(marker);
+        expect(`${foreign.disposition ?? ''} ${foreign.text}`, `${context} — leaks ${marker}`).not.toContain(marker);
       }
     }
     expect(await snapshotB(), `${route.name} changed B's data`).toBe(before);
@@ -360,6 +539,11 @@ const LIST_ROUTES = [
   '/reports/meta?year=2026',
   '/reports/csv?year=2026&template=executive_summary',
   '/reports/excel?year=2026&template=executive_summary',
+  '/reports/pdf?year=2026&template=ghg_protocol_detail&includeEvidenceSummary=true',
+  ...CONTEXT_FILTERS.flatMap((filter) => [
+    ...CONTEXT_READS.map(({ path }) => `${path}?year=2026${filter}`),
+    ...CONTEXT_EXPORTS.map(([path, rest]) => `${path}?year=2026${filter}${rest}`),
+  ]),
   '/bulk-upload/template',
 ];
 
@@ -387,6 +571,34 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
       expect(res.status, `${role} GET /kpi`).toBe(200);
       expect(JSON.parse(res.text), `${role} GET /kpi`).toMatchObject({ totalSubsidiaries: 1, totalLocations: 1 });
     }
+  });
+
+  it("the report sections B's markers sit in are printed for A's own data (control: those checks above can fail)", async () => {
+    await recordIn(ActivityRecordStatus.approved)(); // backed by A's "int-test.pdf"
+    await createRecord(owner, A, {
+      status: ActivityRecordStatus.voided,
+      periodValue: 'November',
+      voidReason: 'Int-test withdrawal A gave',
+      voidedBy: A.users.superAdmin.id,
+      voidedAt: new Date(),
+    }, { priced: true });
+    await owner.subsidiaryDenominator.create({
+      data: { subsidiaryId: A.subsidiaryId, year: 2026, metric: 'revenue', value: 500000, unit: 'EUR', createdBy: A.users.dataEntry.id },
+    });
+    for (const [path, rest] of CONTEXT_EXPORTS) {
+      const res = await call('consultant', 'GET', `${path}?year=2026${rest}`);
+      expect(res.status, `${path}: ${res.text.slice(0, 200)}`).toBe(200);
+      expect(res.text, `${path}: the withdrawn ledger`).toContain('Int-test withdrawal A gave');
+      expect(res.text, `${path}: the ledger`).toContain(subsidiaryNameA);
+      // The PDF alone names evidence files (the workbook and the CSV count them).
+      if (path.endsWith('pdf')) expect(res.text, `${path}: the evidence appendix`).toContain('int-test.pdf');
+      for (const marker of markersB) expect(res.text, `${path} leaks ${marker}`).not.toContain(marker);
+    }
+    // A group intensity reads revenue alone (D14): A's, and only A's.
+    const intensity = JSON.parse((await call('consultant', 'GET', '/intensity/context?year=2026')).text) as { data: ReportingIntensityData };
+    expect(intensity.data.metrics).toEqual([
+      expect.objectContaining({ metric: 'revenue', denominatorTotal: 500000, contributingSubsidiaryIds: [A.subsidiaryId] }),
+    ]);
   });
 
   it("a B record pointing at A's import batch (malformed) is not listed in A's batch", async () => {
@@ -466,6 +678,44 @@ describe('inside one organisation: a data_entry user reaches only what it is gra
     expect((await call('dataEntry', 'GET', `/import-batches/${batch.id}`)).status).toBe(404);
     expect((await call('consultant', 'GET', '/import-batches')).text).toContain(batch.id); // organisation-wide readers do see it
   });
+
+  it('the reporting context answers a subsidiary it is not granted as one that does not exist, and never counts it', async () => {
+    const ungranted = await owner.subsidiary.create({
+      data: { organisationId: A.organisationId, legalName: 'Int-test subsidiary only consultants see', geographyCode: 'UK' },
+    });
+    const UNGRANTED_TCO2E = 135792;
+    await createRecord(owner, A, {
+      subsidiaryId: ungranted.id,
+      status: ActivityRecordStatus.approved,
+      periodValue: 'March',
+      calculation: { tCo2e: UNGRANTED_TCO2E, factorId: 'int-test-placeholder' },
+    });
+    const hidden = [ungranted.legalName, ...printed(UNGRANTED_TCO2E)];
+    const missingId = randomUUID();
+    for (const { path, empty } of CONTEXT_READS) {
+      const selecting = (id: string) => call('dataEntry', 'GET', `${path}?year=2026&subsidiaryId=${id}`);
+      const foreign = await selecting(ungranted.id);
+      const missing = await selecting(missingId);
+      expect(foreign.status, `${path}: ${foreign.text.slice(0, 200)}`).toBe(200);
+      expect(dataOf(foreign), path).toStrictEqual(dataOf(missing));
+      expect(empty(dataOf(foreign)), path).toBe(true);
+      // Its whole accessible set: the granted subsidiary alone.
+      const all = await call('dataEntry', 'GET', `${path}?year=2026`);
+      expect(all.status, path).toBe(200);
+      for (const marker of [...hidden, ungranted.id]) {
+        expect(`${foreign.text} ${all.text}`.replaceAll(`"subsidiaryId":"${ungranted.id}"`, ''), `${path} shows ${marker}`).not.toContain(marker);
+      }
+    }
+    // data_entry exports nothing, whatever it selects.
+    for (const [path, rest] of CONTEXT_EXPORTS) {
+      const foreign = await call('dataEntry', 'GET', `${path}?year=2026&subsidiaryId=${ungranted.id}${rest}`);
+      const missing = await call('dataEntry', 'GET', `${path}?year=2026&subsidiaryId=${missingId}${rest}`);
+      expect([foreign.status, foreign.text], path).toStrictEqual([403, missing.text]);
+    }
+    // Control: an organisation-wide reader counts it.
+    const consultant = await call('consultant', 'GET', `/emissions/context/summary?year=2026&subsidiaryId=${ungranted.id}`);
+    expect(consultant.text).toContain(String(UNGRANTED_TCO2E));
+  });
 });
 
 describe("A's every answer stays the same while B's data changes (a leak into a sum carries no marker)", () => {
@@ -506,6 +756,12 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
         `/reports/meta?year=${year}`,
         `/reports/csv?year=${year}&template=ghg_protocol_detail`,
         `/reports/excel?year=${year}&template=executive_summary`,
+        `/reports/pdf?year=${year}&template=ghg_protocol_detail&includeEvidenceSummary=true`,
+        // the reporting context: unfiltered, A's own selection, and a scope
+        ...['', `&subsidiaryId=${A.subsidiaryId}`, '&scope=2'].flatMap((filter) => [
+          ...CONTEXT_READS.map(({ path }) => `${path}?year=${year}${filter}`),
+          ...CONTEXT_EXPORTS.map(([path, rest]) => `${path}?year=${year}${filter}${rest}`),
+        ]),
       ]),
     ];
     const answers = async () => {
@@ -543,8 +799,10 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
       await createRecord(owner, B, { reportingYear: 2026, periodValue: 'May' }),
     ];
     const by = B.users.dataEntry.id;
+    // B's 2026 revenue exists (beforeAll): it changes; a 2025 one is new.
+    await owner.subsidiaryDenominator.update({ where: { id: revenueBId }, data: { value: 1e6 } });
     const denominators = [
-      await owner.subsidiaryDenominator.create({ data: { subsidiaryId: B.subsidiaryId, year: 2026, metric: 'revenue', value: 1e6, unit: 'EUR', createdBy: by } }),
+      await owner.subsidiaryDenominator.create({ data: { subsidiaryId: B.subsidiaryId, year: 2025, metric: 'revenue', value: 2e6, unit: 'EUR', createdBy: by } }),
       await owner.subsidiaryDenominator.create({ data: { subsidiaryId: B.subsidiaryId, year: 2025, metric: 'headcount', value: 77, unit: 'FTE', createdBy: by } }),
     ];
     const location = await owner.location.create({ data: { subsidiaryId: B.subsidiaryId, name: 'Int-test B site two', geographyCode: 'UK' } });
@@ -566,9 +824,175 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
       await owner.target.delete({ where: { id: target.id } });
       await owner.location.delete({ where: { id: location.id } });
       await owner.subsidiaryDenominator.deleteMany({ where: { id: { in: denominators.map((d) => d.id) } } });
+      await owner.subsidiaryDenominator.update({ where: { id: revenueBId }, data: { value: B_REVENUE } });
       await owner.activityRecord.deleteMany({ where: { id: { in: records.map((r) => r.id) } } });
     }
-  }, 120_000);
+  }, 180_000);
+});
+
+describe("the reporting context's answers to B's selection, as each of A's roles: an empty answer, the context echoed, nothing of B", () => {
+  it.each(CONTEXT_FILTERS.flatMap((filter) => CONTEXT_READS.map((read) => [`GET ${read.path}?subsidiaryId=${filter}`, read, filter] as const)))(
+    '%s',
+    async (_name, { path, empty }, filter) => {
+      const missingId = randomUUID();
+      const echo = (subsidiaryId: string) => ({ year: 2026, subsidiaryId, ...(filter ? { scope: 2, category: 'Electricity' } : {}) });
+      for (const role of ROLES) {
+        const answer = async (id: string) => {
+          const res = await call(role, 'GET', `${path}?year=2026&subsidiaryId=${id}${filter}`);
+          expect(res.status, `${role} ${path}: ${res.text.slice(0, 200)}`).toBe(200);
+          return JSON.parse(res.text) as { context: unknown; data: unknown };
+        };
+        const foreign = await answer(B.subsidiaryId);
+        const missing = await answer(missingId);
+        // #167: the selection comes back verbatim, never widened or dropped…
+        expect(foreign.context, role).toStrictEqual(echo(B.subsidiaryId));
+        expect(missing.context, role).toStrictEqual(echo(missingId));
+        // …and the data is the unknown id's, as is — no id swapped, so B's id
+        // in it (a `selectedSubsidiaryIds: [B]`) would show.
+        expect(foreign.data, role).toStrictEqual(missing.data);
+        expect(empty(foreign.data), `${role} ${path}: ${JSON.stringify(foreign.data).slice(0, 200)}`).toBe(true);
+      }
+    },
+  );
+});
+
+describe("context exports with B's selection, as each of A's roles: the same file and the same generation audit as an unknown one (#168)", () => {
+  const reportRows = () => owner.auditLog.findMany({ where: { organisationId: A.organisationId, entity: 'report' } });
+  /** The audit rows `request` adds to A's organisation. */
+  const audited = async (request: () => Promise<Res>) => {
+    const seen = new Set((await reportRows()).map((r) => r.id));
+    const res = await request();
+    return { res, rows: (await reportRows()).filter((r) => !seen.has(r.id)) };
+  };
+
+  it.each(CONTEXT_EXPORTS.flatMap(([path, rest]) => (['GET', 'HEAD'] as const).map((method) => [method, path, rest] as const)))(
+    '%s %s',
+    async (method, path, rest) => {
+      const missingId = randomUUID();
+      const url = (id: string) => `${path}?year=2026&subsidiaryId=${id}&scope=2&category=Electricity${rest}`;
+      const before = await snapshotB();
+      for (const role of ROLES) {
+        const foreign = await audited(() => call(role, method, url(B.subsidiaryId)));
+        const missing = await audited(() => call(role, method, url(missingId)));
+        const context = `${role} ${method} ${path}`;
+        if (role === 'dataEntry') {
+          // data_entry exports nothing — for any selection, and leaves no trail.
+          expect([foreign.res.status, missing.res.status], context).toStrictEqual([403, 403]);
+          expect([foreign.rows, missing.rows], context).toStrictEqual([[], []]);
+          continue;
+        }
+        expect([foreign.res.status, missing.res.status], `${context}: ${foreign.res.text.slice(0, 200)}`).toStrictEqual([200, 200]);
+        // The file name carries the selection, by its first 8 characters.
+        expect(foreign.res.disposition, context).toBe(missing.res.disposition?.replace(missingId.slice(0, 8), B.subsidiaryId.slice(0, 8)));
+        expect(foreign.res.disposition, context).toContain(`-${B.subsidiaryId.slice(0, 8)}-scope2-electricity.`);
+        // One generation row each, in A's organisation, by the caller — the
+        // same row but for the selection it records.
+        expect([foreign.rows.length, missing.rows.length], context).toStrictEqual([1, 1]);
+        const [row] = foreign.rows;
+        expect(row, context).toMatchObject({ organisationId: A.organisationId, userId: A.users[role].id, action: 'generate', entity: 'report' });
+        expect(missing.rows[0].diff, context).toMatchObject({ subsidiaryId: missingId, scope: 2, category: 'Electricity', recordCount: 0, voidedCount: 0 });
+        expect(row.diff, context).toStrictEqual({ ...(missing.rows[0].diff as object), subsidiaryId: B.subsidiaryId });
+        // A PDF and a workbook name the filters: the selection is named by
+        // the id it was given, never as every subsidiary (and never by B's name).
+        if (method === 'GET' && !path.endsWith('csv')) {
+          expect(foreign.res.text, context).toContain(`Selected subsidiary (${B.subsidiaryId})`);
+          expect(foreign.res.text, context).not.toContain('All accessible subsidiaries');
+        }
+      }
+      expect(await snapshotB(), `${method} ${path} changed B's data`).toBe(before);
+
+      // Control: A's own selection lists A's record under its name, and audits it as counted.
+      await recordIn(ActivityRecordStatus.approved)();
+      const own = await audited(() => call('consultant', method, url(A.subsidiaryId)));
+      expect(own.res.status, own.res.text.slice(0, 200)).toBe(200);
+      expect(own.rows.map((r) => r.diff), `${method} ${path}`).toEqual([expect.objectContaining({ subsidiaryId: A.subsidiaryId, recordCount: 1 })]);
+      if (method === 'GET') {
+        expect(own.res.text).toContain(subsidiaryNameA);
+        expect(own.res.text).not.toContain('Selected subsidiary (');
+      }
+    },
+  );
+});
+
+describe("locationId is no reporting-context field: B's site is refused exactly as A's own and an unknown one", () => {
+  it.each([
+    ...CONTEXT_READS.map(({ path }) => [path, ''] as const),
+    ...CONTEXT_EXPORTS,
+  ])('GET %s?locationId=', async (path, rest) => {
+    const sites = [dataB.locationId, dataA.locationId, randomUUID()];
+    for (const role of ROLES) {
+      const answers: string[] = [];
+      for (const site of sites) {
+        const res = await call(role, 'GET', `${path}?year=2026&locationId=${site}${rest}`);
+        expect(res.status, `${role} ${path}: ${res.text.slice(0, 200)}`).toBe(400);
+        expect((JSON.parse(res.text) as { code?: unknown }).code, role).toBe('validation_failed');
+        for (const marker of markersB.filter((m) => m !== site)) expect(res.text, `${role} ${path} leaks ${marker}`).not.toContain(marker);
+        answers.push(res.text.split(site).join('<id>'));
+      }
+      expect(new Set(answers).size, `${role} ${path}: ${answers.join(' | ')}`).toBe(1);
+    }
+  });
+});
+
+describe('context exports are EXPORT work (#160, #168): one report at a time, and the export quota', () => {
+  const csv = '/reports/context/csv?year=2026&template=executive_summary';
+
+  it('while a PDF renders, every other export is refused — context and legacy alike — and reads are not', async () => {
+    const hold = deferred();
+    const entered = deferred();
+    pdf.hold = hold.promise;
+    pdf.entered = () => entered.resolve();
+    try {
+      const rendering = call('consultant', 'GET', '/reports/context/pdf?year=2026&template=executive_summary');
+      await entered.promise;
+      for (const path of [
+        csv,
+        '/reports/context/excel?year=2026&template=executive_summary',
+        '/reports/context/pdf?year=2026&template=executive_summary',
+        '/reports/csv?year=2026&template=executive_summary',
+      ]) {
+        for (const method of ['GET', 'HEAD'] as const) {
+          const res = await call('superAdmin', method, path);
+          expect(res.status, `${method} ${path}: ${res.text.slice(0, 200)}`).toBe(429);
+          if (method === 'GET') expect((JSON.parse(res.text) as { code?: unknown }).code, path).toBe('rate_limited');
+        }
+      }
+      for (const path of ['/reports/context/meta?year=2026', ...CONTEXT_READS.map((r) => `${r.path}?year=2026`)]) {
+        expect((await call('superAdmin', 'GET', path)).status, path).toBe(200);
+      }
+      hold.resolve();
+      expect((await rendering).status).toBe(200);
+    } finally {
+      hold.resolve();
+      pdf.hold = undefined;
+      pdf.entered = undefined;
+    }
+    // The lease came back with the render.
+    expect((await call('superAdmin', 'GET', csv)).status).toBe(200);
+  });
+
+  it('context and legacy exports spend one per-user quota; reads and other users do not', async () => {
+    const config = limits.config as { RATE_EXPORT_PER_MINUTE: number };
+    const previous = config.RATE_EXPORT_PER_MINUTE;
+    config.RATE_EXPORT_PER_MINUTE = 5;
+    try {
+      const spend: [string, 'GET' | 'HEAD'][] = [
+        ['/reports/csv?year=2026&template=executive_summary', 'GET'],
+        [csv, 'GET'],
+        ['/reports/excel?year=2026&template=executive_summary', 'GET'],
+        ['/reports/context/excel?year=2026&template=executive_summary', 'GET'],
+        [csv, 'HEAD'],
+      ];
+      for (const [path, method] of spend) expect((await call('consultant', method, path)).status, `${method} ${path}`).toBe(200);
+      const sixth = await call('consultant', 'GET', '/reports/context/pdf?year=2026&template=executive_summary');
+      expect(sixth.status, sixth.text.slice(0, 200)).toBe(429);
+      expect((JSON.parse(sixth.text) as { code?: unknown }).code).toBe('rate_limited');
+      expect((await call('consultant', 'GET', '/reports/context/meta?year=2026')).status).toBe(200);
+      expect((await call('superAdmin', 'GET', csv)).status).toBe(200);
+    } finally {
+      config.RATE_EXPORT_PER_MINUTE = previous;
+    }
+  });
 });
 
 describe('PATCH /me/preferences (LP3-01): the caller\'s own language, and nothing else', () => {
