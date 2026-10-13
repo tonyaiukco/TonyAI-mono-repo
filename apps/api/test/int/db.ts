@@ -40,10 +40,48 @@ export function connectOwner(connections = 1): PrismaService {
   return clientFor(process.env.INT_OWNER_DATABASE_URL, connections);
 }
 
+/**
+ * The same, logged in as the factor library's loader (LP4-02): what the
+ * loader CLI connects as, for proving its grants, policies and guards.
+ */
+export function connectLoader(connections = 1): PrismaService {
+  return clientFor(process.env.INT_FACTOR_LOADER_DATABASE_URL, connections);
+}
+
 function clientFor(raw: string | undefined, connections: number): PrismaService {
   const url = new URL(raw ?? '');
   url.searchParams.set('connection_limit', String(connections));
   return new PrismaService({ datasourceUrl: url.toString() });
+}
+
+/**
+ * The local stack's PostgREST with the service key — the credential a direct
+ * writer holds. A refusal of the service role's is proven here, as an
+ * attacker holding the key would act: an owner session that `SET ROLE`s to
+ * `service_role` keeps `session_user` = the owner, and the guards that read it
+ * rightly let the owner through. Refuses — never skips — without the stack.
+ */
+export function serviceRest(method: string, path: string, body?: unknown): Promise<Response> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error(
+      'The service-role probe needs the local stack: set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (`set -a; source apps/api/.env; set +a`). CI exports both.',
+    );
+  }
+  const target = new URL(url);
+  if (!['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname)) throw new Error(`refusing a non-local SUPABASE_URL (${target.hostname})`);
+  return fetch(`${url}/rest/v1/${path}`, {
+    method,
+    headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=minimal', 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+/** PostgREST's refusal: its HTTP status and the SQLSTATE in its body. */
+export async function refusal(res: Response): Promise<{ ok: boolean; code?: string }> {
+  const body = (await res.json().catch(() => ({}))) as { code?: string };
+  return { ok: res.ok, code: body.code };
 }
 
 /** The PostgreSQL backend pid of a `connect()` client's single connection. */

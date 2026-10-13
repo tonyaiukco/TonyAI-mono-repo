@@ -594,6 +594,10 @@ model FactorRelease {
   withdrawnBy      String?   @map("withdrawn_by")
   withdrawalReason String?   @map("withdrawal_reason")
   createdAt        DateTime  @default(now()) @map("created_at")
+  // Set once, by the database's clock, in the transaction that loads the
+  // release (LP4-02, P1/P2): a sealed release takes no rows, and pricing reads
+  // sealed releases only. A release left unsealed at commit is refused.
+  sealedAt         DateTime? @map("sealed_at") @db.Timestamptz(6)
 
   factors     EmissionFactor[]
   conversions UnitConversion[]
@@ -645,7 +649,7 @@ model FactorReleaseEvent {
   publisher     String
   edition       String
   releaseStatus String   @map("release_status") // the release's status at the event
-  event         String // loaded | rows_added | withdrawn | rows_deleted | deleted
+  event         String // loaded | rows_added | sealed | withdrawn | rows_deleted | deleted
   tableName     String?  @map("table_name") // rows_added / rows_deleted: which table
   rowCount      Int?     @map("row_count")
   detail        Json? // withdrawn: who, when, why

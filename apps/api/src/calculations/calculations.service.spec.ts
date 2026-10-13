@@ -46,16 +46,19 @@ function expectCalculated(
 // Local Prisma mock: a fake factor library behind the two queries the service
 // makes. No DB. `findMany` applies the service's `where` the way SQL would —
 // exact equality per column, the release status by its IN list — so a spec
-// can show that a row of another year, geography, gas or status is never a
-// candidate, not merely that the resolver would discard it.
+// can show that a row of another year, geography, gas or status — or of an
+// unsealed release (LP4-02) — is never a candidate, not merely that the
+// resolver would discard it.
 type FactorRow = EmissionFactor & { release: FactorRelease };
 type ConversionRow = UnitConversion & { release: FactorRelease };
 
 function matchesWhere(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([key, wanted]) => {
     if (key === 'release') {
-      const statuses = (wanted as { status: { in: string[] } }).status.in;
-      return statuses.includes((row.release as FactorRelease).status);
+      const release = row.release as FactorRelease;
+      const asked = wanted as { status: { in: string[] }; sealedAt?: { not: null } };
+      if (asked.sealedAt && release.sealedAt === null) return false;
+      return asked.status.in.includes(release.status);
     }
     return row[key] === wanted;
   });
@@ -65,6 +68,8 @@ function createFactorPrismaMock() {
   const library = { factors: [] as FactorRow[], conversions: [] as ConversionRow[] };
   return {
     library,
+    // The batch form the engine reads both in: one snapshot (see `candidates`).
+    $transaction: vi.fn(async (reads: Promise<unknown>[], _options?: unknown) => Promise.all(reads)),
     emissionFactor: {
       findMany: vi.fn(async (args: { where: Record<string, unknown>; take?: number }) =>
         library.factors.filter((f) => matchesWhere(f, args.where)).slice(0, args.take),
@@ -105,6 +110,7 @@ function makeRelease(overrides: Partial<FactorRelease> = {}): FactorRelease {
     withdrawnBy: null,
     withdrawalReason: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    sealedAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
   } as FactorRelease;
 }
@@ -482,7 +488,7 @@ describe('CalculationsService.compute', () => {
         activityType: 'grid_electricity',
         geographyCode: 'UK',
         reportingYear: 2023,
-        release: { status: { in: ['authoritative', 'placeholder', 'fixture'] } },
+        release: { status: { in: ['authoritative', 'placeholder', 'fixture'] }, sealedAt: { not: null } },
         gas: 'CO2e',
         scope2Method: 'location',
       },
@@ -643,6 +649,27 @@ describe('CalculationsService.compute', () => {
         unit: 'kWh',
       }),
     ).rejects.toBeInstanceOf(NoEmissionFactorError);
+  });
+
+  it('reads factors and conversions in one REPEATABLE READ snapshot — an erratum between two reads would mix libraries (Codex F2)', async () => {
+    useFactor(prisma, makeFactor({ geographyCode: 'UK', reportingYear: 2024 }));
+    await service.compute({ category: 'Electricity', geographyCode: 'UK', reportingYear: 2024, value: 1, unit: 'kWh' });
+    expect(prisma.$transaction).toHaveBeenCalledWith([expect.anything(), expect.anything()], { isolationLevel: 'RepeatableRead' });
+    // Both reads go through that one call — none apart from it.
+    expect(prisma.emissionFactor.findMany).toHaveBeenCalledTimes(prisma.$transaction.mock.calls.length);
+    expect(prisma.unitConversion.findMany).toHaveBeenCalledTimes(prisma.$transaction.mock.calls.length);
+  });
+
+  it('never prices from an unsealed release (LP4-02): its factor and its conversion are not candidates', async () => {
+    const unsealed = makeRelease({ sealedAt: null });
+    useFactor(prisma, makeFactor({ geographyCode: 'UK', reportingYear: 2024, release: unsealed }));
+    await expect(
+      service.compute({ category: 'Electricity', geographyCode: 'UK', reportingYear: 2024, value: 1, unit: 'kWh' }),
+    ).rejects.toBeInstanceOf(NoEmissionFactorError);
+    // Asked of the database, not only discarded here.
+    for (const query of [prisma.emissionFactor.findMany, prisma.unitConversion.findMany]) {
+      for (const [args] of query.mock.calls) expect(args.where.release).toMatchObject({ sealedAt: { not: null } });
+    }
   });
 
   /**
@@ -1006,7 +1033,7 @@ describe('CalculationsService.listFactors', () => {
     const result = await service.listFactors({ category: 'Electricity', geographyCode: 'TR', year: 2024 });
 
     expect(prisma.emissionFactor.findMany).toHaveBeenCalledWith({
-      where: { category: 'Electricity', geographyCode: 'TR', reportingYear: 2024 },
+      where: { category: 'Electricity', geographyCode: 'TR', reportingYear: 2024, release: { sealedAt: { not: null } } },
       include: {
         release: {
           select: {
@@ -1052,7 +1079,7 @@ describe('CalculationsService.listFactors', () => {
     await service.listFactors({});
 
     expect(prisma.emissionFactor.findMany).toHaveBeenCalledWith({
-      where: { category: undefined, geographyCode: undefined, reportingYear: undefined },
+      where: { category: undefined, geographyCode: undefined, reportingYear: undefined, release: { sealedAt: { not: null } } },
       include: { release: { select: expect.not.objectContaining({ reviewedBy: true }) } },
       orderBy: expect.any(Array),
     });

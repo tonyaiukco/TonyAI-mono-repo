@@ -23,7 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import type { PrismaService } from '../../src/prisma/prisma.service';
-import { connect, connectOwner, createRecord, createTenant, withRollback, type Tenant } from './db';
+import { connect, connectOwner, createRecord, createTenant, refusal, serviceRest, withRollback, type Tenant } from './db';
 import { lifecycleServices } from './services';
 
 let runtime: PrismaService;
@@ -72,29 +72,6 @@ function codeOf(e: unknown): string | null {
   return /code: "([0-9A-Z]{5})"/.exec(String((e as Error | null)?.message))?.[1] ?? null;
 }
 
-/** The local stack's PostgREST with the service key — the credential OQ (11)'s first attack used. */
-function serviceRest(method: string, path: string, body?: unknown): Promise<Response> {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    throw new Error(
-      'The service-role probe needs the local stack: set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (`set -a; source apps/api/.env; set +a`). CI exports both.',
-    );
-  }
-  const target = new URL(url);
-  if (!['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname)) throw new Error(`refusing a non-local SUPABASE_URL (${target.hostname})`);
-  return fetch(`${url}/rest/v1/${path}`, {
-    method,
-    headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=minimal', 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-}
-
-/** PostgREST's refusal: its HTTP status and the SQLSTATE in its body. */
-async function refusal(res: Response): Promise<{ ok: boolean; code?: string }> {
-  const body = (await res.json().catch(() => ({}))) as { code?: string };
-  return { ok: res.ok, code: body.code };
-}
 
 /** A record inserted directly, in the status given — not walked there like `createRecord`'s. */
 function recordData(periodValue: string, status: ActivityRecordStatus): Prisma.ActivityRecordUncheckedCreateInput {
@@ -227,6 +204,116 @@ describe('LP4-01 — a record is born a draft and moved by the API alone', () =>
       (await tx.activityRecord.create({ data: recordData('September', ActivityRecordStatus.approved) })).status,
     );
     expect(inserted).toBe(ActivityRecordStatus.approved);
+  });
+});
+
+describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
+  // The measured attack (LP4-01 follow-ups (9)): the API saved 3.4 tCO2e, a
+  // service-role PATCH made it 0.0001, and the author's ordinary submit and a
+  // reviewer's approve committed it.
+  const forged = { tCo2e: 0.0001, factorId: 'forged' };
+
+  it("refuses the service role a draft's or a rejected record's figure and inputs rewritten through PostgREST (TA006)", async () => {
+    const id = randomUUID();
+    try {
+      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'October'))).ok).toBe(true);
+      for (const change of [
+        { calculation: forged },
+        { input: { value: 1 } },
+        { activity_value: 0.001 },
+        { activity_unit: 'MWh' },
+        { category: 'Natural Gas' },
+        { scope: 1 },
+        { reporting_year: 2025 },
+        { reporting_period: 'quarterly' },
+        { period_value: 'November' },
+        { activity_type: 'grid_electricity' },
+        { subsidiary_id: randomUUID() },
+        { location_id: randomUUID() },
+      ]) {
+        expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, change)), JSON.stringify(change)).toEqual({ ok: false, code: 'TA006' });
+      }
+      // Rejected is editable too — by the API alone.
+      await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.submitted } });
+      await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.rejected } });
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { calculation: forged }))).toEqual({ ok: false, code: 'TA006' });
+      const stored = await owner.activityRecord.findUniqueOrThrow({ where: { id } });
+      expect(stored).toMatchObject({ activityValue: 99, calculation: { tCo2e: 9, factorId: 'forged' } });
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
+  it("refuses the service role a committed record's free-form input (TA006), and leaves its figure to K5 (TA001)", async () => {
+    const id = randomUUID();
+    try {
+      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'December'))).ok).toBe(true);
+      await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.submitted } });
+      await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.approved } });
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { input: { value: 1 } }))).toEqual({ ok: false, code: 'TA006' });
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { calculation: forged }))).toEqual({ ok: false, code: 'TA001' });
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
+  it('refuses the service role deleting a draft or a rejected record — the delete-and-re-insert rewrite (TA006)', async () => {
+    const id = randomUUID();
+    try {
+      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'October'))).ok).toBe(true);
+      expect(await refusal(await serviceRest('DELETE', `activity_records?id=eq.${id}`))).toEqual({ ok: false, code: 'TA006' });
+      // So its id cannot be re-used for a forged figure.
+      expect((await serviceRest('POST', 'activity_records', { ...recordRow(id, 'draft', 'October'), calculation: forged })).ok).toBe(false);
+      await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.submitted } });
+      await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.rejected } });
+      expect(await refusal(await serviceRest('DELETE', `activity_records?id=eq.${id}`))).toEqual({ ok: false, code: 'TA006' });
+      expect(await owner.activityRecord.findUniqueOrThrow({ where: { id } })).toMatchObject({ calculation: { factorId: 'forged' }, activityValue: 99 });
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
+  it('refuses the service role rewriting who wrote a record, at any status — the self-approval rule reads it (TA006)', async () => {
+    const id = randomUUID();
+    try {
+      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'October'))).ok).toBe(true);
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { created_by: tenant.users.superAdmin.id }))).toEqual({
+        ok: false,
+        code: 'TA006',
+      });
+      await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.submitted } });
+      expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { created_by: tenant.users.superAdmin.id }))).toEqual({
+        ok: false,
+        code: 'TA006',
+      });
+      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).createdBy).toBe(tenant.users.dataEntry.id);
+    } finally {
+      await owner.activityRecord.deleteMany({ where: { id } });
+    }
+  });
+
+  it("lets the API's login and the owner delete a draft (the API's delete; a teardown)", async () => {
+    for (const client of [runtime, owner]) {
+      const left = await withRollback(client, async (tx) => {
+        const rec = await createRecord(tx as unknown as PrismaService, tenant, { periodValue: 'October' });
+        await tx.activityRecord.delete({ where: { id: rec.id } });
+        return tx.activityRecord.count({ where: { id: rec.id } });
+      });
+      expect(left).toBe(0);
+    }
+  });
+
+  it("lets the API's login and the owner rewrite a draft's figure and inputs (the API's save; a fixture)", async () => {
+    for (const client of [runtime, owner]) {
+      const saved = await withRollback(client, async (tx) => {
+        const rec = await createRecord(tx as unknown as PrismaService, tenant, { periodValue: 'October' });
+        return tx.activityRecord.update({
+          where: { id: rec.id },
+          data: { calculation: { tCo2e: 1.5, factorId: 'resaved' }, input: { value: 2 }, activityValue: 2 },
+        });
+      });
+      expect(saved).toMatchObject({ activityValue: 2, calculation: { tCo2e: 1.5 }, input: { value: 2 } });
+    }
   });
 });
 

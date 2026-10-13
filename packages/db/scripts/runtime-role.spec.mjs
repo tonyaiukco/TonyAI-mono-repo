@@ -22,6 +22,15 @@ import {
   checkFunctionExecutors,
   platformDefaultPrivileges,
   CLIENT_CALLABLE_FUNCTIONS,
+  FACTOR_LOADER_ROLE,
+  FACTOR_LOADER_TABLE_PRIVILEGES,
+  FACTOR_LOADER_COLUMN_UPDATES,
+  factorLoaderUrlFrom,
+  provisionLocalRuntimeLogin,
+  provisionLocalFactorLoaderLogin,
+  checkLibraryWriters,
+  checkFactorLoaderRole,
+  checkAll,
 } from './runtime-role.mjs';
 
 // The database half — that PostgreSQL accepts the verifier and the privileges
@@ -102,6 +111,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
   const allTriggers = INTEGRITY_TRIGGERS.map((t) => ({
     table: t.table, trigger: t.trigger, enabled: 'A', type: t.type, unconditional: true, allColumns: true,
     fnSchema: 'public', fn: t.fn, bodyMd5: md5(bodies.get(t.fn)), definer: Boolean(t.definer), config: ['search_path=""'], language: 'plpgsql',
+    deferrable: Boolean(t.deferred), initiallyDeferred: Boolean(t.deferred),
   }));
   const allChecks = INTEGRITY_CHECKS.map(([table, name, definitionMd5]) => ({
     table, name, validated: true, definitionMd5, definition: 'CHECK (...)',
@@ -144,8 +154,9 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // conversions, and the record's own three append-only guards.
     // K5, its delete guard and the slot rule; four guards on each factor
     // table; the record's writers; the record's four guards; LP4-01's
-    // lifecycle writer, organisation guard and subsidiary guard.
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3);
+    // lifecycle writer, organisation guard and subsidiary guard; LP4-02's
+    // seal check at the commit.
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3 + 1);
     expect(INTEGRITY_TRIGGERS.filter((t) => t.definer).map((t) => t.trigger).sort()).toEqual([
       'emission_factors_record_delete', 'emission_factors_record_insert', 'factor_releases_record_event',
       'unit_conversions_record_delete', 'unit_conversions_record_insert',
@@ -155,6 +166,25 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
       fn: 'factor_tables_before_truncate',
       type: 2 | 32,
     });
+  });
+
+  it("holds the seal's commit check (LP4-02): after insert, row by row, an invoker, deferred to the commit", async () => {
+    expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === 'factor_releases_sealed_at_commit')).toEqual({
+      table: 'factor_releases',
+      trigger: 'factor_releases_sealed_at_commit',
+      fn: 'factor_releases_sealed_at_commit',
+      type: 1 | 4,
+      deferred: true,
+    });
+    expect(INTEGRITY_TRIGGERS.filter((t) => t.deferred).map((t) => t.trigger)).toEqual(['factor_releases_sealed_at_commit']);
+    // Run at its statement, a load's first row would find its release unsealed
+    // and every load would fail — and a check that never runs at the commit is
+    // no check: either way the trigger is not the one the migration made.
+    for (const change of [{ initiallyDeferred: false }, { deferrable: false, initiallyDeferred: false }]) {
+      expect(await check(tweak('factor_releases_sealed_at_commit', change))).toEqual([
+        'trigger factor_releases_sealed_at_commit on factor_releases is not DEFERRABLE INITIALLY DEFERRED — it must run at the commit, once the load is in',
+      ]);
+    }
   });
 
   it('finds every trigger function in the migrations, as the database must hold it', () => {
@@ -302,11 +332,23 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     expect(real.get('subsidiaries_stay_in_organisation')).toMatch(
       /IF \(NEW\."id" IS DISTINCT FROM OLD\."id" OR NEW\."organisation_id" IS DISTINCT FROM OLD\."organisation_id"\)\s+AND session_user <> \(SELECT/,
     );
-    // A record is born a draft (the owner and replica mode aside), and only
-    // the API's login or the owner's moves its status.
+    // A record is born a draft (the owner and replica mode aside); only the
+    // API's login or the owner's moves its status (TA005) or — K11, LP4-02 —
+    // rewrites what a draft or rejected record says, its figure and every
+    // input K5 freezes once it is committed, or any record's free-form input
+    // (TA006).
     const writer = real.get('activity_records_lifecycle_writer');
     expect(writer).toMatch(/IF NEW\."status" <> 'draft'\s+AND pg_catalog\.current_setting\('session_replication_role'\) <> 'replica'\s+AND session_user <> \(SELECT/);
-    expect(writer).toMatch(new RegExp(`ELSIF NEW\\."status" IS DISTINCT FROM OLD\\."status"\\s+AND session_user <> '${RUNTIME_ROLE}'\\s+AND session_user <> \\(SELECT`));
+    expect(writer).toMatch(new RegExp(`ELSIF session_user <> '${RUNTIME_ROLE}'\\s+AND session_user <> \\(SELECT`));
+    expect(writer).toMatch(/IF NEW\."status" IS DISTINCT FROM OLD\."status" THEN\s+RAISE EXCEPTION USING\s+ERRCODE = 'TA005'/);
+    expect(writer).toMatch(/IF NEW\."input" IS DISTINCT FROM OLD\."input"\s+OR NEW\."created_by" IS DISTINCT FROM OLD\."created_by"\s+OR \(OLD\."status" IN \('draft', 'rejected'\) AND \(/);
+    const frozen = [...real.get('activity_records_snapshot_immutable').matchAll(/NEW\."([a-z_]+)" IS DISTINCT FROM OLD\."\1"/g)]
+      .map((m) => m[1])
+      .filter((col) => col !== 'id' && col !== 'status');
+    expect(frozen).toContain('calculation');
+    expect(frozen.length).toBeGreaterThanOrEqual(11);
+    for (const col of frozen) expect(writer).toContain(`NEW."${col}" IS DISTINCT FROM OLD."${col}"`);
+    expect(writer).toMatch(/ERRCODE = 'TA006'/);
     expect(writer).not.toMatch(/current_user/);
   });
 
@@ -474,6 +516,7 @@ describe('checkFunctionExecutors — only the owner may EXECUTE a function in pu
             { client: 'authenticated', owner: 'postgres', itself: false, runtime: false },
             { client: 'authenticator', owner: 'tonyai_runtime', itself: false, runtime: true },
             { client: 'service_role', owner: 'service_role', itself: true, runtime: false },
+            { client: 'authenticated', owner: 'tonyai_factor_loader', itself: false, runtime: false, loader: true },
           ],
           [
             { client: 'anon', via: 'anon' },
@@ -485,6 +528,7 @@ describe('checkFunctionExecutors — only the owner may EXECUTE a function in pu
       'authenticated can act as postgres (a member — inherited, by SET ROLE or by ADMIN), an owner in public or of the database — it may alter, disable or drop what that role owns; no client may be',
       "authenticator can act as tonyai_runtime (a member — inherited, by SET ROLE or by ADMIN), the API's role — BYPASSRLS and its every grant; no client may be",
       'service_role owns the database, the schema public or something in it — it may alter, disable or drop it; no client may own one',
+      "authenticated can act as tonyai_factor_loader (a member — inherited, by SET ROLE or by ADMIN), the factor library's loader — it loads, seals and withdraws releases; no client may be",
       'anon may create in public — a function it creates there is its own to run, attach and grant; no client may',
       'authenticator may create in public as oq14_creator — a function it creates there is its own to run, attach and grant; no client may',
     ]);
@@ -510,6 +554,7 @@ describe('checkFunctionExecutors — only the owner may EXECUTE a function in pu
       "UNION SELECT t.typowner FROM pg_catalog.pg_type t WHERE t.typnamespace = 'public'::regnamespace",
       "UNION SELECT p.proowner FROM pg_catalog.pg_proc p WHERE p.pronamespace = 'public'::regnamespace",
       "UNION SELECT 'tonyai_runtime'::regrole",
+      "UNION SELECT pg_catalog.to_regrole('tonyai_factor_loader')",
     ])
       expect(actsAs).toContain(owner);
     expect(actsAs).not.toContain('c.oid <> o.role');
@@ -616,10 +661,20 @@ describe('checkTenantInvariants — what a restore skips', () => {
 });
 
 describe('factorLibraryReport (LP3-03)', () => {
-  const fake = (n, releases, unrecorded = [], readable = true) => async (sql) =>
+  const fake = (n, releases, unrecorded = [], readable = true, unsealed = 0) => async (sql) =>
     sql.includes('has_table_privilege')
       ? [{ readable, who: 'tonyai_runtime' }]
-      : sql.includes('WITH held') ? unrecorded : sql.includes('AS n') ? [{ n }] : releases;
+      : sql.includes('WITH held')
+        ? unrecorded
+        : sql.includes('sealed_at IS NULL') ? [{ unsealed }] : sql.includes('AS n') ? [{ n }] : releases;
+
+  it('fails on a release left unsealed (LP4-02) — only a restore or a disabled guard leaves one', async () => {
+    const report = await factorLibraryReport(fake(0, [], [], false, 2));
+    expect(report.problems).toEqual([
+      '2 factor release(s) not sealed — a release is sealed in the transaction that loads it, and pricing ignores an unsealed one',
+    ]);
+    expect((await factorLibraryReport(fake(0, []))).problems).toEqual([]);
+  });
 
   it('fails on rows the record never saw added — a load that bypassed its triggers', async () => {
     const report = await factorLibraryReport(
@@ -659,5 +714,159 @@ describe('factorLibraryReport (LP3-03)', () => {
     expect(report.problems).toEqual([
       '2 factor/conversion row(s) with an unspecified activity type under an authoritative release',
     ]);
+  });
+});
+
+describe('the factor loader role (LP4-02)', () => {
+  it('derives its login for the same database, and never without a password', () => {
+    expect(FACTOR_LOADER_ROLE).toBe('tonyai_factor_loader');
+    const url = factorLoaderUrlFrom('postgresql://postgres:postgres@127.0.0.1:54322/postgres', 'abc');
+    expect(urlUser(url)).toBe(FACTOR_LOADER_ROLE);
+    expect(new URL(url).password).toBe('abc');
+    expect(new URL(url).host).toBe('127.0.0.1:54322');
+    expect(() => factorLoaderUrlFrom('postgresql://postgres:postgres@127.0.0.1:54322/postgres')).toThrow(/password/);
+  });
+
+  it('reads and inserts the library, and updates a release only to seal or withdraw it — nothing else, anywhere', () => {
+    expect(FACTOR_LOADER_TABLE_PRIVILEGES).toEqual({
+      factor_releases: ['SELECT', 'INSERT'],
+      emission_factors: ['SELECT', 'INSERT'],
+      unit_conversions: ['SELECT', 'INSERT'],
+    });
+    expect(FACTOR_LOADER_COLUMN_UPDATES).toEqual({
+      factor_releases: ['sealed_at', 'status', 'withdrawn_at', 'withdrawn_by', 'withdrawal_reason'],
+    });
+    expect(Object.isFrozen(FACTOR_LOADER_TABLE_PRIVILEGES) && Object.isFrozen(FACTOR_LOADER_COLUMN_UPDATES)).toBe(true);
+  });
+
+  it('gives each role a login through the owner, as a SCRAM verifier, on a local database only', async () => {
+    const owner = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
+    for (const [provision, role] of [
+      [provisionLocalRuntimeLogin, RUNTIME_ROLE],
+      [provisionLocalFactorLoaderLogin, FACTOR_LOADER_ROLE],
+    ]) {
+      const sent = [];
+      const client = { $executeRawUnsafe: async (sql) => sent.push(sql) };
+      await provision(client, owner, 'a-password');
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatch(new RegExp(`^ALTER ROLE "${role}" WITH LOGIN PASSWORD 'SCRAM-SHA-256\\$4096:`));
+      expect(sent[0]).not.toContain('a-password');
+      await expect(provision(client, 'postgresql://postgres:postgres@db.example.com:5432/postgres', 'x')).rejects.toThrow(/not plainly local/);
+      await expect(provision(client, factorLoaderUrlFrom(owner, 'x'), 'x')).rejects.toThrow(/owner connection/);
+      await expect(provision(client, runtimeUrlFrom(owner, 'x'), 'x')).rejects.toThrow(/owner connection/);
+      expect(sent).toHaveLength(1);
+    }
+  });
+});
+
+describe('checkFactorLoaderRole — the loader as the runtime role is checked, and no replica mode (LP4-02)', () => {
+  // Just enough catalogue to get through: the role, USAGE on public, no
+  // tables (so each listed one is reported missing), and the setting.
+  const fake = ({ replica = false, bypassrls = false } = {}) => async (sql) =>
+    sql.includes('SELECT rolsuper')
+      ? [{ rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolreplication: false, rolbypassrls: bypassrls, rolconfig: null }]
+      : sql.includes(`has_schema_privilege('${FACTOR_LOADER_ROLE}', 'public', 'USAGE') AS usage`)
+        ? [{ usage: true, create_: false, createdb_obj: false }]
+        : sql.includes('has_parameter_privilege') ? [{ replica }] : [];
+  const missing = ['factor_releases', 'emission_factors', 'unit_conversions'].map(
+    (t) => `${FACTOR_LOADER_ROLE}'s table privileges list public.${t}, which does not exist`,
+  );
+
+  it('names a loader that may SET session_replication_role — replica mode turns the load-time triggers off', async () => {
+    expect(await checkFactorLoaderRole(fake())).toEqual(missing);
+    expect(await checkFactorLoaderRole(fake({ replica: true }))).toEqual([
+      ...missing,
+      `${FACTOR_LOADER_ROLE} may SET session_replication_role — replica mode turns the library's load-time triggers off`,
+    ]);
+    const seen = [];
+    await checkFactorLoaderRole(async (sql) => (seen.push(sql), (await fake()(sql))));
+    expect(seen).toContain(`SELECT pg_catalog.has_parameter_privilege('${FACTOR_LOADER_ROLE}', 'session_replication_role', 'SET') AS replica`);
+  });
+
+  it('names a loader with BYPASSRLS — its policies would no longer bound it — and a missing one plainly', async () => {
+    expect(await checkFactorLoaderRole(fake({ bypassrls: true }))).toContain(`${FACTOR_LOADER_ROLE} has BYPASSRLS — its policies would no longer bound it`);
+    expect(await checkFactorLoaderRole(async () => [])).toEqual([
+      `role ${FACTOR_LOADER_ROLE} does not exist — is the LP4-02 migration applied?`,
+    ]);
+  });
+});
+
+describe('checkLibraryWriters — the factor library has two writers: its loader and the owner (LP4-02)', () => {
+  const fake = (rows, referencing = []) => async (sql) => (sql.includes('confrelid') ? referencing : rows);
+
+  it('checks a table that references a release too — a library table added later is born writable by the service role', async () => {
+    const seen = [];
+    await checkLibraryWriters(async (sql) => (seen.push(sql), sql.includes('confrelid') ? [{ table: 'factor_notes' }] : []));
+    expect(seen[0]).toContain("k.confrelid = 'public.factor_releases'::pg_catalog.regclass");
+    expect(seen[1]).toContain("'public.factor_notes'::pg_catalog.regclass");
+    expect(seen[1]).toContain("'public.unit_conversions'::pg_catalog.regclass");
+    expect(
+      await checkLibraryWriters(fake([{ table: 'factor_notes', grantee: 'service_role', priv: 'INSERT', columnLevel: false }], [{ table: 'factor_notes' }])),
+    ).toEqual(['service_role may INSERT public.factor_notes — the factor library is written by its loader and the owner alone']);
+  });
+
+  it("passes on the loader's grants, and names every other writer — table or column level, PUBLIC included", async () => {
+    expect(
+      await checkLibraryWriters(
+        fake([
+          { table: 'factor_releases', grantee: 'tonyai_factor_loader', priv: 'INSERT', columnLevel: false },
+          { table: 'factor_releases', grantee: 'tonyai_factor_loader', priv: 'UPDATE', columnLevel: true },
+        ]),
+      ),
+    ).toEqual([]);
+    expect(
+      await checkLibraryWriters(
+        fake([
+          { table: 'emission_factors', grantee: 'service_role', priv: 'INSERT', columnLevel: false },
+          { table: 'factor_releases', grantee: 'PUBLIC', priv: 'UPDATE', columnLevel: true },
+          { table: 'unit_conversions', grantee: 'tonyai_runtime', priv: 'DELETE', columnLevel: false },
+        ]),
+      ),
+    ).toEqual([
+      'service_role may INSERT public.emission_factors — the factor library is written by its loader and the owner alone',
+      'PUBLIC may UPDATE public.factor_releases (column-level) — the factor library is written by its loader and the owner alone',
+      'tonyai_runtime may DELETE public.unit_conversions — the factor library is written by its loader and the owner alone',
+    ]);
+  });
+
+  it('asks the ACLs of all three tables and their columns, for the write verbs, about everyone but the owner', async () => {
+    const seen = [];
+    await checkLibraryWriters(async (sql) => (seen.push(sql), []));
+    const sql = seen.join('\n');
+    for (const t of ['factor_releases', 'emission_factors', 'unit_conversions']) expect(sql).toContain(`'public.${t}'::pg_catalog.regclass`);
+    expect(sql).toContain('pg_catalog.aclexplode(COALESCE(c.relacl, pg_catalog.acldefault(');
+    expect(sql).toContain('pg_catalog.aclexplode(a.attacl)');
+    expect(sql).toContain("('INSERT', 'UPDATE', 'DELETE')");
+    expect(sql).toContain('x.grantee <> c.relowner');
+  });
+});
+
+describe('checkAll — the one list `runtime-role.mjs check` runs', () => {
+  it('runs every check: both roles, the library writers, the data, the table verbs, the executors, the triggers, the library', async () => {
+    const seen = [];
+    // One row that satisfies every reader's shape; what the checks conclude
+    // from it does not matter here — which questions they ask does.
+    const row = {
+      rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolreplication: false, rolbypassrls: false, rolconfig: null,
+      usage: true, create_: false, createdb_obj: false, n: 0, unsealed: 3, readable: false, who: 'tonyai_runtime', replica: false,
+      any: false, exists: false,
+    };
+    const { problems } = await checkAll(async (sql) => (seen.push(sql), [row]));
+    // The library report's problems are among them — it is read apart from the rest.
+    expect(problems).toContain('3 factor release(s) not sealed — a release is sealed in the transaction that loads it, and pricing ignores an unsealed one');
+    const asked = seen.join('\n');
+    for (const [check, sql] of [
+      ['checkRuntimeRole', "has_schema_privilege('tonyai_runtime', 'public', 'USAGE')"],
+      ['checkFactorLoaderRole', "has_parameter_privilege('tonyai_factor_loader', 'session_replication_role', 'SET')"],
+      ['checkLibraryWriters', "k.confrelid = 'public.factor_releases'::pg_catalog.regclass"],
+      ['checkTenantInvariants', 'FROM user_subsidiary_access usa'],
+      ['checkTableLevelGrants', "('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')"],
+      ['checkFunctionExecutors', 'AS "signature"'],
+      ['checkIntegrityTriggers', 't.tginitdeferred AS "initiallyDeferred"'],
+      ['factorLibraryReport', 'FROM factor_releases WHERE sealed_at IS NULL'],
+      ['platformDefaultPrivileges', 'pg_default_acl'],
+    ]) {
+      expect(asked, check).toContain(sql);
+    }
   });
 });

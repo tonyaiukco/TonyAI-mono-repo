@@ -33,12 +33,25 @@
  * A deployed environment's operator sets the password with psql's
  * `\password tonyai_runtime` (also client-side hashed), never with a plain
  * `ALTER ROLE … PASSWORD '…'`, which statement logs and pg_stat_statements keep.
+ *
+ * A third credential, one job (LP4-02): FACTOR_LOADER_DATABASE_URL —
+ * `tonyai_factor_loader`, created by `20261011120000_lp4_02_loader`: the factor
+ * library's loader (`apps/api/src/factor-releases`), which loads, seals and
+ * withdraws releases and touches nothing else. No BYPASSRLS — policies of its
+ * own admit it. Provisioned like the runtime's login, by its own command:
+ *
+ *   FACTOR_LOADER_DB_PASSWORD=<pw> DIRECT_URL=<owner> node packages/db/scripts/runtime-role.mjs provision-loader
+ *
+ * and in a deployed environment with `\password tonyai_factor_loader`, then
+ * `ALTER ROLE tonyai_factor_loader LOGIN`.
  */
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const RUNTIME_ROLE = 'tonyai_runtime';
+/** The factor library's loader (LP4-02) — its one writer besides the owner. */
+export const FACTOR_LOADER_ROLE = 'tonyai_factor_loader';
 
 /** A fresh random password for a local runtime login. */
 export function randomRuntimePassword() {
@@ -102,13 +115,22 @@ export function urlUser(url) {
   return decodeURIComponent(new URL(url).username);
 }
 
-/** The same database as `ownerUrl`, logged in as the runtime role with `password`. */
-export function runtimeUrlFrom(ownerUrl, password) {
-  if (!password) throw new Error('runtimeUrlFrom: a password is required');
+function loginUrlFrom(ownerUrl, role, password, caller) {
+  if (!password) throw new Error(`${caller}: a password is required`);
   const url = new URL(ownerUrl);
-  url.username = RUNTIME_ROLE;
+  url.username = role;
   url.password = password;
   return url.toString();
+}
+
+/** The same database as `ownerUrl`, logged in as the runtime role with `password`. */
+export function runtimeUrlFrom(ownerUrl, password) {
+  return loginUrlFrom(ownerUrl, RUNTIME_ROLE, password, 'runtimeUrlFrom');
+}
+
+/** The same database as `ownerUrl`, logged in as the factor loader with `password`. */
+export function factorLoaderUrlFrom(ownerUrl, password) {
+  return loginUrlFrom(ownerUrl, FACTOR_LOADER_ROLE, password, 'factorLoaderUrlFrom');
 }
 
 const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'];
@@ -123,8 +145,8 @@ const SIUD = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
 export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   organisations: ['SELECT'],
   // The factor library (LP3-03): reference data the API reads and never
-  // writes — releases and conversions are loaded by the seed and LP4-02's
-  // loader on the owner connection.
+  // writes — the seed loads it on the owner connection, LP4-02's loader
+  // through its own role (FACTOR_LOADER_TABLE_PRIVILEGES).
   emission_factors: ['SELECT'],
   factor_releases: ['SELECT'],
   unit_conversions: ['SELECT'],
@@ -225,19 +247,81 @@ export const RUNTIME_STORAGE_PRIVILEGES = Object.freeze({
 });
 
 /**
+ * The loader's table privileges (LP4-02): the factor library and nothing else
+ * — a table not listed here holds none. It reads the library (an identical
+ * release already loaded is a no-op, a differing one a refusal) and inserts
+ * releases and their rows; no DELETE (a fixture is the owner's to remove).
+ */
+export const FACTOR_LOADER_TABLE_PRIVILEGES = Object.freeze({
+  factor_releases: ['SELECT', 'INSERT'],
+  emission_factors: ['SELECT', 'INSERT'],
+  unit_conversions: ['SELECT', 'INSERT'],
+});
+
+/** A release's seal and its withdrawal: the columns those two changes write. */
+export const FACTOR_LOADER_COLUMN_UPDATES = Object.freeze({
+  factor_releases: ['sealed_at', 'status', 'withdrawn_at', 'withdrawn_by', 'withdrawal_reason'],
+});
+
+const RUNTIME_SPEC = Object.freeze({
+  role: RUNTIME_ROLE,
+  migration: 'LP1-03',
+  bypassrls: true,
+  tables: RUNTIME_TABLE_PRIVILEGES,
+  everyTableListed: true,
+  columnInserts: RUNTIME_COLUMN_INSERTS,
+  columnUpdates: RUNTIME_COLUMN_UPDATES,
+  outside: RUNTIME_STORAGE_PRIVILEGES,
+});
+
+const FACTOR_LOADER_SPEC = Object.freeze({
+  role: FACTOR_LOADER_ROLE,
+  migration: 'LP4-02',
+  bypassrls: false,
+  tables: FACTOR_LOADER_TABLE_PRIVILEGES,
+  everyTableListed: false,
+  columnInserts: {},
+  columnUpdates: FACTOR_LOADER_COLUMN_UPDATES,
+  outside: {},
+});
+
+/**
  * Compares the role in the connected database with the intended privileges.
  * `query(sql)` runs one read-only statement and resolves to its rows. Returns
  * a list of problems — empty when the role is exactly as intended.
  */
 export async function checkRuntimeRole(query) {
+  return checkRole(query, RUNTIME_SPEC);
+}
+
+/**
+ * The loader as `checkRuntimeRole` checks the runtime role (LP4-02) — plus
+ * the one setting that would undo the library's guards: `SET
+ * session_replication_role = replica` turns its load-time triggers off, so
+ * the loader may not set it (only a superuser, or a role granted SET on it,
+ * may).
+ */
+export async function checkFactorLoaderRole(query) {
+  const problems = await checkRole(query, FACTOR_LOADER_SPEC);
+  if (problems.some((p) => p.endsWith('does not exist — is the LP4-02 migration applied?'))) return problems;
+  const [{ replica }] = await query(
+    `SELECT pg_catalog.has_parameter_privilege('${FACTOR_LOADER_ROLE}', 'session_replication_role', 'SET') AS replica`,
+  );
+  if (replica) {
+    problems.push(`${FACTOR_LOADER_ROLE} may SET session_replication_role — replica mode turns the library's load-time triggers off`);
+  }
+  return problems;
+}
+
+async function checkRole(query, spec) {
   const problems = [];
-  const role = RUNTIME_ROLE;
+  const { role } = spec;
 
   const [attrs] = await query(
     `SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolconfig
        FROM pg_roles WHERE rolname = '${role}'`,
   );
-  if (!attrs) return [`role ${role} does not exist — is the LP1-03 migration applied?`];
+  if (!attrs) return [`role ${role} does not exist — is the ${spec.migration} migration applied?`];
   for (const [attr, label] of [
     ['rolsuper', 'SUPERUSER'],
     ['rolcreatedb', 'CREATEDB'],
@@ -246,8 +330,11 @@ export async function checkRuntimeRole(query) {
   ]) {
     if (attrs[attr]) problems.push(`${role} has ${label}`);
   }
-  if (!attrs.rolbypassrls) {
+  if (spec.bypassrls && !attrs.rolbypassrls) {
     problems.push(`${role} lacks BYPASSRLS — the API would see no rows and the Storage sweeper would stall`);
+  }
+  if (!spec.bypassrls && attrs.rolbypassrls) {
+    problems.push(`${role} has BYPASSRLS — its policies would no longer bound it`);
   }
   // Settings attached to the role (`ALTER ROLE … SET`) apply to every session
   // it opens — a search_path among them would change what its queries resolve to.
@@ -267,7 +354,7 @@ export async function checkRuntimeRole(query) {
       WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = '${role}')`,
   );
   for (const m of memberships) problems.push(`${role} is a member of ${m.rolname}`);
-  // Who may act AS the runtime role: only its creator, with ADMIN and neither
+  // Who may act AS the role: only its creator, with ADMIN and neither
   // INHERIT nor SET (PostgreSQL 16's grant to a CREATEROLE creator).
   const members = await query(
     `SELECT r.rolname, m.inherit_option, m.set_option FROM pg_auth_members m
@@ -299,14 +386,14 @@ export async function checkRuntimeRole(query) {
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') ORDER BY c.relname`,
   );
-  const expectedTables = new Set(Object.keys(RUNTIME_TABLE_PRIVILEGES));
+  const expectedTables = new Set(Object.keys(spec.tables));
   for (const { name, forced } of tables) {
     if (forced) problems.push(`public.${name} has FORCE ROW LEVEL SECURITY`);
-    if (!expectedTables.delete(name)) {
+    if (!expectedTables.delete(name) && spec.everyTableListed) {
       problems.push(`public.${name} has no entry in RUNTIME_TABLE_PRIVILEGES — decide the runtime's privileges for it`);
       continue;
     }
-    const expected = new Set(RUNTIME_TABLE_PRIVILEGES[name]);
+    const expected = new Set(spec.tables[name] ?? []);
     const rows = await query(
       `SELECT ${PRIVILEGES.map((p) => `has_table_privilege('${role}', 'public.${name}', '${p}') AS "${p}"`).join(', ')}`,
     );
@@ -325,8 +412,8 @@ export async function checkRuntimeRole(query) {
     // INSERT and UPDATE may be granted per column instead — exactly the listed
     // columns (LP4-01's profile INSERT, LP1-03's profile and subsidiary UPDATE).
     for (const [p, listed] of [
-      ['INSERT', RUNTIME_COLUMN_INSERTS],
-      ['UPDATE', RUNTIME_COLUMN_UPDATES],
+      ['INSERT', spec.columnInserts],
+      ['UPDATE', spec.columnUpdates],
     ]) {
       if (expected.has(p)) continue;
       const allowed = new Set(listed[name] ?? []);
@@ -341,9 +428,9 @@ export async function checkRuntimeRole(query) {
       }
     }
   }
-  for (const missing of expectedTables) problems.push(`RUNTIME_TABLE_PRIVILEGES lists public.${missing}, which does not exist`);
+  for (const missing of expectedTables) problems.push(`${role}'s table privileges list public.${missing}, which does not exist`);
 
-  for (const [qualified, privileges] of Object.entries(RUNTIME_STORAGE_PRIVILEGES)) {
+  for (const [qualified, privileges] of Object.entries(spec.outside)) {
     const [{ exists }] = await query(`SELECT to_regclass('${qualified}') IS NOT NULL AS exists`);
     if (!exists) continue;
     const expected = new Set(privileges);
@@ -359,7 +446,7 @@ export async function checkRuntimeRole(query) {
   // Outside `public` and Storage's catalogue the role should reach nothing it
   // was granted on its own; what every role inherits from PUBLIC is reported
   // by `runtimeRoleExposures` instead (the platform's grants, not ours).
-  for (const row of await outsideReach(query)) {
+  for (const row of await outsideReach(query, spec)) {
     if (!row.viaPublic) problems.push(`${role} was granted ${row.what}`);
   }
   return problems;
@@ -380,10 +467,10 @@ const sqlList = (xs) => xs.map((x) => `'${x}'`).join(', ');
  * privilege, so a grant this repository made cannot hide behind an unrelated
  * PUBLIC entry in the same ACL (`security-rls` round 2).
  */
-async function outsideReach(query) {
-  const role = RUNTIME_ROLE;
+async function outsideReach(query, spec) {
+  const { role } = spec;
   const declared = new Set(
-    Object.entries(RUNTIME_STORAGE_PRIVILEGES).flatMap(([rel, privileges]) => privileges.map((p) => `${rel}:${p}`)),
+    Object.entries(spec.outside).flatMap(([rel, privileges]) => privileges.map((p) => `${rel}:${p}`)),
   );
   const out = [];
   const schemas = await query(
@@ -454,7 +541,58 @@ async function outsideReach(query) {
  * extension or to have the platform revoke the grant.
  */
 export async function runtimeRoleExposures(query) {
-  return (await outsideReach(query)).filter((r) => r.viaPublic).map((r) => `${r.what} (via PUBLIC)`);
+  return (await outsideReach(query, RUNTIME_SPEC)).filter((r) => r.viaPublic).map((r) => `${r.what} (via PUBLIC)`);
+}
+
+/** The same for the factor loader (LP4-02). */
+export async function factorLoaderExposures(query) {
+  return (await outsideReach(query, FACTOR_LOADER_SPEC)).filter((r) => r.viaPublic).map((r) => `${r.what} (via PUBLIC)`);
+}
+
+const LIBRARY_TABLES = Object.freeze(['factor_releases', 'emission_factors', 'unit_conversions']);
+
+/**
+ * Who may write the factor library (LP4-02): its loader (exactly
+ * FACTOR_LOADER_TABLE_PRIVILEGES and FACTOR_LOADER_COLUMN_UPDATES, which
+ * `checkFactorLoaderRole` holds it to) and the owner — nobody else, at table
+ * or column level, PUBLIC included. Read from the ACLs themselves, so a role
+ * this repository never heard of is named too; a member of the loader is
+ * named by `checkFactorLoaderRole`.
+ */
+export async function checkLibraryWriters(query) {
+  // And any table in public with a key to a release — a library table added
+  // later is born writable by the service role (the owner's default
+  // privileges), so it is held to the library's writers until someone decides
+  // otherwise. (Only direct references; Open questions, "LP4-02 follow-ups".)
+  const referencing = await query(
+    `SELECT DISTINCT c.relname AS "table"
+       FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class c ON c.oid = k.conrelid
+      WHERE k.contype = 'f' AND k.confrelid = 'public.factor_releases'::pg_catalog.regclass`,
+  );
+  const names = [...new Set([...LIBRARY_TABLES, ...referencing.map((r) => r.table)])];
+  const tables = names.map((t) => `'public.${t}'::pg_catalog.regclass`).join(', ');
+  const rows = await query(
+    `SELECT c.relname AS "table", CASE x.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(x.grantee) END AS "grantee",
+            x.privilege_type AS "priv", false AS "columnLevel"
+       FROM pg_catalog.pg_class c,
+            LATERAL pg_catalog.aclexplode(COALESCE(c.relacl, pg_catalog.acldefault('r', c.relowner))) x
+      WHERE c.oid IN (${tables}) AND x.privilege_type IN ('INSERT', 'UPDATE', 'DELETE') AND x.grantee <> c.relowner
+     UNION
+     SELECT c.relname, CASE x.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_catalog.pg_get_userbyid(x.grantee) END,
+            x.privilege_type, true
+       FROM pg_catalog.pg_attribute a
+       JOIN pg_catalog.pg_class c ON c.oid = a.attrelid,
+            LATERAL pg_catalog.aclexplode(a.attacl) x
+      WHERE c.oid IN (${tables}) AND a.attnum > 0 AND NOT a.attisdropped AND a.attacl IS NOT NULL
+        AND x.privilege_type IN ('INSERT', 'UPDATE', 'DELETE') AND x.grantee <> c.relowner
+      ORDER BY 1, 2, 3, 4`,
+  );
+  return rows
+    .filter((r) => r.grantee !== FACTOR_LOADER_ROLE)
+    .map(
+      (r) =>
+        `${r.grantee} may ${r.priv} public.${r.table}${r.columnLevel ? ' (column-level)' : ''} — the factor library is written by its loader and the owner alone`,
+    );
 }
 
 /**
@@ -621,7 +759,8 @@ export async function checkFunctionExecutors(query, clientCallable = CLIENT_CALL
   );
   const actsAs = await query(
     `SELECT c.rolname AS "client", pg_catalog.pg_get_userbyid(o.role) AS "owner",
-            c.oid = o.role AS "itself", o.role = '${RUNTIME_ROLE}'::regrole AS "runtime"
+            c.oid = o.role AS "itself", o.role = '${RUNTIME_ROLE}'::regrole AS "runtime",
+            o.role = pg_catalog.to_regrole('${FACTOR_LOADER_ROLE}') AS "loader"
        FROM pg_catalog.pg_roles c,
             (SELECT ${OWNER_OF_OUR_TABLES} AS role
               UNION SELECT d.datdba FROM pg_catalog.pg_database d WHERE d.datname = pg_catalog.current_database()
@@ -629,7 +768,8 @@ export async function checkFunctionExecutors(query, clientCallable = CLIENT_CALL
               UNION SELECT k.relowner FROM pg_catalog.pg_class k WHERE k.relnamespace = 'public'::regnamespace
               UNION SELECT t.typowner FROM pg_catalog.pg_type t WHERE t.typnamespace = 'public'::regnamespace
               UNION SELECT p.proowner FROM pg_catalog.pg_proc p WHERE p.pronamespace = 'public'::regnamespace
-              UNION SELECT '${RUNTIME_ROLE}'::regrole) o
+              UNION SELECT '${RUNTIME_ROLE}'::regrole
+              UNION SELECT pg_catalog.to_regrole('${FACTOR_LOADER_ROLE}')) o
       WHERE c.rolname IN (${sqlList(CLIENT_ROLES)})
         AND pg_catalog.pg_has_role(c.oid, o.role, 'MEMBER')
       ORDER BY 1, 2`,
@@ -650,7 +790,9 @@ export async function checkFunctionExecutors(query, clientCallable = CLIENT_CALL
         ? `${a.client} owns the database, the schema public or something in it — it may alter, disable or drop it; no client may own one`
         : a.runtime
           ? `${a.client} can act as ${a.owner} (a member — inherited, by SET ROLE or by ADMIN), the API's role — BYPASSRLS and its every grant; no client may be`
-          : `${a.client} can act as ${a.owner} (a member — inherited, by SET ROLE or by ADMIN), an owner in public or of the database — it may alter, disable or drop what that role owns; no client may be`,
+          : a.loader
+            ? `${a.client} can act as ${a.owner} (a member — inherited, by SET ROLE or by ADMIN), the factor library's loader — it loads, seals and withdraws releases; no client may be`
+            : `${a.client} can act as ${a.owner} (a member — inherited, by SET ROLE or by ADMIN), an owner in public or of the database — it may alter, disable or drop what that role owns; no client may be`,
     ),
     ...creators.map(
       (c) => `${c.client} may create in public${c.via === c.client ? '' : ` as ${c.via}`} — a function it creates there is its own to run, attach and grant; no client may`,
@@ -738,6 +880,9 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   { table: 'activity_records', trigger: 'activity_records_lifecycle_writer', fn: 'activity_records_lifecycle_writer', type: ROW | BEFORE | ON.insert | ON.update },
   { table: 'organisations', trigger: 'organisations_delete_owner_only', fn: 'organisations_delete_owner_only', type: ROW | BEFORE | ON.delete },
   { table: 'subsidiaries', trigger: 'subsidiaries_stay_in_organisation', fn: 'subsidiaries_stay_in_organisation', type: ROW | BEFORE | ON.update },
+  // LP4-02: a release left unsealed by its loading transaction is refused at
+  // the commit — a constraint trigger, DEFERRABLE INITIALLY DEFERRED.
+  { table: 'factor_releases', trigger: 'factor_releases_sealed_at_commit', fn: 'factor_releases_sealed_at_commit', type: ROW | ON.insert, deferred: true },
 ]);
 
 /**
@@ -758,7 +903,7 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['emission_factors', 'emission_factors_scope_check', 'baf79c7460165f52d4d03548c8049f8e'],
   ['factor_release_events', 'factor_release_events_actor_check', '7a4d849bfe1c4906fef80b31a7585182'],
   ['factor_release_events', 'factor_release_events_db_role_check', 'ce62d7745ab1349239767e82684dfa4d'],
-  ['factor_release_events', 'factor_release_events_event_check', '251ece6a1f65e0f7e32ea3ef8c503240'],
+  ['factor_release_events', 'factor_release_events_event_check', 'bd339e53208ce61c108c800f8284f170'],
   ['factor_release_events', 'factor_release_events_rows_check', '1501bbfca3f7df329a4bc8fe3eab8dda'],
   ['factor_releases', 'factor_releases_authoritative_provenance_check', '07c31e476a2f5a64d9b7bf843eb69ce1'],
   ['factor_releases', 'factor_releases_fixture_publisher_check', 'f732d504c73b4902273df4dd596bb839'],
@@ -771,6 +916,7 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['factor_releases', 'factor_releases_status_check', 'fd922ea1cc055a55f0e91a96f486f183'],
   ['factor_releases', 'factor_releases_text_check', 'd23326d88a280c94d486b236f0c12e0b'],
   ['factor_releases', 'factor_releases_withdrawal_check', '4430a3652b1631e86ce68f076eae32a4'],
+  ['factor_releases', 'factor_releases_withdrawn_sealed_check', '071f2bdff4397aeabbe9fc0c396e8dc6'],
   ['unit_conversions', 'unit_conversions_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
   ['unit_conversions', 'unit_conversions_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
   ['unit_conversions', 'unit_conversions_multiplier_check', 'b44055800a17e765590df1c5c881b412'],
@@ -867,7 +1013,8 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
     `SELECT c.relname AS "table", t.tgname AS "trigger", t.tgenabled AS "enabled", t.tgtype::int AS "type",
             t.tgqual IS NULL AS "unconditional", cardinality(t.tgattr::int2[]) = 0 AS "allColumns",
             pn.nspname AS "fnSchema", p.proname AS "fn", md5(p.prosrc) AS "bodyMd5",
-            p.prosecdef AS "definer", COALESCE(p.proconfig, '{}') AS "config", l.lanname AS "language"
+            p.prosecdef AS "definer", COALESCE(p.proconfig, '{}') AS "config", l.lanname AS "language",
+            t.tgdeferrable AS "deferrable", t.tginitdeferred AS "initiallyDeferred"
        FROM pg_trigger t
        JOIN pg_class c ON c.oid = t.tgrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -946,6 +1093,9 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
     }
     if (!found.unconditional || !found.allColumns) {
       problems.push(`trigger ${want.trigger} on ${want.table} is narrowed (a WHEN condition or an UPDATE OF column list)`);
+    }
+    if (want.deferred && !(found.deferrable && found.initiallyDeferred)) {
+      problems.push(`trigger ${want.trigger} on ${want.table} is not DEFERRABLE INITIALLY DEFERRED — it must run at the commit, once the load is in`);
     }
     if (found.definer !== Boolean(want.definer) || found.language !== 'plpgsql' || JSON.stringify(found.config) !== JSON.stringify(['search_path=""'])) {
       problems.push(
@@ -1045,6 +1195,10 @@ export async function factorLibraryReport(query) {
           WHERE r.status = 'authoritative' AND u.activity_type = 'unspecified')
      )::int AS n`,
   );
+  // The loader seals a release in the transaction that loads it, and a
+  // deferred trigger refuses the commit otherwise: only a data-only restore
+  // or a disabled guard leaves one unsealed (LP4-02).
+  const [{ unsealed }] = await query(`SELECT count(*)::int AS unsealed FROM factor_releases WHERE sealed_at IS NULL`);
   const releases = await query(
     `SELECT r.publisher, r.edition, r.status,
             (SELECT count(*) FROM emission_factors f WHERE f.release_id = r.id)::int AS factors,
@@ -1061,7 +1215,7 @@ export async function factorLibraryReport(query) {
   );
   if (!readable) {
     return {
-      problems: unspecified(n),
+      problems: [...unspecified(n), ...unsealedReleases(unsealed)],
       notices: placeholderNotices(releases),
       skipped: [`the library's record was not reconciled: ${who} cannot read factor_release_events — run this check through the owner (DIRECT_URL)`],
     };
@@ -1085,6 +1239,7 @@ export async function factorLibraryReport(query) {
   return {
     problems: [
       ...unspecified(n),
+      ...unsealedReleases(unsealed),
       ...unrecorded.map(
         (u) => `release ${u.releaseId} holds ${u.held} ${u.tableName} row(s) but factor_release_events records ${u.recorded}`,
       ),
@@ -1098,6 +1253,12 @@ function unspecified(n) {
   return n > 0 ? [`${n} factor/conversion row(s) with an unspecified activity type under an authoritative release`] : [];
 }
 
+function unsealedReleases(n) {
+  return n > 0
+    ? [`${n} factor release(s) not sealed — a release is sealed in the transaction that loads it, and pricing ignores an unsealed one`]
+    : [];
+}
+
 function placeholderNotices(releases) {
   return releases.map((r) => `${r.status} release ${r.publisher} ${r.edition} (${r.factors} factor(s), ${r.conversions} conversion(s))`);
 }
@@ -1108,14 +1269,53 @@ function placeholderNotices(releases) {
  * SCRAM verifier, never the password.
  */
 export async function provisionLocalRuntimeLogin(client, ownerUrl, password) {
+  await provisionLocalLogin(client, ownerUrl, RUNTIME_ROLE, password);
+}
+
+/** The same for the factor loader (LP4-02). */
+export async function provisionLocalFactorLoaderLogin(client, ownerUrl, password) {
+  await provisionLocalLogin(client, ownerUrl, FACTOR_LOADER_ROLE, password);
+}
+
+async function provisionLocalLogin(client, ownerUrl, role, password) {
   if (!isLoopbackUrl(ownerUrl)) {
     throw new Error(
-      'Refusing to set a runtime password on a database that is not plainly local (a loopback host and no ' +
-        'redirecting parameter). A deployed environment sets its runtime login through its rotation runbook.',
+      `Refusing to set a ${role} password on a database that is not plainly local (a loopback host and no ` +
+        'redirecting parameter). A deployed environment sets the login through its rotation runbook.',
     );
   }
-  if (urlUser(ownerUrl) === RUNTIME_ROLE) throw new Error('Provisioning needs the owner connection, not the runtime role.');
-  await client.$executeRawUnsafe(`ALTER ROLE "${RUNTIME_ROLE}" WITH LOGIN PASSWORD '${scramVerifier(password)}'`);
+  if ([RUNTIME_ROLE, FACTOR_LOADER_ROLE].includes(urlUser(ownerUrl))) {
+    throw new Error(`Provisioning needs the owner connection, not ${urlUser(ownerUrl)}.`);
+  }
+  await client.$executeRawUnsafe(`ALTER ROLE "${role}" WITH LOGIN PASSWORD '${scramVerifier(password)}'`);
+}
+
+/**
+ * Everything `check` runs, in one place — the CLI, the integration suite and
+ * any operator script read the same list. `problems` fail the check; the rest
+ * are warnings (what PUBLIC grants, another creator's defaults, the library's
+ * non-authoritative releases and what this connection could not reconcile).
+ */
+export async function checkAll(query) {
+  const library = await factorLibraryReport(query);
+  return {
+    problems: [
+      ...(await checkRuntimeRole(query)),
+      ...(await checkFactorLoaderRole(query)),
+      ...(await checkLibraryWriters(query)),
+      ...(await checkTenantInvariants(query)),
+      ...(await checkTableLevelGrants(query)),
+      ...(await checkFunctionExecutors(query)),
+      ...(await checkIntegrityTriggers(query)),
+      ...library.problems,
+    ],
+    exposures: [
+      ...(await runtimeRoleExposures(query)).map((e) => `${RUNTIME_ROLE} can also reach ${e}`),
+      ...(await factorLoaderExposures(query)).map((e) => `${FACTOR_LOADER_ROLE} can also reach ${e}`),
+    ],
+    platformDefaults: await platformDefaultPrivileges(query),
+    library,
+  };
 }
 
 async function main() {
@@ -1143,46 +1343,54 @@ async function main() {
     return;
   }
 
+  if (command === 'provision-loader') {
+    const ownerUrl = process.env.DIRECT_URL;
+    const password = process.env.FACTOR_LOADER_DB_PASSWORD;
+    if (!ownerUrl) throw new Error('Set DIRECT_URL to the owner connection string.');
+    if (!password) throw new Error('Set FACTOR_LOADER_DB_PASSWORD to the password the factor loader should log in with.');
+    const owner = new PrismaClient({ datasourceUrl: ownerUrl });
+    try {
+      await provisionLocalFactorLoaderLogin(owner, ownerUrl, password);
+    } finally {
+      await owner.$disconnect();
+    }
+    const loader = new PrismaClient({ datasourceUrl: factorLoaderUrlFrom(ownerUrl, password) });
+    try {
+      const [{ user }] = await loader.$queryRawUnsafe('SELECT current_user AS "user"');
+      console.log(`factor loader login ready: ${user} on ${new URL(ownerUrl).host} — FACTOR_LOADER_DATABASE_URL is the owner URL with this user and password`);
+    } finally {
+      await loader.$disconnect();
+    }
+    return;
+  }
+
   if (command === 'check') {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error('Set DATABASE_URL to the database to check.');
     const client = new PrismaClient({ datasourceUrl: url });
-    let problems;
-    let exposures;
-    let platformDefaults;
-    let library;
+    let report;
     try {
-      const query = (sql) => client.$queryRawUnsafe(sql);
-      library = await factorLibraryReport(query);
-      problems = [
-        ...(await checkRuntimeRole(query)),
-        ...(await checkTenantInvariants(query)),
-        ...(await checkTableLevelGrants(query)),
-        ...(await checkFunctionExecutors(query)),
-        ...(await checkIntegrityTriggers(query)),
-        ...library.problems,
-      ];
-      exposures = await runtimeRoleExposures(query);
-      platformDefaults = await platformDefaultPrivileges(query);
+      report = await checkAll((sql) => client.$queryRawUnsafe(sql));
     } finally {
       await client.$disconnect();
     }
-    for (const e of exposures) console.warn(`  ! ${RUNTIME_ROLE} can also reach ${e}`);
+    const { problems, exposures, platformDefaults, library } = report;
+    for (const e of exposures) console.warn(`  ! ${e}`);
     for (const d of platformDefaults) console.warn(`  ! ${d} (another creator's default, not the migrations' role)`);
     // Not a failure here — local and CI databases hold the seed's placeholder
     // library on purpose. On staging or production each line is a finding.
     for (const n of library.notices) console.warn(`  ! factor library holds a ${n}`);
     for (const k of library.skipped) console.warn(`  ! ${k}`);
     if (problems.length > 0) {
-      console.error(`${RUNTIME_ROLE} on ${new URL(url).host}: ${problems.length} problem(s)`);
+      console.error(`${RUNTIME_ROLE} and ${FACTOR_LOADER_ROLE} on ${new URL(url).host}: ${problems.length} problem(s)`);
       for (const p of problems) console.error(`  - ${p}`);
       process.exit(1);
     }
-    console.log(`${RUNTIME_ROLE} on ${new URL(url).host}: privileges as intended`);
+    console.log(`${RUNTIME_ROLE} and ${FACTOR_LOADER_ROLE} on ${new URL(url).host}: privileges as intended`);
     return;
   }
 
-  console.error('usage: runtime-role.mjs provision | check');
+  console.error('usage: runtime-role.mjs provision | provision-loader | check');
   process.exit(2);
 }
 

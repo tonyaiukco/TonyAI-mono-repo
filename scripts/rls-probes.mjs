@@ -519,6 +519,24 @@ async function probeTwoOrganisations() {
       !subDelete.ok && subDeleteBody.code === '23503' && recordLeft.total === 1,
       `delete=${subDelete.status} ${subDeleteBody.code ?? ''}, record left=${recordLeft.total}`,
     );
+
+    // LP4-02 (K11): what a draft says is what the API computed. The service
+    // role POSTed X1 as a draft above; it may not rewrite its figure or its
+    // free-form input — submit would commit the forgery (TA006).
+    const forged = await svc('PATCH', `activity_records?id=eq.${LP103.recX1}`, { calculation: { tCo2e: 0.0001, factorId: 'forged' } });
+    const forgedBody = forged.ok ? {} : await forged.json().catch(() => ({}));
+    const reinput = await svc('PATCH', `activity_records?id=eq.${LP103.recX1}`, { input: { value: 1 } });
+    const reinputBody = reinput.ok ? {} : await reinput.json().catch(() => ({}));
+    const [draft] = await (
+      await fetch(`${URL_}/rest/v1/activity_records?select=calculation,input&id=eq.${LP103.recX1}`, {
+        headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` },
+      })
+    ).json();
+    check(
+      "activity_records: the service role cannot rewrite a draft's figure or its input — only the API computes them (TA006)",
+      forgedBody.code === 'TA006' && reinputBody.code === 'TA006' && draft?.calculation?.factorId === 'rls-probe-placeholder' && draft?.input == null,
+      `calculation=${forged.status} ${forgedBody.code ?? ''}, input=${reinput.status} ${reinputBody.code ?? ''}`,
+    );
   } catch (e) {
     check('LP1-03 two-organisation probe could run', false, e.message);
   } finally {
@@ -939,17 +957,31 @@ async function main() {
           `insert=${inserted.status}, update=${patched.status}, delete=${deleted.status}`,
         );
 
-        // The service role holds every privilege and bypasses RLS: only the
-        // append-only triggers stand between it and a loaded row.
+        // LP4-02: the library's writers are its loader and the owner. The
+        // service role (it bypasses RLS) keeps SELECT, and nothing else — so
+        // privilege refuses it before any trigger (42501); the append-only
+        // triggers hold the owner and the loader.
+        const svcInserted = await write(SERVICE, SERVICE, 'POST', table, '', { ...patch, id: '99999999-0000-0000-0000-00000000fa02' });
         const svcPatched = await write(SERVICE, SERVICE, 'PATCH', table, `?id=eq.${id}`, patch);
-        const svcPatchBody = svcPatched.ok ? '' : await svcPatched.text();
         const svcDeleted = await write(SERVICE, SERVICE, 'DELETE', table, `?id=eq.${id}`);
-        const svcDeleteBody = svcDeleted.ok ? '' : await svcDeleted.text();
+        const [svcGhost] = await svcRead(`${table}?select=id&id=eq.99999999-0000-0000-0000-00000000fa02`);
         check(
-          `${table}: append-only for the service role too (update and delete refused by trigger, TA010)`,
-          !svcPatched.ok && /TA010/.test(svcPatchBody) && !svcDeleted.ok && /TA010/.test(svcDeleteBody) && (await unchanged(table)),
-          `update=${svcPatched.status}, delete=${svcDeleted.status}`,
+          `${table}: the service role cannot insert, update or delete — the loader and the owner write the library (42501)`,
+          (await denied(svcInserted)) && (await denied(svcPatched)) && (await denied(svcDeleted)) && svcGhost === undefined && (await unchanged(table)),
+          `insert=${svcInserted.status}, update=${svcPatched.status}, delete=${svcDeleted.status}`,
         );
+        if (table === 'factor_releases') {
+          // Independent review F6: it could withdraw any release.
+          const withdrawn = await write(SERVICE, SERVICE, 'PATCH', table, `?id=eq.${id}`, {
+            status: 'withdrawn', withdrawn_by: 'rls-probe', withdrawal_reason: 'rls-probe',
+          });
+          const [still] = await svcRead(`factor_releases?select=status&id=eq.${id}`);
+          check(
+            'factor_releases: the service role cannot withdraw a release (42501)',
+            (await denied(withdrawn)) && still?.status === 'placeholder',
+            `withdraw=${withdrawn.status}, status now=${still?.status}`,
+          );
+        }
       }
     }
   }
@@ -1093,8 +1125,10 @@ async function main() {
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
     const { PrismaClient } = req('../packages/db/generated/client');
-    const { checkRuntimeRole, checkTenantInvariants, checkTableLevelGrants, checkFunctionExecutors, checkIntegrityTriggers, factorLibraryReport, platformDefaultPrivileges, runtimeRoleExposures } =
-      await import('../packages/db/scripts/runtime-role.mjs');
+    const {
+      checkRuntimeRole, checkFactorLoaderRole, checkLibraryWriters, checkTenantInvariants, checkTableLevelGrants, checkFunctionExecutors,
+      checkIntegrityTriggers, factorLibraryReport, platformDefaultPrivileges, runtimeRoleExposures,
+    } = await import('../packages/db/scripts/runtime-role.mjs');
     const prisma = new PrismaClient();
     const query = (sql) => prisma.$queryRawUnsafe(sql);
     try {
@@ -1103,6 +1137,13 @@ async function main() {
         'the runtime role holds exactly its intended privileges (no DDL, append-only audit_log, no _prisma_migrations, BYPASSRLS, owns nothing)',
         problems.length === 0,
         problems.length ? problems.join('; ') : 'as intended',
+      );
+      // LP4-02: the factor library's loader, and nobody else, writes it.
+      const loaderProblems = [...(await checkFactorLoaderRole(query)), ...(await checkLibraryWriters(query))];
+      check(
+        "the factor loader holds exactly its intended privileges (the library alone, no delete, no BYPASSRLS, no replica mode), and is the library's one writer besides the owner",
+        loaderProblems.length === 0,
+        loaderProblems.length ? loaderProblems.join('; ') : 'as intended',
       );
       const broken = await checkTenantInvariants(query);
       check('no grant crosses an organisation and no slot mixes typed and untyped records in the data (a restore skips the keys and the slot rule)', broken.length === 0, broken.join('; ') || 'none');

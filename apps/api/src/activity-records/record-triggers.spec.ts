@@ -98,10 +98,30 @@ describe('the activity_records integrity triggers', () => {
     const born = [...(/IF NEW\."status" <> '([a-z_]+)'/.exec(body) ?? [])][1];
     expect(born).toBe('draft');
     expect([...EDITABLE_STATUSES]).toContain(born);
-    expect(body).toMatch(/AND session_user <> 'tonyai_runtime'/);
+    expect(body).toMatch(new RegExp(`ELSIF session_user <> 'tonyai_runtime'\\s+AND session_user <> ${escape(OWNER)} THEN`));
     expect(body).toContain("ERRCODE = 'TA005'");
     expect(body).not.toContain('current_user');
     expect(lp401).toContain('ENABLE ALWAYS TRIGGER "activity_records_lifecycle_writer"');
+  });
+
+  it("K11 (LP4-02): only the API's login or the owner rewrites what a draft says — every input K5 freezes once it is committed, and any record's input", () => {
+    const body = functionBody('activity_records_lifecycle_writer');
+    const frozen = [...functionBody('activity_records_snapshot_immutable').matchAll(/NEW\."([a-z_]+)" IS DISTINCT FROM OLD\."\1"/g)]
+      .map((m) => m[1])
+      .filter((column) => column !== 'id' && column !== 'status');
+    expect(frozen).toContain('calculation');
+    for (const column of frozen) expect(body).toContain(`NEW."${column}" IS DISTINCT FROM OLD."${column}"`);
+    // The same editable statuses the service writes in, and the free-form input at any status.
+    const editable = /OLD\."status" IN \(([^)]*)\)/.exec(body)?.[1].split(',').map((s) => s.trim().replace(/'/g, ''));
+    expect(editable?.sort()).toEqual([...EDITABLE_STATUSES].sort());
+    expect(body).toMatch(/IF NEW\."input" IS DISTINCT FROM OLD\."input"\s+OR NEW\."created_by" IS DISTINCT FROM OLD\."created_by"\s+OR \(OLD\."status" IN/);
+    expect(body).toContain("ERRCODE = 'TA006'");
+    // Nor deletes one to insert it again under its id: a draft or rejected
+    // record goes through the API (or the owner) only.
+    const del = functionBody('activity_records_committed_delete');
+    expect(del).toMatch(
+      new RegExp(`IF OLD\\."status" IN \\('draft', 'rejected'\\)\\s+AND session_user <> 'tonyai_runtime'\\s+AND session_user <> ${escape(OWNER)} THEN\\s+RAISE EXCEPTION USING\\s+ERRCODE = 'TA006'`),
+    );
   });
 
   it('K5 freezes the id in every status, before it looks at the status at all', () => {

@@ -6,7 +6,21 @@ import { ActivityTypeSlotConflictError, recordTriggerCode } from '../../src/acti
 import { CalculationsService } from '../../src/calculations/calculations.service';
 import { NoEmissionFactorError } from '../../src/calculations/errors';
 import type { PrismaService } from '../../src/prisma/prisma.service';
-import { backendPid, connect, connectOwner, createRecord, createTenant, deferred, recordInput, settledOrBlocked, withRollback, type Tenant } from './db';
+import {
+  backendPid,
+  connect,
+  connectLoader,
+  connectOwner,
+  createRecord,
+  createTenant,
+  deferred,
+  recordInput,
+  refusal,
+  serviceRest,
+  settledOrBlocked,
+  withRollback,
+  type Tenant,
+} from './db';
 import { INT_FACTOR_POLICY, lifecycleServices } from './services';
 import { checkTenantInvariants, factorLibraryReport } from '../../../../packages/db/scripts/runtime-role.mjs';
 
@@ -62,6 +76,44 @@ const nextSlot = () => {
   const i = slot++;
   return { reportingYear: 2026 - Math.floor(i / 12), reportingPeriod: 'monthly', periodValue: MONTHS[i % 12] };
 };
+
+const FIXTURE_PUBLISHER = 'TonyAI test fixture';
+
+/** The fixture publisher's next free ordinal. */
+async function nextFixtureOrdinal(client: Prisma.TransactionClient | PrismaService): Promise<number> {
+  const [{ next }] = await client.$queryRawUnsafe<{ next: number }[]>(
+    `SELECT COALESCE(max(ordinal), 0) + 1 AS next FROM factor_releases WHERE publisher = '${FIXTURE_PUBLISHER}'`,
+  );
+  return Number(next);
+}
+
+type FactorRow = Omit<Prisma.EmissionFactorUncheckedCreateInput, 'releaseId' | 'version'>;
+type ConversionRow = Omit<Prisma.UnitConversionUncheckedCreateInput, 'releaseId'>;
+
+/**
+ * A fixture release loaded whole, as the owner, in one committed transaction —
+ * the release, its rows, its seal (LP4-02: a release is sealed in the
+ * transaction that loads it, and a sealed one takes no row). Fixture rows and
+ * releases are the deletable ones: `removeFixture` in a `finally`.
+ */
+async function loadFixture(rows: { factors?: FactorRow[]; conversions?: ConversionRow[] }) {
+  return owner.$transaction(async (tx) => {
+    const release = await tx.factorRelease.create({
+      data: { publisher: FIXTURE_PUBLISHER, title: 'Int test', edition: `int-${randomUUID()}`, ordinal: await nextFixtureOrdinal(tx), status: 'fixture' },
+    });
+    const factors = (rows.factors ?? []).map((f) => ({ ...f, releaseId: release.id, version: release.edition }));
+    if (factors.length > 0) await tx.emissionFactor.createMany({ data: factors });
+    const conversions = (rows.conversions ?? []).map((c) => ({ ...c, releaseId: release.id }));
+    if (conversions.length > 0) await tx.unitConversion.createMany({ data: conversions });
+    return tx.factorRelease.update({ where: { id: release.id }, data: { sealedAt: new Date() } });
+  });
+}
+
+async function removeFixture(releaseId: string) {
+  await owner.unitConversion.deleteMany({ where: { releaseId } });
+  await owner.emissionFactor.deleteMany({ where: { releaseId } });
+  await owner.factorRelease.deleteMany({ where: { id: releaseId } });
+}
 
 describe('K5 — a snapshot that has left draft never changes', () => {
   it.each([
@@ -572,51 +624,37 @@ describe('the factor library is append-only, for the owner too', () => {
         `INSERT INTO emission_factors (id, release_id, category, activity_type, gas, gas_coverage, geography_code, reporting_year, data_year, scope, scope2_method, calorific_basis, factor_value, factor_unit, normalized_unit, methodology, source, version, updated_at)
          VALUES (gen_random_uuid(), '${releaseId}', 'Fuel', 'unspecified', 'CO2e', 'all_ghg', 'UK', 2031, 2031, 1, 'not_applicable', 'not_applicable', 2.5, 'kgCO2e/L', 'litres', 'x', 'x', '2026', now())`,
       );
+      await tx.$executeRawUnsafe(`UPDATE factor_releases SET sealed_at = now() WHERE id = '${releaseId}'`);
       return (await factorLibraryReport((sql: string) => tx.$queryRawUnsafe(sql))).problems;
     });
     expect(problems).toEqual(['1 factor/conversion row(s) with an unspecified activity type under an authoritative release']);
   });
 
-  it('makes a withdrawal wait for a load into the same release, and the reverse', async () => {
-    const [{ next }] = await owner.$queryRawUnsafe<{ next: number }[]>(
-      `SELECT COALESCE(max(ordinal), 0) + 1 AS next FROM factor_releases WHERE publisher = 'TonyAI test fixture'`,
-    );
-    const release = await owner.factorRelease.create({
-      data: { publisher: 'TonyAI test fixture', title: 'Int lock test', edition: `int-${randomUUID()}`, ordinal: Number(next), status: 'fixture' },
-    });
-    const a = connectOwner(1);
-    const b = connectOwner(1);
-    const observer = connectOwner(1);
-    class Rollback extends Error {}
+  it('lets rows join a release in its loading transaction alone: unseen by any other before the commit, sealed after it', async () => {
+    const releaseId = randomUUID();
+    const conversion = (geographyCode: string) =>
+      `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit, multiplier, calorific_basis, basis)
+       VALUES (gen_random_uuid(), '${releaseId}', 'Natural Gas', 'natural_gas', '${geographyCode}', 2031, 2031, 'cubic_metres', 'kWh', 10, 'gross', 'int test')`;
+    const loading = connectOwner(1);
+    const other = connectOwner(1);
     try {
-      const loaded = deferred();
-      const commit = deferred();
-      const txA = a.$transaction(async (tx) => {
-        await tx.unitConversion.create({
-          data: {
-            releaseId: release.id, category: 'Natural Gas', activityType: 'natural_gas', geographyCode: 'UK', reportingYear: 2031,
-            dataYear: 2031, fromUnit: 'cubic_metres', toUnit: 'kWh', multiplier: 10, calorificBasis: 'gross', basis: 'int test',
-          },
-        });
-        loaded.resolve();
-        await commit.promise;
-      });
-      await loaded.promise;
-      const pidB = await backendPid(b);
-      const withdrawB = b.$transaction(async (tx) => {
+      let midLoad: unknown = 'not run';
+      await loading.$transaction(async (tx) => {
         await tx.$executeRawUnsafe(
-          `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'TonyAI test', withdrawal_reason = 'int lock test', withdrawn_at = now() WHERE id = '${release.id}'`,
+          `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status) VALUES ('${releaseId}', '${FIXTURE_PUBLISHER}', 'Int load test', 'int-${releaseId}', ${await nextFixtureOrdinal(tx)}, 'fixture')`,
         );
-        throw new Rollback();
+        await tx.$executeRawUnsafe(conversion('UK'));
+        // Another session, while the load is open: the release is not there.
+        midLoad = sqlstateOf(await failure(withRollback(other, (o) => o.$executeRawUnsafe(conversion('TR')))));
+        await tx.$executeRawUnsafe(`UPDATE factor_releases SET sealed_at = now() WHERE id = '${releaseId}'`);
       });
-      expect(await settledOrBlocked(withdrawB, pidB, observer)).toBe('blocked');
-      commit.resolve();
-      await txA;
-      expect(await failure(withdrawB)).toBeInstanceOf(Rollback);
+      expect(midLoad).toBe('TA012');
+      // After the commit: sealed, for everyone — the owner included.
+      expect(sqlstateOf(await failure(withRollback(other, (o) => o.$executeRawUnsafe(conversion('TR')))))).toBe('TA012');
+      expect(await owner.unitConversion.count({ where: { releaseId } })).toBe(1);
     } finally {
-      await owner.unitConversion.deleteMany({ where: { releaseId: release.id } });
-      await owner.factorRelease.delete({ where: { id: release.id } });
-      await Promise.all([a.$disconnect(), b.$disconnect(), observer.$disconnect()]);
+      await removeFixture(releaseId);
+      await Promise.all([loading.$disconnect(), other.$disconnect()]);
     }
   });
 
@@ -754,27 +792,29 @@ describe("the factor library's record (factor_release_events)", () => {
     ]);
   });
 
-  it('names the service role when PostgREST loads, and records why a release was withdrawn', async () => {
+  it('records a seal as its own event, and why a release was withdrawn (LP4-02)', async () => {
     const releaseId = randomUUID();
     const events = await withRollback(owner, async (tx) => {
-      const ordinal = await nextOrdinal(tx);
-      await tx.$executeRawUnsafe('SET LOCAL ROLE service_role');
-      for (const sql of load(releaseId, ordinal)) await tx.$executeRawUnsafe(sql);
+      await tx.$executeRawUnsafe(`SET LOCAL tonyai.actor = 'TonyAI ops'`);
+      for (const sql of load(releaseId, await nextOrdinal(tx))) await tx.$executeRawUnsafe(sql);
+      await tx.$executeRawUnsafe(`UPDATE factor_releases SET sealed_at = now() WHERE id = '${releaseId}'`);
       await tx.$executeRawUnsafe(
         `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'TonyAI ops', withdrawal_reason = 'int test' WHERE id = '${releaseId}'`,
       );
-      await tx.$executeRawUnsafe('RESET ROLE');
       return eventsOf(tx, releaseId);
     });
-    expect(events.map((e) => [e.event, e.db_role, e.actor])).toEqual([
-      ['loaded', 'service_role', null],
-      ['rows_added', 'service_role', null],
-      ['withdrawn', 'service_role', null],
+    expect(events.map((e) => [e.event, e.release_status, e.actor])).toEqual([
+      ['loaded', 'fixture', 'TonyAI ops'],
+      ['rows_added', 'fixture', 'TonyAI ops'],
+      ['sealed', 'fixture', 'TonyAI ops'],
+      ['withdrawn', 'withdrawn', 'TonyAI ops'],
     ]);
-    expect(events[2]).toMatchObject({ release_status: 'withdrawn', why: 'int test', by: 'TonyAI ops' });
+    // A seal is not a withdrawal: nothing of one in its record.
+    expect(events[2]).toMatchObject({ why: null, by: null, at: null });
+    expect(events[3]).toMatchObject({ why: 'int test', by: 'TonyAI ops' });
     // The withdrawal's own time, as the release now holds it.
-    expect(events[2].at).not.toBeNull();
-    expect(events[2].at).toBe(events[2].withdrawn_at);
+    expect(events[3].at).not.toBeNull();
+    expect(events[3].at).toBe(events[3].withdrawn_at);
   });
 
   it('refuses a direct INSERT even to the owner — only its own triggers write it', async () => {
@@ -894,10 +934,10 @@ describe("the factor library's record (factor_release_events)", () => {
   // "LP3-03 PR B" (13)).
 
   it('reports rows the record never saw added (a load past its triggers)', async () => {
+    const id = randomUUID();
     const problems = await withRollback(owner, async (tx) => {
-      const [{ id }] = await tx.$queryRawUnsafe<{ id: string }[]>(
-        `SELECT id FROM factor_releases WHERE publisher = 'TonyAI prototype' AND edition = '2026.1'`,
-      );
+      // A release of its own, open in this transaction: a sealed one takes no row (LP4-02).
+      await tx.$executeRawUnsafe(load(id, await nextOrdinal(tx))[0]);
       await tx.$executeRawUnsafe('ALTER TABLE unit_conversions DISABLE TRIGGER unit_conversions_record_insert');
       await tx.$executeRawUnsafe(
         `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit, multiplier, calorific_basis, basis)
@@ -966,6 +1006,9 @@ describe("the factor library's record (factor_release_events)", () => {
     // maintenance on the library or the records K5 guards (MAINTAIN revoked).
     for (const sql of [
       'LOCK TABLE factor_release_events IN ACCESS EXCLUSIVE MODE',
+      // LP4-02: no row verb on the library left, so no lock on it either.
+      'LOCK TABLE factor_releases IN ACCESS EXCLUSIVE MODE',
+      'LOCK TABLE emission_factors IN ACCESS EXCLUSIVE MODE',
       'REINDEX TABLE factor_releases',
       'REINDEX TABLE emission_factors',
       'REINDEX TABLE activity_records',
@@ -1019,6 +1062,7 @@ describe("the factor library's record (factor_release_events)", () => {
           }
         };
         await tx.$executeRawUnsafe(load(releaseId, await nextOrdinal(tx))[0]);
+        await tx.$executeRawUnsafe(`UPDATE factor_releases SET sealed_at = now() WHERE id = '${releaseId}'`);
         await tx.$executeRawUnsafe(
           `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'TonyAI ops', withdrawal_reason = 'int restore' WHERE id = '${releaseId}'`,
         );
@@ -1053,6 +1097,12 @@ describe("the factor library's record (factor_release_events)", () => {
 });
 
 describe('the CHECK constraints refuse what the registry alone would hide', () => {
+  // Rows go to a release loaded in the same rolled-back transaction: a sealed
+  // one — the seed's — refuses every row before its CHECKs are reached (LP4-02).
+  const OPEN_RELEASE = `(SELECT id FROM factor_releases WHERE publisher = '${FIXTURE_PUBLISHER}' AND edition = '2026.1')`;
+  const OPEN_RELEASE_LOAD = `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status)
+    SELECT gen_random_uuid(), '${FIXTURE_PUBLISHER}', 'Int CHECK test', '2026.1', COALESCE(max(ordinal), 0) + 1, 'fixture'
+      FROM factor_releases WHERE publisher = '${FIXTURE_PUBLISHER}'`;
   // Rolled back. The publisher registry is lifted inside the transaction so an
   // authoritative release can exist at all — otherwise it masks every
   // provenance rule behind it, which is the state LP4-02 will open.
@@ -1066,7 +1116,7 @@ describe('the CHECK constraints refuse what the registry alone would hide', () =
   };
   const factor = (cols: Record<string, string>) => {
     const row: Record<string, string> = {
-      id: 'gen_random_uuid()', release_id: `(SELECT id FROM factor_releases WHERE publisher = 'TonyAI prototype' AND edition = '2026.1')`,
+      id: 'gen_random_uuid()', release_id: OPEN_RELEASE,
       category: `'Fuel'`, activity_type: `'gas_oil'`, gas: `'CO2e'`, gas_coverage: `'all_ghg'`, geography_code: `'UK'`,
       reporting_year: '2031', data_year: '2031', scope: '1', scope2_method: `'not_applicable'`, calorific_basis: `'not_applicable'`,
       factor_value: '2.5', factor_unit: `'kgCO2e/L'`, normalized_unit: `'litres'`, methodology: `'x'`, source: `'x'`, version: `'2026.1'`,
@@ -1076,7 +1126,7 @@ describe('the CHECK constraints refuse what the registry alone would hide', () =
   };
   const conversion = (cols: Record<string, string>) => {
     const row: Record<string, string> = {
-      id: 'gen_random_uuid()', release_id: `(SELECT id FROM factor_releases WHERE publisher = 'TonyAI prototype' AND edition = '2026.1')`,
+      id: 'gen_random_uuid()', release_id: OPEN_RELEASE,
       category: `'Natural Gas'`, activity_type: `'natural_gas'`, geography_code: `'UK'`, reporting_year: '2031', data_year: '2031',
       from_unit: `'cubic_metres'`, to_unit: `'kWh'`, multiplier: '10', calorific_basis: `'gross'`, basis: `'x'`, ...cols,
     };
@@ -1130,6 +1180,7 @@ describe('the CHECK constraints refuse what the registry alone would hide', () =
     const e = await failure(
       withRollback(owner, async (tx) => {
         await tx.$executeRawUnsafe('ALTER TABLE factor_releases DROP CONSTRAINT factor_releases_publisher_check');
+        if (!sql.startsWith('INSERT INTO factor_releases')) await tx.$executeRawUnsafe(OPEN_RELEASE_LOAD);
         await tx.$executeRawUnsafe(sql);
       }),
     );
@@ -1170,37 +1221,32 @@ describe('the engine on the real library', () => {
   });
 
   it("never applies another geography's or another year's conversion", async () => {
-    // A fixture release of its own, committed so the runtime can read it,
-    // removed in `finally` (fixture rows are the deletable ones).
-    const [{ next }] = await owner.$queryRawUnsafe<{ next: number }[]>(
-      `SELECT COALESCE(max(ordinal), 0) + 1 AS next FROM factor_releases WHERE publisher = 'TonyAI test fixture'`,
-    );
-    const release = await owner.factorRelease.create({
-      data: { publisher: 'TonyAI test fixture', title: 'Int test', edition: `int-${randomUUID()}`, ordinal: Number(next), status: 'fixture' },
-    });
-    const conversion = (geographyCode: string, reportingYear: number) => ({
-      releaseId: release.id, category: 'Natural Gas', activityType: 'natural_gas', geographyCode, reportingYear,
+    // Fixture releases of their own, committed (and sealed) so the runtime can
+    // read them, removed in `finally` (fixture rows are the deletable ones).
+    const factor: FactorRow = {
+      category: 'Natural Gas', activityType: 'natural_gas', gas: 'CO2e', gasCoverage: 'all_ghg',
+      geographyCode: 'UK', reportingYear: 2031, dataYear: 2031, scope: 1, scope2Method: 'not_applicable', calorificBasis: 'gross',
+      factorValue: 0.2, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'int test', source: 'int test',
+    };
+    const conversion = (geographyCode: string, reportingYear: number): ConversionRow => ({
+      category: 'Natural Gas', activityType: 'natural_gas', geographyCode, reportingYear,
       dataYear: reportingYear, fromUnit: 'cubic_metres', toUnit: 'kWh', multiplier: 10, calorificBasis: 'gross', basis: 'int test',
     });
+    const engine = new CalculationsService(runtime, INT_FACTOR_POLICY);
+    const input = { category: 'Natural Gas', geographyCode: 'UK', reportingYear: 2031, value: 100, unit: 'cubic_metres' };
+    const mismatched = await loadFixture({ factors: [factor], conversions: [conversion('TR', 2031), conversion('UK', 2030)] });
     try {
-      await owner.emissionFactor.create({
-        data: {
-          releaseId: release.id, category: 'Natural Gas', activityType: 'natural_gas', gas: 'CO2e', gasCoverage: 'all_ghg',
-          geographyCode: 'UK', reportingYear: 2031, dataYear: 2031, scope: 1, scope2Method: 'not_applicable', calorificBasis: 'gross',
-          factorValue: 0.2, factorUnit: 'kgCO2e/kWh', normalizedUnit: 'kWh', methodology: 'int test', source: 'int test', version: release.edition,
-        },
-      });
-      await owner.unitConversion.createMany({ data: [conversion('TR', 2031), conversion('UK', 2030)] });
-      const engine = new CalculationsService(runtime, INT_FACTOR_POLICY);
-      const input = { category: 'Natural Gas', geographyCode: 'UK', reportingYear: 2031, value: 100, unit: 'cubic_metres' };
       expect(await failure(engine.compute(input))).toMatchObject({ code: 'no_conversion' });
-      // Positive control: the matching conversion prices it.
-      await owner.unitConversion.create({ data: conversion('UK', 2031) });
+    } finally {
+      await removeFixture(mismatched.id);
+    }
+    // Positive control: the matching conversion prices it — a release of its
+    // own, since a sealed one takes no row.
+    const matching = await loadFixture({ factors: [factor], conversions: [conversion('UK', 2031)] });
+    try {
       expect(await engine.compute(input)).toMatchObject({ normalizedValue: 1000, kgCo2e: 200 });
     } finally {
-      await owner.unitConversion.deleteMany({ where: { releaseId: release.id } });
-      await owner.emissionFactor.deleteMany({ where: { releaseId: release.id } });
-      await owner.factorRelease.delete({ where: { id: release.id } });
+      await removeFixture(matching.id);
     }
   });
 
@@ -1230,5 +1276,239 @@ describe('the engine on the real library', () => {
     // Positive control: the tenant's own administrator learns the gap.
     const ownAnswer = await failure(records.previewCreate(tenant.users.superAdmin, dto));
     expect((ownAnswer as NoEmissionFactorError).getResponse()).toMatchObject({ code: 'no_factor', coverage: { reportingYear: 2031 } });
+  });
+});
+
+describe('LP4-02 — a release is sealed in the transaction that loads it, by its loader or the owner', () => {
+  const release = (id: string, ordinal: number, extra = '') =>
+    `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status${extra ? ', sealed_at' : ''})
+     VALUES ('${id}', '${FIXTURE_PUBLISHER}', 'Int seal test', 'int-${id}', ${ordinal}, 'fixture'${extra ? `, ${extra}` : ''})`;
+  const conversion = (releaseId: string, geographyCode = 'UK') =>
+    `INSERT INTO unit_conversions (id, release_id, category, activity_type, geography_code, reporting_year, data_year, from_unit, to_unit, multiplier, calorific_basis, basis)
+     VALUES (gen_random_uuid(), '${releaseId}', 'Natural Gas', 'natural_gas', '${geographyCode}', 2031, 2031, 'cubic_metres', 'kWh', 10, 'gross', 'int test')`;
+  const seal = (id: string, at = 'now()') => `UPDATE factor_releases SET sealed_at = ${at} WHERE id = '${id}'`;
+  const withdraw = (id: string) =>
+    `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'TonyAI ops', withdrawal_reason = 'int test' WHERE id = '${id}'`;
+  /** Each statement's SQLSTATE (null when it went through), in one rolled-back transaction, each behind a savepoint. */
+  async function outcomes(client: PrismaService, setup: string[], probes: string[]): Promise<(string | null)[]> {
+    return withRollback(client, async (tx) => {
+      for (const sql of setup) await tx.$executeRawUnsafe(sql);
+      const out: (string | null)[] = [];
+      for (const sql of probes) {
+        await tx.$executeRawUnsafe('SAVEPOINT probe');
+        try {
+          await tx.$executeRawUnsafe(sql);
+          out.push(null);
+        } catch (e) {
+          out.push(sqlstateOf(e));
+        } finally {
+          await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT probe');
+        }
+      }
+      return out;
+    });
+  }
+
+  it("seals once, by the database's clock, and never undoes it — and a sealed release takes no row (TA012)", async () => {
+    const id = randomUUID();
+    const sealedAt = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(release(id, await nextFixtureOrdinal(tx)));
+      await tx.$executeRawUnsafe(conversion(id));
+      await tx.$executeRawUnsafe(seal(id, `'2001-01-01'`));
+      const [row] = await tx.$queryRawUnsafe<{ at: Date; now: Date }[]>(`SELECT sealed_at AS at, now() AS now FROM factor_releases WHERE id = '${id}'`);
+      return row;
+    });
+    expect(sealedAt.at.getTime()).toBe(sealedAt.now.getTime());
+    const ordinal = await nextFixtureOrdinal(owner);
+    expect(
+      await outcomes(owner, [release(id, ordinal), conversion(id), seal(id)], [
+        conversion(id, 'TR'),
+        `UPDATE factor_releases SET sealed_at = NULL WHERE id = '${id}'`,
+        seal(id, `now() + interval '1 day'`),
+        `UPDATE factor_releases SET title = 'rewritten' WHERE id = '${id}'`,
+        // A withdrawal never moves the seal: not backdated, not undone.
+        `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'x', withdrawal_reason = 'x', sealed_at = '2001-01-01' WHERE id = '${id}'`,
+        `UPDATE factor_releases SET status = 'withdrawn', withdrawn_by = 'x', withdrawal_reason = 'x', sealed_at = NULL WHERE id = '${id}'`,
+        withdraw(id),
+      ]),
+    ).toEqual(['TA012', 'TA010', 'TA010', 'TA010', 'TA010', 'TA010', null]);
+    // Before its seal a release accepts nothing else: not a withdrawal, not
+    // its seal and another change in one statement.
+    expect(
+      await outcomes(owner, [release(id, ordinal)], [
+        withdraw(id),
+        `UPDATE factor_releases SET sealed_at = now(), title = 'x' WHERE id = '${id}'`,
+        `UPDATE factor_releases SET sealed_at = now(), status = 'withdrawn', withdrawn_by = 'x', withdrawal_reason = 'x' WHERE id = '${id}'`,
+        seal(id),
+      ]),
+    ).toEqual(['TA010', 'TA010', 'TA010', null]);
+  });
+
+  it("stamps a release with the time it was loaded, whatever the writer says — as its rows", async () => {
+    const id = randomUUID();
+    const stamped = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(
+        `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, created_at)
+         VALUES ('${id}', '${FIXTURE_PUBLISHER}', 'Int clock test', 'int-${id}', ${await nextFixtureOrdinal(tx)}, 'fixture', '2001-01-01')`,
+      );
+      return tx.$queryRawUnsafe<{ fresh: boolean }[]>(`SELECT created_at > now() - interval '1 hour' AS fresh FROM factor_releases WHERE id = '${id}'`);
+    });
+    expect(stamped[0].fresh).toBe(true);
+  });
+
+  it("keeps a restored release's own load time — the clock stamps a load, not a restore (replica mode)", async () => {
+    const id = randomUUID();
+    const restored = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('SET LOCAL session_replication_role = replica');
+      await tx.$executeRawUnsafe(
+        `INSERT INTO factor_releases (id, publisher, title, edition, ordinal, status, created_at, sealed_at)
+         VALUES ('${id}', '${FIXTURE_PUBLISHER}', 'Int restore clock test', 'int-${id}', ${await nextFixtureOrdinal(tx)}, 'fixture', '2001-01-01', '2001-01-02')`,
+      );
+      return tx.$queryRawUnsafe<{ year: number }[]>(`SELECT extract(year FROM created_at)::int AS year FROM factor_releases WHERE id = '${id}'`);
+    });
+    expect(restored[0].year).toBe(2001);
+  });
+
+  it('refuses a release loaded sealed (TA011), and a commit that leaves one unsealed (TA011, at the commit)', async () => {
+    const id = randomUUID();
+    expect(await outcomes(owner, [], [release(id, await nextFixtureOrdinal(owner), 'now()')])).toEqual(['TA011']);
+    // The check, run now rather than at the commit, answers with its code…
+    expect(
+      await outcomes(owner, [release(id, await nextFixtureOrdinal(owner)), conversion(id)], [
+        'SET CONSTRAINTS factor_releases_sealed_at_commit IMMEDIATE',
+      ]),
+    ).toEqual(['TA011']);
+    // …and at the commit refuses it whole (Prisma reports a refused COMMIT
+    // without its SQLSTATE — the message is the evidence).
+    const unsealed = await failure(
+      owner.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(release(id, await nextFixtureOrdinal(tx)));
+        await tx.$executeRawUnsafe(conversion(id));
+      }),
+    );
+    expect(String((unsealed as Error).message)).toMatch(new RegExp(`factor release ${id} was loaded and not sealed`));
+    expect(await owner.factorRelease.count({ where: { id } })).toBe(0);
+    // Positive control: the same load, sealed, commits.
+    await owner.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(release(id, await nextFixtureOrdinal(tx)));
+      await tx.$executeRawUnsafe(conversion(id));
+      await tx.$executeRawUnsafe(seal(id));
+    });
+    try {
+      expect(await owner.factorRelease.count({ where: { id, sealedAt: { not: null } } })).toBe(1);
+    } finally {
+      await removeFixture(id);
+    }
+  });
+
+  it('lets the loader load, seal and withdraw, recorded as itself — and nothing else', async () => {
+    const loader = connectLoader(1);
+    const id = randomUUID();
+    try {
+      // A load commits: the release, its rows and its seal, the actor stated.
+      await loader.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL tonyai.actor = 'TonyAI ops'`);
+        await tx.$executeRawUnsafe(release(id, await nextFixtureOrdinal(tx)));
+        await tx.$executeRawUnsafe(conversion(id));
+        await tx.$executeRawUnsafe(seal(id));
+      });
+      const events = await owner.$queryRawUnsafe<{ event: string; db_role: string; actor: string | null }[]>(
+        `SELECT event, db_role, actor FROM factor_release_events WHERE release_id = '${id}' ORDER BY occurred_at`,
+      );
+      expect(events.map((e) => [e.event, e.db_role, e.actor])).toEqual([
+        ['loaded', 'tonyai_factor_loader', 'TonyAI ops'],
+        ['rows_added', 'tonyai_factor_loader', 'TonyAI ops'],
+        ['sealed', 'tonyai_factor_loader', 'TonyAI ops'],
+      ]);
+      // A withdrawal (rolled back: a withdrawn fixture can no longer be removed).
+      expect(await outcomes(loader, [], [withdraw(id)])).toEqual([null]);
+      // Nothing else: no delete, no other column, no other table, no replica
+      // mode, no other role, no record of its own making.
+      expect(
+        await outcomes(loader, [], [
+          `DELETE FROM unit_conversions WHERE release_id = '${id}'`,
+          `DELETE FROM factor_releases WHERE id = '${id}'`,
+          `UPDATE factor_releases SET title = 'x' WHERE id = '${id}'`,
+          `UPDATE unit_conversions SET multiplier = 1 WHERE release_id = '${id}'`,
+          'TRUNCATE unit_conversions',
+          'LOCK TABLE factor_releases IN ACCESS EXCLUSIVE MODE',
+          `INSERT INTO factor_release_events (id, release_id, publisher, edition, release_status, event, db_role)
+           VALUES (gen_random_uuid(), '${id}', 'x', 'x', 'x', 'loaded', 'x')`,
+          'SELECT 1 FROM factor_release_events LIMIT 1',
+          'SELECT 1 FROM activity_records LIMIT 1',
+          'SELECT 1 FROM profiles LIMIT 1',
+          'SET session_replication_role = replica',
+          'SET ROLE postgres',
+          'SET ROLE tonyai_runtime',
+          'CREATE TABLE public.loader_owned (id int)',
+        ]),
+      ).toEqual(['42501', '42501', '42501', '42501', '42501', '42501', '42501', '42501', '42501', '42501', '42501', '42501', '42501', '42501']);
+    } finally {
+      await removeFixture(id);
+      await loader.$disconnect();
+    }
+  });
+
+  it('leaves the service role nothing to write: no load, no seal, no withdrawal, no delete — PostgREST included', async () => {
+    const { releaseId } = await owner.emissionFactor.findFirstOrThrow({ where: { release: { status: 'placeholder' } } });
+    const asServiceRole = (sql: string) => [`SET LOCAL ROLE service_role`, sql];
+    const id = randomUUID();
+    for (const sql of [
+      release(id, 1),
+      withdraw(releaseId),
+      seal(releaseId),
+      `DELETE FROM factor_releases WHERE id = '${releaseId}'`,
+      `DELETE FROM emission_factors WHERE release_id = '${releaseId}'`,
+      conversion(releaseId),
+    ]) {
+      const [state] = await outcomes(owner, asServiceRole('SELECT 1'), [sql]);
+      expect(state, sql).toBe('42501');
+    }
+    // The same through PostgREST, the service role's own door (independent
+    // review F6: it could withdraw any release).
+    expect(
+      await refusal(await serviceRest('PATCH', `factor_releases?id=eq.${releaseId}`, { status: 'withdrawn', withdrawn_by: 'x', withdrawal_reason: 'x' })),
+    ).toEqual({ ok: false, code: '42501' });
+    expect(
+      await refusal(
+        await serviceRest('POST', 'factor_releases', { id, publisher: FIXTURE_PUBLISHER, title: 'x', edition: `int-${id}`, ordinal: 999999, status: 'fixture' }),
+      ),
+    ).toEqual({ ok: false, code: '42501' });
+    expect(await refusal(await serviceRest('DELETE', `unit_conversions?release_id=eq.${releaseId}`))).toEqual({ ok: false, code: '42501' });
+    expect(await owner.factorRelease.count({ where: { id } })).toBe(0);
+    expect(await owner.factorRelease.count({ where: { id: releaseId, status: 'withdrawn' } })).toBe(0);
+  });
+
+  it('lets a test fixture release go with its rows, withdrawn or not — and no other withdrawn release', async () => {
+    const id = randomUUID();
+    const left = await withRollback(owner, async (tx) => {
+      for (const sql of [release(id, await nextFixtureOrdinal(tx)), conversion(id), seal(id), withdraw(id)]) await tx.$executeRawUnsafe(sql);
+      await tx.$executeRawUnsafe(`DELETE FROM unit_conversions WHERE release_id = '${id}'`);
+      await tx.$executeRawUnsafe(`DELETE FROM factor_releases WHERE id = '${id}'`);
+      return tx.factorRelease.count({ where: { id } });
+    });
+    expect(left).toBe(0);
+    const { releaseId } = await owner.emissionFactor.findFirstOrThrow({ where: { release: { status: 'placeholder' } } });
+    expect(
+      await outcomes(owner, [withdraw(releaseId)], [
+        `DELETE FROM emission_factors WHERE release_id = '${releaseId}'`,
+        `DELETE FROM factor_releases WHERE id = '${releaseId}'`,
+      ]),
+    ).toEqual(['TA010', 'TA010']);
+  });
+
+  it('refuses a seal or withdrawal by a session that is neither the loader nor the owner, whatever it was granted (TA013)', async () => {
+    const { releaseId } = await owner.emissionFactor.findFirstOrThrow({ where: { release: { status: 'placeholder' } } });
+    const columns = '"sealed_at", "status", "withdrawn_at", "withdrawn_by", "withdrawal_reason"';
+    // A grant committed for this test alone — the runtime holds none — and
+    // revoked whatever happens; `runtime-role.int.spec` would report it.
+    await owner.$executeRawUnsafe(`GRANT UPDATE (${columns}) ON factor_releases TO tonyai_runtime`);
+    try {
+      expect(await outcomes(runtime, [], [withdraw(releaseId)])).toEqual(['TA013']);
+    } finally {
+      await owner.$executeRawUnsafe(`REVOKE UPDATE (${columns}) ON factor_releases FROM tonyai_runtime`);
+    }
+    // Positive control: the grant was the only barrier left, and it is gone.
+    expect(await outcomes(runtime, [], [withdraw(releaseId)])).toEqual(['42501']);
   });
 });

@@ -24,6 +24,7 @@ import {
 } from '@tonyai/shared-types';
 import {
   DEMO_YEAR,
+  FIXTURE_PUBLISHER,
   PRIOR_YEAR,
   SEED_CONVERSIONS,
   SEED_FACTORS,
@@ -192,7 +193,8 @@ async function resolveFactor(
     activityType: factorActivityTypeFor(category, seedActivityType(category)),
     geographyCode,
     reportingYear,
-    release: { status: { not: 'withdrawn' } },
+    // Sealed releases only, as the engine reads them (LP4-02).
+    release: { status: { not: 'withdrawn' }, sealedAt: { not: null } },
   };
   const [factors, conversions] = await Promise.all([
     prisma.emissionFactor.findMany({
@@ -283,88 +285,87 @@ function assertUnchanged<T extends object>(
  * Load the placeholder library, insert-if-absent: a release, factor or
  * conversion already present must match the seed exactly, or the seed stops —
  * the tables are append-only, so it can never "update" a value.
+ *
+ * Each missing release is loaded whole in one transaction — the release, its
+ * factors and conversions (one statement per table, so the library's record,
+ * factor_release_events, shows one load per release, not one per row), then
+ * its seal (LP4-02): the database refuses to commit a release left unsealed,
+ * and a sealed release takes no row. So a present release missing a seed row
+ * is a changed library, which is a new release (or, locally, `pnpm db:reset`).
  */
 async function seedFactorLibrary(): Promise<void> {
-  const releaseIds = new Map<string, string>();
+  const declared = new Set(SEED_RELEASES.map((r) => r.edition));
+  for (const row of [...SEED_FACTORS, ...SEED_CONVERSIONS]) {
+    if (!declared.has(row.edition)) throw new Error(`Seed row names edition ${row.edition}, which the seed does not declare`);
+  }
   for (const release of SEED_RELEASES) {
+    const factors: Omit<(typeof SEED_FACTORS)[number], 'edition'>[] = [];
+    for (const { edition, ...factor } of SEED_FACTORS) if (edition === release.edition) factors.push(factor);
+    const conversions: Omit<(typeof SEED_CONVERSIONS)[number], 'edition'>[] = [];
+    for (const { edition, ...conversion } of SEED_CONVERSIONS) if (edition === release.edition) conversions.push(conversion);
+    const label = `Release ${release.publisher} ${release.edition}`;
     const stored = await prisma.factorRelease.findUnique({
       where: { publisher_edition: { publisher: release.publisher, edition: release.edition } },
     });
-    if (stored) {
-      assertUnchanged(`Release ${release.publisher} ${release.edition}`, stored, release, ['title', 'ordinal', 'status']);
-      releaseIds.set(release.edition, stored.id);
-    } else {
-      releaseIds.set(release.edition, (await prisma.factorRelease.create({ data: release })).id);
-    }
-  }
-  const releaseIdOf = (edition: string): string => {
-    const id = releaseIds.get(edition);
-    if (!id) throw new Error(`Seed row names edition ${edition}, which the seed does not declare`);
-    return id;
-  };
-
-  // Missing rows go in with ONE statement per table, so the library's record
-  // (factor_release_events) shows one load per release, not one per row.
-  const missingFactors: Prisma.EmissionFactorUncheckedCreateInput[] = [];
-  for (const { edition, ...factor } of SEED_FACTORS) {
-    const data = { ...factor, releaseId: releaseIdOf(edition) };
-    const stored = await prisma.emissionFactor.findUnique({
-      where: {
-        identity: {
-          releaseId: data.releaseId,
-          category: data.category,
-          activityType: data.activityType,
-          gas: data.gas,
-          geographyCode: data.geographyCode,
-          reportingYear: data.reportingYear,
-          scope2Method: data.scope2Method,
-          calorificBasis: data.calorificBasis,
-          normalizedUnit: data.normalizedUnit,
+    if (!stored) {
+      await prisma.$transaction(
+        async (tx) => {
+          const { id: releaseId } = await tx.factorRelease.create({ data: release });
+          if (factors.length > 0) await tx.emissionFactor.createMany({ data: factors.map((f) => ({ ...f, releaseId })) });
+          if (conversions.length > 0) await tx.unitConversion.createMany({ data: conversions.map((c) => ({ ...c, releaseId })) });
+          // The database's clock replaces the value given.
+          await tx.factorRelease.update({ where: { id: releaseId }, data: { sealedAt: new Date() } });
         },
-      },
-    });
-    if (stored) {
-      assertUnchanged(
-        `Factor ${data.category}/${data.activityType}/${data.geographyCode}/${data.reportingYear} (${edition})`,
-        stored,
-        data,
-        ['scope', 'factorValue', 'factorUnit', 'methodology', 'source', 'version', 'gasCoverage', 'dataYear'],
+        { timeout: 30_000 },
       );
-    } else {
-      missingFactors.push(data);
+      continue;
     }
-  }
-  if (missingFactors.length > 0) await prisma.emissionFactor.createMany({ data: missingFactors });
-
-  const missingConversions: Prisma.UnitConversionUncheckedCreateInput[] = [];
-  for (const { edition, ...conversion } of SEED_CONVERSIONS) {
-    const data = { ...conversion, releaseId: releaseIdOf(edition) };
-    const stored = await prisma.unitConversion.findUnique({
-      where: {
-        identity: {
-          releaseId: data.releaseId,
-          category: data.category,
-          activityType: data.activityType,
-          geographyCode: data.geographyCode,
-          reportingYear: data.reportingYear,
-          fromUnit: data.fromUnit,
-          toUnit: data.toUnit,
-          calorificBasis: data.calorificBasis,
+    assertUnchanged(label, stored, release, ['title', 'ordinal', 'status']);
+    const sealed = `${label} is sealed — a changed library is a new release (locally, \`pnpm db:reset\`)`;
+    for (const factor of factors) {
+      const data = { ...factor, releaseId: stored.id };
+      const present = await prisma.emissionFactor.findUnique({
+        where: {
+          identity: {
+            releaseId: data.releaseId,
+            category: data.category,
+            activityType: data.activityType,
+            gas: data.gas,
+            geographyCode: data.geographyCode,
+            reportingYear: data.reportingYear,
+            scope2Method: data.scope2Method,
+            calorificBasis: data.calorificBasis,
+            normalizedUnit: data.normalizedUnit,
+          },
         },
-      },
-    });
-    if (stored) {
-      assertUnchanged(
-        `Conversion ${data.category}/${data.geographyCode}/${data.reportingYear} ${data.fromUnit}→${data.toUnit} (${edition})`,
-        stored,
-        data,
-        ['multiplier', 'referenceConditions', 'basis', 'dataYear'],
-      );
-    } else {
-      missingConversions.push(data);
+      });
+      const what = `Factor ${data.category}/${data.activityType}/${data.geographyCode}/${data.reportingYear} (${release.edition})`;
+      if (!present) throw new Error(`${what} is missing: ${sealed}`);
+      assertUnchanged(what, present, data, [
+        'scope', 'factorValue', 'factorUnit', 'methodology', 'source', 'version', 'gasCoverage', 'dataYear',
+      ]);
+    }
+    for (const conversion of conversions) {
+      const data = { ...conversion, releaseId: stored.id };
+      const present = await prisma.unitConversion.findUnique({
+        where: {
+          identity: {
+            releaseId: data.releaseId,
+            category: data.category,
+            activityType: data.activityType,
+            geographyCode: data.geographyCode,
+            reportingYear: data.reportingYear,
+            fromUnit: data.fromUnit,
+            toUnit: data.toUnit,
+            calorificBasis: data.calorificBasis,
+          },
+        },
+      });
+      const what = `Conversion ${data.category}/${data.geographyCode}/${data.reportingYear} ${data.fromUnit}→${data.toUnit} (${release.edition})`;
+      if (!present) throw new Error(`${what} is missing: ${sealed}`);
+      assertUnchanged(what, present, data, ['multiplier', 'referenceConditions', 'basis', 'dataYear']);
     }
   }
-  if (missingConversions.length > 0) await prisma.unitConversion.createMany({ data: missingConversions });
 }
 
 // --- Demo evidence ---------------------------------------------------------
@@ -626,10 +627,11 @@ async function main() {
   // skips its `globalTeardown` on SIGINT or a crash, so an interrupted E2E run
   // can leave its fixture release behind — and while it sits there its
   // category calculates at a made-up rate instead of being refused, freezing
-  // that rate into every snapshot entered against it. Scoped to `fixture`
-  // releases, the only rows the append-only triggers let anyone delete.
+  // that rate into every snapshot entered against it. Scoped to the test
+  // fixture publisher's releases — fixtures, and ones a loader test withdrew —
+  // the only rows the append-only triggers let anyone delete.
   const fixtureReleases = await prisma.factorRelease.findMany({
-    where: { status: 'fixture' },
+    where: { OR: [{ status: 'fixture' }, { status: 'withdrawn', publisher: FIXTURE_PUBLISHER }] },
     select: { id: true, edition: true },
   });
   if (fixtureReleases.length > 0) {
