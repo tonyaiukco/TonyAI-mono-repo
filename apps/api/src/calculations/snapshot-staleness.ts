@@ -61,13 +61,27 @@ export const NUMBER_TOLERANCE = 1e-12;
  */
 const EXACT_NUMBER_KEYS: ReadonlySet<string> = new Set(['snapshotSchema', 'scope', 'reportingYear', 'dataYear', 'ordinal']);
 
-function sameNumber(a: number, b: number): boolean {
+/**
+ * The subnormal floor. Below about 2e-311, 10^-12 of a number is less than
+ * the gap between two adjacent doubles (`Number.MIN_VALUE`, 5e-324), so the
+ * relative tolerance underflows to zero and an honest one-step rounding
+ * difference would be refused (Codex's B9 review of B2, P3 (2)). There, two
+ * non-zero numbers of one sign may be up to four of those steps apart. Above
+ * that range the relative tolerance is the larger and this never applies; it
+ * never applies across zero or between zero and a non-zero either.
+ */
+const SUBNORMAL_STEPS = 4;
+
+/**
+ * Two finite measurements: equal, or of one sign, neither zero, and within
+ * `NUMBER_TOLERANCE` of the larger (at least `SUBNORMAL_STEPS` steps).
+ */
+function sameMeasurement(a: number, b: number): boolean {
   if (a === b) return true;
-  // `Infinity - x` is Infinity and `Infinity <= Infinity`: without this, a
-  // recompute that overflowed compared equal to any stored figure
-  // (`security-rls` re-review P2-A).
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
-  return Math.abs(a - b) <= NUMBER_TOLERANCE * Math.max(Math.abs(a), Math.abs(b));
+  // Zero's sign is 0, so this also keeps zero apart from every non-zero.
+  if (Math.sign(a) !== Math.sign(b)) return false;
+  const tolerance = Math.max(NUMBER_TOLERANCE * Math.max(Math.abs(a), Math.abs(b)), SUBNORMAL_STEPS * Number.MIN_VALUE);
+  return Math.abs(a - b) <= tolerance;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -87,15 +101,22 @@ function own(object: Record<string, unknown>, key: string): unknown {
 /**
  * Structural equality of two JSON values. Key order is irrelevant — `jsonb`
  * reorders keys — and a key holding `undefined` is an absent key, as it is
- * once serialised. Numbers compare within `NUMBER_TOLERANCE`, except under an
+ * once serialised. A non-finite number equals nothing; finite numbers compare
+ * within `NUMBER_TOLERANCE` (`sameMeasurement`), except under an
  * `EXACT_NUMBER_KEYS` key; everything else exactly. `key` is the name the
  * value is held under.
  */
 function sameJson(a: unknown, b: unknown, key?: string): boolean {
-  if (a === b) return true;
   if (typeof a === 'number' && typeof b === 'number') {
-    return key !== undefined && EXACT_NUMBER_KEYS.has(key) ? false : sameNumber(a, b);
+    // Finiteness before any equality: `Infinity === Infinity`, and `Infinity -
+    // x <= Infinity` — a non-finite number is the same as nothing, itself
+    // included (`security-rls` re-review P2-A; Codex's B9 review, P3 (1)).
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+    return key !== undefined && EXACT_NUMBER_KEYS.has(key) ? a === b : sameMeasurement(a, b);
   }
+  // A shortcut for primitives only: two references to one object still
+  // compare by content, so nothing non-finite inside is waved through.
+  if (typeof a !== 'object' || a === null || typeof b !== 'object' || b === null) return a === b;
   if (Array.isArray(a) || Array.isArray(b)) {
     return (
       Array.isArray(a) &&

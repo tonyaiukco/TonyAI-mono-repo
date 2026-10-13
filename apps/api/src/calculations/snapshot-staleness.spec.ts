@@ -139,6 +139,66 @@ describe('compareSnapshots — K11 (P6)', () => {
     expect(compareSnapshots({ ...(stored(RECOMPUTED) as object), tCo2e: -Infinity }, { ...RECOMPUTED, tCo2e: Infinity }).stale).toBe(true);
   });
 
+  // Codex's B9 review of B2, P3 (1): `a === b` ran before the finiteness
+  // check, so Infinity matched Infinity. No figure the engine computes is
+  // infinite (it refuses an overflow), so this is the rule made true, not a
+  // reachable exploit: a non-finite number is the same as nothing, itself
+  // included — at the top level, nested, and under an exact key.
+  it.each([
+    ['Infinity', Infinity],
+    ['-Infinity', -Infinity],
+    ['NaN', NaN],
+  ])('%s is never the same number, even as itself — top level, nested, exact key', (_label, value) => {
+    const top = { ...RECOMPUTED, tCo2e: value };
+    expect(compareSnapshots({ ...(stored(RECOMPUTED) as object), tCo2e: value }, top)).toEqual({
+      stale: true,
+      classes: ['figure'],
+      legacy: false,
+    });
+    // Two copies, as a stored snapshot and a recomputed one always are…
+    const nested = () => ({ ...RECOMPUTED, conversion: { ...RECOMPUTED.conversion!, multiplier: value } });
+    expect(compareSnapshots(nested(), nested() as CalculationResultV2).classes).toEqual(['conversion']);
+    const exact = () => ({ ...RECOMPUTED, factorRelease: { ...RECOMPUTED.factorRelease, ordinal: value } });
+    expect(compareSnapshots(exact(), exact() as CalculationResultV2).classes).toEqual(['factor']);
+    const schema = () => ({ ...RECOMPUTED, snapshotSchema: value });
+    expect(compareSnapshots(schema(), schema() as unknown as CalculationResultV2).classes).toEqual(['factor']);
+    // …and one object handed as both: no reference shortcut skips the rule.
+    const same = nested();
+    expect(compareSnapshots(same, same as CalculationResultV2).classes).toEqual(['conversion']);
+  });
+
+  // Codex's B9 review of B2, P3 (2): below about 2e-311, 10^-12 of a number
+  // is less than the gap between two adjacent doubles (Number.MIN_VALUE,
+  // 5e-324), so the relative tolerance underflowed to zero and an honest
+  // one-step rounding difference was refused. Modelled as Codex did: the
+  // database's rounding to 16 significant digits, then the recompute from the
+  // rounded input, priced at the placeholder Electricity factor 0.2071.
+  it('an honest rounding difference of a subnormal figure is the same number', () => {
+    const toDb = (x: number) => Number(x.toPrecision(16));
+    const entered = 1.0020650006883337e-308;
+    const saved = { ...RECOMPUTED, inputValue: toDb(entered), normalizedValue: toDb(entered), kgCo2e: toDb(entered * 0.2071), tCo2e: toDb((entered * 0.2071) / 1000) };
+    const input = saved.inputValue;
+    const recomputed = { ...RECOMPUTED, inputValue: input, normalizedValue: input, kgCo2e: input * 0.2071, tCo2e: (input * 0.2071) / 1000 };
+    expect(saved.tCo2e).not.toBe(recomputed.tCo2e);
+    expect(compareSnapshots(stored(saved), recomputed)).toEqual({ stale: false, classes: [], legacy: false });
+    expect(compareSnapshots(stored({ ...RECOMPUTED, tCo2e: 2.075276616423e-312 }), { ...RECOMPUTED, tCo2e: 2.07527661643e-312 }).stale).toBe(false);
+  });
+
+  it('the subnormal allowance is four steps between two non-zero numbers of one sign — never across zero', () => {
+    const step = Number.MIN_VALUE;
+    const at = (stored_: number, recomputed: number) =>
+      compareSnapshots(stored({ ...RECOMPUTED, tCo2e: stored_ }), { ...RECOMPUTED, tCo2e: recomputed }).stale;
+    expect(at(2e-312, 2e-312 + 4 * step)).toBe(false);
+    expect(at(2e-312, 2e-312 + 5 * step)).toBe(true);
+    expect(at(2e-312, 4e-312)).toBe(true);
+    expect(at(0, step)).toBe(true);
+    expect(at(step, 0)).toBe(true);
+    expect(at(step, -step)).toBe(true);
+    expect(at(3 * step, -step)).toBe(true);
+    // An identity stays exact at any magnitude.
+    expect(compareSnapshots(stored({ ...RECOMPUTED, dataYear: step }), { ...RECOMPUTED, dataYear: 2 * step } as CalculationResultV2).stale).toBe(true);
+  });
+
   // `security-rls` re-review P3-A: an identity is not a measurement — a
   // schema version, a scope, a year or a release ordinal is equal or not.
   it.each([
