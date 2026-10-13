@@ -638,10 +638,12 @@ export class ActivityRecordsService {
    * line names the part that differs, so a library change is told from a
    * direct writer's rewrite ("LP4-02 follow-ups" (6)) — never a value.
    *
-   * The record's own `scope` column is an input too: the snapshot does not
-   * carry it and the engine does not read it, but every total groups by it,
-   * so a scope that is not its category's is a mismatch of inputs
-   * (`security-rls` P2-1, B2 review).
+   * The record's own `scope` and period columns are inputs too: the snapshot
+   * carries neither and the engine reads neither, but every total groups by
+   * them — so a scope that is not its category's (`security-rls` P2-1, B2
+   * review), or a period value not in its canonical spelling, which the
+   * period lock's exact lookup would miss while the totals still count it
+   * (re-review P2-B), is a mismatch of inputs.
    *
    * What it does not see: the site's or subsidiary's geography, or the
    * library, changing in the milliseconds between the recompute and the
@@ -659,10 +661,12 @@ export class ActivityRecordsService {
       why = `recompute refused (${recomputed.refusal})`;
     } else {
       const comparison = compareSnapshots(locked.calculation, recomputed.calculation);
-      const scopeAgrees = locked.scope === CATEGORY_SCOPE_MAP[locked.category as Category];
-      if (comparison.stale || !scopeAgrees) {
+      const columnsAgree =
+        locked.scope === CATEGORY_SCOPE_MAP[locked.category as Category] &&
+        canonicalPeriodValue(locked.reportingPeriod, locked.periodValue) === locked.periodValue;
+      if (comparison.stale || !columnsAgree) {
         // `input` leads the classes' fixed order, so it is prepended.
-        const classes = scopeAgrees
+        const classes = columnsAgree
           ? comparison.classes
           : ['input', ...comparison.classes.filter((c) => c !== 'input')];
         why = [

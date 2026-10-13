@@ -53,8 +53,21 @@ export interface SnapshotComparison {
  */
 export const NUMBER_TOLERANCE = 1e-12;
 
+/**
+ * Keys — at any depth — whose numbers are identities, not measurements: a
+ * schema version, a scope, a year, a release ordinal is equal or it is not
+ * (`security-rls` re-review P3-A: `snapshotSchema: 2.000000000001` passed and
+ * then read as "not a provenance snapshot"). No tolerance for them.
+ */
+const EXACT_NUMBER_KEYS: ReadonlySet<string> = new Set(['snapshotSchema', 'scope', 'reportingYear', 'dataYear', 'ordinal']);
+
 function sameNumber(a: number, b: number): boolean {
-  return a === b || Math.abs(a - b) <= NUMBER_TOLERANCE * Math.max(Math.abs(a), Math.abs(b));
+  if (a === b) return true;
+  // `Infinity - x` is Infinity and `Infinity <= Infinity`: without this, a
+  // recompute that overflowed compared equal to any stored figure
+  // (`security-rls` re-review P2-A).
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return Math.abs(a - b) <= NUMBER_TOLERANCE * Math.max(Math.abs(a), Math.abs(b));
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -74,24 +87,27 @@ function own(object: Record<string, unknown>, key: string): unknown {
 /**
  * Structural equality of two JSON values. Key order is irrelevant — `jsonb`
  * reorders keys — and a key holding `undefined` is an absent key, as it is
- * once serialised. Numbers compare within `NUMBER_TOLERANCE`; everything else
- * exactly.
+ * once serialised. Numbers compare within `NUMBER_TOLERANCE`, except under an
+ * `EXACT_NUMBER_KEYS` key; everything else exactly. `key` is the name the
+ * value is held under.
  */
-function sameJson(a: unknown, b: unknown): boolean {
+function sameJson(a: unknown, b: unknown, key?: string): boolean {
   if (a === b) return true;
-  if (typeof a === 'number' && typeof b === 'number') return sameNumber(a, b);
+  if (typeof a === 'number' && typeof b === 'number') {
+    return key !== undefined && EXACT_NUMBER_KEYS.has(key) ? false : sameNumber(a, b);
+  }
   if (Array.isArray(a) || Array.isArray(b)) {
     return (
       Array.isArray(a) &&
       Array.isArray(b) &&
       a.length === b.length &&
-      a.every((item, i) => sameJson(item, b[i]))
+      a.every((item, i) => sameJson(item, b[i], key))
     );
   }
   if (!isPlainObject(a) || !isPlainObject(b)) return false;
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const key of keys) {
-    if (!sameJson(own(a, key), own(b, key))) return false;
+    if (!sameJson(own(a, key), own(b, key), key)) return false;
   }
   return true;
 }
@@ -103,7 +119,7 @@ function sameField(key: string, stored: unknown, recomputed: unknown): boolean {
   if (key === 'inputUnit' && typeof stored === 'string' && typeof recomputed === 'string') {
     return storedUnit(stored) === storedUnit(recomputed);
   }
-  return sameJson(stored, recomputed);
+  return sameJson(stored, recomputed, key);
 }
 
 /**

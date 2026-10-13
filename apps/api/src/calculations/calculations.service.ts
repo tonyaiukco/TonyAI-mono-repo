@@ -491,6 +491,12 @@ export class CalculationsService {
     }
 
     const kgCo2e = normalizedValue * factor.factorValue;
+    // A finite input can still overflow (1e308 MWh is Infinity kWh), and a
+    // stored Infinity is JSON `null` — a figure that reads as uncalculated.
+    // Refused like a non-finite input (`security-rls`, LP4-02 B2 re-review).
+    if (!Number.isFinite(normalizedValue) || !Number.isFinite(kgCo2e)) {
+      throw new BadRequestException('value is too large to calculate');
+    }
     const tCo2e = kgCo2e / 1000;
 
     const snapshot: CalculationResultV2 = {

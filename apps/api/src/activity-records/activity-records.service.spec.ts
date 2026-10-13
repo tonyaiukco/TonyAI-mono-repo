@@ -3911,6 +3911,27 @@ describe('ActivityRecordsService — K11: submit and approve recompute the figur
     }
   });
 
+  // `security-rls` re-review P2-B: the period lock is looked up by exact
+  // value, while the totals trim and lower-case it — a direct writer's
+  // `annual`/`'January '` slipped past a lock and still landed in the period.
+  it.each([
+    ['a period value in another spelling', { periodValue: 'annual' }],
+    ['a period value with a trailing space', { reportingPeriod: 'monthly', periodValue: 'January ' }],
+    ['a granularity that does not exist', { reportingPeriod: 'weekly', periodValue: 'Annual' }],
+  ] as const)('refuses %s: the period is an input too', async (_label, period) => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { prisma, service } = arrange(draft(period));
+      await staleBody(service.submit(dataEntry(), 'rec-k'));
+      expect(prisma.activityRecord.update).not.toHaveBeenCalled();
+      expect(String(warn.mock.calls[0][0])).toBe('calculation_stale: submit of record rec-k refused — input differ');
+      const onApprove = arrange(submitted(period));
+      await staleBody(onApprove.service.approve(superAdmin(), 'rec-k'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   // --- Between the recompute and the lock (C1-a, C2-A).
 
   it('inputs changed between the read and the lock: record_changed, not a verdict on the new inputs', async () => {

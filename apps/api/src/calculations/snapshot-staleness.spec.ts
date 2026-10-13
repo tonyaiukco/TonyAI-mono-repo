@@ -129,6 +129,30 @@ describe('compareSnapshots — K11 (P6)', () => {
     expect(r).toEqual({ stale: true, classes: [cls], legacy: false });
   });
 
+  // `security-rls` re-review P2-A: `Infinity - x` is Infinity, and
+  // `Infinity <= Infinity` — a recompute that overflowed (an absurd activity
+  // value a direct writer stored) compared equal to any stored figure.
+  it('a finite number and an infinite one are never the same; the two infinities are not either', () => {
+    const overflowed = { ...RECOMPUTED, normalizedValue: Infinity, kgCo2e: Infinity, tCo2e: Infinity };
+    expect(compareSnapshots(stored(RECOMPUTED), overflowed as CalculationResultV2).classes).toEqual(['conversion', 'figure']);
+    expect(compareSnapshots({ ...(stored(RECOMPUTED) as object), tCo2e: Infinity }, RECOMPUTED).classes).toEqual(['figure']);
+    expect(compareSnapshots({ ...(stored(RECOMPUTED) as object), tCo2e: -Infinity }, { ...RECOMPUTED, tCo2e: Infinity }).stale).toBe(true);
+  });
+
+  // `security-rls` re-review P3-A: an identity is not a measurement — a
+  // schema version, a scope, a year or a release ordinal is equal or not.
+  it.each([
+    ['snapshotSchema', (s: Record<string, any>) => ({ ...s, snapshotSchema: 2.000000000001 }), ['factor']],
+    ['scope', (s: Record<string, any>) => ({ ...s, scope: 1.0000000000001 }), ['factor']],
+    ['reportingYear', (s: Record<string, any>) => ({ ...s, reportingYear: 2031.000000001 }), ['input']],
+    ['dataYear', (s: Record<string, any>) => ({ ...s, dataYear: 2031.000000001 }), ['factor']],
+    ['factorRelease.ordinal', (s: Record<string, any>) => ({ ...s, factorRelease: { ...s.factorRelease, ordinal: 1.0000000000001 } }), ['factor']],
+    ['conversion.dataYear', (s: Record<string, any>) => ({ ...s, conversion: { ...s.conversion, dataYear: 2031.000000001 } }), ['conversion']],
+    ['conversion.release.ordinal', (s: Record<string, any>) => ({ ...s, conversion: { ...s.conversion, release: { ...s.conversion.release, ordinal: 1.0000000000001 } } }), ['conversion']],
+  ] as const)('%s compares exactly, without the tolerance', (_key, change, classes) => {
+    expect(compareSnapshots(change(stored(RECOMPUTED) as Record<string, any>), RECOMPUTED)).toEqual({ stale: true, classes, legacy: false });
+  });
+
   it('a nested key only the recomputed snapshot has is a mismatch', () => {
     const recomputed = { ...RECOMPUTED, factorRelease: { ...RECOMPUTED.factorRelease, newField: 'x' } };
     expect(compareSnapshots(stored(RECOMPUTED), recomputed as unknown as CalculationResultV2).classes).toEqual(['factor']);
