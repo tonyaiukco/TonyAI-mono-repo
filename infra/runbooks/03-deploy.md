@@ -188,7 +188,7 @@ Preflight through the owner's own `owner-psql` login:
 ```sql
 SELECT current_user, session_user, rolcreaterole
   FROM pg_roles WHERE rolname = current_user;
-SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
   FROM pg_roles WHERE rolname = 'tonyai_factor_loader';
 SELECT granted.rolname AS member_of
   FROM pg_auth_members m JOIN pg_roles granted ON granted.oid = m.roleid
@@ -197,7 +197,13 @@ SELECT granted.rolname AS member_of
 ```
 
 Require the migrating owner to have CREATEROLE. A loader role absent before the
-migration is normal; if present it must have none of SUPERUSER, CREATEDB,
+migration is normal; if present it must have `rolcanlogin = false`. If it is true,
+stop preflight: the owner first disables it with
+`ALTER ROLE tonyai_factor_loader NOLOGIN`, closes its sessions under
+[runbook 05](05-rotation.md#disable-rotate-or-revoke-the-loader-credential), and
+resets its password with `\password tonyai_factor_loader`, recording the new
+private secret version. Keep it NOLOGIN and repeat preflight before proceeding.
+The existing role must also have none of SUPERUSER, CREATEDB,
 CREATEROLE, REPLICATION or BYPASSRLS and no memberships. The migration aborts on
 unsafe existing attributes/memberships; investigate with the owner, never strip
 privileges from an unrecognised cluster-wide role merely to pass.
@@ -205,7 +211,7 @@ privileges from an unrecognised cluster-wide role merely to pass.
 The migration seals **every existing release**, with no back-filled `sealed`
 event (the migration itself is the record). `service_role` loses INSERT/UPDATE/
 DELETE on the library. TA006 becomes live: the service role can no longer rewrite
-or delete a draft/rejected record, rewrite its calculation inputs, or rewrite
+a draft or rejected record's figure or calculation inputs, or delete it, or rewrite
 `created_by` at any status. Sealing/withdrawal uses the loader's or owner's
 session (TA013). Existing API draft edits/submits must still succeed.
 

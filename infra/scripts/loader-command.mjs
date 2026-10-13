@@ -15,7 +15,8 @@ export const run = (env, args, execute = spawnSync, output = console.log) => {
   if (!Object.hasOwn(OUTCOMES, args[0])) throw new Error('Name load or withdraw.');
   const result = execute(process.execPath, ['dist/factor-releases/factor-release.cli.js', ...args], {
     cwd: API_PATH,
-    // No owner/runtime credentials, NODE_OPTIONS, shell interpolation or raw logs.
+    // Only this explicit environment is passed at spawn; Prisma can subsequently
+    // load .env files. The runbook requires an environment-file-free checkout.
     env: { FACTOR_LOADER_DATABASE_URL: url, NODE_ENV: 'production', NO_COLOR: '1' },
     stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8',
     timeout: 360_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,

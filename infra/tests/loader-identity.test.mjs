@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { CA_PATH, loaderUrl, run, verifyLoaderIdentity } from '../scripts/loader-identity.mjs';
 import { run as command, FAILURE } from '../scripts/loader-command.mjs';
 
@@ -16,6 +17,9 @@ test('chosen endpoint requires project-bound loader session pooler and strict TL
     ['postgresql:', 'http:'], ['tonyai_factor_loader.', 'postgres.'],
     ['tonyai_factor_loader.', 'tonyai_runtime.'], [project, 'z'.repeat(20)],
     [password, 'weak'], ['eu-central-1', 'eu-west-1'], ['pooler.supabase.com', 'example.com'],
+    ['aws-0-eu-central-1.pooler.supabase.com', 'aws-0-eu-central-1.pooler.supabase.com.example.net'],
+    ['aws-0-eu-central-1.pooler.supabase.com', 'aws-0-eu-central-1.pooler-supabase.com'],
+    ['aws-0-eu-central-1.pooler.supabase.com', 'xaws-0-eu-central-1.pooler.supabase.com'],
     [':5432/', ':6543/'], ['/postgres?', '/other?'], ['sslmode=require', 'sslmode=disable'],
     ['sslaccept=strict', 'sslaccept=accept_invalid_certs'],
     [encodeURIComponent(CA_PATH), encodeURIComponent('/untrusted/cert')],
@@ -79,23 +83,32 @@ test('runner fails closed on construction, query, identity and disconnect failur
 const report = { command: 'load', outcome: 'would_load', operator: 'Factor operations', release: { publisher: 'approved publisher', edition: 'approved edition' }, factors: 2, conversions: 1, supersedes: null };
 const success = { status: 0, signal: null, stdout: JSON.stringify(report), stderr: '' };
 
-test('owner command preserves CLI arguments but passes only the loader credential in a private child', () => {
-  const args = ['load', '--file=/private/release.json', '--operator=Factor operations', '--apply', '--allow-remote'];
-  const messages = [];
-  command(env, args, (binary, argv, options) => {
-    assert.equal(binary, process.execPath);
-    assert.deepEqual(argv, ['dist/factor-releases/factor-release.cli.js', ...args]);
-    assert.ok(options.cwd.endsWith('/apps/api/'));
-    assert.deepEqual(options.env, { FACTOR_LOADER_DATABASE_URL: url, NODE_ENV: 'production', NO_COLOR: '1' });
-    assert.deepEqual(options.stdio, ['ignore', 'pipe', 'pipe']);
-    assert.equal(options.timeout, 360_000);
-    assert.equal(options.killSignal, 'SIGKILL');
-    assert.equal(options.maxBuffer, 4 * 1024 * 1024);
-    return success;
-  }, (message) => messages.push(message));
-  assert.deepEqual(messages.map(JSON.parse), [report]);
-  const withdrawn = { ...report, command: 'withdraw', outcome: 'would_withdraw' };
-  command(env, ['withdraw'], () => ({ ...success, stdout: JSON.stringify(withdrawn) }), (message) => assert.deepEqual(JSON.parse(message), withdrawn));
+test('owner command preserves all six successful reports and uses the explicit spawn environment', () => {
+  const pairs = [
+    ['load', 'would_load'], ['load', 'loaded'], ['load', 'already_loaded'],
+    ['withdraw', 'would_withdraw'], ['withdraw', 'withdrawn'], ['withdraw', 'already_withdrawn'],
+  ];
+  for (const [verb, outcome] of pairs) {
+    const args = [verb, '--operator=Factor operations'];
+    if (verb === 'load') args.push('--file=/private/release.json');
+    else args.push('--publisher=approved publisher', '--edition=approved edition', '--reason=Correction');
+    if (!outcome.startsWith('would_')) args.push('--apply', '--allow-remote');
+    const expected = { ...report, command: verb, outcome };
+    const messages = [];
+    assert.doesNotThrow(() => command(env, args, (binary, argv, options) => {
+      assert.equal(binary, process.execPath);
+      assert.deepEqual(argv, ['dist/factor-releases/factor-release.cli.js', ...args]);
+      assert.equal(options.cwd, fileURLToPath(new URL('../../apps/api/', import.meta.url)));
+      assert.equal(options.encoding, 'utf8');
+      assert.deepEqual(options.env, { FACTOR_LOADER_DATABASE_URL: url, NODE_ENV: 'production', NO_COLOR: '1' });
+      assert.deepEqual(options.stdio, ['ignore', 'pipe', 'pipe']);
+      assert.equal(options.timeout, 360_000);
+      assert.equal(options.killSignal, 'SIGKILL');
+      assert.equal(options.maxBuffer, 4 * 1024 * 1024);
+      return { ...success, stdout: JSON.stringify(expected) };
+    }, (message) => messages.push(message)));
+    assert.deepEqual(messages.map(JSON.parse), [expected]);
+  }
 });
 
 test('raw diagnostics, refused/unknown/partial outcomes and credentials never become reports', () => {
@@ -110,16 +123,20 @@ test('raw diagnostics, refused/unknown/partial outcomes and credentials never be
     assert.throws(() => command(env, ['load'], () => result, (message) => messages.push(message)));
     assert.deepEqual(messages, []);
   }
-  let called = false;
-  for (const [settings, args] of [[{ ...env, FACTOR_LOADER_DATABASE_URL: undefined }, ['load']], [env, ['bad']]]) {
+  for (const [settings, args] of [
+    [{ ...env, FACTOR_LOADER_DATABASE_URL: undefined }, ['load']], [env, ['bad']],
+    [{ ...env, FACTOR_LOADER_DATABASE_URL: url.replace(':5432/', ':6543/') }, ['load']],
+    [{ ...env, FACTOR_LOADER_DATABASE_URL: url.replace('sslaccept=strict', 'sslaccept=accept_invalid_certs') }, ['load']],
+  ]) {
+    let called = false;
     assert.throws(() => command(settings, args, () => { called = true; }));
+    assert.equal(called, false);
   }
-  assert.equal(called, false);
 });
 
 test('both executable failure boundaries withhold URL parser errors and return nonzero', () => {
   for (const [script, status, expected] of [['loader-identity.mjs', 1, 'FAIL: loader connection identity was not verified; credentials and driver details withheld.'], ['loader-command.mjs', 2, FAILURE]]) {
-    const result = spawnSync(process.execPath, [new URL(`../scripts/${script}`, import.meta.url).pathname, 'load'], {
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL(`../scripts/${script}`, import.meta.url)), 'load'], {
       env: { SUPABASE_PROJECT_REF: project, FACTOR_LOADER_DATABASE_URL: `invalid:${password} password` }, encoding: 'utf8',
     });
     assert.equal(result.status, status);

@@ -222,6 +222,17 @@ owner terminal open `owner-psql` with the exact selected `direct-url` version
 are both the project's owner (`postgres`), and review the both-role owner check.
 Do not grant memberships: TA013 expects the loader's **own** session login.
 
+Before enabling LOGIN, prove the owner can terminate the loader's sessions:
+
+```sql
+SELECT pg_has_role(current_user, 'pg_signal_backend', 'USAGE') AS can_signal_backends;
+```
+
+Require **true**; otherwise stop and resolve with the platform owner. On PG16+
+the creator's implicit membership has INHERIT FALSE / SET FALSE, so creating the
+loader role alone does not establish this ability. Repeat this check before
+every LOGIN activation, including routine loads and rotation.
+
 Generate `openssl rand -hex 32` privately and store the 64-character hex password
 and URL as a separate, versioned **password-manager secret**, named for this
 project/environment and loader role. Use an unrecorded terminal; no shell tracing,
@@ -253,19 +264,73 @@ Before the first apply, retain hosted proof that this session endpoint and its
 server/proxy timeouts permit one transaction of **up to 300 seconds** (the CLI's
 transaction timeout). In a private loader psql session, use the same host, 5432,
 project-qualified loader user, `PGSSLMODE=verify-full` and the repository
-`PGSSLROOTCERT`; supply the password at `psql -X -W`, never argv. Check
-`SHOW statement_timeout`, then a read-only transaction with
-`SELECT current_user, session_user`, `SELECT pg_sleep(300)`, the identities again,
-and `ROLLBACK`. Do not override timeouts just for the probe: it must reflect what
-the CLI inherits. A failure stops qualification; resolve platform limits before
-loading, without granting extra role settings/privileges to bypass the check.
+`PGSSLROOTCERT`; supply the password at `psql -X -W`, never argv. As the loader,
+record all three settings before starting the probe:
+
+```sql
+SHOW statement_timeout;
+SHOW idle_in_transaction_session_timeout;
+SHOW transaction_timeout;
+```
+
+Require PostgreSQL 17's `transaction_timeout` to be 0 (disabled) or at least
+300 seconds, with enough headroom for the actual probe duration below.
+Require `idle_in_transaction_session_timeout` to be 0 or at least a few seconds
+(use 5 seconds as the minimum here) to cover gaps between statements.
+`statement_timeout` must be 0 or exceed the loader's longest individual statement,
+not its whole 300-second transaction; retain representative per-statement timing
+evidence before applying a release. A single `pg_sleep(300)` tests the wrong limit.
+
+In the same loader psql session, run a read-only transaction lasting **at least
+300 seconds** through short statements. For example, psql's `\gexec` sends each
+of these 31 statements separately (at least 310 seconds plus round trips):
+
+```sql
+BEGIN READ ONLY;
+SELECT current_user, session_user;
+SELECT 'SELECT pg_sleep(10);' FROM generate_series(1, 31) \gexec
+SELECT current_user, session_user;
+ROLLBACK;
+```
+
+Both identity results must be the bare loader role. The 10-second example needs
+a statement timeout above 10 seconds (or 0); if it is shorter, use shorter sleeps
+and more separate statements to retain at least 300 seconds in the transaction.
+A transaction timeout of exactly 300 seconds cannot complete the 310-second
+example; allow headroom for the chosen probe and round trips when qualifying the
+endpoint. Record the completed duration and pooler outcome. **Do not override
+timeouts for the probe:** it must reflect what the CLI inherits. A failure stops
+qualification; resolve the configuration with the platform owner, then repeat
+the unchanged-environment probe and the both-role check before loading.
 This is owner-run evidence, **NOT RUN** here; the identity unit tests prove no
 hosted timeout or pooler behaviour.
 
 ## Load or withdraw from the owner workstation
 
+**Activate the existing login for each operation.** In `owner-psql` with the
+selected owner credential, first repeat the `pg_signal_backend` check under
+[provisioning](#provision-the-loader-login-per-environment) and require true.
+Then, without changing the password, run:
+
+```sql
+ALTER ROLE tonyai_factor_loader LOGIN;
+SELECT rolcanlogin FROM pg_roles WHERE rolname = 'tonyai_factor_loader';
+```
+
+Require `rolcanlogin = true`, then perform the loader identity check below before
+loading or withdrawing. The disable/terminate procedure still runs at the end of
+every operation, including a failure during setup or identity checking.
+
 **Recommendation:** use a private owner workstation, Node 22, and a clean checkout
-of the deployed source SHA. Build with `pnpm install --frozen-lockfile`,
+of the deployed source SHA. It must contain **no `.env` files**, including
+`packages/db/.env`; inspect `git status --ignored --short` and require that no
+environment file is present (committed `.env.example` templates are not secrets
+and may remain). Use a fresh isolated checkout if needed; do not delete another
+work session's environment files. Prisma's generated client can load
+`packages/db/.env` into `process.env`, including owner/runtime and Supabase
+variables, despite the wrapper's explicit spawn environment. Recheck that no
+environment files were introduced before running either helper.
+Build with `pnpm install --frozen-lockfile`,
 `pnpm db:generate`, `pnpm --filter @tonyai/api... build` (including workspace
 dependencies) **before** introducing the
 loader secret. Mount the approved release directory read-only from private
@@ -304,8 +369,10 @@ Require identity output
 `PASS: current_user=tonyai_factor_loader; session_user=tonyai_factor_loader`
 and a successful dry-run exit with `would_load` (or a reviewed `already_loaded`).
 The identity checker and CLI both refuse the owner, runtime or member login.
-`loader-command.mjs` invokes the built CLI from `apps/api`; its child receives
-only the loader URL and fixed nonsecret Node settings. It captures raw diagnostics,
+`loader-command.mjs` invokes the built CLI from `apps/api`; at spawn it passes
+only the loader URL and fixed nonsecret Node settings. This is not isolation
+from environment files loaded later by Prisma: the checkout precondition above
+is required. It captures raw diagnostics,
 withholds them on failure, and prints only a successful JSON report. Do not run
 or `tee` the raw CLI in a recorded shell: unexpected driver errors can contain
 connection details. Keep successful reports private too (publisher/operator data).
@@ -329,8 +396,9 @@ There is no root wrapper (P9). Never use DIRECT_URL for a load: the CLI refuses 
 A nonzero exit, interrupted command, timeout (the wrapper bounds the child to
 360 seconds), missing report or unexpected outcome means **stop**: an apply may
 have committed before its response was lost. Disable/close the loader below,
-reconcile through the owner, then re-enable only for a reviewed idempotent retry
-with a fresh dry run. Never infer rollback from a missing report. After success,
+reconcile through the owner, then repeat the [activation step at the start of
+the load procedure](#load-or-withdraw-from-the-owner-workstation) only for a
+reviewed idempotent retry with a fresh dry run. Never infer rollback from a missing report. After success,
 disable/close it too, run the owner reconciliation check, verify the release via
 `GET /api/v1/factors`, and retain both-role evidence. Users may need to save drafts
 again; B2's stale-calculation refusal is required by the staging gate.
@@ -359,7 +427,9 @@ is not revocation proof. If cached authentication still works or termination is
 refused, stop and resolve with the platform owner before declaring closure.
 Record only sanitized outcomes, identities, counts and secret version references.
 
-To rotate, first disable/terminate and verify closure as above. Save a **new**
+To rotate, first repeat the provisioning `pg_signal_backend` check and require
+true before any LOGIN activation; otherwise stop with the platform owner.
+Disable/terminate and verify closure as above. Save a **new**
 private password-manager version, then owner-psql `\password tonyai_factor_loader`
 and `ALTER ROLE tonyai_factor_loader LOGIN`. Prove the new version with
 `loader-identity.mjs`; require an explicit authentication refusal for the **old**

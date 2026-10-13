@@ -107,9 +107,11 @@ projects or a tunnel to one.
 
 Use the project's Frankfurt **session pooler, port 5432**, with user
 `tonyai_factor_loader.<project-ref>` and the same strict CA verification as the
-runtime URL. The chosen endpoint must retain a session for the loader's one
-transaction of up to 300 seconds. Transaction port 6543 is not qualified for this
-procedure. Verify the two bare identities with `infra/scripts/loader-identity.mjs`
+runtime URL. Qualify the chosen endpoint with runbook 05's read-only transaction
+lasting at least 300 seconds through many short statements, recording statement,
+idle-in-transaction and transaction timeouts without overriding them. A single
+300-second statement does not represent a loader transaction. Transaction port
+6543 is not qualified for this procedure. Verify the two bare identities with `infra/scripts/loader-identity.mjs`
 before any load; retain hosted timeout/endpoint evidence separately.
 
 Store each environment's credential as its **own private password-manager
