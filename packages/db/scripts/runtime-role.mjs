@@ -176,6 +176,15 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // Append-only: written with every mutation, read by /audit.
   audit_log: ['SELECT', 'INSERT'],
   storage_intents: SIUD,
+  // LP3-04 PR B's inventory boundary: read by the dataset producer's reader
+  // and by the subsidiary and site delete paths' counts (W9); written by
+  // nothing in the API yet — the write path brings its grants (W1).
+  inventory_boundaries: ['SELECT'],
+  inventory_boundary_subsidiaries: ['SELECT'],
+  inventory_boundary_sites: ['SELECT'],
+  inventory_attribution_policies: ['SELECT'],
+  inventory_applicability_cells: ['SELECT'],
+  inventory_sources: ['SELECT'],
   // Prisma's migration history: neither readable nor writable.
   _prisma_migrations: [],
 });
@@ -846,6 +855,14 @@ export async function platformDefaultPrivileges(query) {
 const ROW = 1;
 const BEFORE = 2;
 const ON = { insert: 4, delete: 8, update: 16, truncate: 32 };
+/** The rows of an inventory boundary version (LP3-04 PR B), below its header. */
+const INVENTORY_BOUNDARY_ROW_TABLES = Object.freeze([
+  'inventory_boundary_subsidiaries',
+  'inventory_boundary_sites',
+  'inventory_attribution_policies',
+  'inventory_applicability_cells',
+  'inventory_sources',
+]);
 export const INTEGRITY_TRIGGERS = Object.freeze([
   { table: 'activity_records', trigger: 'activity_records_snapshot_immutable', fn: 'activity_records_snapshot_immutable', type: ROW | BEFORE | ON.update },
   { table: 'activity_records', trigger: 'activity_records_slot_kind', fn: 'activity_records_slot_kind', type: ROW | BEFORE | ON.insert | ON.update },
@@ -883,6 +900,15 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   // LP4-02: a release left unsealed by its loading transaction is refused at
   // the commit — a constraint trigger, DEFERRABLE INITIALLY DEFERRED.
   { table: 'factor_releases', trigger: 'factor_releases_sealed_at_commit', fn: 'factor_releases_sealed_at_commit', type: ROW | ON.insert, deferred: true },
+  // LP3-04 PR B: a frozen inventory boundary version takes no change, the
+  // owner's included (TA014) — SECURITY DEFINER, to read its header FOR SHARE
+  // and copy the names in as it freezes.
+  { table: 'inventory_boundaries', trigger: 'inventory_boundaries_frozen', fn: 'inventory_boundaries_frozen', type: ROW | BEFORE | ON.insert | ON.update | ON.delete, definer: true },
+  { table: 'inventory_boundaries', trigger: 'inventory_boundaries_before_truncate', fn: 'inventory_boundary_before_truncate', type: BEFORE | ON.truncate },
+  ...INVENTORY_BOUNDARY_ROW_TABLES.flatMap((table) => [
+    { table, trigger: `${table}_frozen`, fn: 'inventory_boundary_rows_frozen', type: ROW | BEFORE | ON.insert | ON.update | ON.delete, definer: true },
+    { table, trigger: `${table}_before_truncate`, fn: 'inventory_boundary_before_truncate', type: BEFORE | ON.truncate },
+  ]),
 ]);
 
 /**
@@ -917,6 +943,25 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['factor_releases', 'factor_releases_text_check', 'd23326d88a280c94d486b236f0c12e0b'],
   ['factor_releases', 'factor_releases_withdrawal_check', '4430a3652b1631e86ce68f076eae32a4'],
   ['factor_releases', 'factor_releases_withdrawn_sealed_check', '071f2bdff4397aeabbe9fc0c396e8dc6'],
+  ['inventory_applicability_cells', 'inventory_applicability_cells_category_check', 'a4735b502a4150198c717e43593a8dbd'],
+  ['inventory_applicability_cells', 'inventory_applicability_cells_decision_check', '1c7ffcfe38222b37c40d68f642315667'],
+  ['inventory_applicability_cells', 'inventory_applicability_cells_location_key_check', 'a12859b8651bbff6733c214dce008b93'],
+  ['inventory_attribution_policies', 'inventory_attribution_policies_category_check', 'a4735b502a4150198c717e43593a8dbd'],
+  ['inventory_attribution_policies', 'inventory_attribution_policies_level_check', '584fbf926f5623ee47e8d5e34cfbcf8a'],
+  ['inventory_attribution_policies', 'inventory_attribution_policies_period_check', '002fa1bd1e5ae2f5bfc7921603e932bb'],
+  ['inventory_boundaries', 'inventory_boundaries_decision_check', 'b1d011288917c94e6edec6e5ccba2e9b'],
+  ['inventory_boundaries', 'inventory_boundaries_version_check', '3e5843bf80ef107834bb748fbe091642'],
+  ['inventory_boundaries', 'inventory_boundaries_year_check', 'f2002164747518aed94d85ff98c93112'],
+  ['inventory_boundary_sites', 'inventory_boundary_sites_frozen_copy_check', '4340b19c70c173cbd9e75c45db21635d'],
+  ['inventory_boundary_sites', 'inventory_boundary_sites_months_check', '0cfb87cc9023eba104c2c2d6975c1f89'],
+  ['inventory_boundary_subsidiaries', 'inventory_boundary_subsidiaries_frozen_copy_check', '0cdd3453f7c56d858e22cb0b45c58681'],
+  ['inventory_boundary_subsidiaries', 'inventory_boundary_subsidiaries_months_check', '0cfb87cc9023eba104c2c2d6975c1f89'],
+  ['inventory_sources', 'inventory_sources_activity_key_check', 'ec99bda43fd0bf69831f0317cfb57374'],
+  ['inventory_sources', 'inventory_sources_cadence_check', 'c6aa9e325b08a34f32b0f39ae3fd8771'],
+  ['inventory_sources', 'inventory_sources_decision_check', '1c7ffcfe38222b37c40d68f642315667'],
+  ['inventory_sources', 'inventory_sources_location_key_check', 'a12859b8651bbff6733c214dce008b93'],
+  ['inventory_sources', 'inventory_sources_mapping_check', 'b780655464fb15564e2ebc5b277cc9c1'],
+  ['inventory_sources', 'inventory_sources_name_check', '89abd8a30af4e8ea9fe6138919107443'],
   ['unit_conversions', 'unit_conversions_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
   ['unit_conversions', 'unit_conversions_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
   ['unit_conversions', 'unit_conversions_multiplier_check', 'b44055800a17e765590df1c5c881b412'],
@@ -1005,7 +1050,10 @@ const RI_ACTION_FUNCTIONS = Object.freeze({ a: 'noaction', r: 'restrict', c: 'ca
 const TRIGGER_STATES = Object.freeze({ D: 'disabled', R: 'replica-only (it fires in replica mode alone)' });
 
 /** The tables the integrity triggers guard: nothing else may hook into them. */
-const GUARDED_TABLES = Object.freeze(['activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events', 'subsidiaries']);
+const GUARDED_TABLES = Object.freeze([
+  'activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events', 'subsidiaries',
+  'inventory_boundaries', ...INVENTORY_BOUNDARY_ROW_TABLES,
+]);
 
 /** Every integrity trigger, CHECK and record key, present, in force and unaltered. */
 export async function checkIntegrityTriggers(query, expectedBodies = expectedTriggerFunctionBodies()) {

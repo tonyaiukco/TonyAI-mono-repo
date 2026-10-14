@@ -5,20 +5,16 @@ import {
   NoEmissionFactorError,
   type CoverageRefusalCode,
 } from './errors';
-import { Prisma, type EmissionFactor, type FactorRelease, type UnitConversion } from '@tonyai/db';
+import type { EmissionFactor, FactorRelease, UnitConversion } from '@tonyai/db';
 import {
   CALCULATION_GAS,
   CATEGORY_SCOPE_MAP,
   CATEGORY_UNITS,
-  DIMENSION_BASE_UNIT,
   factorActivityTypeFor,
   isInvoiceTracked,
   isRecordActivityTypeAllowed,
   isRecordableWithoutFactor,
   recordActivityTypesFor,
-  resolveFactorPath,
-  scope2MethodFor,
-  unitDimensionOf,
   yearPolicyOf,
 } from '@tonyai/shared-types';
 import type {
@@ -37,6 +33,13 @@ import type {
 } from '@tonyai/shared-types';
 import { quoteCallerText } from '../common/caller-text';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  lookupFactorPath,
+  SEALED,
+  type FactorLookupKey,
+  type FactorLookupResult,
+  type CaptureSnapshot,
+} from './factor-lookup';
 import { FACTOR_POLICY, type FactorPolicy } from './factor-policy';
 import {
   blockedUnitReason,
@@ -46,37 +49,11 @@ import {
 } from './normalization';
 import { storedUnit } from './storable-unit';
 
-/** Every status a calculation may ever resolve from — never `withdrawn`. */
-const LIVE_STATUSES: readonly FactorStatus[] = ['authoritative', 'placeholder', 'fixture'];
+// The cap is the lookup's; exported here too, where the engine's spec reads it.
+export { FACTOR_CANDIDATE_CAP } from './factor-lookup';
 
-/**
- * A release is read once sealed (LP4-02): the loader seals it in the
- * transaction that loads it, and the database refuses a commit that leaves one
- * unsealed — so this excludes only what a restore or a disabled guard left
- * behind, a release whose contents nobody closed.
- */
-const SEALED = { sealedAt: { not: null } } as const;
-
-/**
- * More candidate rows than one lookup can legitimately have. A lookup is one
- * category, activity type, geography and year; its candidates are that key's
- * factors across releases and units, and its conversions — paths are
- * factors × conversions, so an unbounded library would make one request
- * quadratic. Above the cap the library is defective and the lookup refused.
- */
-export const FACTOR_CANDIDATE_CAP = 50;
-
-type FactorRow = EmissionFactor & { release: FactorRelease };
 type ConversionRow = UnitConversion & { release: FactorRelease };
 
-/**
- * A row with its release status typed as the contract's. The column is
- * CHECK-constrained to `FACTOR_STATUSES`, and `selectByRelease` ignores any
- * status it does not know in any case.
- */
-function ranked<T extends { release: FactorRelease }>(row: T): T & { release: FactorRelease & { status: FactorStatus } } {
-  return { ...row, release: { ...row.release, status: row.release.status as FactorStatus } };
-}
 
 /** The release columns a `FactorReleaseSnapshot` carries — never reviewer, withdrawer or notes. */
 const RELEASE_SNAPSHOT_SELECT = {
@@ -200,96 +177,17 @@ export class CalculationsService {
   }
 
   /**
-   * The candidate factors and conversions of one lookup, matched EXACTLY on
-   * category, activity type, geography and reporting year — a loose match
-   * would apply another country's calorific value or another year's grid —
-   * factors also on the CO2e row of the category's own Scope 2 method, and
-   * conversions from the base unit of the record's family. Releases are
-   * filtered by status here, in SQL, as well as by `resolveFactorPath`, and
-   * to sealed ones.
-   *
-   * Both reads see ONE snapshot of the library (a REPEATABLE READ, read-only
-   * transaction): read apart, an erratum committed between them — the new
-   * release loaded, the old withdrawn, atomically — priced the old factor
-   * with the new conversion (measured: 400 kgCO2e where either library alone
-   * gives 200 or 600; Codex's B9 review of LP4-02 PR B1, F2, a gap older than
-   * the loader). The engine runs outside the record writers' transactions,
-   * whose triggers require READ COMMITTED (TA003): it is never called inside
-   * one.
+   * Which factor — and which sourced conversion — prices one lookup: the ONE
+   * factor lookup (`factor-lookup.ts`, LP3-04 PR B, W2). With no snapshot it
+   * reads in one of its own, as the engine does; a dataset producer passes
+   * the snapshot of its capture transaction (`CaptureSnapshot.open`).
    */
-  private async candidates(
-    lookup: { category: string; activityType: string; geographyCode: string; reportingYear: number },
-    baseUnit: string,
-    statuses: readonly FactorStatus[],
-  ): Promise<{ factors: FactorRow[]; conversions: ConversionRow[] }> {
-    const where = { ...lookup, release: { status: { in: [...statuses] }, ...SEALED } };
-    const [factors, conversions] = await this.prisma.$transaction(
-      [
-        this.prisma.emissionFactor.findMany({
-          where: { ...where, gas: CALCULATION_GAS, scope2Method: scope2MethodFor(lookup.category) },
-          include: { release: true },
-          orderBy: { id: 'asc' },
-          take: FACTOR_CANDIDATE_CAP + 1,
-        }),
-        this.prisma.unitConversion.findMany({
-          where: { ...where, fromUnit: baseUnit },
-          include: { release: true },
-          orderBy: { id: 'asc' },
-          take: FACTOR_CANDIDATE_CAP + 1,
-        }),
-      ],
-      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
-    );
-    if (factors.length > FACTOR_CANDIDATE_CAP || conversions.length > FACTOR_CANDIDATE_CAP) {
-      throw new FactorLibraryConflictError(
-        'ambiguous_factor',
-        `The factor library holds more than ${FACTOR_CANDIDATE_CAP} candidate rows for category ` +
-          `"${lookup.category}" (${lookup.activityType}, ${lookup.geographyCode}, ${lookup.reportingYear}) — a library defect, refused rather than searched.`,
-      );
-    }
-    return { factors, conversions };
-  }
-
-  /**
-   * Which factor — and which sourced conversion — prices this lookup, by
-   * `resolveFactorPath`: the one rule the engine, the seed and the coverage
-   * report share.
-   *
-   * Where placeholders are refused, the pricing query reads authoritative
-   * releases only, so no non-authoritative row ever reaches the arithmetic
-   * here even if the resolver were wrong. A refusal is then re-derived over
-   * every live release — never to price, only so the code names the real gap
-   * (`placeholder_refused` — "load the source" — rather than `no_factor`).
-   */
-  private async resolve(
-    lookup: { category: string; activityType: string; geographyCode: string; reportingYear: number },
+  lookupFactorPath(
+    key: FactorLookupKey,
     inputUnit: string,
-  ) {
-    const dimension = unitDimensionOf(inputUnit);
-    if (dimension === undefined) return { ok: false as const, code: 'unit_unknown' as const };
-    const baseUnit = DIMENSION_BASE_UNIT[dimension];
-    const allowPlaceholders = this.policy.allowPlaceholders;
-    const run = async (statuses: readonly FactorStatus[]) => {
-      const { factors, conversions } = await this.candidates(lookup, baseUnit, statuses);
-      return resolveFactorPath({
-        category: lookup.category,
-        inputUnit,
-        factors: factors.map(ranked),
-        conversions: conversions.map(ranked),
-        allowPlaceholders,
-      });
-    };
-    const result = await run(allowPlaceholders ? LIVE_STATUSES : ['authoritative']);
-    if (result.ok || allowPlaceholders) return result;
-    // Diagnostic only. A library that is defective among its non-authoritative
-    // rows (over the cap) must not turn this lookup's 404 into a 409.
-    try {
-      const why = await run(LIVE_STATUSES);
-      return why.ok ? result : why;
-    } catch (e) {
-      if (e instanceof FactorLibraryConflictError) return result;
-      throw e;
-    }
+    snapshot?: CaptureSnapshot,
+  ): Promise<FactorLookupResult> {
+    return lookupFactorPath(this.prisma, this.policy, key, inputUnit, snapshot);
   }
 
   /** The lookup, in words. The activity is named only when the record named one. */
@@ -395,7 +293,7 @@ export class CalculationsService {
     // Resolved BEFORE normalization: when there is no factor there is nothing
     // to normalise TOWARDS, and the factorless Water branch below must freeze
     // the reading exactly as entered.
-    const resolution = await this.resolve(
+    const resolution = await this.lookupFactorPath(
       {
         category: coverage.category,
         activityType: coverage.activityType,

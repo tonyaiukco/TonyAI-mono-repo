@@ -116,22 +116,23 @@ model Profile {
 }
 
 model Organisation {
-  id                String        @id @default(uuid()) @db.Uuid
-  legalName         String        @map("legal_name")
-  tradingName       String?       @map("trading_name")
-  country           String
-  geographyCode     String        @map("geography_code")
-  sector            String?
-  reportingCurrency String        @default("EUR") @map("reporting_currency")
-  subsidiaries      Subsidiary[]
-  profiles          Profile[]
-  importBatches     ImportBatch[]
+  id                  String              @id @default(uuid()) @db.Uuid
+  legalName           String              @map("legal_name")
+  tradingName         String?             @map("trading_name")
+  country             String
+  geographyCode       String              @map("geography_code")
+  sector              String?
+  reportingCurrency   String              @default("EUR") @map("reporting_currency")
+  subsidiaries        Subsidiary[]
+  profiles            Profile[]
+  importBatches       ImportBatch[]
+  inventoryBoundaries InventoryBoundary[]
   /// Set by the operator CLI's `offboard` (K6, D21): every user is disabled and
   /// the guard refuses the organisation's members; the start of D21's 90-day
   /// retention clock. The deletion itself is not built (it waits for D24).
-  offboardedAt      DateTime?     @map("offboarded_at") @db.Timestamptz(6)
-  createdAt         DateTime      @default(now()) @map("created_at")
-  updatedAt         DateTime      @updatedAt @map("updated_at")
+  offboardedAt        DateTime?           @map("offboarded_at") @db.Timestamptz(6)
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
 
   @@map("organisations")
 }
@@ -181,39 +182,40 @@ enum InvitationStatus {
 }
 
 model Subsidiary {
-  id                  String                  @id @default(uuid()) @db.Uuid
-  organisationId      String                  @map("organisation_id") @db.Uuid
-  organisation        Organisation            @relation(fields: [organisationId], references: [id], onDelete: Cascade)
-  legalName           String                  @map("legal_name")
-  tradingName         String?                 @map("trading_name")
+  id                  String                        @id @default(uuid()) @db.Uuid
+  organisationId      String                        @map("organisation_id") @db.Uuid
+  organisation        Organisation                  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  legalName           String                        @map("legal_name")
+  tradingName         String?                       @map("trading_name")
   location            String?
-  geographyCode       String                  @map("geography_code")
-  businessArea        String?                 @map("business_area")
+  geographyCode       String                        @map("geography_code")
+  businessArea        String?                       @map("business_area")
   sector              String?
   // Who to contact about this entity's reporting (round-1 UAT SUB-2). Nullable:
   // every existing row predates them, and a subsidiary is legally identifiable
   // without them. `designatedPerson` is the NAME and already existed — it is
   // rendered read-only as "responsible" in the tracking matrix — but until WP16
   // nothing could write it, so all five seeded rows say "Seed Admin".
-  designatedPerson    String?                 @map("designated_person")
-  contactEmail        String?                 @map("contact_email")
-  contactPhone        String?                 @map("contact_phone")
-  reportingStatus     SubsidiaryStatus        @default(pending) @map("reporting_status")
-  includedScopes      Int[]                   @default([1, 2]) @map("included_scopes")
+  designatedPerson    String?                       @map("designated_person")
+  contactEmail        String?                       @map("contact_email")
+  contactPhone        String?                       @map("contact_phone")
+  reportingStatus     SubsidiaryStatus              @default(pending) @map("reporting_status")
+  includedScopes      Int[]                         @default([1, 2]) @map("included_scopes")
   // Defaults to `subsidiary` so no existing row changes meaning. Both write
   // paths refuse `location` without at least one location: the denominator
   // would be `0 × 12 = 0`, every slot is then vacuously covered, and a
   // subsidiary holding one stray record would read as complete.
-  trackingGranularity TrackingGranularity     @default(subsidiary) @map("tracking_granularity")
+  trackingGranularity TrackingGranularity           @default(subsidiary) @map("tracking_granularity")
   locations           Location[]
+  inventoryBoundaries InventoryBoundarySubsidiary[]
   access              UserSubsidiaryAccess[]
   activityRecords     ActivityRecord[]
   periodLocks         PeriodLock[]
   targets             Target[]
   denominators        SubsidiaryDenominator[]
   evidence            Evidence[]
-  createdAt           DateTime                @default(now()) @map("created_at")
-  updatedAt           DateTime                @updatedAt @map("updated_at")
+  createdAt           DateTime                      @default(now()) @map("created_at")
+  updatedAt           DateTime                      @updatedAt @map("updated_at")
 
   // The target of `user_subsidiary_access`'s composite foreign key (LP1-03).
   @@unique([id, organisationId])
@@ -222,16 +224,17 @@ model Subsidiary {
 }
 
 model Location {
-  id               String           @id @default(uuid()) @db.Uuid
-  subsidiaryId     String           @map("subsidiary_id") @db.Uuid
-  subsidiary       Subsidiary       @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
-  name             String
-  geographyCode    String           @map("geography_code") // drives factor selection for records at this location
-  address          String?
-  authorizedPerson String?          @map("authorized_person")
-  activityRecords  ActivityRecord[]
-  createdAt        DateTime         @default(now()) @map("created_at")
-  updatedAt        DateTime         @updatedAt @map("updated_at")
+  id                  String                  @id @default(uuid()) @db.Uuid
+  subsidiaryId        String                  @map("subsidiary_id") @db.Uuid
+  subsidiary          Subsidiary              @relation(fields: [subsidiaryId], references: [id], onDelete: Cascade)
+  name                String
+  geographyCode       String                  @map("geography_code") // drives factor selection for records at this location
+  address             String?
+  authorizedPerson    String?                 @map("authorized_person")
+  activityRecords     ActivityRecord[]
+  inventoryBoundaries InventoryBoundarySite[]
+  createdAt           DateTime                @default(now()) @map("created_at")
+  updatedAt           DateTime                @updatedAt @map("updated_at")
 
   // The target of activity_records' site key (LP4-01): a record's site
   // belongs to the record's own subsidiary.
@@ -767,4 +770,178 @@ model StorageIntent {
   @@unique([bucket, objectPath])
   @@index([kind, nextAttemptAt])
   @@map("storage_intents")
+}
+
+// ---------------------------------------------------------------------------
+// LP3-04 PR B — the declared inventory boundary (D11, D12; README "Inventory
+// coverage and report datasets"; Decisions 2026-10-15 (second), W1–W13).
+//
+// One version of an organisation's boundary for a reporting year: which
+// subsidiaries and sites it declares and the months they operate (W6), the
+// attribution policy per subsidiary × Scope 1/2 category (D11), the
+// applicability decision per entity × category cell (D12), and every named
+// source (D05). Obligations, evidence periods, an included cell's source ids
+// and every gap are DERIVED (`inventory-boundary/boundary-snapshot.ts`), never
+// stored. A version is immutable once frozen — by its confirmation, or by
+// LP3-04 PR C's capture (W8) — every writer refused, the owner included
+// (`inventory_boundary_frozen`, TA014), but the organisation's own deletion
+// (W10). Names and geography are copied into the version as it freezes (W7).
+// CHECK constraints, the guards, RLS and grants live in the migration
+// (`20261016120000_lp3_04_inventory_boundary`); Prisma models none of them.
+// The API reads these tables and writes none yet: the write path is its own
+// PRs (W1).
+// ---------------------------------------------------------------------------
+
+model InventoryBoundary {
+  id             String                        @id @default(uuid()) @db.Uuid
+  organisationId String                        @map("organisation_id") @db.Uuid
+  // CASCADE from the organisation alone (W10): the guard admits that delete,
+  // and only that one, for a frozen version.
+  organisation   Organisation                  @relation(fields: [organisationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  reportingYear  Int                           @map("reporting_year")
+  version        Int
+  // 'unconfirmed' | 'confirmed' — a confirmed version is frozen (CHECK).
+  decision       String                        @default("unconfirmed")
+  // Opaque actor ids, no foreign key (D20: a retained dataset names no person).
+  decidedBy      String?                       @map("decided_by") @db.Uuid
+  decidedAt      DateTime?                     @map("decided_at") @db.Timestamptz(6)
+  // Set once, to the database's clock, by the guard; never cleared.
+  frozenAt       DateTime?                     @map("frozen_at") @db.Timestamptz(6)
+  createdBy      String                        @map("created_by") @db.Uuid
+  createdAt      DateTime                      @default(dbgenerated("transaction_timestamp()")) @map("created_at") @db.Timestamptz(6)
+  subsidiaries   InventoryBoundarySubsidiary[]
+
+  @@unique([organisationId, reportingYear, version])
+  // The target of the subsidiaries' composite key: a boundary names its own
+  // organisation's subsidiaries only.
+  @@unique([id, organisationId])
+  @@map("inventory_boundaries")
+}
+
+// A declared subsidiary — also its company entity (`locationId` null).
+model InventoryBoundarySubsidiary {
+  boundaryId     String                       @map("boundary_id") @db.Uuid
+  organisationId String                       @map("organisation_id") @db.Uuid
+  subsidiaryId   String                       @map("subsidiary_id") @db.Uuid
+  boundary       InventoryBoundary            @relation(fields: [boundaryId, organisationId], references: [id, organisationId], onDelete: Cascade, onUpdate: NoAction)
+  // CASCADE, and the guard refuses it while the version stands (W9): a
+  // subsidiary named in a boundary is not deleted. Not NO ACTION: when the
+  // organisation is deleted, its subsidiaries' and its boundaries' cascades run
+  // in trigger order, and a NO ACTION check queued by the first could run
+  // before the second removes these rows (the order LP1-03 measured for
+  // `user_subsidiary_access`). The guard admits the cascade once the version
+  // itself is gone — the organisation's deletion (W10).
+  subsidiary     Subsidiary                   @relation(fields: [subsidiaryId, organisationId], references: [id, organisationId], onDelete: Cascade, onUpdate: NoAction)
+  // Inclusive operating months of the reporting year (W6).
+  firstMonth     Int                          @map("first_month")
+  lastMonth      Int                          @map("last_month")
+  // Null until the version freezes, then the subsidiary's as it was (W7).
+  subsidiaryName String?                      @map("subsidiary_name")
+  geographyCode  String?                      @map("geography_code")
+  sites          InventoryBoundarySite[]
+  policies       InventoryAttributionPolicy[]
+  cells          InventoryApplicabilityCell[]
+  sources        InventorySource[]
+
+  @@id([boundaryId, subsidiaryId])
+  @@index([subsidiaryId, organisationId])
+  @@map("inventory_boundary_subsidiaries")
+}
+
+model InventoryBoundarySite {
+  boundaryId    String                       @map("boundary_id") @db.Uuid
+  subsidiaryId  String                       @map("subsidiary_id") @db.Uuid
+  locationId    String                       @map("location_id") @db.Uuid
+  subsidiary    InventoryBoundarySubsidiary  @relation(fields: [boundaryId, subsidiaryId], references: [boundaryId, subsidiaryId], onDelete: Cascade, onUpdate: NoAction)
+  // The site's own subsidiary (LP4-01's key); CASCADE refused by the guard,
+  // as the subsidiary's above (W9, W10).
+  location      Location                     @relation(fields: [locationId, subsidiaryId], references: [id, subsidiaryId], onDelete: Cascade, onUpdate: NoAction)
+  firstMonth    Int                          @map("first_month")
+  lastMonth     Int                          @map("last_month")
+  locationName  String?                      @map("location_name")
+  geographyCode String?                      @map("geography_code")
+  cells         InventoryApplicabilityCell[]
+  sources       InventorySource[]
+
+  @@id([boundaryId, locationId])
+  // The target of the cells' and sources' site key.
+  @@unique([boundaryId, locationId, subsidiaryId])
+  @@index([locationId, subsidiaryId])
+  @@map("inventory_boundary_sites")
+}
+
+// D11: one level and one cadence per subsidiary × Scope 1/2 category, across
+// all its activity types. The key makes a duplicate impossible; a missing one
+// is a gap.
+model InventoryAttributionPolicy {
+  boundaryId      String                      @map("boundary_id") @db.Uuid
+  subsidiaryId    String                      @map("subsidiary_id") @db.Uuid
+  category        String
+  // 'company' | 'sites'
+  level           String
+  reportingPeriod String                      @map("reporting_period")
+  subsidiary      InventoryBoundarySubsidiary @relation(fields: [boundaryId, subsidiaryId], references: [boundaryId, subsidiaryId], onDelete: Cascade, onUpdate: NoAction)
+  sources         InventorySource[]
+
+  @@id([boundaryId, subsidiaryId, category])
+  // The target of an included mapped source's cadence key.
+  @@unique([boundaryId, subsidiaryId, category, reportingPeriod])
+  @@map("inventory_attribution_policies")
+}
+
+// D12: one decision per entity × category cell. `locationKey` is the site, or
+// the nil uuid for the company entity, so the key needs no NULLS NOT DISTINCT
+// index (the migration-diff gate accepts none).
+model InventoryApplicabilityCell {
+  boundaryId    String                      @map("boundary_id") @db.Uuid
+  subsidiaryId  String                      @map("subsidiary_id") @db.Uuid
+  locationId    String?                     @map("location_id") @db.Uuid
+  locationKey   String                      @map("location_key") @db.Uuid
+  category      String
+  // 'included' | 'excluded' | 'undetermined'
+  applicability String
+  // Required, and only, when not included.
+  reason        String?
+  subsidiary    InventoryBoundarySubsidiary @relation(fields: [boundaryId, subsidiaryId], references: [boundaryId, subsidiaryId], onDelete: Cascade, onUpdate: NoAction)
+  site          InventoryBoundarySite?      @relation(fields: [boundaryId, locationId, subsidiaryId], references: [boundaryId, locationId, subsidiaryId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([boundaryId, subsidiaryId, locationKey, category])
+  @@map("inventory_applicability_cells")
+}
+
+// D05: every source the holding has is named — an unsupported one too, with
+// its reason, never a made-up category or a zero.
+model InventorySource {
+  id                      String                      @id @default(uuid()) @db.Uuid
+  boundaryId              String                      @map("boundary_id") @db.Uuid
+  subsidiaryId            String                      @map("subsidiary_id") @db.Uuid
+  locationId              String?                     @map("location_id") @db.Uuid
+  locationKey             String                      @map("location_key") @db.Uuid
+  name                    String
+  scope                   Int
+  // 'mapped' | 'unsupported'
+  mapping                 String
+  // Mapped: the category and, for a typed one, its activity type (21).
+  category                String?
+  activityType            String?                     @map("activity_type")
+  // '' for no activity type, so the uniqueness key needs no NULLS NOT DISTINCT.
+  activityKey             String                      @map("activity_key")
+  unsupportedReason       String?                     @map("unsupported_reason")
+  // 'included' | 'excluded' | 'undetermined'
+  applicability           String
+  reason                  String?
+  // An included source's activity cadence — a mapped one's is its policy's
+  // (the cadence key) — and its evidence cadence (null: none).
+  reportingPeriod         String?                     @map("reporting_period")
+  evidenceReportingPeriod String?                     @map("evidence_reporting_period")
+  subsidiary              InventoryBoundarySubsidiary @relation(fields: [boundaryId, subsidiaryId], references: [boundaryId, subsidiaryId], onDelete: Cascade, onUpdate: NoAction)
+  site                    InventoryBoundarySite?      @relation(fields: [boundaryId, locationId, subsidiaryId], references: [boundaryId, locationId, subsidiaryId], onDelete: Cascade, onUpdate: NoAction)
+  // Checked only when every column is set — an included mapped source: its
+  // cadence is its category's policy's, and follows it.
+  policy                  InventoryAttributionPolicy? @relation(fields: [boundaryId, subsidiaryId, category, reportingPeriod], references: [boundaryId, subsidiaryId, category, reportingPeriod], onDelete: NoAction, onUpdate: Cascade)
+
+  @@unique([boundaryId, subsidiaryId, locationKey, category, activityKey])
+  @@index([boundaryId, subsidiaryId, category, reportingPeriod])
+  @@index([boundaryId, locationId, subsidiaryId])
+  @@map("inventory_sources")
 }
