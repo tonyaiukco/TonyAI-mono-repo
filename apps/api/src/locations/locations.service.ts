@@ -334,8 +334,16 @@ export class LocationsService {
         await this.assertNoRecords(id);
       }
       // A boundary version declaring the site since the check: its guard
-      // refuses the cascade (TA014, W9). The same 409 as the check.
-      if (boundaryGuardRefused(err)) await this.assertNotDeclared(id);
+      // refuses the cascade (TA014, W9). The same 409 as the check — and a 409
+      // still if that version is gone by the recount: the delete did not
+      // happen either way (Codex's B9 review).
+      if (boundaryGuardRefused(err)) {
+        await this.assertNotDeclared(id);
+        throw new ConflictException(
+          'This location was declared in an inventory boundary version when it was being deleted, so it ' +
+            'was not deleted. Check the inventory boundary and try again.',
+        );
+      }
       throw err;
     }
     return { id, deleted: true };

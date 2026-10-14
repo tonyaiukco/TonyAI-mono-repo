@@ -421,7 +421,7 @@ BEGIN
 END
 $fn$;
 
--- Every row of a version. A row keeps its key — its version, entity and
+-- Every row of a version. It is written in READ COMMITTED only. A row keeps its key — its version, entity and
 -- category, a source its id and entity — so a change of one is a delete and an
 -- add: a policy re-keyed under its sources would carry them along through the
 -- cadence key's ON UPDATE CASCADE (the review seats' finding). Its version's
@@ -457,6 +457,17 @@ BEGIN
     RAISE EXCEPTION USING
       ERRCODE = 'TA014',
       MESSAGE = format('%s is not a table of an inventory boundary version', TG_TABLE_NAME);
+  END IF;
+  -- Written in READ COMMITTED only, as activity records are (TA003): the
+  -- months rule reads the other table, and a stricter writer reads it in a
+  -- snapshot taken before it waited on another writer's share lock — a site
+  -- committed meanwhile stays unseen (Codex's B9 review, reproduced). Deletes
+  -- read nothing of the sort.
+  IF TG_OP <> 'DELETE' AND pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA014',
+      MESSAGE = format('%s rows of an inventory boundary version are written in READ COMMITTED only, not %s',
+                       TG_TABLE_NAME, pg_catalog.current_setting('transaction_isolation'));
   END IF;
   IF TG_OP = 'UPDATE' THEN
     IF (SELECT pg_catalog.jsonb_object_agg(k, pg_catalog.to_jsonb(NEW) -> k) FROM pg_catalog.unnest(keys) AS k)

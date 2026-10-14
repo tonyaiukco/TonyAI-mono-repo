@@ -373,15 +373,19 @@ describe('a frozen version takes no change (TA014)', () => {
     // REPEATABLE READ freeze waits on a row writer's FOR SHARE, sees no
     // serialization failure once it commits, and copies names in a snapshot
     // that misses that row.
-    for (const isolationLevel of [Prisma.TransactionIsolationLevel.RepeatableRead, Prisma.TransactionIsolationLevel.Serializable]) {
+    // The version is written (READ COMMITTED) and committed first, so the
+    // refusal is the freeze's own, not the rows' (their writes are READ
+    // COMMITTED only too).
+    for (const [isolationLevel, version] of [[Prisma.TransactionIsolationLevel.RepeatableRead, 70], [Prisma.TransactionIsolationLevel.Serializable, 74]] as const) {
+      const { boundaryId } = await createBoundary(owner, a, { locationId: siteA, version });
       const outcome = await failure(
         owner.$transaction(async (tx) => {
-          const { boundaryId } = await createBoundary(tx, a, { locationId: siteA, version: 70 });
           await tx.inventoryBoundary.update({ where: { id: boundaryId }, data: { frozenAt: new Date() } });
           throw new Error('frozen — rolled back');
         }, { isolationLevel }),
       );
       expect(sqlstateOf(outcome), isolationLevel).toBe('TA014');
+      expect((await owner.inventoryBoundary.findUniqueOrThrow({ where: { id: boundaryId } })).frozenAt, isolationLevel).toBeNull();
     }
   });
 
@@ -432,6 +436,72 @@ describe('a frozen version takes no change (TA014)', () => {
     expect(months.firstMonth).toBe(1);
     await owner.inventoryBoundary.delete({ where: { id: boundaryId } });
     await owner.location.delete({ where: { id: site.id } });
+  });
+
+  it("writes a version's rows in READ COMMITTED only — a stricter writer's snapshot misses another writer's site (Codex B9 P2-1)", async () => {
+    // Codex's sequence, two committed sessions: A opens REPEATABLE READ (or
+    // SERIALIZABLE) and takes its snapshot; B declares a January site and holds
+    // its share lock of the subsidiary; A narrows the subsidiary to July and
+    // waits; B commits; A resumes — and, reading sites in its old snapshot,
+    // stored subsidiary July, site January.
+    for (const [isolationLevel, version] of [[Prisma.TransactionIsolationLevel.RepeatableRead, 75], [Prisma.TransactionIsolationLevel.Serializable, 76]] as const) {
+      const { boundaryId } = await createBoundary(owner, a, { locationId: siteA, version });
+      const site = await owner.location.create({ data: { subsidiaryId: a.subsidiaryId, name: `Int-test January site ${version}`, geographyCode: 'UK' } });
+      const snapshotTaken = deferred();
+      const declared = deferred();
+      const gate = deferred();
+      const narrower = connectOwner(1);
+      const pid = await backendPid(narrower);
+      const narrow = narrower.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1`;
+        snapshotTaken.resolve();
+        await declared.promise;
+        await tx.inventoryBoundarySubsidiary.updateMany({ where: { boundaryId }, data: { firstMonth: 7 } });
+      }, { isolationLevel, timeout: 30_000 });
+      narrow.catch(() => undefined);
+      const writer = ownerB.$transaction(async (tx) => {
+        await snapshotTaken.promise;
+        await tx.inventoryBoundarySite.create({ data: { boundaryId, subsidiaryId: a.subsidiaryId, locationId: site.id, firstMonth: 1, lastMonth: 12 } });
+        declared.resolve();
+        await gate.promise;
+      }, { timeout: 30_000 });
+      try {
+        await declared.promise;
+        // A's update waits on B's share lock of the subsidiary (Codex's "A … waits").
+        expect(await settledOrBlocked(narrow, pid, observer), isolationLevel).toBe('blocked');
+      } finally {
+        gate.resolve();
+        await writer;
+        await narrow.catch(() => undefined);
+        await narrower.$disconnect();
+      }
+      expect(sqlstateOf(await failure(narrow)), isolationLevel).toBe('TA014');
+      const [company, declaredSite] = await Promise.all([
+        owner.inventoryBoundarySubsidiary.findFirstOrThrow({ where: { boundaryId } }),
+        owner.inventoryBoundarySite.findUniqueOrThrow({ where: { boundaryId_locationId: { boundaryId, locationId: site.id } } }),
+      ]);
+      expect([company.firstMonth, declaredSite.firstMonth], isolationLevel).toEqual([1, 1]);
+      // Control: the version is whole, so it freezes.
+      await owner.inventoryBoundary.update({ where: { id: boundaryId }, data: { frozenAt: new Date() } });
+    }
+  });
+
+  it("refuses a version's row written outside READ COMMITTED, at once", async () => {
+    for (const isolationLevel of [Prisma.TransactionIsolationLevel.RepeatableRead, Prisma.TransactionIsolationLevel.Serializable]) {
+      for (const [name, write] of [
+        ['a site', (tx: Prisma.TransactionClient, boundaryId: string) => tx.inventoryBoundarySite.updateMany({ where: { boundaryId }, data: { lastMonth: 11 } })],
+        ['a subsidiary', (tx: Prisma.TransactionClient, boundaryId: string) => tx.inventoryBoundarySubsidiary.updateMany({ where: { boundaryId }, data: { lastMonth: 12 } })],
+        ['a source', (tx: Prisma.TransactionClient, boundaryId: string) => tx.inventorySource.updateMany({ where: { boundaryId }, data: { name: 'Renamed' } })],
+      ] as const) {
+        const { boundaryId } = await createBoundary(owner, a, { locationId: siteA, version: 80 });
+        const outcome = await failure(owner.$transaction(async (tx) => {
+          await write(tx, boundaryId);
+          throw new Error('written — rolled back');
+        }, { isolationLevel }));
+        await owner.inventoryBoundary.delete({ where: { id: boundaryId } });
+        expect(sqlstateOf(outcome), `${name}, ${isolationLevel}`).toBe('TA014');
+      }
+    }
   });
 
   it('copies the names of a row written while the freeze waited, once that row commits', async () => {

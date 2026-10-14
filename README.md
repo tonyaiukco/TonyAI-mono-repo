@@ -1111,7 +1111,9 @@ freeze a row committed while it waited, unseen), at the database's clock as the
 freeze runs, which also stamps its confirmation; freezing copies the
 subsidiaries' names (trading, else legal) and geography codes and the sites'
 into it (W7), and an open version is read with today's. Nothing but an open
-version's decision and freeze changes its header, and every row keeps its key
+version's decision and freeze changes its header; its rows are written in READ
+COMMITTED only (a stricter writer's snapshot could miss another writer's site,
+as records' TA003); and every row keeps its key
 (its version and entity, a policy's or cell's category too; a source its id and
 entity) — a change of one is a delete and an add, so a policy is never re-keyed
 under its sources. **A declared subsidiary or
