@@ -312,6 +312,90 @@ async function cleanupForeignSubsidiary() {
   await owner.organisation.deleteMany({ where: { id: FOREIGN_ORG } });
 }
 
+// --- LP3-04 PR B: the inventory boundary --------------------------------------
+// The seed declares no boundary (D05's source list has not arrived — W11), so
+// the probe plants its own, as the owner (the service role writes none of
+// these tables), found again by a sentinel year and removed: a version
+// declaring Energy (entry's), one declaring Manufacturing (not entry's), one
+// in the foreign organisation — each with a probe site and one row in every
+// table. Open versions, so the owner deletes them whole; before the foreign
+// subsidiary, which a version declaring it keeps (W9).
+const BOUNDARY_PROBE_YEAR = 2099;
+const BOUNDARY_PROBE_SITE = 'RLS probe boundary site';
+const BOUNDARY_TABLES = [
+  ['inventory_boundaries', 'id'],
+  ['inventory_boundary_subsidiaries', 'boundary_id'],
+  ['inventory_boundary_sites', 'boundary_id'],
+  ['inventory_attribution_policies', 'boundary_id'],
+  ['inventory_applicability_cells', 'boundary_id'],
+  ['inventory_sources', 'boundary_id'],
+];
+async function cleanupBoundaries() {
+  const owner = await ownerDb();
+  await owner.inventoryBoundary.deleteMany({ where: { reportingYear: BOUNDARY_PROBE_YEAR } });
+  await owner.location.deleteMany({ where: { name: BOUNDARY_PROBE_SITE } });
+}
+async function plantBoundary(owner, subsidiaryId, createdBy, version) {
+  const { organisationId } = await owner.subsidiary.findUniqueOrThrow({ where: { id: subsidiaryId } });
+  const site = await owner.location.create({ data: { subsidiaryId, name: BOUNDARY_PROBE_SITE, geographyCode: 'UK' } });
+  const boundaryId = randomUUID();
+  await owner.inventoryBoundary.create({ data: { id: boundaryId, organisationId, reportingYear: BOUNDARY_PROBE_YEAR, version, createdBy } });
+  await owner.inventoryBoundarySubsidiary.create({ data: { boundaryId, organisationId, subsidiaryId, firstMonth: 1, lastMonth: 12 } });
+  await owner.inventoryBoundarySite.create({ data: { boundaryId, subsidiaryId, locationId: site.id, firstMonth: 1, lastMonth: 12 } });
+  await owner.inventoryAttributionPolicy.create({ data: { boundaryId, subsidiaryId, category: 'Electricity', level: 'sites', reportingPeriod: 'monthly' } });
+  await owner.inventoryApplicabilityCell.create({
+    data: { boundaryId, subsidiaryId, locationId: site.id, locationKey: site.id, category: 'Electricity', applicability: 'included' },
+  });
+  await owner.inventorySource.create({
+    data: {
+      boundaryId, subsidiaryId, locationId: site.id, locationKey: site.id, name: 'RLS probe meter', scope: 2, mapping: 'mapped',
+      category: 'Electricity', includedActivityKey: '', applicability: 'included', reportingPeriod: 'monthly', evidenceReportingPeriod: null,
+    },
+  });
+  return boundaryId;
+}
+async function probeBoundaries(entryToken) {
+  console.log('▸ inventory boundary (LP3-04 PR B: planted versions, one row in each table)');
+  const owner = await ownerDb();
+  const admin = await owner.profile.findFirstOrThrow({ where: { email: ADMIN_EMAIL } });
+  const ids = {
+    // Energy and Manufacturing share an organisation: two versions of its year.
+    entry: await plantBoundary(owner, ENERGY, admin.id, 1),
+    colleague: await plantBoundary(owner, MANUFACTURING, admin.id, 2),
+    foreign: await plantBoundary(owner, FOREIGN_SUB_ID, admin.id, 1),
+  };
+  const consultant = await getToken(CONSULTANT_EMAIL);
+  const all = `(${ids.entry},${ids.colleague},${ids.foreign})`;
+  for (const [table, column] of BOUNDARY_TABLES) {
+    const query = `select=${column}&${column}=in.${all}`;
+    const [anon, entry, review, service] = await Promise.all([
+      count(table, { query }),
+      count(table, { token: entryToken, query }),
+      count(table, { token: consultant, query }),
+      count(table, { token: SERVICE, key: SERVICE, query }),
+    ]);
+    const mine = await count(table, { token: entryToken, query: `select=${column}&${column}=eq.${ids.entry}` });
+    check(
+      `${table}: anon none; entry exactly its own subsidiary's version; a consultant its organisation's two; never the foreign one`,
+      anon.total === 0 && entry.total === 1 && mine.total === 1 && review.total === 2 && service.total === 3,
+      `anon=${anon.error ?? anon.total}, entry=${entry.error ?? entry.total} (own ${mine.error ?? mine.total}), ` +
+        `consultant=${review.error ?? review.total}, service=${service.error ?? service.total}`,
+    );
+  }
+  // The client roles hold SELECT alone here — the service role too (W1).
+  const write = await svc('POST', 'inventory_boundaries', {
+    id: randomUUID(), organisation_id: FOREIGN_ORG, reporting_year: BOUNDARY_PROBE_YEAR, version: 9, created_by: admin.id,
+  });
+  const writeBody = write.ok ? {} : await write.json().catch(() => ({}));
+  const rename = await svc('PATCH', `inventory_sources?boundary_id=eq.${ids.entry}`, { name: 'Forged by the service role' });
+  const renameBody = rename.ok ? {} : await rename.json().catch(() => ({}));
+  check(
+    'inventory boundary: the service role cannot write a version or its rows (42501)',
+    !write.ok && writeBody.code === '42501' && !rename.ok && renameBody.code === '42501',
+    `insert=${write.status} ${writeBody.code ?? ''}, update=${rename.status} ${renameBody.code ?? ''}`,
+  );
+}
+
 // --- LP1-03: two organisations, all four roles, malformed grants ------------
 // A fixture of its own, independent of the seed: organisations X and Y, X with
 // two subsidiaries and Y with one, a record in each, and one user per role in
@@ -557,6 +641,7 @@ async function main() {
   await cleanupPeriodLocks(); // in case a previous run aborted
   await cleanupImportBatches(); // in case a previous run aborted
 
+  await cleanupBoundaries(); // in case a previous run aborted; before the subsidiaries they declare
   await cleanupForeignSubsidiary(); // in case a previous run aborted
   try {
     // Seeds go INSIDE the try. Outside it, a failure between the organisation
@@ -656,9 +741,12 @@ async function main() {
       !orgDelete.ok && orgDeleteBody.code === 'TA004' && orgLeft.total === 1,
       `delete=${orgDelete.status} ${orgDeleteBody.code ?? ''}, rows left=${orgLeft.total}`,
     );
+
+    await probeBoundaries(token);
   } finally {
     await cleanupPeriodLocks();
     await cleanupImportBatches();
+    await cleanupBoundaries();
     await cleanupForeignSubsidiary();
   }
 

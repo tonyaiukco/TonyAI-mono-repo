@@ -77,6 +77,13 @@ function countLocations(
   prisma.txClient.location.count.mockImplementation(impl);
 }
 
+/** Versions declaring the subsidiary: frozen (`frozenAt` set) and open. */
+function countBoundaryVersions(prisma: PrismaMock, { frozen = 0, open = 0 }: { frozen?: number; open?: number }): void {
+  const impl = async ({ where }: any) => (where.boundary.frozenAt === null ? open : frozen);
+  prisma.inventoryBoundarySubsidiary.count.mockImplementation(impl);
+  prisma.txClient.inventoryBoundarySubsidiary.count.mockImplementation(impl);
+}
+
 function countRecords(prisma: PrismaMock, statuses: string[]): void {
   // Both clients: `summary()` counts on the default one and the delete guard
   // counts on the transaction's, and a test that means "the database contains
@@ -959,6 +966,48 @@ describe('SubsidiariesService', () => {
       // thing the caller can actually do — the message must say so.
       await expect(service.remove(user, 'sub-1')).rejects.toThrow(/"inactive"/);
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it('keeps a subsidiary declared in a frozen inventory boundary version, and says "inactive" (W9)', async () => {
+      // A confirmed or captured version records the inventory a report was
+      // issued from and never changes, so nothing the caller clears unblocks
+      // this: the same advice as committed records.
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      countBoundaryVersions(prisma, { frozen: 2, open: 1 });
+
+      const message = await refusal(service.remove(user, 'sub-1'));
+      expect(message).toMatch(/declared in 2 confirmed or captured inventory boundary version\(s\)/);
+      expect(message).toMatch(/"inactive"/);
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it('blocks on an open inventory boundary version that declares it, and says how to clear it (W9)', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      countBoundaryVersions(prisma, { open: 2 });
+
+      const message = await refusal(service.remove(user, 'sub-1'));
+      expect(message).toMatch(/2 open inventory boundary version\(s\) declaring it/);
+      expect(message).not.toMatch(/"inactive"/);
+      expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
+    });
+
+    it('the panel agrees with the guard on boundary versions, and the summary DTO gains no field', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, []);
+      countBoundaryVersions(prisma, { open: 1 });
+
+      const s = await service.summary(user, 'sub-1');
+      expect(s.hasBlockingDependents).toBe(true);
+      expect(s.blockers).toEqual(['1 open inventory boundary version(s) declaring it']);
+      expect(Object.keys(s).sort()).toEqual([
+        'blockers', 'denominators', 'hasBlockingDependents', 'locations', 'openRecords',
+        'periodLocks', 'reviewRecords', 'subsidiaryId', 'targets', 'terminalRecords',
+      ]);
     });
 
     it('blocks on drafts, but tells the caller they can be removed', async () => {

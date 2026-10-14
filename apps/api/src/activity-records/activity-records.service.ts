@@ -602,10 +602,12 @@ export class ActivityRecordsService {
    * a defect and propagates.
    *
    * Called BEFORE `withLockedRecord`, never inside it: the engine reads the
-   * library in one REPEATABLE READ snapshot (`CalculationsService.candidates`),
-   * and a transaction's isolation level is fixed by its first statement — the
-   * lock protocol's transaction is READ COMMITTED and must stay so. Nor is the
-   * engine ever handed a transaction client ("LP4-02 follow-ups" (26)).
+   * library in one REPEATABLE READ snapshot (`factor-lookup.ts`), and a
+   * transaction's isolation level is fixed by its first statement — the lock
+   * protocol's transaction is READ COMMITTED and must stay so. Nor is the
+   * engine ever handed a transaction client ("LP4-02 follow-ups" (26)); the
+   * lookup accepts only a REPEATABLE READ or SERIALIZABLE one
+   * (`CaptureSnapshot`), which no record writer holds.
    */
   private async recompute(user: RequestUser, record: ActivityRecord): Promise<Recomputed> {
     try {

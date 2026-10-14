@@ -9,6 +9,7 @@ import type { LocationDTO } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
+import { boundaryGuardRefused } from '../inventory-boundary/errors';
 // `CreateSubsidiaryLocationDto` is the base of `CreateLocationDto` and is what
 // the shared writer takes: the parameter used to build its own
 // `Omit<CreateLocationDto, 'subsidiaryId'>`, which made the shape's THIRD
@@ -232,6 +233,23 @@ export class LocationsService {
   }
 
   /**
+   * A site declared in an inventory boundary version is not deleted (LP3-04
+   * W9): the version records which sites the inventory covers and the months
+   * each operated. An open version can drop it; a frozen one keeps it, and so
+   * the site stays.
+   */
+  private async assertNotDeclared(locationId: string): Promise<void> {
+    const versions = await this.prisma.inventoryBoundarySite.count({ where: { locationId } });
+    if (versions > 0) {
+      throw new ConflictException(
+        `This location is declared in ${versions} inventory boundary version(s), which record the sites ` +
+          'an inventory covers and the months each operated. Remove it from an open version first; ' +
+          'a confirmed or captured version never changes, so a location declared in one stays.',
+      );
+    }
+  }
+
+  /**
    * Refuse to delete something that committed data still points at.
    *
    * The FK was `ON DELETE SET NULL` (RESTRICT since LP4-01, which makes the
@@ -302,6 +320,7 @@ export class LocationsService {
     this.assertCanWrite(user);
     const existing = await this.loadScoped(user, id);
     await this.assertNoRecords(id);
+    await this.assertNotDeclared(id);
     // Delete + audit in one transaction (see subsidiaries.remove).
     try {
       await this.prisma.$transaction((tx) =>
@@ -313,6 +332,17 @@ export class LocationsService {
       // level. The same 409 as the check, with the count as it is now.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
         await this.assertNoRecords(id);
+      }
+      // A boundary version declaring the site since the check: its guard
+      // refuses the cascade (TA014, W9). The same 409 as the check — and a 409
+      // still if that version is gone by the recount: the delete did not
+      // happen either way (Codex's B9 review).
+      if (boundaryGuardRefused(err)) {
+        await this.assertNotDeclared(id);
+        throw new ConflictException(
+          'This location was declared in an inventory boundary version when it was being deleted, so it ' +
+            'was not deleted. Check the inventory boundary and try again.',
+        );
       }
       throw err;
     }

@@ -521,6 +521,8 @@ export interface TenantData {
   denominatorId: string;
   periodLockId: string;
   importBatchId: string;
+  /** An open inventory boundary version declaring the subsidiary and `locationId` (LP3-04 PR B). */
+  boundaryId: string;
 }
 
 /**
@@ -575,6 +577,7 @@ export async function createTenantData(
       subsidiaryIds: [subsidiaryId],
     },
   });
+  const boundary = await createBoundary(prisma, tenant, { locationId: location.id });
   return {
     recordId: record.id,
     evidenceId: evidence.id,
@@ -583,5 +586,65 @@ export async function createTenantData(
     denominatorId: denominator.id,
     periodLockId: periodLock.id,
     importBatchId: importBatch.id,
+    boundaryId: boundary.boundaryId,
   };
+}
+
+export interface BoundaryFixture {
+  boundaryId: string;
+  /** The site's included Electricity meter. */
+  sourceId: string;
+}
+
+/**
+ * An inventory boundary version of the tenant's (LP3-04 PR B), as the owner —
+ * the API writes none yet (W1): one row in each of its six tables. The
+ * subsidiary all year, `locationId` from July, Electricity attributed to
+ * sites monthly, the site's cell included with one meter. Open unless
+ * `frozen` — a frozen version is deleted only with its organisation (W10),
+ * which `cleanup()` does.
+ */
+export async function createBoundary(
+  prisma: PrismaService | Prisma.TransactionClient,
+  tenant: Tenant,
+  options: { locationId: string; reportingYear?: number; version?: number; frozen?: boolean },
+): Promise<BoundaryFixture> {
+  const { subsidiaryId, organisationId } = tenant;
+  const boundaryId = randomUUID();
+  const sourceId = randomUUID();
+  await prisma.inventoryBoundary.create({
+    data: {
+      id: boundaryId,
+      organisationId,
+      reportingYear: options.reportingYear ?? 2026,
+      version: options.version ?? 1,
+      createdBy: tenant.users.superAdmin.id,
+    },
+  });
+  await prisma.inventoryBoundarySubsidiary.create({
+    data: { boundaryId, organisationId, subsidiaryId, firstMonth: 1, lastMonth: 12 },
+  });
+  await prisma.inventoryBoundarySite.create({
+    data: { boundaryId, subsidiaryId, locationId: options.locationId, firstMonth: 7, lastMonth: 12 },
+  });
+  await prisma.inventoryAttributionPolicy.create({
+    data: { boundaryId, subsidiaryId, category: 'Electricity', level: 'sites', reportingPeriod: 'monthly' },
+  });
+  await prisma.inventoryApplicabilityCell.create({
+    data: {
+      boundaryId, subsidiaryId, locationId: options.locationId, locationKey: options.locationId,
+      category: 'Electricity', applicability: 'included',
+    },
+  });
+  await prisma.inventorySource.create({
+    data: {
+      id: sourceId, boundaryId, subsidiaryId, locationId: options.locationId, locationKey: options.locationId,
+      name: 'Int-test meter', scope: 2, mapping: 'mapped', category: 'Electricity', includedActivityKey: '',
+      applicability: 'included', reportingPeriod: 'monthly', evidenceReportingPeriod: 'monthly',
+    },
+  });
+  if (options.frozen) {
+    await prisma.inventoryBoundary.update({ where: { id: boundaryId }, data: { frozenAt: new Date() } });
+  }
+  return { boundaryId, sourceId };
 }

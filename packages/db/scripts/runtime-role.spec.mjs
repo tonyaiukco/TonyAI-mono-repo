@@ -155,12 +155,19 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // K5, its delete guard and the slot rule; four guards on each factor
     // table; the record's writers; the record's four guards; LP4-01's
     // lifecycle writer, organisation guard and subsidiary guard; LP4-02's
-    // seal check at the commit.
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3 + 1);
+    // seal check at the commit; LP3-04 PR B's freeze guard and truncate guard
+    // on the boundary's header and its five row tables.
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3 + 1 + 6 * 2);
     expect(INTEGRITY_TRIGGERS.filter((t) => t.definer).map((t) => t.trigger).sort()).toEqual([
       'emission_factors_record_delete', 'emission_factors_record_insert', 'factor_releases_record_event',
+      'inventory_applicability_cells_frozen', 'inventory_attribution_policies_frozen', 'inventory_boundaries_frozen',
+      'inventory_boundary_sites_frozen', 'inventory_boundary_subsidiaries_frozen', 'inventory_sources_frozen',
       'unit_conversions_record_delete', 'unit_conversions_record_insert',
     ]);
+    expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === 'inventory_sources_before_truncate')).toMatchObject({
+      fn: 'inventory_boundary_before_truncate',
+      type: 2 | 32,
+    });
     expect(INTEGRITY_TRIGGERS.map((t) => t.trigger)).toContain('activity_records_snapshot_immutable');
     expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === 'unit_conversions_before_truncate')).toMatchObject({
       fn: 'factor_tables_before_truncate',
@@ -265,7 +272,11 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // `organisations` carries a registered trigger but is not guarded: LP1-03's
     // access-removal trigger lives there too (Open questions, "LP3-03 PR B" (20)).
     const guarded = [...new Set(INTEGRITY_TRIGGERS.map((t) => t.table))].filter((t) => t !== 'organisations').sort();
-    expect(guarded).toEqual(['activity_records', 'emission_factors', 'factor_release_events', 'factor_releases', 'subsidiaries', 'unit_conversions']);
+    expect(guarded).toEqual([
+      'activity_records', 'emission_factors', 'factor_release_events', 'factor_releases',
+      'inventory_applicability_cells', 'inventory_attribution_policies', 'inventory_boundaries', 'inventory_boundary_sites',
+      'inventory_boundary_subsidiaries', 'inventory_sources', 'subsidiaries', 'unit_conversions',
+    ]);
     for (const table of guarded) {
       expect(await check(allTriggers, allChecks, [{ table, rule: 'r' }])).toEqual([`unexpected rule r on ${table}`]);
       const stray = { ...allTriggers.find((t) => t.table === table), trigger: 'zz_undo', fn: 'zz_undo' };

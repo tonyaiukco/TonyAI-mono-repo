@@ -101,6 +101,10 @@ export function createPrismaMock() {
     periodLock: { count: vi.fn() },
     target: { count: vi.fn() },
     subsidiaryDenominator: { count: vi.fn() },
+    // LP3-04 PR B: a subsidiary or site declared in an inventory boundary
+    // version is not deleted (W9) — the delete guards count these too.
+    inventoryBoundarySubsidiary: { count: vi.fn() },
+    inventoryBoundarySite: { count: vi.fn() },
     // The object handed to `$transaction` callbacks, with its OWN spies for
     // every model — see `createTxClient` below.
     txClient: null as unknown as typeof mock,
@@ -124,6 +128,8 @@ export function createPrismaMock() {
       client.periodLock,
       client.target,
       client.subsidiaryDenominator,
+      client.inventoryBoundarySubsidiary,
+      client.inventoryBoundarySite,
     ]) {
       model.count.mockResolvedValue(0);
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { LocationsService, TrustedParent } from './locations.service';
 import { Prisma } from '@tonyai/db';
 import { PrismaService } from '../prisma/prisma.service';
@@ -252,6 +252,54 @@ describe('LocationsService', () => {
 
       await expect(service.remove(user, existing.id)).rejects.toBe(failure);
       expect(prisma.activityRecord.count).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses to delete a site declared in an inventory boundary version, and deletes nothing (W9)', async () => {
+      const user = makeSuperAdmin();
+      const existing = makeLocation({ subsidiaryId: 'sub-1' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.inventoryBoundarySite.count.mockResolvedValue(2);
+
+      await expect(service.remove(user, existing.id)).rejects.toThrow(/declared in 2 inventory boundary version\(s\)/);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('answers a version declaring the site between the check and the delete with the same 409, not a 500 (W9)', async () => {
+      // The boundary's guard refuses the cascade (TA014) — the race the check
+      // cannot close. Prisma reports a trigger's RAISE on a model query as an
+      // unknown request error carrying the PostgreSQL code.
+      const user = makeSuperAdmin();
+      const existing = makeLocation({ subsidiaryId: 'sub-1' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.inventoryBoundarySite.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+      prisma.txClient.location.delete.mockRejectedValue(
+        new Prisma.PrismaClientUnknownRequestError(
+          'Error occurred during query execution: ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "TA014", message: "site is declared in inventory boundary", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
+          { clientVersion: 'test' },
+        ),
+      );
+
+      await expect(service.remove(user, existing.id)).rejects.toThrow(/declared in 1 inventory boundary version\(s\)/);
+    });
+
+    it('answers 409 once the guard refused, even if the declaring version is gone by the recount (Codex B9 P2-2)', async () => {
+      // The guard's TA014 means a version declared the site when the delete
+      // ran; a recount after that version's removal finds none — the delete
+      // still did not happen, and the answer is still the conflict, never 500.
+      const user = makeSuperAdmin();
+      const existing = makeLocation({ subsidiaryId: 'sub-1' });
+      prisma.location.findUnique.mockResolvedValue(existing);
+      prisma.inventoryBoundarySite.count.mockResolvedValue(0);
+      prisma.txClient.location.delete.mockRejectedValue(
+        new Prisma.PrismaClientUnknownRequestError(
+          'Error occurred during query execution: ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "TA014", message: "site is declared in inventory boundary", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
+          { clientVersion: 'test' },
+        ),
+      );
+
+      const refusal = await service.remove(user, existing.id).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as Error).message).toMatch(/inventory boundary version/);
     });
 
     it('refuses to delete a location that records are attached to', async () => {

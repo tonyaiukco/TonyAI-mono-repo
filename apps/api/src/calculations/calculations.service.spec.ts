@@ -68,7 +68,7 @@ function createFactorPrismaMock() {
   const library = { factors: [] as FactorRow[], conversions: [] as ConversionRow[] };
   return {
     library,
-    // The batch form the engine reads both in: one snapshot (see `candidates`).
+    // The batch form the engine reads both in: one snapshot (`factor-lookup.ts`).
     $transaction: vi.fn(async (reads: Promise<unknown>[], _options?: unknown) => Promise.all(reads)),
     emissionFactor: {
       findMany: vi.fn(async (args: { where: Record<string, unknown>; take?: number }) =>
