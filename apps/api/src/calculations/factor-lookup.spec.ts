@@ -83,6 +83,19 @@ describe('CaptureSnapshot.open', () => {
     expect(root.$queryRaw).not.toHaveBeenCalled();
   });
 
+  it('refuses a snapshot constructed outside open, or one tampered with (security-rls re-check P3-1)', async () => {
+    const readCommitted = asTx(transaction([factor('authoritative')], 'read committed'));
+    // The constructor is private to TypeScript alone: JavaScript reaches it.
+    const constructed = Reflect.construct(CaptureSnapshot, [readCommitted]) as CaptureSnapshot;
+    expect(CaptureSnapshot.isOpened(constructed)).toBe(false);
+    await expect(lookupFactorPath(asPrisma(rootClient()), REFUSE_PLACEHOLDERS, KEY, 'kWh', constructed)).rejects.toThrow(CaptureSnapshotError);
+    // A genuine one cannot be pointed at another client.
+    const real = await CaptureSnapshot.open(asTx(transaction([factor('authoritative')], 'repeatable read')));
+    expect(() => Object.defineProperty(real, 'tx', { value: readCommitted })).toThrow(TypeError);
+    expect(() => Object.setPrototypeOf(real, {})).toThrow(TypeError);
+    expect(CaptureSnapshot.isOpened(real)).toBe(true);
+  });
+
   it('refuses a level it cannot read', async () => {
     const tx = { ...library([]), $queryRaw: vi.fn(async () => []) };
     await expect(CaptureSnapshot.open(asTx(tx))).rejects.toThrow(CaptureSnapshotError);

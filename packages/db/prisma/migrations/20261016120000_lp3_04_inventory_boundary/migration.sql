@@ -285,6 +285,9 @@ ALTER TABLE "inventory_sources"
   -- or type, a reason, a declared scope.
   ADD CONSTRAINT "inventory_sources_mapping_check" CHECK (
     ("mapping" = 'mapped'
+      -- Said, not left to IN: a NULL category makes this branch NULL, and a
+      -- CHECK admits NULL (review round 2).
+      AND "category" IS NOT NULL
       AND "category" IN ('Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants')
       AND "unsupported_reason" IS NULL
       AND "scope" = CASE "category" WHEN 'Electricity' THEN 2 ELSE 1 END
@@ -439,15 +442,23 @@ DECLARE
   boundary uuid;
   frozen timestamptz;
   keys text[];
+  declared_first integer;
+  declared_last integer;
 BEGIN
+  keys := CASE TG_TABLE_NAME
+    WHEN 'inventory_boundary_subsidiaries' THEN ARRAY['boundary_id', 'organisation_id', 'subsidiary_id']
+    WHEN 'inventory_boundary_sites' THEN ARRAY['boundary_id', 'subsidiary_id', 'location_id']
+    WHEN 'inventory_attribution_policies' THEN ARRAY['boundary_id', 'subsidiary_id', 'category']
+    WHEN 'inventory_applicability_cells' THEN ARRAY['boundary_id', 'subsidiary_id', 'location_id', 'location_key', 'category']
+    WHEN 'inventory_sources' THEN ARRAY['id', 'boundary_id', 'subsidiary_id', 'location_id', 'location_key']
+  END;
+  -- Fail closed: a table this function does not know is no row of a version.
+  IF keys IS NULL THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'TA014',
+      MESSAGE = format('%s is not a table of an inventory boundary version', TG_TABLE_NAME);
+  END IF;
   IF TG_OP = 'UPDATE' THEN
-    keys := CASE TG_TABLE_NAME
-      WHEN 'inventory_boundary_subsidiaries' THEN ARRAY['boundary_id', 'organisation_id', 'subsidiary_id']
-      WHEN 'inventory_boundary_sites' THEN ARRAY['boundary_id', 'subsidiary_id', 'location_id']
-      WHEN 'inventory_attribution_policies' THEN ARRAY['boundary_id', 'subsidiary_id', 'category']
-      WHEN 'inventory_applicability_cells' THEN ARRAY['boundary_id', 'subsidiary_id', 'location_id', 'location_key', 'category']
-      ELSE ARRAY['id', 'boundary_id', 'subsidiary_id', 'location_id', 'location_key']
-    END;
     IF (SELECT pg_catalog.jsonb_object_agg(k, pg_catalog.to_jsonb(NEW) -> k) FROM pg_catalog.unnest(keys) AS k)
        IS DISTINCT FROM (SELECT pg_catalog.jsonb_object_agg(k, pg_catalog.to_jsonb(OLD) -> k) FROM pg_catalog.unnest(keys) AS k) THEN
       RAISE EXCEPTION USING
@@ -477,11 +488,13 @@ BEGIN
   END IF;
   IF TG_OP <> 'DELETE' THEN
     IF TG_TABLE_NAME = 'inventory_boundary_sites' THEN
-      IF EXISTS (
-        SELECT 1 FROM "public"."inventory_boundary_subsidiaries" bs
-         WHERE bs."boundary_id" = NEW."boundary_id" AND bs."subsidiary_id" = NEW."subsidiary_id"
-           AND (NEW."first_month" < bs."first_month" OR NEW."last_month" > bs."last_month")
-      ) THEN
+      -- Its subsidiary's months, read FOR SHARE: a writer narrowing them
+      -- waits for this one, then sees this site and refuses (review round 2).
+      SELECT bs."first_month", bs."last_month" INTO declared_first, declared_last
+        FROM "public"."inventory_boundary_subsidiaries" bs
+       WHERE bs."boundary_id" = NEW."boundary_id" AND bs."subsidiary_id" = NEW."subsidiary_id"
+         FOR SHARE;
+      IF FOUND AND (NEW."first_month" < declared_first OR NEW."last_month" > declared_last) THEN
         RAISE EXCEPTION USING
           ERRCODE = 'TA014',
           MESSAGE = format('site %s operates outside its subsidiary''s months in inventory boundary %s', NEW."location_id", boundary);

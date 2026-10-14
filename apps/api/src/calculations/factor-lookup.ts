@@ -67,6 +67,9 @@ export type FactorLookupResult = FactorPathResolution<Ranked<FactorRow>, Ranked<
 /** A transaction handed to the lookup that cannot hold one snapshot. */
 export class CaptureSnapshotError extends Error {}
 
+/** Every snapshot `CaptureSnapshot.open` made — and nothing else. */
+const OPENED = new WeakSet<object>();
+
 /**
  * The database as one capture's transaction sees it — the factor library
  * through `lookupFactorPath`, the boundary through `readInventoryBoundary`.
@@ -79,22 +82,30 @@ export class CaptureSnapshotError extends Error {}
  * it reads in a snapshot of its own.
  */
 export class CaptureSnapshot {
-  // An ES private field, not TypeScript's `private`: an object made from the
-  // prototype (`Object.create`) passes `instanceof` but has no `#tx`, so
-  // `isOpened` refuses it (security-rls P3-2).
+  // An ES private field, not TypeScript's `private`, read through `txOf` only:
+  // a shape-alike (`Object.create(prototype)`, a Proxy, a spread) has no
+  // `#tx`; and a snapshot counts only if `open` made it — TypeScript's private
+  // constructor is not JavaScript's, so `Reflect.construct` or a subclass
+  // could otherwise skip the isolation check. Frozen, so a genuine one cannot
+  // be re-pointed (security-rls P3-2 and its re-check).
   readonly #tx: Prisma.TransactionClient;
 
   private constructor(tx: Prisma.TransactionClient) {
     this.#tx = tx;
+    Object.freeze(this);
   }
 
-  get tx(): Prisma.TransactionClient {
-    return this.#tx;
-  }
-
-  /** Was this snapshot opened by `open` — not merely shaped like one? */
+  /** Was this snapshot opened by `open` — not merely shaped or built like one? */
   static isOpened(value: unknown): value is CaptureSnapshot {
-    return typeof value === 'object' && value !== null && #tx in value;
+    return typeof value === 'object' && value !== null && OPENED.has(value);
+  }
+
+  /** The transaction an opened snapshot reads in. */
+  static txOf(snapshot: CaptureSnapshot): Prisma.TransactionClient {
+    if (!CaptureSnapshot.isOpened(snapshot)) {
+      throw new CaptureSnapshotError('A capture reads in a snapshot opened by CaptureSnapshot.open only.');
+    }
+    return snapshot.#tx;
   }
 
   static async open(tx: Prisma.TransactionClient): Promise<CaptureSnapshot> {
@@ -110,7 +121,9 @@ export class CaptureSnapshot {
         `The factor lookup reads in a caller snapshot only at REPEATABLE READ or SERIALIZABLE, not ${row?.isolation ?? 'an unknown level'}.`,
       );
     }
-    return new CaptureSnapshot(tx);
+    const snapshot = new CaptureSnapshot(tx);
+    OPENED.add(snapshot);
+    return snapshot;
   }
 }
 
@@ -136,7 +149,7 @@ async function candidates(
   baseUnit: string,
   statuses: readonly FactorStatus[],
 ): Promise<{ factors: FactorRow[]; conversions: ConversionRow[] }> {
-  const db = snapshot?.tx ?? prisma;
+  const db = snapshot ? CaptureSnapshot.txOf(snapshot) : prisma;
   const where = { ...key, release: { status: { in: [...statuses] }, ...SEALED } };
   const factorQuery = db.emissionFactor.findMany({
     where: { ...where, gas: CALCULATION_GAS, scope2Method: scope2MethodFor(key.category) },

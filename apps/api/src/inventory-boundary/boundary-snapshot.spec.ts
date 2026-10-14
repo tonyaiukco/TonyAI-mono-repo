@@ -222,5 +222,6 @@ describe('buildBoundarySnapshot', () => {
     expect(() => buildBoundarySnapshot(rows({ sources: [source({ id: 'stray', locationId: 'elsewhere' })] }))).toThrow(BoundaryRowsDefect);
     expect(() => buildBoundarySnapshot(rows({ header: { ...rows().header, frozenAt: new Date() } }))).toThrow(BoundaryRowsDefect);
     expect(() => buildBoundarySnapshot(rows({ sources: [source({ id: 's', scope: 3 })] }))).toThrow(BoundaryRowsDefect);
+    expect(() => buildBoundarySnapshot(rows({ sources: [source({ id: 's', category: null })] }))).toThrow(BoundaryRowsDefect);
   });
 });

@@ -228,6 +228,7 @@ export function buildBoundarySnapshot(rows: BoundaryRows): InventoryBoundarySnap
   const sources: InventorySource[] = orderedSources.map((s) => {
     const entity = entityOf(s.subsidiaryId, s.locationId, `source ${s.id}`);
     if (s.scope !== 1 && s.scope !== 2) throw new BoundaryRowsDefect(`source ${s.id} has scope ${s.scope}`);
+    if (s.mapping === 'mapped' && s.category === null) throw new BoundaryRowsDefect(`mapped source ${s.id} has no category`);
     const common = {
       id: s.id,
       name: s.name,

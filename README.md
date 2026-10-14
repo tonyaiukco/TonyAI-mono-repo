@@ -1112,8 +1112,9 @@ freeze runs, which also stamps its confirmation; freezing copies the
 subsidiaries' names (trading, else legal) and geography codes and the sites'
 into it (W7), and an open version is read with today's. Nothing but an open
 version's decision and freeze changes its header, and every row keeps its key
-(its version, entity and category; a source its id) — a change of one is a
-delete and an add, so a policy is never re-keyed under its sources. **A declared subsidiary or
+(its version and entity, a policy's or cell's category too; a source its id and
+entity) — a change of one is a delete and an add, so a policy is never re-keyed
+under its sources. **A declared subsidiary or
 site is not deleted while its version stands** (W9): the guard refuses the
 cascade, and `DELETE /subsidiaries/:id` and `DELETE /locations/:id` count the
 versions first and answer 409 — a frozen one keeps the subsidiary for good

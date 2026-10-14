@@ -961,7 +961,7 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['inventory_sources', 'inventory_sources_decision_check', '1c7ffcfe38222b37c40d68f642315667'],
   ['inventory_sources', 'inventory_sources_included_key_check', '8dd7ef5d1dcbce5b18d5ce7e1cb88f4a'],
   ['inventory_sources', 'inventory_sources_location_key_check', 'a12859b8651bbff6733c214dce008b93'],
-  ['inventory_sources', 'inventory_sources_mapping_check', '4e6878505ebdb25d2a6fa37782f648dd'],
+  ['inventory_sources', 'inventory_sources_mapping_check', '58f17af88daeadf0cd7b256ef9972040'],
   ['inventory_sources', 'inventory_sources_name_check', '89abd8a30af4e8ea9fe6138919107443'],
   ['unit_conversions', 'unit_conversions_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
   ['unit_conversions', 'unit_conversions_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],

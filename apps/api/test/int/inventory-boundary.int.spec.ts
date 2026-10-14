@@ -181,6 +181,8 @@ describe('the schema: keys and CHECKs', () => {
     ['a company cell whose key is not the nil uuid', (id) => (tx) =>
       tx.inventoryApplicabilityCell.create({ data: { boundaryId: id, subsidiaryId: a.subsidiaryId, locationKey: siteA, category: 'Fuel', applicability: 'undetermined', reason: 'Why' } })],
     ['a mapped Electricity source under Scope 1', (id) => (tx) => tx.inventorySource.create({ data: sourceRow(id, a, { scope: 1 }) })],
+    // Review round 2 (architect P2): NULL OR FALSE is NULL, which a CHECK admits.
+    ['a mapped source with no category', (id) => (tx) => tx.inventorySource.create({ data: sourceRow(id, a, { category: null, scope: 1 }) })],
     ['a Fuel source with no fuel named (21)', (id) => (tx) =>
       tx.inventorySource.create({ data: sourceRow(id, a, { category: 'Fuel', scope: 1, applicability: 'excluded', reason: 'Why', reportingPeriod: null, evidenceReportingPeriod: null }) })],
     ['an Electricity source naming an activity type', (id) => (tx) =>
@@ -400,6 +402,38 @@ describe('a frozen version takes no change (TA014)', () => {
     ).toBe('TA014');
   });
 
+  it("holds the months rule between two writers of an open version: a site written while its subsidiary narrows (review round 2)", async () => {
+    // The site's writer reads its subsidiary's months FOR SHARE, so a writer
+    // narrowing them waits, then sees the site and refuses.
+    const { boundaryId } = await createBoundary(owner, a, { locationId: siteA, version: 72 });
+    const site = await owner.location.create({ data: { subsidiaryId: a.subsidiaryId, name: 'Int-test early site', geographyCode: 'UK' } });
+    const wrote = deferred();
+    const gate = deferred();
+    const writer = ownerB.$transaction(async (tx) => {
+      await tx.inventoryBoundarySite.create({ data: { boundaryId, subsidiaryId: a.subsidiaryId, locationId: site.id, firstMonth: 1, lastMonth: 12 } });
+      wrote.resolve();
+      await gate.promise;
+    }, { timeout: 30_000 });
+    const narrower = connectOwner(1);
+    let narrow: Promise<unknown> | undefined;
+    try {
+      await wrote.promise;
+      const pid = await backendPid(narrower);
+      narrow = narrower.inventoryBoundarySubsidiary.updateMany({ where: { boundaryId }, data: { firstMonth: 7 } });
+      expect(await settledOrBlocked(narrow, pid, observer)).toBe('blocked');
+    } finally {
+      gate.resolve();
+      await writer;
+      await narrow?.catch(() => undefined);
+      await narrower.$disconnect();
+    }
+    expect(sqlstateOf(await failure(narrow!))).toBe('TA014');
+    const months = await owner.inventoryBoundarySubsidiary.findFirstOrThrow({ where: { boundaryId } });
+    expect(months.firstMonth).toBe(1);
+    await owner.inventoryBoundary.delete({ where: { id: boundaryId } });
+    await owner.location.delete({ where: { id: site.id } });
+  });
+
   it('copies the names of a row written while the freeze waited, once that row commits', async () => {
     const { boundaryId } = await createBoundary(owner, a, { locationId: siteA, version: 71 });
     const second = await owner.location.create({ data: { subsidiaryId: a.subsidiaryId, name: 'Int-test row-first site', geographyCode: 'TR' } });
@@ -473,6 +507,18 @@ describe('a frozen version takes no change (TA014)', () => {
       });
       expect(code, name).toBe('TA014');
     }
+  });
+
+  it('refuses, failing closed, a table the rows\' guard does not know (review round 2)', async () => {
+    expect(
+      await refusedAsOwner(async (tx) => {
+        await tx.$executeRawUnsafe('CREATE TABLE "int_test_stray" ("boundary_id" uuid)');
+        await tx.$executeRawUnsafe(
+          'CREATE TRIGGER "int_test_stray_frozen" BEFORE INSERT ON "int_test_stray" FOR EACH ROW EXECUTE FUNCTION "public"."inventory_boundary_rows_frozen"()',
+        );
+        await tx.$executeRawUnsafe('INSERT INTO "int_test_stray" VALUES (gen_random_uuid())');
+      }),
+    ).toBe('TA014');
   });
 
   it('keeps an open version its identity, and every row in its version', async () => {
