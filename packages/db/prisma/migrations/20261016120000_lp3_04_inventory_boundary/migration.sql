@@ -426,17 +426,20 @@ BEGIN
       MESSAGE = format('inventory boundary %s is frozen: %s takes no change', boundary, TG_TABLE_NAME);
   END IF;
   IF TG_OP = 'DELETE' THEN
-    IF TG_TABLE_NAME = 'inventory_boundary_subsidiaries'
-       AND NOT EXISTS (SELECT 1 FROM "public"."subsidiaries" s WHERE s."id" = OLD."subsidiary_id") THEN
-      RAISE EXCEPTION USING
-        ERRCODE = 'TA014',
-        MESSAGE = format('subsidiary %s is declared in inventory boundary %s: remove it from the version first', OLD."subsidiary_id", boundary);
-    END IF;
-    IF TG_TABLE_NAME = 'inventory_boundary_sites'
-       AND NOT EXISTS (SELECT 1 FROM "public"."locations" l WHERE l."id" = OLD."location_id") THEN
-      RAISE EXCEPTION USING
-        ERRCODE = 'TA014',
-        MESSAGE = format('site %s is declared in inventory boundary %s: remove it from the version first', OLD."location_id", boundary);
+    -- Nested, not joined with AND: PL/pgSQL plans a condition whole, and a
+    -- table without the column (a policy has no site) would fail to plan it.
+    IF TG_TABLE_NAME = 'inventory_boundary_subsidiaries' THEN
+      IF NOT EXISTS (SELECT 1 FROM "public"."subsidiaries" s WHERE s."id" = OLD."subsidiary_id") THEN
+        RAISE EXCEPTION USING
+          ERRCODE = 'TA014',
+          MESSAGE = format('subsidiary %s is declared in inventory boundary %s: remove it from the version first', OLD."subsidiary_id", boundary);
+      END IF;
+    ELSIF TG_TABLE_NAME = 'inventory_boundary_sites' THEN
+      IF NOT EXISTS (SELECT 1 FROM "public"."locations" l WHERE l."id" = OLD."location_id") THEN
+        RAISE EXCEPTION USING
+          ERRCODE = 'TA014',
+          MESSAGE = format('site %s is declared in inventory boundary %s: remove it from the version first', OLD."location_id", boundary);
+      END IF;
     END IF;
     RETURN OLD;
   END IF;
