@@ -46,9 +46,11 @@ import {
  * the same while B's data changes underneath it. LP3-02's reporting-context
  * routes (#167, #168) take B's subsidiary as their selection, and must answer
  * it as they answer an unknown one — the echoed context aside, an empty answer,
- * the same file name and the same generation audit row. Not covered here: the
- * global `/factors` and `/calculations/preview`, and Chromium's rendering — the
- * PDF routes run with Puppeteer replaced (below; e2e renders for real).
+ * the same compared headers and file name, and the same generation audit
+ * contents (its generated id and time aside) but for the selection it records. Not covered here: the global `/factors` and
+ * `/calculations/preview`, and Chromium — the PDF routes run with Puppeteer
+ * replaced (below), so a real render's timeout, kill and recovery, an oversized
+ * stream and a PDF's own metadata are not this file's proof (e2e renders for real).
  */
 
 /**
@@ -56,7 +58,8 @@ import {
  * searched and compared like any other answer. `hold` keeps a render in
  * flight (the report lease's test); `entered` hears that one reached the
  * printer. Everything around the printer — the data, the audit row, the lease,
- * the single-renderer guard — is the application's own.
+ * the single-renderer guard — is the application's own; that guard is not
+ * proven here on its own, the lease refusing a second render before it.
  */
 const pdf = vi.hoisted(() => ({ hold: undefined as Promise<void> | undefined, entered: undefined as (() => void) | undefined }));
 vi.mock('puppeteer', () => {
@@ -109,6 +112,16 @@ let limits: RuntimeLimits;
 const B_TCO2E = 987654;
 const B_VOIDED_TCO2E = 864213;
 const B_REVENUE = 24681357;
+/**
+ * Withdrawal times, fixed and ordered — B's first, then A's, then B's later
+ * ones — so a time leaking across tenants shows whatever the clock says
+ * (Codex P3: a withdrawal at `new Date()` outran B's later one after 2026-12-30).
+ */
+const VOIDED_AT = {
+  firstB: new Date('2026-11-01T08:00:00Z'),
+  A: new Date('2026-11-30T09:00:00Z'),
+  laterB: new Date('2026-12-30T12:00:00Z'),
+} as const;
 const printed = (n: number) => [String(n), n.toLocaleString('en-GB'), n.toLocaleString('tr-TR')];
 const ROLES = ['superAdmin', 'consultant', 'dataEntry', 'executiveViewer'] as const;
 type Role = (typeof ROLES)[number];
@@ -166,7 +179,7 @@ beforeAll(async () => {
     calculation: { tCo2e: B_VOIDED_TCO2E, factorId: 'int-test-placeholder' },
     voidReason: 'Int-test withdrawal only B gave',
     voidedBy: B.users.superAdmin.id,
-    voidedAt: new Date(),
+    voidedAt: VOIDED_AT.firstB,
   });
   const evidenceB = await owner.evidence.create({
     data: {
@@ -246,14 +259,30 @@ async function tokenFor(userId: string): Promise<string> {
 
 interface Res {
   status: number;
+  /** The body; a PDF's or a workbook's with its generation minute masked where it was extracted. */
   text: string;
   /** An export's `Content-Disposition` — its file name carries the selection. */
   disposition: string | null;
-  /** Every response header but those that differ between any two calls, sorted — compared like the body. */
+  /** The compared headers (all but `VOLATILE_HEADERS`), sorted — compared like the body. */
   headers: string;
+  /**
+   * The `ETag`: a hash of the bytes sent, so it differs wherever the bodies do
+   * — between B's answer and an unknown one (each echoes its own id), and for
+   * a generated PDF or workbook (its minute, its zip). Compared where the body
+   * is stable, a JSON or CSV answer to the same request (`answers` below);
+   * elsewhere it adds nothing the body does not show (Codex P3).
+   */
+  etag: string | null;
+  /** A generated PDF or workbook — bytes that differ between two identical requests. */
+  generated: boolean;
 }
 
-/** Headers that differ between two identical requests; a workbook's length moves with its zip (`qa-auditor` P3-2). */
+/**
+ * Headers left out of `Res.headers`: the transport's (`date`, `keep-alive`,
+ * `connection`, `x-request-id`) and the ETag (above). A workbook's
+ * `content-length` is left out too — its zip moves with the time it was built
+ * (`qa-auditor` P3-2).
+ */
 const VOLATILE_HEADERS = new Set(['date', 'etag', 'x-request-id', 'keep-alive', 'connection']);
 
 async function call(role: Role, method: string, path: string, body?: unknown): Promise<Res> {
@@ -266,32 +295,56 @@ async function call(role: Role, method: string, path: string, body?: unknown): P
   }
   const res = await fetch(`${base}${path}`, { method, headers, body: payload });
   const disposition = res.headers.get('content-disposition');
-  const workbook = res.headers.get('content-type')?.includes('spreadsheetml') ?? false;
+  const etag = res.headers.get('etag');
+  const type = res.headers.get('content-type') ?? '';
+  const workbook = type.includes('spreadsheetml');
+  const generated = workbook || type.includes('application/pdf');
   const kept = JSON.stringify(
     [...res.headers]
       .filter(([name]) => !VOLATILE_HEADERS.has(name) && !(workbook && name === 'content-length'))
       .sort(([a], [b]) => a.localeCompare(b)),
   );
+  const answer = { status: res.status, disposition, headers: kept, etag, generated };
   if (method !== 'HEAD' && workbook) {
     // A workbook is a zip stamped with the time it was built: compare and
     // search what its cells say instead (`qa-auditor`).
-    return { status: res.status, text: await workbookText(Buffer.from(await res.arrayBuffer())), disposition, headers: kept };
+    return { ...answer, text: await workbookText(Buffer.from(await res.arrayBuffer())) };
   }
-  return { status: res.status, text: await res.text(), disposition, headers: kept };
+  const text = await res.text();
+  return { ...answer, text: type.includes('application/pdf') ? withoutPdfGenerationTime(text) : text };
 }
+
+/** A report's generation minute as its writers print it (`ReportsService.assemble`'s `generatedAt`). */
+const GENERATION_MINUTE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
+
+/**
+ * The PDF's generation line — `Generated <minute><br/>Generated by <email>`,
+ * the template's own markup: what a user wrote reaches the PDF escaped, so
+ * data cannot spell its `<br/>`. Masked once, nowhere else; CSV and JSON are
+ * never masked, and every other time is business data (Codex P3).
+ */
+const withoutPdfGenerationTime = (html: string) =>
+  html.replace(/Generated \d{4}-\d{2}-\d{2} \d{2}:\d{2}<br\/>Generated by /, 'Generated <time><br/>Generated by ');
 
 async function workbookText(buffer: Buffer): Promise<string> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
   // Besides the cells, what else a workbook can say — its properties (not
   // its build times), defined names, each sheet's header and footer, cell
-  // notes (`security-rls` P3-2).
+  // notes (`security-rls` P3-2): the writer's output, not every part of its zip.
   const { creator, lastModifiedBy, title, subject, keywords, category, description, company, manager } = workbook;
   const lines = [JSON.stringify({ creator, lastModifiedBy, title, subject, keywords, category, description, company, manager }), JSON.stringify(workbook.definedNames.model)];
+  let generation = false;
   workbook.eachSheet((sheet) => {
     lines.push(`# ${sheet.name}`, JSON.stringify(sheet.headerFooter));
     sheet.eachRow((row) => {
-      lines.push(JSON.stringify(row.values));
+      const values = row.values as unknown[];
+      // The Summary sheet's generation row, ["Generated", <minute>, <email>],
+      // masked there and once — a business cell elsewhere stays as written (Codex P3).
+      if (!generation && sheet.name === 'Summary' && values[1] === 'Generated' && typeof values[2] === 'string' && GENERATION_MINUTE.test(values[2])) {
+        generation = true;
+        lines.push(JSON.stringify([...values.slice(0, 2), '<time>', ...values.slice(3)]));
+      } else lines.push(JSON.stringify(values));
       row.eachCell((cell) => {
         if (cell.note) lines.push(JSON.stringify(cell.note));
       });
@@ -299,10 +352,6 @@ async function workbookText(buffer: Buffer): Promise<string> {
   });
   return lines.join('\n');
 }
-
-/** Times a response states about itself ("generated at"), which differ between two calls. */
-const withoutTimes = (text: string) =>
-  text.replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?/g, '<time>');
 
 /** Every row of B, as the owner sees it — compared before and after each attack. */
 async function snapshotB(): Promise<string> {
@@ -332,7 +381,7 @@ const normalise = (res: Res, ids: Ids) => {
   const swap = (text: string) => Object.values(ids).reduce((t, id) => t.split(id).join('<id>'), text);
   // An export's file name carries the first 8 characters of the selected subsidiary's id.
   const headers = Object.values(ids).reduce((t, id) => t.split(id.slice(0, 8)).join('<id>'), swap(res.headers));
-  return `${res.status} ${headers} ${withoutTimes(swap(res.text))}`;
+  return `${res.status} ${headers} ${swap(res.text)}`;
 };
 
 interface Route {
@@ -365,7 +414,7 @@ const voidedIn = () =>
     periodValue: 'November',
     voidReason: 'Int-test withdrawal A gave',
     voidedBy: A.users.superAdmin.id,
-    voidedAt: new Date(),
+    voidedAt: VOIDED_AT.A,
   }, { priced: true });
 
 const created = (res: Res) => res.status === 200 || res.status === 201;
@@ -387,12 +436,24 @@ const contextRead = <T,>(path: string, live: (data: T) => boolean, empty: (data:
   live: (data) => live(data as T),
   empty: (data) => empty(data as T),
 });
+const zero = (counts: object) => Object.values(counts).every((n) => n === 0);
+// `empty`: every inventory figure and count zero and every collection that
+// carries data empty — not merely the count the route leads with (Codex P2).
+// The routes' own metadata (a summary's `statusesIncluded`, a matrix's
+// `reportingYear`, meta's `organisationName`, `recordLimit` and `status`) is
+// left as it is, and no key set is frozen.
 const CONTEXT_READS: ContextRead[] = [
-  contextRead<ReportingSummaryResponse['data']>('/emissions/context/summary', (d) => d.recordCount > 0, (d) => d.recordCount === 0),
+  contextRead<ReportingSummaryResponse['data']>(
+    '/emissions/context/summary',
+    (d) => d.recordCount > 0,
+    (d) => zero(d.totals) && d.byCategory.length === 0 && d.bySubsidiary.length === 0
+      && Object.values(d.trend).every((points) => points.length === 0)
+      && zero({ recordCount: d.recordCount, calculatedRecordCount: d.calculatedRecordCount, uncalculatedRecordCount: d.uncalculatedRecordCount }),
+  ),
   contextRead<ReportingMatrixResponse['data']>(
     '/emissions/context/tracking-matrix',
     (d) => d.rows.length === 1 && d.rows[0].subsidiaryId === A.subsidiaryId && d.rows[0].totalTCo2e > 0,
-    (d) => d.rows.length === 0,
+    (d) => d.rows.length === 0 && zero(d.totals),
   ),
   contextRead<ReportingIntensityData>(
     '/intensity/context',
@@ -400,7 +461,18 @@ const CONTEXT_READS: ContextRead[] = [
       && d.metrics.some((m) => m.contributingSubsidiaryIds.includes(A.subsidiaryId)),
     (d) => d.selectedSubsidiaryIds.length === 0 && d.metrics.length === 0,
   ),
-  contextRead<ReportingMetaResponse['data']>('/reports/context/meta', (d) => d.committedCount > 0, (d) => d.totalCount === 0 && d.voidedCount === 0),
+  contextRead<ReportingMetaResponse['data']>(
+    '/reports/context/meta',
+    (d) => d.committedCount > 0,
+    (d) => zero({
+      totalCount: d.totalCount,
+      committedCount: d.committedCount,
+      incompleteCount: d.incompleteCount,
+      pendingCount: d.pendingCount,
+      voidedCount: d.voidedCount,
+      incompleteRatio: d.incompleteRatio,
+    }),
+  ),
 ];
 /** The context exports, each with the options that put the most of the report on the page. */
 const CONTEXT_EXPORTS = [
@@ -501,7 +573,9 @@ const ID_ROUTES: Route[] = [
       own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.approved), ok: (res) => res.status === 200 && live(dataOf(res)) },
     })),
     // HEAD too: Express answers it with the GET handler, which generates the
-    // file and audits it ("LP3-02 context-route follow-ups" (15)).
+    // file and audits it — today's behaviour, characterised ("LP3-02
+    // context-route follow-ups" (15)): when (15) lands, HEAD's rows part from
+    // GET's generation assertions and keep its equivalence, RBAC and admission.
     ...CONTEXT_EXPORTS.flatMap(([path, rest]) =>
       (['GET', 'HEAD'] as const).map((method): Route => ({
         name: `${method} ${path}?subsidiaryId=${filter}`,
@@ -594,7 +668,7 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
       const res = await call(role, 'GET', path);
       expect(res.status, `${role} GET ${path}: ${res.text.slice(0, 200)}`).toBeLessThan(500);
       if (res.status === 200) answered += 1;
-      for (const marker of markersB) expect(res.text, `${role} GET ${path} leaks ${marker}`).not.toContain(marker);
+      for (const marker of markersB) expect(`${res.headers} ${res.text}`, `${role} GET ${path} leaks ${marker}`).not.toContain(marker);
     }
     // At least one of A's roles reads it, so the check above saw real output.
     expect(answered, `GET ${path}: no role of A got an answer`).toBeGreaterThan(0);
@@ -620,6 +694,21 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
     await owner.subsidiaryDenominator.create({
       data: { subsidiaryId: A.subsidiaryId, year: 2026, metric: 'revenue', value: 500000, unit: 'EUR', createdBy: A.users.dataEntry.id },
     });
+    // Business text shaped like the generation metadata, which no mask may
+    // touch (Codex P3): a withdrawal's reason written as the PDF's generation
+    // line, and a ledger row reading "Generated", <minute> — a subsidiary of
+    // that name with a site named as a minute.
+    const lookalike = 'Generated 2026-12-30 12:00<br/>Generated by a reason';
+    await createRecord(owner, A, {
+      status: ActivityRecordStatus.voided,
+      periodValue: 'October',
+      voidReason: lookalike,
+      voidedBy: A.users.superAdmin.id,
+      voidedAt: VOIDED_AT.A,
+    }, { priced: true });
+    const named = await owner.subsidiary.create({ data: { organisationId: A.organisationId, legalName: 'Generated', geographyCode: 'UK' } });
+    const minuteSite = await owner.location.create({ data: { subsidiaryId: named.id, name: '2026-12-30 12:00', geographyCode: 'UK' } });
+    await createRecord(owner, A, { subsidiaryId: named.id, locationId: minuteSite.id, status: ActivityRecordStatus.approved, periodValue: 'March' }, { priced: true });
     for (const [path, rest] of CONTEXT_EXPORTS) {
       const res = await call('consultant', 'GET', `${path}?year=2026${rest}`);
       expect(res.status, `${path}: ${res.text.slice(0, 200)}`).toBe(200);
@@ -628,6 +717,21 @@ describe("every list and aggregate, unfiltered, as each of A's roles: no trace o
       expect(res.text, `${path}: the reporting entity`).toContain('Int-test site');
       // The PDF alone names evidence files (the workbook and the CSV count them).
       if (path.endsWith('pdf')) expect(res.text, `${path}: the evidence appendix`).toContain('int-test.pdf');
+      // The generation minute is found and masked — a changed format fails here,
+      // not as a rare flake at a minute's turn — and nothing else is: a
+      // withdrawal's time, and text shaped like the generation metadata, stay.
+      if (path.endsWith('pdf')) {
+        expect(res.text, `${path}: the generation line`).toContain('Generated <time><br/>Generated by ');
+        expect(res.text, `${path}: a reason shaped like it`).toContain('Generated 2026-12-30 12:00&lt;br');
+      } else if (path.endsWith('excel')) {
+        expect(res.text, `${path}: the Summary's generation row`).toContain('[null,"Generated","<time>",');
+        expect(res.text, `${path}: a reason shaped like it`).toContain(JSON.stringify(lookalike));
+        expect(res.text, `${path}: a ledger row shaped like it`).toContain('[null,"Generated","2026-12-30 12:00",');
+      } else {
+        expect(res.text, `${path}: a reason shaped like it`).toContain(lookalike);
+        expect(res.text, `${path}: a ledger row shaped like it`).toContain('Generated,2026-12-30 12:00,');
+      }
+      expect(res.text, `${path}: a withdrawal's time is business data`).toContain('2026-11-30 09:00');
       for (const marker of markersB) expect(res.text, `${path} leaks ${marker}`).not.toContain(marker);
     }
     // A group intensity reads revenue alone (D14): A's, and only A's.
@@ -783,6 +887,8 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
         calculation: { tCo2e, factorId: 'int-test-placeholder' },
       });
     }
+    // And a withdrawal, whose time the exports print as business data (Codex P3).
+    await voidedIn();
     const paths = [
       '/me',
       '/kpi',
@@ -818,7 +924,8 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
       for (const role of ROLES) {
         for (const path of paths) {
           const res = await call(role, 'GET', path);
-          out[`${role} GET ${path}`] = `${res.status} ${withoutTimes(res.text)}`;
+          // The same request twice: a JSON or CSV body's ETag is stable, and compared.
+          out[`${role} GET ${path}`] = `${res.status} ${res.headers} ${res.generated ? '' : res.etag} ${res.text}`;
         }
       }
       return out;
@@ -856,7 +963,9 @@ describe("A's every answer stays the same while B's data changes (a leak into a 
             calculation: { tCo2e: 4444, factorId: 'int-test-placeholder' },
             voidReason: 'Int-test later withdrawal B gave',
             voidedBy: B.users.superAdmin.id,
-            voidedAt: new Date(),
+            // Later than A's (VOIDED_AT): a time leaking across tenants shows,
+            // now that only the generation minute is masked.
+            voidedAt: VOIDED_AT.laterB,
           }),
         ),
       )),
@@ -962,16 +1071,21 @@ describe("context exports with B's selection, as each of A's roles: the same fil
         // The file name carries the selection, by its first 8 characters.
         expect(foreign.res.disposition, context).toBe(missing.res.disposition?.replace(missingId.slice(0, 8), B.subsidiaryId.slice(0, 8)));
         expect(foreign.res.disposition, context).toContain(`-${B.subsidiaryId.slice(0, 8)}${filters.scope ? '-scope2' : ''}${filters.category ? '-electricity' : ''}.`);
-        // One generation row each, in A's organisation, by the caller — the
-        // same row but for the selection it records.
+        // One generation row each, in A's organisation, by the caller — every
+        // column the same (its id and time aside), the diff but for the
+        // selection it records (Codex: role and entityId included).
         expect([foreign.rows.length, missing.rows.length], context).toStrictEqual([1, 1]);
         const [row] = foreign.rows;
-        expect(row, context).toMatchObject({ organisationId: A.organisationId, userId: A.users[role].id, action: 'generate', entity: 'report' });
+        expect(row, context).toMatchObject({ organisationId: A.organisationId, userId: A.users[role].id, action: 'generate', entity: 'report', entityId: null });
+        const columns = (r: typeof row) => Object.fromEntries(Object.entries(r).filter(([key]) => !['id', 'createdAt', 'diff'].includes(key)));
+        expect(columns(row), context).toStrictEqual(columns(missing.rows[0]));
         expect(missing.rows[0].diff, context).toMatchObject({ subsidiaryId: missingId, ...filters, recordCount: 0, voidedCount: 0 });
         expect(Object.keys(missing.rows[0].diff as object).filter((k) => k === 'scope' || k === 'category').sort(), context).toStrictEqual(Object.keys(filters).sort());
         expect(row.diff, context).toStrictEqual({ ...(missing.rows[0].diff as object), subsidiaryId: B.subsidiaryId });
         // A PDF and a workbook name the filters: the selection is named by
         // the id it was given, never as every subsidiary (and never by B's name).
+        // The English wording is today's documented label, not the isolation
+        // contract — LP4-03's report language parametrises it.
         if (method === 'GET' && !path.endsWith('csv')) {
           expect(foreign.res.text, context).toContain(`Selected subsidiary (${B.subsidiaryId})`);
           expect(foreign.res.text, context).not.toContain('All accessible subsidiaries');
@@ -1033,8 +1147,11 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
     const entered = deferred();
     pdf.hold = hold.promise;
     pdf.entered = () => entered.resolve();
+    // Outside the try: on any failure below, `finally` releases the render and
+    // waits for its request to settle — its audit row and its lease — before
+    // the test ends and afterEach removes A (Codex P3).
+    const rendering = call('consultant', 'GET', '/reports/context/pdf?year=2026&template=executive_summary');
     try {
-      const rendering = call('consultant', 'GET', '/reports/context/pdf?year=2026&template=executive_summary');
       // A render refused before the printer says why, instead of timing out (`qa-auditor` P3-3).
       let reached = false;
       const refusedEarly = rendering.then((res) => {
@@ -1047,6 +1164,8 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
         '/reports/context/excel?year=2026&template=executive_summary',
         '/reports/context/pdf?year=2026&template=executive_summary',
         '/reports/csv?year=2026&template=executive_summary',
+        '/reports/excel?year=2026&template=executive_summary',
+        '/reports/pdf?year=2026&template=executive_summary',
       ]) {
         for (const method of ['GET', 'HEAD'] as const) {
           const res = await call('superAdmin', method, path);
@@ -1055,8 +1174,9 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
         }
       }
       // A spelling the router still answers is EXPORT work too (the trailing
-      // slash, the case: 429); the others reach no route (404). None generates
-      // a file outside the lease (`security-rls`, unverified there).
+      // slash, the case: 429); the others reach no route (404). The invariant
+      // is that no accepted spelling skips EXPORT; the exact 404s characterise
+      // today's router and move with it.
       for (const [variant, status] of [
         ['/reports/context/csv/', 429],
         ['/REPORTS/CONTEXT/CSV', 429],
@@ -1073,6 +1193,8 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
       expect((await rendering).status).toBe(200);
     } finally {
       hold.resolve();
+      // Settled, never thrown from here: the assertion that failed stays the error reported.
+      await rendering.catch(() => undefined);
       pdf.hold = undefined;
       pdf.entered = undefined;
     }
