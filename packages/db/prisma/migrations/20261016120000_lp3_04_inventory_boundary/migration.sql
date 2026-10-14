@@ -332,7 +332,8 @@ ALTER TABLE "inventory_sources"
 -- The header. Born unfrozen and unconfirmed (its CHECK ties a confirmation to
 -- a freeze); nothing but its decision and its freeze ever changes; it freezes
 -- once — in a READ COMMITTED transaction (W8), with every site inside its
--- subsidiary's months — at the database's clock as the freeze runs, and is
+-- subsidiary's months (the copy re-checks them) — at the database's clock as
+-- the freeze runs, and is
 -- confirmed in the same update if at all, at the same instant; frozen, it
 -- takes no update and no delete — but its organisation's: a cascade from
 -- `organisations` reaches it after the organisation's row is gone, and only
@@ -388,21 +389,6 @@ BEGIN
         MESSAGE = format('inventory boundary %s freezes in a READ COMMITTED transaction of its own (W8), not at %s',
                          OLD."id", pg_catalog.current_setting('transaction_isolation'));
     END IF;
-    -- A site operates inside its subsidiary's months. The rows' guard holds
-    -- each write to that rule; this holds the whole version, which two
-    -- writers could otherwise pass between them.
-    IF EXISTS (
-      SELECT 1
-        FROM "public"."inventory_boundary_sites" bl
-        JOIN "public"."inventory_boundary_subsidiaries" bs
-          ON bs."boundary_id" = bl."boundary_id" AND bs."subsidiary_id" = bl."subsidiary_id"
-       WHERE bl."boundary_id" = OLD."id"
-         AND (bl."first_month" < bs."first_month" OR bl."last_month" > bs."last_month")
-    ) THEN
-      RAISE EXCEPTION USING
-        ERRCODE = 'TA014',
-        MESSAGE = format('inventory boundary %s declares a site operating outside its subsidiary''s months', OLD."id");
-    END IF;
     -- The moment the freeze ran, not its transaction's start: the version
     -- may hold rows committed after that.
     stamped := pg_catalog.clock_timestamp();
@@ -411,7 +397,10 @@ BEGIN
       NEW."decided_at" := stamped;
     END IF;
     -- W7: the names and geography the version is reported with, as they are
-    -- now (the reports' own choice of name: trading, else legal).
+    -- now (the reports' own choice of name: trading, else legal). The copy
+    -- updates every declared subsidiary, so the rows' guard checks each one's
+    -- sites against its months once more, now: two writers who each passed it
+    -- cannot freeze a site outside its subsidiary's months between them.
     UPDATE "public"."inventory_boundary_subsidiaries" bs
        SET "subsidiary_name" = COALESCE(NULLIF(s."trading_name", ''), s."legal_name"),
            "geography_code" = s."geography_code"
