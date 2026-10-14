@@ -332,6 +332,20 @@ describe('deletion: a declared subsidiary or site stays (W9); the organisation t
         }),
         `subsidiary, frozen ${frozen}`,
       ).toBe('TA014');
+      // Declared at company level alone — no site of it in the version, so
+      // the subsidiary's own check, not a site's, is what refuses.
+      expect(
+        await refusedAsOwner(async (tx) => {
+          const bare = await tx.subsidiary.create({ data: { organisationId: a.organisationId, legalName: 'Int-test company-only subsidiary', geographyCode: 'UK' } });
+          const { id } = await tx.inventoryBoundary.create({ data: header(a, { version: 50 }) });
+          await tx.inventoryBoundarySubsidiary.create({
+            data: { boundaryId: id, organisationId: a.organisationId, subsidiaryId: bare.id, firstMonth: 1, lastMonth: 12 },
+          });
+          if (frozen) await tx.inventoryBoundary.update({ where: { id }, data: { frozenAt: new Date() } });
+          await tx.subsidiary.delete({ where: { id: bare.id } });
+        }),
+        `company-only subsidiary, frozen ${frozen}`,
+      ).toBe('TA014');
     }
   });
 
