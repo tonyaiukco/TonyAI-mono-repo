@@ -151,6 +151,9 @@ describe('the database refuses a grant across organisations', () => {
   it('deleting the subsidiary, or the profile, removes the grant', async () => {
     const afterSubsidiary = await withRollback(owner, async (tx) => {
       await tx.activityRecord.deleteMany({ where: { subsidiaryId: a.subsidiaryId } });
+      // A subsidiary an open boundary version declares is not deleted (LP3-04
+      // W9): the version goes first, as its records do.
+      await tx.inventoryBoundary.delete({ where: { id: dataA.boundaryId } });
       await tx.subsidiary.delete({ where: { id: a.subsidiaryId } });
       return tx.userSubsidiaryAccess.count({ where: { userId: a.users.dataEntry.id } });
     });
@@ -173,6 +176,15 @@ const SCOPED: [table: string, idOf: (t: Tenant, d: TenantData) => string, column
   ['targets', (_t, d) => d.targetId, 'id'],
   ['subsidiary_denominators', (_t, d) => d.denominatorId, 'id'],
   ['import_batches', (_t, d) => d.importBatchId, 'id'],
+  // LP3-04 PR B: the boundary version's header (scoped by a declared,
+  // granted subsidiary for a data_entry user) and its five row tables, one
+  // row each in the tenant's version.
+  ['inventory_boundaries', (_t, d) => d.boundaryId, 'id'],
+  ['inventory_boundary_subsidiaries', (_t, d) => d.boundaryId, 'boundary_id'],
+  ['inventory_boundary_sites', (_t, d) => d.boundaryId, 'boundary_id'],
+  ['inventory_attribution_policies', (_t, d) => d.boundaryId, 'boundary_id'],
+  ['inventory_applicability_cells', (_t, d) => d.boundaryId, 'boundary_id'],
+  ['inventory_sources', (_t, d) => d.boundaryId, 'boundary_id'],
 ];
 
 /** Counts, as `userId` through RLS (PostgREST's role), the row of each scoped table identified for (tenant, data). */

@@ -498,7 +498,17 @@ const ID_ROUTES: Route[] = [
   // locations
   { name: 'GET /locations/:id', method: 'GET', path: (i) => `/locations/${i.locationId}`, own: { role: 'executiveViewer' } },
   { name: 'PATCH /locations/:id', method: 'PATCH', path: (i) => `/locations/${i.locationId}`, body: () => ({ name: 'renamed' }), own: { role: 'superAdmin' } },
-  { name: 'DELETE /locations/:id', method: 'DELETE', path: (i) => `/locations/${i.locationId}`, own: { role: 'superAdmin' } },
+  // A's own data site is declared in A's boundary version (LP3-04 W9: not
+  // deletable), so the positive control deletes a disposable site of A's.
+  {
+    name: 'DELETE /locations/:id', method: 'DELETE', path: (i) => `/locations/${i.locationId}`,
+    own: {
+      role: 'superAdmin',
+      prepare: async () => ({
+        locationId: (await owner.location.create({ data: { subsidiaryId: A.subsidiaryId, name: 'Int-test disposable site', geographyCode: 'UK' } })).id,
+      }),
+    },
+  },
   { name: 'POST /locations', method: 'POST', path: () => '/locations', body: (i) => ({ subsidiaryId: i.subsidiaryId, name: 'New site', geographyCode: 'UK' }), own: { role: 'superAdmin', ok: created } },
   // activity records
   { name: 'GET /activity-records/:id', method: 'GET', path: (i) => `/activity-records/${i.recordId}`, own: { role: 'consultant' } },
