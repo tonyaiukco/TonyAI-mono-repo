@@ -349,7 +349,7 @@ async function plantBoundary(owner, subsidiaryId, createdBy, version) {
   await owner.inventorySource.create({
     data: {
       boundaryId, subsidiaryId, locationId: site.id, locationKey: site.id, name: 'RLS probe meter', scope: 2, mapping: 'mapped',
-      category: 'Electricity', activityKey: '', applicability: 'included', reportingPeriod: 'monthly', evidenceReportingPeriod: null,
+      category: 'Electricity', includedActivityKey: '', applicability: 'included', reportingPeriod: 'monthly', evidenceReportingPeriod: null,
     },
   });
   return boundaryId;

@@ -1093,19 +1093,27 @@ stored. The database holds what it can: same-organisation composite keys (a
 version declares its own organisation's subsidiaries and their own sites, a
 cell or source sits at a declared entity); CHECKs on the categories, levels,
 cadences and reasons (the factor library's free-text rule), a mapped source's
-scope from `CATEGORY_SCOPE_MAP` and its activity type exactly when its category
-is typed (follow-up (21)); and an included mapped source's cadence is its
-category's policy's — a composite key that follows a change of the policy. No
-index is partial or NULLS NOT DISTINCT: the company entity's site key is the nil
-uuid and an untyped source's activity key `''`. **A frozen version takes no
-change** (`inventory_boundary_frozen`, SQLSTATE `TA014`, every writer, the
-owner included, `TRUNCATE` too): a version is born open and freezes once — when
-it is confirmed (a confirmed version is frozen, CHECK) or captured into a
-dataset (W8, PR C) — at the database's clock, which also stamps its
-confirmation; freezing copies the subsidiaries' names (trading, else legal) and
-the sites' names and geography codes into it (W7), and an open version is read
-with today's. Nothing but an open version's decision and freeze changes its
-header, and a row never moves to another version. **A declared subsidiary or
+scope from `CATEGORY_SCOPE_MAP` and, for a typed category alone, one of its own
+activity types (`recordActivityTypesFor`, follow-up (21); a parity spec pins
+the lists); an included mapped source's cadence is its category's policy's — a
+composite key that follows a change of the policy; and only included mapped
+sources are unique by entity, category and activity type, so a named exclusion
+can sit beside the meter it is not (D05). A site operates inside its
+subsidiary's months (a subsidiary acquired in July has no site in the inventory
+before it). No index is partial or NULLS NOT DISTINCT: the company entity's
+site key is the nil uuid (never a site), and a source's claim key is null unless
+it is included and mapped. **A frozen version takes no change**
+(`inventory_boundary_frozen`, SQLSTATE `TA014`, every writer, the owner
+included, `TRUNCATE` too): a version is born open and freezes once — when it is
+confirmed (a confirmed version is frozen, CHECK) or captured into a dataset (W8,
+PR C) — in a READ COMMITTED transaction of its own (a stricter snapshot could
+freeze a row committed while it waited, unseen), at the database's clock as the
+freeze runs, which also stamps its confirmation; freezing copies the
+subsidiaries' names (trading, else legal) and geography codes and the sites'
+into it (W7), and an open version is read with today's. Nothing but an open
+version's decision and freeze changes its header, and every row keeps its key
+(its version, entity and category; a source its id) — a change of one is a
+delete and an add, so a policy is never re-keyed under its sources. **A declared subsidiary or
 site is not deleted while its version stands** (W9): the guard refuses the
 cascade, and `DELETE /subsidiaries/:id` and `DELETE /locations/:id` count the
 versions first and answer 409 — a frozen one keeps the subsidiary for good
@@ -1124,7 +1132,8 @@ version whole and answers it as `InventoryBoundarySnapshot`, bound to the
 organisation it is asked under and to the caller's current access (a version
 declaring a subsidiary outside it is not found — W3). It reads, like the factor
 lookup, inside a `CaptureSnapshot`: a transaction at REPEATABLE READ or
-SERIALIZABLE (READ COMMITTED and the root client are refused), so a capture's
+SERIALIZABLE (READ COMMITTED, the root client and a snapshot not opened by
+`CaptureSnapshot.open` are refused), so a capture's
 boundary, records and factor candidates are one moment's — another session's
 rename or erratum committed meanwhile does not reach it. **The factor library
 is selected in one place**, `apps/api/src/calculations/factor-lookup.ts`

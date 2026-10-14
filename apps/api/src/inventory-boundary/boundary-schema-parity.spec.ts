@@ -38,12 +38,15 @@ describe('the inventory boundary schema and shared-types agree', () => {
     }
   });
 
-  it('on which categories are typed — a typed category\'s source names its type (21)', () => {
+  it("on which categories are typed and on each one's activity types — a typed source names one of its own (21)", () => {
     const typed = SCOPE_1_2.filter((c) => recordActivityTypesFor(c).length > 0);
     const block = sql.slice(sql.indexOf('"inventory_sources_mapping_check" CHECK'));
-    const match = block.match(/\("activity_type" IS NOT NULL\) = \("category" IN \(([^)]*)\)\)/);
-    expect(match).not.toBeNull();
-    expect([...match![1].matchAll(/'([^']*)'/g)].map((m) => m[1]).sort()).toEqual([...typed].sort());
+    const cases = [...block.matchAll(/WHEN '([^']+)' THEN "activity_type" IS NOT NULL AND "activity_type" IN \(([^)]*)\)/g)];
+    expect(cases.map((m) => m[1]).sort()).toEqual([...typed].sort());
+    for (const [, category, list] of cases) {
+      expect([...list.matchAll(/'([^']*)'/g)].map((m) => m[1]), category).toEqual(recordActivityTypesFor(category).map((t) => t.value));
+    }
+    expect(block).toMatch(/ELSE "activity_type" IS NULL\s+END/);
   });
 
   it('on the scope each category maps to', () => {

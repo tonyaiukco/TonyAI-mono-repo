@@ -13,7 +13,12 @@ import { describe, it, expect } from 'vitest';
 
 const repoRoot = resolve(__dirname, '../../../..');
 const ROOTS = ['apps/api/src', 'packages/db/prisma', 'packages/db/scripts', 'packages/db/src'];
-const LIBRARY_READ = /(emissionFactor|unitConversion)\.(find[A-Za-z]*|count|aggregate|groupBy)\b|\b(emission_factors|unit_conversions)\b/g;
+/**
+ * A model query however it is spelled across lines, a release that includes
+ * or selects its rows, and the tables' names in raw SQL (qa-auditor P3-8).
+ */
+const LIBRARY_READ =
+  /(emissionFactor|unitConversion)\s*\.\s*(find[A-Za-z]*|count|aggregate|groupBy)\b|\b(factors|conversions)\s*:\s*(true|\{)|\b(emission_factors|unit_conversions)\b/g;
 
 /** File → how many times it may name the library; `'any'` for a catalogue that is no reader. */
 const ALLOWED: Record<string, number | 'any'> = {
@@ -57,6 +62,18 @@ describe('the factor library has one reader that selects', () => {
       return allowed === undefined || (allowed !== 'any' && count !== allowed);
     });
     expect(unexpected, 'a library read outside `lookupFactorPath` — route it through the lookup, or list it with its reason').toEqual([]);
+  });
+
+  it('sees a read however it is spelled — a split chain, a release that includes its rows (qa-auditor P3-8)', () => {
+    for (const sample of [
+      'await prisma.emissionFactor\n      .findMany({ where })',
+      'db.unitConversion . findFirst({ where })',
+      "prisma.factorRelease.findMany({ include: { factors: { where: { category } } } })",
+      'tx.factorRelease.findUnique({ where: { id }, include: { conversions: true } })',
+      "SELECT * FROM emission_factors",
+    ]) {
+      expect(sample.match(LIBRARY_READ)?.length ?? 0, sample).toBeGreaterThan(0);
+    }
   });
 
   it('lists nothing stale', () => {

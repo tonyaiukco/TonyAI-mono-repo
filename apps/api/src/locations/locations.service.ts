@@ -233,20 +233,6 @@ export class LocationsService {
   }
 
   /**
-   * Refuse to delete something that committed data still points at.
-   *
-   * The FK was `ON DELETE SET NULL` (RESTRICT since LP4-01, which makes the
-   * database refuse it too), so a delete used to succeed silently and
-   * leave every referencing record claiming the SUBSIDIARY's geography while its
-   * frozen calculation snapshot was computed from the LOCATION's — measured:
-   * subsidiary TR, location UK, record detached with `geographyCode: 'UK'` still
-   * in the snapshot. Nothing recorded that per record, so the divergence was
-   * undiscoverable from the audit trail.
-   *
-   * The count is part of the message because "you cannot delete this" without a
-   * number leaves the user with no idea what to do next.
-   */
-  /**
    * A site declared in an inventory boundary version is not deleted (LP3-04
    * W9): the version records which sites the inventory covers and the months
    * each operated. An open version can drop it; a frozen one keeps it, and so
@@ -263,6 +249,20 @@ export class LocationsService {
     }
   }
 
+  /**
+   * Refuse to delete something that committed data still points at.
+   *
+   * The FK was `ON DELETE SET NULL` (RESTRICT since LP4-01, which makes the
+   * database refuse it too), so a delete used to succeed silently and
+   * leave every referencing record claiming the SUBSIDIARY's geography while its
+   * frozen calculation snapshot was computed from the LOCATION's — measured:
+   * subsidiary TR, location UK, record detached with `geographyCode: 'UK'` still
+   * in the snapshot. Nothing recorded that per record, so the divergence was
+   * undiscoverable from the audit trail.
+   *
+   * The count is part of the message because "you cannot delete this" without a
+   * number leaves the user with no idea what to do next.
+   */
   private async assertNoRecords(locationId: string): Promise<void> {
     const count = await this.prisma.activityRecord.count({
       where: { locationId },

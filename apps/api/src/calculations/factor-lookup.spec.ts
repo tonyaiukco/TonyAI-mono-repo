@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { EmissionFactor, FactorRelease, Prisma } from '@tonyai/db';
 import { directCalorificBasisFor, factorActivityTypeFor, scope2MethodFor } from '@tonyai/shared-types';
 import type { PrismaService } from '../prisma/prisma.service';
-import { CaptureSnapshot, CaptureSnapshotError, lookupFactorPath, type FactorLookupKey } from './factor-lookup';
+import { CaptureSnapshot, CaptureSnapshotError, FACTOR_CANDIDATE_CAP, lookupFactorPath, type FactorLookupKey } from './factor-lookup';
 
 /**
  * The one factor lookup's two ways of reading the library (LP3-04 PR B, W2):
@@ -95,6 +95,30 @@ describe('lookupFactorPath', () => {
     const result = await lookupFactorPath(asPrisma(root), REFUSE_PLACEHOLDERS, KEY, 'kWh');
     expect(result.ok).toBe(true);
     expect(root.$transaction).toHaveBeenCalledWith([expect.anything(), expect.anything()], { isolationLevel: 'RepeatableRead' });
+  });
+
+  it('asks for exactly the candidates the engine always has — both queries pinned (qa-auditor P3-9)', async () => {
+    const root = rootClient([factor('authoritative')]);
+    await lookupFactorPath(asPrisma(root), REFUSE_PLACEHOLDERS, KEY, 'kWh');
+    const release = { status: { in: ['authoritative'] }, sealedAt: { not: null } };
+    expect(root.emissionFactor.findMany).toHaveBeenCalledWith({
+      where: { ...KEY, release, gas: 'CO2e', scope2Method: scope2MethodFor('Electricity') },
+      include: { release: true },
+      orderBy: { id: 'asc' },
+      take: FACTOR_CANDIDATE_CAP + 1,
+    });
+    expect(root.unitConversion.findMany).toHaveBeenCalledWith({
+      where: { ...KEY, release, fromUnit: 'kWh' },
+      include: { release: true },
+      orderBy: { id: 'asc' },
+      take: FACTOR_CANDIDATE_CAP + 1,
+    });
+  });
+
+  it('runs no diagnostic pass where placeholders price', async () => {
+    const root = rootClient([]);
+    await lookupFactorPath(asPrisma(root), { allowPlaceholders: true }, KEY, 'kWh');
+    expect(root.$transaction).toHaveBeenCalledTimes(1);
   });
 
   it('reads every pass in the caller\'s transaction and never the root client', async () => {

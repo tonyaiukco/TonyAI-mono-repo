@@ -21,7 +21,7 @@ export async function readInventoryBoundary(
   snapshot: CaptureSnapshot,
   query: { boundaryId: string; organisationId: string; accessibleSubsidiaryIds: readonly string[] },
 ): Promise<InventoryBoundarySnapshot | null> {
-  if (!(snapshot instanceof CaptureSnapshot)) {
+  if (!CaptureSnapshot.isOpened(snapshot)) {
     throw new CaptureSnapshotError('An inventory boundary is read in a snapshot opened by CaptureSnapshot.open only.');
   }
   const db = snapshot.tx;

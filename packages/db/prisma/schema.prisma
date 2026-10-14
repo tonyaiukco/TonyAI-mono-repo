@@ -924,8 +924,12 @@ model InventorySource {
   // Mapped: the category and, for a typed one, its activity type (21).
   category                String?
   activityType            String?                     @map("activity_type")
-  // '' for no activity type, so the uniqueness key needs no NULLS NOT DISTINCT.
-  activityKey             String                      @map("activity_key")
+  // An included mapped source's claim — its activity type, '' for an untyped
+  // category — and null for every other source: only included mapped
+  // sources are unique by entity, category and type (a named exclusion may
+  // share the key, D05), and a nullable column under a plain unique key needs
+  // no partial or NULLS NOT DISTINCT index.
+  includedActivityKey     String?                     @map("included_activity_key")
   unsupportedReason       String?                     @map("unsupported_reason")
   // 'included' | 'excluded' | 'undetermined'
   applicability           String
@@ -940,7 +944,7 @@ model InventorySource {
   // cadence is its category's policy's, and follows it.
   policy                  InventoryAttributionPolicy? @relation(fields: [boundaryId, subsidiaryId, category, reportingPeriod], references: [boundaryId, subsidiaryId, category, reportingPeriod], onDelete: NoAction, onUpdate: Cascade)
 
-  @@unique([boundaryId, subsidiaryId, locationKey, category, activityKey])
+  @@unique([boundaryId, subsidiaryId, locationKey, category, includedActivityKey])
   @@index([boundaryId, subsidiaryId, category, reportingPeriod])
   @@index([boundaryId, locationId, subsidiaryId])
   @@map("inventory_sources")

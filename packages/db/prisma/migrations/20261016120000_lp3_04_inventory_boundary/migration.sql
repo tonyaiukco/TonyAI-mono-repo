@@ -21,8 +21,9 @@
 --    yet (W1).
 --
 -- No index here is partial or NULLS NOT DISTINCT: the company entity's site
--- key is the nil uuid and an untyped source's activity key '', so every key is
--- one Prisma models (the CI migration-diff gate accepts no other raw index).
+-- key is the nil uuid, and a source's claim key is null unless it is included
+-- and mapped, so every key is one Prisma models (the CI migration-diff gate
+-- accepts no other raw index).
 -- New tables only — nothing existing is rewritten — but the foreign keys take
 -- SHARE ROW EXCLUSIVE on `organisations`, `subsidiaries` and `locations`, so a
 -- lock wait gives up after 5 s rather than stall writes behind a long
@@ -136,7 +137,7 @@ CREATE TABLE "inventory_sources" (
     "mapping" TEXT NOT NULL,
     "category" TEXT,
     "activity_type" TEXT,
-    "activity_key" TEXT NOT NULL,
+    "included_activity_key" TEXT,
     "unsupported_reason" TEXT,
     "applicability" TEXT NOT NULL,
     "reason" TEXT,
@@ -171,7 +172,7 @@ CREATE INDEX "inventory_sources_boundary_id_subsidiary_id_category_report_idx" O
 CREATE INDEX "inventory_sources_boundary_id_location_id_subsidiary_id_idx" ON "inventory_sources"("boundary_id", "location_id", "subsidiary_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "inventory_sources_boundary_id_subsidiary_id_location_key_ca_key" ON "inventory_sources"("boundary_id", "subsidiary_id", "location_key", "category", "activity_key");
+CREATE UNIQUE INDEX "inventory_sources_boundary_id_subsidiary_id_location_key_ca_key" ON "inventory_sources"("boundary_id", "subsidiary_id", "location_key", "category", "included_activity_key");
 
 -- AddForeignKey
 ALTER TABLE "inventory_boundaries" ADD CONSTRAINT "inventory_boundaries_organisation_id_fkey" FOREIGN KEY ("organisation_id") REFERENCES "organisations"("id") ON DELETE CASCADE ON UPDATE NO ACTION;
@@ -206,7 +207,6 @@ ALTER TABLE "inventory_sources" ADD CONSTRAINT "inventory_sources_boundary_id_lo
 -- AddForeignKey
 ALTER TABLE "inventory_sources" ADD CONSTRAINT "inventory_sources_boundary_id_subsidiary_id_category_repor_fkey" FOREIGN KEY ("boundary_id", "subsidiary_id", "category", "reporting_period") REFERENCES "inventory_attribution_policies"("boundary_id", "subsidiary_id", "category", "reporting_period") ON DELETE NO ACTION ON UPDATE CASCADE;
 
-
 -- ---------------------------------------------------------------------------
 -- 1. What a row may hold, whoever writes it. Prisma models no CHECK, so it
 --    reports no drift for these; `runtime-role.mjs` pins each one's definition
@@ -239,6 +239,8 @@ ALTER TABLE "inventory_boundary_subsidiaries"
   );
 
 ALTER TABLE "inventory_boundary_sites"
+  -- The nil uuid is the company entity's key in cells and sources, never a site.
+  ADD CONSTRAINT "inventory_boundary_sites_location_check" CHECK ("location_id" <> '00000000-0000-0000-0000-000000000000'::uuid),
   ADD CONSTRAINT "inventory_boundary_sites_months_check" CHECK (
     "first_month" BETWEEN 1 AND 12 AND "last_month" BETWEEN "first_month" AND 12
   ),
@@ -270,19 +272,28 @@ ALTER TABLE "inventory_sources"
   ),
   ADD CONSTRAINT "inventory_sources_name_check" CHECK ("name" IS NFC NORMALIZED AND char_length("name") BETWEEN 1 AND 200
         AND "name" !~ '^[[:space:]]|[[:space:]]$|[[:cntrl:]]|[­͏؜ᅟᅠ឴឵᠋-᠏​-‏‪-‮⁠-⁯ㅤ︀-️﻿ﾠ￹-￻\U000E0000-\U000E0FFF]'),
-  ADD CONSTRAINT "inventory_sources_activity_key_check" CHECK (
-        "activity_key" = COALESCE("activity_type", '')
-    AND ("activity_type" IS NULL OR "activity_type" ~ '^[A-Za-z0-9_-]{1,32}$')
+  -- Only an included mapped source claims its key (its activity type, '' for
+  -- an untyped category); every other source's is null, so a named exclusion
+  -- may share an included meter's entity, category and type (D05).
+  ADD CONSTRAINT "inventory_sources_included_key_check" CHECK (
+    "included_activity_key" IS NOT DISTINCT FROM
+      CASE WHEN "applicability" = 'included' AND "mapping" = 'mapped' THEN COALESCE("activity_type", '') END
   ),
   -- A mapped source: a Scope 1/2 category, the scope CATEGORY_SCOPE_MAP gives
-  -- it, and an activity type exactly when the category is typed (follow-up
-  -- (21)). An unsupported one: no category or type, a reason, a declared scope.
+  -- it, and — for a typed category alone — one of its activity types
+  -- (`recordActivityTypesFor`; follow-up (21)). An unsupported one: no category
+  -- or type, a reason, a declared scope.
   ADD CONSTRAINT "inventory_sources_mapping_check" CHECK (
     ("mapping" = 'mapped'
       AND "category" IN ('Electricity', 'Natural Gas', 'Fuel', 'Mobile Combustion', 'Refrigerants')
       AND "unsupported_reason" IS NULL
       AND "scope" = CASE "category" WHEN 'Electricity' THEN 2 ELSE 1 END
-      AND ("activity_type" IS NOT NULL) = ("category" IN ('Fuel', 'Mobile Combustion', 'Refrigerants')))
+      AND CASE "category"
+            WHEN 'Fuel' THEN "activity_type" IS NOT NULL AND "activity_type" IN ('diesel', 'gas_oil', 'fuel_oil', 'burning_oil', 'lpg')
+            WHEN 'Mobile Combustion' THEN "activity_type" IS NOT NULL AND "activity_type" IN ('diesel', 'petrol', 'lpg', 'cng')
+            WHEN 'Refrigerants' THEN "activity_type" IS NOT NULL AND "activity_type" IN ('R-32', 'R-134a', 'R-404A', 'R-407C', 'R-407F', 'R-410A', 'R-448A', 'R-449A', 'R-1234yf')
+            ELSE "activity_type" IS NULL
+          END)
     OR ("mapping" = 'unsupported'
       AND "category" IS NULL
       AND "activity_type" IS NULL
@@ -319,11 +330,13 @@ ALTER TABLE "inventory_sources"
 -- never UPDATE OF: the integrity check refuses a narrowed one.
 
 -- The header. Born unfrozen and unconfirmed (its CHECK ties a confirmation to
--- a freeze); nothing but its decision and its freeze ever changes; it freezes once, at the database's
--- clock, and is confirmed in the same update if at all, also at the database's
--- clock; frozen, it takes no update and no delete — but its organisation's: a
--- cascade from `organisations` reaches it after the organisation's row is
--- gone, and only the owner deletes an organisation (LP4-01, TA004).
+-- a freeze); nothing but its decision and its freeze ever changes; it freezes
+-- once — in a READ COMMITTED transaction (W8), with every site inside its
+-- subsidiary's months — at the database's clock as the freeze runs, and is
+-- confirmed in the same update if at all, at the same instant; frozen, it
+-- takes no update and no delete — but its organisation's: a cascade from
+-- `organisations` reaches it after the organisation's row is gone, and only
+-- the owner deletes an organisation (LP4-01, TA004).
 CREATE FUNCTION "public"."inventory_boundaries_frozen"() RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -331,6 +344,7 @@ SET search_path = ''
 AS $fn$
 DECLARE
   changing CONSTANT text[] := ARRAY['decision', 'decided_by', 'decided_at', 'frozen_at'];
+  stamped timestamptz;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW."frozen_at" IS NOT NULL THEN
@@ -362,9 +376,39 @@ BEGIN
       MESSAGE = format('inventory boundary %s keeps its organisation, year, version and author', OLD."id");
   END IF;
   IF NEW."frozen_at" IS NOT NULL THEN
-    NEW."frozen_at" := pg_catalog.now();
+    -- W8: in READ COMMITTED each statement below reads what is committed once
+    -- this row's lock is held — every row writer's share lock released — so
+    -- the copy names every row the version holds. A stricter snapshot, taken
+    -- before that wait, misses a row committed meanwhile, with no
+    -- serialization failure (its lock was a share lock), and freezes it
+    -- unnamed (the review seats' finding, reproduced).
+    IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+      RAISE EXCEPTION USING
+        ERRCODE = 'TA014',
+        MESSAGE = format('inventory boundary %s freezes in a READ COMMITTED transaction of its own (W8), not at %s',
+                         OLD."id", pg_catalog.current_setting('transaction_isolation'));
+    END IF;
+    -- A site operates inside its subsidiary's months. The rows' guard holds
+    -- each write to that rule; this holds the whole version, which two
+    -- writers could otherwise pass between them.
+    IF EXISTS (
+      SELECT 1
+        FROM "public"."inventory_boundary_sites" bl
+        JOIN "public"."inventory_boundary_subsidiaries" bs
+          ON bs."boundary_id" = bl."boundary_id" AND bs."subsidiary_id" = bl."subsidiary_id"
+       WHERE bl."boundary_id" = OLD."id"
+         AND (bl."first_month" < bs."first_month" OR bl."last_month" > bs."last_month")
+    ) THEN
+      RAISE EXCEPTION USING
+        ERRCODE = 'TA014',
+        MESSAGE = format('inventory boundary %s declares a site operating outside its subsidiary''s months', OLD."id");
+    END IF;
+    -- The moment the freeze ran, not its transaction's start: the version
+    -- may hold rows committed after that.
+    stamped := pg_catalog.clock_timestamp();
+    NEW."frozen_at" := stamped;
     IF NEW."decision" = 'confirmed' THEN
-      NEW."decided_at" := pg_catalog.now();
+      NEW."decided_at" := stamped;
     END IF;
     -- W7: the names and geography the version is reported with, as they are
     -- now (the reports' own choice of name: trading, else legal).
@@ -385,12 +429,18 @@ BEGIN
 END
 $fn$;
 
--- Every row of a version. Its version's header, read FOR SHARE: not found, the
--- version itself is being deleted (its cascade, or its organisation's) and the
--- row goes with it; frozen, nothing changes. A row stays in its version. While
--- the version stands, its subsidiary or site is not deleted (W9): a declared
--- subsidiary's or site's row reached by a cascade from that parent is refused —
--- the API's delete paths count these rows first and answer 409.
+-- Every row of a version. A row keeps its key — its version, entity and
+-- category, a source its id and entity — so a change of one is a delete and an
+-- add: a policy re-keyed under its sources would carry them along through the
+-- cadence key's ON UPDATE CASCADE (the review seats' finding). Its version's
+-- header, read FOR SHARE: not found, the version itself is being deleted (its
+-- cascade, or its organisation's) and the row goes with it; frozen, nothing
+-- changes. A site operates inside its subsidiary's months, both ways round.
+-- While the version stands, its subsidiary or site is not deleted (W9): a
+-- declared subsidiary's or site's row reached by a cascade from that parent is
+-- refused — the API's delete paths count these rows first and answer 409.
+-- Conditions naming a column only some tables have are nested under the
+-- table's name: PL/pgSQL plans a condition whole.
 CREATE FUNCTION "public"."inventory_boundary_rows_frozen"() RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -399,11 +449,22 @@ AS $fn$
 DECLARE
   boundary uuid;
   frozen timestamptz;
+  keys text[];
 BEGIN
-  IF TG_OP = 'UPDATE' AND NEW."boundary_id" IS DISTINCT FROM OLD."boundary_id" THEN
-    RAISE EXCEPTION USING
-      ERRCODE = 'TA014',
-      MESSAGE = format('%s: a row stays in its inventory boundary version', TG_TABLE_NAME);
+  IF TG_OP = 'UPDATE' THEN
+    keys := CASE TG_TABLE_NAME
+      WHEN 'inventory_boundary_subsidiaries' THEN ARRAY['boundary_id', 'organisation_id', 'subsidiary_id']
+      WHEN 'inventory_boundary_sites' THEN ARRAY['boundary_id', 'subsidiary_id', 'location_id']
+      WHEN 'inventory_attribution_policies' THEN ARRAY['boundary_id', 'subsidiary_id', 'category']
+      WHEN 'inventory_applicability_cells' THEN ARRAY['boundary_id', 'subsidiary_id', 'location_id', 'location_key', 'category']
+      ELSE ARRAY['id', 'boundary_id', 'subsidiary_id', 'location_id', 'location_key']
+    END;
+    IF (SELECT pg_catalog.jsonb_object_agg(k, pg_catalog.to_jsonb(NEW) -> k) FROM pg_catalog.unnest(keys) AS k)
+       IS DISTINCT FROM (SELECT pg_catalog.jsonb_object_agg(k, pg_catalog.to_jsonb(OLD) -> k) FROM pg_catalog.unnest(keys) AS k) THEN
+      RAISE EXCEPTION USING
+        ERRCODE = 'TA014',
+        MESSAGE = format('%s keeps its key in its inventory boundary version: delete the row and add another', TG_TABLE_NAME);
+    END IF;
   END IF;
   IF TG_OP = 'DELETE' THEN
     boundary := OLD."boundary_id";
@@ -425,9 +486,30 @@ BEGIN
       ERRCODE = 'TA014',
       MESSAGE = format('inventory boundary %s is frozen: %s takes no change', boundary, TG_TABLE_NAME);
   END IF;
+  IF TG_OP <> 'DELETE' THEN
+    IF TG_TABLE_NAME = 'inventory_boundary_sites' THEN
+      IF EXISTS (
+        SELECT 1 FROM "public"."inventory_boundary_subsidiaries" bs
+         WHERE bs."boundary_id" = NEW."boundary_id" AND bs."subsidiary_id" = NEW."subsidiary_id"
+           AND (NEW."first_month" < bs."first_month" OR NEW."last_month" > bs."last_month")
+      ) THEN
+        RAISE EXCEPTION USING
+          ERRCODE = 'TA014',
+          MESSAGE = format('site %s operates outside its subsidiary''s months in inventory boundary %s', NEW."location_id", boundary);
+      END IF;
+    ELSIF TG_TABLE_NAME = 'inventory_boundary_subsidiaries' AND TG_OP = 'UPDATE' THEN
+      IF EXISTS (
+        SELECT 1 FROM "public"."inventory_boundary_sites" bl
+         WHERE bl."boundary_id" = NEW."boundary_id" AND bl."subsidiary_id" = NEW."subsidiary_id"
+           AND (bl."first_month" < NEW."first_month" OR bl."last_month" > NEW."last_month")
+      ) THEN
+        RAISE EXCEPTION USING
+          ERRCODE = 'TA014',
+          MESSAGE = format('subsidiary %s has a site operating outside its months in inventory boundary %s', NEW."subsidiary_id", boundary);
+      END IF;
+    END IF;
+  END IF;
   IF TG_OP = 'DELETE' THEN
-    -- Nested, not joined with AND: PL/pgSQL plans a condition whole, and a
-    -- table without the column (a policy has no site) would fail to plan it.
     IF TG_TABLE_NAME = 'inventory_boundary_subsidiaries' THEN
       IF NOT EXISTS (SELECT 1 FROM "public"."subsidiaries" s WHERE s."id" = OLD."subsidiary_id") THEN
         RAISE EXCEPTION USING

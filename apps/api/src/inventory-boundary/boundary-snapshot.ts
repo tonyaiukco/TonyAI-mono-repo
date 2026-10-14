@@ -20,11 +20,14 @@ import {
  * obligations and their evidence periods, an included cell's sources (W1).
  *
  * It reports the version as it is, gaps and all: a missing cell or policy, an
- * included cell with no source, a source under an excluded cell are LP3-04 PR
- * C's coverage gaps to raise, not this builder's to hide or refuse. Structural
- * breaches the tables can hold none of (a duplicate policy, an included mapped
- * source off its policy's cadence, a source named by two cells) need no check
- * here: the keys refuse them.
+ * included cell with no source, a source under an excluded cell or at an
+ * entity its policy does not select are LP3-04 PR C's coverage gaps to raise,
+ * not this builder's to hide or refuse. The structural breaches the database
+ * refuses need no check here: a duplicate policy, a second included mapped
+ * source of one key, an included mapped source off its policy's cadence, a
+ * typed source naming a type its category does not have, a site operating
+ * outside its subsidiary's months (keys, CHECKs and the rows' guard); a source
+ * named by two cells cannot even be stored, since a cell's sources are derived.
  */
 
 /** A version's header. */

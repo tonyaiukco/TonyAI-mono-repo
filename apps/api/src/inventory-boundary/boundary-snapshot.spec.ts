@@ -105,18 +105,24 @@ describe('buildBoundarySnapshot', () => {
   });
 
   it('an included cell names every included mapped source at its entity and category, and no other', () => {
+    // Two generators of one site — diesel and LPG — under one Fuel cell; a
+    // named exclusion of the same key (D05); the company's own diesel; another
+    // category at the site. A state the database holds (two included sources
+    // of one key it refuses).
+    const fuel = { category: 'Fuel', scope: 1 };
     const snapshot = buildBoundarySnapshot(rows({
+      policies: [{ subsidiaryId: SUB, category: 'Fuel', level: 'sites', reportingPeriod: 'monthly' }],
+      cells: [{ subsidiaryId: SUB, locationId: SITE, category: 'Fuel', applicability: 'included', reason: null }],
       sources: [
-        source({ id: 'meter-2' }),
-        source({ id: 'meter-1' }),
-        source({ id: 'meter-excluded', applicability: 'excluded', reason: 'Sub-metered by the landlord', reportingPeriod: null, evidenceReportingPeriod: null }),
-        source({ id: 'company-meter', locationId: null }),
-        source({ id: 'boiler', category: 'Natural Gas', scope: 1 }),
+        source({ id: 'gen-lpg', ...fuel, activityType: 'lpg' }),
+        source({ id: 'gen-diesel', ...fuel, activityType: 'diesel' }),
+        source({ id: 'contractor-diesel', ...fuel, activityType: 'diesel', applicability: 'excluded', reason: "The contractor's own Scope 1", reportingPeriod: null, evidenceReportingPeriod: null }),
+        source({ id: 'company-diesel', ...fuel, activityType: 'diesel', locationId: null }),
+        source({ id: 'site-meter' }),
       ],
-      subsidiaries: rows().subsidiaries,
     }));
     expect(snapshot.applicability).toEqual([
-      { subsidiaryId: SUB, locationId: SITE, category: 'Electricity', applicability: 'included', sourceIds: ['meter-1', 'meter-2'] },
+      { subsidiaryId: SUB, locationId: SITE, category: 'Fuel', applicability: 'included', sourceIds: ['gen-diesel', 'gen-lpg'] },
     ]);
   });
 
@@ -177,10 +183,22 @@ describe('buildBoundarySnapshot', () => {
   });
 
   it('is the same snapshot whatever order the rows were read in', () => {
+    // The reader orders nothing: the builder's sort is the only determinism a
+    // dataset's fingerprint will have (qa-auditor P3-6: sites and policies too).
     const base = rows({
       subsidiaries: [
         rows().subsidiaries[0],
         { subsidiaryId: 'sub-0', firstMonth: 1, lastMonth: 12, frozenName: null, frozenGeographyCode: null, liveName: 'Zero', liveGeographyCode: 'TR' },
+      ],
+      sites: [
+        rows().sites[0],
+        { subsidiaryId: SUB, locationId: 'site-0', firstMonth: 1, lastMonth: 12, frozenName: null, frozenGeographyCode: null, liveName: 'Zero site', liveGeographyCode: 'GB' },
+        { subsidiaryId: 'sub-0', locationId: 'site-9', firstMonth: 1, lastMonth: 12, frozenName: null, frozenGeographyCode: null, liveName: 'Nine', liveGeographyCode: 'TR' },
+      ],
+      policies: [
+        rows().policies[0],
+        { subsidiaryId: SUB, category: 'Natural Gas', level: 'company', reportingPeriod: 'annual' },
+        { subsidiaryId: 'sub-0', category: 'Electricity', level: 'company', reportingPeriod: 'quarterly' },
       ],
       cells: [
         { subsidiaryId: SUB, locationId: SITE, category: 'Natural Gas', applicability: 'undetermined', reason: 'Awaiting the landlord' },
@@ -191,6 +209,8 @@ describe('buildBoundarySnapshot', () => {
     const reversed = {
       ...base,
       subsidiaries: [...base.subsidiaries].reverse(),
+      sites: [...base.sites].reverse(),
+      policies: [...base.policies].reverse(),
       cells: [...base.cells].reverse(),
       sources: [...base.sources].reverse(),
     };

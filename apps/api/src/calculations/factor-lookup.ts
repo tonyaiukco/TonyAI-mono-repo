@@ -79,7 +79,23 @@ export class CaptureSnapshotError extends Error {}
  * it reads in a snapshot of its own.
  */
 export class CaptureSnapshot {
-  private constructor(readonly tx: Prisma.TransactionClient) {}
+  // An ES private field, not TypeScript's `private`: an object made from the
+  // prototype (`Object.create`) passes `instanceof` but has no `#tx`, so
+  // `isOpened` refuses it (security-rls P3-2).
+  readonly #tx: Prisma.TransactionClient;
+
+  private constructor(tx: Prisma.TransactionClient) {
+    this.#tx = tx;
+  }
+
+  get tx(): Prisma.TransactionClient {
+    return this.#tx;
+  }
+
+  /** Was this snapshot opened by `open` — not merely shaped like one? */
+  static isOpened(value: unknown): value is CaptureSnapshot {
+    return typeof value === 'object' && value !== null && #tx in value;
+  }
 
   static async open(tx: Prisma.TransactionClient): Promise<CaptureSnapshot> {
     // The root client has `$transaction`; an interactive transaction's does
@@ -169,7 +185,7 @@ export async function lookupFactorPath(
   inputUnit: string,
   snapshot?: CaptureSnapshot,
 ): Promise<FactorLookupResult> {
-  if (snapshot !== undefined && !(snapshot instanceof CaptureSnapshot)) {
+  if (snapshot !== undefined && !CaptureSnapshot.isOpened(snapshot)) {
     throw new CaptureSnapshotError('The factor lookup reads in a snapshot opened by CaptureSnapshot.open only.');
   }
   // Exactly the key's four columns reach the query — a caller's wider object

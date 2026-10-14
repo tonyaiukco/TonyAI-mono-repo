@@ -86,11 +86,34 @@ const NIL = '00000000-0000-0000-0000-000000000000';
 const header = (tenant: Tenant, over: Partial<Prisma.InventoryBoundaryUncheckedCreateInput> = {}) => ({
   id: randomUUID(), organisationId: tenant.organisationId, reportingYear: 2026, version: 1, createdBy: tenant.users.superAdmin.id, ...over,
 });
-const sourceRow = (boundaryId: string, tenant: Tenant, over: Partial<Prisma.InventorySourceUncheckedCreateInput> = {}) => ({
-  id: randomUUID(), boundaryId, subsidiaryId: tenant.subsidiaryId, locationId: siteA, locationKey: siteA,
-  name: 'Int-test meter', scope: 2, mapping: 'mapped', category: 'Electricity', activityKey: '',
-  applicability: 'included', reportingPeriod: 'monthly', evidenceReportingPeriod: 'monthly', ...over,
-});
+/**
+ * A source row of the version: the fixture's site meter unless overridden. Its
+ * claim key follows the row (an included mapped source claims its type, ''
+ * untyped; every other none) unless a case sets it to break that rule.
+ */
+const sourceRow = (boundaryId: string, tenant: Tenant, over: Partial<Prisma.InventorySourceUncheckedCreateInput> = {}) => {
+  const row = {
+    id: randomUUID(), boundaryId, subsidiaryId: tenant.subsidiaryId, locationId: siteA as string | null, locationKey: siteA,
+    name: 'Int-test meter', scope: 2, mapping: 'mapped', category: 'Electricity' as string | null, activityType: null as string | null,
+    applicability: 'included', reportingPeriod: 'monthly' as string | null, evidenceReportingPeriod: 'monthly' as string | null, ...over,
+  };
+  const claim = row.applicability === 'included' && row.mapping === 'mapped' ? (row.activityType ?? '') : null;
+  return { includedActivityKey: claim, ...row };
+};
+
+/** Declares one more subsidiary of the version, with its site and one row in each row table. */
+async function createRows(db: Prisma.TransactionClient | PrismaService, boundaryId: string, organisationId: string, subsidiaryId: string, locationId: string) {
+  await db.inventoryBoundarySubsidiary.create({ data: { boundaryId, organisationId, subsidiaryId, firstMonth: 1, lastMonth: 12 } });
+  await db.inventoryBoundarySite.create({ data: { boundaryId, subsidiaryId, locationId, firstMonth: 1, lastMonth: 12 } });
+  await db.inventoryAttributionPolicy.create({ data: { boundaryId, subsidiaryId, category: 'Electricity', level: 'sites', reportingPeriod: 'monthly' } });
+  await db.inventoryApplicabilityCell.create({ data: { boundaryId, subsidiaryId, locationId, locationKey: locationId, category: 'Electricity', applicability: 'included' } });
+  await db.inventorySource.create({
+    data: {
+      boundaryId, subsidiaryId, locationId, locationKey: locationId, name: 'Int-test second meter', scope: 2, mapping: 'mapped',
+      category: 'Electricity', includedActivityKey: '', applicability: 'included', reportingPeriod: 'monthly', evidenceReportingPeriod: null,
+    },
+  });
+}
 
 describe('the schema: keys and CHECKs', () => {
   it("declares only its own organisation's subsidiaries, and only their own sites", async () => {
@@ -161,7 +184,7 @@ describe('the schema: keys and CHECKs', () => {
     ['a Fuel source with no fuel named (21)', (id) => (tx) =>
       tx.inventorySource.create({ data: sourceRow(id, a, { category: 'Fuel', scope: 1, applicability: 'excluded', reason: 'Why', reportingPeriod: null, evidenceReportingPeriod: null }) })],
     ['an Electricity source naming an activity type', (id) => (tx) =>
-      tx.inventorySource.create({ data: sourceRow(id, a, { activityType: 'grid_electricity', activityKey: 'grid_electricity', applicability: 'excluded', reason: 'Why', reportingPeriod: null, evidenceReportingPeriod: null }) })],
+      tx.inventorySource.create({ data: sourceRow(id, a, { activityType: 'grid_electricity', applicability: 'excluded', reason: 'Why', reportingPeriod: null, evidenceReportingPeriod: null }) })],
     ['an unsupported source with a category', (id) => (tx) =>
       tx.inventorySource.create({ data: sourceRow(id, a, { mapping: 'unsupported', unsupportedReason: 'No factor' }) })],
     ['an unsupported source with no reason', (id) => (tx) =>
@@ -172,7 +195,19 @@ describe('the schema: keys and CHECKs', () => {
       tx.inventorySource.create({ data: sourceRow(id, a, { applicability: 'excluded', reason: 'Why', reportingPeriod: null }) })],
     ['a nameless source', (id) => (tx) => tx.inventorySource.create({ data: sourceRow(id, a, { name: '' }) })],
     ['a source named with a bidi override', (id) => (tx) => tx.inventorySource.create({ data: sourceRow(id, a, { name: `Meter ${rlo}1` }) })],
-    ['an activity key that is not its type', (id) => (tx) => tx.inventorySource.create({ data: sourceRow(id, a, { activityKey: 'other' }) })],
+    ['an included source claiming a key that is not its type', (id) => (tx) => tx.inventorySource.create({ data: sourceRow(id, a, { includedActivityKey: 'other' }) })],
+    ['an excluded source claiming a key', (id) => (tx) =>
+      tx.inventorySource.create({ data: sourceRow(id, a, { applicability: 'excluded', reason: 'Why', reportingPeriod: null, evidenceReportingPeriod: null, includedActivityKey: '' }) })],
+    // Review round 1 (qa-auditor P2-4): the type must be one its category has (recordActivityTypesFor).
+    ['a Fuel source naming a refrigerant', (id) => (tx) =>
+      tx.inventorySource.create({ data: sourceRow(id, a, { category: 'Fuel', scope: 1, activityType: 'R-410A', applicability: 'excluded', reason: 'Why', reportingPeriod: null, evidenceReportingPeriod: null }) })],
+    ['a Mobile Combustion source naming no fuel of the list', (id) => (tx) =>
+      tx.inventorySource.create({ data: sourceRow(id, a, { category: 'Mobile Combustion', scope: 1, activityType: 'banana', applicability: 'excluded', reason: 'Why', reportingPeriod: null, evidenceReportingPeriod: null }) })],
+    // (architect P3-4): the nil uuid is the company entity's key, never a site.
+    ['a site at the nil uuid', (id) => async (tx) => {
+      await tx.location.create({ data: { id: NIL, subsidiaryId: a.subsidiaryId, name: 'Int-test nil site', geographyCode: 'UK' } });
+      return tx.inventoryBoundarySite.create({ data: { boundaryId: id, subsidiaryId: a.subsidiaryId, locationId: NIL, firstMonth: 7, lastMonth: 12 } });
+    }],
   ])('refuses %s (CHECK)', async (_name, write) => {
     expect(
       await refusedAsOwner(async (tx) => {
@@ -180,6 +215,62 @@ describe('the schema: keys and CHECKs', () => {
         await write(boundaryId)(tx);
       }),
     ).toBe('23514');
+  });
+
+  it('names an excluded and an undetermined source beside an included one of the same key (D05), and refuses a second included one', async () => {
+    // Review round 1 (architect P2-4, qa-auditor P2-3): only included mapped
+    // sources are unique by entity, category and activity type.
+    const named = await withRollback(owner, async (tx) => {
+      const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
+      await tx.inventorySource.create({ data: sourceRow(boundaryId, a, { name: 'Tenant sub-meter', applicability: 'excluded', reason: 'Recharged to the tenant', reportingPeriod: null, evidenceReportingPeriod: null }) });
+      await tx.inventorySource.create({ data: sourceRow(boundaryId, a, { name: 'Landlord meter', applicability: 'undetermined', reason: 'Awaiting the lease', reportingPeriod: null, evidenceReportingPeriod: null }) });
+      return tx.inventorySource.count({ where: { boundaryId } });
+    });
+    expect(named).toBe(3);
+    expect(['P2002', '23505']).toContain(
+      await refusedAsOwner(async (tx) => {
+        const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
+        await tx.inventorySource.create({ data: sourceRow(boundaryId, a, { name: 'A second included meter' }) });
+      }),
+    );
+  });
+
+  it("keeps a site's months inside its subsidiary's (a site is not in the boundary before its subsidiary is)", async () => {
+    // Review round 1 (architect P2-3, qa-auditor P2-5): a subsidiary acquired
+    // in July has no site that operated, for this inventory, in June. The
+    // fixture's subsidiary operates all year, its site from July.
+    expect(
+      await refusedAsOwner(async (tx) => {
+        const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
+        await tx.inventoryBoundarySubsidiary.updateMany({ where: { boundaryId }, data: { firstMonth: 8 } });
+      }),
+      'the subsidiary shrinks below its site',
+    ).toBe('TA014');
+    expect(
+      await refusedAsOwner(async (tx) => {
+        const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
+        await tx.inventoryBoundarySubsidiary.updateMany({ where: { boundaryId }, data: { firstMonth: 7 } });
+        await tx.inventoryBoundarySite.updateMany({ where: { boundaryId }, data: { firstMonth: 6 } });
+      }),
+      'the site grows past its subsidiary',
+    ).toBe('TA014');
+    expect(
+      await refusedAsOwner(async (tx) => {
+        const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
+        await tx.inventoryBoundarySubsidiary.updateMany({ where: { boundaryId }, data: { firstMonth: 7 } });
+        const second = await tx.location.create({ data: { subsidiaryId: a.subsidiaryId, name: 'Int-test second site', geographyCode: 'UK' } });
+        await tx.inventoryBoundarySite.create({ data: { boundaryId, subsidiaryId: a.subsidiaryId, locationId: second.id, firstMonth: 1, lastMonth: 12 } });
+      }),
+      'a new site operating before its subsidiary',
+    ).toBe('TA014');
+    const inside = await withRollback(owner, async (tx) => {
+      const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
+      await tx.inventoryBoundarySite.updateMany({ where: { boundaryId }, data: { firstMonth: 3, lastMonth: 11 } });
+      await tx.inventoryBoundarySubsidiary.updateMany({ where: { boundaryId }, data: { firstMonth: 3, lastMonth: 11 } });
+      const site = await tx.inventoryBoundarySite.findFirstOrThrow({ where: { boundaryId } });
+      return [site.firstMonth, site.lastMonth];
+    });
+    expect(inside, 'control: a site inside its subsidiary').toEqual([3, 11]);
   });
 
   it("holds an included mapped source to its category's policy cadence, and moves it with the policy", async () => {
@@ -209,7 +300,7 @@ describe('a frozen version takes no change (TA014)', () => {
     expect(await refusedAsOwner((tx) => tx.inventoryBoundary.create({ data: header(a, { version: 3, frozenAt: new Date() }) }))).toBe('TA014');
   });
 
-  it('freezes once, at the database clock, confirmed at the same instant, with the names and geography as they are (W7)', async () => {
+  it('freezes once, at the database clock as it runs, confirmed at the same instant, with the names and geography as they are (W7)', async () => {
     const seen = await withRollback(owner, async (tx) => {
       await tx.subsidiary.update({ where: { id: a.subsidiaryId }, data: { tradingName: 'Alpha Trading' } });
       const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
@@ -224,8 +315,10 @@ describe('a frozen version takes no change (TA014)', () => {
       const site = await tx.inventoryBoundarySite.findFirstOrThrow({ where: { boundaryId } });
       return { now, frozen, company, site };
     });
-    expect(seen.frozen.frozenAt?.getTime()).toBe(seen.now.getTime());
-    expect(seen.frozen.decidedAt?.getTime()).toBe(seen.now.getTime());
+    // Not the caller's 2000-01-01: the database's clock, as the freeze ran.
+    expect(seen.frozen.frozenAt!.getTime()).toBeGreaterThanOrEqual(seen.now.getTime());
+    expect(seen.frozen.frozenAt!.getTime() - seen.now.getTime()).toBeLessThan(60_000);
+    expect(seen.frozen.decidedAt?.getTime()).toBe(seen.frozen.frozenAt!.getTime());
     expect([seen.company.subsidiaryName, seen.company.geographyCode]).toEqual(['Alpha Trading', 'UK']);
     expect([seen.site.locationName, seen.site.geographyCode]).toEqual(['Int-test site A', 'UK']);
   });
@@ -271,6 +364,98 @@ describe('a frozen version takes no change (TA014)', () => {
       return tx.inventoryBoundary.count({ where: { id: boundaryId, subsidiaries: { some: {} } } });
     });
     expect(left).toBe(0);
+  });
+
+  it('freezes only in READ COMMITTED — a stricter snapshot could freeze rows it never saw (W8)', async () => {
+    // Review round 1 (architect P2-2, security-rls P2-1, reproduced there): a
+    // REPEATABLE READ freeze waits on a row writer's FOR SHARE, sees no
+    // serialization failure once it commits, and copies names in a snapshot
+    // that misses that row.
+    for (const isolationLevel of [Prisma.TransactionIsolationLevel.RepeatableRead, Prisma.TransactionIsolationLevel.Serializable]) {
+      const outcome = await failure(
+        owner.$transaction(async (tx) => {
+          const { boundaryId } = await createBoundary(tx, a, { locationId: siteA, version: 70 });
+          await tx.inventoryBoundary.update({ where: { id: boundaryId }, data: { frozenAt: new Date() } });
+          throw new Error('frozen — rolled back');
+        }, { isolationLevel }),
+      );
+      expect(sqlstateOf(outcome), isolationLevel).toBe('TA014');
+    }
+  });
+
+  it('copies the names of a row written while the freeze waited, once that row commits', async () => {
+    const { boundaryId } = await createBoundary(owner, a, { locationId: siteA, version: 71 });
+    const second = await owner.location.create({ data: { subsidiaryId: a.subsidiaryId, name: 'Int-test row-first site', geographyCode: 'TR' } });
+    const wrote = deferred();
+    const gate = deferred();
+    const writer = ownerB.$transaction(async (tx) => {
+      await tx.inventoryBoundarySite.create({ data: { boundaryId, subsidiaryId: a.subsidiaryId, locationId: second.id, firstMonth: 9, lastMonth: 12 } });
+      wrote.resolve();
+      await gate.promise;
+    }, { timeout: 30_000 });
+    const freezer = connectOwner(1);
+    let freeze: Promise<unknown> | undefined;
+    try {
+      await wrote.promise;
+      const pid = await backendPid(freezer);
+      freeze = freezer.inventoryBoundary.update({ where: { id: boundaryId }, data: { frozenAt: new Date() } });
+      // The freeze waits on the writer's share lock of the header.
+      expect(await settledOrBlocked(freeze, pid, observer)).toBe('blocked');
+    } finally {
+      gate.resolve();
+      await writer;
+      await freeze?.catch(() => undefined);
+      await freezer.$disconnect();
+    }
+    await freeze;
+    const row = await owner.inventoryBoundarySite.findUniqueOrThrow({ where: { boundaryId_locationId: { boundaryId, locationId: second.id } } });
+    expect([row.locationName, row.geographyCode]).toEqual(['Int-test row-first site', 'TR']);
+  });
+
+  it('stamps the freeze with the time it ran, not the start of its transaction (security-rls P3-1)', async () => {
+    const seen = await withRollback(owner, async (tx) => {
+      const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
+      await tx.$executeRaw`SELECT pg_sleep(0.3)`;
+      const frozen = await tx.inventoryBoundary.update({
+        where: { id: boundaryId },
+        data: { frozenAt: new Date(), decision: 'confirmed', decidedBy: a.users.superAdmin.id, decidedAt: new Date() },
+      });
+      const [{ started }] = await tx.$queryRaw<{ started: Date }[]>`SELECT now() AS started`;
+      return { frozen, started };
+    });
+    expect(seen.frozen.frozenAt!.getTime() - seen.started.getTime()).toBeGreaterThanOrEqual(250);
+    expect(seen.frozen.decidedAt!.getTime()).toBe(seen.frozen.frozenAt!.getTime());
+  });
+
+  it('keeps every row its key — a policy is not re-keyed under its sources, nor a source moved (review round 1)', async () => {
+    // Architect P2-1, qa-auditor P2-2: the cadence key's ON UPDATE CASCADE
+    // carried a policy's new category or subsidiary into its sources.
+    const other = async (tx: Prisma.TransactionClient, boundaryId: string) => {
+      const sub = await tx.subsidiary.create({ data: { organisationId: a.organisationId, legalName: 'Int-test second declared subsidiary', geographyCode: 'UK' } });
+      await tx.inventoryBoundarySubsidiary.create({ data: { boundaryId, organisationId: a.organisationId, subsidiaryId: sub.id, firstMonth: 1, lastMonth: 12 } });
+      return sub.id;
+    };
+    const rekeys: [string, (tx: Prisma.TransactionClient, ids: { boundaryId: string; sourceId: string }) => Promise<unknown>][] = [
+      ['policy category', (tx, { boundaryId }) => tx.inventoryAttributionPolicy.updateMany({ where: { boundaryId }, data: { category: 'Natural Gas' } })],
+      ['policy subsidiary', async (tx, { boundaryId }) => {
+        const sub = await other(tx, boundaryId);
+        return tx.inventoryAttributionPolicy.updateMany({ where: { boundaryId }, data: { subsidiaryId: sub } });
+      }],
+      ['cell category', (tx, { boundaryId }) => tx.inventoryApplicabilityCell.updateMany({ where: { boundaryId }, data: { category: 'Natural Gas' } })],
+      ['source to the company entity', (tx, { sourceId }) =>
+        tx.inventorySource.update({ where: { id: sourceId }, data: { locationId: null, locationKey: NIL, applicability: 'excluded', reason: 'Moved', reportingPeriod: null, evidenceReportingPeriod: null } })],
+      ['site to another location', async (tx, { boundaryId }) => {
+        const loc = await tx.location.create({ data: { subsidiaryId: a.subsidiaryId, name: 'Int-test moved site', geographyCode: 'UK' } });
+        return tx.$executeRaw`UPDATE inventory_boundary_sites SET location_id = ${loc.id}::uuid WHERE boundary_id = ${boundaryId}::uuid`;
+      }],
+    ];
+    for (const [name, rekey] of rekeys) {
+      const code = await refusedAsOwner(async (tx) => {
+        const ids = await createBoundary(tx, a, { locationId: siteA });
+        await rekey(tx, ids);
+      });
+      expect(code, name).toBe('TA014');
+    }
   });
 
   it('keeps an open version its identity, and every row in its version', async () => {
@@ -460,6 +645,21 @@ describe('RLS and the client roles', () => {
     });
   });
 
+  it('shows a data_entry user only its granted subsidiary\'s rows of a version that also declares another (security-rls P3-4)', async () => {
+    const seen = await withRollback(owner, async (tx) => {
+      const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
+      const other = await tx.subsidiary.create({ data: { organisationId: a.organisationId, legalName: 'Int-test ungranted subsidiary', geographyCode: 'UK' } });
+      const otherSite = await tx.location.create({ data: { subsidiaryId: other.id, name: 'Int-test ungranted site', geographyCode: 'UK' } });
+      await createRows(tx, boundaryId, a.organisationId, other.id, otherSite.id);
+      return {
+        entry: await seenAs(tx, 'authenticated', a.users.dataEntry.id, boundaryId),
+        consultant: await seenAs(tx, 'authenticated', a.users.consultant.id, boundaryId),
+      };
+    });
+    expect(seen.entry).toEqual([1, 1, 1, 1, 1, 1]);
+    expect(seen.consultant).toEqual([1, 2, 2, 2, 2, 2]);
+  });
+
   it('lets no client role, the service role included, and not the runtime role, write a row (42501)', async () => {
     for (const role of ['authenticated', 'service_role']) {
       const code = await refusedAsOwner(async (tx) => {
@@ -515,6 +715,41 @@ describe('one capture snapshot: the reader and the one factor lookup', () => {
     } finally {
       await owner.inventoryBoundary.delete({ where: { id: fixture.boundaryId } });
     }
+  });
+
+  it('answers a version declaring any subsidiary outside the caller\'s access as not found, and an empty one too (qa-auditor P1-1)', async () => {
+    const other = await owner.subsidiary.create({ data: { organisationId: a.organisationId, legalName: 'Int-test second subsidiary of A', geographyCode: 'UK' } });
+    const otherSite = await owner.location.create({ data: { subsidiaryId: other.id, name: 'Int-test second site of A', geographyCode: 'UK' } });
+    const mixed = await createBoundary(owner, a, { locationId: siteA, version: 42 });
+    await createRows(owner, mixed.boundaryId, a.organisationId, other.id, otherSite.id);
+    const empty = await owner.inventoryBoundary.create({ data: header(a, { version: 43 }) });
+    try {
+      const seen = await capture(async (snapshot) => ({
+        partial: await readInventoryBoundary(snapshot, { boundaryId: mixed.boundaryId, organisationId: a.organisationId, accessibleSubsidiaryIds: [a.subsidiaryId] }),
+        whole: await readInventoryBoundary(snapshot, { boundaryId: mixed.boundaryId, organisationId: a.organisationId, accessibleSubsidiaryIds: [a.subsidiaryId, other.id] }),
+        empty: await readInventoryBoundary(snapshot, { boundaryId: empty.id, organisationId: a.organisationId, accessibleSubsidiaryIds: [a.subsidiaryId, other.id] }),
+      }));
+      expect(seen.partial).toBeNull();
+      expect(seen.empty).toBeNull();
+      expect(seen.whole?.subsidiaryIds).toEqual([a.subsidiaryId, other.id].sort());
+    } finally {
+      await owner.inventoryBoundary.deleteMany({ where: { id: { in: [mixed.boundaryId, empty.id] } } });
+      await owner.location.delete({ where: { id: otherSite.id } });
+      await owner.subsidiary.delete({ where: { id: other.id } });
+    }
+  });
+
+  it('refuses a snapshot it did not open, however it was made (security-rls P3-2)', async () => {
+    // Made from the prototype, with the transaction a real one exposes: `instanceof` passes, `#tx` is absent.
+    const forged = Object.defineProperty(Object.create(CaptureSnapshot.prototype), 'tx', { value: runtime }) as CaptureSnapshot;
+    expect(forged).toBeInstanceOf(CaptureSnapshot);
+    expect(
+      await failure(readInventoryBoundary(forged, { boundaryId: randomUUID(), organisationId: a.organisationId, accessibleSubsidiaryIds: [a.subsidiaryId] })),
+    ).toBeInstanceOf(CaptureSnapshotError);
+    const engine = new CalculationsService(runtime, INT_FACTOR_POLICY);
+    expect(
+      await failure(engine.lookupFactorPath({ category: 'Electricity', activityType: 'grid_electricity', geographyCode: 'UK', reportingYear: 2087 }, 'kWh', forged)),
+    ).toBeInstanceOf(CaptureSnapshotError);
   });
 
   it('holds its snapshot while another session renames a site and withdraws the factor it priced with', async () => {

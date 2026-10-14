@@ -639,7 +639,7 @@ export async function createBoundary(
   await prisma.inventorySource.create({
     data: {
       id: sourceId, boundaryId, subsidiaryId, locationId: options.locationId, locationKey: options.locationId,
-      name: 'Int-test meter', scope: 2, mapping: 'mapped', category: 'Electricity', activityKey: '',
+      name: 'Int-test meter', scope: 2, mapping: 'mapped', category: 'Electricity', includedActivityKey: '',
       applicability: 'included', reportingPeriod: 'monthly', evidenceReportingPeriod: 'monthly',
     },
   });
