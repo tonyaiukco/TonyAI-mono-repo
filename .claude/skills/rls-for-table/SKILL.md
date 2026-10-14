@@ -85,6 +85,19 @@ set -a; source packages/db/.env; set +a; node packages/db/scripts/runtime-role.m
 and add the table to `SCOPED` in `apps/api/test/int/tenant-invariants.int.spec.ts` (RLS with a planted
 cross-organisation grant) and, if it has routes, to `apps/api/test/int/tenant-isolation.int.spec.ts`.
 
+**Learned on LP3-04 PR B (the inventory boundary):**
+- **A table the seed leaves empty** cannot join `rls:probe`'s `TENANT_TABLES` loop (it asserts the seeded
+  entry user sees > 0). Plant its rows in the probe as the owner (`ownerDb()`), found again by a sentinel,
+  count each role through PostgREST, and remove them in the `finally` — before any parent they keep
+  (`probeBoundaries`). Never seed demo rows that could read as authoritative.
+- **One trigger function on several tables:** a condition naming a column only some tables have fails to
+  plan on the others (42703) even behind `TG_TABLE_NAME = …  AND`. Nest it: `IF TG_TABLE_NAME = … THEN IF …`.
+- **A key from a parent the organisation's deletion also reaches:** `NO ACTION` is checked when its event
+  runs, and the organisation's cascades run in trigger order — a sibling cascade queued later can leave
+  the check failing (LP1-03 measured it for `user_subsidiary_access`). Prefer `CASCADE` and let a guard
+  refuse the cascades it must (`inventory_boundary_rows_frozen`: refused while the parent row is gone and
+  the version stands; admitted once the version itself is).
+
 ## Columns are not tables
 
 A new **table** comes up invisible to client roles until its migration grants

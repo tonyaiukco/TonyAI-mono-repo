@@ -905,10 +905,11 @@ the batch audit row after settled work, including the `failed` closing path.
 
 `ReportDataset`, `InventoryBoundarySnapshot` and `ReportIssuance` are additive,
 **dormant** contracts exported by `@tonyai/shared-types`. Existing `ReportStatus`,
-`ReportMetaDTO`, context routes and report assembly are unchanged. No boundary
-storage, dataset capture, final-issuance gate or retained-PDF endpoint is shipped
-by this contract PR. In particular, today's count-based "approved" badge does
-not certify a complete inventory.
+`ReportMetaDTO`, context routes and report assembly are unchanged. The boundary's
+storage and its reader are shipped (LP3-04 PR B, below); no route writes or
+serves a boundary yet, and no dataset capture, final-issuance gate or
+retained-PDF endpoint exists. In particular, today's count-based "approved"
+badge does not certify a complete inventory.
 
 The dataset records one bounded, consistent capture of the declared boundary,
 records and their unchanged calculation snapshots, evidence references, period
@@ -1079,11 +1080,63 @@ Contract acceptance examples (not executed database/UAT evidence):
 | Annual record but missing monthly invoices | Evidence gap remains; annual granularity does not close it |
 | Filtered subset of an otherwise complete inventory | Partial extract, never a final whole-inventory claim |
 
-Implementation follows the shared-contract merge. Any schema slot follows
-Claude Code's LP4-02 PR B (L8). Coverage must consume one public calculation
-lookup supporting the capture transaction and PR B's sealed-release rules; it
-must not copy private candidate SQL/diagnostic selection a third time. Boundary
-schema, dataset/issuance assembly and render consumers are separate later PRs.
+**Boundary storage (LP3-04 PR B; Decisions 2026-10-15 (second), W1–W13).** Six
+tables hold an organisation's declared boundary for a reporting year, one
+**version** per row of `inventory_boundaries`: the subsidiaries it declares
+(each also its company entity) and their sites with the months each operates
+(W6); one attribution policy per subsidiary × Scope 1/2 category (D11 — its key
+makes a duplicate impossible); one applicability decision per entity × category
+cell (D12); and every named source, an unsupported one too, with its reason
+(D05). Obligations, evidence periods, an included cell's sources and every gap
+are derived (`apps/api/src/inventory-boundary/boundary-snapshot.ts`), never
+stored. The database holds what it can: same-organisation composite keys (a
+version declares its own organisation's subsidiaries and their own sites, a
+cell or source sits at a declared entity); CHECKs on the categories, levels,
+cadences and reasons (the factor library's free-text rule), a mapped source's
+scope from `CATEGORY_SCOPE_MAP` and its activity type exactly when its category
+is typed (follow-up (21)); and an included mapped source's cadence is its
+category's policy's — a composite key that follows a change of the policy. No
+index is partial or NULLS NOT DISTINCT: the company entity's site key is the nil
+uuid and an untyped source's activity key `''`. **A frozen version takes no
+change** (`inventory_boundary_frozen`, SQLSTATE `TA014`, every writer, the
+owner included, `TRUNCATE` too): a version is born open and freezes once — when
+it is confirmed (a confirmed version is frozen, CHECK) or captured into a
+dataset (W8, PR C) — at the database's clock, which also stamps its
+confirmation; freezing copies the subsidiaries' names (trading, else legal) and
+the sites' names and geography codes into it (W7), and an open version is read
+with today's. Nothing but an open version's decision and freeze changes its
+header, and a row never moves to another version. **A declared subsidiary or
+site is not deleted while its version stands** (W9): the guard refuses the
+cascade, and `DELETE /subsidiaries/:id` and `DELETE /locations/:id` count the
+versions first and answer 409 — a frozen one keeps the subsidiary for good
+("set it inactive"), an open one is a blocker to clear; the panel's summary
+agrees (no new DTO field). The one delete a frozen version admits is its
+organisation's own, the owner's alone (W10). RLS is on (never FORCE) with
+SELECT-only policies — a row with its subsidiary (LP1-03's predicate), the
+header for its organisation's org-wide readers or a user granted a subsidiary
+it declares (W3) — and the client roles, the service role included, hold
+SELECT alone; the runtime role SELECT (no route writes yet: the write path is
+a contract PR, then a service-and-routes PR, W1). The seed declares no boundary
+until D05's source list arrives (W11); `rls:probe` plants and removes its own.
+
+**One capture snapshot, one factor lookup.** `readInventoryBoundary` reads a
+version whole and answers it as `InventoryBoundarySnapshot`, bound to the
+organisation it is asked under and to the caller's current access (a version
+declaring a subsidiary outside it is not found — W3). It reads, like the factor
+lookup, inside a `CaptureSnapshot`: a transaction at REPEATABLE READ or
+SERIALIZABLE (READ COMMITTED and the root client are refused), so a capture's
+boundary, records and factor candidates are one moment's — another session's
+rename or erratum committed meanwhile does not reach it. **The factor library
+is selected in one place**, `apps/api/src/calculations/factor-lookup.ts`
+(`lookupFactorPath`): the engine calls it with a snapshot of its own (its
+REPEATABLE READ batch, unchanged) and is never handed a transaction (a record
+writer's must stay READ COMMITTED, TA003); a capture passes its
+`CaptureSnapshot`. A source scan (`factor-lookup.single-source.spec.ts`) lists
+every other read of the library's rows — the catalogue, the loader's re-read,
+the seed's accepted second copy — and fails on a new one. Dataset/issuance
+assembly (PR C, which defines the lookup's consumer), issuance with its storage
+recovery (PR D) and the boundary's write path and editor are separate later
+PRs.
 
 ## Localisation and error codes
 
@@ -1108,6 +1161,7 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | --- | --- |
 | `profiles` | App user: role, organisation, UI language (`en`/`tr`, CHECK; the runtime may update it — LP3-01) and theme (1:1 with an auth user, same id). LP4-01: `disabled_at` (refused by the guard), `sessions_revoked_at` (set by a disable, an enable and an offboarding; sessions begun at or before it are refused), `auth_sync_pending_since` (Supabase Auth's ban not yet applied), `auth_sync_generation` (moved on by every change the sync must apply) and `recovery_sent_at` (the reset cooldown); created by an invitation through a column-level runtime INSERT |
 | `organisations` | The holding company (top of the hierarchy); `offboarded_at` once the operator offboards it (LP4-01, D21) |
+| `inventory_boundaries` + `inventory_boundary_subsidiaries`, `inventory_boundary_sites`, `inventory_attribution_policies`, `inventory_applicability_cells`, `inventory_sources` | LP3-04 PR B: an organisation's declared inventory boundary per reporting year, one version per header — declared subsidiaries and sites with their operating months, D11's attribution policies, D12's applicability cells, D05's named sources. Immutable once frozen (`TA014`, every writer), names copied in as it freezes; deleted only with an open version or its organisation; a declared subsidiary or site stays. RLS SELECT-only; clients, the service role and the runtime role SELECT only. See "Inventory coverage and report datasets" |
 | `invitations` | One per invited profile (LP4-01): `status` `pending` → `sent` → `accepted`, or `revoked`; the email's language, the inviter (null for the operator), attempts and the last failed step with a short code. Operational state: RLS on with no policy and nothing granted to any client role, the service role included |
 | `subsidiaries` | Companies within an organisation (geography, sector, status, included scopes, reporting contact, and `tracking_granularity` — whether completeness is measured for the whole entity or per location) |
 | `locations` | Facilities within a subsidiary |
