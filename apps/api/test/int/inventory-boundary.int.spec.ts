@@ -383,6 +383,23 @@ describe('a frozen version takes no change (TA014)', () => {
     }
   });
 
+  it("refuses to freeze a version whose site operates outside its subsidiary's months — what two writers could pass between them", async () => {
+    // Two writers each pass the rows' guard (one widens a site, the other
+    // narrows its subsidiary) but not together; the freeze holds the whole
+    // version. Planted here with the rows' guard switched off, in the
+    // rolled-back transaction alone.
+    expect(
+      await refusedAsOwner(async (tx) => {
+        // The fixture's subsidiary operates all year, its site from July.
+        const { boundaryId } = await createBoundary(tx, a, { locationId: siteA });
+        await tx.$executeRawUnsafe('ALTER TABLE "inventory_boundary_subsidiaries" DISABLE TRIGGER "inventory_boundary_subsidiaries_frozen"');
+        await tx.inventoryBoundarySubsidiary.updateMany({ where: { boundaryId }, data: { firstMonth: 8 } });
+        await tx.$executeRawUnsafe('ALTER TABLE "inventory_boundary_subsidiaries" ENABLE ALWAYS TRIGGER "inventory_boundary_subsidiaries_frozen"');
+        await tx.inventoryBoundary.update({ where: { id: boundaryId }, data: { frozenAt: new Date() } });
+      }),
+    ).toBe('TA014');
+  });
+
   it('copies the names of a row written while the freeze waited, once that row commits', async () => {
     const { boundaryId } = await createBoundary(owner, a, { locationId: siteA, version: 71 });
     const second = await owner.location.create({ data: { subsidiaryId: a.subsidiaryId, name: 'Int-test row-first site', geographyCode: 'TR' } });
