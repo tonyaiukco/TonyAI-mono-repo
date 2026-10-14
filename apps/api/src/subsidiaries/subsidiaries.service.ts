@@ -35,6 +35,13 @@ import { UpdateSubsidiaryDto } from './dto/update-subsidiary.dto';
  */
 interface SubsidiaryDependentCounts {
   terminalRecords: number;
+  /**
+   * Inventory boundary versions declaring the subsidiary (LP3-04 W9): frozen
+   * ones — confirmed or captured, never changed — keep it for good; an open
+   * one can drop it. Neither is in the panel's DTO: the blockers say so.
+   */
+  frozenBoundaryVersions: number;
+  openBoundaryVersions: number;
   reviewRecords: number;
   openRecords: number;
   locations: number;
@@ -319,6 +326,8 @@ export class SubsidiariesService {
       periodLocks,
       targets,
       denominators,
+      frozenBoundaryVersions,
+      openBoundaryVersions,
     ] =
       await Promise.all([
         db.activityRecord.count({
@@ -340,9 +349,13 @@ export class SubsidiariesService {
         db.periodLock.count({ where: { subsidiaryId: id } }),
         db.target.count({ where: { subsidiaryId: id } }),
         db.subsidiaryDenominator.count({ where: { subsidiaryId: id } }),
+        db.inventoryBoundarySubsidiary.count({ where: { subsidiaryId: id, boundary: { frozenAt: { not: null } } } }),
+        db.inventoryBoundarySubsidiary.count({ where: { subsidiaryId: id, boundary: { frozenAt: null } } }),
       ]);
     return {
       terminalRecords,
+      frozenBoundaryVersions,
+      openBoundaryVersions,
       reviewRecords,
       openRecords,
       locations,
@@ -367,8 +380,15 @@ export class SubsidiariesService {
     // exposes are the ones used here. Verified: removing the cast typechecks.
     const counts = await this.countDependents(this.prisma, id);
     const refusal = SubsidiariesService.describeBlockers(counts);
-    const { locationsHoldingForeignRecords: _alarm, ...reportable } = counts;
+    const {
+      locationsHoldingForeignRecords: _alarm,
+      frozenBoundaryVersions: _frozen,
+      openBoundaryVersions: _open,
+      ...reportable
+    } = counts;
     void _alarm;
+    void _frozen;
+    void _open;
     return {
       subsidiaryId: id,
       ...reportable,
@@ -437,6 +457,13 @@ export class SubsidiariesService {
         'to retire it instead.';
       return { message, blockers: [message] };
     }
+    if (c.frozenBoundaryVersions > 0) {
+      const message =
+        `This subsidiary is declared in ${c.frozenBoundaryVersions} confirmed or captured inventory ` +
+        'boundary version(s), which record the inventory a report was issued from and never ' +
+        'change, so a subsidiary declared in one stays. Set its status to "inactive" to retire it instead.';
+      return { message, blockers: [message] };
+    }
 
     // Nothing terminal — so everything below IS removable, and the message
     // should say how rather than send the user to "inactive" for a subsidiary
@@ -456,6 +483,9 @@ export class SubsidiariesService {
     if (c.periodLocks > 0) blockers.push(`${c.periodLocks} closed reporting period(s)`);
     if (c.targets > 0) blockers.push(`${c.targets} reduction target(s)`);
     if (c.denominators > 0) blockers.push(`${c.denominators} intensity denominator(s)`);
+    if (c.openBoundaryVersions > 0) {
+      blockers.push(`${c.openBoundaryVersions} open inventory boundary version(s) declaring it`);
+    }
     if (blockers.length === 0) return null;
 
     return {
