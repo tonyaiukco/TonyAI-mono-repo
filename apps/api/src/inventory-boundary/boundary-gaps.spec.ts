@@ -86,6 +86,13 @@ describe('boundaryGaps — every rule a boundary breaks before any record is rea
       })).toEqual([gap('applicability_undetermined', SUB, null, 'Natural Gas', ['g-3'])]);
     });
 
+    it('is not raised for a mapped source excluded under its excluded cell, or at an entity its policy does not select (qa-auditor P2)', () => {
+      const rows = complete();
+      const generator = source({ id: 'f-9', category: 'Fuel', activityType: 'diesel', applicability: 'excluded', reason: 'Decommissioned', reportingPeriod: null });
+      expect(gapsOf({ ...rows, sources: [...rows.sources, generator] })).toEqual([]);
+      expect(gapsOf({ ...rows, sources: [...rows.sources, { ...generator, id: 'f-10', locationId: SITE_1 }] })).toEqual([]);
+    });
+
     it('is not raised for an undetermined or missing cell at an entity its policy does not select', () => {
       const rows = complete();
       expect(gapsOf({ ...rows, cells: [...rows.cells, cell(SITE_1, 'Fuel', 'undetermined')] })).toEqual([]);

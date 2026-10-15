@@ -1,9 +1,9 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, HttpException } from '@nestjs/common';
 import { Prisma } from '@tonyai/db';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
-import { errorCodeOf } from '../common/api-error';
+import { errorCodeOf, toErrorBody } from '../common/api-error';
 import type { PrismaService } from '../prisma/prisma.service';
 import { makeDataEntry, makeSuperAdmin } from '../../test/helpers';
 import { InventoryBoundariesService } from './inventory-boundaries.service';
@@ -58,6 +58,9 @@ const guardRefusal = () => new Prisma.PrismaClientUnknownRequestError(
   'Error occurred during query execution: ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "TA014", message: "inventory boundary version is frozen", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
   { clientVersion: 'test' },
 );
+
+/** The code a client receives: the filter's, as `toErrorBody` answers it. */
+const answered = (e: unknown) => (e instanceof HttpException ? toErrorBody(e.getStatus(), e.getResponse()).code : undefined);
 
 const BODY = { firstMonth: 1, lastMonth: 12, sites: [], attribution: [], applicability: [], sources: [] } as const;
 
@@ -186,7 +189,7 @@ describe('InventoryBoundariesService', () => {
       ]) {
         putReaches();
         db.tx.inventoryBoundarySubsidiary.create.mockRejectedValueOnce(known('P2003', { modelName, constraint }));
-        await expect(service.putSubsidiary(admin, ID, SUB_ID, BODY)).rejects.toBeInstanceOf(ConflictException);
+        expect(answered(await service.putSubsidiary(admin, ID, SUB_ID, BODY).catch((e: unknown) => e))).toBe('conflict');
       }
     });
 
@@ -203,7 +206,7 @@ describe('InventoryBoundariesService', () => {
     it('a deadlock (40P01, Prisma P2034) is a lost race too: conflict, never a 500', async () => {
       putReaches();
       db.tx.inventoryBoundarySubsidiary.create.mockRejectedValueOnce(known('P2034', {}));
-      await expect(service.putSubsidiary(admin, ID, SUB_ID, BODY)).rejects.toBeInstanceOf(ConflictException);
+      expect(answered(await service.putSubsidiary(admin, ID, SUB_ID, BODY).catch((e: unknown) => e))).toBe('conflict');
       db.tx.inventoryBoundary.findUniqueOrThrow.mockResolvedValue(header());
       db.tx.inventoryBoundarySubsidiary.findMany.mockRejectedValueOnce(known('P2034', {}));
       await expect(service.confirm(admin, ID)).rejects.toBeInstanceOf(ConflictException);
@@ -212,7 +215,7 @@ describe('InventoryBoundariesService', () => {
     it("two creates of a year's next version: the loser is told conflict — and only that key's failure is", async () => {
       db.tx.inventoryBoundary.findFirst.mockResolvedValue(null);
       db.tx.inventoryBoundary.create.mockRejectedValueOnce(known('P2002', { target: ['organisation_id', 'reporting_year', 'version'] }));
-      await expect(service.create(admin, { reportingYear: 2026 })).rejects.toBeInstanceOf(ConflictException);
+      expect(answered(await service.create(admin, { reportingYear: 2026 }).catch((e: unknown) => e))).toBe('conflict');
       const other = known('P2002', { target: ['id'] });
       db.tx.inventoryBoundary.create.mockRejectedValueOnce(other);
       await expect(service.create(admin, { reportingYear: 2026 })).rejects.toBe(other);

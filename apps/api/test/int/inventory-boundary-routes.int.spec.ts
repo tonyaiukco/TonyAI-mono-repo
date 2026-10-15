@@ -11,7 +11,7 @@
  */
 import 'reflect-metadata';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { ConflictException, type INestApplication } from '@nestjs/common';
+import { HttpException, type INestApplication } from '@nestjs/common';
 import type {
   InventoryBoundaryVersionDTO,
   InventoryBoundaryVersionSummary,
@@ -22,7 +22,7 @@ import { SignJWT } from 'jose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AuditService } from '../../src/audit/audit.service';
 import type { RequestUser } from '../../src/auth/auth.types';
-import { errorCodeOf } from '../../src/common/api-error';
+import { errorCodeOf, toErrorBody } from '../../src/common/api-error';
 import { declarationOf, declarationRows, type StoredDeclaration } from '../../src/inventory-boundary/boundary-declaration';
 import { readDeclaration } from '../../src/inventory-boundary/boundary-rows';
 import { InventoryBoundariesService } from '../../src/inventory-boundary/inventory-boundaries.service';
@@ -182,6 +182,9 @@ const json = <T>(a: Answer): T => JSON.parse(a.text) as T;
 /** The service on its own client — a held one, a failing one. */
 const serviceOn = (client: PrismaService) => new InventoryBoundariesService(client, new AuditService(client));
 
+/** The code a client receives for a thrown refusal: the filter's (`toErrorBody`). */
+const answered = (e: unknown) => (e instanceof HttpException ? toErrorBody(e.getStatus(), e.getResponse()).code : undefined);
+
 async function failure(p: Promise<unknown>): Promise<unknown> {
   try {
     await p;
@@ -283,6 +286,10 @@ describe('who may do what (E2): super_admin writes and confirms; everyone else r
     const { id } = json<InventoryBoundaryVersionDTO>(created);
     expect((await call(admin, 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S2}`, excludedAll())).status).toBe(200);
     expect((await call(admin, 'DELETE', `/inventory-boundaries/${id}/subsidiaries/${S2}`)).status).toBe(200);
+    // A removal is an `update` holding what it removed (E8; `qa-auditor` P2).
+    const [, declaredS2, removedS2] = await auditOf(id);
+    expect(removedS2.action).toBe('update');
+    expect(removedS2.diff).toEqual({ subsidiaryId: S2, before: (declaredS2.diff as { after: unknown }).after, after: null });
     expect((await call(admin, 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, completeS())).status).toBe(200);
     expect((await call(admin, 'POST', `/inventory-boundaries/${id}/confirm`)).status).toBe(200);
     const copy = await call(admin, 'POST', '/inventory-boundaries', { reportingYear: 2026, copyOf: id });
@@ -396,6 +403,9 @@ describe("a version's life (E3, E4, W7, W10)", () => {
     await owner.inventoryBoundary.update({ where: { id }, data: { frozenAt: new Date() } });
     const refused = await call(admin, 'POST', `/inventory-boundaries/${id}/confirm`);
     expect([refused.status, refused.code]).toEqual([409, 'boundary_confirm_requires_copy']);
+    const captured = json<InventoryBoundaryVersionDTO>(await call(admin, 'GET', `/inventory-boundaries/${id}`));
+    expect(captured).toMatchObject({ decision: 'unconfirmed', decidedBy: null, decidedAt: null });
+    expect(captured.frozenAt).not.toBeNull();
     expect((await call(admin, 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, completeS())).code).toBe('boundary_frozen');
     const copy = json<InventoryBoundaryVersionDTO>(await call(admin, 'POST', '/inventory-boundaries', { reportingYear: 2026, copyOf: id }));
     expect(copy.version).toBe(2);
@@ -489,6 +499,18 @@ describe('whose subsidiary and site a declaration may name', () => {
     const missing = await call(admin, 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, withSite(randomUUID()));
     expect([sibling.status, sibling.code]).toEqual([404, 'location_not_found']);
     expect(sibling.text).toBe(missing.text);
+    // One own site beside a sibling's is refused as a whole, the same way (`qa-auditor` P3).
+    const mixed = await call(admin, 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, completeS({
+      sites: [{ locationId: L1, firstMonth: 1, lastMonth: 12 }, { locationId: M1, firstMonth: 1, lastMonth: 12 }],
+      applicability: completeS().applicability.filter((c) => c.locationId !== L2),
+      sources: completeS().sources.filter((s) => s.locationId !== L2),
+    }));
+    expect([mixed.status, mixed.text]).toEqual([404, sibling.text]);
+    // What the database would refuse, the DTOs refuse first — never the guard's 500 (`qa-auditor` P2).
+    const early = await call(admin, 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, completeS({ firstMonth: 4 }));
+    expect([early.status, early.code]).toEqual([400, 'validation_failed']);
+    const noId = await call(admin, 'POST', '/inventory-boundaries', { reportingYear: 2027, copyOf: 'not-an-id' });
+    expect([noId.status, noId.code]).toEqual([400, 'validation_failed']);
     const undeclared = await call(admin, 'DELETE', `/inventory-boundaries/${id}/subsidiaries/${S2}`);
     expect([undeclared.status, undeclared.code]).toEqual([404, 'subsidiary_not_found']);
     expect((await call(admin, 'PUT', `/inventory-boundaries/${id}/subsidiaries/${randomUUID()}`, excludedAll())).code).toBe('subsidiary_not_found');
@@ -535,7 +557,7 @@ describe('concurrent writers (W8, E5; PR B (6))', () => {
       const second = await serviceOn(clientB).create(admin, { reportingYear: 2026 });
       expect(second.version).toBe(1);
       hold.release();
-      expect(await failure(first)).toBeInstanceOf(ConflictException);
+      expect(answered(await failure(first))).toBe('conflict');
       const versions = await owner.inventoryBoundary.findMany({ where: { organisationId: t.organisationId } });
       expect(versions.map((v) => v.id)).toEqual([second.id]);
       expect(await owner.auditLog.count({ where: { organisationId: t.organisationId, entity: 'inventory_boundary', action: 'create' } })).toBe(1);
@@ -654,7 +676,7 @@ describe('concurrent writers (W8, E5; PR B (6))', () => {
       await hold.reached();
       await owner.location.delete({ where: { id: L3 } });
       hold.release();
-      expect(await failure(write)).toBeInstanceOf(ConflictException);
+      expect(answered(await failure(write))).toBe('conflict');
     } finally {
       await client.$disconnect();
     }
@@ -668,7 +690,7 @@ describe('concurrent writers (W8, E5; PR B (6))', () => {
       await hold.reached();
       await owner.subsidiary.delete({ where: { id: S3 } });
       hold.release();
-      expect(await failure(write)).toBeInstanceOf(ConflictException);
+      expect(answered(await failure(write))).toBe('conflict');
     } finally {
       await client2.$disconnect();
     }
