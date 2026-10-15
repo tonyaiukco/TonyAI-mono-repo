@@ -15,18 +15,26 @@ import type {
  *   POST   /inventory-boundaries                  CreateInventoryBoundaryRequest → InventoryBoundaryVersionDTO
  *   PUT    /inventory-boundaries/:id/subsidiaries/:subsidiaryId
  *                                                 PutInventoryBoundarySubsidiaryRequest → InventoryBoundaryVersionDTO
- *   DELETE /inventory-boundaries/:id/subsidiaries/:subsidiaryId → InventoryBoundaryVersionDTO
+ *   DELETE /inventory-boundaries/:id/subsidiaries/:subsidiaryId  (an open version only) → InventoryBoundaryVersionDTO
  *   POST   /inventory-boundaries/:id/confirm      (no body) → InventoryBoundaryVersionDTO
  *   DELETE /inventory-boundaries/:id              (an open version only) → 204
  *
  * Roles (W4, E2): super_admin creates, copies, edits, deletes an open version
  * and confirms; consultant and executive_viewer read; data_entry reads its
  * granted subsidiaries' part of a version (W3, `view`). Every other write
- * answers `forbidden`.
+ * answers `forbidden`. What data_entry sees follows the boundary's RLS: the
+ * list holds only the versions declaring a subsidiary it is granted, and a
+ * version declaring none of them is `boundary_not_found`, byte for byte as a
+ * missing one. The view is by role — data_entry's is always
+ * `granted_subsidiaries`, every other reader's `organisation` — and is read
+ * through the routes' own reader: `readInventoryBoundary` is the capture's,
+ * whole or nothing.
  *
  * Versions (W8, E4): a create takes the year's highest version + 1 and is
  * refused `boundary_draft_open` while that year's newest version is open, so
- * a year has one open version at most and it is the newest. Edits serialise on
+ * a year has one open version at most and it is the newest; deleting it frees
+ * its number for the next create (no dataset can name an open version, and
+ * the audit trail tells them apart by id). Edits serialise on
  * the version's header row, in READ COMMITTED (TA014); there is no revision
  * precondition (E5) — the last writer of a subsidiary's declaration wins, and
  * the audit row of each write holds what it replaced.
@@ -42,7 +50,9 @@ import type {
  * enforces (TA014) before it writes, so a TA014 that still reaches it is a
  * defect — answered `internal_error` and logged, never shown as "frozen".
  * `boundary_not_found` is a version of another organisation or none; a
- * subsidiary or site of another organisation is `subsidiary_not_found` or
+ * subsidiary of another organisation, or one the version does not declare on
+ * its DELETE, is `subsidiary_not_found`; a site that is not one of the route's
+ * subsidiary's own locations — another subsidiary's included — is
  * `location_not_found`; a body the DTOs refuse is `validation_failed`; a lost
  * race (two creates, a site deleted mid-write) is `conflict`.
  *
@@ -78,9 +88,12 @@ export interface ListInventoryBoundariesParams {
 export interface CreateInventoryBoundaryRequest {
   reportingYear: number;
   /** A version of the caller's organisation, any year and open or frozen —
-   * a new year starts from the last one's. Its declarations are copied into
-   * the new open version; names and geography are read live again until it
-   * freezes (W7). Omitted: an empty version. */
+   * a new year starts from the last one's. Its declarations are copied as
+   * they are into the new open version, months included (a subsidiary
+   * acquired in July stays July–December until edited), read under the source
+   * version's header lock so a concurrent edit cannot tear the copy; names and
+   * geography are read live again until the new version freezes (W7).
+   * Omitted: an empty version. */
   copyOf?: string;
 }
 
@@ -160,9 +173,8 @@ export type InventorySourceInput = {
  * outside `InventorySourceInput`, an included mapped source without its
  * category's policy, two included mapped sources on one key. Stored, and
  * reported in `boundaryGaps` (blocking a confirmation, not the write), when it
- * is incomplete or inconsistent across rows: a missing policy or cell, an
- * `undetermined` decision, an unsupported source not excluded, a source under
- * a cell that does not include it.
+ * is incomplete or inconsistent across rows — every such rule is listed at
+ * `InventoryBoundaryGap`.
  */
 export interface PutInventoryBoundarySubsidiaryRequest {
   /** The months the subsidiary is included in the inventory. */
@@ -182,9 +194,32 @@ export const INVENTORY_BOUNDARY_GAP_CODES = Object.freeze([
 ] as const);
 export type InventoryBoundaryGapCode = (typeof INVENTORY_BOUNDARY_GAP_CODES)[number];
 
-/** A dataset carries it unchanged (PR C): a coverage gap naming no record. */
-export type InventoryBoundaryGap = Omit<ReportCoverageGap, 'code' | 'recordIds'> & {
+/**
+ * A gap of the boundary itself, naming no record — one per rule below, each
+ * at the entity it names (`entity` is always set, so a data_entry view keeps
+ * exactly its granted subsidiaries' gaps). A "selected" entity is the company
+ * entity under a `company` policy, each declared site under a `sites` one.
+ *   applicability_undetermined —
+ *     a declared subsidiary × Scope 1/2 category with no policy (the company entity);
+ *     a `sites` policy whose subsidiary declares no site (the company entity);
+ *     a selected entity × category with no cell;
+ *     an `undetermined` cell at a selected entity;
+ *     a mapped source whose own decision is `undetermined` (`sourceIds`).
+ *   unsupported_source —
+ *     an unsupported source included or undetermined (`sourceIds`); one
+ *     excluded with its reason is a named exclusion, no gap.
+ *   attribution_conflict —
+ *     an included cell with no included mapped source at its entity and
+ *     category — never a covered zero;
+ *     an included mapped source not held by an included cell at a selected
+ *     entity of its category — its cell excluded, undetermined, missing, or at
+ *     an entity its policy does not select (`sourceIds`).
+ * A dataset's coverage gaps include these (PR C), where an attribution
+ * conflict also names the records it leaves unmapped.
+ */
+export type InventoryBoundaryGap = Omit<ReportCoverageGap, 'code' | 'recordIds' | 'entity'> & {
   code: InventoryBoundaryGapCode;
+  entity: NonNullable<ReportCoverageGap['entity']>;
   recordIds: readonly [];
 };
 
@@ -213,8 +248,8 @@ export interface InventoryBoundaryVersionDTO extends InventoryBoundaryVersionSum
   boundary: InventoryBoundarySnapshot;
   boundaryGaps: readonly InventoryBoundaryGap[];
   /** `organisation`: the whole declared inventory. `granted_subsidiaries`: a
-   * data_entry user's view (W3) — only its granted subsidiaries' entities,
-   * cells, policies, sources and gaps, so `boundary.subsidiaryIds` is not the
-   * declared inventory. Such a view is never captured or issued. */
+   * data_entry user's view (W3), always — only its granted subsidiaries'
+   * entities, cells, policies, sources and gaps, so `boundary.subsidiaryIds`
+   * is not the declared inventory. Such a view is never captured or issued. */
   view: 'organisation' | 'granted_subsidiaries';
 }

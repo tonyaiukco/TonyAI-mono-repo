@@ -24,7 +24,8 @@ import { integerQuery } from '../../common/reporting-context-query.dto';
  * admits is one the database admits, and the guard stays a backstop (E7).
  * What the database stores but a final report cannot use — a missing policy or
  * cell, an `undetermined` decision — is a gap, reported, never refused here.
- * Whether a subsidiary or site belongs to the caller's organisation is the
+ * Whether the subsidiary belongs to the caller's organisation, and each site
+ * to that subsidiary (the composite key `locations(id, subsidiary_id)`), is the
  * service's check (`subsidiary_not_found`, `location_not_found`).
  */
 

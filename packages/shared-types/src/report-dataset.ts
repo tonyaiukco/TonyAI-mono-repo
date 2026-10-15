@@ -124,9 +124,7 @@ export interface InventoryBoundarySnapshot {
   version: number;
   organisationId: string;
   reportingYear: number;
-  /** Explicit declared inventory, not whatever the requester can currently see
-   * — the one exception, a data_entry user's live view of its granted
-   * subsidiaries (`InventoryBoundaryVersionDTO.view`), is never captured. */
+  /** Explicit declared inventory, not whatever the requester can currently see. */
   subsidiaryIds: readonly string[];
   decision: 'unconfirmed' | 'confirmed';
   /** The confirming super_admin's profile id, written by the API from the

@@ -18,8 +18,9 @@ import {
 /** The options `main.ts` installs on the global ValidationPipe. */
 const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true };
 
-const SITE = '33333333-3333-3333-3333-333333330001';
-const OTHER_SITE = '33333333-3333-3333-3333-333333330002';
+// Letters in every id, so upper-casing one really changes its spelling.
+const SITE = 'abcdef33-3333-4333-8333-33333333000a';
+const OTHER_SITE = 'abcdef33-3333-4333-8333-33333333000b';
 const NIL = '00000000-0000-0000-0000-000000000000';
 // Invisible characters built from their code points, so the source shows them.
 const NUL = String.fromCharCode(0x0000);
@@ -99,6 +100,7 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
     expect(put((b) => { b.createdBy = 'someone'; }).join()).toMatch(/createdBy/);
     expect(put((b) => { b.subsidiaryId = SITE; }).join()).toMatch(/subsidiaryId/);
     expect(put((b) => { sites(b)[0].subsidiaryId = SITE; }).join()).toMatch(/subsidiaryId/);
+    expect(put((b) => { policies(b)[0].subsidiaryId = SITE; }).join()).toMatch(/subsidiaryId/);
     expect(put((b) => { sources(b)[0].id = SITE; }).join()).toMatch(/\bid\b/);
     expect(put((b) => { sources(b)[0].obligations = []; }).join()).toMatch(/obligations/);
     expect(put((b) => { cells(b)[0].sourceIds = []; }).join()).toMatch(/sourceIds/);
@@ -107,14 +109,21 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
 
   it('refuses a missing list rather than reading it as empty', () => {
     for (const key of ['sites', 'attribution', 'applicability', 'sources'] as const) {
-      expect(put((b) => { delete (b as Record<string, unknown>)[key]; }).join(), key).toMatch(new RegExp(key));
+      expect(put((b) => { delete (b as Record<string, unknown>)[key]; }).join(), key).toMatch(new RegExp(`${key}: ${key} must be an array`));
     }
   });
 
   describe('months', () => {
-    it.each([0, 13, 1.5, '1', null])('refuses %s as a month', (month) => {
-      expect(put((b) => { (b as Record<string, unknown>).firstMonth = month; }).join()).toMatch(/firstMonth/);
-      expect(put((b) => { sites(b)[0].lastMonth = month; }).join()).toMatch(/lastMonth/);
+    it.each([0, 13, 1.5, '1', null])('refuses %s as a month, in every month field', (month) => {
+      expect(put((b) => { (b as Record<string, unknown>).firstMonth = month; }).join()).toMatch(/firstMonth: firstMonth/);
+      expect(put((b) => { (b as Record<string, unknown>).lastMonth = month; }).join()).toMatch(/lastMonth: lastMonth/);
+      expect(put((b) => { sites(b)[0].firstMonth = month; }).join()).toMatch(/sites\.0\.firstMonth: firstMonth/);
+      expect(put((b) => { sites(b)[0].lastMonth = month; }).join()).toMatch(/sites\.0\.lastMonth: lastMonth/);
+    });
+
+    it('accepts a one-month interval', () => {
+      expect(put((b) => { b.firstMonth = 7; b.lastMonth = 7; sites(b)[0].lastMonth = 7; })).toEqual([]);
+      expect(put((b) => { sites(b)[0].firstMonth = 9; sites(b)[0].lastMonth = 9; })).toEqual([]);
     });
 
     it('refuses an interval that ends before it starts', () => {
@@ -143,8 +152,15 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
         .toMatch(/sites\[1\] .*declared twice/);
     });
 
-    it('reads an id in either case as the same site', () => {
+    it('reads an id in either case as the same site, and hands the service the lowercase one', () => {
+      expect(SITE.toUpperCase()).not.toBe(SITE);
       expect(put((b) => { sites(b)[0].locationId = SITE.toUpperCase(); })).toEqual([]);
+      const body = valid();
+      sites(body)[0].locationId = SITE.toUpperCase();
+      cells(body)[1].locationId = SITE.toUpperCase();
+      sources(body)[1].locationId = SITE.toUpperCase();
+      const dto = plainToInstance(PutInventoryBoundarySubsidiaryDto, body);
+      expect([dto.sites[0].locationId, dto.applicability[1].locationId, dto.sources[1].locationId]).toEqual([SITE, SITE, SITE]);
     });
   });
 
@@ -162,6 +178,20 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
   });
 
   describe('applicability (D12)', () => {
+    it('refuses a category outside Scope 1/2, or none', () => {
+      expect(put((b) => { cells(b)[0].category = 'Water'; }).join()).toMatch(/applicability\.0\.category/);
+      expect(put((b) => { delete cells(b)[0].category; }).join()).toMatch(/applicability\.0\.category/);
+    });
+
+    it('takes one category at two entities — the D12 matrix', () => {
+      expect(put((b) => { b.applicability = [...b.applicability, { locationId: null, category: 'Fuel', applicability: 'excluded', reason: 'Sites only.' }]; }))
+        .toEqual([]);
+    });
+
+    it('refuses a cell with no location at all — null is the company entity, absent is not', () => {
+      expect(put((b) => { delete cells(b)[1].locationId; }).join()).toMatch(/applicability\.1\.locationId/);
+    });
+
     it('refuses a cell declared twice for one entity and category', () => {
       expect(put((b) => { b.applicability = [...b.applicability, { locationId: SITE.toUpperCase(), category: 'Fuel', applicability: 'undetermined', reason: 'Unsure.' }]; }).join())
         .toMatch(/applicability\[3\] .*declared twice/);
@@ -175,6 +205,8 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
     it('ties a reason to every decision but inclusion', () => {
       expect(put((b) => { cells(b)[0].reason = 'Why'; }).join()).toMatch(/applicability\[0\] .*must carry no reason/);
       expect(put((b) => { delete cells(b)[2].reason; }).join()).toMatch(/applicability\[2\] .*must name its reason/);
+      expect(put((b) => { cells(b)[2].reason = null; }).join()).toMatch(/applicability\[2\] .*must name its reason/);
+      expect(put((b) => { cells(b)[0].applicability = 'undetermined'; }).join()).toMatch(/applicability\[0\] .*must name its reason/);
       expect(put((b) => { cells(b)[0].applicability = 'unknown'; }).join()).toMatch(/applicability/);
     });
 
@@ -195,8 +227,30 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
       expect(put((b) => { sources(b)[0].name = 'x'.repeat(INVENTORY_SOURCE_NAME_MAX_LENGTH); })).toEqual([]);
     });
 
-    it('refuses a source at a site this declaration does not hold', () => {
+    it('refuses a source at a site this declaration does not hold, or with no location at all', () => {
       expect(put((b) => { sources(b)[1].locationId = OTHER_SITE; }).join()).toMatch(/sources\[1\] .*not a declared site/);
+      expect(put((b) => { delete sources(b)[1].locationId; }).join()).toMatch(/sources\.1\.locationId/);
+    });
+
+    it('refuses a decision it does not know, or none', () => {
+      expect(put((b) => { sources(b)[0].applicability = 'unknown'; }).join()).toMatch(/sources\.0\.applicability/);
+      expect(put((b) => { delete sources(b)[0].applicability; }).join()).toMatch(/sources\.0\.applicability/);
+    });
+
+    it("holds a reason to the database's free-text rule", () => {
+      for (const reason of [' padded', `a${NUL}b`, 'x'.repeat(INVENTORY_REASON_MAX_LENGTH + 1), 7]) {
+        expect(put((b) => { sources(b)[2].reason = reason; }).join(), JSON.stringify(reason)).toMatch(/sources\.2\.reason/);
+      }
+    });
+
+    it('refuses a source with no mapping', () => {
+      expect(put((b) => { delete sources(b)[0].mapping; }).join()).toMatch(/sources\.0\.mapping/);
+      expect(put((b) => { sources(b)[0].mapping = 'mapped'; }).join()).toMatch(/sources\.0\.mapping/);
+    });
+
+    it('gives a mapped source its category', () => {
+      expect(put((b) => { delete (sources(b)[0].mapping as Record<string, unknown>).category; }).join()).toMatch(/sources\[0\] must name its category when mapped/);
+      expect(put((b) => { (sources(b)[0].mapping as Record<string, unknown>).category = null; }).join()).toMatch(/sources\[0\] must name its category when mapped/);
     });
 
     it("names one of a typed category's own activity types, and none for an untyped one (21; PR B (6))", () => {
@@ -224,13 +278,16 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
       expect(put((b) => { mapping(b).reason = ' padded'; }).join()).toMatch(/reason/);
       expect(put((b) => { mapping(b).category = 'Electricity'; }).join()).toMatch(/sources\[3\] .*category/);
       expect(put((b) => { mapping(b).activityType = null; }).join()).toMatch(/sources\[3\] .*activity type/);
+      expect(put((b) => { mapping(b).reason = null; }).join()).toMatch(/sources\[3\] must name why it is unsupported/);
       expect(put((b) => { delete sources(b)[3].scope; }).join()).toMatch(/sources\[3\] .*scope/);
+      expect(put((b) => { sources(b)[3].scope = null; }).join()).toMatch(/sources\[3\] must declare its scope/);
       expect(put((b) => { sources(b)[3].scope = 3; }).join()).toMatch(/scope/);
       expect(put((b) => { (sources(b)[0].mapping as Record<string, unknown>).reason = 'x'; }).join()).toMatch(/sources\[0\] .*reason/);
     });
 
     it('gives an included unsupported source its cadence, and no other source one', () => {
       expect(put((b) => { delete sources(b)[3].reportingPeriod; }).join()).toMatch(/sources\[3\] .*cadence/);
+      expect(put((b) => { sources(b)[3].reportingPeriod = null; }).join()).toMatch(/sources\[3\] must declare its cadence when included/);
       expect(put((b) => { sources(b)[4].reportingPeriod = 'annual'; }).join()).toMatch(/sources\[4\] .*cadence/);
       expect(put((b) => { sources(b)[3].reportingPeriod = 'weekly'; }).join()).toMatch(/reportingPeriod/);
     });
@@ -238,6 +295,8 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
     it('ties a reason and an evidence cadence to the decision', () => {
       expect(put((b) => { sources(b)[0].reason = 'x'; }).join()).toMatch(/sources\[0\] .*must carry no reason/);
       expect(put((b) => { delete sources(b)[2].reason; }).join()).toMatch(/sources\[2\] .*must name its reason/);
+      expect(put((b) => { sources(b)[2].reason = null; }).join()).toMatch(/sources\[2\] .*must name its reason/);
+      expect(put((b) => { delete sources(b)[4].reason; }).join()).toMatch(/sources\[4\] .*must name its reason/);
       expect(put((b) => { delete sources(b)[0].evidenceReportingPeriod; }).join()).toMatch(/sources\[0\] .*evidence cadence/);
       expect(put((b) => { sources(b)[2].evidenceReportingPeriod = 'monthly'; }).join()).toMatch(/sources\[2\] .*evidence cadence/);
       expect(put((b) => { sources(b)[2].evidenceReportingPeriod = null; }).join()).toMatch(/sources\[2\] .*evidence cadence/);
@@ -258,8 +317,14 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
         .toMatch(/sources\[5\] .*same entity, category and activity type/);
       expect(put((b) => { b.sources = [...b.sources, { ...b.sources[0], name: 'Second meter' }]; }).join())
         .toMatch(/sources\[5\] .*same entity, category and activity type/);
-      // Another type, or another entity, is another key.
+      // Another type, another entity or another category is another key.
       expect(put((b) => { b.sources = [...b.sources, { ...b.sources[1], name: 'Boiler', mapping: { kind: 'mapped', category: 'Fuel', activityType: 'gas_oil' } } as never]; }))
+        .toEqual([]);
+      expect(put((b) => {
+        b.sites = [...b.sites, { locationId: OTHER_SITE, firstMonth: 1, lastMonth: 12 }];
+        b.sources = [...b.sources, { ...b.sources[1], name: 'Other generator', locationId: OTHER_SITE } as never];
+      })).toEqual([]);
+      expect(put((b) => { b.sources = [...b.sources, { ...b.sources[1], name: 'Van', mapping: { kind: 'mapped', category: 'Mobile Combustion', activityType: 'diesel' } } as never]; }))
         .toEqual([]);
     });
   });
@@ -274,6 +339,15 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
       .toMatch(/applicability must contain no more than/);
     expect(put((b) => { b.attribution = many(INVENTORY_DECLARATION_LIMITS.attribution + 1, () => b.attribution[0]); }).join())
       .toMatch(/attribution must contain no more than/);
+  });
+
+  it('accepts every list at exactly its bound', () => {
+    const many = <T>(n: number, make: (i: number) => T) => Array.from({ length: n }, (_, i) => make(i));
+    const bound = /must contain no more than/;
+    expect(put((b) => { b.sites = many(INVENTORY_DECLARATION_LIMITS.sites, (i) => ({ locationId: `abcdef33-3333-4333-8333-${String(i).padStart(12, '0')}`, firstMonth: 1, lastMonth: 12 })); }).join()).not.toMatch(bound);
+    expect(put((b) => { b.sources = many(INVENTORY_DECLARATION_LIMITS.sources, () => b.sources[4]); }).join()).not.toMatch(bound);
+    expect(put((b) => { b.applicability = many(INVENTORY_DECLARATION_LIMITS.applicability, () => b.applicability[0]); }).join()).not.toMatch(bound);
+    expect(put((b) => { b.attribution = many(INVENTORY_DECLARATION_LIMITS.attribution, () => b.attribution[0]); }).join()).not.toMatch(bound);
   });
 
   it('pins the bounds', () => {

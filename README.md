@@ -1191,13 +1191,16 @@ their consumers). The routes, under `/api/v1`:
 | `GET` | `/inventory-boundaries/:id` | A version: its snapshot, its `boundaryGaps` and its `view` |
 | `POST` | `/inventory-boundaries` | A new open version, empty or a copy (`copyOf`, any year — a rollover starts from last year's) |
 | `PUT` | `/inventory-boundaries/:id/subsidiaries/:subsidiaryId` | One subsidiary's whole declaration — months, sites, policies, cells, sources — replacing the stored one |
-| `DELETE` | `/inventory-boundaries/:id/subsidiaries/:subsidiaryId` | Removes it (the blocker W9's 409 asks to clear) |
+| `DELETE` | `/inventory-boundaries/:id/subsidiaries/:subsidiaryId` | Removes it from an open version — the blocker W9's 409 asks to clear |
 | `POST` | `/inventory-boundaries/:id/confirm` | Confirms and freezes it |
 | `DELETE` | `/inventory-boundaries/:id` | An open version only |
 
 `super_admin` alone writes and confirms (E2; D12's matrix is theirs);
 consultant and `executive_viewer` read; a `data_entry` user reads only its
-granted subsidiaries' part (`view: 'granted_subsidiaries'`, W3), never captured.
+granted subsidiaries' part (`view: 'granted_subsidiaries'`, W3), never captured
+— as the boundary's RLS does, its list holds only the versions declaring a
+subsidiary it is granted, and a version declaring none of them is
+`boundary_not_found`, byte for byte as a missing one.
 One body per subsidiary is one validation unit — every rule the database holds
 sits inside one subsidiary — so the DTOs refuse (`validation_failed`) whatever
 the CHECKs, keys and guard would: months outside 1–12 or reversed, a site
@@ -1205,12 +1208,19 @@ outside its subsidiary's months, an entry twice, a cell or source at an
 undeclared site, free text outside the library's rule, a mapped source sending
 a scope or cadence (both derived) or naming another category's activity type,
 an included mapped source without its category's policy, two included mapped
-sources on one key. What is stored but blocks a final — a missing policy or
-cell, an `undetermined` decision, an unsupported source not excluded, a source
-under a cell that does not include it — is reported in `boundaryGaps`
-(`INVENTORY_BOUNDARY_GAP_CODES`). A year has one open version at most, the
+sources on one key (a site that is not the route's subsidiary's own is
+`location_not_found`). What is stored but blocks a final is reported in
+`boundaryGaps`, each gap at its entity (`InventoryBoundaryGap` lists the
+rules): a missing policy, a `sites` policy with no site, a missing or
+`undetermined` cell, a mapped source left `undetermined`
+(`applicability_undetermined`); an unsupported source not excluded
+(`unsupported_source`); an included cell with no included source — never a
+covered zero — or an included source no selected included cell holds
+(`attribution_conflict`). A year has one open version at most, the
 newest: a create takes the highest version + 1 and answers
-`boundary_draft_open` while one is open (E4). Edits serialise on the header's
+`boundary_draft_open` while one is open (E4); deleting it frees its number.
+A copy takes its source's declarations as they are, months included, read
+under the source's header lock. Edits serialise on the header's
 row lock with no revision precondition — the last writer of a subsidiary wins,
 and each audit row holds what it replaced (E5). **Confirm** (`super_admin`)
 refuses `boundary_frozen` when already confirmed,

@@ -74,6 +74,15 @@ describe('the record-independent gaps confirm refuses (E3)', () => {
     expectTypeOf<InventoryBoundaryGap>().toMatchTypeOf<ReportCoverageGap>();
     expectTypeOf<InventoryBoundaryGap['recordIds']>().toEqualTypeOf<readonly []>();
   });
+
+  it('always name their entity — a granted view filters them by subsidiary (security-rls P2-1)', () => {
+    // @ts-expect-error — every boundary gap sits at one subsidiary's entity.
+    const nowhere: InventoryBoundaryGap = { code: 'unsupported_source', sourceIds: ['heat'], obligationIds: [], recordIds: [] };
+    const placed: InventoryBoundaryGap = {
+      code: 'unsupported_source', entity: { subsidiaryId: 's', locationId: null }, sourceIds: ['heat'], obligationIds: [], recordIds: [],
+    };
+    void nowhere; void placed;
+  });
 });
 
 describe('the audit taxonomy', () => {

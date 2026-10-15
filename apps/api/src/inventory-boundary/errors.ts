@@ -43,7 +43,7 @@ export class BoundaryConfirmRequiresCopyError extends ConflictException {
 }
 
 export const BOUNDARY_INCOMPLETE_MESSAGE =
-  'This version cannot be confirmed yet: it declares no subsidiary, or it still has undetermined decisions, unsupported sources or sources outside their cells. Resolve the listed gaps first.';
+  'This version cannot be confirmed yet: it declares no subsidiary, or it still has gaps — a missing or undetermined decision, an unsupported source, or a cell and its sources that do not match. Resolve the listed gaps first.';
 
 /** Confirming an empty version, or one with `boundaryGaps` (E3). No params:
  * the screen reads the gaps from the version itself. */
