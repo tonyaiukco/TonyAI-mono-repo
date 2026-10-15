@@ -17,7 +17,9 @@
  * The service role's refusals are proven through PostgREST with the service
  * key, as an attacker holding it would act: an owner session that `SET ROLE`s
  * to `service_role` keeps `session_user` = the owner, and the guards rightly
- * let the owner through.
+ * let the owner through. Since LP4-02 (29) the service role inserts no record
+ * at all (TA006, `record-write-guards.int.spec.ts`): the drafts it is refused
+ * rewriting here are the owner's fixtures.
  */
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -92,6 +94,14 @@ function recordData(periodValue: string, status: ActivityRecordStatus): Prisma.A
     subsidiaryId: tenant.subsidiaryId, reportingYear: 2026, reportingPeriod: 'monthly', periodValue, category: 'Electricity', scope: 2,
     activityValue: 1, activityUnit: 'kWh', calculation: { tCo2e: 0, factorId: 'int-test-placeholder' }, createdBy: tenant.users.dataEntry.id, status,
   };
+}
+
+/**
+ * The draft a direct client would have POSTed (`recordRow`'s), inserted by the
+ * owner — the service role may not insert one since LP4-02 (29).
+ */
+function draftData(id: string, periodValue: string): Prisma.ActivityRecordUncheckedCreateInput {
+  return { ...recordData(periodValue, ActivityRecordStatus.draft), id, activityValue: 99, calculation: { tCo2e: 9, factorId: 'forged' } };
 }
 
 /** A record row as a direct client would POST it (the slot is the test's own). */
@@ -196,10 +206,10 @@ describe('LP4-01 — a record is born a draft and moved by the API alone', () =>
     expect(codeOf(e) ?? String(e)).toMatch(/TA005|created as a draft/);
   });
 
-  it('refuses the service role walking its own draft up the lifecycle, one valid step at a time (TA005)', async () => {
+  it('refuses the service role walking a draft up the lifecycle, one valid step at a time (TA005)', async () => {
     const id = randomUUID();
     try {
-      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'July'))).ok).toBe(true);
+      await owner.activityRecord.create({ data: draftData(id, 'July') });
       expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { status: 'submitted' }))).toEqual({ ok: false, code: 'TA005' });
       expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).status).toBe(ActivityRecordStatus.draft);
     } finally {
@@ -229,7 +239,7 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
   it("refuses the service role a draft's or a rejected record's figure and inputs rewritten through PostgREST (TA006)", async () => {
     const id = randomUUID();
     try {
-      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'October'))).ok).toBe(true);
+      await owner.activityRecord.create({ data: draftData(id, 'October') });
       for (const change of [
         { calculation: forged },
         { input: { value: 1 } },
@@ -260,7 +270,7 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
   it("refuses the service role a committed record's free-form input (TA006), and leaves its figure to K5 (TA001)", async () => {
     const id = randomUUID();
     try {
-      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'December'))).ok).toBe(true);
+      await owner.activityRecord.create({ data: draftData(id, 'December') });
       await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.submitted } });
       await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.approved } });
       expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { input: { value: 1 } }))).toEqual({ ok: false, code: 'TA006' });
@@ -273,10 +283,14 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
   it('refuses the service role deleting a draft or a rejected record — the delete-and-re-insert rewrite (TA006)', async () => {
     const id = randomUUID();
     try {
-      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'October'))).ok).toBe(true);
+      await owner.activityRecord.create({ data: draftData(id, 'October') });
       expect(await refusal(await serviceRest('DELETE', `activity_records?id=eq.${id}`))).toEqual({ ok: false, code: 'TA006' });
-      // So its id cannot be re-used for a forged figure.
-      expect((await serviceRest('POST', 'activity_records', { ...recordRow(id, 'draft', 'October'), calculation: forged })).ok).toBe(false);
+      // Nor can its id be re-used for a forged figure: the service role inserts
+      // no record at all (LP4-02 (29)).
+      expect(await refusal(await serviceRest('POST', 'activity_records', { ...recordRow(id, 'draft', 'October'), calculation: forged }))).toEqual({
+        ok: false,
+        code: 'TA006',
+      });
       await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.submitted } });
       await owner.activityRecord.update({ where: { id }, data: { status: ActivityRecordStatus.rejected } });
       expect(await refusal(await serviceRest('DELETE', `activity_records?id=eq.${id}`))).toEqual({ ok: false, code: 'TA006' });
@@ -289,7 +303,7 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
   it('refuses the service role rewriting who wrote a record, at any status — the self-approval rule reads it (TA006)', async () => {
     const id = randomUUID();
     try {
-      expect((await serviceRest('POST', 'activity_records', recordRow(id, 'draft', 'October'))).ok).toBe(true);
+      await owner.activityRecord.create({ data: draftData(id, 'October') });
       expect(await refusal(await serviceRest('PATCH', `activity_records?id=eq.${id}`, { created_by: tenant.users.superAdmin.id }))).toEqual({
         ok: false,
         code: 'TA006',
@@ -305,19 +319,18 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
     }
   });
 
-  // INSERT stays outside the guard (Decisions 2026-10-11 (third)): the e2e and
-  // `rls:probe` fixtures POST drafts. So the service role can still POST a NEW
-  // draft with any figure, and K11's recompute at the API's submit is what
-  // refuses to commit it ("LP4-02 follow-ups" (13), LP4-02 B2).
-  it("refuses at the API's submit a NEW draft the service role POSTed with a forged figure (calculation_stale); it stays a draft, unaudited", async () => {
+  // The service role inserts no record since LP4-02 (29) (TA006). A session
+  // holding the runtime login's own credential still can — to the database it
+  // IS the API — so K11's recompute at the API's submit is what refuses to
+  // commit its forged figure ("LP4-02 follow-ups" (13), LP4-02 B2).
+  it("refuses at the API's submit a NEW draft the runtime login inserted with a forged figure (calculation_stale); it stays a draft, unaudited", async () => {
     const id = randomUUID();
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     try {
       // Well-shaped: the engine's own snapshot for these inputs, its figure
       // alone rewritten — the forgery a reader of the snapshot cannot see.
       const engine = (await pricedCalculation(owner, tenant, { periodValue: 'September', activityValue: 99 })) as Record<string, unknown>;
-      const row = { ...recordRow(id, 'draft', 'September'), calculation: { ...engine, tCo2e: 0.0001, kgCo2e: 0.1 } };
-      expect((await serviceRest('POST', 'activity_records', row)).ok).toBe(true);
+      await runtime.activityRecord.create({ data: { ...draftData(id, 'September'), calculation: { ...engine, tCo2e: 0.0001, kgCo2e: 0.1 } } });
       await attachEvidence(owner, tenant, [id]);
 
       const outcome = await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, id));
@@ -338,27 +351,25 @@ describe('LP4-02 (K11) — what a draft says is what the API computed', () => {
 
   // `security-rls` P2-1 (B2 review): the totals group by the record's own
   // `scope` column, which no snapshot carries — filed under another scope, an
-  // honest figure moved between Scope 2 and Scope 3.
-  it("refuses at the API's submit a NEW draft the service role POSTed under a scope that is not its category's", async () => {
-    const id = randomUUID();
-    try {
-      const engine = await pricedCalculation(owner, tenant, { periodValue: 'September', activityValue: 99 });
-      const row = { ...recordRow(id, 'draft', 'September'), scope: 3, calculation: engine };
-      expect((await serviceRest('POST', 'activity_records', row)).ok).toBe(true);
-      await attachEvidence(owner, tenant, [id]);
-      const outcome = await failure(lifecycleServices(runtime).records.submit(tenant.users.dataEntry, id));
-      expect(outcome).toBeInstanceOf(CalculationStaleError);
-      expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).status).toBe(ActivityRecordStatus.draft);
-    } finally {
-      await owner.activityRecord.deleteMany({ where: { id } });
+  // honest figure moved between Scope 2 and Scope 3. K11 refused it at
+  // submit; since LP4-02 (33) the scope CHECK refuses it at the insert, for
+  // the runtime login and the owner alike (and K11's check stays behind it).
+  it("refuses a NEW draft under a scope that is not its category's at the insert — the runtime login's and the owner's (23514)", async () => {
+    const engine = await pricedCalculation(owner, tenant, { periodValue: 'September', activityValue: 99 });
+    for (const client of [runtime, owner]) {
+      const e = await failure(
+        withRollback(client, (tx) => tx.activityRecord.create({ data: { ...draftData(randomUUID(), 'September'), scope: 3, calculation: engine } })),
+      );
+      expect(codeOf(e)).toBe('23514');
+      expect(String((e as Error).message)).toContain('activity_records_scope_check');
     }
   });
 
-  it("submits a draft POSTed with the engine's own snapshot for its inputs — K11 checks the figure, not who wrote the row", async () => {
+  it("submits a draft inserted with the engine's own snapshot for its inputs — K11 checks the figure, not who wrote the row", async () => {
     const id = randomUUID();
     try {
       const engine = await pricedCalculation(owner, tenant, { periodValue: 'September', activityValue: 99 });
-      expect((await serviceRest('POST', 'activity_records', { ...recordRow(id, 'draft', 'September'), calculation: engine })).ok).toBe(true);
+      await runtime.activityRecord.create({ data: { ...draftData(id, 'September'), calculation: engine } });
       await attachEvidence(owner, tenant, [id]);
       await lifecycleServices(runtime).records.submit(tenant.users.dataEntry, id);
       expect((await owner.activityRecord.findUniqueOrThrow({ where: { id } })).status).toBe(ActivityRecordStatus.submitted);

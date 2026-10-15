@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ACTIVITY_UNITS,
   ACTIVITY_UNIT_MAX_LENGTH,
+  ACTIVITY_VALUE_MAX,
   EXPLANATION_MAX_LENGTH,
   PERIOD_VALUE_MAX_LENGTH,
 } from '@tonyai/shared-types';
@@ -112,6 +113,7 @@ describe('the caps have the values they claim', () => {
     expect(PERIOD_VALUE_MAX_LENGTH).toBe(32);
     expect(ACTIVITY_UNIT_MAX_LENGTH).toBe(32);
     expect(EXPLANATION_MAX_LENGTH).toBe(2000);
+    expect(ACTIVITY_VALUE_MAX).toBe(1e12);
   });
 });
 
@@ -263,6 +265,12 @@ describe.each(DTOS)('%s — bounded free text', (_name, Dto) => {
     expect(parse(Dto, { activityValue: 0 }).errors).toHaveLength(0);
   });
 
+  it('bounds activityValue at ACTIVITY_VALUE_MAX — the bound the database CHECK holds every writer to', () => {
+    // LP4-02 (33): refused here, at the door, before the engine prices it.
+    expect(parse(Dto, { activityValue: ACTIVITY_VALUE_MAX }).errors).toHaveLength(0);
+    expect(constraintsOn(Dto, { activityValue: ACTIVITY_VALUE_MAX + 1 }, 'activityValue')).toContain('max');
+  });
+
   it('accepts a unit the engine understands, "kW h" included', () => {
     // The refusal a user actually hit was raised HERE, not in the engine:
     // `@IsActivityUnit` asks `isKnownUnit`, whose alias table could not reach
@@ -297,6 +305,7 @@ describe('the two write DTOs agree, rule for rule', () => {
     ['activityUnit', { activityUnit: 'x'.repeat(ACTIVITY_UNIT_MAX_LENGTH + 1) }],
     ['varianceReason', { varianceReason: 'x'.repeat(EXPLANATION_MAX_LENGTH + 1) }],
     ['activityValue', { activityValue: -0.0001 }],
+    ['activityValue', { activityValue: ACTIVITY_VALUE_MAX + 1 }],
   ])('%s is refused by both classes', (field, body) => {
     for (const [, Dto] of DTOS) {
       expect(constraintsOn(Dto, body, field).length).toBeGreaterThan(0);

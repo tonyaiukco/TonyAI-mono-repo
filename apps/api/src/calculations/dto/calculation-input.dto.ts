@@ -12,6 +12,7 @@ import {
 } from 'class-validator';
 import {
   ACTIVITY_UNIT_MAX_LENGTH,
+  ACTIVITY_VALUE_MAX,
   CATEGORIES,
   GEOGRAPHY_CODES,
 } from '@tonyai/shared-types';
@@ -72,8 +73,11 @@ export class CalculationInputDto {
   @Max(2100)
   reportingYear!: number;
 
+  // Where the save DTOs bound it (ACTIVITY_VALUE_MAX): a preview the save
+  // would refuse is a divergence.
   @IsNumber()
   @Min(0)
+  @Max(ACTIVITY_VALUE_MAX)
   value!: number;
 
   // Bounded to match the write DTOs, because the vocabulary check bounds

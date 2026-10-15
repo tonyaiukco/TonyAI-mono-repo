@@ -913,6 +913,7 @@ describe('BulkUploadService — warnings', () => {
 describe('BulkUploadService — row validation reaches the real DTO rules', () => {
   it.each([
     ['a negative consumption figure', { activityValue: '-5' }, 'activityValue'],
+    ['a consumption figure past ACTIVITY_VALUE_MAX (LP4-02 (33))', { activityValue: '1000000000001' }, 'activityValue'],
     ['a category that does not exist', { category: 'Vibes' }, 'category'],
     ['a unit the calc engine does not know', { activityUnit: 'furlongs' }, 'activityUnit'],
     ['a year outside the allowed range', { reportingYear: '1066' }, 'reportingYear'],
