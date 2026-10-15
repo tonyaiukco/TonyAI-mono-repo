@@ -103,6 +103,7 @@ python3 -m venv /private/tmp/tonyai-infra-venv
 source /private/tmp/tonyai-infra-venv/bin/activate
 python3 -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
 python3 -m unittest discover -s infra/tests -v
+python3 infra/tests/check_selfhost_runtime_mutations.py
 python3 infra/tests/check_mutations.py
 python3 infra/scripts/check_terraform_policy.py
 terraform fmt -check -recursive infra/terraform
@@ -118,6 +119,10 @@ pnpm typecheck
 pnpm build
 pnpm test
 ```
+
+The selfhost mutation runner preserves the repository's `infra/` layout and
+Terraform source dependencies in each disposable copy. Each unmodified copy must
+pass before a mutation is applied; setup/import errors are never valid kills.
 
 For a checkout already bound to a live backend, run offline init/validate/test
 in a disposable source copy with a separate local `TF_DATA_DIR` and
