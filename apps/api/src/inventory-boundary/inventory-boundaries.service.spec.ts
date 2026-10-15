@@ -45,6 +45,8 @@ function mockDb() {
   tx.inventoryBoundary.findFirst.mockResolvedValue(header());
   const prisma = {
     ...tx,
+    // The root client's own: a write made outside the transaction shows here.
+    auditLog: { create: vi.fn() },
     $transaction: vi.fn(async (work: (client: typeof tx) => unknown) => work(tx)),
   };
   return { prisma, tx };
@@ -198,6 +200,15 @@ describe('InventoryBoundariesService', () => {
       await expect(service.putSubsidiary(admin, ID, SUB_ID, BODY)).rejects.toBe(duplicate);
     });
 
+    it('a deadlock (40P01, Prisma P2034) is a lost race too: conflict, never a 500', async () => {
+      putReaches();
+      db.tx.inventoryBoundarySubsidiary.create.mockRejectedValueOnce(known('P2034', {}));
+      await expect(service.putSubsidiary(admin, ID, SUB_ID, BODY)).rejects.toBeInstanceOf(ConflictException);
+      db.tx.inventoryBoundary.findUniqueOrThrow.mockResolvedValue(header());
+      db.tx.inventoryBoundarySubsidiary.findMany.mockRejectedValueOnce(known('P2034', {}));
+      await expect(service.confirm(admin, ID)).rejects.toBeInstanceOf(ConflictException);
+    });
+
     it("two creates of a year's next version: the loser is told conflict — and only that key's failure is", async () => {
       db.tx.inventoryBoundary.findFirst.mockResolvedValue(null);
       db.tx.inventoryBoundary.create.mockRejectedValueOnce(known('P2002', { target: ['organisation_id', 'reporting_year', 'version'] }));
@@ -218,6 +229,39 @@ describe('InventoryBoundariesService', () => {
       await expect(service.create(admin, { reportingYear: 2026, copyOf: ID })).rejects.toSatisfy((e) => errorCodeOf(e) === 'boundary_not_found');
       expect((db.tx.$queryRaw.mock.calls[0][0] as TemplateStringsArray).join('?')).toMatch(/FOR SHARE\s*$/);
       expect(db.tx.inventoryBoundary.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("bound to the caller's organisation, its subsidiary and the transaction", () => {
+    it("looks a PUT's subsidiary up in the caller's organisation, and its sites in that subsidiary", async () => {
+      db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID });
+      db.tx.location.count.mockResolvedValue(0);
+      const site = '1c000000-0000-4000-8000-000000000001';
+      await expect(service.putSubsidiary(admin, ID, SUB_ID, { ...BODY, sites: [{ locationId: site, firstMonth: 1, lastMonth: 12 }] }))
+        .rejects.toSatisfy((e) => errorCodeOf(e) === 'location_not_found');
+      expect(db.tx.subsidiary.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: SUB_ID, organisationId: 'org-1' } }));
+      expect(db.tx.location.count).toHaveBeenCalledWith({ where: { id: { in: [site] }, subsidiaryId: SUB_ID } });
+      expect((db.tx.$queryRaw.mock.calls[0] as unknown[]).slice(1)).toEqual([ID, 'org-1']);
+    });
+
+    it("reads a version in the caller's organisation only", async () => {
+      db.tx.inventoryBoundary.findFirst.mockResolvedValue(null);
+      await expect(service.get(admin, ID)).rejects.toThrow();
+      expect(db.tx.inventoryBoundary.findFirst).toHaveBeenCalledWith({ where: { id: ID, organisationId: 'org-1' } });
+    });
+
+    it("writes each audit row through the write's own transaction, never the root client", async () => {
+      db.tx.subsidiary.findFirst.mockResolvedValue({ id: SUB_ID });
+      db.tx.inventoryBoundarySubsidiary.findUnique.mockResolvedValue(null);
+      await service.putSubsidiary(admin, ID, SUB_ID, BODY);
+      await service.confirm(admin, ID).catch(() => undefined);
+      db.tx.inventoryBoundary.findFirst.mockResolvedValueOnce(null);
+      db.tx.inventoryBoundary.create.mockResolvedValue(header());
+      await service.create(admin, { reportingYear: 2026 });
+      await service.remove(admin, ID);
+      expect(db.tx.auditLog.create).toHaveBeenCalledTimes(3);
+      expect(db.tx.auditLog.create.mock.calls.map(([arg]) => (arg as { data: { action: string } }).data.action)).toEqual(['update', 'create', 'delete']);
+      expect(db.prisma.auditLog.create).not.toHaveBeenCalled();
     });
   });
 

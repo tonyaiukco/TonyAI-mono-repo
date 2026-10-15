@@ -1,8 +1,9 @@
 import 'reflect-metadata';
 import { RequestMethod } from '@nestjs/common';
-import { HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { GUARDS_METADATA, HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { describe, expect, it } from 'vitest';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
+import { BoundaryWriterGuard, DeclarationSizeGuard } from './boundary-writer.guard';
 import { InventoryBoundariesController } from './inventory-boundaries.controller';
 
 /**
@@ -37,5 +38,14 @@ describe('InventoryBoundariesController', () => {
     const params = args.filter((a) => typeof a.data === 'string' && (ids as readonly string[]).includes(a.data));
     expect(params.map((p) => p.data).sort()).toEqual([...ids].sort());
     for (const p of params) expect(p.pipes).toContain(ParseUuidParamPipe);
+  });
+
+  it('refuses a write before its body is validated: the writer first, then the declaration\'s list sizes (security-rls P1)', () => {
+    const guards = (name: keyof InventoryBoundariesController) =>
+      (Reflect.getMetadata(GUARDS_METADATA, InventoryBoundariesController.prototype[name]) ?? []) as unknown[];
+    expect(guards('list')).toEqual([]);
+    expect(guards('get')).toEqual([]);
+    for (const name of ['create', 'deleteSubsidiary', 'confirm', 'remove'] as const) expect(guards(name), name).toEqual([BoundaryWriterGuard]);
+    expect(guards('putSubsidiary')).toEqual([BoundaryWriterGuard, DeclarationSizeGuard]);
   });
 });

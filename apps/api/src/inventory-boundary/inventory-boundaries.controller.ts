@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import type {
   InventoryBoundaryVersionDTO,
   InventoryBoundaryVersionSummary,
@@ -7,6 +7,7 @@ import type {
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
+import { BoundaryWriterGuard, DeclarationSizeGuard } from './boundary-writer.guard';
 import {
   CreateInventoryBoundaryDto,
   ListInventoryBoundariesQueryDto,
@@ -15,7 +16,8 @@ import {
 import { InventoryBoundariesService } from './inventory-boundaries.service';
 
 /** LP3-04's write path (E1): a year's boundary versions and one subsidiary's
- * declaration at a time. Roles and refusals are the service's. */
+ * declaration at a time. Roles and refusals are the service's; a write is also
+ * refused before its body is validated (`boundary-writer.guard.ts`). */
 @Controller('inventory-boundaries')
 export class InventoryBoundariesController {
   constructor(private readonly service: InventoryBoundariesService) {}
@@ -31,11 +33,13 @@ export class InventoryBoundariesController {
   }
 
   @Post()
+  @UseGuards(BoundaryWriterGuard)
   create(@CurrentUser() user: RequestUser, @Body() dto: CreateInventoryBoundaryDto): Promise<InventoryBoundaryVersionDTO> {
     return this.service.create(user, dto);
   }
 
   @Put(':id/subsidiaries/:subsidiaryId')
+  @UseGuards(BoundaryWriterGuard, DeclarationSizeGuard)
   putSubsidiary(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseUuidParamPipe) id: string,
@@ -48,6 +52,7 @@ export class InventoryBoundariesController {
   }
 
   @Delete(':id/subsidiaries/:subsidiaryId')
+  @UseGuards(BoundaryWriterGuard)
   deleteSubsidiary(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseUuidParamPipe) id: string,
@@ -58,12 +63,14 @@ export class InventoryBoundariesController {
 
   @Post(':id/confirm')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(BoundaryWriterGuard)
   confirm(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string): Promise<InventoryBoundaryVersionDTO> {
     return this.service.confirm(user, id);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(BoundaryWriterGuard)
   remove(@CurrentUser() user: RequestUser, @Param('id', ParseUuidParamPipe) id: string): Promise<void> {
     return this.service.remove(user, id);
   }

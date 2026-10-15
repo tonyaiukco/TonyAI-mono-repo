@@ -259,6 +259,24 @@ describe('who may do what (E2): super_admin writes and confirms; everyone else r
     expect(await boundaryState()).toBe(before);
   });
 
+  it("refuses a reader's 1 MB declaration of empty rows before it is validated — forbidden, small — and a writer's past the limits with one message (security-rls P1)", async () => {
+    const id = await versionWith([]);
+    const empties = (n: number) => ({ firstMonth: 1, lastMonth: 12, sites: [], attribution: [], applicability: [], sources: Array(n).fill({}) });
+    const flood = empties(340_000);
+    expect(Buffer.byteLength(JSON.stringify(flood))).toBeLessThan(1_048_576);
+    for (const role of ['consultant', 'executiveViewer', 'dataEntry'] as const) {
+      const answer = await call(t.users[role], 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, flood);
+      expect([answer.status, answer.code], role).toEqual([403, 'forbidden']);
+      expect(answer.text.length, role).toBeLessThan(1_000);
+    }
+    for (const body of [flood, empties(2_001)]) {
+      const answer = await call(admin, 'PUT', `/inventory-boundaries/${id}/subsidiaries/${S}`, body);
+      expect([answer.status, answer.code]).toEqual([400, 'validation_failed']);
+      expect(json<{ message: string[] }>(answer).message).toEqual(['sources must contain no more than 2000 elements']);
+    }
+    expect(await declared(id, S)).toBeNull();
+  });
+
   it('lets super_admin do every one of them', async () => {
     const created = await call(admin, 'POST', '/inventory-boundaries', { reportingYear: 2026 });
     expect(created.status).toBe(201);

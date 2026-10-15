@@ -1277,7 +1277,11 @@ subsidiary is one body, and the global 100 KB held only about a hundred sites
 attributed per site, below the DTOs' limits (500 sites, 2,000 sources) — those
 fit at ordinary name lengths. Every other route, the boundary's included,
 keeps `BODY_MAX_BYTES`; the declaration's parser is registered before the
-global one, which then passes the read body by.
+global one, which then passes the read body by. A body is parsed before
+authentication, but a write is refused before it is validated — the global
+pipe's work grows with a body's rows — by guards (`boundary-writer.guard.ts`):
+anyone but a `super_admin` is `forbidden`, and a declaration's list past the
+DTO's limits is `validation_failed` by its count alone.
 
 ## Localisation and error codes
 

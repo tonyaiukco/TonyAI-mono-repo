@@ -57,6 +57,9 @@ const versionTaken = (e: unknown): boolean =>
   e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002'
   && JSON.stringify(e.meta?.target ?? null).includes('version');
 
+/** PostgreSQL broke a deadlock by aborting this transaction. */
+const deadlocked = (e: unknown): boolean => e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2034';
+
 /** The subsidiary, or a site, deleted between the check and the insert — the
  * only keys a valid declaration can break (Prisma 6 names it `meta.constraint`). */
 const DECLARED_PARENT_KEYS = new Set([
@@ -321,7 +324,10 @@ export class InventoryBoundariesService {
         );
         throw e;
       }
-      if (lostRace(e)) throw new ConflictException(LOST_RACE_MESSAGE);
+      // A deadlock (P2034) is a lost race too — against a subsidiary's or a
+      // site's delete, whose cascade locks a row before the guard locks the
+      // header (`security-rls` P3) — as is the operation's own key race.
+      if (deadlocked(e) || lostRace(e)) throw new ConflictException(LOST_RACE_MESSAGE);
       throw e;
     }
   }
