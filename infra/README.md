@@ -15,6 +15,29 @@ Container Apps environment must include the reserved infrastructure subnet in
 its creation request. See [runbook 07's integration prerequisites](runbooks/07-selfhost.md#application-integration-prerequisites-not-implemented). Runtime health
 alone does not establish application QA or recovery acceptance.
 
+[Runbook 08](runbooks/08-qa-application.md) defines the additive Sweden application
+foundation/release design, private DB TLS and credential boundaries, and staged
+approval/rollback plan. Its offline `selfhost_app_network.py` preflight checks the
+existing reserved subnet against nonsecret ARM projections; it neither deploys
+nor initializes state. The new deployment roots remain unimplemented. API issuer
+enforcement was integrated by #180. Deployment binding and live acceptance of the
+selfhost issuer/JWKS remain open, alongside SMTP provider/residency, PD-3 and
+recovery acceptance.
+
+Runbook 08 also defines the dashboard-only credential transaction. Its separately
+approved live rotation/custody completed on 2026-10-15, as did one format-1 I1
+catalog inventory. The owner need not recover the old password. Only dashboard
+credential rotation/custody is accepted; other DB-admin/Studio-reachable secrets
+remain potentially exposed. Neither completed operation closes PD-3.
+
+[Runbook 09](runbooks/09-qa-integrity.md) makes clean Sweden replacement with fresh
+credentials, old-trust retirement and preservation the primary planned route.
+Catalog consistency cannot prove no secret disclosure, and counts do not establish
+disposable data. No rebuild, broad rotation or containment change is authorized
+by this documentation. The format-2 collector adds connection-startup event-trigger
+suppression and a separate login-trigger count; it is locally tested only, not a
+retroactive property of the executed format-1 report or a deployed change.
+
 Host/runtime acceptance, including the 2026-10-15 corrections and normal reboot,
 does not close LP2-01, LP2-02 or LP2-03; DONE requires application integration,
 migration/runtime-role/bucket acceptance, fresh recreation and recovery evidence.
@@ -80,6 +103,7 @@ python3 -m venv /private/tmp/tonyai-infra-venv
 source /private/tmp/tonyai-infra-venv/bin/activate
 python3 -m pip install --only-binary=:all: --require-hashes -r infra/tests/requirements.txt
 python3 -m unittest discover -s infra/tests -v
+python3 infra/tests/check_selfhost_runtime_mutations.py
 python3 infra/tests/check_mutations.py
 python3 infra/scripts/check_terraform_policy.py
 terraform fmt -check -recursive infra/terraform
@@ -95,6 +119,10 @@ pnpm typecheck
 pnpm build
 pnpm test
 ```
+
+The selfhost mutation runner preserves the repository's `infra/` layout and
+Terraform source dependencies in each disposable copy. Each unmodified copy must
+pass before a mutation is applied; setup/import errors are never valid kills.
 
 For a checkout already bound to a live backend, run offline init/validate/test
 in a disposable source copy with a separate local `TF_DATA_DIR` and

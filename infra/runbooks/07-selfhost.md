@@ -147,6 +147,10 @@ ID is present in its creation request; this cannot be retrofitted safely.
 
 ## Application integration prerequisites (not implemented)
 
+The concrete foundation/application/release design, offline network preflight,
+lane dependencies and staged approval boundary are in
+[runbook 08](08-qa-application.md). The preflight is not a deployment path.
+
 Keep the legacy subscription gate closed. A region-string change in the Germany
 roots cannot connect the application to this host. The implementation must add
 an explicit self-host deployment contract across foundation, release validation,
@@ -563,8 +567,10 @@ establish this selfhost contract.
    separate Azure storage. Azure Blob is not a drop-in S3 endpoint. Qualify the
    backend and restore order; demonstrate <=15-minute recovery-point lag and
    <=4-hour full recovery. Daily storage verification is not a backup.
-5. Configure Azure Communication Services Email, verified domain/sender and the
-   API's versioned SMTP secret. Verify invitation/reset delivery.
+5. Resolve the SMTP processor and data-location decision before configuration:
+   this runbook previously named ACS Email while LP2-04 names Resend. Neither is
+   selected; see [runbook 08](08-qa-application.md#required-decisions-before-live-integration).
+   Then verify the domain/sender, API's versioned SMTP secret and invitation/reset delivery.
 6. Run exact-deployment health, session-lifecycle, cross-tenant API/PostgREST,
    private upload/download/digest, factor provenance, restoration and alert
    checks. Provision the first organisation through the supported owner flow;
