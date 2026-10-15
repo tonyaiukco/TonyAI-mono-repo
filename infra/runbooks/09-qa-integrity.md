@@ -35,6 +35,15 @@ match. A clean recreation contributes to LP2-01 evidence but does not by itself
 complete that card, application QA or recoverability. Retain LP5-03's database +
 file-byte restore and measured RPO/RTO launch blockers.
 
+On 2026-10-15, a separately reviewed and explicitly approved R1 packet applied
+the old NSG containment rules, stopped ten bound containers with SIGTERM and
+deallocated the old VM. Retained disk/NIC/IP/vault/lock metadata was unchanged;
+nine fresh external TCP probes timed out. The private/VNet probe remains open.
+This bounded operation does not prove database integrity, clean database shutdown
+or old-credential rejection. No replacement or data transfer occurred. See
+[runbook 10](10-qa-clean-replacement.md#executed-r1-evidence-and-limits) for the
+dated evidence boundary; PD-3 remains OPEN.
+
 ### Credential exposure scope and closure gate
 
 PD-3 covers the potential DB-admin/Studio exposure during the historical public
@@ -174,6 +183,11 @@ See [PostgreSQL transaction semantics](https://www.postgresql.org/docs/17/sql-se
 [password-file lookup](https://www.postgresql.org/docs/17/libpq-pgpass.html).
 
 ## I2: primary clean replacement plan (separate design/apply approval)
+
+Use the [clean replacement execution design](10-qa-clean-replacement.md) for the
+proposed same-state resource generation, preservation/containment sequence,
+implementation prerequisites, cost scope and individually bounded live packages.
+It is not an executable apply plan or permission to change the current host.
 
 ### Preservation and containment before provisioning
 

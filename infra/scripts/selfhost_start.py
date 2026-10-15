@@ -11,6 +11,8 @@ from selfhost_pin import GatewayDestinationError
 
 
 def main():
+    if Path("/etc/tonyai/replacement.json").exists():
+        raise ValueError("Generation-bound hosts require the replacement workflow.")
     if os.geteuid() != 0 or sys.argv[1:] not in ([], ['--https']):
         raise ValueError('Use as root, optionally with --https.')
     subprocess.run(['/usr/local/sbin/tonyai-runtime-guard'], check=True)

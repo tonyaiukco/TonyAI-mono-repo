@@ -68,6 +68,8 @@ def invoke(lane, backend_path, inputs_path, action, before_apply=None):
         raise SafeFailure('Unsupported Terraform root or action.')
     if action == 'approved-apply' and lane != 'application':
         raise SafeFailure('Unattended apply is restricted to the application root.')
+    if lane == 'selfhost' and action in ('plan', 'apply'):
+        raise SafeFailure('Legacy selfhost plan/apply is closed; use replacement_run.py with a separately approved saved plan.')
     env = clean_environment()
     backend = json.loads(Path(backend_path).read_text())
     validate_backend(backend)

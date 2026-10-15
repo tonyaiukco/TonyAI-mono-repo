@@ -61,6 +61,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--resource-id', required=True)
     parser.add_argument('--initialize-empty-disks', action='store_true')
+    parser.add_argument('--replacement-contract')
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise ValueError('Run as root on the intended Azure host.')
@@ -69,6 +70,11 @@ def main():
         compute = json.load(response)['compute']
     if compute['resourceId'].lower() != args.resource_id.lower():
         raise ValueError('Azure instance identity differs from the reviewed target.')
+    replacement = None
+    if args.replacement_contract:
+        from replacement_host import validate_contract, validate_identity, safe_path
+        replacement = validate_contract(json.loads(safe_path(args.replacement_contract).read_bytes()))
+        validate_identity(replacement, compute)
     # Check both disks and destination directories before any formatting.
     checked = [(name, *inspect_disk(lun, gib, name, args.initialize_empty_disks)) for lun, gib, name in DISKS]
     if len({device for _, device, _, _ in checked}) != len(DISKS):
@@ -77,10 +83,12 @@ def main():
     original = fstab.read_text()
     for name, device, target, row in checked:
         check_destination(target, row, original)
+        if replacement and row['fstype'] and row['uuid'] != replacement['disks'][name]['uuid']:
+            raise ValueError('Existing filesystem is not the approved generation UUID.')
     updated = original
     for name, device, target, row in checked:
         if not row['fstype']:
-            subprocess.run(['mkfs.ext4', '-q', '-L', 'tonyai-' + name, device], check=True)
+            subprocess.run(['mkfs.ext4', '-q', '-L', 'tonyai-' + name] + (['-U', replacement['disks'][name]['uuid']] if replacement else []) + [device], check=True)
         disk_uuid = run('blkid', '-s', 'UUID', '-o', 'value', device)
         legacy = f'UUID={disk_uuid} {target} ext4 defaults,nodev,nosuid 0 2'
         line = f'UUID={disk_uuid} {target} ext4 {MOUNT_OPTIONS} 0 2'

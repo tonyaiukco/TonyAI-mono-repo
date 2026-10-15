@@ -6,6 +6,8 @@ import sys
 
 
 def main():
+    if Path("/etc/tonyai/replacement.json").exists():
+        raise ValueError("Generation-bound hosts require the replacement workflow.")
     if os.geteuid() != 0 or not all(os.path.ismount('/srv/tonyai/' + name) for name in ('database', 'objects')):
         raise ValueError('Root and both recovery disks are required.')
     root = Path('/opt/tonyai/supabase')

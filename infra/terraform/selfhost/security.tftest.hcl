@@ -2,8 +2,10 @@ mock_provider "azapi" {
   override_during = plan
   mock_resource "azapi_resource" {
     defaults = {
-      id     = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock"
-      output = { properties = { ipAddress = "192.0.2.1", dnsSettings = { fqdn = "tonyai-staging-00000000.swedencentral.cloudapp.azure.com" } }, identity = { principalId = "00000000-0000-0000-0000-000000000004" } }
+      id       = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock"
+      location = ""
+      tags     = {}
+      output   = { properties = { ipAddress = "192.0.2.1", dnsSettings = { fqdn = "tonyai-staging-00000000.swedencentral.cloudapp.azure.com" } }, identity = { principalId = "00000000-0000-0000-0000-000000000004" } }
     }
   }
 }
@@ -148,4 +150,33 @@ override_resource {
   override_during = plan
   target          = azapi_resource.recovery_vault
   values          = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock/providers/Microsoft.KeyVault/vaults/test" }
+}
+
+run "separate_old_containment" {
+  command = plan
+  variables { containment = true }
+  assert {
+    condition     = length(azapi_resource.firewall.body.properties.securityRules) == 3 && azapi_resource.firewall.body.properties.securityRules[2].properties.direction == "Outbound" && azapi_resource.firewall.body.properties.securityRules[2].properties.access == "Deny" && length(azapi_resource.replacement_host) == 0
+    error_message = "R1 must only contain the retained host."
+  }
+}
+run "isolated_additive_r02" {
+  command = plan
+  variables {
+    containment = true
+    replacement = { generation = "r02", recovery_vault_name = "tonyai-qa-r02-12345678", ssh_public_key = "ssh-rsa cmVwbGFjZW1lbnQ=" }
+  }
+  assert {
+    condition     = length(azapi_resource.network.body.properties.subnets) == 3 && azapi_resource.network.body.properties.subnets[1].name == "container-apps" && azapi_resource.network.body.properties.subnets[2].properties.addressPrefix == "10.80.1.0/24" && azapi_resource.replacement_host["r02"].body.properties.storageProfile.osDisk.diskSizeGB == 32
+    error_message = "R02 must append a separate subnet and fix OS disk capacity."
+  }
+  assert {
+    condition     = length(azapi_resource.replacement_firewall["r02"].body.properties.securityRules) == 3 && azapi_resource.replacement_firewall["r02"].body.properties.securityRules[2].properties.access == "Deny" && azapi_resource.replacement_disk["database"].body.properties.creationData.createOption == "Empty" && azapi_resource.replacement_recovery_vault["r02"].body.properties.enablePurgeProtection && azapi_resource.replacement_public_ip["r02"].body.properties.dnsSettings.domainNameLabelScope == "NoReuse"
+    error_message = "R02 starts isolated with empty disks and separate protected custody."
+  }
+}
+run "replacement_requires_containment" {
+  command = plan
+  variables { replacement = { generation = "r02", recovery_vault_name = "tonyai-qa-r02-12345678", ssh_public_key = "ssh-rsa cmVwbGFjZW1lbnQ=" } }
+  expect_failures = [var.replacement]
 }
