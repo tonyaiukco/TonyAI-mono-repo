@@ -87,6 +87,9 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   offboard: "bg-red-500/15 text-red-700 border-red-500/30",
   // Amber: a reset was requested for the account (no person is the actor) — worth a look.
   password_reset: "bg-amber-500/15 text-amber-700 border-amber-500/30",
+  // Emerald, with `approve`: LP3-04's boundary confirmation — decisive, and
+  // what makes a final report possible.
+  confirm: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30",
 };
 
 const NEUTRAL_ACTION = "bg-slate-500/15 text-slate-700 border-slate-500/30";

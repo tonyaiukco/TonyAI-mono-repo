@@ -33,6 +33,12 @@ import {
 } from '../activity-records/errors';
 import { UpdatePreferencesDto } from '../auth/dto/update-preferences.dto';
 import { HttpExceptionFilter } from '../observability/http-exception.filter';
+import {
+  BoundaryConfirmRequiresCopyError,
+  BoundaryDraftOpenError,
+  BoundaryFrozenError,
+  BoundaryIncompleteError,
+} from '../inventory-boundary/errors';
 import { UploadExpiredError } from '../storage/storage-intents.service';
 import { errorBody, errorCodeOf, QueryTooBroadError, ResourceNotFoundError, toErrorBody } from './api-error';
 import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from './coded-validation.pipe';
@@ -116,6 +122,11 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   email_unavailable: () => new EmailUnavailableError(),
   invitation_closed: () => new InvitationClosedError(),
   user_disabled: () => new UserDisabledError(),
+  boundary_not_found: () => new ResourceNotFoundError('boundary_not_found'),
+  boundary_frozen: () => new BoundaryFrozenError(),
+  boundary_draft_open: () => new BoundaryDraftOpenError(),
+  boundary_confirm_requires_copy: () => new BoundaryConfirmRequiresCopyError(),
+  boundary_incomplete: () => new BoundaryIncompleteError(),
 };
 
 describe('every domain code, as the client receives it', () => {

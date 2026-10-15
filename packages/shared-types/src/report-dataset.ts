@@ -24,7 +24,9 @@ export interface InventoryEntitySnapshot {
   locationId: string | null;
   locationName: string | null;
   geographyCode: string;
-  /** Inclusive actual operating months, never inferred from row createdAt. */
+  /** Inclusive months the entity is included in the inventory, which may
+   * differ from its physical lifetime; never inferred from row createdAt. A
+   * site's lie within its subsidiary's (Decisions 2026-10-15 (third) (5)). */
   firstMonth: InventoryMonth;
   lastMonth: InventoryMonth;
 }
@@ -82,7 +84,8 @@ export type InventorySource = {
 );
 
 /** A version is immutable once captured into any dataset or confirmed. New facts create a new
- * version. super_admin owns decisions; reasons must be nonblank. Included
+ * version; one captured unconfirmed is confirmed only as a copy
+ * (`boundary_confirm_requires_copy`). super_admin owns decisions; reasons must be nonblank. Included
  * sources have obligations that exhaust their operating months exactly once
  * at the source reportingPeriod, matching the category attribution policy
  * wherever mapped (unsupported sources still declare a cadence), with canonical period labels
@@ -92,8 +95,9 @@ export type InventorySource = {
  * months at that cadence; unknown/legacy period assignments never satisfy them.
  * firstMonth <= lastMonth in every interval.
  * For every boundary subsidiary, retain every entity operating in any month
- * of reportingYear. attribution holds exactly one policy per boundary subsidiary
- * x Scope 1/2 category. A missing or duplicate policy, or a sites policy with no
+ * of reportingYear. A site entity's firstMonth/lastMonth lie within its
+ * subsidiary's company entity's: the months it is included in the inventory.
+ * attribution holds exactly one policy per boundary subsidiary x Scope 1/2 category. A missing or duplicate policy, or a sites policy with no
  * operating site entity, is a final-blocking applicability_undetermined gap naming
  * the company entity and category. For every Scope 1/2 category, the D11 policy selects either
  * the company entity or ALL operating site entities. Each resulting entity x
@@ -123,6 +127,9 @@ export interface InventoryBoundarySnapshot {
   /** Explicit declared inventory, not whatever the requester can currently see. */
   subsidiaryIds: readonly string[];
   decision: 'unconfirmed' | 'confirmed';
+  /** The confirming super_admin's profile id, written by the API from the
+   * caller's verified token — never a request field — and opaque: no foreign
+   * key, so a profile's erasure (D20/D21) leaves it standing (LP3-04 E6). */
   decidedBy: string | null;
   decidedAt: string | null;
   /** Complete domain, including entities whose categories have no source yet. */
@@ -360,6 +367,7 @@ export type ReportIssuance = {
   datasetId: string;
   datasetFingerprint: ReportDatasetFingerprint;
   issuedAt: string;
+  /** As `decidedBy`: the issuer's profile id from the verified token; opaque. */
   issuedBy: string;
   language: Locale;
   template: ReportTemplate;

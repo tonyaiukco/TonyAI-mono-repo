@@ -1154,8 +1154,8 @@ organisation's own, the owner's alone (W10). RLS is on (never FORCE) with
 SELECT-only policies — a row with its subsidiary (LP1-03's predicate), the
 header for its organisation's org-wide readers or a user granted a subsidiary
 it declares (W3) — and the client roles, the service role included, hold
-SELECT alone; the runtime role SELECT (no route writes yet: the write path is
-a contract PR, then a service-and-routes PR, W1). The seed declares no boundary
+SELECT alone; the runtime role SELECT (no route writes yet: the write path's
+contract is below, its service and routes — with their grants — follow, W1). The seed declares no boundary
 until D05's source list arrives (W11); `rls:probe` plants and removes its own.
 
 **One capture snapshot, one factor lookup.** `readInventoryBoundary` reads a
@@ -1175,8 +1175,67 @@ writer's must stay READ COMMITTED, TA003); a capture passes its
 every other read of the library's rows — the catalogue, the loader's re-read,
 the seed's accepted second copy — and fails on a new one. Dataset/issuance
 assembly (PR C, which defines the lookup's consumer), issuance with its storage
-recovery (PR D) and the boundary's write path and editor are separate later
-PRs.
+recovery (PR D), the write path's service and routes and the editor's screen
+(LP4-03) are separate later PRs.
+
+**The write path's contract (LP3-04 W1, W13; Decisions 2026-10-15 (fifth),
+E1–E9).** Dormant until the service-and-routes PR: the request and response
+types (`packages/shared-types/src/inventory-boundary.ts`), the DTOs that hold a
+body to them (`apps/api/src/inventory-boundary/dto/`), five error codes and the
+audit taxonomy; no migration, no route, no `api.ts` function (they land with
+their consumers). The routes, under `/api/v1`:
+
+| Method | Route | Does |
+| --- | --- | --- |
+| `GET` | `/inventory-boundaries?reportingYear=` | One year's versions, newest first (summaries) |
+| `GET` | `/inventory-boundaries/:id` | A version: its snapshot, its `boundaryGaps` and its `view` |
+| `POST` | `/inventory-boundaries` | A new open version, empty or a copy (`copyOf`, any year — a rollover starts from last year's) |
+| `PUT` | `/inventory-boundaries/:id/subsidiaries/:subsidiaryId` | One subsidiary's whole declaration — months, sites, policies, cells, sources — replacing the stored one |
+| `DELETE` | `/inventory-boundaries/:id/subsidiaries/:subsidiaryId` | Removes it from an open version — the blocker W9's 409 asks to clear |
+| `POST` | `/inventory-boundaries/:id/confirm` | Confirms and freezes it |
+| `DELETE` | `/inventory-boundaries/:id` | An open version only |
+
+`super_admin` alone writes and confirms (E2; D12's matrix is theirs);
+consultant and `executive_viewer` read; a `data_entry` user reads only its
+granted subsidiaries' part (`view: 'granted_subsidiaries'`, W3), never captured
+— as the boundary's RLS does, its list holds only the versions declaring a
+subsidiary it is granted, and a version declaring none of them is
+`boundary_not_found`, byte for byte as a missing one.
+One body per subsidiary is one validation unit — every rule the database holds
+sits inside one subsidiary — so the DTOs refuse (`validation_failed`) whatever
+the CHECKs, keys and guard would: months outside 1–12 or reversed, a site
+outside its subsidiary's months, an entry twice, a cell or source at an
+undeclared site, free text outside the library's rule, a mapped source sending
+a scope or cadence (both derived) or naming another category's activity type,
+an included mapped source without its category's policy, two included mapped
+sources on one key (a site that is not the route's subsidiary's own is
+`location_not_found`). What is stored but blocks a final is reported in
+`boundaryGaps`, each gap at its entity (`InventoryBoundaryGap` lists the
+rules): a missing policy, a `sites` policy with no site, a missing or
+`undetermined` cell, a mapped source left `undetermined`
+(`applicability_undetermined`); an unsupported source not excluded
+(`unsupported_source`); an included cell with no included source — never a
+covered zero — or an included source no selected included cell holds
+(`attribution_conflict`). A year has one open version at most, the
+newest: a create takes the highest version + 1 and answers
+`boundary_draft_open` while one is open (E4); deleting it frees its number.
+A copy takes its source's declarations as they are, months included, read
+under the source's header lock. Edits serialise on the header's
+row lock with no revision precondition — the last writer of a subsidiary wins,
+and each audit row holds what it replaced (E5). **Confirm** (`super_admin`)
+refuses `boundary_frozen` when already confirmed,
+`boundary_confirm_requires_copy` when the version froze unconfirmed in a capture
+(copy it, confirm the copy), and `boundary_incomplete` when it declares no
+subsidiary or has any `boundaryGaps` (E3). Every write to a frozen version is
+`boundary_frozen`; another organisation's version is `boundary_not_found`.
+The service checks all of this before it writes, so a `TA014` that still
+reaches it is a defect — `internal_error`, logged (E7). `decidedBy` and
+`createdBy` are profile ids the API writes from the verified token, never a
+body field, with no foreign key (E6: every delete action would break W10 or
+D20/D21's erasure). Audit: entity `inventory_boundary` (`entityId` the
+version); `create` (a copy names `copyOf`), `update` (a subsidiary's
+declaration, before and after), `delete`, and the new action `confirm` — each in
+its write's transaction.
 
 ## Localisation and error codes
 

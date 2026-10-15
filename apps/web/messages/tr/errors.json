@@ -64,6 +64,11 @@
     "email_unavailable": "Bu e-posta adresinin zaten bir hesabı var.",
     "invitation_closed": "Bu davet zaten kabul edildi.",
     "user_disabled": "Bu hesap devre dışı; davetini yeniden göndermeden önce etkinleştirin.",
+    "boundary_not_found": "Envanter sınırı bulunamadı.",
+    "boundary_frozen": "Envanter sınırının bu sürümü dondurulmuş, artık değiştirilemez. Değişiklik yapmak için onu yeni bir sürüme kopyalayın.",
+    "boundary_draft_open": "Bu yılın envanter sınırı için açık bir sürüm zaten var. Yeni bir sürüme başlamadan önce onu düzenleyin ya da silin.",
+    "boundary_confirm_requires_copy": "Bu sürüm onaylanmadan bir rapora alındı, bu yüzden artık değiştirilemez. Onu yeni bir sürüme kopyalayın ve o sürümü onaylayın.",
+    "boundary_incomplete": "Bu sürüm henüz onaylanamaz: hiçbir bağlı şirket beyan edilmemiş ya da hâlâ eksikler var — eksik ya da belirsiz bir karar, desteklenmeyen bir kaynak veya birbiriyle uyuşmayan bir hücre ve kaynakları. Önce listelenen eksikleri giderin.",
     "session_revoked": "Oturumunuz sona erdi; yeniden giriş yapın."
   },
   "bulkOutcomes": {
