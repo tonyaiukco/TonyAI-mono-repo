@@ -24,19 +24,25 @@
 -- bounds the value in its DTOs. None of this changes what the API does.
 --
 -- 1. (27) `geography_code_writer` (TA015): a subsidiary's or a site's
---    geography changes in the API's session or the owner's alone. A trigger,
+--    geography is UPDATEd in the API's session or the owner's alone. A trigger,
 --    not a REVOKE (D1a): the service role holds UPDATE on the whole table, so
 --    a column REVOKE is no refusal, and the triggers are what refuse it here
---    (LP4-01's rule) — whatever a later GRANT ALL hands back.
+--    (LP4-01's rule) — whatever a later GRANT ALL hands back. An INSERT is
+--    not guarded (D4a, filed): a direct client can still create a subsidiary
+--    or a site under any geography — or delete one that holds no record and
+--    insert it again under its id with another; one that holds a record
+--    cannot be deleted (RESTRICT), so its geography stays the API's.
 -- 2. (29) `activity_records_lifecycle_writer`'s INSERT branch (TA006, K11's
 --    rule): a record is inserted in the API's session or the owner's alone —
 --    the e2e suite already creates its drafts through the API; `rls:probe`
 --    and the integration fixtures insert theirs as the owner (D2a).
 --    What no guard can tell apart: a session holding the runtime login's own
 --    credential IS the API to the database (`session_user` is all it can
---    read; `application_name` is the client's to say). That residual is the
---    credential's custody (LP2), behind K11's recompute, the author's own
---    submit and another super_admin's approval.
+--    read; `application_name` is the client's to say) — it can move a
+--    record's status too, so K11, the author's own submit and a second
+--    approval bind only what goes through the API. That residual rests on
+--    the credential's custody alone (LP2: the Key Vault secret, the
+--    operator-set password).
 -- 3. (33) three CHECKs, every writer — the owner included: the scope is the
 --    category's (CATEGORY_SCOPE_MAP), the period value is one of its
 --    granularity's canonical tokens (PERIOD_VALUES), and 0 ≤ activity_value ≤
@@ -64,8 +70,7 @@ SET LOCAL lock_timeout = '5s';
 -- ---------------------------------------------------------------------------
 
 -- A whole-row trigger, not UPDATE OF: the integrity check refuses a narrowed
--- one. An INSERT is not guarded (D4a): a new subsidiary or site has no
--- record priced under it yet.
+-- one. An INSERT is not guarded (D4a, filed — see 1. above).
 CREATE FUNCTION "public"."geography_code_writer"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''

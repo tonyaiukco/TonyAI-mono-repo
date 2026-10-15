@@ -16,62 +16,70 @@ import {
  * canonicalises the period and bounds the value before it writes; the CHECKs
  * hold every other writer — the owner included — to the same answer. A
  * category, a token or a bound changed on one side only would let the
- * database hold what the API refuses, or refuse what it writes. Each is read
- * from the LAST migration that adds it — the definition in force.
+ * database hold what the API refuses, or refuse what it writes.
+ *
+ * Each CHECK is compared whole, as text built from shared-types — an extra
+ * branch, a loosened one or a duplicate earlier one fails, not only a
+ * missing pair — and read from the definition in force: the LAST migration
+ * that mentions the constraint's name must be the one that adds it in this
+ * form, so a later DROP, RENAME or re-ADD in any other spelling fails here
+ * rather than leaving a dead definition read as live.
  */
 
 const migrations = resolve(__dirname, '../../../../packages/db/prisma/migrations');
-const dirs = readdirSync(migrations).filter((d) => /^\d/.test(d)).sort();
+const texts = readdirSync(migrations)
+  .filter((d) => /^\d/.test(d))
+  .sort()
+  .map((d) => ({ dir: d, text: readFileSync(join(migrations, d, 'migration.sql'), 'utf8') }));
 
-/** The expression of the named CHECK, as the last migration that adds it writes it. */
-function checkInForce(name: string): string {
-  let found: string | undefined;
-  for (const d of dirs) {
-    const text = readFileSync(join(migrations, d, 'migration.sql'), 'utf8');
-    const head = `ADD CONSTRAINT "${name}" CHECK (`;
-    const start = text.lastIndexOf(head);
-    if (start === -1) continue;
-    // To the parenthesis that closes CHECK's, skipping quoted literals.
-    let depth = 1;
-    let i = start + head.length;
-    for (; i < text.length && depth > 0; i++) {
-      if (text[i] === "'") i = text.indexOf("'", i + 1);
-      else if (text[i] === '(') depth++;
-      else if (text[i] === ')') depth--;
+/** The end of the CHECK's own parentheses, skipping quoted literals and comments. */
+function closingParen(text: string, from: number): number {
+  let depth = 1;
+  for (let i = from; i < text.length; i++) {
+    if (text.startsWith('--', i)) {
+      i = text.indexOf('\n', i);
+      if (i === -1) break;
+    } else if (text[i] === "'") {
+      i = text.indexOf("'", i + 1); // '' inside a literal: two literals back to back, the same depth
+      if (i === -1) break;
+    } else if (text[i] === '(') {
+      depth++;
+    } else if (text[i] === ')' && --depth === 0) {
+      return i;
     }
-    found = text.slice(start + head.length, i - 1);
   }
-  if (found === undefined) throw new Error(`no migration adds ${name}`);
-  return found;
+  throw new Error('a CHECK whose parentheses or quotes never close');
 }
 
-const quoted = (list: string) => [...list.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+/** The expression of the named CHECK in force, whitespace collapsed. */
+function checkInForce(name: string): string {
+  const head = `ADD CONSTRAINT "${name}" CHECK (`;
+  const mention = new RegExp(`\\b${name}\\b`, 'gi');
+  let last: { dir: string; index: number } | undefined;
+  for (const { dir, text } of texts) for (const m of text.matchAll(mention)) last = { dir, index: m.index };
+  if (last === undefined) throw new Error(`no migration adds ${name}`);
+  const { text } = texts.find((t) => t.dir === last!.dir)!;
+  const start = last.index - 'ADD CONSTRAINT "'.length;
+  expect(text.slice(start, start + head.length), `${last.dir}: the last mention of ${name} must add it`).toBe(head);
+  return text.slice(start + head.length, closingParen(text, start + head.length)).replace(/\s+/g, ' ').trim();
+}
+
+const literal = (value: string) => `'${value}'`;
 
 describe('the activity_records CHECKs and shared-types agree (LP4-02 (33))', () => {
-  it("holds each category to CATEGORY_SCOPE_MAP's scope, and refuses a category it does not name", () => {
-    const check = checkInForce('activity_records_scope_check');
-    expect(check).toMatch(/^\s*CASE "category"\s/);
-    const cases = [...check.matchAll(/WHEN '([^']+)' THEN "scope" = (\d)/g)].map((m) => [m[1], Number(m[2])]);
-    expect(cases.map(([c]) => c)).toEqual([...CATEGORIES]);
-    expect(Object.fromEntries(cases)).toEqual(CATEGORY_SCOPE_MAP);
-    // Fail-closed: a CASE with no ELSE is NULL, and a NULL CHECK passes.
-    expect(check).toMatch(/ELSE false\s+END\s*$/);
+  it("holds each category to CATEGORY_SCOPE_MAP's scope, and refuses a category it does not name (ELSE false — a NULL CHECK passes)", () => {
+    const branches = CATEGORIES.map((c) => `WHEN ${literal(c)} THEN "scope" = ${CATEGORY_SCOPE_MAP[c]}`);
+    expect(checkInForce('activity_records_scope_check')).toBe(`CASE "category" ${branches.join(' ')} ELSE false END`);
   });
 
   it("holds each granularity to PERIOD_VALUES' canonical tokens, in order, and refuses one it does not name", () => {
-    const check = checkInForce('activity_records_period_value_check');
-    expect(check).toMatch(/^\s*CASE "reporting_period"\s/);
-    const cases = [...check.matchAll(/WHEN '([^']+)' THEN "period_value" IN \(([^)]*)\)/g)].map((m) => [m[1], quoted(m[2])] as const);
-    expect(cases.map(([p]) => p)).toEqual([...REPORTING_PERIODS]);
-    for (const [period, tokens] of cases) {
-      expect(tokens, period).toEqual([...PERIOD_VALUES[period as keyof typeof PERIOD_VALUES]]);
-    }
-    expect(check).toMatch(/ELSE false\s+END\s*$/);
+    const branches = REPORTING_PERIODS.map((p) => `WHEN ${literal(p)} THEN "period_value" IN (${PERIOD_VALUES[p].map(literal).join(', ')})`);
+    expect(checkInForce('activity_records_period_value_check')).toBe(`CASE "reporting_period" ${branches.join(' ')} ELSE false END`);
   });
 
   it('bounds the activity value at zero and at ACTIVITY_VALUE_MAX — which NaN and ±Infinity both fail', () => {
     const check = checkInForce('activity_records_activity_value_check');
-    const bound = /^"activity_value" >= 0 AND "activity_value" <= ([0-9e.+]+)::double precision$/.exec(check.trim());
+    const bound = /^"activity_value" >= 0 AND "activity_value" <= ([0-9e.+]+)::double precision$/.exec(check);
     expect(bound, check).not.toBeNull();
     expect(Number(bound![1])).toBe(ACTIVITY_VALUE_MAX);
   });

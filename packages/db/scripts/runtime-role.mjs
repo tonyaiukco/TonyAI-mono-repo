@@ -912,7 +912,7 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   // LP4-02 (27): a subsidiary's or a site's geography — what its records are
   // priced with — changes in the API's or the owner's session alone (TA015).
   // `locations` is guarded from here on: a later BEFORE UPDATE trigger could
-  // put NEW.geography_code back after the guard read it.
+  // change NEW.geography_code after the guard compared it.
   { table: 'subsidiaries', trigger: 'subsidiaries_geography_writer', fn: 'geography_code_writer', type: ROW | BEFORE | ON.update },
   { table: 'locations', trigger: 'locations_geography_writer', fn: 'geography_code_writer', type: ROW | BEFORE | ON.update },
 ]);
