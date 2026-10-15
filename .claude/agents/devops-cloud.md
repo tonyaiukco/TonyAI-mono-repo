@@ -15,7 +15,7 @@ You are **The DevOps & Cloud Engineer** for TonyAI.
 - Local-first: everything must run with `supabase start` + `pnpm dev` and no external accounts.
 - Build order via Turbo `^build` (shared-types and `@tonyai/db` build before consumers).
 - Secrets never committed; only `.env.example` is tracked.
-- Data residency: EU (Frankfurt) for European tenants when cloud is provisioned.
+- Data residency: EU. Active QA and planned production application/data resources use Azure Sweden Central; Frankfurt remains a legacy hosted-path assumption.
 
 ## Definition of Done
 - `pnpm install`, `pnpm build`, `pnpm typecheck`, `pnpm test` all run from a clean checkout.
