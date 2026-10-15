@@ -1,0 +1,13 @@
+{
+  "config": {
+    "subscription_id": "00000000-0000-0000-0000-000000000001",
+    "tenant_id": "00000000-0000-0000-0000-000000000002",
+    "environment": "staging",
+    "operator_ipv4": "REPLACE_WITH_PUBLIC_IPV4/32",
+    "ssh_public_key": "REPLACE_WITH_RSA_PUBLIC_KEY_WITHOUT_COMMENT",
+    "image_version": "REPLACE_WITH_VERIFIED_EXACT_VERSION",
+    "vm_size": "Standard_D2as_v7",
+    "https_enabled": false,
+    "recovery_owner_object_id": "00000000-0000-0000-0000-000000000003"
+  }
+}

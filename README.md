@@ -361,6 +361,34 @@ The wrapper sources `apps/api/.env` + `apps/web/.env.local`, reuses an existing 
 
 ### Staging deployment (LP2-01)
 
+For the Azure-only deployment direction, the additive [self-hosted Supabase
+runbook](infra/runbooks/07-selfhost.md) describes an owner-run VM/network/disk
+foundation in Sweden Central (D2as_v7 for QA, D4as_v7 for pilot production),
+with separate QA and production resources. Separate owner-run helpers prepare
+persistent disks and Docker, pin the official Supabase snapshot/images, generate
+protected host credentials and test Auth before explicit HTTPS exposure.
+The application is not yet connected; backups, recovery targets and cloud QA
+acceptance remain unproven. The hosted path below retains its strict Supabase
+Cloud assumptions and must not be pointed at the self-hosted VM.
+The host exports an Azure-managed DNS name with reuse protection for temporary
+QA HTTPS; the original IP remains locked for rollback. Custom-domain DNS access
+can be deferred until the later cutover. Owner-only Key Vault escrow protects
+runtime credentials against OS-disk loss, with exact-version readback and a
+guarded start. Resource delete locks, disk export restrictions, boot diagnostics,
+container IMDS/WireServer blocking (with DNS preserved) and fail-closed persistent
+mounts complement this. Guarded recovery regenerates the gateway configuration
+from a digest-verified template without repinning images. The HTTPS edge rejects
+semicolon paths before upstream normalization.
+Auth smoke uses service-specific JWT rejection codes and matching valid-session
+controls; edge denials must have Caddy's exact body and no upstream timing header.
+The runbook separates the reviewed host-upgrade procedure from local evidence;
+live rollout and acceptance require the owner's separate approval.
+Auth IP rate limits, ten-digit OTPs, narrow case-sensitive edge routes and
+negative live tests are required before exposure. The selected subscription is
+blocked from the legacy Germany app roots until Sweden VNet integration is
+implemented. Legacy HS256 service-key compatibility remains documented; it is
+not a completed asymmetric API-key migration or production approval.
+
 LP4-01's [Auth and SMTP handoff](infra/runbooks/03-deploy.md#35-api-smtp-parameters-lp4-01-production-preparation-for-lp2-04)
 aligns hosted Auth with the local lifecycle policy (12-character passwords,
 one-hour links and access tokens, signup off while email/password sign-in stays enabled). API mail

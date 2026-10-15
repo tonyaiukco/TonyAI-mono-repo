@@ -187,3 +187,10 @@ run "smtp_grant_only_after_owner_provisioning" {
     error_message = "SMTP permission must be exactly one named secret for API Secrets User only."
   }
 }
+run "sweden_subscription_cannot_create_legacy_foundation" {
+  command = plan
+  variables {
+    config = merge(var.config, { subscription_id = "cb7efc2f-37a7-4672-b62c-93c207bcd33d" })
+  }
+  expect_failures = [var.config]
+}

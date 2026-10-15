@@ -1,0 +1,24 @@
+# Apply only after validating the gateway and pinning the resolved image digest.
+services:
+  caddy:
+    profiles: [https]
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443/tcp"
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME}
+      ACME_EMAIL: ${ACME_EMAIL:?An operator contact is required}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - type: bind
+        source: /srv/tonyai/database/caddy-data
+        target: /data
+        bind: {create_host_path: false}
+      - type: bind
+        source: /srv/tonyai/database/caddy-config
+        target: /config
+        bind: {create_host_path: false}
+    depends_on:
+      api-gw:
+        condition: service_healthy

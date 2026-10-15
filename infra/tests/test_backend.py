@@ -23,6 +23,18 @@ def config():
 
 
 class BackendTests(unittest.TestCase):
+    def test_sweden_backend_and_existing_region_guard(self):
+        data = {**config(), 'location': 'swedencentral'}
+        calls = []
+        def arm(path, version, method='GET', body=None, missing_ok=False):
+            calls.append(method)
+            return {'location': 'germanywestcentral', 'tags': {
+                'application': 'TonyAI', 'environment': 'staging', 'purpose': 'terraform-state'}}
+        validate(data)
+        with self.assertRaises(SafeFailure):
+            bootstrap(data, arm)
+        self.assertNotIn('PUT', calls)
+
     def test_only_application_container_granted_to_deployer_and_recovery_enabled(self):
         calls=[]; state={}
         def arm(path,version,method='GET',body=None,missing_ok=False):
@@ -31,12 +43,13 @@ class BackendTests(unittest.TestCase):
             if path not in state: return None
             result=copy.deepcopy(state[path]); result.setdefault('properties',{})['provisioningState']='Succeeded'
             return result
-        bootstrap(config(),arm)
+        bootstrap({**config(), "location": "swedencentral"},arm)
         grants=[(p,b['properties']) for p,m,b in calls if m=='PUT' and '/roleAssignments/' in p]
         app_grants=[p for p,g in grants if g['principalId']==config()['application_object_id']]
         self.assertEqual(len(app_grants),1)
         self.assertIn('/containers/application/',app_grants[0])
         account=next(b for p,m,b in calls if m=='PUT' and p.endswith('/storageAccounts/tonyaistagingstate'))
+        self.assertEqual(account['location'], 'swedencentral')
         self.assertIs(account['properties']['allowSharedKeyAccess'],False)
         self.assertEqual(account['properties']['networkAcls']['defaultAction'],'Deny')
         self.assertEqual(account['properties']['networkAcls']['bypass'],'None')
@@ -47,7 +60,7 @@ class BackendTests(unittest.TestCase):
         self.assertFalse(any('listKeys' in p for p,m,b in calls))
 
     def test_backend_validation_fails_before_any_cloud_operation(self):
-        for field,value in [('environment','dev'),('allowed_ipv4',[]),('allowed_ipv4',['0.0.0.0/0']),
+        for field,value in [('location','unreviewed-region'),('environment','dev'),('allowed_ipv4',[]),('allowed_ipv4',['0.0.0.0/0']),
                             ('allowed_ipv4',['10.0.0.1/32']),('allowed_ipv4',['8.8.8.8/31']),('resource_group','shared'),
                             ('application_object_id',config()['owner_object_id'])]:
             c=config();c[field]=value

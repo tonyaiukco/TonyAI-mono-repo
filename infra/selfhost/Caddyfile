@@ -1,0 +1,40 @@
+{
+	admin off
+	auto_https disable_redirects
+	email {$ACME_EMAIL}
+	log {
+		format filter {
+			request delete
+			resp_headers delete
+			error delete
+			wrap json
+		}
+	}
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$PUBLIC_HOSTNAME} {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	route {
+		@noncanonical expression `{http.request.orig_uri.path}.contains('//') || {http.request.orig_uri.path}.contains(';') || {http.request.orig_uri.path}.matches('(^|/)[.]{1,2}(/|$)')`
+		respond @noncanonical "Not found" 404
+		@api path_regexp ^/(auth/v1/(token|verify|logout|user|settings|health|\.well-known/jwks\.json|admin/(users(/[^/]+)?|generate_link))|storage/v1/(object|bucket)(/.*)?|rest/v1/.*)$
+		handle @api {
+			reverse_proxy api-gw:8000 {
+				header_up -Sb-Forwarded-For
+				header_up -X-Forwarded-Prefix
+				header_up -X-Forwarded-Port
+				header_up -X-Envoy-*
+			}
+		}
+		respond "Not found" 404
+	}
+	header -Server
+	header Strict-Transport-Security "max-age=31536000"
+}

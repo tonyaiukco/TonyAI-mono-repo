@@ -13,6 +13,11 @@ ALLOWED = {
         'Microsoft.Authorization/roleDefinitions', 'Microsoft.App/jobs',
         'Microsoft.Insights/actionGroups', 'Microsoft.Insights/scheduledQueryRules'},
     'application': {'Microsoft.App/containerApps'},
+    'selfhost': {'Microsoft.Resources/resourceGroups', 'Microsoft.Network/virtualNetworks',
+        'Microsoft.Network/networkSecurityGroups',
+        'Microsoft.Network/publicIPAddresses', 'Microsoft.Network/networkInterfaces',
+        'Microsoft.Compute/disks', 'Microsoft.Compute/virtualMachines', 'Microsoft.KeyVault/vaults',
+        'Microsoft.Authorization/roleAssignments', 'Microsoft.Authorization/locks'},
 }
 
 
@@ -22,7 +27,7 @@ def check(root=ROOT):
         if re.search(r'\b(data|provisioner|import)\s+"|\b(local-exec|remote-exec|listKeys|listSecrets|primary_shared_key|sensitive_body)\b',source):
             raise ValueError('Unreviewed state/command surface in ' + lane)
         resources = re.findall(r'resource\s+"([^"]+)"\s+"([^"]+)"\s*\{',source)
-        if not resources or any(kind != 'azapi_resource' for kind,name in resources):
+        if not resources or any(kind != 'azapi_resource' and not (lane == 'selfhost' and kind == 'azapi_update_resource' and name == 'os_disk_export') for kind,name in resources):
             raise ValueError('Only reviewed AzAPI resources are permitted.')
         types = re.findall(r'^\s*type\s*=\s*"(Microsoft\.[^"@]+)@[^\"]+"', source, re.M)
         if set(types) != allowed or len(types) != len(resources):

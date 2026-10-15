@@ -5,7 +5,7 @@ provider source, not evidence from a live state. Re-review before any version or
 resource-type change. Marking a value `sensitive` only redacts display; it does
 not remove it from state.
 
-The two roots intentionally do not use AzureRM resource/data sources. In
+The roots intentionally do not use AzureRM resource/data sources. In
 particular, [AzureRM workspace read](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.46.0/internal/services/loganalytics/log_analytics_workspace_resource.go)
 retrieves workspace shared keys. No `azurerm_log_analytics_workspace`, storage
 account key reads, ACR admin reads, Key Vault secret resource/data source,
@@ -30,6 +30,13 @@ these resources: the provider's state-move path can flatten the entire body.
 | Vault ARM GET | Metadata only; no `/secrets` data-plane calls from Terraform |
 | Container Apps GET | Reference metadata only; no `listSecrets`; all configured secrets use versioned `keyVaultUrl`, never `value` |
 | Identity/RBAC/group/diagnostic GET | IDs, tags and permissions only |
+| Selfhost network, NSG, NIC and public IP GET | Nonsecret configuration; bounded IP output |
+| Selfhost VM and disk GET | Public SSH key and image/disk metadata; no passwords, custom data, extensions, disk access grants or SAS retrieval |
+
+The owner-only `selfhost` root exports host identifiers and a managed identity
+principal ID. State lives at `foundation/<environment>-selfhost.tfstate`; the
+application deployer receives no access. Do not add out-of-band VM secrets or
+extensions: the same provider refresh assumptions apply to this new surface.
 
 The owner must confirm these assumptions on the first real plan/apply and verify
 state locally without uploading raw state or running secret-revealing CLI commands.

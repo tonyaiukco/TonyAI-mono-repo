@@ -166,7 +166,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix='tonyai-infra-mutant-') as directory:
             target = Path(directory) / 'infra'
             target.mkdir()
-            for folder in ('scripts', 'tests', 'terraform', 'config'):
+            for folder in ('scripts', 'tests', 'terraform', 'config', 'selfhost'):
                 shutil.copytree(INFRA / folder, target / folder, ignore=shutil.ignore_patterns('__pycache__', '.terraform'))
             # New provenance tests read the actual migration/lockfile inputs; the
             # local-only guard test executes its copied script, never the original.

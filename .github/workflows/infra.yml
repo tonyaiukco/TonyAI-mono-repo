@@ -30,6 +30,10 @@ jobs:
           echo "$RUNNER_TEMP/infra-tests/bin" >> "$GITHUB_PATH"
       - name: Infrastructure unit and failure-path tests
         run: python3 -m unittest discover -s infra/tests -v
+      - name: Selfhost initializer and destructive-path mutations
+        run: |
+          node --test infra/tests/selfhost_init.test.mjs infra/tests/selfhost_smoke_expectations.test.mjs
+          python3 infra/tests/check_selfhost_runtime_mutations.py
       - name: Regression mutation checks
         run: python3 infra/tests/check_mutations.py
       - name: State security and writer policy
@@ -38,7 +42,7 @@ jobs:
         shell: bash
         run: |
           terraform fmt -check -recursive infra/terraform
-          for root in foundation application; do
+          for root in foundation application selfhost; do
             terraform -chdir="infra/terraform/$root" init -backend=false -input=false -lockfile=readonly
             terraform -chdir="infra/terraform/$root" validate -no-color
             terraform -chdir="infra/terraform/$root" test -no-color
@@ -47,5 +51,7 @@ jobs:
         run: python3 infra/tests/check_runtime_terraform_mutations.py
       - name: Terraform secret grant mutation checks
         run: python3 infra/tests/check_grant_mutations.py
+      - name: Terraform selfhost security mutation checks
+        run: python3 infra/tests/check_selfhost_mutations.py
       - name: Docker context excludes infrastructure secrets and state
         run: python3 infra/tests/check_docker_context.py
