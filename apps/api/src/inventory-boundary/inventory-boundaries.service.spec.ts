@@ -177,19 +177,20 @@ describe('InventoryBoundariesService', () => {
     });
 
     it('a site or the subsidiary deleted mid-write is a lost race: conflict', async () => {
-      for (const constraint of [
-        'inventory_boundary_sites_location_id_subsidiary_id_fkey (index)',
-        'inventory_boundary_subsidiaries_subsidiary_id_organisation_fkey (index)',
+      // Prisma 6 names the key in `meta.constraint` (measured on the real database).
+      for (const [modelName, constraint] of [
+        ['InventoryBoundarySite', 'inventory_boundary_sites_location_id_subsidiary_id_fkey'],
+        ['InventoryBoundarySubsidiary', 'inventory_boundary_subsidiaries_subsidiary_id_organisation_fkey'],
       ]) {
         putReaches();
-        db.tx.inventoryBoundarySubsidiary.create.mockRejectedValueOnce(known('P2003', { field_name: constraint }));
+        db.tx.inventoryBoundarySubsidiary.create.mockRejectedValueOnce(known('P2003', { modelName, constraint }));
         await expect(service.putSubsidiary(admin, ID, SUB_ID, BODY)).rejects.toBeInstanceOf(ConflictException);
       }
     });
 
     it('any other key failure is a defect, not a race', async () => {
       putReaches();
-      const other = known('P2003', { field_name: 'inventory_sources_boundary_id_subsidiary_id_category_repor_fkey (index)' });
+      const other = known('P2003', { modelName: 'InventorySource', constraint: 'inventory_sources_boundary_id_subsidiary_id_category_repor_fkey' });
       db.tx.inventoryBoundarySubsidiary.create.mockRejectedValue(other);
       await expect(service.putSubsidiary(admin, ID, SUB_ID, BODY)).rejects.toBe(other);
       const duplicate = known('P2002', { target: ['boundary_id', 'location_id'] });

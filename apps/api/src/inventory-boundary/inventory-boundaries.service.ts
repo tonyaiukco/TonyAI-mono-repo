@@ -57,11 +57,15 @@ const versionTaken = (e: unknown): boolean =>
   e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002'
   && JSON.stringify(e.meta?.target ?? null).includes('version');
 
-/** The subsidiary, or a site, deleted between the check and the insert. */
-const DECLARED_PARENT_KEYS = /inventory_boundary_subsidiaries_subsidiary_id_organisation_fkey|inventory_boundary_sites_location_id_subsidiary_id_fkey/;
+/** The subsidiary, or a site, deleted between the check and the insert — the
+ * only keys a valid declaration can break (Prisma 6 names it `meta.constraint`). */
+const DECLARED_PARENT_KEYS = new Set([
+  'inventory_boundary_subsidiaries_subsidiary_id_organisation_fkey',
+  'inventory_boundary_sites_location_id_subsidiary_id_fkey',
+]);
 const declaredParentGone = (e: unknown): boolean =>
   e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003'
-  && DECLARED_PARENT_KEYS.test(String(e.meta?.field_name ?? ''));
+  && DECLARED_PARENT_KEYS.has(String(e.meta?.constraint ?? ''));
 
 @Injectable()
 export class InventoryBoundariesService {

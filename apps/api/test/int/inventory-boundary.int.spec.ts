@@ -793,7 +793,7 @@ describe('RLS and the client roles', () => {
     expect(seen.consultant).toEqual([1, 2, 2, 2, 2, 2]);
   });
 
-  it('lets no client role, the service role included, and not the runtime role, write a row (42501)', async () => {
+  it('lets no client role, the service role included, write a row (42501)', async () => {
     for (const role of ['authenticated', 'service_role']) {
       const code = await refusedAsOwner(async (tx) => {
         await tx.$executeRawUnsafe(`SET LOCAL ROLE ${role}`);
@@ -802,13 +802,43 @@ describe('RLS and the client roles', () => {
       });
       expect(code, role).toBe('42501');
     }
+  });
+
+  it("gives the runtime role the write path's grants and no more: rows inserted and deleted, never updated; a header born open, changed only in its decision and freeze (LP3-04's write path)", async () => {
     const fixture = await createBoundary(owner, a, { locationId: siteA, version: 31 });
     try {
+      // No row is ever updated — a PUT replaces it — and no header's identity changes.
       expect(sqlstateOf(await failure(runtime.inventorySource.update({ where: { id: fixture.sourceId }, data: { name: 'Forged' } })))).toBe('42501');
-      expect(sqlstateOf(await failure(runtime.inventoryBoundary.delete({ where: { id: fixture.boundaryId } })))).toBe('42501');
+      expect(sqlstateOf(await failure(runtime.inventoryAttributionPolicy.updateMany({
+        where: { boundaryId: fixture.boundaryId }, data: { reportingPeriod: 'annual' },
+      })))).toBe('42501');
+      for (const data of [{ version: 99 }, { reportingYear: 2030 }, { createdBy: randomUUID() }, { organisationId: b.organisationId }]) {
+        expect(sqlstateOf(await failure(runtime.inventoryBoundary.update({ where: { id: fixture.boundaryId }, data }))), JSON.stringify(data)).toBe('42501');
+      }
+      // A header is never born decided, frozen or backdated.
+      for (const column of ['frozen_at', 'decided_at', 'created_at']) {
+        const code = sqlstateOf(await failure(runtime.$executeRawUnsafe(
+          `INSERT INTO inventory_boundaries (id, organisation_id, reporting_year, version, created_by, ${column})
+           VALUES (gen_random_uuid(), '${a.organisationId}', 2026, 32, gen_random_uuid(), now())`,
+        )));
+        expect(code, column).toBe('42501');
+      }
+      // Its rows: inserted and deleted (in READ COMMITTED, as the guard asks).
+      await runtime.inventoryApplicabilityCell.deleteMany({ where: { boundaryId: fixture.boundaryId, locationId: siteA } });
+      await runtime.inventoryApplicabilityCell.create({
+        data: { boundaryId: fixture.boundaryId, subsidiaryId: a.subsidiaryId, locationId: siteA, locationKey: siteA, category: 'Electricity', applicability: 'included' },
+      });
+      // An open version is deleted whole; a frozen one is the guard's (W10).
+      await runtime.inventoryBoundary.delete({ where: { id: fixture.boundaryId } });
+      expect(await owner.inventoryBoundarySubsidiary.count({ where: { boundaryId: fixture.boundaryId } })).toBe(0);
     } finally {
-      await owner.inventoryBoundary.delete({ where: { id: fixture.boundaryId } });
+      await owner.inventoryBoundary.deleteMany({ where: { id: fixture.boundaryId } });
     }
+    const frozen = await createBoundary(owner, a, { locationId: siteA, version: 33, frozen: true });
+    expect(sqlstateOf(await failure(runtime.inventoryBoundary.delete({ where: { id: frozen.boundaryId } })))).toBe('TA014');
+    expect(sqlstateOf(await failure(runtime.inventoryBoundary.update({
+      where: { id: frozen.boundaryId }, data: { decision: 'confirmed', decidedBy: randomUUID(), decidedAt: new Date() },
+    })))).toBe('TA014');
   });
 });
 
