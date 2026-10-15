@@ -193,11 +193,12 @@ const isMonth = (value: unknown): value is number =>
 const isInventoryCategory = (value: unknown): value is InventoryCategory =>
   (INVENTORY_CATEGORIES as readonly unknown[]).includes(value);
 
-/** Each object in a list with its own index; anything else is a field error already. */
+/** Each row of a list with its own index; anything else — an array
+ * included — is a field error already. */
 function eachRow(list: unknown, visit: (row: Row, index: number) => void): void {
   if (!Array.isArray(list)) return;
   list.forEach((row, index) => {
-    if (typeof row === 'object' && row !== null) visit(row as Row, index);
+    if (typeof row === 'object' && row !== null && !Array.isArray(row)) visit(row as Row, index);
   });
 }
 
@@ -343,6 +344,10 @@ class InventoryDeclarationConstraint implements ValidatorConstraintInterface {
   }
 }
 
+/** Each list's direct elements are rows: objects, never arrays (Codex B9
+ * P2 — an inner array passed `@ValidateNested` whole, its rows unchecked). */
+const ROW_MESSAGE = 'each $property entry must be an object';
+
 /** PUT /inventory-boundaries/:id/subsidiaries/:subsidiaryId — the whole
  * declaration (E1); every list present, an empty one meaning none. */
 export class PutInventoryBoundarySubsidiaryDto {
@@ -356,24 +361,28 @@ export class PutInventoryBoundarySubsidiaryDto {
 
   @IsArray()
   @ArrayMaxSize(INVENTORY_DECLARATION_LIMITS.sites)
+  @IsObject({ each: true, message: ROW_MESSAGE })
   @ValidateNested({ each: true })
   @Type(() => InventoryBoundarySiteDto)
   sites!: readonly InventoryBoundarySiteDto[];
 
   @IsArray()
   @ArrayMaxSize(INVENTORY_DECLARATION_LIMITS.attribution)
+  @IsObject({ each: true, message: ROW_MESSAGE })
   @ValidateNested({ each: true })
   @Type(() => InventoryAttributionPolicyDto)
   attribution!: readonly InventoryAttributionPolicyDto[];
 
   @IsArray()
   @ArrayMaxSize(INVENTORY_DECLARATION_LIMITS.applicability)
+  @IsObject({ each: true, message: ROW_MESSAGE })
   @ValidateNested({ each: true })
   @Type(() => InventoryApplicabilityCellDto)
   applicability!: readonly InventoryApplicabilityCellDto[];
 
   @IsArray()
   @ArrayMaxSize(INVENTORY_DECLARATION_LIMITS.sources)
+  @IsObject({ each: true, message: ROW_MESSAGE })
   @ValidateNested({ each: true })
   @Type(() => InventorySourceDto)
   sources!: readonly InventorySourceDto[];

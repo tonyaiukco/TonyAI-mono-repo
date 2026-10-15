@@ -8,6 +8,7 @@ import {
   INVENTORY_SOURCE_NAME_MAX_LENGTH,
   type PutInventoryBoundarySubsidiaryRequest,
 } from '@tonyai/shared-types';
+import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from '../../common/coded-validation.pipe';
 import {
   CreateInventoryBoundaryDto,
   INVENTORY_DECLARATION_LIMITS,
@@ -348,6 +349,50 @@ describe('PutInventoryBoundarySubsidiaryDto — the whole declaration of one sub
     expect(put((b) => { b.sources = many(INVENTORY_DECLARATION_LIMITS.sources, () => b.sources[4]); }).join()).not.toMatch(bound);
     expect(put((b) => { b.applicability = many(INVENTORY_DECLARATION_LIMITS.applicability, () => b.applicability[0]); }).join()).not.toMatch(bound);
     expect(put((b) => { b.attribution = many(INVENTORY_DECLARATION_LIMITS.attribution, () => b.attribution[0]); }).join()).not.toMatch(bound);
+  });
+
+  /**
+   * Codex's B9 review (P2): every list's direct elements are rows — objects,
+   * never arrays. An inner array used to pass, its absent fields skipped and
+   * its rows hidden from the duplicate checks. Through the real pipe, as a
+   * route would see it.
+   */
+  describe('rows are objects, never arrays (Codex B9 P2)', () => {
+    const pipe = new CodedValidationPipe(GLOBAL_VALIDATION_OPTIONS);
+    const meta = { type: 'body' as const, metatype: PutInventoryBoundarySubsidiaryDto };
+    async function refusal(body: unknown) {
+      try {
+        await pipe.transform(body, meta);
+      } catch (e) {
+        return (e as { getResponse(): { code: string; message: string[] } }).getResponse();
+      }
+      throw new Error('the pipe accepted it');
+    }
+
+    it.each(['sites', 'attribution', 'applicability', 'sources'] as const)('refuses an empty inner array in %s', async (key) => {
+      const body = { firstMonth: 1, lastMonth: 12, sites: [], attribution: [], applicability: [], sources: [], [key]: [[]] };
+      const response = await refusal(body);
+      expect(response.code).toBe('validation_failed');
+      expect(response.message.join(' ')).toMatch(new RegExp(key));
+    });
+
+    it.each(['sites', 'attribution', 'applicability', 'sources'] as const)('refuses valid rows wrapped in an inner array in %s', async (key) => {
+      const body = valid();
+      (body as Record<string, unknown>)[key] = [[...body[key]]];
+      const response = await refusal(body);
+      expect(response.code).toBe('validation_failed');
+      expect(response.message.join(' ')).toMatch(new RegExp(key));
+    });
+
+    it('refuses a site declared twice inside an inner array — the duplicate check sees every row', async () => {
+      const body = valid();
+      (body as Record<string, unknown>).sites = [[body.sites[0], body.sites[0]]];
+      expect((await refusal(body)).code).toBe('validation_failed');
+    });
+
+    it('still accepts a flat declaration', async () => {
+      await expect(pipe.transform(valid(), meta)).resolves.toBeInstanceOf(PutInventoryBoundarySubsidiaryDto);
+    });
   });
 
   it('pins the bounds', () => {
