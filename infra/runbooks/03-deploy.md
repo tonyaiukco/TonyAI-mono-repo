@@ -1,5 +1,11 @@
 # 3. One versioned application deployment path
 
+> **Legacy hosted deployment path.** These procedures retain Germany West Central
+> and hosted Supabase Frankfurt assumptions. For active Azure self-hosted QA and
+> planned production in Sweden Central, use [runbook 07](07-selfhost.md). Do not
+> point hosted helpers at the VM or bypass region/project validation; application
+> integration and its acceptance procedures still need a reviewed implementation.
+
 Restore the session/project variables (runbook 00). Keep infrastructure and image
 source SHAs distinct. First create is owner-run; app-scoped OIDC deployment starts
 only after both apps exist and runbook 01 grants their exact scopes.

@@ -1,5 +1,11 @@
 # 4. Acceptance evidence, recreation and recovery
 
+> **Legacy hosted deployment path.** These procedures retain Germany West Central
+> and hosted Supabase Frankfurt assumptions. For active Azure self-hosted QA and
+> planned production in Sweden Central, use [runbook 07](07-selfhost.md). Do not
+> point hosted helpers at the VM or bypass region/project validation; application
+> integration and its acceptance procedures still need a reviewed implementation.
+
 First [restore the session](00-session.md). The owner records each actual result in the PR's B9 handoff, including integrated
 SHA, timestamp, environment/project ref, command/scenario, result and a sanitized
 evidence location. A blank checklist is not a successful cloud execution.
