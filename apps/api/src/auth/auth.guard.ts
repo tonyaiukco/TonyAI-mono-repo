@@ -40,8 +40,10 @@ export function sessionStartedAt(payload: { iat?: unknown; amr?: unknown }): num
 export class SupabaseAuthGuard implements CanActivate {
   private readonly logger = new Logger(SupabaseAuthGuard.name);
   /**
-   * Config errors are throttled per message. An unauthenticated caller can
-   * trigger some of them at will (the `alg` header alone picks the path, before
+   * Config errors are throttled per `logKey` — the message, unless it quotes
+   * token content; then one key per kind, so the map stays bounded. An
+   * unauthenticated caller can trigger some of them at will (the `alg` header
+   * alone picks the path, before
    * any signature check), so logging per request would be a free ERROR-level
    * flood — but logging strictly once per process is worse in the other
    * direction: a transient blip at 02:00 would permanently silence the real
@@ -78,9 +80,9 @@ export class SupabaseAuthGuard implements CanActivate {
       // the cause in the server log; the client still learns nothing.
       if (error instanceof TokenVerificationError && error.configError) {
         const now = Date.now();
-        const last = this.lastLoggedConfigError.get(error.message) ?? 0;
+        const last = this.lastLoggedConfigError.get(error.logKey) ?? 0;
         if (now - last >= SupabaseAuthGuard.CONFIG_LOG_WINDOW_MS) {
-          this.lastLoggedConfigError.set(error.message, now);
+          this.lastLoggedConfigError.set(error.logKey, now);
           this.logger.error(error.message);
         }
       }

@@ -17,7 +17,7 @@ import { InvitationDeliveryService } from '../../src/users/invitation-delivery.s
 import { PasswordResetService } from '../../src/users/password-reset.service';
 import { UserLifecycleService } from '../../src/users/user-lifecycle.service';
 import { UsersQueryService } from '../../src/users/users-query.service';
-import { connect, connectOwner, createTenant, deferred, holdBefore, TENANT_ORG_PREFIX, type Tenant } from './db';
+import { apiTokenIssuer, connect, connectOwner, createTenant, deferred, holdBefore, TENANT_ORG_PREFIX, type Tenant } from './db';
 import { failingAuditClient, INJECTED_AUDIT_FAILURE } from './services';
 
 /**
@@ -1045,6 +1045,7 @@ describe('through the HTTP API (guard, routes, public reset)', () => {
   const token = (sub: string) =>
     new SignJWT({ sub, role: 'authenticated', aud: 'authenticated' })
       .setProtectedHeader({ alg: 'HS256' })
+      .setIssuer(apiTokenIssuer())
       .setIssuedAt()
       .setExpirationTime('5m')
       .sign(new TextEncoder().encode(JWT_SECRET));

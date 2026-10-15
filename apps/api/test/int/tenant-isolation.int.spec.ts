@@ -16,6 +16,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { RuntimeLimits } from '../../src/common/runtime-limits';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import {
+  apiTokenIssuer,
   attachEvidence,
   connectOwner,
   createRecord,
@@ -251,6 +252,7 @@ afterEach(async () => {
 async function tokenFor(userId: string): Promise<string> {
   return new SignJWT({ role: 'authenticated' })
     .setProtectedHeader({ alg: 'HS256' })
+    .setIssuer(apiTokenIssuer())
     .setSubject(userId)
     .setAudience('authenticated')
     .setExpirationTime('5m')

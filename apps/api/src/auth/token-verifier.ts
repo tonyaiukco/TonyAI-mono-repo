@@ -23,6 +23,10 @@ import type { JWTPayload, JWTVerifyGetKey, JWTVerifyOptions } from 'jose';
  *    supabase-cli version decides the scheme; production must be explicit.
  *  - The JWKS URL is derived from trusted configuration (`SUPABASE_URL`), never
  *    from the token (no `jku`/`iss`-driven fetching).
+ *  - The token's `iss` must be this project's Auth server (`expectedIssuers`).
+ *    The key proves who signed, not for which project: another GoTrue sharing
+ *    the secret or key set (a second environment, a copied `.env`) mints
+ *    correctly signed tokens with its own issuer, and those must not pass.
  *  - The remote key set is created once. Against a REACHABLE JWKS `jose` caches
  *    it and rate-limits refetches, so a burst of unknown `kid`s costs one fetch.
  *    Against a failing one it retries per call (the cooldown timestamp is only
@@ -37,12 +41,27 @@ const ASYMMETRIC_ALGORITHMS = ['ES256', 'RS256'] as const;
  * storage URLs do not, so requiring them blocks replaying those as user
  * tokens instead of relying on GoTrue happening to omit `sub`. */
 function verifyOptions(): JWTVerifyOptions {
-  return {
-    // GoTrue's default; overridable because a self-hosted project can set
-    // GOTRUE_JWT_AUD, and hardcoding it would 401 every request with no signal.
-    audience: process.env.SUPABASE_JWT_AUDIENCE ?? 'authenticated',
-    requiredClaims: ['exp', 'sub'],
-  };
+  const issuer = expectedIssuers();
+  if (!issuer) {
+    // Boot refuses this (assertAuthConfig); reaching it means the environment
+    // changed underneath a running process. Fail closed, and say why.
+    throw new TokenVerificationError(
+      'Auth is not configured: the expected token issuer is unknown. Set SUPABASE_URL ' +
+        `(the issuer defaults to its origin + ${AUTH_PATH}) or SUPABASE_JWT_ISSUER.`,
+      true,
+    );
+  }
+  return { audience: expectedAudience(), issuer, requiredClaims: ['exp', 'sub'] };
+}
+
+/**
+ * GoTrue's default; overridable because a self-hosted project can set
+ * GOTRUE_JWT_AUD, and hardcoding it would 401 every request with no signal.
+ * An EMPTY value falls back too: jose skips the audience check entirely when
+ * `audience` is falsy, so `SUPABASE_JWT_AUDIENCE=` would otherwise turn it off.
+ */
+function expectedAudience(): string {
+  return process.env.SUPABASE_JWT_AUDIENCE || 'authenticated';
 }
 
 /** The published default of every local Supabase and of the self-hosted sample. */
@@ -76,6 +95,12 @@ export class TokenVerificationError extends Error {
   constructor(
     message: string,
     readonly configError = false,
+    /**
+     * What the guard throttles this log line by, when the message itself
+     * varies (it quotes a token's issuer): one line per window per kind, and a
+     * bounded throttle map, however many issuers a key holder writes.
+     */
+    readonly logKey: string = message,
   ) {
     super(message);
   }
@@ -116,6 +141,117 @@ function targetsLocalSupabase(url: string | undefined): boolean {
   }
 }
 
+/** The explicit local opt-in — honoured only together with a loopback Supabase host. */
+function insecureLocalAuth(): boolean {
+  return (
+    process.env.ALLOW_INSECURE_LOCAL_AUTH === 'true' && targetsLocalSupabase(process.env.SUPABASE_URL)
+  );
+}
+
+/** GoTrue serves under this prefix and stamps it into the issuer it publishes. */
+const AUTH_PATH = '/auth/v1';
+
+/** Loopback spellings of one local GoTrue (the CLI stamps `http://127.0.0.1:<port>`). */
+const LOCAL_ISSUER_HOSTS = ['127.0.0.1', 'localhost', '[::1]'];
+
+/**
+ * The `iss` values a user token may carry, or null when none can be determined
+ * (callers fail closed). GoTrue stamps its external URL plus `/auth/v1` — the
+ * local CLI `http://127.0.0.1:54321/auth/v1`, a hosted project
+ * `https://<ref>.supabase.co/auth/v1` — so the default is derived from
+ * SUPABASE_URL exactly like the JWKS URL. Where the API reaches Auth through
+ * another address than the one GoTrue publishes (a private hostname, a proxy),
+ * SUPABASE_JWT_ISSUER names the issuer exactly and is the only value accepted.
+ *
+ * Only the opted-in local stack also accepts the other loopback spellings of
+ * the same port: `pnpm docker:up` reaches Supabase as host.docker.internal while
+ * its GoTrue still stamps 127.0.0.1.
+ */
+export function expectedIssuers(): string[] | null {
+  const explicit = process.env.SUPABASE_JWT_ISSUER;
+  if (explicit) return [explicit];
+  const base = process.env.SUPABASE_URL;
+  if (!base) return null;
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  // The origin alone: no path, and no userinfo to leak into the mismatch log.
+  const derived = `${url.origin}${AUTH_PATH}`;
+  if (!insecureLocalAuth()) return [derived];
+  const port = url.port ? `:${url.port}` : '';
+  const aliases = LOCAL_ISSUER_HOSTS.map((host) => `${url.protocol}//${host}${port}${AUTH_PATH}`);
+  return [...new Set([derived, ...aliases])];
+}
+
+/**
+ * An absolute http(s) URL written exactly as GoTrue stamps it. jose compares
+ * `iss` byte for byte, so a value a log line would show identically to the
+ * real issuer — an invisible or non-ASCII character, `https:host` without the
+ * slashes, embedded credentials — is refused at boot instead of 401-ing every
+ * request behind a log that looks right.
+ */
+function isIssuerUrl(value: string): boolean {
+  if (!/^https?:\/\/[\x21-\x7e]+$/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+function audienceMatches(aud: unknown): boolean {
+  const expected = expectedAudience();
+  return aud === expected || (Array.isArray(aud) && aud.includes(expected));
+}
+
+/**
+ * Turns an issuer fault on a CORRECTLY SIGNED token into a config error, so
+ * the guard logs it: jose validates claims only after the signature, so
+ * producing one needs the signing key and hands an unauthenticated caller
+ * nothing. Two causes look alike and both need an operator — the expected
+ * issuer is wrong (every user gets 401 with no other signal), or another Auth
+ * server shares this secret or key set (the attack this check blocks; this
+ * line is its only trace) — so the message names both. The received value is
+ * a trusted signer's, JSON-quoted and cut short; `logKey` keeps the guard's
+ * throttle at one line per kind however many issuers a key holder writes.
+ *
+ * A MISSING `iss` is logged only on a token shaped like a user's (`sub` and
+ * our audience); storage URL tokens and the anon/service-role keys never are,
+ * so they stay ordinary bad tokens.
+ */
+function issuerMismatch(error: unknown): TokenVerificationError | null {
+  const fault = error as { code?: string; claim?: string; reason?: string; payload?: JWTPayload };
+  if (fault?.code !== 'ERR_JWT_CLAIM_VALIDATION_FAILED' || fault.claim !== 'iss') return null;
+  const payload = fault.payload ?? {};
+  const expected = JSON.stringify(expectedIssuers());
+  if (fault.reason === 'check_failed') {
+    const received = (JSON.stringify(payload.iss) ?? 'undefined').slice(0, 200);
+    return new TokenVerificationError(
+      `Auth issuer mismatch: a correctly signed token carries the issuer ${received}, but this ` +
+        `API expects ${expected}. Either the expected issuer is wrong — set SUPABASE_JWT_ISSUER ` +
+        'to the issuer your Auth server stamps, or fix SUPABASE_URL — or another Auth server ' +
+        'shares this signing secret or key set: rotate it.',
+      true,
+      'issuer-mismatch',
+    );
+  }
+  if (fault.reason === 'missing' && typeof payload.sub === 'string' && audienceMatches(payload.aud)) {
+    return new TokenVerificationError(
+      `Auth issuer missing: a correctly signed user token carries no issuer, so it cannot match ` +
+        `${expected}. Either your Auth server stamps none — configure its issuer — or another ` +
+        'signer shares this signing secret or key set: rotate it.',
+      true,
+      'issuer-missing',
+    );
+  }
+  return null;
+}
+
 export function resolveScheme(): JwtScheme {
   const raw = (process.env.SUPABASE_JWT_SCHEME ?? 'auto').toLowerCase();
   if (raw === 'hs256' || raw === 'jwks' || raw === 'auto') return raw;
@@ -132,9 +268,7 @@ export function assertAuthConfig(): void {
   const scheme = resolveScheme();
   const secret = process.env.SUPABASE_JWT_SECRET;
   const url = process.env.SUPABASE_URL;
-  const relaxed =
-    process.env.ALLOW_INSECURE_LOCAL_AUTH === 'true' && targetsLocalSupabase(url);
-  const strict = !relaxed;
+  const strict = !insecureLocalAuth();
   const localHint =
     ' (For local development run `pnpm setup`, which writes ' +
     'ALLOW_INSECURE_LOCAL_AUTH=true alongside a loopback SUPABASE_URL.)';
@@ -163,6 +297,20 @@ export function assertAuthConfig(): void {
   if (scheme === 'auto' && !secret && !url) {
     throw new Error(
       'Auth is not configured: set SUPABASE_JWT_SECRET (HS256) or SUPABASE_URL (JWKS).',
+    );
+  }
+  const issuer = process.env.SUPABASE_JWT_ISSUER;
+  if (issuer && !isIssuerUrl(issuer)) {
+    throw new Error(
+      'SUPABASE_JWT_ISSUER must be the exact absolute http(s) URL your Auth server stamps ' +
+        `in a token's iss claim — printable ASCII, no credentials (for example https://<host>${AUTH_PATH}).`,
+    );
+  }
+  if (!expectedIssuers()) {
+    throw new Error(
+      'Cannot determine the expected token issuer: set SUPABASE_URL (the issuer defaults to ' +
+        `its origin + ${AUTH_PATH}) or SUPABASE_JWT_ISSUER. Without it a token minted by ` +
+        'another Auth server sharing this secret or key set would be accepted.',
     );
   }
 }
@@ -213,22 +361,25 @@ export class TokenVerifier {
         true,
       );
     }
-    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), {
-      ...verifyOptions(),
-      algorithms: [...HS_ALGORITHMS],
-    });
-    return payload;
+    const options = { ...verifyOptions(), algorithms: [...HS_ALGORITHMS] };
+    try {
+      const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), options);
+      return payload;
+    } catch (error) {
+      throw issuerMismatch(error) ?? error;
+    }
   }
 
   private async verifyWithJwks(token: string): Promise<JWTPayload> {
     const jwks = this.getJwks();
+    // Outside the try: an unknown issuer is a config error of its own, not a JWKS outage.
+    const options = { ...verifyOptions(), algorithms: [...ASYMMETRIC_ALGORITHMS] };
     try {
-      const { payload } = await jwtVerify(token, jwks, {
-        ...verifyOptions(),
-        algorithms: [...ASYMMETRIC_ALGORITHMS],
-      });
+      const { payload } = await jwtVerify(token, jwks, options);
       return payload;
     } catch (error) {
+      const mismatch = issuerMismatch(error);
+      if (mismatch) throw mismatch;
       // Anything that is NOT a fault of the presented token is OUR outage and
       // must be visible, otherwise it is indistinguishable from "everyone's
       // token expired" — the exact symptom this file exists to eliminate.
