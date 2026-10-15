@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { CATEGORIES, CATEGORY_SCOPE_MAP, recordActivityTypesFor, REPORTING_PERIODS } from '@tonyai/shared-types';
+import {
+  CATEGORIES, CATEGORY_SCOPE_MAP, INVENTORY_CATEGORIES, INVENTORY_REASON_MAX_LENGTH,
+  INVENTORY_SOURCE_NAME_MAX_LENGTH, recordActivityTypesFor, REPORTING_PERIODS,
+} from '@tonyai/shared-types';
 
 /**
  * The inventory boundary's CHECKs spell shared-types' lists out in SQL
@@ -60,5 +63,26 @@ describe('the inventory boundary schema and shared-types agree', () => {
     expect(listIn('inventory_attribution_policies_period_check', 'reporting_period')).toEqual([...REPORTING_PERIODS]);
     expect(listIn('inventory_sources_cadence_check', 'reporting_period')).toEqual([...REPORTING_PERIODS]);
     expect(listIn('inventory_sources_cadence_check', 'evidence_reporting_period')).toEqual([...REPORTING_PERIODS]);
+  });
+
+  // The write path's contract (W1) names the same list and caps its DTOs hold
+  // a body to, so a body the DTO admits is one the CHECKs admit.
+  it("on the write path's inventory categories", () => {
+    expect([...INVENTORY_CATEGORIES]).toEqual(listIn('inventory_attribution_policies_category_check', 'category'));
+  });
+
+  it("on the write path's free-text caps", () => {
+    const capsOf = (constraint: string, column: string): number[] => {
+      const start = sql.indexOf(`"${constraint}" CHECK`);
+      expect(start, constraint).toBeGreaterThan(-1);
+      // To the next constraint: this one's own bounds, never a neighbour's.
+      const end = sql.indexOf('\n  ADD CONSTRAINT', start + 1);
+      const block = sql.slice(start, end === -1 ? undefined : end);
+      return [...block.matchAll(new RegExp(`char_length\\("${column}"\\) BETWEEN 1 AND (\\d+)`, 'g'))].map((m) => Number(m[1]));
+    };
+    expect(capsOf('inventory_sources_name_check', 'name')).toEqual([INVENTORY_SOURCE_NAME_MAX_LENGTH]);
+    expect(capsOf('inventory_sources_mapping_check', 'unsupported_reason')).toEqual([INVENTORY_REASON_MAX_LENGTH]);
+    expect(capsOf('inventory_sources_decision_check', 'reason')).toEqual([INVENTORY_REASON_MAX_LENGTH]);
+    expect(capsOf('inventory_applicability_cells_decision_check', 'reason')).toEqual([INVENTORY_REASON_MAX_LENGTH]);
   });
 });

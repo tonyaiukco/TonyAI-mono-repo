@@ -9,7 +9,7 @@ import {
 } from '@tonyai/shared-types';
 
 // Preserve arrays and malformed strings for validation instead of coercing them.
-const integerQuery = ({ value }: { value: unknown }) =>
+export const integerQuery = ({ value }: { value: unknown }) =>
   typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
 
 /** Omit absent fields, including when class-transformer creates undefined keys. */

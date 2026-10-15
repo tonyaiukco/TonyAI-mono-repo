@@ -2358,6 +2358,8 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** LP4-01: the profile has no invitation (a seeded account, from before
    *  LP4-01) — same shape as any other 404. */
   invitation_not_found: 404,
+  /** LP3-04: an inventory boundary version (of another organisation, or none). */
+  boundary_not_found: 404,
   /** D19: the account (or its organisation, offboarded) is disabled. Refused
    *  on the next request, whatever token it carries; the web signs it out. */
   account_disabled: 401,
@@ -2375,6 +2377,18 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** The address already has an account — in this organisation or another
    *  (D17: one organisation per account). */
   email_unavailable: 409,
+  /** LP3-04 (W10): the boundary version is frozen — confirmed, or captured
+   *  into a dataset; new facts make a new version. */
+  boundary_frozen: 409,
+  /** LP3-04 (E4): the year's newest boundary version is still open; edit or
+   *  delete it before starting another. */
+  boundary_draft_open: 409,
+  /** LP3-04 (PR B's (6)): the version froze unconfirmed when a dataset
+   *  captured it; confirm a copy of it instead. */
+  boundary_confirm_requires_copy: 409,
+  /** LP3-04 (E3): the version declares no subsidiary or still has a gap that
+   *  blocks a final report (`boundaryGaps`). No params. */
+  boundary_incomplete: 409,
   /** Re-sending an invitation that was accepted. */
   invitation_closed: 409,
   /** The account is disabled; enable it before re-sending its invitation. */
@@ -2877,8 +2891,11 @@ function isOneOf(value: unknown, list: readonly string[]): value is string {
   return typeof value === 'string' && list.includes(value);
 }
 
-/** Why a text value is unacceptable, or null when it is clean. */
-function textIssue(value: unknown, max: number): string | null {
+/** Why a text value is unacceptable, or null when it is clean: nonblank, at
+ * most `max` UTF-16 units (never more characters than PostgreSQL's
+ * `char_length` counts), NFC, no edge space, no control or invisible
+ * formatting character — the factor library's and the boundary's rule. */
+export function textIssue(value: unknown, max: number): string | null {
   if (!isText(value)) return 'is required';
   if (value !== value.trim()) return 'has leading or trailing white space';
   if (value.length > max) return `is longer than ${max} characters`;
@@ -4519,6 +4536,9 @@ export const AUDIT_ACTIONS = [
    *  and sent (an Auth or SMTP failure after it leaves the row). No person is
    *  the actor (null `userId`); `entity: 'profile'`. */
   'password_reset',
+  /** LP3-04: a super_admin confirmed an inventory boundary version, freezing
+   *  it (W4). `entity: 'inventory_boundary'`. */
+  'confirm',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -4545,6 +4565,10 @@ export const AUDIT_ENTITIES = [
   // operator CLI; an account's invitation (`invite`, `accept`).
   'organisation',
   'invitation',
+  // LP3-04: an inventory boundary version; `entityId` is the version. A copy
+  // is a `create` whose diff names `copyOf`; a subsidiary's declaration
+  // replaced or removed is an `update` whose diff holds it before and after.
+  'inventory_boundary',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
@@ -5231,3 +5255,5 @@ export interface BulkSubmitReportDTO {
 export * from './bounded-access';
 
 export * from './report-dataset';
+
+export * from './inventory-boundary';
