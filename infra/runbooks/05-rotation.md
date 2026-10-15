@@ -1,5 +1,15 @@
 # 5. Rotation, rollback and recovery
 
+> **Legacy hosted deployment path.** These procedures retain Germany West Central
+> and hosted Supabase Frankfurt assumptions. For active Azure self-hosted QA and
+> planned production in Sweden Central, use [runbook 07](07-selfhost.md). Do not
+> point hosted helpers at the VM or bypass region/project validation; application
+> integration and its acceptance procedures still need a reviewed implementation.
+> **Shared backend exception:** the [backend state-recovery procedure](#recover-backend-state-or-a-vault)
+> also applies to the Sweden backend, preserving its firewall and access restrictions.
+> The vault example using `--location germanywestcentral` is legacy; use the
+> verified original region for the actual vault.
+
 Use a private owner session restored through runbook 00. Keep the last verified
 release manifest and DB/schema compatibility evidence. **Every application
 change uses a new immutable manifest and the same `deploy-apps.sh` path**. Never

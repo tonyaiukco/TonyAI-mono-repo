@@ -1,15 +1,29 @@
 # TonyAI cloud foundation (LP2-01)
 
-For the Azure-only deployment direction, start with [self-hosted Supabase host
-foundation](runbooks/07-selfhost.md) in Sweden Central. This additive owner-only root provisions
-network/VM/disks; separate reviewed helpers bootstrap the private QA runtime.
-Neither path alone establishes accepted QA readiness. Existing
-hosted helpers below retain their strict Supabase Cloud assumptions.
+The active QA and planned production direction is **Azure Sweden Central** for
+both application and data layers, with self-hosted Supabase. Start with the
+[self-hosted host/runtime runbook](runbooks/07-selfhost.md). QA comes first; no
+production resources are authorized. QA target: **2026-11-15**. The former
+TRY 10,000 monthly cap is removed; the reported USD 25,000 credit allocation's
+activation, eligibility, expiry and balance remain unverified.
 
-Owner-run Terraform for Azure Germany West Central; coded Supabase Management API
-operations for Frankfurt. **No resources or cloud evidence are implied by these
-files.** LP2-01 closes only after the owner evidences fresh recreation. Inputs for
-tenant, subscription, organization and budget remain placeholders.
+The existing QA host, network, disks, recovery vault and runtime must be discovered
+and reconciled before further rollout. Reuse the verified deployment contract,
+backend and SSH host keys; never assume an empty subscription or initialize a
+parallel state. Application integration is still unimplemented: the Sweden
+Container Apps environment must include the reserved infrastructure subnet in
+its creation request. See [runbook 07's integration prerequisites](runbooks/07-selfhost.md#application-integration-prerequisites-not-implemented). Runtime health
+alone does not establish application QA or recovery acceptance.
+
+Host/runtime acceptance, including the 2026-10-15 corrections and normal reboot,
+does not close LP2-01, LP2-02 or LP2-03; DONE requires application integration,
+migration/runtime-role/bucket acceptance, fresh recreation and recovery evidence.
+
+The **legacy hosted path** below uses Azure Germany West Central and Supabase
+Management API operations for Frankfurt. Its region/project checks remain intact;
+the foundation and application roots are blocked for the selected self-host
+subscription. Do not remove that gate or substitute region text to deploy the
+application. Generic example inputs remain placeholders, not live contracts.
 
 Use Terraform **1.13.3**, AzAPI **2.6.1**, Node **22**, pnpm **11.9.0**, Python **3.10+**,
 Azure CLI, GitHub CLI (`gh`) and Docker/buildx. Run from a clean, reviewed checkout. Terraform provider
@@ -18,7 +32,7 @@ is used. Hosted helper secrets stay in memory and Key Vault. Self-hosted service
 also require protected root-only runtime files as described in runbook 07.
 Secret payloads never enter tfvars, state, plan files, logs, repository files or chat.
 
-## Ordered owner path
+## Legacy hosted owner path (00–06)
 
 1. [Restore a safe session](runbooks/00-session.md).
 2. [Bootstrap backend, apply foundation, establish OIDC](runbooks/01-azure.md).
@@ -28,11 +42,13 @@ Secret payloads never enter tfvars, state, plan files, logs, repository files or
 6. [Rotate, roll back or recover state/vault; run the owner reconciliation check](runbooks/05-rotation.md).
 7. [Prove readiness, alert delivery and staging acceptance](runbooks/06-operations.md).
 
-## Authoritative writers
+## Authoritative writers: shared backend and legacy hosted path
+
+For self-host writers and their boundaries, use [runbook 07](runbooks/07-selfhost.md#state-inputs-and-commands).
 
 | Surface | Sole writer | Access |
 |---|---|---|
-| Backend group/account, firewall, containers, recovery/lock and backend RBAC | `bootstrap_backend.py` | Owner only; no Terraform state needed |
+| Shared backend (Sweden self-host and legacy hosted): group/account, firewall, containers, recovery/lock and backend RBAC | `bootstrap_backend.py` | Owner only; no Terraform state needed |
 | Azure resource group, registry, logs, environment, diagnostics, vault, managed identities, Azure role assignments | `terraform/foundation` | Owner; `foundation` blob container only |
 | Scheduled verification job and operator alert delivery | `terraform/foundation` optional `config.monitoring` | Owner only; pinned runtime image/secret references, no deployer grant |
 | Entra app/SP/federation and RG `githubClientId`/`githubPrincipalId` recovery markers | Reviewed `configure_oidc.py` | Owner Graph access; these two tag fields are explicitly excluded from Terraform ownership |
@@ -51,9 +67,11 @@ and controlled fixture provisioning. Bootstrap writes only `direct-url`; runbook
 independently and disable historical owner-backed runtime versions. Enforced GitHub environment protections are required.
 
 Bicep is retired from the active tree. Its reviewed baseline remains in Git at
-`40ed0f9` (#139); there is no second Azure writer to apply. As no Bicep deployment
-exists, this transition starts with empty remote state. Do not import arbitrary
-existing resources or state; inspect provider read behavior and ownership first.
+`40ed0f9` (#139); there is no second Azure writer to apply. The original Bicep-to-Terraform transition was designed for an empty legacy
+state; that historical assumption does not describe current self-hosted QA. Its
+existing state is `foundation/staging-selfhost.tfstate` in the verified backend.
+Do not import arbitrary existing resources, replace state or reinitialize against
+a new backend; inspect ownership and provider read behavior first.
 
 ## Offline validation
 
@@ -65,7 +83,7 @@ python3 -m unittest discover -s infra/tests -v
 python3 infra/tests/check_mutations.py
 python3 infra/scripts/check_terraform_policy.py
 terraform fmt -check -recursive infra/terraform
-for root in foundation application; do
+for root in foundation application selfhost; do
   terraform -chdir="infra/terraform/$root" init -backend=false -input=false -lockfile=readonly
   terraform -chdir="infra/terraform/$root" validate
   terraform -chdir="infra/terraform/$root" test
@@ -77,6 +95,11 @@ pnpm typecheck
 pnpm build
 pnpm test
 ```
+
+For a checkout already bound to a live backend, run offline init/validate/test
+in a disposable source copy with a separate local `TF_DATA_DIR` and
+`-backend=false`; preserve the original backend metadata and remote state.
+This isolated test directory is not a deployment state.
 
 Terraform tests use **mock providers**. They test expressions/guards and do not
 establish permissions, region availability, provisioning, pricing, OIDC, TLS,
