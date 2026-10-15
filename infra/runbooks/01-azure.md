@@ -5,6 +5,11 @@ subscription, budget/alerts and organization billing before provisioning. Budget
 amounts are deliberately unspecified. This code does not activate billing or
 claim a cost ceiling.
 
+> **Scope:** backend bootstrap supports the verified Sweden self-host path too;
+> sections 1.2 onward describe the legacy Germany/hosted application foundation.
+> For active QA, use [runbook 07](07-selfhost.md) and reuse the existing backend.
+> The legacy application gate stays closed until Sweden VNet integration is reviewed.
+
 ## 1.1 Bootstrap the Entra-only backend
 
 Fill `backend.json`: distinct staging account, owner object ID, explicit public
@@ -19,7 +24,9 @@ Existing backend resources cannot be relocated by changing this field.
 python3 infra/scripts/bootstrap_backend.py --config .infra-local/staging/backend.json
 ```
 
-Expected `PASS`: account in Germany West Central, two private containers
+Expected `PASS`: account in the verified backend configuration's region
+(Sweden Central for active self-host QA; Germany West Central for the legacy
+hosted path), two private containers
 (`foundation`, `application`), Entra-only data plane, deny-default IP firewall,
 versioning and 30-day deletion retention, deletion lock. A timeout is resumable
 with the same config/IDs. The bootstrap checks ownership tags and readbacks;

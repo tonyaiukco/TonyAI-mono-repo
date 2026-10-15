@@ -29,6 +29,8 @@ in the estimate. Configure a separately agreed operating alert threshold; alerts
 
 ## Owner access and capacity
 
+The [session hygiene rules in runbook 00](00-session.md#0-safe-owner-session-and-restoration) apply to both paths: use a private terminal without transcripts, shell tracing or Azure/HTTP/Terraform debug logging, and keep secrets out of arguments, history and chat.
+
 Use Azure CLI browser login with MFA and verify tenant/subscription. New tenants
 may block device-code flow; do not disable security defaults to make it work.
 Register Compute, Network, Storage, App, ContainerRegistry, KeyVault,
@@ -50,7 +52,7 @@ deployment; do not enable unattended OIDC or remove existing reviewer gates.
 Use the existing Entra-only backend bootstrap and owner-only `foundation`
 container. No new access goes to the application deployer. Keys are
 `staging-selfhost.tfstate` and `production-selfhost.tfstate`, distinct from both
-existing roots. Follow existing backend firewall and state-recovery procedures.
+existing roots. Follow the shared [backend firewall procedure](01-azure.md#11-bootstrap-the-entra-only-backend) and [state-recovery procedure](05-rotation.md#recover-backend-state-or-a-vault); the Germany vault recovery example is legacy.
 
 Set backend `location` to `swedencentral` explicitly; the legacy hosted path
 defaults to Germany West Central. Existing backend resources cannot change region.
@@ -142,6 +144,74 @@ environment cannot join this VNet. The current application root cannot yet
 deploy against this host, and its legacy path is blocked for this subscription.
 Do not create a managed environment until the same-region infrastructure subnet
 ID is present in its creation request; this cannot be retrofitted safely.
+
+## Application integration prerequisites (not implemented)
+
+Keep the legacy subscription gate closed. A region-string change in the Germany
+roots cannot connect the application to this host. The implementation must add
+an explicit self-host deployment contract across foundation, release validation,
+image builds, secret references and readback before a cloud plan is approved.
+
+1. Reuse the existing selfhost contract and state. Bind the contract to the exact
+   tenant, subscription, staging environment, Sweden VNet and dedicated
+   `container-apps` subnet (`10.80.2.0/23` for QA, `local.apps_net` in `infra/terraform/selfhost/variables.tf`; its ID is the contract's `apps_subnet_id`), checking delegation and address-space
+   conflicts. The app foundation owns the managed environment, not the data VNet.
+   Include `properties.vnetConfiguration.infrastructureSubnetId` in the first
+   managed-environment creation request, with a compatible workload-profiles
+   environment and Consumption profile. Read ARM back and require the exact
+   subnet ID and `swedencentral` before any application deployment. A missing,
+   foreign, wrong-region or already incompatible environment must fail closed.
+   Microsoft documents the [creation-time network boundary](https://learn.microsoft.com/en-us/azure/container-apps/networking)
+   and [dedicated subnet integration](https://learn.microsoft.com/en-us/azure/container-apps/vnet-custom).
+2. Define a self-host origin/JWKS/issuer contract instead of fabricating a hosted
+   project reference or relaxing the hosted `*.supabase.co` validation. Bind the
+   browser's environment-specific build and server configuration to the verified
+   temporary Azure HTTPS hostname, then the owned domain at a later cutover.
+   SMTP, exact redirects, invite/reset and signed downloads need fresh acceptance.
+3. Design private database DNS and verified TLS from the app subnet to the host.
+   PostgreSQL currently has no published port; the NSG's 5432 allow rule alone
+   does not provide connectivity. Specify the private listener, certificate trust,
+   pooling and separate runtime, migration-owner and loader credentials before
+   opening a listener. Keep owner/loader secrets out of workload identities.
+4. Coordinate the API/DB lane before modifying its files or applying migrations.
+   Verify migrations, runtime grants (`runtime-role.mjs check`), owner
+   reconciliation, private `evidence` and `import-sources` buckets, and
+   tenant-isolation behavior against the deployed candidate. No demo seed.
+5. Prepare ACR, application Key Vault, identities and logs with explicit writers
+   and existing state-container ownership. Preserve exact image/secret-version
+   release manifests, release gates and the recovery-vault boundary. Remain
+   owner-run while the independent reviewer/JIT/OIDC prerequisites are unmet.
+6. Accept only after dependency readiness, login, entry, evidence, review,
+   report, negative tenant checks, cleanup, alert delivery and rollback pass on
+   the exact deployed artifacts. Database, object-byte and configuration restore
+   drills must separately demonstrate the proposed RPO/RTO. Production remains
+   unprovisioned; LP2-04 belongs to its assigned lane after the infra reservation
+   is released.
+
+## Resume discovery before an existing-host rollout
+
+Use read-only Azure/SSH checks first, not the fresh-bootstrap steps below.
+Verify the active tenant/subscription against the private deployment contract,
+resource locations, VM/disk/NIC/IP identities, DNS, NSG operator `/32`, locks and
+existing backend binding. Inspect blob metadata and the existing state privately;
+never print full state or replace it. Keep the original backend metadata intact.
+Verify SSH against the persistent known-hosts file with strict checking enabled.
+
+Compare hashes of nonsecret installed helpers/overlays with the reviewed source;
+compare upstream source and effective image identities with the locks. Inspect
+mount UUIDs against fstab, Docker startup dependencies, gateway destination type,
+firewall order and Node ownership without invoking the mutating guard. Never dump
+`docker inspect` environments or interpolated `docker compose config`. Check
+credential/escrow equality privately and report only pass/fail, never values.
+An existing Node version or corrected ownership is not content-integrity proof.
+
+Reconfirm the maintenance target and record the exact source manifest, live
+baseline and rollback procedure before requesting rollout approval. Read-only
+external denied-path probes can characterize current behavior; synthetic-user
+smoke, file transfer, restart, firewall changes, apply and reboot need approval.
+Do not rerun initialization, fresh Docker installation, image repinning or disk
+formatting against this existing runtime. An older initializer/Docker bootstrap
+on the host is not a reason to execute it again.
 
 ## QA runtime bootstrap
 
@@ -252,7 +322,14 @@ Apps integration, backups and full QA acceptance remain separate required work.
 This procedure is documentation only. Local review evidence does not authorize
 or establish a live rollout. Obtain separate owner approval for the maintenance
 window, host changes, acceptance requests and reboot before executing any step.
-Preserve the reviewed nonsecret rollback bundle and exact image lock. Do not
+After approval and before overwriting files, preserve a root-owned, nonsecret
+rollback bundle of the replaced helpers/overlays and installed runtime guard
+(the guard is retained for evidence only, never for restoration), plus Docker/SSH
+unit configuration, firewall rules and ownership metadata. Include `lds.qa.yaml`
+only if it equals the digest-verified, template-derived nonsecret content;
+otherwise keep it root-only outside the bundle. Record hashes and the exact image lock. Keep credentials, PostgreSQL,
+pgsodium material and object bytes outside this source rollback bundle. Stop if
+existing credentials do not match the verified escrow marker. Do not
 repin images, initialize disks, regenerate credentials or print the environment.
 
 1. Over host-key-verified SSH, stage the reviewed `Caddyfile` and `compose.qa.yml`
@@ -349,6 +426,24 @@ repin images, initialize disks, regenerate credentials or print the environment.
    and the runtime guard succeeds. Repeat smoke and firewall checks afterwards.
    A negative missing-disk boot rehearsal belongs on an isolated recovery host;
    do not detach a live QA disk to manufacture evidence.
+
+Rollback is a separate, bounded maintenance action: validate and restore the
+previous nonsecret composition/helpers, then use a reviewed guarded startup and
+explicit Caddy restart with the unchanged image lock. Do not restore older
+firewall/ownership weaknesses automatically, undo new database writes, substitute
+old credentials or treat an IP switch as a TLS/issuer rollback. If the previous
+edge would re-expose a known route defect, keep the affected service stopped and
+request a containment/recovery decision instead of declaring rollback successful.
+A firewall or NSG containment change must be included in owner approval.
+
+Never restore the installed runtime guard, `selfhost_runtime_guard.py` or
+`selfhost_host_guard.sh` from the rollback bundle: the installed guard rebuilds
+the container firewall at every boot, so an older guard silently drops the
+WireServer and DNS rules after the next reboot. Restore `selfhost_start.py` with
+`selfhost_pin.py`, and `selfhost_auth_smoke.mjs` with
+`selfhost_smoke_expectations.mjs`, as pairs. After any rollback, and again after
+the next reboot, repeat the firewall-prefix check and the bridge probes from
+the acceptance steps above.
 
 Record live results separately from local tests. Stop acceptance on any failure;
 do not call the host ready or bypass the guard to continue. Restrictions to public

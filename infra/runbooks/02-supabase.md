@@ -1,5 +1,11 @@
 # 2. Resumable Supabase Frankfurt setup
 
+> **Legacy hosted deployment path.** These procedures retain Germany West Central
+> and hosted Supabase Frankfurt assumptions. For active Azure self-hosted QA and
+> planned production in Sweden Central, use [runbook 07](07-selfhost.md). Do not
+> point hosted helpers at the VM or bypass region/project validation; application
+> integration and its acceptance procedures still need a reviewed implementation.
+
 First restore the owner session. Complete `supabase.json` with organization ID
 **and slug**, a unique staging/recreation name, the foundation vault and exact
 `WEB_ORIGIN`. Obtain a scoped Supabase management token in the owner's secure

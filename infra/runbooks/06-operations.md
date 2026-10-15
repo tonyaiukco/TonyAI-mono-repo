@@ -1,5 +1,11 @@
 # 6. LP2-03 operational acceptance (owner-run)
 
+> **Legacy hosted deployment path.** These procedures retain Germany West Central
+> and hosted Supabase Frankfurt assumptions. For active Azure self-hosted QA and
+> planned production in Sweden Central, use [runbook 07](07-selfhost.md). Do not
+> point hosted helpers at the VM or bypass region/project validation; application
+> integration and its acceptance procedures still need a reviewed implementation.
+
 These steps are procedures, **not evidence of cloud execution**. Record each
 result against source SHA, API/web digests, migration hashes, environment, UTC
 time and the named operator in B9. Use dedicated synthetic tenants. Staging
