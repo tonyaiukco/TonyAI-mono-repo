@@ -1,5 +1,11 @@
 # TonyAI cloud foundation (LP2-01)
 
+For the Azure-only deployment direction, start with [self-hosted Supabase host
+foundation](runbooks/07-selfhost.md) in Sweden Central. This additive owner-only root provisions
+network/VM/disks; separate reviewed helpers bootstrap the private QA runtime.
+Neither path alone establishes accepted QA readiness. Existing
+hosted helpers below retain their strict Supabase Cloud assumptions.
+
 Owner-run Terraform for Azure Germany West Central; coded Supabase Management API
 operations for Frankfurt. **No resources or cloud evidence are implied by these
 files.** LP2-01 closes only after the owner evidences fresh recreation. Inputs for
@@ -7,9 +13,10 @@ tenant, subscription, organization and budget remain placeholders.
 
 Use Terraform **1.13.3**, AzAPI **2.6.1**, Node **22**, pnpm **11.9.0**, Python **3.10+**,
 Azure CLI, GitHub CLI (`gh`) and Docker/buildx. Run from a clean, reviewed checkout. Terraform provider
-locks belong with the two roots; no Supabase or secret-reading Terraform provider
-is used. All secret payloads stay in helper memory and Key Vault, never tfvars,
-state, plan files, logs, repository files or chat.
+locks belong with each root; no Supabase or secret-reading Terraform provider
+is used. Hosted helper secrets stay in memory and Key Vault. Self-hosted services
+also require protected root-only runtime files as described in runbook 07.
+Secret payloads never enter tfvars, state, plan files, logs, repository files or chat.
 
 ## Ordered owner path
 

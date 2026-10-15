@@ -443,3 +443,10 @@ run "mail_version_refused" {
   }
   expect_failures = [var.release]
 }
+run "sweden_subscription_cannot_create_legacy_application" {
+  command = plan
+  variables {
+    foundation = merge(var.foundation, { subscription_id = "cb7efc2f-37a7-4672-b62c-93c207bcd33d" })
+  }
+  expect_failures = [var.foundation]
+}

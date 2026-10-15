@@ -2,12 +2,14 @@
 import re
 from uuid import UUID
 from pooler import SafeFailure
+from deployment_policy import require_hosted_target
 
 
 def validate_foundation(inputs):
     if set(inputs) != {'config'} or not isinstance(inputs['config'], dict):
         raise SafeFailure('Foundation input must contain only config.')
     config = inputs['config']
+    require_hosted_target(config.get('subscription_id'))
     required = {'subscription_id','tenant_id','environment','prefix','resource_group','registry_name',
                 'vault_name','repository','release_sha','owner_object_id'}
     optional = {'deployer_object_id','runtime_secrets_ready','smtp_secret_ready','apps_ready','monitoring'}

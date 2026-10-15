@@ -29,7 +29,9 @@ def main():
         if source.count(before) != 1:
             raise SystemExit('FAIL: mutation anchor changed: ' + name)
         with tempfile.TemporaryDirectory(prefix='tonyai-grant-mutant-') as directory:
-            target = Path(directory)
+            target = Path(directory) / 'terraform/foundation'
+            target.mkdir(parents=True)
+            shutil.copytree(ROOT.parents[1] / 'config', Path(directory) / 'config')
             for path in ROOT.iterdir():
                 if path.is_file() and (path.suffix in ('.tf', '.hcl')):
                     shutil.copy2(path, target / path.name)

@@ -14,8 +14,10 @@ from pooler import SafeFailure
 def validate(config):
     required = {'subscription_id', 'tenant_id', 'environment', 'resource_group', 'storage_account',
                 'owner_object_id', 'application_object_id', 'allowed_ipv4'}
-    if set(config) != required or config['environment'] not in ('staging', 'production'):
+    if set(config) - {'location'} != required or config['environment'] not in ('staging', 'production'):
         raise SafeFailure('Backend configuration fields or environment are invalid.')
+    if config.get('location', 'germanywestcentral') not in ('germanywestcentral', 'swedencentral'):
+        raise SafeFailure('Backend location must be a reviewed Azure region.')
     for name in ('subscription_id', 'tenant_id', 'owner_object_id'):
         UUID(config[name])
     if config['application_object_id']:
@@ -36,6 +38,7 @@ def validate(config):
 
 def bootstrap(config, arm):
     validate(config)
+    location = config.get('location', 'germanywestcentral')
     subscription = '/subscriptions/' + config['subscription_id']
     group = subscription + '/resourceGroups/' + config['resource_group']
     account = group + '/providers/Microsoft.Storage/storageAccounts/' + config['storage_account']
@@ -44,9 +47,11 @@ def bootstrap(config, arm):
         existing = arm(resource, version, missing_ok=True)
         if existing and any(existing.get('tags', {}).get(k) != v for k, v in tags.items()):
             raise SafeFailure('Refusing to adopt an unrelated backend group/account.')
-    arm(group, '2024-03-01', 'PUT', {'location': 'germanywestcentral', 'tags': tags, 'properties': {}})
+        if existing and existing.get('location', '').lower().replace(' ', '') != location:
+            raise SafeFailure('Refusing to relocate an existing backend resource.')
+    arm(group, '2024-03-01', 'PUT', {'location': location, 'tags': tags, 'properties': {}})
     arm(account, '2023-05-01', 'PUT', {
-        'location': 'germanywestcentral', 'tags': tags, 'kind': 'StorageV2', 'sku': {'name': 'Standard_LRS'},
+        'location': location, 'tags': tags, 'kind': 'StorageV2', 'sku': {'name': 'Standard_LRS'},
         'properties': {
             'allowSharedKeyAccess': False, 'allowBlobPublicAccess': False, 'minimumTlsVersion': 'TLS1_2',
             'supportsHttpsTrafficOnly': True, 'defaultToOAuthAuthentication': True,

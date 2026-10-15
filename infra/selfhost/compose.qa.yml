@@ -1,0 +1,57 @@
+# Combine with the digest-verified official v0.8.2 source. No public ports initially.
+services:
+  api-gw:
+    volumes:
+      - type: bind
+        source: ./volumes/api/envoy/lds.qa.yaml
+        target: /etc/envoy/lds.template.yaml
+        read_only: true
+        bind: {create_host_path: false}
+    ports: !override
+      - "127.0.0.1:8000:8000"
+  auth:
+    environment:
+      GOTRUE_JWT_KEYS: ${JWT_KEYS}
+      GOTRUE_PASSWORD_MIN_LENGTH: "12"
+      GOTRUE_MAILER_OTP_EXP: "3600"
+      GOTRUE_MAILER_OTP_LENGTH: "10"
+      GOTRUE_RATE_LIMIT_HEADER: X-Forwarded-For
+      GOTRUE_RATE_LIMIT_VERIFY: "30"
+      GOTRUE_RATE_LIMIT_TOKEN_REFRESH: "30"
+      GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "true"
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "10"
+  realtime:
+    environment:
+      API_JWT_JWKS: ${JWT_JWKS}
+  storage:
+    environment:
+      JWT_JWKS: ${JWT_JWKS}
+    volumes:
+      - type: bind
+        source: /srv/tonyai/objects/storage
+        target: /var/lib/storage
+        bind: {create_host_path: false}
+  imgproxy:
+    volumes:
+      - type: bind
+        source: /srv/tonyai/objects/storage
+        target: /var/lib/storage
+        read_only: true
+        bind: {create_host_path: false}
+  functions:
+    profiles: [unused]
+    environment:
+      SUPABASE_JWKS: ${JWT_JWKS}
+  db:
+    volumes:
+      - type: bind
+        source: /srv/tonyai/database/postgres
+        target: /var/lib/postgresql/data
+        bind: {create_host_path: false}
+      - type: bind
+        source: /srv/tonyai/database/db-config
+        target: /etc/postgresql-custom
+        bind: {create_host_path: false}
+  supavisor:
+    profiles: [unused]
+    ports: !reset []

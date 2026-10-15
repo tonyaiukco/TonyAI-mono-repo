@@ -1,4 +1,8 @@
 variable "config" {
+  validation {
+    condition     = !contains(jsondecode(file("${path.module}/../../config/deployment-policy.json")).selfhost_sweden_subscriptions, lower(var.config.subscription_id))
+    error_message = "Sweden selfhost subscriptions require the pending VNet/application integration; legacy Germany foundation is blocked."
+  }
   description = "Nonsecret owner configuration. Use a distinct group and backend account per environment."
   type = object({
     subscription_id       = string

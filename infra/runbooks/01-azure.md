@@ -11,6 +11,10 @@ Fill `backend.json`: distinct staging account, owner object ID, explicit public
 owner egress IPv4 (`/32`), empty `application_object_id` until OIDC is established.
 No broad firewall range, trusted-service bypass or storage keys.
 
+The optional backend `location` accepts `germanywestcentral` (the legacy
+default) or `swedencentral`. The self-hosted QA path explicitly uses Sweden.
+Existing backend resources cannot be relocated by changing this field.
+
 ```bash
 python3 infra/scripts/bootstrap_backend.py --config .infra-local/staging/backend.json
 ```

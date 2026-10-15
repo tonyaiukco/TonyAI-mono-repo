@@ -11,6 +11,8 @@ import tempfile
 from pooler import SafeFailure
 from bootstrap_backend import validate as validate_backend
 from foundation_contract import validate_foundation
+from selfhost_contract import validate_selfhost
+from deployment_policy import require_hosted_target
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -27,6 +29,7 @@ def validate_release(inputs):
     if set(inputs) != {'foundation', 'release'}:
         raise SafeFailure('Application input must contain only foundation and release.')
     foundation, release = inputs['foundation'], inputs['release']
+    require_hosted_target(foundation.get('subscription_id'))
     expected = {'subscription_id', 'tenant_id', 'environment', 'resource_group', 'prefix', 'registry_name', 'vault_name', 'default_domain'}
     if set(foundation) != expected or foundation['environment'] not in ('staging', 'production'):
         raise SafeFailure('Unexpected foundation contract.')
@@ -61,6 +64,8 @@ def validate_release(inputs):
 
 
 def invoke(lane, backend_path, inputs_path, action, before_apply=None):
+    if lane not in ('foundation', 'application', 'selfhost') or action not in ('plan', 'apply', 'output', 'approved-apply'):
+        raise SafeFailure('Unsupported Terraform root or action.')
     if action == 'approved-apply' and lane != 'application':
         raise SafeFailure('Unattended apply is restricted to the application root.')
     env = clean_environment()
@@ -69,6 +74,8 @@ def invoke(lane, backend_path, inputs_path, action, before_apply=None):
     inputs = json.loads(Path(inputs_path).read_text())
     if lane == 'application':
         target, _ = validate_release(inputs)
+    elif lane == 'selfhost':
+        target = validate_selfhost(inputs)
     else:
         target = validate_foundation(inputs)
     if any(target[k] != backend[k] for k in ('subscription_id', 'tenant_id', 'environment')):
@@ -87,10 +94,10 @@ def invoke(lane, backend_path, inputs_path, action, before_apply=None):
           '-backend-config=tenant_id=' + target['tenant_id'],
           '-backend-config=subscription_id=' + target['subscription_id'],
           '-backend-config=storage_account_name=' + backend['storage_account'],
-          '-backend-config=container_name=' + lane,
-          '-backend-config=key=' + target['environment'] + '.tfstate'])
+          '-backend-config=container_name=' + ('foundation' if lane == 'selfhost' else lane),
+          '-backend-config=key=' + target['environment'] + ('-selfhost' if lane == 'selfhost' else '') + '.tfstate'])
     if action == 'output':
-        call(['output', '-json', 'application_contract'])
+        call(['output', '-json', 'selfhost_contract' if lane == 'selfhost' else 'application_contract'])
         return
     if action == 'approved-apply' or (action == 'apply' and before_apply):
         # The protected environment reviewer approves the release before this
@@ -113,7 +120,7 @@ def invoke(lane, backend_path, inputs_path, action, before_apply=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('lane', choices=['foundation', 'application'])
+    parser.add_argument('lane', choices=['foundation', 'application', 'selfhost'])
     parser.add_argument('action', choices=['plan', 'apply', 'output'])
     parser.add_argument('--backend', required=True)
     parser.add_argument('--inputs', required=True)
