@@ -393,6 +393,25 @@ blocked from the legacy Germany app roots until Sweden VNet integration is
 implemented. Legacy HS256 service-key compatibility remains documented; it is
 not a completed asymmetric API-key migration or production approval.
 
+The [Sweden QA application integration runbook](infra/runbooks/08-qa-application.md)
+specifies separate foundation/application writers, creation-time subnet binding,
+private database TLS with bounded Prisma pooling, credential separation and an
+immutable build/release contract. An offline network preflight is available;
+the new deployment roots and live application connection remain unimplemented.
+JWT issuer enforcement was integrated by #180; deployed selfhost issuer/JWKS and
+exact-candidate acceptance remain to be verified. SMTP provider/data location
+is undecided (ACS Email and Resend references must be reconciled before setup);
+PD-3 remains open for potentially exposed DB-admin/Studio credentials. The
+separately approved dashboard credential rotation/custody and one format-1 catalog
+inventory completed on 2026-10-15; neither proves database integrity or revokes
+other credentials. The owner need not locate the old password.
+The [remediation procedure](infra/runbooks/09-qa-integrity.md) makes clean Sweden
+replacement with fresh credentials, old-trust retirement and preservation the
+primary plan. No rebuild is authorized by those completed operations. Optional
+comparison can establish only scoped consistency. The format-2 inventory hardening
+is local-only and requires a new package/approval before use. Measured recovery
+also remains open.
+
 LP4-01's [Auth and SMTP handoff](infra/runbooks/03-deploy.md#35-api-smtp-parameters-lp4-01-production-preparation-for-lp2-04)
 aligns hosted Auth with the local lifecycle policy (12-character passwords,
 one-hour links and access tokens, signup off while email/password sign-in stays enabled). API mail
