@@ -67,6 +67,7 @@ const NOT_FOUND_MESSAGES = {
   access_grant_not_found: 'Grant not found',
   invitation_not_found: 'Invitation not found',
   boundary_not_found: 'Inventory boundary not found',
+  report_dataset_not_found: 'Report dataset not found',
 } as const satisfies Partial<Record<ApiErrorCode, string>>;
 export type NotFoundCode = keyof typeof NOT_FOUND_MESSAGES;
 

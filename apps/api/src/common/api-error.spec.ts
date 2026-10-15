@@ -123,6 +123,7 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   invitation_closed: () => new InvitationClosedError(),
   user_disabled: () => new UserDisabledError(),
   boundary_not_found: () => new ResourceNotFoundError('boundary_not_found'),
+  report_dataset_not_found: () => new ResourceNotFoundError('report_dataset_not_found'),
   boundary_frozen: () => new BoundaryFrozenError(),
   boundary_draft_open: () => new BoundaryDraftOpenError(),
   boundary_confirm_requires_copy: () => new BoundaryConfirmRequiresCopyError(),

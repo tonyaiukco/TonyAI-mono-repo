@@ -529,6 +529,8 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/h
 | `PUT` `DELETE` | `/inventory-boundaries/:id/subsidiaries/:subsidiaryId` | Replace or remove one subsidiary's whole declaration in an open version (the `PUT` body up to 1 MB) | `super_admin` |
 | `POST` | `/inventory-boundaries/:id/confirm` | Confirm and freeze a version (`boundary_frozen`, `boundary_confirm_requires_copy`, `boundary_incomplete`) | `super_admin` |
 | `DELETE` | `/inventory-boundaries/:id` | Delete an open version (204) | `super_admin` |
+| `POST` | `/report-datasets` | Capture a report dataset of a version (`boundaryId`; an extract by `subsidiaryId`/`scope`/`category`); an open version freezes first, unconfirmed — "The capture" | `super_admin`; consultant (a frozen version) |
+| `GET` | `/report-datasets?year=` · `/report-datasets/:id` | A year's datasets the caller may read; one, as retained (`report_dataset_not_found` unless every subsidiary it references is the caller's) | not data_entry |
 | `GET` | `/bulk-upload/template` | Download the import template (XLSX): sheet 1 is exactly the importer's ten columns, sheet 2 (invisible to the importer) names the caller's own reporting entities and the vocabularies | any |
 | `POST` | `/bulk-upload/activity-records` | Import activity records from a CSV/XLSX (multipart `file`, `dryRun` required — exactly `true` or `false`; an empty or missing value is a 400, never a default). Row-level report; 1,000 populated rows / 2 MB (and an XLSX may unpack to at most 16 MB); 5 imports per minute per user. A role that may not author records is refused before the file is parsed, and that refusal is audited (a 413 from the 2 MB limit and a 400 for a malformed `dryRun` happen before the service runs, so those two are not) | `data_entry`, `super_admin` |
 
@@ -941,13 +943,14 @@ the batch audit row after settled work, including the `failed` closing path.
 
 ## Inventory coverage and report datasets (LP3-04 contract)
 
-`ReportDataset`, `InventoryBoundarySnapshot` and `ReportIssuance` are additive,
-**dormant** contracts exported by `@tonyai/shared-types`. Existing `ReportStatus`,
+`ReportDataset`, `InventoryBoundarySnapshot` and `ReportIssuance` are additive
+contracts exported by `@tonyai/shared-types`. Existing `ReportStatus`,
 `ReportMetaDTO`, context routes and report assembly are unchanged. The boundary's
-storage and its reader are shipped (LP3-04 PR B, below), and its routes write
-and serve it ("The write path", below); no dataset capture, final-issuance gate
-or retained-PDF endpoint exists yet. In particular, today's count-based "approved"
-badge does not certify a complete inventory.
+storage and its reader are shipped (LP3-04 PR B, below), its routes write and
+serve it ("The write path", below), and a dataset is captured, retained and
+served ("The capture", below); no final-issuance gate or retained-PDF endpoint
+exists yet (`ReportIssuance` stays dormant). In particular, today's count-based
+"approved" badge does not certify a complete inventory.
 
 The dataset records one bounded, consistent capture of the declared boundary,
 records and their unchanged calculation snapshots, evidence references, period
@@ -1028,7 +1031,8 @@ gap, authoritative calculations and consistent GWP sets. Lock keys match exactly
 on `(subsidiaryId, reportingYear, reportingPeriod, periodValue)`; an annual obligation needs
 an `Annual` lock, not twelve monthly locks. `selection === 'extract'` always
 produces `partial` with `filtered_extract`, even when selected records are approved.
-Final has no gaps; partial has at least one. These are dormant producer requirements.
+Final has no gaps; partial has at least one. These are the issuance's producer
+requirements, dormant until it lands; the dataset they read is captured today.
 
 For **both dataset and issuance**, every lookup (capture, list, metadata, PDF
 retrieval and CSV/Excel projection) first requires requester `organisationId` to
@@ -1090,8 +1094,9 @@ and [ECMAScript Number::toString](https://tc39.es/ecma262/multipage/ecmascript-d
 This format differs from RFC 8785 by sorting semantic-set arrays. Compare dataset
 fingerprints only when canonicalization tags match. SHA-256 uses 64 lowercase
 hexadecimal characters; the PDF fingerprint hashes its exact stored bytes.
-Hashing/serialization is a later server implementation; this package introduces
-no hashing runtime or claim of generated fingerprints.
+The package ships no hashing runtime; the API implements the encoding
+(`apps/api/src/report-datasets/dataset-fingerprint.ts`, LP3-04 PR C), refusing
+a dataset that breaks any rule above rather than coercing it.
 
 Contract acceptance examples (not executed database/UAT evidence):
 
@@ -1175,22 +1180,24 @@ until D05's source list arrives (W11); `rls:probe` plants and removes its own.
 version whole and answers it as `InventoryBoundarySnapshot`, bound to the
 organisation it is asked under and to the caller's current access (a version
 declaring a subsidiary outside it is not found — W3). It reads, like the factor
-lookup, inside a `CaptureSnapshot`: a transaction at REPEATABLE READ or
-SERIALIZABLE (READ COMMITTED, the root client and a snapshot not opened by
-`CaptureSnapshot.open` are refused), so a capture's
+lookup, inside a `CaptureSnapshot` (`apps/api/src/common/capture-snapshot.ts`):
+a transaction at REPEATABLE READ or SERIALIZABLE (READ COMMITTED, the root
+client and a snapshot not opened by `CaptureSnapshot.open` are refused), so a capture's
 boundary, records and factor candidates are one moment's — another session's
 rename or erratum committed meanwhile does not reach it. **The factor library
 is selected in one place**, `apps/api/src/calculations/factor-lookup.ts`
 (`lookupFactorPath`): the engine calls it with a snapshot of its own (its
 REPEATABLE READ batch, unchanged) and is never handed a transaction (a record
-writer's must stay READ COMMITTED, TA003); a capture passes its
-`CaptureSnapshot`. A source scan (`factor-lookup.single-source.spec.ts`) lists
-every other read of the library's rows — the catalogue, the loader's re-read,
-the seed's accepted second copy — and fails on a new one. Dataset/issuance
-assembly (PR C, which defines the lookup's consumer), issuance with its storage
-recovery (PR D) and the editor's screen (LP4-03) are separate later PRs; the
-routes read through their own reader (below), which answers an empty version
-and a data_entry user's part — the capture's reader reads none.
+writer's must stay READ COMMITTED, TA003). Its mode that reads inside a
+caller's `CaptureSnapshot` has no consumer: a dataset takes each record's stored
+calculation and its releases' standing now, and recalculates nothing
+(Decisions 2026-10-15 (ninth), V4). A source scan
+(`factor-lookup.single-source.spec.ts`) lists every other read of the library's
+rows — the catalogue, the loader's re-read, the seed's accepted second copy —
+and fails on a new one. Issuance with its storage recovery (PR D) and the
+editor's screen (LP4-03) are later PRs; the routes read through their own
+reader (below), which answers an empty version and a data_entry user's part —
+the capture's reader reads none.
 
 **The write path (LP3-04 W1, W13; Decisions 2026-10-15 (fifth), E1–E9).** The
 contract — the request and response types
@@ -1287,6 +1294,95 @@ pipe's work grows with a body's rows — by guards (`boundary-writer.guard.ts`):
 anyone but a `super_admin` is `forbidden`, and a declaration's list past the
 DTO's limits is `validation_failed` by its count alone.
 
+**The capture (LP3-04 PR C; Decisions 2026-10-15 (ninth), V1–V12).** A
+`ReportDataset` is captured from one boundary version, retained as its exact
+`JSON.stringify` text — from which its fingerprint is recomputed: parse it,
+canonicalise it ("Fingerprint encoding"), SHA-256; the stored bytes themselves
+are not what is hashed — and served back as stored (`apps/api/src/report-datasets/`):
+
+| Method | Path | What | Who |
+|---|---|---|---|
+| `POST` | `/report-datasets` | Capture a version (`boundaryId`) — the whole declared inventory, or an extract by `subsidiaryId`, `scope` and/or `category`; 201 with a `ReportDatasetSummary` | `super_admin`; a consultant only a version already frozen |
+| `GET` | `/report-datasets?year=` | A year's datasets the caller may read, newest first (at most 50) | every role but data_entry |
+| `GET` | `/report-datasets/:id` | One dataset, its retained text byte for byte (`application/json`) | every role but data_entry |
+
+**Two transactions.** The first, READ COMMITTED — the only isolation the
+boundary guard freezes in (TA014) — locks the version's header FOR UPDATE and
+makes every refusal the request decides before anything changes: another
+organisation's or an unknown version and one declaring no subsidiary or one
+outside the caller's access (`boundary_not_found`, W3), an extract's
+subsidiary the version does not declare or outside access (`subsidiary_not_found`
+— of an undeclared one no source is selected, and every scope would read
+covered over nothing), a capture certain to read
+more than `REPORT_RECORD_LIMIT` records or `REPORT_EVIDENCE_LINK_LIMIT` evidence
+links (`query_too_broad`; only the 20 MB text cap is known after the freeze),
+and a consultant
+before an open version (`forbidden`: freezing is a header write, E2's). Then,
+if the version is open, it **freezes it unconfirmed** — conditionally
+(`frozenAt: null`; none changed means it was frozen already) — and audits the
+freeze (`inventory_boundary` / `freeze`). The second, REPEATABLE READ
+(`CaptureSnapshot`), asserts the version frozen, reads the boundary, the
+records, their evidence, the year's locks and the named releases in **one
+snapshot**, assesses and fingerprints the dataset and retains it with its audit
+row (`report_dataset` / `capture`), atomically. **A capture that fails after its
+freeze leaves the version frozen and audited, with no dataset**: a retry
+captures it as it stands (no second freeze), and an unconfirmed version, once
+captured, is confirmed only as a copy (`boundary_confirm_requires_copy`).
+
+**What is captured.** The year is the version's; `selection` is derived — no
+filter is an `inventory`, any filter an `extract`, which still embeds the whole
+boundary (W3) but assesses only the selection's sources, obligations and gaps,
+an unselected scope reading `partial` with no amount. An inventory resolves the
+version's declared subsidiaries (`resolvedSubsidiaryIds`), a subsidiary extract
+that declared one: every Scope 1/2 record of them in the year, every status (the review
+sets exhaust them). A record counts only where it attaches to an obligation of
+an included, mapped source named by no attribution conflict — exactly on entity,
+category and activity type (null is null) and on its period; every other live
+record is an `unmapped_record`, beside an `overlapping_periods` when it holds
+another granularity's months of such a source; obligations no record can meet
+(an unsupported or conflicting source's) are listed `missing` with
+`missing_record`. Evidence follows W5's interim rule: a linked live record's
+own period, so only an evidence cadence equal to the activity cadence can be
+met. A gap holds back the scopes of its category, sources and records, and one
+with none of these (`boundary_unconfirmed`) both. Provenance comes from each
+record's stored calculation and its releases' standing **now** — authoritative
+only when the factor's and the conversion's releases are, in the snapshot and
+now; a release no longer in the library reads withdrawn — and D09 compares the
+GWP sets of the counted all-GHG calculations alone. Records carry the
+snapshot's live names; the boundary its frozen ones (W7).
+
+**Retained** (`report_datasets`, `20261019120000_lp3_04_report_datasets`): the
+dataset's `JSON.stringify` as **text**, not jsonb — Prisma rounds a double to
+16 significant digits on a jsonb write, and the fingerprint must be
+recomputable from what is stored — with its fingerprint, context, selection,
+capturer (opaque, E6) and the set of subsidiaries it references (every
+`subsidiaryId` it holds at any depth, the declared and the resolved ones). The
+guard (`report_datasets_guard`, SQLSTATE `TA016`, every writer, the owner
+included) admits an insert only for a **frozen** version of its organisation
+and year whose columns agree with its content, and whose content agrees with the
+version as stored — its number and decision, its declared subsidiaries exactly
+the version's rows, its resolved ones what the selection takes of them — the
+referenced set recomputed from it, every one its organisation's; a missing or
+malformed set fails closed, and so do a key named twice in any object (jsonb
+keeps the last; the text is served whole), a `subsidiaryId` that is not a
+string and a uuid spelled otherwise than the API spells it — and then refuses every change, every
+delete but the organisation's own (as W10) and `TRUNCATE`. RLS is on with no
+client policy and no client grant, the service role included: the API is the
+only reader. **Every function in `public`** — definer or invoker — is pinned to
+`search_path = pg_catalog, pg_temp`: with `''` alone PostgreSQL still searches
+the session's temporary schema first for type names, so a caller's temporary
+domain shadowing `jsonb`, `timestamptz` or `text` ran its check as whoever the
+function ran as — a definer's owner (reproduced as the runtime login,
+`security-rls`), and so an invoker a definer calls (the factor event recorders'
+actor helper ran the loader's domain as `postgres` — Codex's review, reproduced
+from a fresh loader login) or a trigger an FK cascade reaches. `runtime-role.mjs
+check` holds every function in `public` to that path, registered or not. **The read rule** (README above), once, in the API: the caller's
+organisation, then every referenced subsidiary in the caller's current access —
+else `report_dataset_not_found`, the same answer as an unknown id; a dataset
+referencing a subsidiary since deleted is no one's to read, never redacted. The
+capture and one dataset's read take the report exports' quota and their
+one-at-a-time lease (EXPORT); the list is a read.
+
 ## Localisation and error codes
 
 LP3-01 laid the foundation the remaining screens (LP4-04), onboarding (LP4-01) and reports (LP4-03) build on. Turkish UI copy lives **only** in the `tr` catalogue (CLAUDE.md's one exception); keys, code and docs stay English. Recipes: the [`localise-ui`](.claude/skills/localise-ui/SKILL.md) skill.
@@ -1311,6 +1407,7 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | `profiles` | App user: role, organisation, UI language (`en`/`tr`, CHECK; the runtime may update it — LP3-01) and theme (1:1 with an auth user, same id). LP4-01: `disabled_at` (refused by the guard), `sessions_revoked_at` (set by a disable, an enable and an offboarding; sessions begun at or before it are refused), `auth_sync_pending_since` (Supabase Auth's ban not yet applied), `auth_sync_generation` (moved on by every change the sync must apply) and `recovery_sent_at` (the reset cooldown); created by an invitation through a column-level runtime INSERT |
 | `organisations` | The holding company (top of the hierarchy); `offboarded_at` once the operator offboards it (LP4-01, D21) |
 | `inventory_boundaries` + `inventory_boundary_subsidiaries`, `inventory_boundary_sites`, `inventory_attribution_policies`, `inventory_applicability_cells`, `inventory_sources` | LP3-04 PR B: an organisation's declared inventory boundary per reporting year, one version per header — declared subsidiaries and sites with their operating months, D11's attribution policies, D12's applicability cells, D05's named sources. Immutable once frozen (`TA014`, every writer), names copied in as it freezes; deleted only with an open version or its organisation; a declared subsidiary or site stays. RLS SELECT-only; clients and the service role SELECT only; the runtime role inserts the rows (never updates one) and deletes only a subsidiary's whole declaration, inserts a header open and changes only its decision and freeze — the routes' grants. See "Inventory coverage and report datasets" |
+| `report_datasets` | LP3-04 PR C: one retained report dataset per capture — its exact JSON text (text, not jsonb), fingerprint, context, selection, capturer and referenced subsidiaries. Append-only (`TA016`, every writer): an insert names a frozen version of its organisation and year and agrees with its content; deleted only with its organisation. RLS on with no client policy and nothing granted to any client role, the service role included; the runtime role SELECT, INSERT. See "The capture" |
 | `invitations` | One per invited profile (LP4-01): `status` `pending` → `sent` → `accepted`, or `revoked`; the email's language, the inviter (null for the operator), attempts and the last failed step with a short code. Operational state: RLS on with no policy and nothing granted to any client role, the service role included |
 | `subsidiaries` | Companies within an organisation (geography — updated only by the API, audited, or the owner: `TA015` — sector, status, included scopes, reporting contact, and `tracking_granularity` — whether completeness is measured for the whole entity or per location) |
 | `locations` | Facilities within a subsidiary (their geography, too, updated only by the API, audited, or the owner: `TA015`) |

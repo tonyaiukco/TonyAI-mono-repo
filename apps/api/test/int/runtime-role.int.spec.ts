@@ -11,6 +11,7 @@ import {
   checkLibraryWriters,
   checkRuntimeRole,
   checkFunctionExecutors,
+  checkFunctionSearchPaths,
   checkTableLevelGrants,
   checkTenantInvariants,
   factorLibraryReport,
@@ -253,6 +254,24 @@ describe('the factor loader role (LP4-02)', () => {
         `${FACTOR_LOADER_ROLE} carries role settings for a database: search_path=public`,
       ]),
     );
+  });
+
+  it('holds every function in public to pg_catalog, pg_temp — an invoker helper and an unregistered one too, through check (LP3-04 PR C)', async () => {
+    const { before, after, all } = await withRollback(owner, async (tx) => {
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      const clean = await checkFunctionSearchPaths(query);
+      // Codex's P1: the factor event recorders' invoker helper, run as their owner.
+      await tx.$executeRawUnsafe(`ALTER FUNCTION public.factor_release_events_actor_role() SET search_path = ''`);
+      await tx.$executeRawUnsafe(`CREATE FUNCTION public.zz_unpinned_probe() RETURNS integer LANGUAGE sql AS 'SELECT 1'`);
+      return { before: clean, after: await checkFunctionSearchPaths(query), all: (await checkAll(query)).problems };
+    });
+    const unpinned = [
+      `function public.factor_release_events_actor_role() is not pinned to search_path=pg_catalog, pg_temp (config ["search_path=\\"\\""])`,
+      'function public.zz_unpinned_probe() is not pinned to search_path=pg_catalog, pg_temp (config [])',
+    ];
+    expect(before).toEqual([]);
+    expect(after).toEqual(unpinned);
+    expect(all).toEqual(expect.arrayContaining(unpinned));
   });
 
   it('names every other writer of the library, at table or column level — and a client that can act as the loader', async () => {

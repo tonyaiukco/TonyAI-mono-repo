@@ -98,6 +98,27 @@ cross-organisation grant) and, if it has routes, to `apps/api/test/int/tenant-is
   refuse the cascades it must (`inventory_boundary_rows_frozen`: refused while the parent row is gone and
   the version stands; admitted once the version itself is).
 
+**Learned on LP3-04 PR C (the retained report datasets):**
+- **A table only the API reads** (`report_datasets`, `invitations`, `storage_intents`): RLS on with NO client
+  policy, and `REVOKE ALL … FROM anon, authenticated, service_role` inside the roles-exist `DO` block — the
+  service role has BYPASSRLS and gets every new table by default privilege, so it must be revoked by name.
+  Add a `tonyai_runtime` policy (`FOR ALL … USING (true)`) so the table keeps working should BYPASSRLS go.
+- **Prove "no client access" by privilege, not by "0 rows":** `rls:probe` reads and writes as anon, a user and
+  the service role and expects 42501. Do not plant rows in an append-only, guarded table — nothing could
+  remove them. In an int spec, `SET LOCAL ROLE x` first proves the role was taken (`SELECT current_user`):
+  a refused `SET ROLE` is a 42501 too, and would pass for the refusal you meant.
+- **Every function in `public` pins `SET search_path = pg_catalog, pg_temp`, never `''` — definer or
+  invoker:** with `''` PostgreSQL still searches `pg_temp` FIRST for type and relation names, so any login
+  (TEMP is PUBLIC's) can `CREATE DOMAIN pg_temp.jsonb … CHECK (pg_temp.f(VALUE))` and have `f` run as
+  whoever the function runs as. A definer runs as its owner — and so does an invoker it calls, or a trigger
+  an owner-run statement or an FK cascade fires (LP3-04 PR C: the factor event recorders' invoker SQL helper
+  ran the loader's domain as postgres). `runtime-role.mjs` (`checkFunctionSearchPaths`) holds every function
+  in `public` to the path. Probe from a FRESH session as the real login: PL/pgSQL resolves types once per
+  session, at the first call.
+- **Fingerprinted JSON goes in a `text` column, not `jsonb`:** Prisma rounds a double to 16 significant
+  digits on a jsonb write (and jsonb reorders keys), so a hash recomputed from the stored value would not
+  match. Keep small, guard-checked jsonb copies (a `context`) for SQL filters only.
+
 ## Columns are not tables
 
 A new **table** comes up invisible to client roles until its migration grants

@@ -90,6 +90,11 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   // Emerald, with `approve`: LP3-04's boundary confirmation — decisive, and
   // what makes a final report possible.
   confirm: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30",
+  // Amber, with `lock`: LP3-04 PR C — a capture froze an open boundary version
+  // unconfirmed; it can no longer change, and only a copy can be confirmed.
+  freeze: "bg-amber-500/15 text-amber-700 border-amber-500/30",
+  // Violet, with `generate`: a report dataset captured and retained.
+  capture: "bg-violet-500/15 text-violet-700 border-violet-500/30",
 };
 
 const NEUTRAL_ACTION = "bg-slate-500/15 text-slate-700 border-slate-500/30";

@@ -34,6 +34,9 @@ export declare const INTEGRITY_CHECKS: readonly (readonly [table: string, name: 
 export declare const RECORD_FOREIGN_KEYS: readonly (readonly [name: string, definitionMd5: string])[];
 export declare function expectedTriggerFunctionBodies(dir?: string): Map<string, string>;
 export declare function checkTableLevelGrants(query: Query): Promise<string[]>;
+export declare const FUNCTION_SEARCH_PATH: string;
+export declare function expectedFunctionConfig(): string[];
+export declare function checkFunctionSearchPaths(query: Query): Promise<string[]>;
 export declare function checkFunctionExecutors(
   query: Query,
   clientCallable?: Readonly<Record<string, readonly string[]>>,

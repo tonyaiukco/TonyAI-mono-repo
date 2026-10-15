@@ -11,6 +11,9 @@ import {
   scramVerifier,
   urlUser,
   INTEGRITY_CHECKS,
+  FUNCTION_SEARCH_PATH,
+  expectedFunctionConfig,
+  checkFunctionSearchPaths,
   INTEGRITY_HELPERS,
   INTEGRITY_TRIGGERS,
   RECORD_FOREIGN_KEYS,
@@ -108,12 +111,37 @@ describe('runtime URLs and passwords', () => {
   });
 });
 
+describe('checkFunctionSearchPaths (LP3-04 PR C)', () => {
+  it('holds every function in public to pg_catalog, pg_temp — registered or not, definer or invoker', async () => {
+    const seen = [];
+    const query = async (sql) => {
+      seen.push(sql);
+      return [
+        { fn: 'report_datasets_guard()', config: ['search_path=pg_catalog, pg_temp'] },
+        { fn: 'factor_release_events_actor_role()', config: ['search_path=""'] },
+        { fn: 'a_later_helper(integer)', config: [] },
+        { fn: 'reordered()', config: ['search_path=pg_temp, pg_catalog'] },
+      ];
+    };
+    expect(await checkFunctionSearchPaths(query)).toEqual([
+      'function public.factor_release_events_actor_role() is not pinned to search_path=pg_catalog, pg_temp (config ["search_path=\\"\\""])',
+      'function public.a_later_helper(integer) is not pinned to search_path=pg_catalog, pg_temp (config [])',
+      'function public.reordered() is not pinned to search_path=pg_catalog, pg_temp (config ["search_path=pg_temp, pg_catalog"])',
+    ]);
+    expect(seen[0]).toMatch(/n\.nspname = 'public' AND p\.prokind IN \('f', 'p'\)/);
+  });
+
+  it('finds nothing when every function is pinned', async () => {
+    expect(await checkFunctionSearchPaths(async () => [{ fn: 'f()', config: [FUNCTION_SEARCH_PATH] }])).toEqual([]);
+  });
+});
+
 describe('checkIntegrityTriggers (LP3-03)', () => {
   const md5 = (t) => createHash('md5').update(t, 'utf8').digest('hex');
   const bodies = new Map(INTEGRITY_TRIGGERS.map((t) => [t.fn, `\nBEGIN /* ${t.fn} */ END\n`]));
   const allTriggers = INTEGRITY_TRIGGERS.map((t) => ({
     table: t.table, trigger: t.trigger, enabled: 'A', type: t.type, unconditional: true, allColumns: true,
-    fnSchema: 'public', fn: t.fn, bodyMd5: md5(bodies.get(t.fn)), definer: Boolean(t.definer), config: ['search_path=""'], language: 'plpgsql',
+    fnSchema: 'public', fn: t.fn, bodyMd5: md5(bodies.get(t.fn)), definer: Boolean(t.definer), config: expectedFunctionConfig(), language: 'plpgsql',
     deferrable: Boolean(t.deferred), initiallyDeferred: Boolean(t.deferred),
   }));
   const allChecks = INTEGRITY_CHECKS.map(([table, name, definitionMd5]) => ({
@@ -121,7 +149,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
   }));
   for (const h of INTEGRITY_HELPERS) bodies.set(h.fn, `\n  SELECT /* ${h.fn} */ 1\n`);
   const allHelpers = INTEGRITY_HELPERS.map((h) => ({
-    fn: h.fn, bodyMd5: md5(bodies.get(h.fn)), definer: false, config: ['search_path=""'], language: h.language,
+    fn: h.fn, bodyMd5: md5(bodies.get(h.fn)), definer: false, config: expectedFunctionConfig(), language: h.language,
   }));
   const parentOf = (name) => (name.includes('import_batch') ? 'import_batches' : name.includes('location') ? 'locations' : 'subsidiaries');
   const allKeys = RECORD_FOREIGN_KEYS.map(([name, definitionMd5]) => {
@@ -160,8 +188,9 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // lifecycle writer, organisation guard and subsidiary guard; LP4-02's
     // seal check at the commit; LP3-04 PR B's freeze guard and truncate guard
     // on the boundary's header and its five row tables; LP4-02 (27)'s
-    // geography guard on subsidiaries and sites.
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3 + 1 + 6 * 2 + 2);
+    // geography guard on subsidiaries and sites; LP3-04 PR C's dataset guard
+    // and truncate guard on `report_datasets`.
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2);
     for (const table of ['subsidiaries', 'locations']) {
       expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === `${table}_geography_writer`)).toEqual({
         table,
@@ -174,7 +203,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
       'emission_factors_record_delete', 'emission_factors_record_insert', 'factor_releases_record_event',
       'inventory_applicability_cells_frozen', 'inventory_attribution_policies_frozen', 'inventory_boundaries_frozen',
       'inventory_boundary_sites_frozen', 'inventory_boundary_subsidiaries_frozen', 'inventory_sources_frozen',
-      'unit_conversions_record_delete', 'unit_conversions_record_insert',
+      'report_datasets_guard', 'unit_conversions_record_delete', 'unit_conversions_record_insert',
     ]);
     expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === 'inventory_sources_before_truncate')).toMatchObject({
       fn: 'inventory_boundary_before_truncate',
@@ -250,6 +279,17 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     expect(await check(tweak('activity_records_snapshot_immutable', { allColumns: false }))).toHaveLength(1);
   });
 
+  it("reports any integrity function — definer or invoker — not pinned to pg_catalog, pg_temp (security-rls P1, Codex P1)", async () => {
+    expect(FUNCTION_SEARCH_PATH).toBe('search_path=pg_catalog, pg_temp');
+    for (const trigger of ['report_datasets_guard', 'inventory_boundaries_frozen', 'factor_releases_record_event', 'emission_factors_before_update', 'activity_records_lifecycle_writer']) {
+      for (const config of [['search_path=""'], [], ['search_path=pg_temp, pg_catalog']]) {
+        const problems = await check(tweak(trigger, { config }));
+        expect(problems.length, `${trigger} ${JSON.stringify(config)}`).toBe(1);
+        expect(problems[0]).toMatch(/plpgsql function pinned to search_path=pg_catalog, pg_temp/);
+      }
+    }
+  });
+
   it('reports a function made SECURITY DEFINER, given another search_path or language, or moved to another schema', async () => {
     for (const change of [{ definer: true }, { config: ['search_path=evil, pg_catalog'] }, { config: [] }, { language: 'sql' }]) {
       const problems = await check(tweak('emission_factors_before_update', change));
@@ -287,7 +327,8 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     expect(guarded).toEqual([
       'activity_records', 'emission_factors', 'factor_release_events', 'factor_releases',
       'inventory_applicability_cells', 'inventory_attribution_policies', 'inventory_boundaries', 'inventory_boundary_sites',
-      'inventory_boundary_subsidiaries', 'inventory_sources', 'locations', 'subsidiaries', 'unit_conversions',
+      'inventory_boundary_subsidiaries', 'inventory_sources', 'locations', 'report_datasets', 'subsidiaries',
+      'unit_conversions',
     ]);
     for (const table of guarded) {
       expect(await check(allTriggers, allChecks, [{ table, rule: 'r' }])).toEqual([`unexpected rule r on ${table}`]);
@@ -766,6 +807,16 @@ describe("the runtime role's inventory boundary grants (LP3-04's write path)", (
       expect(RUNTIME_COLUMN_INSERTS.inventory_boundaries).not.toContain(column);
     }
     expect(RUNTIME_COLUMN_UPDATES.inventory_boundaries).toEqual(['decision', 'decided_by', 'decided_at', 'frozen_at']);
+  });
+
+  it('inserts and reads a retained report dataset — never updates or deletes one (LP3-04 PR C, V5)', () => {
+    expect(RUNTIME_TABLE_PRIVILEGES.report_datasets).toEqual(['SELECT', 'INSERT']);
+    expect(RUNTIME_COLUMN_INSERTS.report_datasets).toBeUndefined();
+    expect(RUNTIME_COLUMN_UPDATES.report_datasets).toBeUndefined();
+    expect(INTEGRITY_TRIGGERS.filter((t) => t.table === 'report_datasets')).toEqual([
+      { table: 'report_datasets', trigger: 'report_datasets_guard', fn: 'report_datasets_guard', type: 1 | 2 | 4 | 8 | 16, definer: true },
+      { table: 'report_datasets', trigger: 'report_datasets_before_truncate', fn: 'report_datasets_before_truncate', type: 2 | 32 },
+    ]);
   });
 });
 

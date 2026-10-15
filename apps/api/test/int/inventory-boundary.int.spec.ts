@@ -13,7 +13,7 @@ import { Prisma } from '@tonyai/db';
 import { directCalorificBasisFor, scope2MethodFor } from '@tonyai/shared-types';
 import { AuditService } from '../../src/audit/audit.service';
 import { CalculationsService } from '../../src/calculations/calculations.service';
-import { CaptureSnapshot, CaptureSnapshotError } from '../../src/calculations/factor-lookup';
+import { CaptureSnapshot, CaptureSnapshotError } from '../../src/common/capture-snapshot';
 import { readInventoryBoundary } from '../../src/inventory-boundary/boundary-reader';
 import { LocationsService } from '../../src/locations/locations.service';
 import type { PrismaService } from '../../src/prisma/prisma.service';

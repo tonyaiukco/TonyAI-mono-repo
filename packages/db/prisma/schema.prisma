@@ -127,6 +127,7 @@ model Organisation {
   profiles            Profile[]
   importBatches       ImportBatch[]
   inventoryBoundaries InventoryBoundary[]
+  reportDatasets      ReportDataset[]
   /// Set by the operator CLI's `offboard` (K6, D21): every user is disabled and
   /// the guard refuses the organisation's members; the start of D21's 90-day
   /// retention clock. The deletion itself is not built (it waits for D24).
@@ -810,6 +811,7 @@ model InventoryBoundary {
   createdBy      String                        @map("created_by") @db.Uuid
   createdAt      DateTime                      @default(dbgenerated("transaction_timestamp()")) @map("created_at") @db.Timestamptz(6)
   subsidiaries   InventoryBoundarySubsidiary[]
+  datasets       ReportDataset[]
 
   @@unique([organisationId, reportingYear, version])
   // The target of the subsidiaries' composite key: a boundary names its own
@@ -948,4 +950,49 @@ model InventorySource {
   @@index([boundaryId, subsidiaryId, category, reportingPeriod])
   @@index([boundaryId, locationId, subsidiaryId])
   @@map("inventory_sources")
+}
+
+// A retained report dataset (LP3-04 PR C; Decisions 2026-10-15 (ninth), V5): one
+// capture of a frozen boundary version, kept as the exact JSON text whose
+// fingerprint it carries — text, not jsonb, because Prisma rounds a double to
+// 16 significant digits on a jsonb write and the fingerprint must be
+// recomputable from what is stored. Append-only: `report_datasets_guard`
+// (TA016) refuses every change and every delete but the organisation's own,
+// and checks an insert's columns against its content. The API is its only
+// reader: RLS on with no client policy, no client grant.
+model ReportDataset {
+  // The dataset's `datasetId`, written by the API.
+  id                      String            @id @db.Uuid
+  organisationId          String            @map("organisation_id") @db.Uuid
+  // CASCADE from the organisation and from its version — a frozen version is
+  // deleted only with its organisation (W10), and the guard admits only that
+  // delete. Not NO ACTION: the organisation's cascades run in trigger order
+  // (Decisions 2026-10-15 (third) (1)).
+  organisation            Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  boundaryId              String            @map("boundary_id") @db.Uuid
+  boundary                InventoryBoundary @relation(fields: [boundaryId, organisationId], references: [id, organisationId], onDelete: Cascade, onUpdate: NoAction)
+  reportingYear           Int               @map("reporting_year")
+  // 'inventory' | 'extract' (CHECK).
+  selection               String
+  // The dataset's `context`, as its content holds it (the guard compares) —
+  // so the list names an extract's filters without reading the content.
+  context                 Json
+  schemaVersion           Int               @map("schema_version")
+  canonicalization        String
+  fingerprintHex          String            @map("fingerprint_hex") @db.Char(64)
+  // Every subsidiary the dataset references (README: the read rule's set),
+  // computed from the content — the guard recomputes it. A reader needs all of
+  // them in their current access.
+  referencedSubsidiaryIds String[]          @map("referenced_subsidiary_ids") @db.Uuid
+  // Opaque, from the verified token; no foreign key (E6).
+  capturedBy              String            @map("captured_by") @db.Uuid
+  capturedAt              DateTime          @map("captured_at") @db.Timestamptz(6)
+  content                 String
+
+  @@index([organisationId, reportingYear, capturedAt(sort: Desc)])
+  @@index([boundaryId, organisationId])
+  // The target of a later same-organisation key (an issuance, LP3-04 PR D),
+  // in place before the table holds retained rows.
+  @@unique([id, organisationId])
+  @@map("report_datasets")
 }
