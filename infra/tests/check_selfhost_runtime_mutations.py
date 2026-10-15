@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prove destructive disk and runtime boundary regressions fail offline tests."""
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
@@ -72,16 +73,29 @@ MUTANTS = [
 
 
 def run(root):
-    return subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(root / 'tests'), '-p', 'test_selfhost_*.py'], capture_output=True, text=True)
+    # The clean control must not leave bytecode that a same-size mutant can reuse.
+    return subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover', '-s', str(root / 'tests'), '-p', 'test_selfhost_*.py'],
+                          capture_output=True, text=True,
+                          env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+
+
+def copy_fixture(project):
+    """Preserve repository-relative CLI and Terraform references in disposable copies."""
+    target = project / 'infra'
+    for folder in ('scripts', 'tests', 'config', 'selfhost', 'terraform'):
+        shutil.copytree(ROOT / folder, target / folder,
+                        ignore=shutil.ignore_patterns('__pycache__', '.terraform'))
+    return target
 
 
 def main():
     if run(ROOT).returncode: raise SystemExit('FAIL: selfhost baseline failed.')
     for name, file, before, after in MUTANTS:
         with tempfile.TemporaryDirectory(prefix='tonyai-runtime-mutant-') as directory:
-            target = Path(directory)
-            for folder in ('scripts', 'tests', 'config', 'selfhost'):
-                shutil.copytree(ROOT / folder, target / folder, ignore=shutil.ignore_patterns('__pycache__'))
+            target = copy_fixture(Path(directory))
+            baseline = run(target)
+            if baseline.returncode:
+                raise SystemExit('FAIL: unmodified disposable-copy baseline failed: ' + name + '\n' + baseline.stderr[-1500:])
             path = target / 'scripts' / file; source = path.read_text()
             if source.count(before) != 1: raise SystemExit('FAIL: mutation anchor drift: ' + name)
             path.write_text(source.replace(before, after))
