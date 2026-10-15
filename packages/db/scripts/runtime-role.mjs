@@ -194,6 +194,10 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   inventory_attribution_policies: ['SELECT', 'INSERT'],
   inventory_applicability_cells: ['SELECT', 'INSERT'],
   inventory_sources: ['SELECT', 'INSERT'],
+  // LP3-04 PR C's retained datasets (V5): a capture inserts, the dataset
+  // routes read — never an update or a delete (the guard, TA016, refuses
+  // them for every writer but the organisation's own deletion).
+  report_datasets: ['SELECT', 'INSERT'],
   // Prisma's migration history: neither readable nor writable.
   _prisma_migrations: [],
 });
@@ -927,6 +931,12 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
     { table, trigger: `${table}_frozen`, fn: 'inventory_boundary_rows_frozen', type: ROW | BEFORE | ON.insert | ON.update | ON.delete, definer: true },
     { table, trigger: `${table}_before_truncate`, fn: 'inventory_boundary_before_truncate', type: BEFORE | ON.truncate },
   ]),
+  // LP3-04 PR C: a retained dataset names a frozen version of its
+  // organisation and year, agrees with its own content, and is never changed
+  // or deleted but with its organisation (TA016) — SECURITY DEFINER, to read
+  // the version and the subsidiaries whoever inserts.
+  { table: 'report_datasets', trigger: 'report_datasets_guard', fn: 'report_datasets_guard', type: ROW | BEFORE | ON.insert | ON.update | ON.delete, definer: true },
+  { table: 'report_datasets', trigger: 'report_datasets_before_truncate', fn: 'report_datasets_before_truncate', type: BEFORE | ON.truncate },
   // LP4-02 (27): a subsidiary's or a site's geography — what its records are
   // priced with — changes in the API's or the owner's session alone (TA015).
   // `locations` is guarded from here on: a later BEFORE UPDATE trigger could
@@ -991,6 +1001,12 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['inventory_sources', 'inventory_sources_location_key_check', 'a12859b8651bbff6733c214dce008b93'],
   ['inventory_sources', 'inventory_sources_mapping_check', '58f17af88daeadf0cd7b256ef9972040'],
   ['inventory_sources', 'inventory_sources_name_check', '89abd8a30af4e8ea9fe6138919107443'],
+  // LP3-04 PR C: what a retained dataset row is (V5).
+  ['report_datasets', 'report_datasets_fingerprint_check', '63204d1bbd98e2266744f4d2a7eb9a0c'],
+  ['report_datasets', 'report_datasets_referenced_check', 'a61fe632e52e8c2bc789ca1a3a429491'],
+  ['report_datasets', 'report_datasets_schema_check', '14dd828e62fc6a8879ad1d25e61e94cc'],
+  ['report_datasets', 'report_datasets_selection_check', '8ff91db91299eba2a1b97fa4d1533b93'],
+  ['report_datasets', 'report_datasets_selection_context_check', '30735b94defd559b810da8a1f204d001'],
   ['unit_conversions', 'unit_conversions_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
   ['unit_conversions', 'unit_conversions_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
   ['unit_conversions', 'unit_conversions_multiplier_check', 'b44055800a17e765590df1c5c881b412'],
@@ -1002,7 +1018,7 @@ export const INTEGRITY_CHECKS = Object.freeze([
  * Functions the triggers call that are not trigger functions themselves —
  * replacing one changes what a trigger records (`db_role`) as surely as
  * replacing the trigger function. Each must keep its migration body and be a
- * SECURITY INVOKER function pinned to search_path ''.
+ * SECURITY INVOKER function pinned to search_path pg_catalog, pg_temp (FUNCTION_SEARCH_PATH).
  */
 export const INTEGRITY_HELPERS = Object.freeze([{ fn: 'factor_release_events_actor_role', language: 'sql' }]);
 
@@ -1078,10 +1094,43 @@ const RI_ACTION_FUNCTIONS = Object.freeze({ a: 'noaction', r: 'restrict', c: 'ca
 /** `pg_trigger.tgenabled`: fires in an ordinary session ('O' origin, 'A' always), or does not ('D', 'R'). */
 const TRIGGER_STATES = Object.freeze({ D: 'disabled', R: 'replica-only (it fires in replica mode alone)' });
 
+/**
+ * The search path every function in `public` is pinned to — pg_catalog first,
+ * the session's temporary schema LAST. With '' alone PostgreSQL still
+ * searches pg_temp FIRST for type names, so a caller's temporary domain
+ * shadowing `jsonb`, `timestamptz` or `text` ran its own check function as
+ * whoever the function ran as: a SECURITY DEFINER's owner (`security-rls` P1,
+ * LP3-04 PR C, reproduced as the runtime login), and so an INVOKER function a
+ * definer calls — the factor event recorders' actor helper ran the loader's
+ * domain as postgres (Codex's P1, reproduced from a fresh loader login) — or a
+ * trigger an owner-run statement or an FK cascade fires. So the path is not
+ * decided by `prosecdef`: definers and invokers alike.
+ */
+export const FUNCTION_SEARCH_PATH = 'search_path=pg_catalog, pg_temp';
+export const expectedFunctionConfig = () => [FUNCTION_SEARCH_PATH];
+
+/**
+ * Every function in `public` pinned to FUNCTION_SEARCH_PATH — the registered
+ * integrity triggers and helpers, and any other, a later one included: one
+ * left at '' (or unpinned) is a finding.
+ */
+export async function checkFunctionSearchPaths(query) {
+  const rows = await query(
+    `SELECT p.oid::regprocedure::text AS "fn", COALESCE(p.proconfig, '{}'::text[]) AS "config"
+       FROM pg_catalog.pg_proc p
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.prokind IN ('f', 'p')
+      ORDER BY 1`,
+  );
+  return rows
+    .filter((r) => JSON.stringify(r.config) !== JSON.stringify([FUNCTION_SEARCH_PATH]))
+    .map((r) => `function public.${r.fn} is not pinned to ${FUNCTION_SEARCH_PATH} (config ${JSON.stringify(r.config)})`);
+}
+
 /** The tables the integrity triggers guard: nothing else may hook into them. */
 const GUARDED_TABLES = Object.freeze([
   'activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events', 'subsidiaries',
-  'inventory_boundaries', ...INVENTORY_BOUNDARY_ROW_TABLES, 'locations',
+  'inventory_boundaries', ...INVENTORY_BOUNDARY_ROW_TABLES, 'locations', 'report_datasets',
 ]);
 
 /** Every integrity trigger, CHECK and record key, present, in force and unaltered. */
@@ -1174,9 +1223,11 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
     if (want.deferred && !(found.deferrable && found.initiallyDeferred)) {
       problems.push(`trigger ${want.trigger} on ${want.table} is not DEFERRABLE INITIALLY DEFERRED — it must run at the commit, once the load is in`);
     }
-    if (found.definer !== Boolean(want.definer) || found.language !== 'plpgsql' || JSON.stringify(found.config) !== JSON.stringify(['search_path=""'])) {
+    if (found.definer !== Boolean(want.definer) || found.language !== 'plpgsql'
+      || JSON.stringify(found.config) !== JSON.stringify(expectedFunctionConfig())) {
       problems.push(
-        `function public.${found.fn}() is not a SECURITY ${want.definer ? 'DEFINER' : 'INVOKER'} plpgsql function pinned to search_path '' ` +
+        `function public.${found.fn}() is not a SECURITY ${want.definer ? 'DEFINER' : 'INVOKER'} plpgsql function pinned to ` +
+          `${FUNCTION_SEARCH_PATH} ` +
           `(definer ${found.definer}, ${found.language}, config ${JSON.stringify(found.config)})`,
       );
     }
@@ -1244,7 +1295,7 @@ export async function checkIntegrityTriggers(query, expectedBodies = expectedTri
     else if (
       found.definer ||
       found.language !== want.language ||
-      JSON.stringify(found.config) !== JSON.stringify(['search_path=""']) ||
+      JSON.stringify(found.config) !== JSON.stringify(expectedFunctionConfig()) ||
       found.bodyMd5 !== md5(expectedBodies.get(want.fn) ?? '')
     ) {
       problems.push(`function public.${want.fn}() differs from its migration's definition`);
@@ -1383,6 +1434,7 @@ export async function checkAll(query) {
       ...(await checkTenantInvariants(query)),
       ...(await checkTableLevelGrants(query)),
       ...(await checkFunctionExecutors(query)),
+      ...(await checkFunctionSearchPaths(query)),
       ...(await checkIntegrityTriggers(query)),
       ...library.problems,
     ],

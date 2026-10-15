@@ -2360,6 +2360,9 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   invitation_not_found: 404,
   /** LP3-04: an inventory boundary version (of another organisation, or none). */
   boundary_not_found: 404,
+  /** LP3-04 PR C: a report dataset — of another organisation, referencing a
+   *  subsidiary outside the caller's current access, or none at all. */
+  report_dataset_not_found: 404,
   /** D19: the account (or its organisation, offboarded) is disabled. Refused
    *  on the next request, whatever token it carries; the web signs it out. */
   account_disabled: 401,
@@ -4539,6 +4542,14 @@ export const AUDIT_ACTIONS = [
   /** LP3-04: a super_admin confirmed an inventory boundary version, freezing
    *  it (W4). `entity: 'inventory_boundary'`. */
   'confirm',
+  /** LP3-04 PR C: a capture froze an open inventory boundary version,
+   *  unconfirmed, in a transaction of its own before reading it (W8, V8) —
+   *  written even when the capture then fails. `entity: 'inventory_boundary'`. */
+  'freeze',
+  /** LP3-04 PR C: a report dataset captured and retained (V8); the diff
+   *  summarises it — the dataset itself is retained whole. `entity:
+   *  'report_dataset'`. */
+  'capture',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -4569,6 +4580,8 @@ export const AUDIT_ENTITIES = [
   // is a `create` whose diff names `copyOf`; a subsidiary's declaration
   // replaced or removed is an `update` whose diff holds it before and after.
   'inventory_boundary',
+  // LP3-04 PR C: a retained report dataset; `entityId` is its `datasetId`.
+  'report_dataset',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

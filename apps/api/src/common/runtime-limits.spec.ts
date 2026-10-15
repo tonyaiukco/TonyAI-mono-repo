@@ -81,6 +81,14 @@ describe('bounded admission', () => {
     ['POST', '/api/v1/activity-records/bulk-submit', 'SUBMIT'],
     ['POST', '/api/v1/activity-records/id/submit', 'WRITE'],
     ['GET', '/api/v1/reports/meta', 'READ'],
+    // LP3-04 PR C (V7): a capture and one retained dataset take the exports'
+    // quota and lease; the list is a read.
+    ['POST', '/api/v1/report-datasets', 'EXPORT'], ['POST', '/api/v1/REPORT-DATASETS/', 'EXPORT'],
+    ['GET', '/api/v1/report-datasets/0b1d0000-0000-4000-8000-000000000001', 'EXPORT'],
+    ['HEAD', '/api/v1/report-datasets/ID/', 'EXPORT'],
+    ['GET', '/api/v1/report-datasets?year=2026', 'READ'],
+    ['POST', '/api/v1/report-datasets/id', 'WRITE'],
+    ['GET', '/api/v1/report-datasets/id/extra', 'READ'],
   ])('groups %s %s', (method, path, group) => expect(routeGroup(method, path)).toBe(group));
   it.each(['GET', 'HEAD'])('classifies every legacy and context export as EXPORT for %s', (method) => {
     for (const path of [REPORTING_CONTEXT_API_PATHS.pdf, REPORTING_CONTEXT_API_PATHS.excel, REPORTING_CONTEXT_API_PATHS.csv,

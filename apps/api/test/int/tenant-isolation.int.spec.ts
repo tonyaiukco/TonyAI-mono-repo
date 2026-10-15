@@ -19,6 +19,7 @@ import {
   apiTokenIssuer,
   attachEvidence,
   connectOwner,
+  createBoundary,
   createRecord,
   createTenant,
   createTenantData,
@@ -592,6 +593,17 @@ const ID_ROUTES: Route[] = [
   // A's own version has gaps: its confirmation is refused, not unseen.
   { name: 'POST /inventory-boundaries/:id/confirm', method: 'POST', path: (i) => `/inventory-boundaries/${i.boundaryId}/confirm`, own: { role: 'superAdmin', ok: differs } },
   { name: 'DELETE /inventory-boundaries/:id', method: 'DELETE', path: (i) => `/inventory-boundaries/${i.boundaryId}`, own: { role: 'superAdmin', ok: (res) => res.status === 204 } },
+  // report datasets (LP3-04 PR C): a capture of B's version. A capture freezes
+  // the version it captures, so A's positive control captures a fresh version
+  // of its own, not the one the routes above edit.
+  {
+    name: "POST /report-datasets (B's version)", method: 'POST', path: () => '/report-datasets', body: (i) => ({ boundaryId: i.boundaryId }),
+    own: {
+      role: 'superAdmin',
+      ok: created,
+      prepare: async () => ({ boundaryId: (await createBoundary(owner, A, { locationId: dataA.locationId, reportingYear: 2031 })).boundaryId }),
+    },
+  },
   // filters by subsidiary
   ...(
     [

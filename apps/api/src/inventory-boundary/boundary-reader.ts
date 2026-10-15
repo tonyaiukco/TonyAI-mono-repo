@@ -1,5 +1,5 @@
 import type { InventoryBoundarySnapshot } from '@tonyai/shared-types';
-import { CaptureSnapshot, CaptureSnapshotError } from '../calculations/factor-lookup';
+import { CaptureSnapshot, CaptureSnapshotError } from '../common/capture-snapshot';
 import { readBoundaryRows } from './boundary-rows';
 import { buildBoundarySnapshot } from './boundary-snapshot';
 

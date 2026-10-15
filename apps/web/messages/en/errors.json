@@ -65,6 +65,7 @@
     "invitation_closed": "This invitation was already accepted.",
     "user_disabled": "This account is disabled — enable it before re-sending its invitation.",
     "boundary_not_found": "Inventory boundary not found.",
+    "report_dataset_not_found": "Report dataset not found.",
     "boundary_frozen": "This inventory boundary version is frozen and can no longer change. Copy it into a new version to make changes.",
     "boundary_draft_open": "An open version of this year’s inventory boundary already exists. Edit or delete it before starting another.",
     "boundary_confirm_requires_copy": "This version was captured into a report without being confirmed, so it can no longer change. Copy it into a new version and confirm that one.",

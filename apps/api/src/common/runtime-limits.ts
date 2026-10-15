@@ -16,6 +16,13 @@ const EXPORT_PATHS = new Set([
     .map((path) => `/api/v1${path}`),
 ]);
 
+/** LP3-04 PR C (V7): a capture reads up to the report limits in one snapshot,
+ * and one retained dataset is served whole (up to `REPORT_MAX_BYTES`) — both
+ * take the report exports' quota and their one-at-a-time lease. The list is
+ * an ordinary read. */
+const REPORT_DATASETS_ROUTE = '/api/v1/report-datasets';
+const REPORT_DATASET_ROUTE = /^\/api\/v1\/report-datasets\/[^/]+$/;
+
 export type RouteGroup = 'READ' | 'WRITE' | 'IMPORT' | 'EXPORT' | 'SUBMIT';
 export const routeGroup = (method: string, path: string): RouteGroup => {
   const route = path.split('?')[0].toLowerCase().replace(/\/+$/, '');
@@ -23,6 +30,8 @@ export const routeGroup = (method: string, path: string): RouteGroup => {
   if (method === 'POST' && (route === '/api/v1/activity-records/bulk-submit'
     || /^\/api\/v1\/import-batches\/[^/]+\/submit$/.test(route))) return 'SUBMIT';
   if (['GET', 'HEAD'].includes(method) && EXPORT_PATHS.has(route)) return 'EXPORT';
+  if (method === 'POST' && route === REPORT_DATASETS_ROUTE) return 'EXPORT';
+  if (['GET', 'HEAD'].includes(method) && REPORT_DATASET_ROUTE.test(route)) return 'EXPORT';
   return ['GET', 'HEAD', 'OPTIONS'].includes(method) ? 'READ' : 'WRITE';
 };
 

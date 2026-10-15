@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import type { EmissionFactor, FactorRelease, Prisma } from '@tonyai/db';
 import { directCalorificBasisFor, factorActivityTypeFor, scope2MethodFor } from '@tonyai/shared-types';
 import type { PrismaService } from '../prisma/prisma.service';
-import { CaptureSnapshot, CaptureSnapshotError, FACTOR_CANDIDATE_CAP, lookupFactorPath, type FactorLookupKey } from './factor-lookup';
+import { CaptureSnapshot, CaptureSnapshotError } from '../common/capture-snapshot';
+import { FACTOR_CANDIDATE_CAP, lookupFactorPath, type FactorLookupKey } from './factor-lookup';
 
 /**
  * The one factor lookup's two ways of reading the library (LP3-04 PR B, W2):

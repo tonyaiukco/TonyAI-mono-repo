@@ -3,9 +3,10 @@ import type {
   Locale, PeriodLockDTO, ReportingContext, ReportingPeriod, ReportTemplate,
 } from './index';
 
-/** LP3-04: additive contracts. Only the boundary's routes return one yet (an
- * `InventoryBoundarySnapshot` inside `InventoryBoundaryVersionDTO`); no dataset
- * or issuance is produced.
+/** LP3-04: additive contracts. The boundary's routes return an
+ * `InventoryBoundarySnapshot` inside `InventoryBoundaryVersionDTO`; the dataset
+ * routes capture, retain and serve a `ReportDataset` (PR C,
+ * `CaptureReportDatasetRequest`); no issuance is produced yet.
  * All timestamps use Date.prototype.toISOString() UTC spelling; months are calendar months of reportingYear.
  * Producers validate runtime inputs, referential integrity and the invariants
  * below. TypeScript shapes alone do not certify a complete inventory. */
@@ -393,3 +394,35 @@ export type ReportIssuance = {
   | { status: 'final'; gaps: readonly [] }
   | { status: 'partial'; gaps: readonly [ReportIssuanceGap, ...ReportIssuanceGap[]] }
 );
+
+/** `POST /api/v1/report-datasets` (LP3-04 PR C; Decisions 2026-10-15 (ninth),
+ * V1–V3): capture one boundary version. Its reporting year is the version's,
+ * and `selection` is derived, never sent: no filter is an `inventory` of the
+ * whole declared boundary; any filter an `extract`, which still embeds the
+ * whole boundary but assesses only the selection — a `subsidiaryId` is one the
+ * version declares (`subsidiary_not_found` otherwise).
+ * Capturing an open version freezes it, unconfirmed (`boundary_unconfirmed`),
+ * in a transaction of its own before anything is read — `super_admin` alone
+ * may; a consultant captures a version already frozen. A capture that fails
+ * after its freeze leaves the version frozen without a dataset: a retry
+ * captures it as it stands. */
+export interface CaptureReportDatasetRequest {
+  boundaryId: string;
+  subsidiaryId?: string;
+  scope?: 1 | 2 | 3;
+  category?: Category;
+}
+
+/** A retained dataset as its capture and the list (`GET
+ * /report-datasets?year=`, the newest first) name it; `GET
+ * /report-datasets/:id` answers the whole `ReportDataset`, as retained. */
+export interface ReportDatasetSummary {
+  datasetId: string;
+  capturedAt: string;
+  /** As `decidedBy`: the capturer's profile id from the verified token; opaque. */
+  capturedBy: string;
+  context: ReportingContext;
+  selection: ReportDataset['selection'];
+  boundary: Pick<InventoryBoundarySnapshot, 'id' | 'version' | 'decision'>;
+  fingerprint: ReportDatasetFingerprint;
+}

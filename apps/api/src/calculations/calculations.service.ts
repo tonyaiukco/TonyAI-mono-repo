@@ -26,20 +26,18 @@ import type {
   EmissionFactorDetailDTO,
   EmissionFactorDTO,
   FactorGasCoverage,
-  FactorReleaseSnapshot,
-  FactorStatus,
-  GwpSet,
   UnitConversionSnapshot,
 } from '@tonyai/shared-types';
 import { quoteCallerText } from '../common/caller-text';
+import { RELEASE_SNAPSHOT_SELECT, releaseSnapshot } from './release-snapshot';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   lookupFactorPath,
   SEALED,
   type FactorLookupKey,
   type FactorLookupResult,
-  type CaptureSnapshot,
 } from './factor-lookup';
+import type { CaptureSnapshot } from '../common/capture-snapshot';
 import { FACTOR_POLICY, type FactorPolicy } from './factor-policy';
 import {
   blockedUnitReason,
@@ -54,37 +52,6 @@ export { FACTOR_CANDIDATE_CAP } from './factor-lookup';
 
 type ConversionRow = UnitConversion & { release: FactorRelease };
 
-
-/** The release columns a `FactorReleaseSnapshot` carries — never reviewer, withdrawer or notes. */
-const RELEASE_SNAPSHOT_SELECT = {
-  id: true,
-  publisher: true,
-  title: true,
-  edition: true,
-  ordinal: true,
-  status: true,
-  sourceUrl: true,
-  licence: true,
-  publishedAt: true,
-  gwpSet: true,
-} as const;
-
-function releaseSnapshot(
-  release: Pick<FactorRelease, keyof typeof RELEASE_SNAPSHOT_SELECT>,
-): FactorReleaseSnapshot {
-  return {
-    id: release.id,
-    publisher: release.publisher,
-    title: release.title,
-    edition: release.edition,
-    ordinal: release.ordinal,
-    status: release.status as FactorStatus,
-    sourceUrl: release.sourceUrl,
-    licence: release.licence,
-    publishedAt: release.publishedAt ? release.publishedAt.toISOString().slice(0, 10) : null,
-    gwpSet: release.gwpSet as GwpSet | null,
-  };
-}
 
 function conversionSnapshot(conversion: ConversionRow): UnitConversionSnapshot {
   return {
@@ -179,8 +146,9 @@ export class CalculationsService {
   /**
    * Which factor — and which sourced conversion — prices one lookup: the ONE
    * factor lookup (`factor-lookup.ts`, LP3-04 PR B, W2). With no snapshot it
-   * reads in one of its own, as the engine does; a dataset producer passes
-   * the snapshot of its capture transaction (`CaptureSnapshot.open`).
+   * reads in one of its own, as the engine does. A caller's
+   * `CaptureSnapshot` mode has no consumer: a report dataset recalculates
+   * nothing (Decisions 2026-10-15 (ninth), V4).
    */
   lookupFactorPath(
     key: FactorLookupKey,

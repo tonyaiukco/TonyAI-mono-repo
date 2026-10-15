@@ -108,8 +108,9 @@ export class BoundaryRowsDefect extends Error {}
 
 const month = (m: number): InventoryMonth => m as InventoryMonth;
 
-/** The months of a period of a cadence: a month, a quarter, the year. */
-function periodsOf(cadence: ReportingPeriod): Array<{ periodValue: string; firstMonth: number; lastMonth: number }> {
+/** The months of a period of a cadence: a month, a quarter, the year. The
+ * dataset's coverage reads a record's months with it (LP3-04 PR C). */
+export function periodsOf(cadence: ReportingPeriod): Array<{ periodValue: string; firstMonth: number; lastMonth: number }> {
   switch (cadence) {
     case 'monthly':
       return MONTH_NAMES.map((name, i) => ({ periodValue: name, firstMonth: i + 1, lastMonth: i + 1 }));
