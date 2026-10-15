@@ -12,11 +12,13 @@
 --    only ones the guard lets change (TA014); the grant is also what lets the
 --    routes take the header's row lock (FOR UPDATE, FOR SHARE). DELETE, for
 --    an open version (the guard refuses a frozen one).
---  * The five row tables: INSERT and DELETE, never UPDATE. A PUT replaces a
---    subsidiary's declaration by deleting its row (the keys cascade) and
---    inserting the new one, so no row is ever re-keyed — a policy never takes
---    its sources along through their cadence key's ON UPDATE CASCADE — and the
---    guard's key rule is never met.
+--  * The five row tables: INSERT, never UPDATE. A PUT replaces a
+--    subsidiary's declaration by deleting its row and inserting the new one,
+--    so no row is ever re-keyed — a policy never takes its sources along
+--    through their cadence key's ON UPDATE CASCADE — and the guard's key rule
+--    is never met. DELETE on the subsidiaries' rows alone: their keys cascade
+--    to the sites, policies, cells and sources as those tables' owner, so none
+--    of them is deleted one by one outside an audited replace.
 --
 -- GRANT takes no lock beyond the catalogue's; the timeout is the house rule.
 SET LOCAL lock_timeout = '5s';
@@ -27,6 +29,6 @@ GRANT UPDATE ("decision", "decided_by", "decided_at", "frozen_at")
   ON "inventory_boundaries" TO "tonyai_runtime";
 GRANT DELETE ON "inventory_boundaries" TO "tonyai_runtime";
 
-GRANT INSERT, DELETE ON "inventory_boundary_subsidiaries", "inventory_boundary_sites",
-  "inventory_attribution_policies", "inventory_applicability_cells", "inventory_sources"
-  TO "tonyai_runtime";
+GRANT INSERT, DELETE ON "inventory_boundary_subsidiaries" TO "tonyai_runtime";
+GRANT INSERT ON "inventory_boundary_sites", "inventory_attribution_policies",
+  "inventory_applicability_cells", "inventory_sources" TO "tonyai_runtime";

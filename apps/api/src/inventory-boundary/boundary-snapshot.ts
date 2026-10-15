@@ -21,8 +21,8 @@ import {
  *
  * It reports the version as it is, gaps and all: a missing cell or policy, an
  * included cell with no source, a source under an excluded cell or at an
- * entity its policy does not select are LP3-04 PR C's coverage gaps to raise,
- * not this builder's to hide or refuse. The structural breaches the database
+ * entity its policy does not select are gaps `boundaryGaps` raises (and PR C's
+ * dataset beside its record-based ones), not this builder's to hide or refuse. The structural breaches the database
  * refuses need no check here: a duplicate policy, a second included mapped
  * source of one key, an included mapped source off its policy's cadence, a
  * typed source naming a type its category does not have, a site operating

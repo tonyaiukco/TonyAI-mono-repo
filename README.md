@@ -940,9 +940,9 @@ the batch audit row after settled work, including the `failed` closing path.
 `ReportDataset`, `InventoryBoundarySnapshot` and `ReportIssuance` are additive,
 **dormant** contracts exported by `@tonyai/shared-types`. Existing `ReportStatus`,
 `ReportMetaDTO`, context routes and report assembly are unchanged. The boundary's
-storage and its reader are shipped (LP3-04 PR B, below); no route writes or
-serves a boundary yet, and no dataset capture, final-issuance gate or
-retained-PDF endpoint exists. In particular, today's count-based "approved"
+storage and its reader are shipped (LP3-04 PR B, below), and its routes write
+and serve it ("The write path", below); no dataset capture, final-issuance gate
+or retained-PDF endpoint exists yet. In particular, today's count-based "approved"
 badge does not certify a complete inventory.
 
 The dataset records one bounded, consistent capture of the declared boundary,
@@ -1161,7 +1161,8 @@ SELECT-only policies — a row with its subsidiary (LP1-03's predicate), the
 header for its organisation's org-wide readers or a user granted a subsidiary
 it declares (W3) — and the client roles, the service role included, hold
 SELECT alone; the runtime role reads them and writes them through the routes
-below — rows inserted and deleted, never updated; a header inserted open and
+below — rows inserted, never updated, and deleted only a subsidiary's whole
+declaration at a time (its keys cascade); a header inserted open and
 undecided, changed only in its decision and freeze, deleted while open
 (`20261018120000_lp3_04_boundary_write_grants`, grants only). The seed declares no boundary
 until D05's source list arrives (W11); `rls:probe` plants and removes its own.
@@ -1301,7 +1302,7 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | --- | --- |
 | `profiles` | App user: role, organisation, UI language (`en`/`tr`, CHECK; the runtime may update it — LP3-01) and theme (1:1 with an auth user, same id). LP4-01: `disabled_at` (refused by the guard), `sessions_revoked_at` (set by a disable, an enable and an offboarding; sessions begun at or before it are refused), `auth_sync_pending_since` (Supabase Auth's ban not yet applied), `auth_sync_generation` (moved on by every change the sync must apply) and `recovery_sent_at` (the reset cooldown); created by an invitation through a column-level runtime INSERT |
 | `organisations` | The holding company (top of the hierarchy); `offboarded_at` once the operator offboards it (LP4-01, D21) |
-| `inventory_boundaries` + `inventory_boundary_subsidiaries`, `inventory_boundary_sites`, `inventory_attribution_policies`, `inventory_applicability_cells`, `inventory_sources` | LP3-04 PR B: an organisation's declared inventory boundary per reporting year, one version per header — declared subsidiaries and sites with their operating months, D11's attribution policies, D12's applicability cells, D05's named sources. Immutable once frozen (`TA014`, every writer), names copied in as it freezes; deleted only with an open version or its organisation; a declared subsidiary or site stays. RLS SELECT-only; clients and the service role SELECT only; the runtime role inserts and deletes the rows (never updates one), inserts a header open and changes only its decision and freeze — the routes' grants. See "Inventory coverage and report datasets" |
+| `inventory_boundaries` + `inventory_boundary_subsidiaries`, `inventory_boundary_sites`, `inventory_attribution_policies`, `inventory_applicability_cells`, `inventory_sources` | LP3-04 PR B: an organisation's declared inventory boundary per reporting year, one version per header — declared subsidiaries and sites with their operating months, D11's attribution policies, D12's applicability cells, D05's named sources. Immutable once frozen (`TA014`, every writer), names copied in as it freezes; deleted only with an open version or its organisation; a declared subsidiary or site stays. RLS SELECT-only; clients and the service role SELECT only; the runtime role inserts the rows (never updates one) and deletes only a subsidiary's whole declaration, inserts a header open and changes only its decision and freeze — the routes' grants. See "Inventory coverage and report datasets" |
 | `invitations` | One per invited profile (LP4-01): `status` `pending` → `sent` → `accepted`, or `revoked`; the email's language, the inviter (null for the operator), attempts and the last failed step with a short code. Operational state: RLS on with no policy and nothing granted to any client role, the service role included |
 | `subsidiaries` | Companies within an organisation (geography — updated only by the API, audited, or the owner: `TA015` — sector, status, included scopes, reporting contact, and `tracking_granularity` — whether completeness is measured for the whole entity or per location) |
 | `locations` | Facilities within a subsidiary (their geography, too, updated only by the API, audited, or the owner: `TA015`) |

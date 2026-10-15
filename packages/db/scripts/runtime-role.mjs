@@ -182,15 +182,18 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // only its decision and freeze — + INSERT and UPDATE on listed columns only,
   // see RUNTIME_COLUMN_INSERTS and RUNTIME_COLUMN_UPDATES (the UPDATE also
   // lets the routes lock it, FOR UPDATE / FOR SHARE). A declaration's rows
-  // are inserted and deleted, never updated: a PUT replaces them, so no row is
-  // ever re-keyed — a policy never carries its sources along (ON UPDATE
-  // CASCADE) — and the guard's key rule (TA014) is never met.
+  // are inserted, never updated: a PUT replaces them, so no row is ever
+  // re-keyed — a policy never carries its sources along (ON UPDATE CASCADE) —
+  // and the guard's key rule (TA014) is never met. Only a subsidiary's row is
+  // deleted, whole: its keys cascade to its sites, policies, cells and
+  // sources as their owner, so no single one of them goes outside an audited
+  // replace (`architect`'s review, measured).
   inventory_boundaries: ['SELECT', 'DELETE'],
   inventory_boundary_subsidiaries: ['SELECT', 'INSERT', 'DELETE'],
-  inventory_boundary_sites: ['SELECT', 'INSERT', 'DELETE'],
-  inventory_attribution_policies: ['SELECT', 'INSERT', 'DELETE'],
-  inventory_applicability_cells: ['SELECT', 'INSERT', 'DELETE'],
-  inventory_sources: ['SELECT', 'INSERT', 'DELETE'],
+  inventory_boundary_sites: ['SELECT', 'INSERT'],
+  inventory_attribution_policies: ['SELECT', 'INSERT'],
+  inventory_applicability_cells: ['SELECT', 'INSERT'],
+  inventory_sources: ['SELECT', 'INSERT'],
   // Prisma's migration history: neither readable nor writable.
   _prisma_migrations: [],
 });

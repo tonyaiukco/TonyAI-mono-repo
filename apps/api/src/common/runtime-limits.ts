@@ -31,7 +31,10 @@ export const routeGroup = (method: string, path: string): RouteGroup => {
  * subsidiary's declaration is one body, so its cap is its own — 1 MB, which
  * holds the DTOs' limits (500 sites, 2,000 sources) at ordinary lengths —
  * set here in code, never by an environment value (owner, 2026-10-15). Only
- * `super_admin` writes there; every other route keeps `BODY_MAX_BYTES`.
+ * `super_admin` writes there, but a JSON body is read and parsed before
+ * authentication — so any client can make the API parse up to this much on
+ * this one path, bounded by the per-IP in-flight and rate quotas (multipart
+ * alone waits for authentication). Every other route keeps `BODY_MAX_BYTES`.
  */
 export const INVENTORY_DECLARATION_BODY_MAX_BYTES = 1_048_576;
 const INVENTORY_DECLARATION_ROUTE = /^\/api\/v1\/inventory-boundaries\/[^/]+\/subsidiaries\/[^/]+$/;

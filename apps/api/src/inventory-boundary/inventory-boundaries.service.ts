@@ -40,7 +40,7 @@ import {
  * a site within its subsidiary's months (the DTOs), no declared subsidiary or
  * site deleted (W9 — their own delete paths). So a TA014 that still arrives is
  * a defect: logged and answered as an internal error, never as "frozen" (E7).
- * Each write's audit row is written in its own transaction.
+ * Each write's audit row is written in that write's transaction.
  */
 
 const WRITE_TX = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000 };

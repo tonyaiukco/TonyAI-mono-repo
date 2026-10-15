@@ -823,10 +823,24 @@ describe('RLS and the client roles', () => {
         )));
         expect(code, column).toBe('42501');
       }
-      // Its rows: inserted and deleted (in READ COMMITTED, as the guard asks).
-      await runtime.inventoryApplicabilityCell.deleteMany({ where: { boundaryId: fixture.boundaryId, locationId: siteA } });
+      // No single cell, source, policy or site is deleted: only a
+      // subsidiary's whole declaration, whose keys cascade as their owner.
+      for (const remove of [
+        () => runtime.inventoryApplicabilityCell.deleteMany({ where: { boundaryId: fixture.boundaryId } }),
+        () => runtime.inventorySource.deleteMany({ where: { boundaryId: fixture.boundaryId } }),
+        () => runtime.inventoryAttributionPolicy.deleteMany({ where: { boundaryId: fixture.boundaryId } }),
+        () => runtime.inventoryBoundarySite.deleteMany({ where: { boundaryId: fixture.boundaryId } }),
+      ]) {
+        expect(sqlstateOf(await failure(remove()))).toBe('42501');
+      }
+      // Its rows: a subsidiary's deleted whole, and inserted (in READ COMMITTED, as the guard asks).
+      await runtime.inventoryBoundarySubsidiary.deleteMany({ where: { boundaryId: fixture.boundaryId } });
+      expect(await owner.inventorySource.count({ where: { boundaryId: fixture.boundaryId } })).toBe(0);
+      await runtime.inventoryBoundarySubsidiary.create({
+        data: { boundaryId: fixture.boundaryId, organisationId: a.organisationId, subsidiaryId: a.subsidiaryId, firstMonth: 1, lastMonth: 12 },
+      });
       await runtime.inventoryApplicabilityCell.create({
-        data: { boundaryId: fixture.boundaryId, subsidiaryId: a.subsidiaryId, locationId: siteA, locationKey: siteA, category: 'Electricity', applicability: 'included' },
+        data: { boundaryId: fixture.boundaryId, subsidiaryId: a.subsidiaryId, locationId: null, locationKey: NIL, category: 'Electricity', applicability: 'excluded', reason: 'Int-test' },
       });
       // An open version is deleted whole; a frozen one is the guard's (W10).
       await runtime.inventoryBoundary.delete({ where: { id: fixture.boundaryId } });

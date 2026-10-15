@@ -746,9 +746,12 @@ describe("the runtime role's inventory boundary grants (LP3-04's write path)", (
     'inventory_applicability_cells', 'inventory_sources',
   ];
 
-  it('inserts and deletes declaration rows and never updates one — a PUT replaces, and no policy is re-keyed under its sources', () => {
+  it("inserts declaration rows, deletes only a subsidiary's whole declaration, and never updates one — a PUT replaces, and no policy is re-keyed under its sources", () => {
+    // Its row's keys cascade to the rest, as the tables' owner: no single
+    // cell, source or policy is deleted outside an audited replace.
+    expect(RUNTIME_TABLE_PRIVILEGES.inventory_boundary_subsidiaries).toEqual(['SELECT', 'INSERT', 'DELETE']);
     for (const table of ROWS) {
-      expect(RUNTIME_TABLE_PRIVILEGES[table]).toEqual(['SELECT', 'INSERT', 'DELETE']);
+      if (table !== 'inventory_boundary_subsidiaries') expect(RUNTIME_TABLE_PRIVILEGES[table], table).toEqual(['SELECT', 'INSERT']);
       expect(RUNTIME_COLUMN_UPDATES[table]).toBeUndefined();
       expect(RUNTIME_COLUMN_INSERTS[table]).toBeUndefined();
     }
