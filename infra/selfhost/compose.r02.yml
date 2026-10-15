@@ -1,0 +1,30 @@
+# Generation r02 only. Do not install on the retained legacy host.
+services:
+  realtime:
+    restart: "no"
+    environment:
+      DB_ENC_KEY_GCM: ${REALTIME_DB_ENC_KEY_GCM:?Fresh r02 GCM key required}
+      DB_ENC_WRITE_GCM: "true"
+
+  api-gw:
+    restart: "no"
+  auth:
+    restart: "no"
+  caddy:
+    restart: "no"
+  db:
+    restart: "no"
+  functions:
+    restart: "no"
+  imgproxy:
+    restart: "no"
+  meta:
+    restart: "no"
+  rest:
+    restart: "no"
+  storage:
+    restart: "no"
+  studio:
+    restart: "no"
+  supavisor:
+    restart: "no"

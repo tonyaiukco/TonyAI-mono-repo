@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "generation": "r02",
+  "required": {
+    "provenance": "Exact reviewed source, Azure VM/OS/data-disk identity and empty baseline; initializer journal and both immutable custody versions.",
+    "dashboard": "New Basic authentication works, old fails with 401, then new works again; public and direct gateway paths.",
+    "database": "Every LOGIN role inventoried without password attributes; new password works and old is rejected with password-auth failure over a password-checked TCP path.",
+    "hs256": "Fresh challenge tokens signed with each key, identical current claims, accepted new and rejected old at every active Auth/REST/Storage/Realtime consumer; derived API tokens separately tested.",
+    "es256": "Fresh challenge tokens signed with each EC key, identical current claims; new accepted and old rejected at each active consumer. Public JWKS contains no old kid/key or oct/private material.",
+    "sessions": "No old Auth sessions, refresh tokens, MFA/provider tokens or one-time tokens imported. Separately approved exact-version old/new session fixtures prove refresh behavior; no broad token export.",
+    "storage_s3": "New SigV4 read-only request succeeds, old yields SignatureDoesNotMatch or InvalidAccessKeyId; object-byte fixtures need explicit approval.",
+    "encryption": "Fresh Realtime GCM, ECB compatibility, secret_key_base, pg-meta and intrinsic pgsodium material; source/consumer mapping, private inequality and fresh encryption/decryption exercise. Never call this a login test.",
+    "inactive": "Supavisor/functions/MinIO/Logflare and opaque keys disabled: effective Compose configuration AND no running container/listener/route; generated unused secrets are still fresh.",
+    "external": "Explicit reachable SMTP/OAuth/OpenAI/control-plane/operator credential assessment and issuer revocation evidence where applicable; blank current settings alone are insufficient.",
+    "old_containment": "Approved NSG denies, stopped services and ARM deallocated state; both old IPs/hostname and private/lateral fresh connections fail during and after all probes; retained disks/escrow unchanged.",
+    "public_activation": "Separate approved HTTPS/egress plan, actual NoReuse hostname, TLS, issuer and mail/webhook suppression; public path tests repeat after activation.",
+    "independent_review": "Security and QA reviewers reconcile every consumer row against exact-source evidence; partial probe PASS never closes PD-3."
+  }
+}

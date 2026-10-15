@@ -63,23 +63,23 @@ verified image version and a dedicated RSA public SSH key (2048+ bits, no commen
 Keep the private key in protected owner SSH storage. Never put passwords, JWT
 keys, private keys, cloud-init secrets or SMTP credentials in these inputs.
 
-With pinned Terraform on PATH, run from the reviewed checkout:
+**The legacy selfhost plan/apply path is closed.** Config-only inputs would
+default containment off and could reopen the retained old host. The entrypoint
+now refuses those actions before Terraform is invoked. Use the separately
+approved saved-plan flow in [runbook 10](10-qa-clean-replacement.md); do not bypass
+the refusal with direct Terraform. The output action remains available:
 
 ```sh
-python3 infra/scripts/terraform_run.py selfhost plan \
-  --backend /private/path/backend.json --inputs /private/path/selfhost.json
-python3 infra/scripts/terraform_run.py selfhost apply \
-  --backend /private/path/backend.json --inputs /private/path/selfhost.json
 python3 infra/scripts/terraform_run.py selfhost output \
   --backend /private/path/backend.json --inputs /private/path/selfhost.json
 ```
 
-Apply is interactive; review source, target, costs and plan before approval.
-`approved-apply` is prohibited. Direct Terraform invocation skips strict Python
-field/public-key/IP checks and is not the supported cloud entrypoint. Mock tests
-use synthetic key/image fixtures and do not prove live Azure acceptance.
+Review source, target, costs and the exact saved-plan binding before approval.
+`approved-apply` is prohibited. Mock tests use synthetic key/image fixtures and
+do not prove live Azure acceptance.
 
-After apply, repeat the plan and require no changes. Read back the VM size,
+After an approved operation, follow its bounded readback procedure; do not rerun
+the closed legacy plan command. Read back the VM size,
 location, NVMe controller, Trusted Launch and encryption settings from Azure.
 For first SSH trust, compare the host public-key fingerprint with Azure boot
 diagnostics obtained through authenticated Azure access before accepting it.
@@ -217,7 +217,13 @@ Do not rerun initialization, fresh Docker installation, image repinning or disk
 formatting against this existing runtime. An older initializer/Docker bootstrap
 on the host is not a reason to execute it again.
 
-## QA runtime bootstrap
+## Historical QA runtime bootstrap — not a recovery or rebuild route
+
+The sequence below records the legacy bootstrap context. Do not execute it to
+recover the retained host or to build r02. Current r02 initialization requires
+the generation-bound `/etc/tonyai/replacement.json` contract and the separate
+disk/source/custody/install gates in [runbook 10](10-qa-clean-replacement.md).
+Legacy helpers cannot be substituted for that reviewed bootstrap package.
 
 The Terraform root remains host-only. The separate owner-run runtime helpers
 under `infra/scripts/selfhost_*` install the reviewed official Supabase snapshot
@@ -253,10 +259,11 @@ checkout over host-key-verified SSH; do not run upstream reset/setup/update scri
    and config; the runtime root remains private and `.env` remains 0600.
    Copy `compose.qa.yml`, `compose.https.yml`
    and `Caddyfile` from `infra/selfhost/` into that directory.
-5. Save the exact exported `public_hostname` and the operator email in root-owned
-   `/etc/tonyai/host.json` (mode 0600). Run
-   `selfhost_init.mjs /opt/tonyai/supabase` with Node 22 as root. It reads this
-   reviewed contract rather than accepting a caller-supplied origin, requires
+5. The current `selfhost_init.mjs` requires a root-owned, mode-0600
+   `/etc/tonyai/replacement.json` with generation `r02`; the legacy `host.json`
+   is not accepted. Invoke it only through runbook 10's separately approved
+   bootstrap package with Node 22 as root. It reads the complete generation
+   contract rather than accepting a caller-supplied origin, requires
    both disks mounted and rejects writable/symlinked runtime parents. It refuses existing credentials/data and creates fresh secrets in
    `.env` mode 0600. Do not print/source this file or run upstream key generators:
    those generators print secret material. Host runtime files are a necessary

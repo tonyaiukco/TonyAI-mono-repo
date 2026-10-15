@@ -412,6 +412,29 @@ comparison can establish only scoped consistency. The format-2 inventory hardeni
 is local-only and requires a new package/approval before use. Measured recovery
 also remains open.
 
+The [clean replacement execution design](infra/runbooks/10-qa-clean-replacement.md)
+specifies an additive generation in the existing selfhost state, preservation
+and containment of the old environment, fresh credential custody and staged
+acceptance. Read-only Azure metadata confirms the current binding and reserved
+apps subnet; it does not approve provisioning. Local r02 Terraform writers and
+`replacement_run.py` now prepare and bind a saved plan without backend init or
+reconfiguration. Generation/disk/source guards, complete template classification,
+separate recovery custody and bounded old/new credential probes have local
+regression coverage; complete consumer and live recovery acceptance is still open.
+Legacy selfhost plan/apply is now refused. Saved-plan writes use graceful SIGINT
+and private failure diagnostics; intrinsic custody must retain the first
+environment's byte binding. Separately approved R1 executed on 2026-10-15: the exact
+containment NSG plan was applied, ten bound containers exited after SIGTERM,
+and the retained old VM was deallocated. ARM readback confirmed unchanged disk,
+NIC, IP, vault and lock metadata; nine fresh external TCP probes timed out.
+Those probes ran from the operator /32: port-22 timeouts support deallocation,
+not NSG denial of that permitted source.
+The same state retained all fifteen resource IDs (serial 10 to 11). Private/VNet
+probing, replacement name availability, bootstrap qualification and the complete
+acceptance matrix remain open. Old QA is unavailable; no replacement was created.
+PD-3 remains OPEN. Follow runbook 10's separate R1–R4
+packages; the legacy selfhost apply command must not perform this replacement.
+
 LP4-01's [Auth and SMTP handoff](infra/runbooks/03-deploy.md#35-api-smtp-parameters-lp4-01-production-preparation-for-lp2-04)
 aligns hosted Auth with the local lifecycle policy (12-character passwords,
 one-hour links and access tokens, signup off while email/password sign-in stays enabled). API mail

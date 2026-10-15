@@ -38,6 +38,25 @@ by this documentation. The format-2 collector adds connection-startup event-trig
 suppression and a separate login-trigger count; it is locally tested only, not a
 retroactive property of the executed format-1 report or a deployed change.
 
+[Runbook 10](runbooks/10-qa-clean-replacement.md) turns that direction into a
+resource/state and maintenance design: one additive replacement generation in
+the existing selfhost state, separate subnet and recovery custody, retained old
+disks, explicit containment and staged trust acceptance. Its read-only Azure
+observations and retail cost subtotals are dated evidence, not a saved plan or
+live authorization. The local implementation adds exact R1/R2 saved-plan policy,
+generation/source/disk guards, fresh template-wide credentials, two-stage recovery
+custody and secret-safe consumer probes. `replacement_run.py` refuses backend
+reconfiguration and applies only an explicitly hash-approved saved binary.
+The separately approved R1 packet executed on 2026-10-15: one NSG update,
+SIGTERM-only stop of ten bound containers, then old VM deallocation. Exact ARM
+readback and nine fresh external TCP timeouts support the bounded operation;
+retained disk/NIC/IP/vault/lock metadata and all fifteen state resource IDs are
+unchanged. Private/VNet probing remains open. Old QA is unavailable; R2–R4,
+credential rejection, database integrity and PD-3 closure are not established.
+Bootstrap qualification and full trust acceptance remain deployment gates; do
+not invoke the legacy selfhost apply path as a clean rebuild. Runbook 10 lists
+the private input and approval boundaries and the probes' incomplete coverage.
+
 Host/runtime acceptance, including the 2026-10-15 corrections and normal reboot,
 does not close LP2-01, LP2-02 or LP2-03; DONE requires application integration,
 migration/runtime-role/bucket acceptance, fresh recreation and recovery evidence.

@@ -1,0 +1,564 @@
+{
+  "azapi_resource.replacement_disk[\"database\"]": {
+    "body": {
+      "properties": {
+        "creationData": {
+          "createOption": "Empty"
+        },
+        "diskSizeGB": 64,
+        "encryption": {
+          "type": "EncryptionAtRestWithPlatformKey"
+        },
+        "networkAccessPolicy": "DenyAll",
+        "publicNetworkAccess": "Disabled"
+      },
+      "sku": {
+        "name": "StandardSSD_LRS"
+      }
+    },
+    "create_headers": null,
+    "create_query_parameters": null,
+    "delete_headers": null,
+    "delete_query_parameters": null,
+    "identity": [],
+    "ignore_casing": false,
+    "ignore_missing_property": true,
+    "ignore_null_property": false,
+    "location": "swedencentral",
+    "locks": null,
+    "name": "tonyai-staging-data-r02-database",
+    "parent_id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data",
+    "read_headers": null,
+    "read_query_parameters": null,
+    "replace_triggers_external_values": null,
+    "replace_triggers_refs": null,
+    "response_export_values": [],
+    "retry": null,
+    "schema_validation_enabled": true,
+    "sensitive_body": null,
+    "sensitive_body_version": null,
+    "tags": {
+      "application": "TonyAI",
+      "component": "supabase-host",
+      "environment": "staging",
+      "generation": "r02"
+    },
+    "timeouts": null,
+    "type": "Microsoft.Compute/disks@2024-03-02",
+    "update_headers": null,
+    "update_query_parameters": null
+  },
+  "azapi_resource.replacement_disk[\"objects\"]": {
+    "body": {
+      "properties": {
+        "creationData": {
+          "createOption": "Empty"
+        },
+        "diskSizeGB": 32,
+        "encryption": {
+          "type": "EncryptionAtRestWithPlatformKey"
+        },
+        "networkAccessPolicy": "DenyAll",
+        "publicNetworkAccess": "Disabled"
+      },
+      "sku": {
+        "name": "StandardSSD_LRS"
+      }
+    },
+    "create_headers": null,
+    "create_query_parameters": null,
+    "delete_headers": null,
+    "delete_query_parameters": null,
+    "identity": [],
+    "ignore_casing": false,
+    "ignore_missing_property": true,
+    "ignore_null_property": false,
+    "location": "swedencentral",
+    "locks": null,
+    "name": "tonyai-staging-data-r02-objects",
+    "parent_id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data",
+    "read_headers": null,
+    "read_query_parameters": null,
+    "replace_triggers_external_values": null,
+    "replace_triggers_refs": null,
+    "response_export_values": [],
+    "retry": null,
+    "schema_validation_enabled": true,
+    "sensitive_body": null,
+    "sensitive_body_version": null,
+    "tags": {
+      "application": "TonyAI",
+      "component": "supabase-host",
+      "environment": "staging",
+      "generation": "r02"
+    },
+    "timeouts": null,
+    "type": "Microsoft.Compute/disks@2024-03-02",
+    "update_headers": null,
+    "update_query_parameters": null
+  },
+  "azapi_resource.replacement_firewall[\"r02\"]": {
+    "body": {
+      "properties": {
+        "securityRules": [
+          {
+            "name": "owner-ssh",
+            "properties": {
+              "access": "Allow",
+              "destinationAddressPrefix": "10.80.1.4",
+              "destinationPortRange": "22",
+              "direction": "Inbound",
+              "priority": 100,
+              "protocol": "Tcp",
+              "sourceAddressPrefix": "${operator_ipv4}",
+              "sourcePortRange": "*"
+            }
+          },
+          {
+            "name": "deny-other-inbound",
+            "properties": {
+              "access": "Deny",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*",
+              "direction": "Inbound",
+              "priority": 4000,
+              "protocol": "*",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*"
+            }
+          },
+          {
+            "name": "deny-outbound",
+            "properties": {
+              "access": "Deny",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*",
+              "direction": "Outbound",
+              "priority": 4000,
+              "protocol": "*",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*"
+            }
+          }
+        ]
+      }
+    },
+    "create_headers": null,
+    "create_query_parameters": null,
+    "delete_headers": null,
+    "delete_query_parameters": null,
+    "identity": [],
+    "ignore_casing": false,
+    "ignore_missing_property": true,
+    "ignore_null_property": false,
+    "location": "swedencentral",
+    "locks": null,
+    "name": "tonyai-staging-data-r02-nsg",
+    "parent_id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data",
+    "read_headers": null,
+    "read_query_parameters": null,
+    "replace_triggers_external_values": null,
+    "replace_triggers_refs": null,
+    "response_export_values": [],
+    "retry": null,
+    "schema_validation_enabled": true,
+    "sensitive_body": null,
+    "sensitive_body_version": null,
+    "tags": {
+      "application": "TonyAI",
+      "component": "supabase-host",
+      "environment": "staging",
+      "generation": "r02"
+    },
+    "timeouts": null,
+    "type": "Microsoft.Network/networkSecurityGroups@2024-05-01",
+    "update_headers": null,
+    "update_query_parameters": null
+  },
+  "azapi_resource.replacement_host[\"r02\"]": {
+    "body": {
+      "properties": {
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": true
+          }
+        },
+        "hardwareProfile": {
+          "vmSize": "Standard_D2as_v7"
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data/providers/Microsoft.Network/networkInterfaces/tonyai-staging-data-r02-nic",
+              "properties": {
+                "deleteOption": "Detach",
+                "primary": true
+              }
+            }
+          ]
+        },
+        "osProfile": {
+          "adminUsername": "tonyaiops",
+          "allowExtensionOperations": false,
+          "computerName": "supabase-staging-r02",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": true,
+            "patchSettings": {
+              "assessmentMode": "ImageDefault",
+              "patchMode": "ImageDefault"
+            },
+            "provisionVMAgent": true,
+            "ssh": {
+              "publicKeys": [
+                {
+                  "keyData": "${ssh_public_key}",
+                  "path": "/home/tonyaiops/.ssh/authorized_keys"
+                }
+              ]
+            }
+          }
+        },
+        "securityProfile": {
+          "encryptionAtHost": true,
+          "securityType": "TrustedLaunch",
+          "uefiSettings": {
+            "secureBootEnabled": true,
+            "vTpmEnabled": true
+          }
+        },
+        "storageProfile": {
+          "dataDisks": [
+            {
+              "caching": "None",
+              "createOption": "Attach",
+              "deleteOption": "Detach",
+              "lun": 0,
+              "managedDisk": {
+                "id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data/providers/Microsoft.Compute/disks/tonyai-staging-data-r02-database"
+              },
+              "name": "tonyai-staging-data-r02-database"
+            },
+            {
+              "caching": "None",
+              "createOption": "Attach",
+              "deleteOption": "Detach",
+              "lun": 1,
+              "managedDisk": {
+                "id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data/providers/Microsoft.Compute/disks/tonyai-staging-data-r02-objects"
+              },
+              "name": "tonyai-staging-data-r02-objects"
+            }
+          ],
+          "diskControllerType": "NVMe",
+          "imageReference": {
+            "offer": "ubuntu-24_04-lts",
+            "publisher": "Canonical",
+            "sku": "server",
+            "version": "${image_version}"
+          },
+          "osDisk": {
+            "caching": "ReadWrite",
+            "createOption": "FromImage",
+            "deleteOption": "Detach",
+            "diskSizeGB": 32,
+            "managedDisk": {
+              "storageAccountType": "StandardSSD_LRS"
+            },
+            "name": "tonyai-staging-data-r02-os"
+          }
+        }
+      }
+    },
+    "create_headers": null,
+    "create_query_parameters": null,
+    "delete_headers": null,
+    "delete_query_parameters": null,
+    "identity": [
+      {
+        "identity_ids": null,
+        "type": "SystemAssigned"
+      }
+    ],
+    "ignore_casing": false,
+    "ignore_missing_property": true,
+    "ignore_null_property": false,
+    "location": "swedencentral",
+    "locks": null,
+    "name": "tonyai-staging-data-r02",
+    "parent_id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data",
+    "read_headers": null,
+    "read_query_parameters": null,
+    "replace_triggers_external_values": null,
+    "replace_triggers_refs": null,
+    "response_export_values": [
+      "identity.principalId"
+    ],
+    "retry": null,
+    "schema_validation_enabled": true,
+    "sensitive_body": null,
+    "sensitive_body_version": null,
+    "tags": {
+      "application": "TonyAI",
+      "component": "supabase-host",
+      "environment": "staging",
+      "generation": "r02"
+    },
+    "timeouts": null,
+    "type": "Microsoft.Compute/virtualMachines@2024-11-01",
+    "update_headers": null,
+    "update_query_parameters": null
+  },
+  "azapi_resource.replacement_ip_lock[\"r02\"]": {
+    "body": {
+      "properties": {
+        "level": "CanNotDelete",
+        "notes": "Retain r02 hostname. Removal requires a separate reviewed decommission plan."
+      }
+    },
+    "create_headers": null,
+    "create_query_parameters": null,
+    "delete_headers": null,
+    "delete_query_parameters": null,
+    "identity": [],
+    "ignore_casing": false,
+    "ignore_missing_property": true,
+    "ignore_null_property": false,
+    "location": "",
+    "locks": null,
+    "name": "tonyai-retain-r02-public-ip",
+    "parent_id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data/providers/Microsoft.Network/publicIPAddresses/tonyai-staging-data-r02-edge-ip",
+    "read_headers": null,
+    "read_query_parameters": null,
+    "replace_triggers_external_values": null,
+    "replace_triggers_refs": null,
+    "response_export_values": [],
+    "retry": null,
+    "schema_validation_enabled": true,
+    "sensitive_body": null,
+    "sensitive_body_version": null,
+    "tags": {},
+    "timeouts": null,
+    "type": "Microsoft.Authorization/locks@2020-05-01",
+    "update_headers": null,
+    "update_query_parameters": null
+  },
+  "azapi_resource.replacement_nic[\"r02\"]": {
+    "body": {
+      "properties": {
+        "enableIPForwarding": false,
+        "ipConfigurations": [
+          {
+            "name": "primary",
+            "properties": {
+              "primary": true,
+              "privateIPAddress": "10.80.1.4",
+              "privateIPAllocationMethod": "Static",
+              "publicIPAddress": {
+                "id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data/providers/Microsoft.Network/publicIPAddresses/tonyai-staging-data-r02-edge-ip"
+              },
+              "subnet": {
+                "id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data/providers/Microsoft.Network/virtualNetworks/tonyai-staging-data-vnet/subnets/supabase-r02"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "create_headers": null,
+    "create_query_parameters": null,
+    "delete_headers": null,
+    "delete_query_parameters": null,
+    "identity": [],
+    "ignore_casing": false,
+    "ignore_missing_property": true,
+    "ignore_null_property": false,
+    "location": "swedencentral",
+    "locks": null,
+    "name": "tonyai-staging-data-r02-nic",
+    "parent_id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data",
+    "read_headers": null,
+    "read_query_parameters": null,
+    "replace_triggers_external_values": null,
+    "replace_triggers_refs": null,
+    "response_export_values": [],
+    "retry": null,
+    "schema_validation_enabled": true,
+    "sensitive_body": null,
+    "sensitive_body_version": null,
+    "tags": {
+      "application": "TonyAI",
+      "component": "supabase-host",
+      "environment": "staging",
+      "generation": "r02"
+    },
+    "timeouts": null,
+    "type": "Microsoft.Network/networkInterfaces@2024-05-01",
+    "update_headers": null,
+    "update_query_parameters": null
+  },
+  "azapi_resource.replacement_public_ip[\"r02\"]": {
+    "body": {
+      "properties": {
+        "dnsSettings": {
+          "domainNameLabel": "tonyai-staging-${subscription_prefix}-r02",
+          "domainNameLabelScope": "NoReuse"
+        },
+        "publicIPAddressVersion": "IPv4",
+        "publicIPAllocationMethod": "Static"
+      },
+      "sku": {
+        "name": "Standard",
+        "tier": "Regional"
+      }
+    },
+    "create_headers": null,
+    "create_query_parameters": null,
+    "delete_headers": null,
+    "delete_query_parameters": null,
+    "identity": [],
+    "ignore_casing": false,
+    "ignore_missing_property": true,
+    "ignore_null_property": false,
+    "location": "swedencentral",
+    "locks": null,
+    "name": "tonyai-staging-data-r02-edge-ip",
+    "parent_id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data",
+    "read_headers": null,
+    "read_query_parameters": null,
+    "replace_triggers_external_values": null,
+    "replace_triggers_refs": null,
+    "response_export_values": [
+      "properties.ipAddress",
+      "properties.dnsSettings.fqdn"
+    ],
+    "retry": null,
+    "schema_validation_enabled": true,
+    "sensitive_body": null,
+    "sensitive_body_version": null,
+    "tags": {
+      "application": "TonyAI",
+      "component": "supabase-host",
+      "environment": "staging",
+      "generation": "r02"
+    },
+    "timeouts": null,
+    "type": "Microsoft.Network/publicIPAddresses@2024-05-01",
+    "update_headers": null,
+    "update_query_parameters": null
+  },
+  "azapi_resource.replacement_recovery_owner[\"r02\"]": {
+    "body": {
+      "properties": {
+        "principalId": "${recovery_owner_object_id}",
+        "principalType": "User",
+        "roleDefinitionId": "/subscriptions/${subscription_id}/providers/Microsoft.Authorization/roleDefinitions/b86a8fe4-44ce-4948-aee5-eccb2c155cd7"
+      }
+    },
+    "create_headers": null,
+    "create_query_parameters": null,
+    "delete_headers": null,
+    "delete_query_parameters": null,
+    "identity": [],
+    "ignore_casing": false,
+    "ignore_missing_property": true,
+    "ignore_null_property": false,
+    "location": "",
+    "locks": null,
+    "name": "${recovery_assignment_id}",
+    "parent_id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data/providers/Microsoft.KeyVault/vaults/${recovery_vault_name}",
+    "read_headers": null,
+    "read_query_parameters": null,
+    "replace_triggers_external_values": null,
+    "replace_triggers_refs": null,
+    "response_export_values": [],
+    "retry": null,
+    "schema_validation_enabled": true,
+    "sensitive_body": null,
+    "sensitive_body_version": null,
+    "tags": {},
+    "timeouts": null,
+    "type": "Microsoft.Authorization/roleAssignments@2022-04-01",
+    "update_headers": null,
+    "update_query_parameters": null
+  },
+  "azapi_resource.replacement_recovery_vault[\"r02\"]": {
+    "body": {
+      "properties": {
+        "accessPolicies": [],
+        "enablePurgeProtection": true,
+        "enableRbacAuthorization": true,
+        "enableSoftDelete": true,
+        "networkAcls": {
+          "bypass": "None",
+          "defaultAction": "Deny",
+          "ipRules": [
+            {
+              "value": "${operator_ipv4}"
+            }
+          ],
+          "virtualNetworkRules": []
+        },
+        "publicNetworkAccess": "Enabled",
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "softDeleteRetentionInDays": 90,
+        "tenantId": "${tenant_id}"
+      }
+    },
+    "create_headers": null,
+    "create_query_parameters": null,
+    "delete_headers": null,
+    "delete_query_parameters": null,
+    "identity": [],
+    "ignore_casing": false,
+    "ignore_missing_property": true,
+    "ignore_null_property": false,
+    "location": "swedencentral",
+    "locks": null,
+    "name": "${recovery_vault_name}",
+    "parent_id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data",
+    "read_headers": null,
+    "read_query_parameters": null,
+    "replace_triggers_external_values": null,
+    "replace_triggers_refs": null,
+    "response_export_values": [],
+    "retry": null,
+    "schema_validation_enabled": true,
+    "sensitive_body": null,
+    "sensitive_body_version": null,
+    "tags": {
+      "application": "TonyAI",
+      "component": "supabase-host",
+      "environment": "staging",
+      "generation": "r02"
+    },
+    "timeouts": null,
+    "type": "Microsoft.KeyVault/vaults@2023-07-01",
+    "update_headers": null,
+    "update_query_parameters": null
+  },
+  "azapi_update_resource.replacement_os_disk_export[\"r02\"]": {
+    "body": {
+      "properties": {
+        "networkAccessPolicy": "DenyAll",
+        "publicNetworkAccess": "Disabled"
+      }
+    },
+    "locks": null,
+    "read_headers": null,
+    "read_query_parameters": null,
+    "resource_id": "/subscriptions/${subscription_id}/resourceGroups/tonyai-staging-data/providers/Microsoft.Compute/disks/tonyai-staging-data-r02-os",
+    "response_export_values": [],
+    "retry": null,
+    "sensitive_body": null,
+    "sensitive_body_version": null,
+    "timeouts": null,
+    "type": "Microsoft.Compute/disks@2024-03-02",
+    "update_headers": null,
+    "update_query_parameters": null,
+    "ignore_casing": false,
+    "ignore_missing_property": true
+  }
+}

@@ -44,7 +44,7 @@ class StartupTests(unittest.TestCase):
                 locked = {'services': {'db': {'image': 'example:latest' if scenario == 'image' else IMAGE}}}
                 (root / 'compose.images.json').write_text(json.dumps(locked))
                 marker = root / 'escrow.json'; marker.write_text(json.dumps({'sha256': 'wrong' if scenario == 'hash' else hashlib.sha256(PAYLOAD).hexdigest()}))
-                stack.enter_context(patch('selfhost_start.Path', side_effect=lambda p: marker if str(p) == '/etc/tonyai/escrow.json' else root))
+                stack.enter_context(patch('selfhost_start.Path', side_effect=lambda p: marker if str(p) == '/etc/tonyai/escrow.json' else root / 'replacement-absent.json' if str(p) == '/etc/tonyai/replacement.json' else root))
                 stack.enter_context(patch('selfhost_start.os.geteuid', return_value=0))
                 stack.enter_context(patch('sys.argv', ['start'] + ([] if scenario == 'recovery-http' else ['--https'])))
                 stack.enter_context(patch('selfhost_pin.GATEWAY_TEMPLATE_SHA256', hashlib.sha256(TEMPLATE).hexdigest()))
@@ -85,7 +85,7 @@ class StartupTests(unittest.TestCase):
                         compose.assert_not_called()
                         if scenario != 'gateway-directory': self.assertFalse(source.with_name('lds.qa.yaml').exists())
                     if scenario in ('up-failure', 'gateway-directory'):
-                        with patch('pathlib.Path', side_effect=lambda p: marker if str(p) == '/etc/tonyai/escrow.json' else root):
+                        with patch('pathlib.Path', side_effect=lambda p: marker if str(p) == '/etc/tonyai/escrow.json' else root / 'replacement-absent.json' if str(p) == '/etc/tonyai/replacement.json' else root):
                             message = 'FAIL: guarded runtime start refused' if scenario == 'up-failure' else 'FAIL: .*inspect and manually remove the leftover directory'
                             with self.assertRaisesRegex(SystemExit, message): runpy.run_path(start.__file__, run_name='__main__')
                         self.assertNotIn('PASS:', output.getvalue())
@@ -117,7 +117,7 @@ class RestoreTests(unittest.TestCase):
                 target = root / '.env'; other = root / 'preserved'; other.write_bytes(b'preserve')
                 if scenario == 'exists': target.write_bytes(b'original')
                 if scenario == 'symlink': target.symlink_to(root / 'missing')
-                def mapped(value): return root if str(value) == '/opt/tonyai/supabase' else root.parent.parent
+                def mapped(value): return root / 'replacement-absent.json' if str(value) == '/etc/tonyai/replacement.json' else root if str(value) == '/opt/tonyai/supabase' else root.parent.parent
                 stack.enter_context(patch('selfhost_restore_env.Path', side_effect=mapped))
                 stack.enter_context(patch('selfhost_restore_env.os.geteuid', return_value=0))
                 stack.enter_context(patch('selfhost_restore_env.os.path.ismount', side_effect=lambda p: scenario != p.rsplit('/', 1)[-1] + '-unmounted'))

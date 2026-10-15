@@ -17,7 +17,7 @@ resource "azapi_resource" "network" {
   body = { properties = {
     addressSpace = { addressPrefixes = ["10.${local.octet}.0.0/16"] }
     # VNet PUT must include both subnets; separate child writers can lose them.
-    subnets = [
+    subnets = concat([
       { name = "supabase", properties = {
         addressPrefix         = local.host_net
         networkSecurityGroup  = { id = azapi_resource.firewall.id }
@@ -27,8 +27,9 @@ resource "azapi_resource" "network" {
         addressPrefix = local.apps_net
         delegations   = [{ name = "container-apps", properties = { serviceName = "Microsoft.App/environments" } }]
       } }
-    ]
+    ], var.replacement == null ? [] : [{ name = "supabase-r02", properties = { addressPrefix = "10.80.1.0/24", networkSecurityGroup = { id = local.r02_nsg_id }, defaultOutboundAccess = false } }])
   } }
+  depends_on             = [azapi_resource.replacement_firewall]
   response_export_values = []
   lifecycle { prevent_destroy = true }
 }
@@ -38,7 +39,7 @@ resource "azapi_resource" "firewall" {
   parent_id = azapi_resource.group.id
   location  = local.location
   tags      = local.tags
-  body = { properties = { securityRules = concat([
+  body = { properties = { securityRules = var.containment ? local.containment_rules : concat([
     { name = "owner-ssh", properties = { priority = 100, direction = "Inbound", access = "Allow", protocol = "Tcp", sourcePortRange = "*", destinationPortRange = "22", sourceAddressPrefix = var.config.operator_ipv4, destinationAddressPrefix = local.host_ip } },
     { name = "apps-postgres", properties = { priority = 110, direction = "Inbound", access = "Allow", protocol = "Tcp", sourcePortRange = "*", destinationPortRange = "5432", sourceAddressPrefix = local.apps_net, destinationAddressPrefix = local.host_ip } }
     ], var.config.https_enabled ? [
