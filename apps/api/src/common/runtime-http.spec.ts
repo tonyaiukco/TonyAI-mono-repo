@@ -119,6 +119,22 @@ const rawRequest = (url: string, request: string): Promise<string> => new Promis
   socket.on('error', reject);
 });
 
+/** Sends `head`, then `body` in 64 KB writes, and answers what came back:
+ * the server may refuse and close mid-upload, which the writer then sees as a
+ * reset — an answer already received is the result, not a failure. */
+const refusedUpload = (url: string, head: string, body: string): Promise<string> => new Promise((resolve, reject) => {
+  let data = '';
+  const settle = (error?: Error) => (data.startsWith('HTTP/') ? resolve(data) : reject(error ?? new Error('no response')));
+  const socket = connect(Number(new URL(url).port), '127.0.0.1', () => {
+    socket.write(head);
+    for (let i = 0; i < body.length && !socket.destroyed; i += 65_536) socket.write(body.slice(i, i + 65_536));
+  });
+  socket.setTimeout(5_000, () => socket.destroy(new Error('Test socket did not receive a response')));
+  socket.on('data', (chunk) => { data += chunk.toString(); });
+  socket.on('close', () => settle());
+  socket.on('error', (error) => { socket.destroy(); settle(error); });
+});
+
 describe('transport and parser boundaries', () => {
   it('returns coded 431 for excessive headers and 408 for incomplete headers/body', async () => {
     const { url } = await boot({ HTTP_HEADER_BYTES: '256', HTTP_HEADERS_TIMEOUT_MS: '100', HTTP_BODY_TIMEOUT_MS: '200' });
@@ -147,12 +163,15 @@ describe('transport and parser boundaries', () => {
     const ok = await put(json(MB));
     expect(ok.status).toBe(200);
     expect(((await ok.json()) as { bytes: number }).bytes).toBe(MB);
-    const over = await put(json(MB + 1));
-    expect(over.status).toBe(413);
-    expect(((await over.json()) as { code: string }).code).toBe('payload_too_large');
-    // Chunked, with no length to refuse up front: counted as it arrives.
-    const chunked = await rawRequest(url, `PUT /api/v1/inventory-boundaries/0b1d/subsidiaries/5b00 HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n${(MB + 1).toString(16)}\r\n${json(MB + 1)}\r\n0\r\n\r\n`);
-    expect(chunked).toContain('413'); expect(chunked).toContain('payload_too_large');
+    const head = 'PUT /api/v1/inventory-boundaries/0b1d/subsidiaries/5b00 HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n';
+    // A declared length past the cap is refused before a byte is read — so
+    // only the headers are sent, and the refusal cannot race the upload.
+    const declared = await rawRequest(url, `${head}Content-Length: ${MB + 1}\r\n\r\n{}`);
+    expect(declared).toMatch(/^HTTP\/1\.1 413/); expect(declared).toContain('payload_too_large');
+    // Chunked, with no length to refuse up front: counted as it arrives, and
+    // refused the moment it passes the cap — while the rest is still being sent.
+    const chunked = await refusedUpload(url, `${head}Transfer-Encoding: chunked\r\n\r\n${(MB + 1).toString(16)}\r\n`, json(MB + 1));
+    expect(chunked).toMatch(/^HTTP\/1\.1 413/); expect(chunked).toContain('payload_too_large');
     // Any other body to it keeps the global cap — a form's parser is the global one.
     expect((await put('x=1234567890123456', 'application/x-www-form-urlencoded')).status).toBe(413);
     // The boundary's other routes, and every other, keep the global cap.
