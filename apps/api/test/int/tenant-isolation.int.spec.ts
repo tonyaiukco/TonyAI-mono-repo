@@ -370,6 +370,13 @@ async function snapshotB(): Promise<string> {
     owner.profile.findMany({ where: { organisationId: B.organisationId }, orderBy: { id: 'asc' } }),
     owner.auditLog.count({ where: { organisationId: B.organisationId } }),
     owner.storageIntent.count({ where: { OR: [{ subsidiaryId: B.subsidiaryId }, { organisationId: B.organisationId }] } }),
+    // LP3-04: B's boundary versions and every declaration row under them.
+    owner.inventoryBoundary.findMany({ where: { organisationId: B.organisationId }, orderBy: { id: 'asc' } }),
+    owner.inventoryBoundarySubsidiary.findMany({ where: { organisationId: B.organisationId }, orderBy: { boundaryId: 'asc' } }),
+    owner.inventoryBoundarySite.findMany({ where, orderBy: [{ boundaryId: 'asc' }, { locationId: 'asc' }] }),
+    owner.inventoryAttributionPolicy.findMany({ where, orderBy: [{ boundaryId: 'asc' }, { category: 'asc' }] }),
+    owner.inventoryApplicabilityCell.findMany({ where, orderBy: [{ boundaryId: 'asc' }, { locationKey: 'asc' }, { category: 'asc' }] }),
+    owner.inventorySource.findMany({ where, orderBy: { id: 'asc' } }),
   ]);
   return JSON.stringify(rows);
 }
@@ -386,7 +393,7 @@ const normalise = (res: Res, ids: Ids) => {
 
 interface Route {
   name: string;
-  method: 'GET' | 'HEAD' | 'POST' | 'PATCH' | 'DELETE';
+  method: 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: (ids: Ids) => string;
   body?: (ids: Ids) => unknown;
   /** The role and the state A needs for the positive control; returns the ids it should use. */
@@ -418,6 +425,8 @@ const voidedIn = () =>
   }, { priced: true });
 
 const created = (res: Res) => res.status === 200 || res.status === 201;
+/** A whole declaration with nothing in it: valid, so a PUT's ids alone decide its answer. */
+const EMPTY_DECLARATION = { firstMonth: 1, lastMonth: 12, sites: [], attribution: [], applicability: [], sources: [] };
 const differs = (res: Res, foreign: Res) => res.status !== foreign.status || res.text !== foreign.text;
 
 /**
@@ -548,6 +557,39 @@ const ID_ROUTES: Route[] = [
   { name: 'GET /import-batches/:id', method: 'GET', path: (i) => `/import-batches/${i.importBatchId}`, own: { role: 'dataEntry' } },
   { name: 'GET /import-batches/:id/source-url', method: 'GET', path: (i) => `/import-batches/${i.importBatchId}/source-url`, own: { role: 'dataEntry', ok: differs } },
   { name: 'POST /import-batches/:id/submit', method: 'POST', path: (i) => `/import-batches/${i.importBatchId}/submit`, own: { role: 'dataEntry', ok: differs } },
+  // inventory boundary versions (LP3-04's write path). Each PUT body is a
+  // whole, valid declaration, so only the ids in it decide the answer.
+  { name: 'GET /inventory-boundaries/:id', method: 'GET', path: (i) => `/inventory-boundaries/${i.boundaryId}`, own: { role: 'dataEntry' } },
+  {
+    name: 'POST /inventory-boundaries (copyOf)', method: 'POST', path: () => '/inventory-boundaries',
+    body: (i) => ({ reportingYear: 2027, copyOf: i.boundaryId }), own: { role: 'superAdmin', ok: created },
+  },
+  {
+    name: 'PUT /inventory-boundaries/:id/subsidiaries/:subsidiaryId', method: 'PUT',
+    path: (i) => `/inventory-boundaries/${i.boundaryId}/subsidiaries/${i.subsidiaryId}`, body: () => EMPTY_DECLARATION, own: { role: 'superAdmin' },
+  },
+  // B's subsidiary declared in A's own version, and B's site in A's own subsidiary's declaration.
+  {
+    name: "PUT /inventory-boundaries/:id/subsidiaries/:subsidiaryId (B's subsidiary in A's version)", method: 'PUT',
+    path: (i) => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${i.subsidiaryId}`, body: () => EMPTY_DECLARATION, own: { role: 'superAdmin' },
+  },
+  {
+    name: "PUT /inventory-boundaries/:id/subsidiaries/:subsidiaryId (B's site in A's declaration)", method: 'PUT',
+    path: () => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${A.subsidiaryId}`,
+    body: (i) => ({ ...EMPTY_DECLARATION, sites: [{ locationId: i.locationId, firstMonth: 1, lastMonth: 12 }] }),
+    own: { role: 'superAdmin' },
+  },
+  {
+    name: 'DELETE /inventory-boundaries/:id/subsidiaries/:subsidiaryId', method: 'DELETE',
+    path: (i) => `/inventory-boundaries/${i.boundaryId}/subsidiaries/${i.subsidiaryId}`, own: { role: 'superAdmin' },
+  },
+  {
+    name: "DELETE /inventory-boundaries/:id/subsidiaries/:subsidiaryId (B's subsidiary in A's version)", method: 'DELETE',
+    path: (i) => `/inventory-boundaries/${dataA.boundaryId}/subsidiaries/${i.subsidiaryId}`, own: { role: 'superAdmin' },
+  },
+  // A's own version has gaps: its confirmation is refused, not unseen.
+  { name: 'POST /inventory-boundaries/:id/confirm', method: 'POST', path: (i) => `/inventory-boundaries/${i.boundaryId}/confirm`, own: { role: 'superAdmin', ok: differs } },
+  { name: 'DELETE /inventory-boundaries/:id', method: 'DELETE', path: (i) => `/inventory-boundaries/${i.boundaryId}`, own: { role: 'superAdmin', ok: (res) => res.status === 204 } },
   // filters by subsidiary
   ...(
     [
@@ -669,6 +711,7 @@ const LIST_ROUTES = [
     ...CONTEXT_EXPORTS.map(([path, rest]) => `${path}?year=2026${filter}${rest}`),
   ]),
   '/bulk-upload/template',
+  '/inventory-boundaries?reportingYear=2026',
 ];
 
 describe("every list and aggregate, unfiltered, as each of A's roles: no trace of B", () => {

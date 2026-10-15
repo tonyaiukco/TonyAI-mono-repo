@@ -3,7 +3,9 @@ import type {
   Locale, PeriodLockDTO, ReportingContext, ReportingPeriod, ReportTemplate,
 } from './index';
 
-/** LP3-04: additive, dormant contracts. No existing route returns these yet.
+/** LP3-04: additive contracts. Only the boundary's routes return one yet (an
+ * `InventoryBoundarySnapshot` inside `InventoryBoundaryVersionDTO`); no dataset
+ * or issuance is produced.
  * All timestamps use Date.prototype.toISOString() UTC spelling; months are calendar months of reportingYear.
  * Producers validate runtime inputs, referential integrity and the invariants
  * below. TypeScript shapes alone do not certify a complete inventory. */

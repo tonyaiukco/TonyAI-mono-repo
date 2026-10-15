@@ -176,15 +176,24 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // Append-only: written with every mutation, read by /audit.
   audit_log: ['SELECT', 'INSERT'],
   storage_intents: SIUD,
-  // LP3-04 PR B's inventory boundary: read by the dataset producer's reader
-  // and by the subsidiary and site delete paths' counts (W9); written by
-  // nothing in the API yet — the write path brings its grants (W1).
-  inventory_boundaries: ['SELECT'],
-  inventory_boundary_subsidiaries: ['SELECT'],
-  inventory_boundary_sites: ['SELECT'],
-  inventory_attribution_policies: ['SELECT'],
-  inventory_applicability_cells: ['SELECT'],
-  inventory_sources: ['SELECT'],
+  // LP3-04's inventory boundary: read by the dataset producer's reader, the
+  // routes and the subsidiary and site delete paths' counts (W9); written by
+  // the routes (W1, E1). A header is created, deleted while open, and changes
+  // only its decision and freeze — + INSERT and UPDATE on listed columns only,
+  // see RUNTIME_COLUMN_INSERTS and RUNTIME_COLUMN_UPDATES (the UPDATE also
+  // lets the routes lock it, FOR UPDATE / FOR SHARE). A declaration's rows
+  // are inserted, never updated: a PUT replaces them, so no row is ever
+  // re-keyed — a policy never carries its sources along (ON UPDATE CASCADE) —
+  // and the guard's key rule (TA014) is never met. Only a subsidiary's row is
+  // deleted, whole: its keys cascade to its sites, policies, cells and
+  // sources as their owner, so no single one of them goes outside an audited
+  // replace (`architect`'s review, measured).
+  inventory_boundaries: ['SELECT', 'DELETE'],
+  inventory_boundary_subsidiaries: ['SELECT', 'INSERT', 'DELETE'],
+  inventory_boundary_sites: ['SELECT', 'INSERT'],
+  inventory_attribution_policies: ['SELECT', 'INSERT'],
+  inventory_applicability_cells: ['SELECT', 'INSERT'],
+  inventory_sources: ['SELECT', 'INSERT'],
   // Prisma's migration history: neither readable nor writable.
   _prisma_migrations: [],
 });
@@ -199,6 +208,11 @@ export const RUNTIME_COLUMN_INSERTS = Object.freeze({
   // account is born enabled. Prisma fills `theme` and `auth_sync_generation`
   // (their schema defaults) and the two timestamps on every create.
   profiles: ['id', 'email', 'full_name', 'role', 'language', 'theme', 'auth_sync_generation', 'organisation_id', 'created_at', 'updated_at'],
+  // A boundary version is born open and undecided (LP3-04's write path):
+  // never `decided_by`, `decided_at` or `frozen_at`, and never `created_at`
+  // (the database's clock) — so not even a bug can insert a version already
+  // confirmed, frozen or backdated. Prisma fills `decision`, its default.
+  inventory_boundaries: ['id', 'organisation_id', 'reporting_year', 'version', 'decision', 'created_by'],
 });
 
 /** Column-level UPDATE grants on tables whose table-level UPDATE is withheld. */
@@ -248,6 +262,10 @@ export const RUNTIME_COLUMN_UPDATES = Object.freeze({
     'contact_phone',
     'tracking_granularity',
   ],
+  // What `confirm` writes — and PR C's capture, which freezes unconfirmed —
+  // the four columns the guard lets change (TA014); never the organisation,
+  // year, version or author.
+  inventory_boundaries: ['decision', 'decided_by', 'decided_at', 'frozen_at'],
 });
 
 /** Privileges outside `public`, checked only where the schema exists. */

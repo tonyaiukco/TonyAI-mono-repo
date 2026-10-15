@@ -523,6 +523,12 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/h
 | `GET` | `/reports/pdf` | Branded audit‑ready PDF (Puppeteer; methodology + evidence appendices) | all except `data_entry` |
 | `GET` | `/reports/excel` | Excel export: Summary / Raw Activity Data / Withdrawn Records / Factors Used sheets | all except `data_entry` |
 | `GET` | `/reports/csv` | CSV export of the committed ledger **plus the withdrawn rows**, one table | all except `data_entry` |
+| `GET` | `/inventory-boundaries?reportingYear=` | One year's inventory boundary versions, newest first (a data_entry user's: those declaring a subsidiary it is granted) — "The write path" | any |
+| `GET` | `/inventory-boundaries/:id` | A version: its snapshot, `boundaryGaps` and `view` (data_entry: its granted subsidiaries' part; one declaring none is `boundary_not_found`) | any |
+| `POST` | `/inventory-boundaries` | A new open version, empty or a copy (`copyOf`); `boundary_draft_open` while the year's newest is open | `super_admin` |
+| `PUT` `DELETE` | `/inventory-boundaries/:id/subsidiaries/:subsidiaryId` | Replace or remove one subsidiary's whole declaration in an open version (the `PUT` body up to 1 MB) | `super_admin` |
+| `POST` | `/inventory-boundaries/:id/confirm` | Confirm and freeze a version (`boundary_frozen`, `boundary_confirm_requires_copy`, `boundary_incomplete`) | `super_admin` |
+| `DELETE` | `/inventory-boundaries/:id` | Delete an open version (204) | `super_admin` |
 | `GET` | `/bulk-upload/template` | Download the import template (XLSX): sheet 1 is exactly the importer's ten columns, sheet 2 (invisible to the importer) names the caller's own reporting entities and the vocabularies | any |
 | `POST` | `/bulk-upload/activity-records` | Import activity records from a CSV/XLSX (multipart `file`, `dryRun` required — exactly `true` or `false`; an empty or missing value is a 400, never a default). Row-level report; 1,000 populated rows / 2 MB (and an XLSX may unpack to at most 16 MB); 5 imports per minute per user. A role that may not author records is refused before the file is parsed, and that refusal is audited (a 413 from the 2 MB limit and a 400 for a malformed `dryRun` happen before the service runs, so those two are not) | `data_entry`, `super_admin` |
 
@@ -835,7 +841,7 @@ in `infra/config/runtime-limits.json`. Configuration changes require a restart.
 | `MUTATION_CONCURRENCY`, `MUTATION_USER_CONCURRENCY` | 2 / 1 | Mutations globally and per verified user |
 | `HTTP_HEADER_BYTES` | 16,384 | HTTP parser header bytes |
 | `HTTP_HEADERS_TIMEOUT_MS`, `HTTP_BODY_TIMEOUT_MS`, `HTTP_KEEPALIVE_MS` | 10,000 / 30,000 / 5,000 | Header reception, body reception, idle keep-alive |
-| `BODY_MAX_BYTES`, `BODY_MAX_PARAMETERS` | 102,400 / 100 | JSON/form body bytes and flat form parameters |
+| `BODY_MAX_BYTES`, `BODY_MAX_PARAMETERS` | 102,400 / 100 | JSON/form body bytes and flat form parameters (LP3-04's declaration `PUT` reads up to its own 1 MB, set in code — "The write path") |
 | `IMPORT_CONCURRENCY`, `IMPORT_PARSE_TIMEOUT_MS` | 1 / 5,000 | Import work after body reception; parsing checkpoints |
 | `BULK_DEADLINE_MS` | 60,000 | Deadline for starting additional batch rows |
 | `REPORT_CONCURRENCY`, `PDF_TIMEOUT_MS` | 1 / 30,000 | Export admission before assembly; PDF renderer |
@@ -938,9 +944,9 @@ the batch audit row after settled work, including the `failed` closing path.
 `ReportDataset`, `InventoryBoundarySnapshot` and `ReportIssuance` are additive,
 **dormant** contracts exported by `@tonyai/shared-types`. Existing `ReportStatus`,
 `ReportMetaDTO`, context routes and report assembly are unchanged. The boundary's
-storage and its reader are shipped (LP3-04 PR B, below); no route writes or
-serves a boundary yet, and no dataset capture, final-issuance gate or
-retained-PDF endpoint exists. In particular, today's count-based "approved"
+storage and its reader are shipped (LP3-04 PR B, below), and its routes write
+and serve it ("The write path", below); no dataset capture, final-issuance gate
+or retained-PDF endpoint exists yet. In particular, today's count-based "approved"
 badge does not certify a complete inventory.
 
 The dataset records one bounded, consistent capture of the declared boundary,
@@ -1158,8 +1164,11 @@ organisation's own, the owner's alone (W10). RLS is on (never FORCE) with
 SELECT-only policies — a row with its subsidiary (LP1-03's predicate), the
 header for its organisation's org-wide readers or a user granted a subsidiary
 it declares (W3) — and the client roles, the service role included, hold
-SELECT alone; the runtime role SELECT (no route writes yet: the write path's
-contract is below, its service and routes — with their grants — follow, W1). The seed declares no boundary
+SELECT alone; the runtime role reads them and writes them through the routes
+below — rows inserted, never updated, and deleted only a subsidiary's whole
+declaration at a time (its keys cascade); a header inserted open and
+undecided, changed only in its decision and freeze, deleted while open
+(`20261018120000_lp3_04_boundary_write_grants`, grants only). The seed declares no boundary
 until D05's source list arrives (W11); `rls:probe` plants and removes its own.
 
 **One capture snapshot, one factor lookup.** `readInventoryBoundary` reads a
@@ -1179,15 +1188,17 @@ writer's must stay READ COMMITTED, TA003); a capture passes its
 every other read of the library's rows — the catalogue, the loader's re-read,
 the seed's accepted second copy — and fails on a new one. Dataset/issuance
 assembly (PR C, which defines the lookup's consumer), issuance with its storage
-recovery (PR D), the write path's service and routes and the editor's screen
-(LP4-03) are separate later PRs.
+recovery (PR D) and the editor's screen (LP4-03) are separate later PRs; the
+routes read through their own reader (below), which answers an empty version
+and a data_entry user's part — the capture's reader reads none.
 
-**The write path's contract (LP3-04 W1, W13; Decisions 2026-10-15 (fifth),
-E1–E9).** Dormant until the service-and-routes PR: the request and response
-types (`packages/shared-types/src/inventory-boundary.ts`), the DTOs that hold a
-body to them (`apps/api/src/inventory-boundary/dto/`), five error codes and the
-audit taxonomy; no migration, no route, no `api.ts` function (they land with
-their consumers). The routes, under `/api/v1`:
+**The write path (LP3-04 W1, W13; Decisions 2026-10-15 (fifth), E1–E9).** The
+contract — the request and response types
+(`packages/shared-types/src/inventory-boundary.ts`), the DTOs that hold a body
+to them (`apps/api/src/inventory-boundary/dto/`), five error codes and the audit
+taxonomy — and the routes and their service
+(`apps/api/src/inventory-boundary/inventory-boundaries.{controller,service}.ts`);
+the screen's `api.ts` functions land with it (LP4-03). The routes, under `/api/v1`:
 
 | Method | Route | Does |
 | --- | --- | --- |
@@ -1241,6 +1252,41 @@ version); `create` (a copy names `copyOf`), `update` (a subsidiary's
 declaration, before and after), `delete`, and the new action `confirm` — each in
 its write's transaction.
 
+How the service holds it. Every write runs in READ COMMITTED — the only
+isolation the guard admits a row write or a freeze in — and takes the
+version's header `FOR UPDATE` as its first statement (`boundary-lock.ts`; PR
+B's (6): a later freeze in the same transaction would otherwise wait on
+another writer's share lock and deadlock); a copy reads its source under the
+source header's `FOR SHARE`. A `PUT` deletes the subsidiary's row — its keys
+cascade to its sites, policies, cells and sources — and inserts the new
+declaration (`boundary-declaration.ts` derives the company entity's key, a
+mapped source's scope and cadence and its claim key, by the CHECKs' own rules);
+nothing is ever updated, so no key changes and no policy carries its sources
+along. The guard's other rules are the DTOs' (a site within its subsidiary's
+months) and the subsidiary and site delete paths' (W9). Two creates of a year's
+next version are decided by its key — the loser answers `conflict` — as is a
+subsidiary or site deleted between the check and the write (`conflict`, by the
+key that broke; any other key's failure is a defect). `boundaryGaps(snapshot)`
+(`boundary-gaps.ts`) is pure, one step per rule `InventoryBoundaryGap` lists,
+each gap at its entity and a source's naming that source; a version's routes
+report them, `confirm` refuses on them, and PR C's dataset starts from them.
+Reads run in one REPEATABLE READ snapshot through the routes' own reader
+(`boundary-version.ts`, on `buildBoundarySnapshot`): every reader but
+data_entry gets the whole declared inventory; data_entry's view filters every
+collection and gap to its granted subsidiaries — the gaps are the whole
+version's, which equals its part's alone, since every rule stays inside one
+subsidiary. The `PUT`'s body has a cap of its own, **1 MB, set in code**
+(`INVENTORY_DECLARATION_BODY_MAX_BYTES`, never an environment value): one
+subsidiary is one body, and the global 100 KB held only about a hundred sites
+attributed per site, below the DTOs' limits (500 sites, 2,000 sources) — those
+fit at ordinary name lengths. Every other route, the boundary's included,
+keeps `BODY_MAX_BYTES`; the declaration's parser is registered before the
+global one, which then passes the read body by. A body is parsed before
+authentication, but a write is refused before it is validated — the global
+pipe's work grows with a body's rows — by guards (`boundary-writer.guard.ts`):
+anyone but a `super_admin` is `forbidden`, and a declaration's list past the
+DTO's limits is `validation_failed` by its count alone.
+
 ## Localisation and error codes
 
 LP3-01 laid the foundation the remaining screens (LP4-04), onboarding (LP4-01) and reports (LP4-03) build on. Turkish UI copy lives **only** in the `tr` catalogue (CLAUDE.md's one exception); keys, code and docs stay English. Recipes: the [`localise-ui`](.claude/skills/localise-ui/SKILL.md) skill.
@@ -1264,7 +1310,7 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | --- | --- |
 | `profiles` | App user: role, organisation, UI language (`en`/`tr`, CHECK; the runtime may update it — LP3-01) and theme (1:1 with an auth user, same id). LP4-01: `disabled_at` (refused by the guard), `sessions_revoked_at` (set by a disable, an enable and an offboarding; sessions begun at or before it are refused), `auth_sync_pending_since` (Supabase Auth's ban not yet applied), `auth_sync_generation` (moved on by every change the sync must apply) and `recovery_sent_at` (the reset cooldown); created by an invitation through a column-level runtime INSERT |
 | `organisations` | The holding company (top of the hierarchy); `offboarded_at` once the operator offboards it (LP4-01, D21) |
-| `inventory_boundaries` + `inventory_boundary_subsidiaries`, `inventory_boundary_sites`, `inventory_attribution_policies`, `inventory_applicability_cells`, `inventory_sources` | LP3-04 PR B: an organisation's declared inventory boundary per reporting year, one version per header — declared subsidiaries and sites with their operating months, D11's attribution policies, D12's applicability cells, D05's named sources. Immutable once frozen (`TA014`, every writer), names copied in as it freezes; deleted only with an open version or its organisation; a declared subsidiary or site stays. RLS SELECT-only; clients, the service role and the runtime role SELECT only. See "Inventory coverage and report datasets" |
+| `inventory_boundaries` + `inventory_boundary_subsidiaries`, `inventory_boundary_sites`, `inventory_attribution_policies`, `inventory_applicability_cells`, `inventory_sources` | LP3-04 PR B: an organisation's declared inventory boundary per reporting year, one version per header — declared subsidiaries and sites with their operating months, D11's attribution policies, D12's applicability cells, D05's named sources. Immutable once frozen (`TA014`, every writer), names copied in as it freezes; deleted only with an open version or its organisation; a declared subsidiary or site stays. RLS SELECT-only; clients and the service role SELECT only; the runtime role inserts the rows (never updates one) and deletes only a subsidiary's whole declaration, inserts a header open and changes only its decision and freeze — the routes' grants. See "Inventory coverage and report datasets" |
 | `invitations` | One per invited profile (LP4-01): `status` `pending` → `sent` → `accepted`, or `revoked`; the email's language, the inviter (null for the operator), attempts and the last failed step with a short code. Operational state: RLS on with no policy and nothing granted to any client role, the service role included |
 | `subsidiaries` | Companies within an organisation (geography — updated only by the API, audited, or the owner: `TA015` — sector, status, included scopes, reporting contact, and `tracking_granularity` — whether completeness is measured for the whole entity or per location) |
 | `locations` | Facilities within a subsidiary (their geography, too, updated only by the API, audited, or the owner: `TA015`) |

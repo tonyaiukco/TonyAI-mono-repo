@@ -5,8 +5,8 @@ import type {
 
 /**
  * LP3-04's write path: the D12 editor's contract (W1, W13; Decisions
- * 2026-10-15 (fifth) E1–E9). Dormant — no route serves these yet; the
- * service-and-routes PR does. Type-only imports: `index.ts` re-exports this
+ * 2026-10-15 (fifth) E1–E9), served by `apps/api/src/inventory-boundary/`
+ * (the routes PR). Type-only imports: `index.ts` re-exports this
  * module, so a runtime import from it would be circular.
  *
  * Routes, under /api/v1 (E1):

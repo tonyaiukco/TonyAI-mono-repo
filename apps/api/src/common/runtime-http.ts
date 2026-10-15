@@ -3,8 +3,13 @@ import type { Response, NextFunction } from 'express';
 import { STATUS_CODES, type Server, type ServerResponse } from 'node:http';
 import { isIP } from 'node:net';
 import { toErrorBody } from './api-error';
-import { CapacityError, routeGroup, RuntimeLimits } from './runtime-limits';
+import {
+  CapacityError, INVENTORY_DECLARATION_BODY_MAX_BYTES, isInventoryDeclarationPut, jsonBodyLimit, routeGroup, RuntimeLimits,
+} from './runtime-limits';
 import { type LimitedRequest, RuntimeRequestInterceptor } from './runtime-request';
+
+/** A request's media type, as admission reads it: no parameters, lowercased. */
+const mediaOf = (req: LimitedRequest): string => String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
 
 const refuse = (res: Response, status: number, message: string): void => {
   if (res.headersSent || res.destroyed) return;
@@ -44,7 +49,7 @@ export const configureRuntimeHttp = (app: NestExpressApplication, limits: Runtim
         if (res.destroyed) return lease.release();
         const group = routeGroup(req.method, req.path);
         const hasBody = Boolean(req.headers['transfer-encoding']) || Number(req.headers['content-length'] ?? 0) > 0;
-        const media = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+        const media = mediaOf(req);
         const multipart = media === 'multipart/form-data';
         req.runtimeMultipart = multipart;
         const uploadRoute = req.method === 'POST' && (group === 'IMPORT'
@@ -57,7 +62,9 @@ export const configureRuntimeHttp = (app: NestExpressApplication, limits: Runtim
         if (req.headers['content-encoding'] && req.headers['content-encoding'] !== 'identity') {
           return refuse(res, 415, 'Compressed request bodies are not supported.');
         }
-        const bytesLimit = multipart ? (group === 'IMPORT' ? 2 : 10) * 1024 * 1024 + 65_536 : c.BODY_MAX_BYTES;
+        const bytesLimit = multipart
+          ? (group === 'IMPORT' ? 2 : 10) * 1024 * 1024 + 65_536
+          : jsonBodyLimit(req.method, req.path, c.BODY_MAX_BYTES);
         const length = req.headers['content-length'];
         if (length && (!/^\d+$/.test(length) || Number(length) > bytesLimit)) {
           return refuse(res, 413, 'Request body is too large.');
@@ -94,7 +101,14 @@ export const configureRuntimeHttp = (app: NestExpressApplication, limits: Runtim
     })();
   });
   // Register explicitly BEFORE Nest's defaults; its adapter recognizes these
-  // parsers and does not install a second set on init.
+  // parsers and does not install a second set on init. LP3-04's declaration
+  // PUT is read first, at its own cap (`jsonBodyLimit`, as admitted above);
+  // the global parser then finds that body read and passes it by.
+  app.useBodyParser('json', {
+    limit: INVENTORY_DECLARATION_BODY_MAX_BYTES,
+    inflate: false,
+    type: (req: LimitedRequest) => isInventoryDeclarationPut(req.method, req.path) && mediaOf(req) === 'application/json',
+  });
   app.useBodyParser('json', { limit: c.BODY_MAX_BYTES, inflate: false });
   app.useBodyParser('urlencoded', { limit: c.BODY_MAX_BYTES, extended: false, parameterLimit: c.BODY_MAX_PARAMETERS, inflate: false });
   app.useGlobalInterceptors(new RuntimeRequestInterceptor());

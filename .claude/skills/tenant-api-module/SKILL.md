@@ -27,6 +27,11 @@ For an endpoint that ingests MANY rows from an uploaded file into an existing re
     (`data_entry` / `consultant` / `super_admin`); rows carry `createdBy`; edits/deletes restricted to
     **author-or-`super_admin`** and to editable statuses only (e.g. `draft`/`rejected`) — mirror
     `assertCanMutate` in the activity-records service.
+  - *A body that scales with rows* (lists in a DTO, a raised body cap): the global pipe builds and
+    validates every element before a role check in the service runs, so also refuse the write in a
+    guard — `@UseGuards(...)` runs before pipes — and bound each list by its length there
+    (`apps/api/src/inventory-boundary/boundary-writer.guard.ts`; LP3-04's `security-rls` P1: a
+    reader's 1 MB of empty rows held the API for seconds). Keep the service's own check too.
 - **Audit every mutation** — create/update/delete each write one `audit_log` row through Prisma.
 - **Validate input** with `class-validator` DTOs (the global `ValidationPipe` uses `whitelist` + `forbidNonWhitelisted`).
 - **Response types live in `@tonyai/shared-types`** (a `XxxDTO` interface) — never inline a duplicate type.

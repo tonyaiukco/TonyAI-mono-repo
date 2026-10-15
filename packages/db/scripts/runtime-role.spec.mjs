@@ -14,6 +14,9 @@ import {
   INTEGRITY_HELPERS,
   INTEGRITY_TRIGGERS,
   RECORD_FOREIGN_KEYS,
+  RUNTIME_TABLE_PRIVILEGES,
+  RUNTIME_COLUMN_INSERTS,
+  RUNTIME_COLUMN_UPDATES,
   checkIntegrityTriggers,
   expectedTriggerFunctionBodies,
   factorLibraryReport,
@@ -734,6 +737,35 @@ describe('factorLibraryReport (LP3-03)', () => {
     expect(report.problems).toEqual([
       '2 factor/conversion row(s) with an unspecified activity type under an authoritative release',
     ]);
+  });
+});
+
+describe("the runtime role's inventory boundary grants (LP3-04's write path)", () => {
+  const ROWS = [
+    'inventory_boundary_subsidiaries', 'inventory_boundary_sites', 'inventory_attribution_policies',
+    'inventory_applicability_cells', 'inventory_sources',
+  ];
+
+  it("inserts declaration rows, deletes only a subsidiary's whole declaration, and never updates one — a PUT replaces, and no policy is re-keyed under its sources", () => {
+    // Its row's keys cascade to the rest, as the tables' owner: no single
+    // cell, source or policy is deleted outside an audited replace.
+    expect(RUNTIME_TABLE_PRIVILEGES.inventory_boundary_subsidiaries).toEqual(['SELECT', 'INSERT', 'DELETE']);
+    for (const table of ROWS) {
+      if (table !== 'inventory_boundary_subsidiaries') expect(RUNTIME_TABLE_PRIVILEGES[table], table).toEqual(['SELECT', 'INSERT']);
+      expect(RUNTIME_COLUMN_UPDATES[table]).toBeUndefined();
+      expect(RUNTIME_COLUMN_INSERTS[table]).toBeUndefined();
+    }
+  });
+
+  it('creates a header open and undecided, and changes only its decision and freeze — never its identity', () => {
+    expect(RUNTIME_TABLE_PRIVILEGES.inventory_boundaries).toEqual(['SELECT', 'DELETE']);
+    expect(RUNTIME_COLUMN_INSERTS.inventory_boundaries).toEqual(
+      ['id', 'organisation_id', 'reporting_year', 'version', 'decision', 'created_by'],
+    );
+    for (const column of ['decided_by', 'decided_at', 'frozen_at', 'created_at']) {
+      expect(RUNTIME_COLUMN_INSERTS.inventory_boundaries).not.toContain(column);
+    }
+    expect(RUNTIME_COLUMN_UPDATES.inventory_boundaries).toEqual(['decision', 'decided_by', 'decided_at', 'frozen_at']);
   });
 });
 
