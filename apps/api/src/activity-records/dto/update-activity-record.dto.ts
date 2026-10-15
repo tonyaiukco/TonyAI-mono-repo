@@ -19,6 +19,7 @@ import {
 import { Transform } from 'class-transformer';
 import {
   ACTIVITY_UNIT_MAX_LENGTH,
+  ACTIVITY_VALUE_MAX,
   CATEGORIES,
   EXPLANATION_MAX_LENGTH,
   PERIOD_VALUE_MAX_LENGTH,
@@ -83,9 +84,11 @@ export class UpdateActivityRecordDto {
   @Matches(ACTIVITY_TYPE_SHAPE, { message: ACTIVITY_TYPE_SHAPE_MESSAGE })
   activityType?: string | null;
 
+  // ACTIVITY_VALUE_MAX: the bound the database CHECK holds every writer to.
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(ACTIVITY_VALUE_MAX)
   activityValue?: number;
 
   // Whitespace-normalised before it is validated or bounded (`storableUnit`):

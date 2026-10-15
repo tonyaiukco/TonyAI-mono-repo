@@ -16,6 +16,7 @@ const dirs = readdirSync(migrations).filter((d) => /^\d/.test(d)).sort();
 const read = (d: string) => readFileSync(join(migrations, d, 'migration.sql'), 'utf8');
 const sql = read(dirs.find((d) => d.endsWith('_lp3_03_factor_model')) ?? 'missing');
 const lp401 = read(dirs.find((d) => d.endsWith('_lp4_01_cascade_guard')) ?? 'missing');
+const guards = read(dirs.find((d) => d.endsWith('_lp4_02_record_write_guards')) ?? 'missing');
 
 /** The guarded table's owner, as the triggers look it up. */
 const OWNER = '(SELECT pg_catalog.pg_get_userbyid(c."relowner") FROM "pg_catalog"."pg_class" c WHERE c."oid" = TG_RELID)';
@@ -122,6 +123,36 @@ describe('the activity_records integrity triggers', () => {
     expect(del).toMatch(
       new RegExp(`IF OLD\\."status" IN \\('draft', 'rejected'\\)\\s+AND session_user <> 'tonyai_runtime'\\s+AND session_user <> ${escape(OWNER)} THEN\\s+RAISE EXCEPTION USING\\s+ERRCODE = 'TA006'`),
     );
+  });
+
+  it("LP4-02 (29): a record is inserted by the API's login or the owner alone — a direct client's new draft carries forged inputs K11 cannot see (TA006)", () => {
+    const body = functionBody('activity_records_lifecycle_writer');
+    const insert = body.slice(body.indexOf("IF TG_OP = 'INSERT' THEN"), body.indexOf('ELSIF '));
+    expect(insert).toMatch(
+      new RegExp(
+        `IF session_user <> 'tonyai_runtime'\\s+AND pg_catalog\\.current_setting\\('session_replication_role'\\) <> 'replica'\\s+AND session_user <> ${escape(OWNER)} THEN\\s+RAISE EXCEPTION USING\\s+ERRCODE = 'TA006'`,
+      ),
+    );
+    // The born-a-draft rule still answers first (TA005), for the owner's exemption too.
+    expect(insert.indexOf("ERRCODE = 'TA005'")).toBeGreaterThan(-1);
+    expect(insert.indexOf("ERRCODE = 'TA005'")).toBeLessThan(insert.indexOf("ERRCODE = 'TA006'"));
+  });
+
+  it("LP4-02 (27): a subsidiary's or a site's geography — the factor every draft under it is priced with — changes in the API's (audited) session or the owner's alone (TA015)", () => {
+    const body = functionBody('geography_code_writer');
+    expect(body).toMatch(
+      new RegExp(
+        `IF NEW\\."geography_code" IS DISTINCT FROM OLD\\."geography_code"\\s+AND session_user <> 'tonyai_runtime'\\s+AND session_user <> ${escape(OWNER)} THEN\\s+RAISE EXCEPTION USING\\s+ERRCODE = 'TA015'`,
+      ),
+    );
+    expect(body).not.toContain('current_user');
+    expect(body).not.toContain('SECURITY DEFINER');
+    for (const table of ['subsidiaries', 'locations']) {
+      expect(guards).toMatch(
+        new RegExp(`CREATE TRIGGER "${table}_geography_writer"\\s+BEFORE UPDATE ON "${table}"\\s+FOR EACH ROW EXECUTE FUNCTION "public"\\."geography_code_writer"\\(\\);`),
+      );
+      expect(guards).toContain(`ALTER TABLE "${table}" ENABLE ALWAYS TRIGGER "${table}_geography_writer";`);
+    }
   });
 
   it('K5 freezes the id in every status, before it looks at the status at all', () => {

@@ -411,6 +411,7 @@ const LP103 = {
   recX1: '99999999-1003-4000-8000-000000000a11',
   recX2: '99999999-1003-4000-8000-000000000a21',
   recY1: '99999999-1003-4000-8000-000000000b11',
+  recX1Forged: '99999999-1003-4000-8000-000000000a1f', // the service role's refused insert (LP4-02 (29))
   emailPrefix: 'lp103-probe-',
 };
 const LP103_ROLES = ['super_admin', 'consultant', 'data_entry', 'executive_viewer'];
@@ -484,16 +485,17 @@ async function seedTwoOrganisations() {
     }),
     'grant X1 to X data_entry',
   );
+  // The drafts are the owner's to insert (LP4-02 (29)): the service role may
+  // not insert a record at all — a probe below proves it.
   const record = (id, sub) => ({
-    id, subsidiary_id: sub, reporting_year: 2019, reporting_period: 'monthly', period_value: 'January',
-    category: 'Electricity', scope: 2, activity_value: 1, activity_unit: 'kWh',
-    calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, created_by: users['super_admin:x'].id,
-    updated_at: new Date().toISOString(),
+    id, subsidiaryId: sub, reportingYear: 2019, reportingPeriod: 'monthly', periodValue: 'January',
+    category: 'Electricity', scope: 2, activityValue: 1, activityUnit: 'kWh',
+    calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, createdBy: users['super_admin:x'].id,
   });
-  await ok(
-    await svc('POST', 'activity_records', [record(LP103.recX1, LP103.subX1), record(LP103.recX2, LP103.subX2), record(LP103.recY1, LP103.subY1)]),
-    'activity_records',
-  );
+  const owner = await ownerDb();
+  await owner.activityRecord.createMany({
+    data: [record(LP103.recX1, LP103.subX1), record(LP103.recX2, LP103.subX2), record(LP103.recY1, LP103.subY1)],
+  });
   return users;
 }
 
@@ -604,9 +606,9 @@ async function probeTwoOrganisations() {
       `delete=${subDelete.status} ${subDeleteBody.code ?? ''}, record left=${recordLeft.total}`,
     );
 
-    // LP4-02 (K11): what a draft says is what the API computed. The service
-    // role POSTed X1 as a draft above; it may not rewrite its figure or its
-    // free-form input — submit would commit the forgery (TA006).
+    // LP4-02 (K11): what a draft says is what the API computed. The owner
+    // inserted X1 as a draft above; the service role may not rewrite its
+    // figure or its free-form input — submit would commit the forgery (TA006).
     const forged = await svc('PATCH', `activity_records?id=eq.${LP103.recX1}`, { calculation: { tCo2e: 0.0001, factorId: 'forged' } });
     const forgedBody = forged.ok ? {} : await forged.json().catch(() => ({}));
     const reinput = await svc('PATCH', `activity_records?id=eq.${LP103.recX1}`, { input: { value: 1 } });
@@ -620,6 +622,40 @@ async function probeTwoOrganisations() {
       "activity_records: the service role cannot rewrite a draft's figure or its input — only the API computes them (TA006)",
       forgedBody.code === 'TA006' && reinputBody.code === 'TA006' && draft?.calculation?.factorId === 'rls-probe-placeholder' && draft?.input == null,
       `calculation=${forged.status} ${forgedBody.code ?? ''}, input=${reinput.status} ${reinputBody.code ?? ''}`,
+    );
+
+    // LP4-02 (29): nor insert a NEW draft — its inputs would be whatever the
+    // key holder says, carrying the engine's honest snapshot for them (TA006).
+    const inserted = await svc('POST', 'activity_records', {
+      id: LP103.recX1Forged, subsidiary_id: LP103.subX1, reporting_year: 2019, reporting_period: 'monthly', period_value: 'February',
+      category: 'Electricity', scope: 2, activity_value: 1, activity_unit: 'kWh',
+      calculation: { tCo2e: 0, factorId: 'rls-probe-placeholder' }, created_by: users['data_entry:x'].id,
+      updated_at: new Date().toISOString(),
+    });
+    const insertedBody = inserted.ok ? {} : await inserted.json().catch(() => ({}));
+    const insertedLeft = await count('activity_records', { token: SERVICE, key: SERVICE, query: `select=id&id=eq.${LP103.recX1Forged}` });
+    check(
+      'activity_records: the service role cannot insert a record — only the API (or the owner) creates one (TA006)',
+      !inserted.ok && insertedBody.code === 'TA006' && insertedLeft.total === 0,
+      `insert=${inserted.status} ${insertedBody.code ?? ''}, rows=${insertedLeft.total}`,
+    );
+
+    // LP4-02 (27): nor change a subsidiary's or a site's geography — the
+    // factor its drafts are priced with — unaudited (TA015).
+    const owner = await ownerDb();
+    const site = await owner.location.create({ data: { subsidiaryId: LP103.subX1, name: 'RLS probe site', geographyCode: 'UK' } });
+    const subFlip = await svc('PATCH', `subsidiaries?id=eq.${LP103.subX1}`, { geography_code: 'TR' });
+    const subFlipBody = subFlip.ok ? {} : await subFlip.json().catch(() => ({}));
+    const siteFlip = await svc('PATCH', `locations?id=eq.${site.id}`, { geography_code: 'TR' });
+    const siteFlipBody = siteFlip.ok ? {} : await siteFlip.json().catch(() => ({}));
+    const [subAfter, siteAfter] = await Promise.all([
+      owner.subsidiary.findUniqueOrThrow({ where: { id: LP103.subX1 } }),
+      owner.location.findUniqueOrThrow({ where: { id: site.id } }),
+    ]);
+    check(
+      "subsidiaries, locations: the service role cannot change a geography — only the API, which audits it, or the owner (TA015)",
+      subFlipBody.code === 'TA015' && siteFlipBody.code === 'TA015' && subAfter.geographyCode === 'UK' && siteAfter.geographyCode === 'UK',
+      `subsidiary=${subFlip.status} ${subFlipBody.code ?? ''}, site=${siteFlip.status} ${siteFlipBody.code ?? ''}`,
     );
   } catch (e) {
     check('LP1-03 two-organisation probe could run', false, e.message);

@@ -156,8 +156,17 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // table; the record's writers; the record's four guards; LP4-01's
     // lifecycle writer, organisation guard and subsidiary guard; LP4-02's
     // seal check at the commit; LP3-04 PR B's freeze guard and truncate guard
-    // on the boundary's header and its five row tables.
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3 + 1 + 6 * 2);
+    // on the boundary's header and its five row tables; LP4-02 (27)'s
+    // geography guard on subsidiaries and sites.
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3 + 1 + 6 * 2 + 2);
+    for (const table of ['subsidiaries', 'locations']) {
+      expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === `${table}_geography_writer`)).toEqual({
+        table,
+        trigger: `${table}_geography_writer`,
+        fn: 'geography_code_writer',
+        type: 1 | 2 | 16,
+      });
+    }
     expect(INTEGRITY_TRIGGERS.filter((t) => t.definer).map((t) => t.trigger).sort()).toEqual([
       'emission_factors_record_delete', 'emission_factors_record_insert', 'factor_releases_record_event',
       'inventory_applicability_cells_frozen', 'inventory_attribution_policies_frozen', 'inventory_boundaries_frozen',
@@ -275,7 +284,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     expect(guarded).toEqual([
       'activity_records', 'emission_factors', 'factor_release_events', 'factor_releases',
       'inventory_applicability_cells', 'inventory_attribution_policies', 'inventory_boundaries', 'inventory_boundary_sites',
-      'inventory_boundary_subsidiaries', 'inventory_sources', 'subsidiaries', 'unit_conversions',
+      'inventory_boundary_subsidiaries', 'inventory_sources', 'locations', 'subsidiaries', 'unit_conversions',
     ]);
     for (const table of guarded) {
       expect(await check(allTriggers, allChecks, [{ table, rule: 'r' }])).toEqual([`unexpected rule r on ${table}`]);

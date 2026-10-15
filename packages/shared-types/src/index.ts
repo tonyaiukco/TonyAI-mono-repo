@@ -3486,6 +3486,20 @@ export const VOID_REASON_MAX_LENGTH = EXPLANATION_MAX_LENGTH;
 export const PERIOD_VALUE_MAX_LENGTH = 32;
 
 /**
+ * The upper bound on an `activityValue`, on both record write DTOs and the
+ * calculation preview — and on every writer, in the `activity_records`
+ * CHECK of the same value (LP4-02 (33); `record-checks.spec.ts` holds the two
+ * together).
+ *
+ * Not the engine's limit — it has none but a finite result, after a unit
+ * conversion (×1000 at most) and a factor. A bound a reading cannot honestly
+ * reach: 1e12 is about a hundred times a large smelter's annual kWh, and stays
+ * below 2^53, where whole numbers stop being exact. A value past it is a typo
+ * or a forgery, refused at the door rather than priced.
+ */
+export const ACTIVITY_VALUE_MAX = 1e12;
+
+/**
  * The upper bound on an `activityUnit`, on both record write DTOs.
  *
  * NOT a refusal that comes earlier than the vocabulary's, and not a bound the

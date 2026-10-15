@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ACTIVITY_UNITS,
   ACTIVITY_UNIT_MAX_LENGTH,
+  ACTIVITY_VALUE_MAX,
   CATEGORIES,
   GEOGRAPHY_CODES,
   SELECTABLE_GEOGRAPHY_CODES,
@@ -234,6 +235,12 @@ describe('CalculationInputDto — the fields that were already bounded', () => {
     // refusal let `@Min(0)` become `@Min(1)` unnoticed, which is precisely the
     // preview/save divergence this file exists to rule out.
     expect(parse({ value: 0 }).errors).toHaveLength(0);
+  });
+
+  it('bounds the activity value where the save DTOs do — ACTIVITY_VALUE_MAX, accepted; one more, refused', () => {
+    // LP4-02 (33): a preview the save would refuse is the divergence above.
+    expect(parse({ value: ACTIVITY_VALUE_MAX }).errors).toHaveLength(0);
+    expect(constraintsOn({ value: ACTIVITY_VALUE_MAX + 1 }, 'value')).toContain('max');
   });
 
   it('refuses a fractional reporting year', () => {

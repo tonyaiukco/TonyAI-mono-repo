@@ -909,10 +909,16 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
     { table, trigger: `${table}_frozen`, fn: 'inventory_boundary_rows_frozen', type: ROW | BEFORE | ON.insert | ON.update | ON.delete, definer: true },
     { table, trigger: `${table}_before_truncate`, fn: 'inventory_boundary_before_truncate', type: BEFORE | ON.truncate },
   ]),
+  // LP4-02 (27): a subsidiary's or a site's geography — what its records are
+  // priced with — changes in the API's or the owner's session alone (TA015).
+  // `locations` is guarded from here on: a later BEFORE UPDATE trigger could
+  // put NEW.geography_code back after the guard read it.
+  { table: 'subsidiaries', trigger: 'subsidiaries_geography_writer', fn: 'geography_code_writer', type: ROW | BEFORE | ON.update },
+  { table: 'locations', trigger: 'locations_geography_writer', fn: 'geography_code_writer', type: ROW | BEFORE | ON.update },
 ]);
 
 /**
- * The CHECK constraints the factor model's guarantees rest on, each with the
+ * The CHECK constraints the factor model's and the records' guarantees rest on, each with the
  * md5 of its `pg_get_constraintdef` on a database migrated from this
  * repository — so `CHECK (true)` under the same name is a finding, not a pass.
  * A migration that changes one updates its hash here (`runtime-role.int.spec`
@@ -920,6 +926,10 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
  */
 export const INTEGRITY_CHECKS = Object.freeze([
   ['activity_records', 'activity_records_activity_type_check', '209bc4e708c65029678d21cb1c434ea6'],
+  // LP4-02 (33): what a record says, held for every writer at the door.
+  ['activity_records', 'activity_records_activity_value_check', 'eeef9e2c8cf6539c36909ac41432c40a'],
+  ['activity_records', 'activity_records_period_value_check', 'd15080e375207c7ca22a5777c479af8b'],
+  ['activity_records', 'activity_records_scope_check', 'e8da473541720c3a2b4ecaeff36399b4'],
   ['emission_factors', 'emission_factors_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
   ['emission_factors', 'emission_factors_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
   ['emission_factors', 'emission_factors_factor_value_check', '9fd4bc38d56fd6f39cda5c362d62ca79'],
@@ -1053,7 +1063,7 @@ const TRIGGER_STATES = Object.freeze({ D: 'disabled', R: 'replica-only (it fires
 /** The tables the integrity triggers guard: nothing else may hook into them. */
 const GUARDED_TABLES = Object.freeze([
   'activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events', 'subsidiaries',
-  'inventory_boundaries', ...INVENTORY_BOUNDARY_ROW_TABLES,
+  'inventory_boundaries', ...INVENTORY_BOUNDARY_ROW_TABLES, 'locations',
 ]);
 
 /** Every integrity trigger, CHECK and record key, present, in force and unaltered. */
