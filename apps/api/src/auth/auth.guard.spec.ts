@@ -229,6 +229,26 @@ describe('SupabaseAuthGuard — rejection paths', () => {
     expect(logged[0]).toMatch(/Auth is not configured/);
   });
 
+  it('throttles by logKey, so messages quoting a token’s issuer cannot flood the log or the map', async () => {
+    const logged: string[] = [];
+    vi.spyOn(Logger.prototype, 'error').mockImplementation((message: unknown) => {
+      logged.push(String(message));
+    });
+    const { context } = makeContext();
+    for (const iss of ['https://a.test/auth/v1', 'https://b.test/auth/v1', 'https://c.test/auth/v1']) {
+      vi.mocked(tokenVerifier.verify).mockRejectedValueOnce(
+        new TokenVerificationError(`Auth issuer mismatch: ${iss}`, true, 'issuer-mismatch'),
+      );
+      await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    }
+    vi.mocked(tokenVerifier.verify).mockRejectedValueOnce(
+      new TokenVerificationError('Auth issuer missing: no iss', true, 'issuer-missing'),
+    );
+    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+
+    expect(logged).toEqual(['Auth issuer mismatch: https://a.test/auth/v1', 'Auth issuer missing: no iss']);
+  });
+
   it('never logs an ordinary verification failure', async () => {
     const logged: string[] = [];
     vi.spyOn(Logger.prototype, 'error').mockImplementation((message: unknown) => {

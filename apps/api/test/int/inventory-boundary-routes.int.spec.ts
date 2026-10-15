@@ -27,7 +27,7 @@ import { declarationOf, declarationRows, type StoredDeclaration } from '../../sr
 import { readDeclaration } from '../../src/inventory-boundary/boundary-rows';
 import { InventoryBoundariesService } from '../../src/inventory-boundary/inventory-boundaries.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
-import { backendPid, connect, connectOwner, createTenant, holdBefore, settledOrBlocked, type Tenant } from './db';
+import { apiTokenIssuer, backendPid, connect, connectOwner, createTenant, holdBefore, settledOrBlocked, type Tenant } from './db';
 import { ABORTED_AFTER_AUDIT, abortAfterAuditClient, failingAuditClient, INJECTED_AUDIT_FAILURE } from './services';
 
 const JWT_SECRET = randomBytes(32).toString('hex');
@@ -151,6 +151,7 @@ function excludedAll(reason = 'Holding company with no operations'): PutInventor
 async function tokenFor(userId: string): Promise<string> {
   return new SignJWT({ role: 'authenticated' })
     .setProtectedHeader({ alg: 'HS256' })
+    .setIssuer(apiTokenIssuer())
     .setSubject(userId)
     .setAudience('authenticated')
     .setExpirationTime('5m')

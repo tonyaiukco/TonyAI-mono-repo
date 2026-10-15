@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ActivityRecordStatus, Prisma, UserRole } from '@tonyai/db';
 import { CATEGORY_SCOPE_MAP, type Category } from '@tonyai/shared-types';
 import type { RequestUser } from '../../src/auth/auth.types';
+import { expectedIssuers } from '../../src/auth/token-verifier';
 import { CalculationsService } from '../../src/calculations/calculations.service';
 import type { FactorPolicy } from '../../src/calculations/factor-policy';
 import { PrismaService } from '../../src/prisma/prisma.service';
@@ -87,6 +88,20 @@ export function serviceRest(method: string, path: string, body?: unknown): Promi
     headers: { apikey: key, Authorization: `Bearer ${key}`, Prefer: 'return=minimal', 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+}
+
+/**
+ * The `iss` the API under test expects — the verifier's own derivation — for
+ * hand-minted HS256 tokens. Refuses, never skips, without SUPABASE_URL.
+ */
+export function apiTokenIssuer(): string {
+  const issuer = expectedIssuers()?.[0];
+  if (!issuer) {
+    throw new Error(
+      'Hand-minted tokens need the API\'s expected issuer: set SUPABASE_URL (`set -a; source apps/api/.env; set +a`). CI exports it.',
+    );
+  }
+  return issuer;
 }
 
 /** PostgREST's refusal: its HTTP status and the SQLSTATE in its body. */
