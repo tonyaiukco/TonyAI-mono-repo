@@ -1,4 +1,5 @@
 import type { Prisma } from '@tonyai/db';
+import type { StoredDeclarationRows, VersionRows } from './boundary-declaration';
 import type { BoundaryHeaderRow, BoundaryRows } from './boundary-snapshot';
 
 /** What a boundary's rows are read through: a transaction's client, or a
@@ -61,4 +62,35 @@ export async function readBoundaryRows(db: BoundaryRowsReader, header: BoundaryH
     cells,
     sources,
   };
+}
+
+/** A version's rows as stored, for a copy (`copiedRows`). */
+export async function readVersionRows(db: BoundaryRowsReader, boundaryId: string): Promise<VersionRows> {
+  const where = { boundaryId };
+  const subsidiaries = await db.inventoryBoundarySubsidiary.findMany({ where });
+  const sites = await db.inventoryBoundarySite.findMany({ where });
+  const policies = await db.inventoryAttributionPolicy.findMany({ where });
+  const cells = await db.inventoryApplicabilityCell.findMany({ where });
+  const sources = await db.inventorySource.findMany({ where });
+  return { subsidiaries, sites, policies, cells, sources };
+}
+
+/** One subsidiary's stored declaration in a version, or null when the version
+ * does not declare it — an audit row's "before". */
+export async function readDeclaration(
+  db: BoundaryRowsReader,
+  boundaryId: string,
+  subsidiaryId: string,
+): Promise<(StoredDeclarationRows & { subsidiaryId: string }) | null> {
+  const subsidiary = await db.inventoryBoundarySubsidiary.findUnique({
+    where: { boundaryId_subsidiaryId: { boundaryId, subsidiaryId } },
+  });
+  if (subsidiary === null) return null;
+  // The stored spelling from here on, not the route's.
+  const where = { boundaryId, subsidiaryId: subsidiary.subsidiaryId };
+  const sites = await db.inventoryBoundarySite.findMany({ where });
+  const policies = await db.inventoryAttributionPolicy.findMany({ where });
+  const cells = await db.inventoryApplicabilityCell.findMany({ where });
+  const sources = await db.inventorySource.findMany({ where });
+  return { subsidiaryId: subsidiary.subsidiaryId, subsidiary, sites, policies, cells, sources };
 }

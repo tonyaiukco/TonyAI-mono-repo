@@ -26,6 +26,24 @@ export const routeGroup = (method: string, path: string): RouteGroup => {
   return ['GET', 'HEAD', 'OPTIONS'].includes(method) ? 'READ' : 'WRITE';
 };
 
+/**
+ * LP3-04's whole-subsidiary PUT (E1; write-path contract follow-up (4)): one
+ * subsidiary's declaration is one body, so its cap is its own — 1 MB, which
+ * holds the DTOs' limits (500 sites, 2,000 sources) at ordinary lengths —
+ * set here in code, never by an environment value (owner, 2026-10-15). Only
+ * `super_admin` writes there; every other route keeps `BODY_MAX_BYTES`.
+ */
+export const INVENTORY_DECLARATION_BODY_MAX_BYTES = 1_048_576;
+const INVENTORY_DECLARATION_ROUTE = /^\/api\/v1\/inventory-boundaries\/[^/]+\/subsidiaries\/[^/]+$/;
+
+/** Is this LP3-04's declaration PUT — normalised as `routeGroup` normalises? */
+export const isInventoryDeclarationPut = (method: string, path: string): boolean =>
+  method === 'PUT' && INVENTORY_DECLARATION_ROUTE.test(path.split('?')[0].toLowerCase().replace(/\/+$/, ''));
+
+/** A non-multipart body's cap on this route. */
+export const jsonBodyLimit = (method: string, path: string, global: number): number =>
+  isInventoryDeclarationPut(method, path) ? INVENTORY_DECLARATION_BODY_MAX_BYTES : global;
+
 @Injectable()
 export class RuntimeLimits implements OnApplicationShutdown {
   stopping = false;

@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Body, Controller, Get, Module, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, Module, Post, Put, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FileInterceptor, type NestExpressApplication } from '@nestjs/platform-express';
 import { configureApp } from '../app-setup';
@@ -13,6 +13,10 @@ import { RuntimeAuthGuard, RuntimeUploadWorkInterceptor } from './runtime-reques
 @Controller()
 class HttpProbe {
   @Post('json') json(@Body() body: unknown) { return body; }
+  @Put('inventory-boundaries/:id/subsidiaries/:subsidiaryId') declaration(@Body() body: unknown) {
+    return { bytes: JSON.stringify(body).length };
+  }
+  @Post('inventory-boundaries') boundary(@Body() body: unknown) { return body; }
   @Get('read') read() { return { ok: true }; }
   @Get('pool') pool() { throw Object.assign(new Error('pool full'), { code: 'P2024' }); }
   @Post('pool') mutationPool() { throw Object.assign(new Error('uncertain outcome'), { code: 'P2024' }); }
@@ -132,6 +136,30 @@ describe('transport and parser boundaries', () => {
     expect((await post('a=1&b=2&c=3')).status).toBe(413);
     const result = await rawRequest(url, 'POST /api/v1/json HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n11\r\n{"x":"123456789"}\r\n0\r\n\r\n');
     expect(result).toContain('413'); expect(result).toContain('payload_too_large');
+  });
+  it("admits LP3-04's whole-subsidiary PUT up to its own 1 MB whatever the global cap — and nothing else past the global", async () => {
+    const { url } = await boot({ BODY_MAX_BYTES: '16' });
+    const MB = 1_048_576;
+    const json = (bytes: number) => `{"x":"${'a'.repeat(bytes - 8)}"}`;
+    const put = (body: string, type = 'application/json') => fetch(`${url}/api/v1/inventory-boundaries/0b1d/subsidiaries/5b00`, {
+      method: 'PUT', headers: { 'Content-Type': type }, body,
+    });
+    const ok = await put(json(MB));
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { bytes: number }).bytes).toBe(MB);
+    const over = await put(json(MB + 1));
+    expect(over.status).toBe(413);
+    expect(((await over.json()) as { code: string }).code).toBe('payload_too_large');
+    // Chunked, with no length to refuse up front: counted as it arrives.
+    const chunked = await rawRequest(url, `PUT /api/v1/inventory-boundaries/0b1d/subsidiaries/5b00 HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n${(MB + 1).toString(16)}\r\n${json(MB + 1)}\r\n0\r\n\r\n`);
+    expect(chunked).toContain('413'); expect(chunked).toContain('payload_too_large');
+    // Any other body to it keeps the global cap — a form's parser is the global one.
+    expect((await put('x=1234567890123456', 'application/x-www-form-urlencoded')).status).toBe(413);
+    // The boundary's other routes, and every other, keep the global cap.
+    const create = await fetch(`${url}/api/v1/inventory-boundaries`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: json(17) });
+    expect(create.status).toBe(413);
+    const other = await fetch(`${url}/api/v1/json`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: json(17) });
+    expect(other.status).toBe(413);
   });
   it.each([
     ['bulk-upload/activity-records', 2 * 1024 * 1024, 4, 16_384],

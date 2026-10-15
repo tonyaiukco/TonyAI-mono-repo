@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIMIT_DEFAULTS, configurePool, readRuntimeConfig } from './runtime-config';
-import { CapacityError, routeGroup, RuntimeLimits } from './runtime-limits';
+import {
+  CapacityError, INVENTORY_DECLARATION_BODY_MAX_BYTES, jsonBodyLimit, routeGroup, RuntimeLimits,
+} from './runtime-limits';
 import { REPORTING_CONTEXT_API_PATHS } from '@tonyai/shared-types';
 import { WorkDeadline } from './work-deadline';
 
@@ -87,6 +89,22 @@ describe('bounded admission', () => {
       expect(routeGroup(method, `/api/v1${path.toUpperCase()}/?year=2027`)).toBe('EXPORT');
     }
     expect(routeGroup(method, `/api/v1${REPORTING_CONTEXT_API_PATHS.meta}`)).toBe('READ');
+  });
+  it("caps LP3-04's whole-subsidiary PUT at its own 1 MB, in code — every other route at the global cap", () => {
+    expect(INVENTORY_DECLARATION_BODY_MAX_BYTES).toBe(1_048_576);
+    const declaration = '/api/v1/inventory-boundaries/0b1d/subsidiaries/5b00';
+    for (const path of [declaration, declaration.toUpperCase(), `${declaration}/`, `${declaration}?x=1`]) {
+      expect(jsonBodyLimit('PUT', path, 100)).toBe(1_048_576);
+    }
+    for (const [method, path] of [
+      ['POST', declaration], ['DELETE', declaration], ['GET', declaration],
+      ['PUT', '/api/v1/inventory-boundaries/0b1d'], ['POST', '/api/v1/inventory-boundaries'],
+      ['POST', '/api/v1/inventory-boundaries/0b1d/confirm'], ['PUT', `${declaration}/extra`],
+      ['PUT', '/api/v1/inventory-boundaries//subsidiaries/5b00'], ['PUT', `/x${declaration}`],
+      ['PUT', '/api/v1/subsidiaries/5b00'],
+    ]) {
+      expect(jsonBodyLimit(method, path, 100)).toBe(100);
+    }
   });
   it('stops new work at the exact monotonic deadline', () => {
     let clock = 10;
