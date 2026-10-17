@@ -415,14 +415,21 @@ also remains open.
 The [clean replacement execution design](infra/runbooks/10-qa-clean-replacement.md)
 specifies an additive generation in the existing selfhost state, preservation
 and containment of the old environment, fresh credential custody and staged
-acceptance. Read-only Azure metadata confirms the current binding and reserved
-apps subnet; it does not approve provisioning. Local r02 Terraform writers and
+acceptance. Historical 2026-10-15 Azure metadata confirmed the binding and reserved
+apps subnet; current readback is required before provisioning. Local r02 Terraform writers and
 `replacement_run.py` now prepare and bind a saved plan without backend init or
 reconfiguration. Generation/disk/source guards, complete template classification,
 separate recovery custody and bounded old/new credential probes have local
 regression coverage; complete consumer and live recovery acceptance is still open.
 Legacy selfhost plan/apply is now refused. Saved-plan writes use graceful SIGINT
-and private failure diagnostics; intrinsic custody must retain the first
+and exclusive mode-0600 diagnostic files opened before Terraform starts, so
+wrapper death or terminal closure cannot sever its diagnostic streams. Both
+streams stay private on success/failure; real-child lifetime tests cover this
+boundary. The attempt marker still forbids automatic retry. Runbook 10
+[defines the pre-R2 design freeze and new-packet procedure](infra/runbooks/10-qa-clean-replacement.md#q1-q3-design-freeze-and-r2-preparation):
+private immutable Sweden backup storage belongs to a separate future writer/apply
+packet, and any observed drift still fails closed. Fresh live evidence and owner
+decisions remain gates; intrinsic custody must retain the first
 environment's byte binding. Separately approved R1 executed on 2026-10-15: the exact
 containment NSG plan was applied, ten bound containers exited after SIGTERM,
 and the retained old VM was deallocated. ARM readback confirmed unchanged disk,

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Prepare/apply a private saved R1/R2 plan in the existing backend; never init/replan."""
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -23,13 +25,32 @@ def capture(command, env):
     return result.stdout
 
 
-def terraform_capture(command, env, directory, action):
+@contextmanager
+def diagnostic_files(directory, action):
+    """Bind both exclusive streams to an owner-only packet before any writer starts."""
+    if action not in ('plan', 'apply'):
+        raise ValueError('Unexpected Terraform action.')
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(descriptor)
+        if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise ValueError('Expected an owner-only packet directory.')
+        def create(stream):
+            fd = os.open(action + '.' + stream + '.log',
+                         os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=descriptor)
+            return os.fdopen(fd, 'w+b')
+        with create('stdout') as stdout, create('stderr') as stderr:
+            yield stdout, stderr
+    finally:
+        os.close(descriptor)
+
+
+def wait_for_terraform(process):
     """Interrupt long writes once, then let Terraform finish and release its lock."""
-    process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, start_new_session=True)
     interrupted = False
     try:
-        stdout, stderr = process.communicate(timeout=900)
+        process.wait(timeout=900)
     except (subprocess.TimeoutExpired, KeyboardInterrupt):
         interrupted = True
         # A second SIGINT can make Terraform abandon its state write. Ignore
@@ -37,14 +58,25 @@ def terraform_capture(command, env, directory, action):
         previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
         try:
             process.send_signal(signal.SIGINT)
-            stdout, stderr = process.communicate()
+            process.wait()
         finally:
             signal.signal(signal.SIGINT, previous)
-    if interrupted or process.returncode:
-        write_new(Path(directory) / (action + '.stdout.log'), stdout)
-        write_new(Path(directory) / (action + '.stderr.log'), stderr)
-        raise ValueError('Terraform failed/interrupted; private packet diagnostics retained. No automatic retry.')
-    return stdout
+    return interrupted
+
+
+def terraform_capture(command, env, directory, action):
+    # Regular file descriptors survive wrapper death/terminal closure. PIPE
+    # readers would disappear with the wrapper and could SIGPIPE the state writer.
+    with diagnostic_files(directory, action) as (stdout, stderr):
+        process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,
+                                   stdout=stdout, stderr=stderr, start_new_session=True)
+        interrupted = wait_for_terraform(process)
+        for stream in (stdout, stderr):
+            os.fsync(stream.fileno())
+        if interrupted or process.returncode:
+            raise ValueError('Terraform failed/interrupted; private packet diagnostics retained. No automatic retry.')
+        stdout.seek(0)
+        return stdout.read()
 
 
 def context(backend_path, input_path, phase):
