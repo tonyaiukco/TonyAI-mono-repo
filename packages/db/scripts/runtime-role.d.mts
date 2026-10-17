@@ -11,7 +11,7 @@ export declare function factorLoaderUrlFrom(ownerUrl: string, password: string):
 export declare const RUNTIME_TABLE_PRIVILEGES: Readonly<Record<string, readonly string[]>>;
 export declare const RUNTIME_COLUMN_INSERTS: Readonly<Record<string, readonly string[]>>;
 export declare const RUNTIME_COLUMN_UPDATES: Readonly<Record<string, readonly string[]>>;
-export declare const RUNTIME_STORAGE_PRIVILEGES: Readonly<Record<string, readonly string[]>>;
+export declare const RUNTIME_CATALOGUE_READERS: readonly string[];
 export declare const FACTOR_LOADER_TABLE_PRIVILEGES: Readonly<Record<string, readonly string[]>>;
 export declare const FACTOR_LOADER_COLUMN_UPDATES: Readonly<Record<string, readonly string[]>>;
 export declare function checkRuntimeRole(query: Query): Promise<string[]>;
@@ -37,6 +37,11 @@ export declare function checkTableLevelGrants(query: Query): Promise<string[]>;
 export declare const FUNCTION_SEARCH_PATH: string;
 export declare function expectedFunctionConfig(): string[];
 export declare function checkFunctionSearchPaths(query: Query): Promise<string[]>;
+export declare function checkReachableDefiners(
+  query: Query,
+  reviewed?: Readonly<Record<string, string>>,
+): Promise<string[]>;
+export declare const REVIEWED_PLATFORM_DEFINERS: Readonly<Record<string, string>>;
 export declare function checkFunctionExecutors(
   query: Query,
   clientCallable?: Readonly<Record<string, readonly string[]>>,

@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaService } from '../../src/prisma/prisma.service';
+import { CATALOGUE_READERS } from '../../src/storage/storage-intents.service';
 import {
   FACTOR_LOADER_ROLE,
   INTEGRITY_CHECKS,
   INTEGRITY_TRIGGERS,
+  RUNTIME_CATALOGUE_READERS,
   RUNTIME_ROLE,
   checkAll,
   checkFactorLoaderRole,
@@ -12,6 +14,7 @@ import {
   checkRuntimeRole,
   checkFunctionExecutors,
   checkFunctionSearchPaths,
+  checkReachableDefiners,
   checkTableLevelGrants,
   checkTenantInvariants,
   factorLibraryReport,
@@ -70,16 +73,113 @@ describe('the runtime role', () => {
   });
 
   it("reaches nothing outside its grants except what PUBLIC holds — and the check notices a grant of ours there", async () => {
-    // Whatever the platform grants to PUBLIC (pg_net's queue, Storage's helper
-    // functions) is reported, not failed: the owner cannot revoke it.
+    // Whatever the platform grants to PUBLIC (pg_net's queue) is reported,
+    // not failed: the owner cannot revoke it.
     const exposures = await runtimeRoleExposures((sql) => runtime.$queryRawUnsafe(sql));
     for (const e of exposures) expect(e).toMatch(/\(via PUBLIC\)$/);
     // A grant made by us outside public is a problem, not an exposure.
     const problems = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('GRANT USAGE ON SCHEMA storage TO tonyai_runtime');
       await tx.$executeRawUnsafe('GRANT SELECT ON storage.buckets TO tonyai_runtime');
       return checkRuntimeRole((sql) => tx.$queryRawUnsafe(sql));
     });
-    expect(problems).toContain('tonyai_runtime was granted SELECT on storage.buckets');
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        'tonyai_runtime was granted USAGE on schema storage',
+        'tonyai_runtime was granted SELECT on storage.buckets',
+      ]),
+    );
+  });
+
+  it("holds no USAGE on Storage's schema — LP1-03's grant back fails the check, by the grant and by the helpers it reaches", async () => {
+    const { role, definers, all } = await withRollback(owner, async (tx) => {
+      // What LP1-03 granted, before `20261020120000_runtime_storage_readers`.
+      await tx.$executeRawUnsafe('GRANT USAGE ON SCHEMA storage TO tonyai_runtime');
+      await tx.$executeRawUnsafe('GRANT SELECT ON storage.objects TO tonyai_runtime');
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      return {
+        role: await checkRuntimeRole(query),
+        definers: await checkReachableDefiners(query),
+        all: (await checkAll(query)).problems,
+      };
+    });
+    const granted = ['tonyai_runtime was granted USAGE on schema storage', 'tonyai_runtime was granted SELECT on storage.objects'];
+    expect(role).toEqual(expect.arrayContaining(granted));
+    const helpers = ['add_prefixes(text, text)', 'delete_leaf_prefixes(text[], text[])', 'delete_prefix(text, text)', 'lock_top_prefixes(text[], text[])'];
+    expect(definers).toEqual(
+      expect.arrayContaining(
+        helpers.map(
+          (fn) =>
+            `tonyai_runtime can run SECURITY DEFINER storage.${fn}, by calling it, and it does not pin its search_path with pg_temp last (config []) — a temporary type of the caller's would run as its owner`,
+        ),
+      ),
+    );
+    expect(definers.every((d) => d.startsWith('tonyai_runtime can run SECURITY DEFINER storage.'))).toBe(true);
+    expect(all).toEqual(expect.arrayContaining([...granted, ...definers]));
+  });
+
+  it('follows each way a definer runs — DDL an event trigger watches, a write a trigger answers — not only a call', async () => {
+    const tail = "and it does not pin its search_path with pg_temp last (config []) — a temporary type of the caller's would run as its owner";
+    // pg_graphql's event triggers run its schema-version bump as supabase_admin
+    // after every DDL statement, a login's temporary objects included: only its
+    // reviewed body lets it pass.
+    const live = (sql: string) => owner.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+    expect(await checkReachableDefiners(live)).toEqual([]);
+    expect(await checkReachableDefiners(live, {})).toEqual(
+      [FACTOR_LOADER_ROLE, RUNTIME_ROLE].flatMap((role) =>
+        ['graphql_watch_ddl', 'graphql_watch_drop'].map(
+          (trigger) =>
+            `${role} can run SECURITY DEFINER graphql.increment_schema_version(), by running DDL (event trigger ${trigger}), ${tail}`,
+        ),
+      ),
+    );
+    // An unpinned definer trigger on tables the runtime role writes — whole
+    // (storage_intents) or column by column (profiles); it may not call it.
+    const written = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe(
+        `CREATE FUNCTION public.zz_unpinned_trigger() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN NEW; END $$`,
+      );
+      for (const table of ['storage_intents', 'profiles']) {
+        await tx.$executeRawUnsafe(
+          `CREATE TRIGGER zz_unpinned BEFORE UPDATE ON public.${table} FOR EACH ROW EXECUTE FUNCTION public.zz_unpinned_trigger()`,
+        );
+      }
+      return checkReachableDefiners((sql) => tx.$queryRawUnsafe(sql));
+    });
+    expect(written).toEqual(
+      ['profiles', 'storage_intents'].map(
+        (table) => `${RUNTIME_ROLE} can run SECURITY DEFINER public.zz_unpinned_trigger(), by writing public.${table}, ${tail}`,
+      ),
+    );
+  });
+
+  it("reads Storage's catalogue through its two readers alone — and the check notices one missing, made an invoker, or not its to run", async () => {
+    // The sweeper's visibility check and `check` name the same two.
+    expect([...CATALOGUE_READERS]).toEqual([...RUNTIME_CATALOGUE_READERS]);
+    // The readers answer the runtime role, which may not read storage.objects itself.
+    const [{ has, keys }] = await runtime.$queryRaw<{ has: boolean; keys: number }[]>`
+      SELECT storage_catalogue_has('evidence', 'no/such/object') AS has,
+             (SELECT count(*)::int FROM storage_catalogue_page('evidence', '', '', 'infinity', 1)) AS keys`;
+    expect(has).toBe(false);
+    expect(keys).toBeLessThanOrEqual(1);
+    const changed = async (sql: string) =>
+      withRollback(owner, async (tx) => {
+        await tx.$executeRawUnsafe(sql);
+        return checkRuntimeRole((q) => tx.$queryRawUnsafe(q));
+      });
+    expect(await changed('DROP FUNCTION storage_catalogue_has(text, text)')).toContain(
+      "public.storage_catalogue_has(text, text) is missing — tonyai_runtime reads Storage's catalogue through it",
+    );
+    expect(await changed('ALTER FUNCTION storage_catalogue_has(text, text) SECURITY INVOKER')).toContain(
+      'public.storage_catalogue_has(text, text) is not SECURITY DEFINER — tonyai_runtime, which holds no USAGE on storage, cannot read through it',
+    );
+    expect(
+      await changed('REVOKE EXECUTE ON FUNCTION storage_catalogue_page(text, text, text, timestamptz, integer) FROM tonyai_runtime'),
+    ).toContain('tonyai_runtime lacks EXECUTE on public.storage_catalogue_page(text, text, text, timestamp with time zone, integer)');
+    // Its two readers, and no other definer in public, are its to run.
+    expect(
+      await changed('GRANT EXECUTE ON FUNCTION public.report_datasets_guard() TO tonyai_runtime'),
+    ).toContain('tonyai_runtime was granted EXECUTE on SECURITY DEFINER public.report_datasets_guard()');
   });
 
   it('a grant of ours cannot hide behind PUBLIC, a per-database setting, CREATE elsewhere or a Storage column (`security-rls` round 2)', async () => {
@@ -94,6 +194,7 @@ describe('the runtime role', () => {
       await tx.$executeRawUnsafe(
         `DO $$ BEGIN EXECUTE format('ALTER ROLE tonyai_runtime IN DATABASE %I SET search_path = public', current_database()); END $$`,
       );
+      await tx.$executeRawUnsafe('GRANT USAGE ON SCHEMA storage TO tonyai_runtime');
       await tx.$executeRawUnsafe('GRANT UPDATE (name) ON storage.objects TO tonyai_runtime');
       const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
       return { problems: await checkRuntimeRole(query), exposures: await runtimeRoleExposures(query) };
@@ -169,7 +270,7 @@ describe('the factor model is in force on this database (LP3-03)', () => {
     expect(await checkTableLevelGrants((sql: string) => owner.$queryRawUnsafe(sql))).toEqual([]);
   });
 
-  it('lets no role but the owner EXECUTE (so attach, or call through /rpc) a function in public, now or by default', async () => {
+  it("lets no role but the owner EXECUTE (so attach, or call through /rpc) a function in public, now or by default — but the runtime role its catalogue readers", async () => {
     expect(await checkFunctionExecutors((sql: string) => owner.$queryRawUnsafe(sql))).toEqual([]);
   });
 
@@ -680,6 +781,9 @@ describe('the runtime role is refused', () => {
     ['assuming the owner', 'SET LOCAL ROLE postgres'],
     ['creating a role', 'CREATE ROLE lp1_03_probe'],
     ['writing Storage metadata', 'DELETE FROM storage.objects WHERE false'],
+    // Its readers in public are its only way to the catalogue.
+    ["reading Storage's catalogue directly", 'SELECT 1 FROM storage.objects LIMIT 1'],
+    ["calling Storage's own helpers (they rewrite its prefix index as Storage's owner)", `SELECT storage.delete_prefix('evidence', 'x/y')`],
   ])('%s', async (_label, sql) => {
     expect(await attempt(sql)).toMatch(DENIED);
   });
@@ -723,5 +827,50 @@ describe('the runtime role is refused', () => {
     expect(
       await attempt(`UPDATE profiles SET language = 'de' WHERE id = (SELECT id FROM profiles LIMIT 1)`),
     ).toMatch(/profiles_language_supported/);
+  });
+});
+
+describe("a fresh runtime login cannot run its code as Storage's owner (storage definers, after LP3-04 PR C)", () => {
+  // Supabase's SECURITY DEFINER storage helpers pin no search_path, and a
+  // session's temporary schema is searched first for type names: a
+  // `pg_temp.text` domain whose CHECK calls the caller's own function makes a
+  // helper run that function as `supabase_storage_admin`, which may update
+  // storage.buckets and delete storage.objects. The helpers themselves rewrite
+  // Storage's prefix index as that role. Each attempt is a new login, rolled back.
+  const ARM = [
+    `CREATE FUNCTION pg_temp.probe(v pg_catalog.text) RETURNS boolean LANGUAGE plpgsql
+       AS $$ BEGIN RAISE EXCEPTION 'probe ran as %', current_user; END $$`,
+    'CREATE DOMAIN pg_temp.text AS pg_catalog.text CHECK (pg_temp.probe(VALUE))',
+  ];
+
+  it.each([
+    ['storage.add_prefixes', `SELECT storage.add_prefixes('evidence', 'a/b/c')`],
+    ['storage.delete_prefix', `SELECT storage.delete_prefix('evidence', 'a/b/c')`],
+    ['storage.lock_top_prefixes', `SELECT storage.lock_top_prefixes(ARRAY['evidence'], ARRAY['a/b/c'])`],
+    ['storage.delete_leaf_prefixes', `SELECT storage.delete_leaf_prefixes(ARRAY['evidence'], ARRAY['a/b/c'])`],
+  ])('%s is out of its reach', async (_name, call) => {
+    const fresh = connect();
+    try {
+      const { armed, outcome } = await withRollback(fresh, async (tx) => {
+        for (const sql of ARM) await tx.$executeRawUnsafe(sql);
+        // Control: the trap is set — the caller's own cast runs the probe.
+        await tx.$executeRawUnsafe('SAVEPOINT armed');
+        const armedBy = await tx.$executeRawUnsafe(`SELECT 'x'::text`).then(
+          () => null,
+          (err: unknown) => String(err),
+        );
+        await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT armed');
+        const result = await tx.$executeRawUnsafe(call).then(
+          () => 'it ran',
+          (err: unknown) => String(err),
+        );
+        return { armed: armedBy, outcome: result };
+      });
+      expect(armed).toMatch(/probe ran as tonyai_runtime/);
+      expect(outcome).not.toMatch(/probe ran as/);
+      expect(outcome).toMatch(DENIED);
+    } finally {
+      await fresh.$disconnect();
+    }
   });
 });

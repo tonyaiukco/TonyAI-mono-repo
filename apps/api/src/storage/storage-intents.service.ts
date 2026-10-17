@@ -51,6 +51,18 @@ const BACKOFF_MAX_SECONDS = 6 * 3600;
 /** Storage caps one remove() at 1,000 keys; stay well under it. */
 const REMOVE_CHUNK = 100;
 
+/**
+ * The readers of Storage's catalogue (`storage.objects`) — SECURITY DEFINER
+ * functions in `public`, the runtime role's only way to it (it holds no USAGE
+ * on `storage`) — by signature as `oidvectortypes` prints it. Created by the
+ * migration `20261020120000_runtime_storage_readers`; `runtime-role.mjs`
+ * lists the same.
+ */
+export const CATALOGUE_READERS = [
+  'storage_catalogue_page(text, text, text, timestamp with time zone, integer)',
+  'storage_catalogue_has(text, text)',
+] as const;
+
 /** `STORAGE_CLEANUP_HOLD` — set while a backup or a restore runs: nothing removes bytes. */
 export function removalsHeld(env: NodeJS.ProcessEnv = process.env): boolean {
   return /^(1|true|yes|on)$/i.test(env.STORAGE_CLEANUP_HOLD?.trim() ?? '');
@@ -84,7 +96,7 @@ export class UploadExpiredError extends ConflictException {
 export class RowsHiddenError extends Error {
   constructor() {
     super(
-      'Storage removal refused: this database role cannot see every row of evidence, import_batches and storage.objects (it needs BYPASSRLS, ownership of the tables, or tables without RLS). Run it as the API\'s runtime role, tonyai_runtime (LP1-03).',
+      'Storage removal refused: this database role cannot see every row of evidence and import_batches, or the readers of storage.objects (storage_catalogue_page, storage_catalogue_has) are missing or do not run as a role that sees every object (each needs BYPASSRLS, ownership of the tables, or tables without RLS). Run it as the API\'s runtime role, tonyai_runtime (LP1-03).',
     );
     this.name = 'RowsHiddenError';
   }
@@ -307,27 +319,44 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
 
   /**
    * Whether the role `client` runs as sees every row of the tables that own
-   * objects and of Storage's catalogue: a superuser, a BYPASSRLS role, the
-   * table's owner (unless the table FORCEs RLS), or a table without RLS.
-   * Asked before any removal, in the SAME transaction as the owned-bytes
-   * read it vouches for — a pooled connection can carry another role, so a
-   * check on one connection says nothing about a read on the next. Never
-   * cached, for the same reason and because a role can lose BYPASSRLS
-   * mid-process. Membership of an owning role does not count: that fails
-   * closed.
+   * objects, and whether the readers of Storage's catalogue (the runtime role
+   * holds no USAGE on `storage`: `storage_catalogue_page` and
+   * `storage_catalogue_has`, SECURITY DEFINER) run as a role that sees every
+   * object: a superuser, a BYPASSRLS role, the table's owner (unless the table
+   * FORCEs RLS), or a table without RLS. A reader that is missing, or no
+   * longer a definer, fails it. Asked before any removal, in the SAME
+   * transaction as the owned-bytes read it vouches for — a pooled connection
+   * can carry another role, so a check on one connection says nothing about a
+   * read on the next. Never cached, for the same reason and because a role
+   * can lose BYPASSRLS mid-process. Membership of an owning role does not
+   * count: that fails closed. Read from the catalogues alone, which need no
+   * USAGE on `storage`.
    */
   async seesEveryRow(client: Pick<Prisma.TransactionClient, '$queryRaw'> = this.prisma): Promise<boolean> {
     const [{ ok }] = await client.$queryRaw<{ ok: boolean | null }[]>`
-      SELECT bool_and(
+      SELECT count(*) = ${2 + CATALOGUE_READERS.length}
+             AND bool_and(
                r.rolsuper
                OR r.rolbypassrls
                OR (c.relowner = r.oid AND NOT c.relforcerowsecurity)
                OR NOT c.relrowsecurity
              ) AS ok
-      FROM pg_roles r
-      CROSS JOIN pg_class c
-      WHERE r.rolname = current_user
-        AND c.oid IN ('public.evidence'::regclass, 'public.import_batches'::regclass, 'storage.objects'::regclass)`;
+      FROM (
+        SELECT (SELECT oid FROM pg_roles WHERE rolname = current_user), t.oid
+          FROM pg_class t
+         WHERE t.oid IN ('public.evidence'::regclass, 'public.import_batches'::regclass)
+        UNION ALL
+        SELECT p.proowner, o.oid
+          FROM pg_proc p
+          JOIN pg_namespace pn ON pn.oid = p.pronamespace AND pn.nspname = 'public'
+         CROSS JOIN pg_class o
+          JOIN pg_namespace n ON n.oid = o.relnamespace AND n.nspname = 'storage'
+         WHERE o.relname = 'objects' AND o.relkind IN ('r', 'p')
+           AND p.prosecdef
+           AND p.proname || '(' || oidvectortypes(p.proargtypes) || ')' IN (${Prisma.join(CATALOGUE_READERS)})
+      ) AS reads (reader, rel)
+      JOIN pg_roles r ON r.oid = reads.reader
+      JOIN pg_class c ON c.oid = reads.rel`;
     return ok === true;
   }
 

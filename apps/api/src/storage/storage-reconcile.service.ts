@@ -64,8 +64,11 @@ const OWNERS: Record<Bucket, { owned: Prisma.Sql; rows: Prisma.Sql }> = {
  *    evidence going missing is an incident for a person.
  *
  * Every query is keyset-paged and bounded by `limit`. Storage's catalogue is
- * the `storage.objects` table in this same database; the runtime role
- * (`tonyai_runtime`, LP1-03) holds SELECT on it and BYPASSRLS for exactly this.
+ * the `storage.objects` table in this same database, read through two pinned
+ * SECURITY DEFINER functions in `public` (`storage_catalogue_page`,
+ * `storage_catalogue_has`): the runtime role (`tonyai_runtime`, LP1-03) holds
+ * no USAGE on Supabase's `storage` schema, whose own helper functions would
+ * run a caller's temporary types as Storage's owner.
  */
 @Injectable()
 export class StorageReconcileService {
@@ -77,25 +80,39 @@ export class StorageReconcileService {
 
   /** Objects no row owns and no intent names, older than `olderThanHours`, in key order. */
   async orphans(bucket: Bucket, page: Page, olderThanHours = 0): Promise<OrphanObject[]> {
-    const rows = await this.prisma.$queryRaw<{ name: string; created_at: Date; size: bigint | null }[]>`
-      SELECT o.name, o.created_at, (o.metadata->>'size')::bigint AS size
-      FROM storage.objects o
-      WHERE o.bucket_id = ${bucket}
-        AND o.name > ${page.after ?? ''}
-        AND starts_with(o.name, ${page.prefix ?? ''})
-        AND o.created_at < now() - ${olderThanHours}::float8 * interval '1 hour'
-        AND NOT ${OWNERS[bucket].owned}
-        AND NOT EXISTS (
-          SELECT 1 FROM storage_intents i WHERE i.bucket = o.bucket_id AND i.object_path = o.name
-        )
-      ORDER BY o.name
-      LIMIT ${page.limit}`;
-    return rows.map((r) => ({
-      bucket,
-      path: r.name,
-      createdAt: r.created_at,
-      sizeBytes: r.size === null ? null : Number(r.size),
-    }));
+    const found: OrphanObject[] = [];
+    let after = page.after ?? '';
+    // A page of the catalogue's keys at a time, each judged in the same
+    // statement; the next page starts after the last key SCANNED, owned or
+    // not, so the walk ends with the bucket and never repeats a key. Ordered
+    // by the row's place in the page — the order of the column's own
+    // collation, the one the reader's cursor compares in.
+    for (;;) {
+      const rows = await this.prisma.$queryRaw<
+        { name: string; created_at: Date; size: bigint | null; orphan: boolean }[]
+      >`
+        SELECT o.name, o.created_at, o.size_bytes AS size,
+               NOT ${OWNERS[bucket].owned}
+                 AND NOT EXISTS (
+                   SELECT 1 FROM storage_intents i WHERE i.bucket = ${bucket} AND i.object_path = o.name
+                 ) AS orphan
+        FROM storage_catalogue_page(
+               ${bucket}, ${page.prefix ?? ''}, ${after},
+               now() - ${olderThanHours}::float8 * interval '1 hour', ${page.limit}::integer
+             ) WITH ORDINALITY AS o (name, created_at, size_bytes, n)
+        ORDER BY o.n`;
+      for (const r of rows) {
+        if (!r.orphan || found.length === page.limit) continue;
+        found.push({
+          bucket,
+          path: r.name,
+          createdAt: r.created_at,
+          sizeBytes: r.size === null ? null : Number(r.size),
+        });
+      }
+      if (found.length === page.limit || rows.length < page.limit) return found;
+      after = rows[rows.length - 1].name;
+    }
   }
 
   /** Rows whose object is absent from Storage's catalogue, in id order. */
@@ -104,9 +121,7 @@ export class StorageReconcileService {
     const rows = await this.prisma.$queryRaw<{ id: string; path: string }[]>`
       SELECT r.id::text AS id, r.path FROM (${OWNERS[bucket].rows}) r
       WHERE (${page.after ?? null}::uuid IS NULL OR r.id > ${page.after ?? null}::uuid)
-        AND NOT EXISTS (
-          SELECT 1 FROM storage.objects o WHERE o.bucket_id = ${bucket} AND o.name = r.path
-        )
+        AND NOT storage_catalogue_has(${bucket}, r.path)
       ORDER BY r.id
       LIMIT ${page.limit}`;
     return this.withRecords(

@@ -272,10 +272,20 @@ export const RUNTIME_COLUMN_UPDATES = Object.freeze({
   inventory_boundaries: ['decision', 'decided_by', 'decided_at', 'frozen_at'],
 });
 
-/** Privileges outside `public`, checked only where the schema exists. */
-export const RUNTIME_STORAGE_PRIVILEGES = Object.freeze({
-  'storage.objects': ['SELECT'],
-});
+/**
+ * The runtime role's way to Storage's catalogue (`storage.objects`): two
+ * SECURITY DEFINER functions in `public`, by signature as `oidvectortypes`
+ * prints it — `storage:reconcile`'s page of a bucket's keys and its "does the
+ * catalogue name this object". It holds no USAGE on `storage` itself (LP1-03
+ * granted it; `20261020120000_runtime_storage_readers` took it back):
+ * Supabase's own SECURITY DEFINER helpers there pin no search_path, so a
+ * caller's temporary type ran as Storage's owner. Checked only where
+ * `storage.objects` exists; the API's `CATALOGUE_READERS` lists the same.
+ */
+export const RUNTIME_CATALOGUE_READERS = Object.freeze([
+  'storage_catalogue_page(text, text, text, timestamp with time zone, integer)',
+  'storage_catalogue_has(text, text)',
+]);
 
 /**
  * The loader's table privileges (LP4-02): the factor library and nothing else
@@ -302,7 +312,8 @@ const RUNTIME_SPEC = Object.freeze({
   everyTableListed: true,
   columnInserts: RUNTIME_COLUMN_INSERTS,
   columnUpdates: RUNTIME_COLUMN_UPDATES,
-  outside: RUNTIME_STORAGE_PRIVILEGES,
+  outside: {},
+  definers: RUNTIME_CATALOGUE_READERS,
 });
 
 const FACTOR_LOADER_SPEC = Object.freeze({
@@ -314,6 +325,7 @@ const FACTOR_LOADER_SPEC = Object.freeze({
   columnInserts: {},
   columnUpdates: FACTOR_LOADER_COLUMN_UPDATES,
   outside: {},
+  definers: [],
 });
 
 /**
@@ -474,8 +486,33 @@ async function checkRole(query, spec) {
     }
   }
 
-  // Outside `public` and Storage's catalogue the role should reach nothing it
-  // was granted on its own; what every role inherits from PUBLIC is reported
+  // The definers in `public` the role calls (the runtime role's readers of
+  // Storage's catalogue): present, still SECURITY DEFINER, and its to EXECUTE
+  // — where the catalogue exists. Their path and owner are
+  // checkFunctionSearchPaths' and checkFunctionExecutors'. Looked up in the
+  // catalogues by name: `to_regclass('storage.objects')` needs the USAGE on
+  // `storage` the role no longer holds, and the check runs as the role too.
+  if (spec.definers.length > 0) {
+    const readers = await query(
+      `SELECT x.signature AS "signature", p.oid IS NOT NULL AS "present", COALESCE(p.prosecdef, false) AS "definer",
+              COALESCE(pg_catalog.has_function_privilege('${role}', p.oid, 'EXECUTE'), false) AS "executes"
+         FROM unnest(ARRAY[${sqlList(spec.definers)}]::text[]) AS x(signature)
+         LEFT JOIN pg_catalog.pg_proc p
+           ON p.pronamespace = 'public'::regnamespace
+          AND p.proname || '(' || pg_catalog.oidvectortypes(p.proargtypes) || ')' = x.signature
+        WHERE EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                       WHERE n.nspname = 'storage' AND c.relname = 'objects')
+        ORDER BY 1`,
+    );
+    for (const { signature, present, definer, executes } of readers) {
+      if (!present) problems.push(`public.${signature} is missing — ${role} reads Storage's catalogue through it`);
+      else if (!definer) problems.push(`public.${signature} is not SECURITY DEFINER — ${role}, which holds no USAGE on storage, cannot read through it`);
+      else if (!executes) problems.push(`${role} lacks EXECUTE on public.${signature}`);
+    }
+  }
+
+  // Outside `public` the role should reach nothing it was granted on its own
+  // — `storage` included; what every role inherits from PUBLIC is reported
   // by `runtimeRoleExposures` instead (the platform's grants, not ours).
   for (const row of await outsideReach(query, spec)) {
     if (!row.viaPublic) problems.push(`${role} was granted ${row.what}`);
@@ -490,10 +527,11 @@ const sqlList = (xs) => xs.map((x) => `'${x}'`).join(', ');
 
 /**
  * Everything the role can reach beyond its declared grants (the tables of
- * `public`, checked against RUNTIME_TABLE_PRIVILEGES, and
- * RUNTIME_STORAGE_PRIVILEGES): USAGE or CREATE on a schema; any privilege, table
- * or column level, on a relation of a schema it can use — in `public` the
- * relations that are not tables; EXECUTE on a SECURITY DEFINER function there.
+ * `public`, checked against RUNTIME_TABLE_PRIVILEGES, and the definers it
+ * calls, RUNTIME_CATALOGUE_READERS): USAGE or CREATE on a schema — `storage`
+ * like any other; any privilege, table or column level, on a relation of a
+ * schema it can use — in `public` the relations that are not tables; EXECUTE
+ * on a SECURITY DEFINER function there.
  * Each privilege is marked `viaPublic` only when PUBLIC itself holds THAT
  * privilege, so a grant this repository made cannot hide behind an unrelated
  * PUBLIC entry in the same ACL (`security-rls` round 2).
@@ -520,7 +558,7 @@ async function outsideReach(query, spec) {
     // `public` is checked above, as a problem whoever granted it.
     if (create_ && name !== 'public') out.push({ what: `CREATE on schema ${name}`, viaPublic: create_public });
     if (!usage) continue;
-    if (name !== 'public' && name !== 'storage') out.push({ what: `USAGE on schema ${name}`, viaPublic: usage_public });
+    if (name !== 'public') out.push({ what: `USAGE on schema ${name}`, viaPublic: usage_public });
     const kinds = name === 'public' ? ['v', 'm', 'S', 'f'] : ['r', 'p', 'v', 'm', 'S', 'f'];
     const reach = await query(
       `SELECT c.relname AS rel, x.priv, false AS column_level, has_table_privilege('public', c.oid, x.priv) AS via_public
@@ -552,12 +590,14 @@ async function outsideReach(query, spec) {
       });
     }
     const definers = await query(
-      `SELECT p.proname AS fn, has_function_privilege('public', p.oid, 'EXECUTE') AS via_public
+      `SELECT p.proname AS fn, p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS signature,
+              has_function_privilege('public', p.oid, 'EXECUTE') AS via_public
          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = '${name}' AND p.prosecdef AND has_function_privilege('${role}', p.oid, 'EXECUTE')
-        ORDER BY 1`,
+        ORDER BY 1, 2`,
     );
-    for (const { fn, via_public } of definers) {
+    for (const { fn, signature, via_public } of definers) {
+      if (name === 'public' && spec.definers.includes(signature)) continue;
       out.push({ what: `EXECUTE on SECURITY DEFINER ${name}.${fn}()`, viaPublic: via_public });
     }
   }
@@ -566,8 +606,8 @@ async function outsideReach(query, spec) {
 
 /**
  * What the runtime role can reach outside its own grants because PUBLIC holds
- * it — granted by the platform (Supabase's `pg_net` tables, Storage's helper
- * functions), not by this repository, and not revocable by the owner. Reported,
+ * it — granted by the platform (Supabase's `pg_net` tables), not by this
+ * repository, and not revocable by the owner. Reported,
  * not failed: in a deployed environment each line is a reason to disable the
  * extension or to have the platform revoke the grant.
  */
@@ -756,6 +796,8 @@ export const CLIENT_CALLABLE_FUNCTIONS = Object.freeze({});
  * into the library's record as the owner. No function there is meant for a
  * client (`clientCallable`, CLIENT_CALLABLE_FUNCTIONS by default): the policies
  * call only `auth.uid()`, and a trigger fires without its function's EXECUTE.
+ * The runtime role — no client: no client may act as it — runs its readers of
+ * Storage's catalogue (RUNTIME_CATALOGUE_READERS), and nothing else there.
  * A client role (CLIENT_ROLES) is held to more than its ACL entries. It may own
  * nothing an owner's power flows from — the database, the schema `public`, a
  * relation, a type or a function there (a type's owner may rename an enum's
@@ -830,6 +872,7 @@ export async function checkFunctionExecutors(query, clientCallable = CLIENT_CALL
     ),
     ...executors
       .filter((e) => !(Object.hasOwn(clientCallable, e.signature) && clientCallable[e.signature].includes(e.grantee)))
+      .filter((e) => !(e.grantee === RUNTIME_ROLE && !e.trigger && RUNTIME_CATALOGUE_READERS.includes(e.signature)))
       .map(
         (e) =>
           `${e.grantee} may EXECUTE public.${e.fn}(${e.args ?? ''}) — ${e.trigger ? 'attach it to a table of its own' : 'call it, through /rpc too'}; only its owner may`,
@@ -1125,6 +1168,98 @@ export async function checkFunctionSearchPaths(query) {
   return rows
     .filter((r) => JSON.stringify(r.config) !== JSON.stringify([FUNCTION_SEARCH_PATH]))
     .map((r) => `function public.${r.fn} is not pinned to ${FUNCTION_SEARCH_PATH} (config ${JSON.stringify(r.config)})`);
+}
+
+/**
+ * Every SECURITY DEFINER function either of our logins can set running pins
+ * its search_path with pg_temp listed last, wherever it lives and whoever
+ * granted the reach — PUBLIC included, which the owner cannot revoke: the
+ * remedy for a platform function is to take the reach away. One that pins
+ * none resolves a type name through the CALLER's path, where pg_temp comes
+ * first unless listed, so a temporary domain the login creates (TEMP is
+ * PUBLIC's) runs the login's own CHECK as the function's owner — Supabase's
+ * Storage helpers, while the runtime role held USAGE on `storage` (reproduced
+ * from a fresh runtime login; closed by `20261020120000_runtime_storage_readers`).
+ * "Set running" is calling it (USAGE on its schema and EXECUTE), writing a
+ * table one of its triggers guards (table or column level), or running DDL an
+ * enabled event trigger of it watches — creating a temporary object is DDL.
+ * `public`'s own functions are held tighter by checkFunctionSearchPaths
+ * (exactly `pg_catalog, pg_temp`, definer or invoker), which also covers what
+ * a cascade fires there. A platform function reviewed as resolving no name
+ * through the path passes while its body is the one reviewed
+ * (`reviewed`, REVIEWED_PLATFORM_DEFINERS by default).
+ */
+export async function checkReachableDefiners(query, reviewed = REVIEWED_PLATFORM_DEFINERS) {
+  const rows = await query(
+    `SELECT r.rolname AS "role", x.how AS "how", COALESCE(p.proconfig, '{}'::text[]) AS "config",
+            n.nspname || '.' || p.proname || '(' || pg_catalog.oidvectortypes(p.proargtypes) || ')' AS "fn",
+            pg_catalog.md5(p.prosrc) AS "body"
+       FROM pg_catalog.pg_roles r
+      CROSS JOIN LATERAL (
+            SELECT f.oid, 'calling it' AS how
+              FROM pg_catalog.pg_proc f
+             WHERE f.prosecdef
+               AND pg_catalog.has_schema_privilege(r.oid, f.pronamespace, 'USAGE')
+               AND pg_catalog.has_function_privilege(r.oid, f.oid, 'EXECUTE')
+            UNION
+            SELECT t.tgfoid, 'writing ' || cn.nspname || '.' || c.relname
+              FROM pg_catalog.pg_trigger t
+              JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+              JOIN pg_catalog.pg_namespace cn ON cn.oid = c.relnamespace
+             WHERE t.tgenabled <> 'D'
+               AND pg_catalog.has_schema_privilege(r.oid, c.relnamespace, 'USAGE')
+               AND (pg_catalog.has_table_privilege(r.oid, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')
+                    OR pg_catalog.has_any_column_privilege(r.oid, c.oid, 'INSERT, UPDATE'))
+            UNION
+            SELECT e.evtfoid, 'running DDL (event trigger ' || e.evtname || ')'
+              FROM pg_catalog.pg_event_trigger e
+             WHERE e.evtenabled <> 'D'
+           ) x
+       JOIN pg_catalog.pg_proc p ON p.oid = x.oid
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE r.rolname IN (${sqlList([RUNTIME_ROLE, FACTOR_LOADER_ROLE])}) AND p.prosecdef
+      ORDER BY 1, 4, 2`,
+  );
+  return rows
+    .filter((r) => !pinsPgTempLast(r.config ?? []))
+    .filter((r) => !(Object.hasOwn(reviewed, r.fn) && reviewed[r.fn] === r.body))
+    .map(
+      (r) =>
+        `${r.role} can run SECURITY DEFINER ${r.fn}, by ${r.how}, and it does not pin its search_path with pg_temp last (config ${JSON.stringify(r.config ?? [])}) — a temporary type of the caller's would run as its owner`,
+    );
+}
+
+/**
+ * Platform SECURITY DEFINER functions our logins can set running that pin no
+ * search_path, each reviewed: its body resolves no type or relation name
+ * through the caller's path. Keyed as checkReachableDefiners names a function,
+ * to the md5 of the body reviewed — a changed body (an extension upgrade) is
+ * unreviewed again, and fails.
+ */
+export const REVIEWED_PLATFORM_DEFINERS = Object.freeze({
+  // pg_graphql's schema-version bump, which its event triggers
+  // (`graphql_watch_ddl`, `graphql_watch_drop`) run as supabase_admin after
+  // every DDL statement — a login's temporary object included. Its body is one
+  // fully qualified `pg_catalog.nextval('graphql.seq_schema_version')`:
+  // nothing resolves through the path (2026-10-17; temporary domains over
+  // text, regclass, int8, bigint, name, oid, bool, boolean, int4 and integer
+  // did not run under it). An open question in the status file.
+  'graphql.increment_schema_version()': 'cf541948e5ba6c830440b810d5601e44',
+});
+
+/**
+ * Whether a function's settings pin a search_path that lists pg_temp once,
+ * last: PostgreSQL searches the first pg_temp it is given, so
+ * `pg_temp, pg_catalog, pg_temp` still puts it first.
+ */
+function pinsPgTempLast(config) {
+  const entry = config.findLast((c) => c.startsWith('search_path='));
+  if (!entry) return false;
+  const path = entry
+    .slice('search_path='.length)
+    .split(',')
+    .map((x) => x.trim().replace(/^"(.*)"$/, '$1'));
+  return path.indexOf('pg_temp') === path.length - 1;
 }
 
 /** The tables the integrity triggers guard: nothing else may hook into them. */
@@ -1435,6 +1570,7 @@ export async function checkAll(query) {
       ...(await checkTableLevelGrants(query)),
       ...(await checkFunctionExecutors(query)),
       ...(await checkFunctionSearchPaths(query)),
+      ...(await checkReachableDefiners(query)),
       ...(await checkIntegrityTriggers(query)),
       ...library.problems,
     ],
