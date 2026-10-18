@@ -78,11 +78,27 @@ class DatabaseImageTests(unittest.TestCase):
             '{"id":{{json .Id}},"os":{{json .Os}},"architecture":{{json .Architecture}}}'), self.calls)
 
     def test_non_ci_or_wrong_registry_refuses_before_any_command(self):
+        self.assertEqual(image.REGISTRY, 'ghcr.io')
         for key, value in [('CI', 'false'), ('GITHUB_ACTIONS', 'false'),
+                           ('SUPABASE_INTERNAL_IMAGE_REGISTRY', 'public.ecr.aws'),
+                           ('SUPABASE_INTERNAL_IMAGE_REGISTRY', 'docker.io'),
                            ('SUPABASE_INTERNAL_IMAGE_REGISTRY', 'unreviewed.invalid')]:
             with self.subTest(key=key), patch.dict(os.environ, {key: value}):
                 with self.assertRaises(ValueError): image.prepare(self.root)
         self.assertEqual(self.calls, [])
+
+    def test_failed_digest_pull_stops_without_tag_or_registry_fallback(self):
+        def fail_pull(*argv):
+            if argv[:2] == ('docker', 'pull'):
+                self.calls.append(argv)
+                raise image.QualificationFailure('immutable image pull failed')
+            return self.command(*argv)
+        with patch.object(image, 'command', side_effect=fail_pull):
+            with self.assertRaises(image.QualificationFailure): image.prepare(self.root)
+        pulls = [argv for argv in self.calls if argv[:2] == ('docker', 'pull')]
+        self.assertEqual(pulls, [('docker', 'pull', '--platform', 'linux/amd64',
+                                 'ghcr.io/' + self.policy['image'])])
+        self.assertFalse(any(argv[:2] == ('docker', 'tag') for argv in self.calls))
 
     def test_wrong_cli_existing_database_and_link_override_refuse_before_pull(self):
         self.cli_version = '0.0.0'
@@ -154,7 +170,8 @@ class DatabaseImageTests(unittest.TestCase):
             with self.assertRaises(ValueError): image.prepare(self.root)
             self.image_data = original
         self.assertFalse(any(argv[:2] == ('docker', 'tag') for argv in self.calls))
-        for field, bad in [('id', 'sha256:' + '0' * 64), ('reference', 'supabase/postgres:unreviewed'), ('running', False)]:
+        for field, bad in [('id', 'sha256:' + '0' * 64), ('reference', 'supabase/postgres:unreviewed'),
+                           ('reference', 'public.ecr.aws/' + self.policy['image_tag']), ('running', False)]:
             original = copy.deepcopy(self.container_data)
             self.container_data[field] = bad
             with self.assertRaises(ValueError): image.verify(self.root)

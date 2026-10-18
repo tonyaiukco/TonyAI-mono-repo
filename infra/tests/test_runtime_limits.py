@@ -97,7 +97,7 @@ class RuntimeLimitTests(unittest.TestCase):
         compose = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())
         self.assertGreaterEqual(int(compose['services']['api']['stop_grace_period'].removesuffix('s')) * 1000, DEFAULTS['SHUTDOWN_GRACE_MS'])
 
-    def test_images_keep_mirror_and_do_not_copy_the_builder_tree(self):
+    def test_images_keep_default_mirror_and_do_not_copy_the_builder_tree(self):
         api = (ROOT / 'apps/api/Dockerfile').read_text()
         self.assertNotIn('/app /app', api)
         self.assertIn('--prod --filter @tonyai/api... --ignore-scripts', api)
@@ -105,12 +105,14 @@ class RuntimeLimitTests(unittest.TestCase):
         self.assertIn('ENTRYPOINT ["/usr/bin/tini", "--"]', api)
         for file in ('api', 'web'):
             source = (ROOT / f'apps/{file}/Dockerfile').read_text()
+            self.assertIn('ARG NODE_IMAGE=public.ecr.aws/docker/library/node:22-bookworm-slim', source)
+            self.assertIn('FROM ${NODE_IMAGE} AS base', source)
             stages = set()
             for line in source.splitlines():
                 if not line.startswith('FROM '): continue
                 tokens = line.split()
                 base = tokens[1]
-                self.assertTrue(base.startswith('public.ecr.aws/docker/library/') or base in stages, line)
+                self.assertTrue((base == '${NODE_IMAGE}' and not stages) or base in stages, line)
                 if len(tokens) >= 4: stages.add(tokens[3])
 
 

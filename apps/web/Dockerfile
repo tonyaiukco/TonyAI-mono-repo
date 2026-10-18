@@ -7,10 +7,10 @@
 # the Supabase URL at RUNTIME via SUPABASE_URL_INTERNAL (needed in containers,
 # where the browser-facing localhost URL is unreachable from inside).
 
-# Docker Hub's official node image through its Amazon ECR Public mirror (the
-# same digest): anonymous pulls from shared CI runners hit Docker Hub's rate
-# limit (429) and failed the image build.
-FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS base
+# Owner candidate builds retain their existing ECR source. Disposable CI selects
+# the official Docker Hub image after registry login, without changing Node tags.
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node:22-bookworm-slim
+FROM ${NODE_IMAGE} AS base
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH
 RUN corepack enable
 
