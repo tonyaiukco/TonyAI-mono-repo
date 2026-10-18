@@ -394,7 +394,7 @@ without requiring removed platform helpers or enabling unused extensions in
 runtime startup.
 
 The CI action first pulls the reviewed digest and seeds the pinned CLI's cached
-default tag on `public.ecr.aws`; the index and amd64 manifest bytes match the
+default tag on `ghcr.io`; the index and amd64 manifest bytes match the
 qualified upstream image. It checks the running container's config digest and
 architecture before repository migration/seed. The guard refuses startup
 repository SQL paths, including `supabase/migrations` and `supabase/seed.sql`,

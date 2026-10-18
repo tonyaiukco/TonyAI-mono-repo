@@ -436,7 +436,7 @@ records the replacement CLI 2.121.0/Postgres 17.11.0.004 candidate, supautils
 [GHSA-vxh6-6m4g-c39q](https://github.com/supabase/supautils/security/advisories/GHSA-vxh6-6m4g-c39q) and
 [GHSA-xj9m-rx42-rfc7](https://github.com/supabase/supautils/security/advisories/GHSA-xj9m-rx42-rfc7).
 The earlier 3.4.0 candidate and its R2 packet are withdrawn. CI pulls the reviewed
-digest from ECR Public, refuses CLI startup repository SQL, and binds actual
+digest from GHCR, refuses CLI startup repository SQL, and binds actual
 database content before repository migrations. Final-SHA Integration/E2E and
 informed owner re-acceptance are required before a new R2 packet; complete
 QA-composition qualification remains a separate pre-bootstrap gate. The shared
@@ -446,6 +446,21 @@ The CI action supplies `TONYAI_TEST_PASSWORD` to the disposable seed, E2E,
 RLS probes and image smoke so the fixture meets the unchanged 12-character Auth
 minimum. Local demo defaults remain unchanged; updating them belongs to the
 shared stack's later owner-led upgrade. The override does not enable cloud seeding.
+
+CI authenticates public Supabase pulls to GHCR with the job's ephemeral
+`GITHUB_TOKEN` (`contents: read`, `packages: read`); no GHCR PAT is needed.
+The database digest, CLI pin, advisory floor and running-image checks remain
+unchanged. Official Node build images and the migration-diff PostgreSQL service
+use Docker Hub. Repository Actions secrets `DOCKERHUB_USERNAME` (Docker ID) and
+`DOCKERHUB_TOKEN` (a [public-read-only Docker PAT](https://docs.docker.com/security/access-tokens/personal-access-tokens/))
+are required for normal repository runs. The service uses credentials during job
+initialization, before any step; image builds log in before Buildx runs. Fork and
+Dependabot PRs still execute the full checks with anonymous Docker Hub pulls when
+secrets are withheld, and can encounter registry limits. Authentication is not
+an unlimited-pull guarantee. CI passes `NODE_IMAGE=docker.io/library/node:22-bookworm-slim`
+to both Dockerfiles; owner candidate builds retain the default ECR Public source.
+Documentation-only PRs continue to run the existing required jobs.
+
 Private immutable Sweden backup storage belongs to a separate future writer/apply
 packet, and any observed drift still fails closed. October 18 read-only
 reconciliation evidence is retained privately; a future packet needs current
@@ -992,7 +1007,8 @@ shared throttling and new qualification. API resources remain 1 CPU/2 GiB with a
 768 MiB Node heap and an image-level process reaper; Compose additionally caps
 PIDs. Chromium/native memory is covered by the container limit, not Node's heap.
 The API image retains compiled runtime/CLI code, generated Prisma and production
-dependencies; its base remains the ECR Public mirror.
+dependencies; its default base remains the ECR Public mirror (CI explicitly
+selects the official Docker Hub Node image after registry login).
 
 PR C still owns paginated reads/consumers, bounded history/anomaly/target paths
 and broader aggregate evidence payload protection. PR B's evidence-link budget
