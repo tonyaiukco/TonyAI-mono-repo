@@ -282,7 +282,10 @@ describe('the runtime role', () => {
 
 describe('the factor model is in force on this database (LP3-03)', () => {
   it('holds every integrity trigger, ENABLE ALWAYS, on its events, with its migration\'s function body; every key CHECK', async () => {
+    const [{ version }] = await runtime.$queryRaw<{ version: string }[]>`SELECT current_setting('server_version') AS version`;
+    expect(version).toMatch(/^17\./);
     expect(await checkIntegrityTriggers((sql: string) => runtime.$queryRawUnsafe(sql))).toEqual([]);
+    console.info(`Integrity catalog pins checked on PostgreSQL ${version}`);
   });
 
   it('leaves the table-level verbs (TRIGGER, TRUNCATE, REFERENCES, MAINTAIN) to the owners alone, now and by default', async () => {

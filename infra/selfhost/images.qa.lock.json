@@ -13,7 +13,7 @@
       "platform": "linux/amd64"
     },
     "db": {
-      "image": "supabase/postgres@sha256:617b62a16858dc8436c1ded1970fa13e33539feb4c98b580cf6274b46b2ab1ef",
+      "image": "supabase/postgres@sha256:e85bc10ac5b141223b289e1e8dc8d448cf3df92501917149db0366b9c5aaf053",
       "platform": "linux/amd64"
     },
     "functions": {

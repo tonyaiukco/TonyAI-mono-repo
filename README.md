@@ -429,16 +429,23 @@ streams stay private on success/failure; real-child lifetime tests cover this
 boundary. The attempt marker still forbids automatic retry. Runbook 10
 [defines the pre-R2 design freeze and new-packet procedure](infra/runbooks/10-qa-clean-replacement.md#q1-q3-design-freeze-and-r2-preparation):
 The [database image gate](infra/runbooks/10-qa-clean-replacement.md#database-image-qualification-before-r2)
-records the proposed CLI 2.115.0/database candidate and immutable provenance.
-CI binds actual database image content before migrations; candidate integration,
-QA-composition qualification and owner approval remain required. The shared
+records the replacement CLI 2.121.0/Postgres 17.11.0.004 candidate, supautils
+3.4.4 and immutable provenance. The minimum is now supautils 3.4.2 because of
+[GHSA-5pqj-rc76-r669](https://github.com/supabase/supautils/security/advisories/GHSA-5pqj-rc76-r669),
+[GHSA-v9vh-54vv-7vfg](https://github.com/supabase/supautils/security/advisories/GHSA-v9vh-54vv-7vfg),
+[GHSA-vxh6-6m4g-c39q](https://github.com/supabase/supautils/security/advisories/GHSA-vxh6-6m4g-c39q) and
+[GHSA-xj9m-rx42-rfc7](https://github.com/supabase/supautils/security/advisories/GHSA-xj9m-rx42-rfc7).
+The earlier 3.4.0 candidate and its R2 packet are withdrawn. CI pulls the reviewed
+digest from ECR Public, refuses CLI startup repository SQL, and binds actual
+database content before repository migrations. Final-SHA Integration/E2E and
+informed owner re-acceptance are required before a new R2 packet; complete
+QA-composition qualification remains a separate pre-bootstrap gate. The shared
 local CLI/stack is upgraded only by its owner. Runbook 05's reader pre-check
 follows #186 and does not restore runtime Storage grants.
 Private immutable Sweden backup storage belongs to a separate future writer/apply
-packet, and any observed drift still fails closed. October 18 read-only checks confirmed the old VM remains
-deallocated, containment and retained resources match, and the bound default
-state retains fifteen owned IDs at serial 11. This does not establish absence
-of drift. The owner declined QA VPN and deferred extra custody/recovery design
+packet, and any observed drift still fails closed. October 18 read-only
+reconciliation evidence is retained privately; a future packet needs current
+resource and state bindings. The owner declined QA VPN and deferred extra custody/recovery design
 decisions until production preparation; they do not block isolated R2 planning.
 Exact R2 inputs, image acceptance and saved-plan review still apply. Intrinsic
 custody must retain the first environment's byte binding. Separately approved R1 executed on 2026-10-15: the exact

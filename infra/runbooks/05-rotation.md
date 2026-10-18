@@ -199,6 +199,12 @@ loader is confined; review every exposure. Attach full stdout and stderr with th
 
 1. Its CHECK pins are md5 hashes of PostgreSQL 17 output. Confirm `SHOW
    server_version` is 17.x in the same session before relying on it.
+   For an image minor-version change (including 17.6 to 17.11), re-run the
+   unchanged integrity checker against the migrated candidate: all 57 CHECK
+   and three FK definition pins must still match. Record the observed server
+   version and exact source/image with the integration evidence. A static
+   deparser comparison does not replace this catalog check; do not repin a
+   mismatch without separate review.
 2. It reads its integrity-function bodies from the checkout's migrations. Run it
    only from the deployed SHA; any other checkout can report false drift or miss
    real drift.

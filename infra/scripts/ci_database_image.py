@@ -4,12 +4,20 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = ROOT / 'infra/selfhost/database-image-policy.json'
+REGISTRY = 'public.ecr.aws'
+
+
+def version(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', value):
+        raise ValueError('Expected a reviewed stable extension version.')
+    return tuple(int(part) for part in value.split('.'))
 
 
 def command(*argv):
@@ -22,14 +30,24 @@ def command(*argv):
 def context(root=ROOT):
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('CI') != 'true':
         raise ValueError('Only a disposable GitHub CI stack is supported.')
-    if os.environ.get('SUPABASE_INTERNAL_IMAGE_REGISTRY') != 'docker.io':
+    if os.environ.get('SUPABASE_INTERNAL_IMAGE_REGISTRY') != REGISTRY:
         raise ValueError('The reviewed source registry is required.')
     policy = json.loads((root / POLICY.relative_to(ROOT)).read_text())
+    if version(policy['minimum_supautils']) < (3, 4, 2) or version(policy['supautils']) < version(policy['minimum_supautils']):
+        raise ValueError('Database extension is below the reviewed advisory floor.')
     if command('supabase', '--version') != policy['cli_version']:
         raise ValueError('Unreviewed Supabase CLI version.')
     config = tomllib.loads((root / 'supabase/config.toml').read_text())
-    if config['db']['major_version'] != 17 or config.get('experimental', {}).get('orioledb_version'):
+    if (config['db']['major_version'] != 17 or config['db'].get('orioledb_version')
+            or config.get('experimental', {}).get('orioledb_version')):
         raise ValueError('Unreviewed database engine.')
+    # `start` runs user SQL before the post-start identity check. Upstream
+    # platform bootstrap is necessary, but repository SQL must wait for verify.
+    if (any(path.exists() or path.is_symlink() for path in
+            (root / 'supabase/migrations', root / 'supabase/seed.sql'))
+            or config['db'].get('migrations', {}).get('schema_paths', [])
+            or config['db'].get('seed', {}).get('sql_paths', ['./seed.sql']) not in ([], ['./seed.sql'])):
+        raise ValueError('Supabase startup repository SQL is not permitted before image verification.')
     # A linked project can override the embedded CLI image. CI must be unlinked.
     version_path = root / 'supabase/.temp/postgres-version'
     if ((version_path.exists() and version_path.read_text().strip() != policy['image_tag'].split(':')[1])
@@ -49,20 +67,22 @@ def prepare(root=ROOT):
     policy, container = context(root)
     if command('docker', 'ps', '-aq', '--filter', 'name=^/' + container + '$'):
         raise ValueError('CI must start a fresh disposable database.')
-    command('docker', 'pull', '--platform', policy['platform'], policy['image'])
-    verify_image(policy, policy['image'])
+    reference = REGISTRY + '/' + policy['image']
+    tag = REGISTRY + '/' + policy['image_tag']
+    command('docker', 'pull', '--platform', policy['platform'], reference)
+    verify_image(policy, reference)
     # The pinned CLI resolves cached images before pulling. Seed its embedded
     # default tag from the reviewed digest, then check the running image again.
     # Do not rely on the mutable tag or an unsupported version-file override.
-    command('docker', 'tag', policy['image'], policy['image_tag'])
-    verify_image(policy, policy['image_tag'])
+    command('docker', 'tag', reference, tag)
+    verify_image(policy, tag)
 
 
 def verify(root=ROOT):
     policy, container = context(root)
     metadata = json.loads(command('docker', 'container', 'inspect', container, '--format',
         '{"id":{{json .Image}},"reference":{{json .Config.Image}},"running":{{json .State.Running}}}'))
-    if metadata != {'id': policy['config_digest'], 'reference': policy['image_tag'], 'running': True}:
+    if metadata != {'id': policy['config_digest'], 'reference': REGISTRY + '/' + policy['image_tag'], 'running': True}:
         raise ValueError('Running database differs from the reviewed image.')
     verify_image(policy, metadata['id'])
 

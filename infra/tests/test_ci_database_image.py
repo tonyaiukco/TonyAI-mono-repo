@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -27,11 +28,12 @@ class DatabaseImageTests(unittest.TestCase):
         (self.root / 'supabase/config.toml').write_text('project_id = "fixture"\n[db]\nmajor_version = 17\n')
         self.calls = []
         self.image_data = {'id': self.policy['config_digest'], 'os': 'linux', 'architecture': 'amd64'}
-        self.container_data = {'id': self.policy['config_digest'], 'reference': self.policy['image_tag'], 'running': True}
+        self.container_data = {'id': self.policy['config_digest'], 'reference': image.REGISTRY + '/' + self.policy['image_tag'], 'running': True}
         self.cli_version = self.policy['cli_version']
         self.existing = ''
         env = patch.dict(os.environ, {'CI': 'true', 'GITHUB_ACTIONS': 'true',
-                                     'SUPABASE_INTERNAL_IMAGE_REGISTRY': 'docker.io'}, clear=True)
+                                     'PATH': os.environ.get('PATH', ''),
+                                     'SUPABASE_INTERNAL_IMAGE_REGISTRY': image.REGISTRY}, clear=True)
         env.start(); self.addCleanup(env.stop)
         stub = patch.object(image, 'command', side_effect=self.command)
         stub.start(); self.addCleanup(stub.stop)
@@ -53,8 +55,8 @@ class DatabaseImageTests(unittest.TestCase):
 
     def test_pull_exact_digest_before_tag_and_verify_running_content(self):
         image.prepare(self.root)
-        pull = ('docker', 'pull', '--platform', 'linux/amd64', self.policy['image'])
-        tag = ('docker', 'tag', self.policy['image'], self.policy['image_tag'])
+        pull = ('docker', 'pull', '--platform', 'linux/amd64', image.REGISTRY + '/' + self.policy['image'])
+        tag = ('docker', 'tag', image.REGISTRY + '/' + self.policy['image'], image.REGISTRY + '/' + self.policy['image_tag'])
         self.assertLess(self.calls.index(pull), self.calls.index(tag))
         image.verify(self.root)
         self.assertIn(('docker', 'image', 'inspect', self.policy['config_digest'], '--format',
@@ -81,6 +83,55 @@ class DatabaseImageTests(unittest.TestCase):
             path.unlink()
         self.assertFalse(any(argv[:2] == ('docker', 'pull') for argv in self.calls))
 
+    def test_advisory_floor_cannot_be_downgraded_or_bypassed(self):
+        for minimum, actual in [('3.2.3', '3.4.4'), ('3.4.2', '3.4.0'),
+                                ('3.4.2', '3.4.2-rc1'), ('bad', '3.4.4')]:
+            policy = {**self.policy, 'minimum_supautils': minimum, 'supautils': actual}
+            (self.root / image.POLICY.relative_to(ROOT)).write_text(json.dumps(policy))
+            with self.subTest(minimum=minimum, actual=actual), self.assertRaises(ValueError):
+                image.prepare(self.root)
+        self.assertEqual(self.calls, [])
+
+    def test_engine_overrides_refuse_before_pull(self):
+        for config in ('[db]\nmajor_version = 16\n',
+                       '[db]\nmajor_version = 17\norioledb_version = "17"\n',
+                       '[db]\nmajor_version = 17\n[experimental]\norioledb_version = "17"\n'):
+            (self.root / 'supabase/config.toml').write_text('project_id = "fixture"\n' + config)
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                image.prepare(self.root)
+        self.assertFalse(any(argv[:2] == ('docker', 'pull') for argv in self.calls))
+
+    def test_startup_repository_sql_refuses_before_pull(self):
+        migrations = self.root / 'supabase/migrations'
+        migrations.mkdir()
+        with self.assertRaises(ValueError): image.prepare(self.root)
+        migrations.rmdir()
+        seed = self.root / 'supabase/seed.sql'
+        seed.write_text('SELECT 1;')
+        with self.assertRaises(ValueError): image.prepare(self.root)
+        seed.unlink()
+        seed.symlink_to('missing.sql')
+        with self.assertRaises(ValueError): image.prepare(self.root)
+        seed.unlink()
+        for paths in ('[db.seed]\nsql_paths = ["./seeds/*.sql"]\n',
+                      '[db.migrations]\nschema_paths = ["./schemas/*.sql"]\n'):
+            (self.root / 'supabase/config.toml').write_text('project_id = "fixture"\n[db]\nmajor_version = 17\n' + paths)
+            with self.subTest(paths=paths), self.assertRaises(ValueError):
+                image.prepare(self.root)
+        self.assertFalse(any(argv[:2] == ('docker', 'pull') for argv in self.calls))
+
+    def test_policy_records_advisories_and_production_reviewed_body(self):
+        self.assertGreaterEqual(image.version(self.policy['minimum_supautils']), (3, 4, 2))
+        self.assertGreaterEqual(image.version(self.policy['supautils']), image.version(self.policy['minimum_supautils']))
+        self.assertEqual(set(self.policy['security_advisories']), {
+            'GHSA-5pqj-rc76-r669', 'GHSA-v9vh-54vv-7vfg',
+            'GHSA-vxh6-6m4g-c39q', 'GHSA-xj9m-rx42-rfc7'})
+        module = (ROOT / 'packages/db/scripts/runtime-role.mjs').as_uri()
+        reviewed = json.loads(subprocess.check_output(['node', '--input-type=module', '-e',
+            'import { REVIEWED_PLATFORM_DEFINERS } from ' + json.dumps(module) + ';'
+            'console.log(JSON.stringify(REVIEWED_PLATFORM_DEFINERS));'], text=True))
+        self.assertEqual(self.policy['reviewed_graphql_body_md5'], reviewed['graphql.increment_schema_version()'])
+
     def test_wrong_pulled_image_refuses_tag_and_wrong_running_identity_refuses(self):
         for field, bad in [('id', 'sha256:' + '0' * 64), ('os', 'windows'), ('architecture', 'arm64')]:
             original = copy.deepcopy(self.image_data)
@@ -104,7 +155,7 @@ class DatabaseImageTests(unittest.TestCase):
         migrate = next(i for i,s in enumerate(steps) if 'pnpm --filter @tonyai/db run deploy' in s.get('run', ''))
         self.assertLess(prepare, start); self.assertLess(start, verify); self.assertLess(verify, migrate)
         for index in (prepare, start, verify):
-            self.assertEqual(steps[index]['env']['SUPABASE_INTERNAL_IMAGE_REGISTRY'], 'docker.io')
+            self.assertEqual(steps[index]['env']['SUPABASE_INTERNAL_IMAGE_REGISTRY'], image.REGISTRY)
 
     def test_candidate_qa_lock_and_ci_trigger_coverage(self):
         lock = json.loads((ROOT / 'infra/selfhost/images.qa.lock.json').read_text())
