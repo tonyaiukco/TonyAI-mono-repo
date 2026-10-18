@@ -15,6 +15,19 @@ sys.path.insert(0, str(ROOT / 'infra/scripts'))
 import ci_database_image as image
 
 
+class CommandDiagnosticsTests(unittest.TestCase):
+    def test_command_failure_reports_only_fixed_stage_and_reason(self):
+        for stderr, reason in [('private-output', 'command refused'),
+                               ('private-output: Data limit exceeded', 'registry request limit')]:
+            result = subprocess.CompletedProcess([], 1, 'private-stdout', stderr)
+            with patch.object(image.subprocess, 'run', return_value=result):
+                with self.assertRaises(image.QualificationFailure) as raised:
+                    image.command('docker', 'pull', 'private-reference')
+            self.assertEqual(str(raised.exception),
+                             f'immutable image pull failed ({reason}); diagnostics withheld.')
+            self.assertNotIn('private', str(raised.exception))
+
+
 class DatabaseImageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
