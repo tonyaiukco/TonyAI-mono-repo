@@ -51,8 +51,11 @@ The separately approved R1 packet executed on 2026-10-15: one NSG update,
 SIGTERM-only stop of ten bound containers, then old VM deallocation. Exact ARM
 readback and nine fresh external TCP timeouts support the bounded operation;
 retained disk/NIC/IP/vault/lock metadata and all fifteen state resource IDs are
-unchanged. Private/VNet probing remains open. Old QA is unavailable; R2–R4,
-credential rejection, database integrity and PD-3 closure are not established.
+unchanged. R2 subsequently created isolated replacement infrastructure on
+2026-10-18, with accepted control-plane readback; consumed packet-02 must never
+be replayed or regenerated. Private/VNet probing remains open. Old QA is
+unavailable; R3/R4, credential rejection, database integrity and PD-3 closure
+are not established.
 Bootstrap qualification and full trust acceptance remain deployment gates; do
 not invoke the legacy selfhost apply path as a clean rebuild. Runbook 10 lists
 the private input and approval boundaries and the probes' incomplete coverage.
@@ -159,3 +162,9 @@ bounded DB connectivity and both private Storage buckets. `/health/synthetic`
 requires a real authenticated profile. Full lifecycle acceptance remains owner-run. The included CA under
 `infra/certs/` remains in the API Docker context; other infra files and all
 Terraform/owner artifacts are excluded.
+
+R3 preparation uses `r3_artifacts.py`, `r3_transfer.py`, `r3_toolchain.py` and
+`r3_install.py` for pinned offline inputs and a separately approved toolchain
+stage, plus `r3-qualification.yml` for the agreed fresh GitHub Ubuntu 24.04 amd64
+composition target. No preparation command grants cloud or bootstrap authority;
+[runbook 10](runbooks/10-qa-clean-replacement.md#accepted-r2-and-bounded-r3-preparation-2026-10-18) lists the outstanding proof and approval gates.

@@ -1,0 +1,66 @@
+name: R3 disposable composition
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact reviewed 40-character source commit (must equal dispatch ref)
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  composition:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      DOCKER_CONFIG: ${{ runner.temp }}/r3-docker-config
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Bind the selected disposable run to reviewed source
+        env:
+          REVIEWED_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$REVIEWED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$REVIEWED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22.23.3
+          package-manager-cache: false
+      - name: Authenticate public Docker Hub pulls using the existing read-only credentials
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Exact QA composition on fresh disposable storage
+        run: |
+          sudo --preserve-env=PATH,DOCKER_CONFIG,GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS,RUNNER_ARCH \
+            python3 infra/scripts/r3_qualification.py "$RUNNER_TEMP/r3-qualification"
+      - name: Publish status-only smoke report
+        run: sudo cat "$RUNNER_TEMP/r3-qualification/summary.json" >> "$GITHUB_STEP_SUMMARY"
+      # No credentials, runtime directories, Docker logs or rendered Compose
+      # configuration are uploaded. The entire runner is discarded after the job.
+  package-provenance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Bind public artifact verification to reviewed source
+        env:
+          REVIEWED_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$REVIEWED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$REVIEWED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+      - name: Verify signatures and package control metadata without installing
+        env:
+          R3_BUNDLE: ${{ runner.temp }}/r3-public-artifacts
+        run: |
+          python3 infra/scripts/r3_artifacts.py stage "$R3_BUNDLE"
+          PYTHONPATH=infra/scripts python3 -c 'import os; from r3_toolchain import verify_toolchain; verify_toolchain(os.environ["R3_BUNDLE"]); print("PASS: signed package provenance and metadata; no installation")'
+      # No installer invocation: hosted runner dependencies differ from the r02 OS.

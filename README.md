@@ -427,7 +427,7 @@ and exclusive mode-0600 diagnostic files opened before Terraform starts, so
 wrapper death or terminal closure cannot sever its diagnostic streams. Both
 streams stay private on success/failure; real-child lifetime tests cover this
 boundary. The attempt marker still forbids automatic retry. Runbook 10
-[defines the pre-R2 design freeze and new-packet procedure](infra/runbooks/10-qa-clean-replacement.md#q1-q3-design-freeze-and-r2-preparation):
+[retains the historical pre-R2 design freeze](infra/runbooks/10-qa-clean-replacement.md#q1-q3-design-freeze-and-r2-preparation):
 The [database image gate](infra/runbooks/10-qa-clean-replacement.md#database-image-qualification-before-r2)
 records the replacement CLI 2.121.0/Postgres 17.11.0.004 candidate, supautils
 3.4.4 and immutable provenance. The minimum is now supautils 3.4.2 because of
@@ -435,11 +435,12 @@ records the replacement CLI 2.121.0/Postgres 17.11.0.004 candidate, supautils
 [GHSA-v9vh-54vv-7vfg](https://github.com/supabase/supautils/security/advisories/GHSA-v9vh-54vv-7vfg),
 [GHSA-vxh6-6m4g-c39q](https://github.com/supabase/supautils/security/advisories/GHSA-vxh6-6m4g-c39q) and
 [GHSA-xj9m-rx42-rfc7](https://github.com/supabase/supautils/security/advisories/GHSA-xj9m-rx42-rfc7).
-The earlier 3.4.0 candidate and its R2 packet are withdrawn. CI pulls the reviewed
+The earlier 3.4.0 candidate and packet-01 are withdrawn; the replacement candidate was owner-accepted for #187 and consumed packet-02. CI pulls the reviewed
 digest from GHCR, refuses CLI startup repository SQL, and binds actual
-database content before repository migrations. Final-SHA Integration/E2E and
-informed owner re-acceptance are required before a new R2 packet; complete
-QA-composition qualification remains a separate pre-bootstrap gate. The shared
+database content before repository migrations. Final-SHA Integration/E2E and informed owner acceptance accompanied #187.
+Packet-02 completed R2 once on 2026-10-18 (ten creates, one VNet append, zero
+destroys), with accepted control-plane readback; never replay or regenerate it.
+Complete QA-composition qualification remains a separate pre-bootstrap gate. The shared
 local CLI/stack is upgraded only by its owner. Runbook 05's reader pre-check
 follows #186 and does not restore runtime Storage grants.
 The CI action supplies `TONYAI_TEST_PASSWORD` to the disposable seed, E2E,
@@ -465,8 +466,8 @@ Private immutable Sweden backup storage belongs to a separate future writer/appl
 packet, and any observed drift still fails closed. October 18 read-only
 reconciliation evidence is retained privately; a future packet needs current
 resource and state bindings. The owner declined QA VPN and deferred extra custody/recovery design
-decisions until production preparation; they do not block isolated R2 planning.
-Exact R2 inputs, image acceptance and saved-plan review still apply. Intrinsic
+decisions until production preparation; retain them as open follow-ups.
+R3 has its own source, target, qualification and approval gates. Intrinsic
 custody must retain the first environment's byte binding. Separately approved R1 executed on 2026-10-15: the exact
 containment NSG plan was applied, ten bound containers exited after SIGTERM,
 and the retained old VM was deallocated. ARM readback confirmed unchanged disk,
@@ -474,10 +475,20 @@ NIC, IP, vault and lock metadata; nine fresh external TCP probes timed out.
 Those probes ran from the operator /32: port-22 timeouts support deallocation,
 not NSG denial of that permitted source.
 The same state retained all fifteen resource IDs (serial 10 to 11). Private/VNet
-probing, replacement name availability, bootstrap qualification and the complete
-acceptance matrix remain open. Old QA is unavailable; no replacement was created.
+probing, bootstrap qualification and the complete acceptance matrix remain open.
+R2 created isolated replacement infrastructure; old QA is unavailable and the new
+host is not bootstrapped. No application deployment or QA readiness is claimed.
 PD-3 remains OPEN. Follow runbook 10's separate R1–R4
 packages; the legacy selfhost apply command must not perform this replacement.
+
+Bounded R3 preparation now includes pinned public artifact staging, a local
+transfer archive, signature/package verification and a separately approved
+offline toolchain installer that leaves services persistently masked. A manual
+GitHub Ubuntu 24.04 amd64 workflow prepares exact QA-composition smoke on the
+owner-selected disposable target. Its source/dispatch, full private regression,
+Realtime consumer proof, offline transfer/install qualification and live
+host/custody acceptance remain gates. See [runbook 10](infra/runbooks/10-qa-clean-replacement.md#accepted-r2-and-bounded-r3-preparation-2026-10-18).
+Local preparation authorizes no SSH transfer, bootstrap, network change or R4 activation.
 
 LP4-01's [Auth and SMTP handoff](infra/runbooks/03-deploy.md#35-api-smtp-parameters-lp4-01-production-preparation-for-lp2-04)
 aligns hosted Auth with the local lifecycle policy (12-character passwords,
