@@ -11,7 +11,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = ROOT / 'infra/selfhost/database-image-policy.json'
-REGISTRY = 'public.ecr.aws'
+REGISTRY = 'ghcr.io'
 
 
 class QualificationFailure(ValueError):

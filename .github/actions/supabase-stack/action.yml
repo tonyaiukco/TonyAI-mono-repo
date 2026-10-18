@@ -20,6 +20,13 @@ runs:
       with:
         version: ${{ inputs.cli-version }}
 
+    - name: Log in to GHCR for public Supabase images
+      uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
     # `studio`, `mailpit` and `realtime` are developer conveniences; `supavisor`
     # is the connection pooler, disabled in config.toml anyway; `edge-runtime`
     # serves functions this project has none of. Everything the probes and the
@@ -27,19 +34,19 @@ runs:
     - name: Prepare the reviewed database image
       shell: bash
       env:
-        SUPABASE_INTERNAL_IMAGE_REGISTRY: public.ecr.aws
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
       run: python3 infra/scripts/ci_database_image.py prepare
 
     - name: Start Supabase
       shell: bash
       env:
-        SUPABASE_INTERNAL_IMAGE_REGISTRY: public.ecr.aws
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
       run: supabase start -x studio,mailpit,realtime,edge-runtime,supavisor
 
     - name: Verify the running database image before migrations
       shell: bash
       env:
-        SUPABASE_INTERNAL_IMAGE_REGISTRY: public.ecr.aws
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
       run: python3 infra/scripts/ci_database_image.py verify
 
     # Derived, never hardcoded. The local keys ARE well-known demo values (so no

@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -65,6 +68,9 @@ jobs:
   # nightly instead, in `e2e.yml`.
   rls-probe:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v5
 
@@ -94,8 +100,20 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v5
+      # Fork and Dependabot PRs have no repository secrets; they still build
+      # and smoke-test the same public images using anonymous Docker Hub pulls.
+      - name: Log in to Docker Hub
+        if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v5
         with:
@@ -113,6 +131,7 @@ jobs:
           load: true
           tags: tonyai-api:ci
           platforms: linux/amd64
+          build-args: NODE_IMAGE=docker.io/library/node:22-bookworm-slim
           cache-from: type=gha,scope=api
           cache-to: type=gha,scope=api,mode=max
       - name: Build and load environment-bound web image
@@ -124,6 +143,7 @@ jobs:
           tags: tonyai-web:ci
           platforms: linux/amd64
           build-args: |
+            NODE_IMAGE=docker.io/library/node:22-bookworm-slim
             NEXT_PUBLIC_SUPABASE_URL=${{ env.NEXT_PUBLIC_SUPABASE_URL }}
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
             NEXT_PUBLIC_API_BASE_URL=${{ env.NEXT_PUBLIC_API_BASE_URL }}
@@ -139,10 +159,12 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        # Docker Hub's official image through its Amazon ECR Public mirror (the
-        # same digest): anonymous pulls from shared runners hit Docker Hub's
-        # rate limit (429) and failed this job before any check ran.
-        image: public.ecr.aws/docker/library/postgres:17
+        # Service images are pulled before steps, so authentication belongs here.
+        # Withheld fork/Dependabot secrets select anonymous public pulls.
+        image: docker.io/library/postgres:17
+        credentials:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
         env:
           POSTGRES_PASSWORD: ci-only
           POSTGRES_DB: tonyai_shadow
@@ -156,6 +178,16 @@ jobs:
       MIGRATION_SHADOW_URL: postgresql://postgres:ci-only@127.0.0.1:5432/tonyai_shadow
     steps:
       - uses: actions/checkout@v5
+      - name: Require Docker Hub credentials for repository runs
+        if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::Set both DOCKERHUB_USERNAME and a public-read-only DOCKERHUB_TOKEN in Actions repository secrets."
+            exit 1
+          fi
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v5
         with:

@@ -7,10 +7,10 @@
 # ~400 MB smaller than Puppeteer's bundled Chrome and it exists for linux/arm64,
 # so local Apple-Silicon builds work natively.
 
-# Docker Hub's official node image through its Amazon ECR Public mirror (the
-# same digest): anonymous pulls from shared CI runners hit Docker Hub's rate
-# limit (429) and failed the image build.
-FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS base
+# Owner candidate builds retain their existing ECR source. Disposable CI selects
+# the official Docker Hub image after registry login, without changing Node tags.
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node:22-bookworm-slim
+FROM ${NODE_IMAGE} AS base
 RUN apt-get update && apt-get install -y --no-install-recommends \
       openssl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
