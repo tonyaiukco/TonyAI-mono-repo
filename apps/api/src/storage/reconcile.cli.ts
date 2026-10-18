@@ -38,8 +38,9 @@
  * orphans), then `--verify`, and lift the hold only after reading the report.
  *
  * Refuses to run at all under a database role that cannot see every row of
- * evidence, import_batches and storage.objects: its "orphans" would be every
- * object, and its "missing" every row.
+ * evidence and import_batches, or whose readers of storage.objects do not see
+ * every object: its "orphans" would be every object, and its "missing" every
+ * row.
  *
  * In the API image: `node dist/storage/reconcile.cli.js [flags]`.
  */

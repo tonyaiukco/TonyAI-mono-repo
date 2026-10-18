@@ -14,6 +14,9 @@ import {
   FUNCTION_SEARCH_PATH,
   expectedFunctionConfig,
   checkFunctionSearchPaths,
+  checkReachableDefiners,
+  REVIEWED_PLATFORM_DEFINERS,
+  RUNTIME_CATALOGUE_READERS,
   INTEGRITY_HELPERS,
   INTEGRITY_TRIGGERS,
   RECORD_FOREIGN_KEYS,
@@ -133,6 +136,58 @@ describe('checkFunctionSearchPaths (LP3-04 PR C)', () => {
 
   it('finds nothing when every function is pinned', async () => {
     expect(await checkFunctionSearchPaths(async () => [{ fn: 'f()', config: [FUNCTION_SEARCH_PATH] }])).toEqual([]);
+  });
+});
+
+describe("checkReachableDefiners — a definer our logins can set running pins pg_temp last (Storage's helpers)", () => {
+  const row = (fn, how, config, body = 'x') => ({ role: RUNTIME_ROLE, fn, how, config, body });
+
+  it('names an unpinned or pg_temp-first definer either login can reach — and passes one pinned with pg_temp last', async () => {
+    const rows = [
+      row('storage.add_prefixes(text, text)', 'calling it', []),
+      { ...row('net.http_get(text)', 'calling it', ['search_path=net']), role: FACTOR_LOADER_ROLE },
+      row('x.empty()', 'writing x.t', ['search_path=""']),
+      row('x.first()', 'calling it', ['search_path=pg_temp, pg_catalog']),
+      row('x.quoted()', 'calling it', ['search_path="pg_catalog", "pg_temp"']),
+      row('public.report_datasets_guard()', 'writing public.report_datasets', [FUNCTION_SEARCH_PATH]),
+      row('x.later()', 'calling it', ['search_path=pg_temp', 'search_path=pg_catalog, x, pg_temp']),
+      row('x.twice()', 'calling it', ['search_path=pg_temp, pg_catalog, pg_temp']),
+    ];
+    const tail = "— a temporary type of the caller's would run as its owner";
+    expect(await checkReachableDefiners(async () => rows, {})).toEqual([
+      `${RUNTIME_ROLE} can run SECURITY DEFINER storage.add_prefixes(text, text), by calling it, and it does not pin its search_path with pg_temp last (config []) ${tail}`,
+      `${FACTOR_LOADER_ROLE} can run SECURITY DEFINER net.http_get(text), by calling it, and it does not pin its search_path with pg_temp last (config ["search_path=net"]) ${tail}`,
+      `${RUNTIME_ROLE} can run SECURITY DEFINER x.empty(), by writing x.t, and it does not pin its search_path with pg_temp last (config ["search_path=\\"\\""]) ${tail}`,
+      `${RUNTIME_ROLE} can run SECURITY DEFINER x.first(), by calling it, and it does not pin its search_path with pg_temp last (config ["search_path=pg_temp, pg_catalog"]) ${tail}`,
+      // PostgreSQL searches the first pg_temp it is given.
+      `${RUNTIME_ROLE} can run SECURITY DEFINER x.twice(), by calling it, and it does not pin its search_path with pg_temp last (config ["search_path=pg_temp, pg_catalog, pg_temp"]) ${tail}`,
+    ]);
+  });
+
+  it('passes a reviewed platform definer while its body is the one reviewed — a changed body is unreviewed again', async () => {
+    const fn = 'graphql.increment_schema_version()';
+    expect(REVIEWED_PLATFORM_DEFINERS[fn]).toMatch(/^[0-9a-f]{32}$/);
+    expect(Object.isFrozen(REVIEWED_PLATFORM_DEFINERS)).toBe(true);
+    const reached = (body) => async () => [row(fn, 'running DDL (event trigger graphql_watch_ddl)', [], body)];
+    expect(await checkReachableDefiners(reached(REVIEWED_PLATFORM_DEFINERS[fn]))).toEqual([]);
+    expect(await checkReachableDefiners(reached('0'.repeat(32)))).toHaveLength(1);
+    expect(await checkReachableDefiners(reached(REVIEWED_PLATFORM_DEFINERS[fn]), {})).toHaveLength(1);
+  });
+
+  it('asks about both logins, every way a definer runs — a call, a write a trigger answers, DDL an event trigger watches — and its body', async () => {
+    const seen = [];
+    await checkReachableDefiners(async (sql) => (seen.push(sql), []));
+    expect(seen).toHaveLength(1);
+    for (const fragment of [
+      `r.rolname IN ('${RUNTIME_ROLE}', '${FACTOR_LOADER_ROLE}') AND p.prosecdef`,
+      "pg_catalog.has_function_privilege(r.oid, f.oid, 'EXECUTE')",
+      "pg_catalog.has_table_privilege(r.oid, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')",
+      "pg_catalog.has_any_column_privilege(r.oid, c.oid, 'INSERT, UPDATE')",
+      'FROM pg_catalog.pg_event_trigger e',
+      'pg_catalog.md5(p.prosrc) AS "body"',
+    ]) {
+      expect(seen[0]).toContain(fragment);
+    }
   });
 });
 
@@ -640,6 +695,33 @@ describe('checkFunctionExecutors — only the owner may EXECUTE a function in pu
       'anon may EXECUTE public.some_rpc(p_id uuid) — call it, through /rpc too; only its owner may',
       'authenticated may EXECUTE public.some_rpc(p_name text) — call it, through /rpc too; only its owner may',
     ]);
+    // The runtime role runs its two readers of Storage's catalogue, by
+    // signature — not an overload, not another role, not as a trigger.
+    expect(RUNTIME_CATALOGUE_READERS).toEqual([
+      'storage_catalogue_page(text, text, text, timestamp with time zone, integer)',
+      'storage_catalogue_has(text, text)',
+    ]);
+    const reader = (signature, grantee, trigger = false) => ({
+      fn: signature.slice(0, signature.indexOf('(')), args: '', signature, trigger, grantee,
+    });
+    expect(
+      await checkFunctionExecutors(
+        fake(
+          [
+            reader('storage_catalogue_has(text, text)', RUNTIME_ROLE),
+            reader('storage_catalogue_page(text, text, text, timestamp with time zone, integer)', RUNTIME_ROLE),
+            reader('storage_catalogue_has(text, text)', 'service_role'),
+            reader('storage_catalogue_has(text)', RUNTIME_ROLE),
+            reader('storage_catalogue_has(text, text)', RUNTIME_ROLE, true),
+          ],
+          [],
+        ),
+      ),
+    ).toEqual([
+      'service_role may EXECUTE public.storage_catalogue_has() — call it, through /rpc too; only its owner may',
+      `${RUNTIME_ROLE} may EXECUTE public.storage_catalogue_has() — call it, through /rpc too; only its owner may`,
+      `${RUNTIME_ROLE} may EXECUTE public.storage_catalogue_has() — attach it to a table of its own; only its owner may`,
+    ]);
     // The signature the allowlist is keyed by is the one the query builds.
     const seen = [];
     await checkFunctionExecutors(async (sql) => (seen.push(sql), []));
@@ -965,6 +1047,7 @@ describe('checkAll — the one list `runtime-role.mjs check` runs', () => {
       ['checkTenantInvariants', 'FROM user_subsidiary_access usa'],
       ['checkTableLevelGrants', "('TRIGGER', 'TRUNCATE', 'REFERENCES', 'MAINTAIN')"],
       ['checkFunctionExecutors', 'AS "signature"'],
+      ['checkReachableDefiners', 'FROM pg_catalog.pg_event_trigger e'],
       ['checkIntegrityTriggers', 't.tginitdeferred AS "initiallyDeferred"'],
       ['factorLibraryReport', 'FROM factor_releases WHERE sealed_at IS NULL'],
       ['platformDefaultPrivileges', 'pg_default_acl'],

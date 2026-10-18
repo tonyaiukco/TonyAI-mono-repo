@@ -114,7 +114,12 @@ cross-organisation grant) and, if it has routes, to `apps/api/test/int/tenant-is
   an owner-run statement or an FK cascade fires (LP3-04 PR C: the factor event recorders' invoker SQL helper
   ran the loader's domain as postgres). `runtime-role.mjs` (`checkFunctionSearchPaths`) holds every function
   in `public` to the path. Probe from a FRESH session as the real login: PL/pgSQL resolves types once per
-  session, at the first call.
+  session, at the first call. **Outside `public` the platform's definers are not ours to pin**, so our logins
+  must not reach them: grant no USAGE on a Supabase schema (`storage`, `auth`, `graphql`, …) — read what you
+  need through a pinned definer in `public` instead, as `storage_catalogue_page`/`_has` read Storage's
+  catalogue — and `checkReachableDefiners` fails on any SECURITY DEFINER the runtime or loader login can call,
+  fire by a write, or fire by DDL (an event trigger) that does not pin `pg_temp` last. Grant roles to a login by
+  its name in probes (Open questions, "Supabase's own definers and the runtime and loader logins" (1)).
 - **Fingerprinted JSON goes in a `text` column, not `jsonb`:** Prisma rounds a double to 16 significant
   digits on a jsonb write (and jsonb reorders keys), so a hash recomputed from the stored value would not
   match. Keep small, guard-checked jsonb copies (a `context`) for SQL filters only.

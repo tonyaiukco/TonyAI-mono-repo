@@ -1288,7 +1288,7 @@ async function main() {
     const { PrismaClient } = req('../packages/db/generated/client');
     const {
       checkRuntimeRole, checkFactorLoaderRole, checkLibraryWriters, checkTenantInvariants, checkTableLevelGrants, checkFunctionExecutors,
-      checkIntegrityTriggers, factorLibraryReport, platformDefaultPrivileges, runtimeRoleExposures,
+      checkIntegrityTriggers, checkReachableDefiners, factorLibraryReport, platformDefaultPrivileges, runtimeRoleExposures,
     } = await import('../packages/db/scripts/runtime-role.mjs');
     const prisma = new PrismaClient();
     const query = (sql) => prisma.$queryRawUnsafe(sql);
@@ -1319,6 +1319,15 @@ async function main() {
         'no role but the owner may EXECUTE (so attach, or call through /rpc) a function in public, now or by default, and no client can act as an owner there or create there — an event writer runs as the owner',
         executors.length === 0,
         executors.join('; ') || 'none',
+      );
+      // The runtime role holds no USAGE on Supabase's `storage`: its SECURITY
+      // DEFINER helpers pin no search_path, and a login's temporary type ran
+      // as Storage's owner through them.
+      const definers = await checkReachableDefiners(query);
+      check(
+        'every SECURITY DEFINER function the runtime role or the factor loader can set running pins its search_path with pg_temp last (Storage\'s helpers are out of reach)',
+        definers.length === 0,
+        definers.join('; ') || 'none',
       );
       const triggers = await checkIntegrityTriggers(query);
       check(

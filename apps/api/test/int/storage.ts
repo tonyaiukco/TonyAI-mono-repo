@@ -21,10 +21,14 @@ export function localStorage(): StorageService {
   return new StorageService();
 }
 
-/** Whether Storage's catalogue holds the object — `storage.objects`, the table the Storage API itself reads. */
+/**
+ * Whether Storage's catalogue holds the object — `storage.objects`, the table
+ * the Storage API itself reads — through the reader the runtime role is given
+ * (it holds no USAGE on `storage`).
+ */
 export async function objectExists(observer: PrismaService, bucket: Bucket, path: string): Promise<boolean> {
   const [{ found }] = await observer.$queryRaw<{ found: boolean }[]>`
-    SELECT EXISTS (SELECT 1 FROM storage.objects WHERE bucket_id = ${bucket} AND name = ${path}) AS found`;
+    SELECT storage_catalogue_has(${bucket}, ${path}) AS found`;
   return found;
 }
 
@@ -37,7 +41,7 @@ export function tenantPrefixes(tenant: Pick<Tenant, 'subsidiaryId' | 'organisati
   return { evidence: `${tenant.subsidiaryId}/`, 'import-sources': `${tenant.organisationId}/` };
 }
 
-/** Every object under the tenant's prefixes, from the catalogue. */
+/** Every object under the tenant's prefixes, from the catalogue (through its page reader). */
 export async function tenantObjects(
   observer: PrismaService,
   tenant: Pick<Tenant, 'subsidiaryId' | 'organisationId'>,
@@ -46,7 +50,7 @@ export async function tenantObjects(
   for (const bucket of BUCKETS) {
     const prefix = tenantPrefixes(tenant)[bucket];
     const rows = await observer.$queryRaw<{ name: string }[]>`
-      SELECT name FROM storage.objects WHERE bucket_id = ${bucket} AND starts_with(name, ${prefix})`;
+      SELECT name FROM storage_catalogue_page(${bucket}, ${prefix}, '', 'infinity', 100000)`;
     found.push(...rows.map((r) => ({ bucket, path: r.name })));
   }
   return found;

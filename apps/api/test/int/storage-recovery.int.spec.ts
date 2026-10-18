@@ -878,28 +878,46 @@ describe('LP1-02 — the sweeper: bounded, observable, safe', () => {
     expect(sha256(await storage.download(IMPORT_SOURCES_BUCKET, batch.storagePath!))).toBe(batch.sha256);
   });
 
-  it('the visibility check covers Storage\'s catalogue too — seeing every owning row is not enough', async () => {
+  it("the visibility check covers Storage's catalogue too — through its readers, which must run as a role that sees every object", async () => {
     class Rollback extends Error {}
-    // The owner: it alone may alter the tables and assume `authenticated`.
-    const restricted = connectOwner();
-    let seen: boolean | null = null;
-    try {
-      await restricted
+    // The owner: it alone may alter the readers. It sees every evidence and
+    // import_batches row, so only the catalogue's leg decides; each change is
+    // rolled back.
+    const owner = connectOwner();
+    const seenAfter = async (changes: string[]) => {
+      let seen: boolean | null = null;
+      await owner
         .$transaction(async (tx) => {
-          // Rolled back: this role now sees every evidence and import_batches row, but not storage.objects.
-          await tx.$executeRawUnsafe('ALTER TABLE evidence DISABLE ROW LEVEL SECURITY');
-          await tx.$executeRawUnsafe('ALTER TABLE import_batches DISABLE ROW LEVEL SECURITY');
-          await tx.$executeRawUnsafe('SET LOCAL ROLE authenticated');
+          for (const sql of changes) await tx.$executeRawUnsafe(sql);
           seen = await sweeper(observer).seesEveryRow(tx);
           throw new Rollback();
         })
         .catch((error: unknown) => {
           if (!(error instanceof Rollback)) throw error;
         });
+      return seen;
+    };
+    try {
+      // Control: the readers as the migration made them.
+      expect(await seenAfter([])).toBe(true);
+      // A reader owned by a role RLS filters on storage.objects.
+      expect(
+        await seenAfter([
+          'CREATE ROLE zz_catalogue_reader NOLOGIN',
+          // By name (Open questions, "Supabase's own definers and the
+          // runtime and loader logins" (1)).
+          `DO $$ BEGIN EXECUTE format('GRANT zz_catalogue_reader TO %I', current_user); END $$`,
+          'GRANT CREATE ON SCHEMA public TO zz_catalogue_reader',
+          'ALTER FUNCTION storage_catalogue_has(text, text) OWNER TO zz_catalogue_reader',
+        ]),
+      ).toBe(false);
+      // A reader no longer a definer: it would read as the caller, who may not.
+      expect(await seenAfter(['ALTER FUNCTION storage_catalogue_page(text, text, text, timestamptz, integer) SECURITY INVOKER'])).toBe(false);
+      // A reader gone.
+      expect(await seenAfter(['DROP FUNCTION storage_catalogue_has(text, text)'])).toBe(false);
     } finally {
-      await restricted.$disconnect();
+      await owner.$disconnect();
     }
-    expect(seen).toBe(false);
   });
 
   it('never removes an orphan — an object no row owns and no intent names', async () => {
@@ -1002,6 +1020,39 @@ describe('LP1-02 — reconciliation: both directions', () => {
     } finally {
       await localStorage().remove(EVIDENCE_BUCKET, [other]);
     }
+  });
+
+  it('walks past pages of owned keys to the orphans — each page starts after the last key it scanned, owned or not', async () => {
+    const record = await draft();
+    const owned = [(await uploaded([record.id])).storagePath, (await uploaded([record.id])).storagePath];
+    const prefix = tenantPrefixes(tenant).evidence;
+    // Around the owned keys (`<subsidiary>/<uuid>-…`), in the catalogue's own
+    // collation as well as in "C": eight zeros before any uuid, 'zz' after.
+    // The last two differ in case: "C" would put `ZZ` before every lower-case
+    // key, the catalogue's collation puts it after `zz-orphan-3`.
+    const orphans = ['00000000-first-orphan.pdf', 'zz-orphan-1.pdf', 'zz-orphan-2.pdf', 'zz-orphan-3.pdf', 'ZZ-orphan-4.pdf'];
+    const [first, next, last, third, upper] = orphans.map((n) => `${prefix}${n}`);
+    for (const path of [first, next, last, third, upper]) {
+      await storage.upload(EVIDENCE_BUCKET, path, Buffer.from('%PDF-1.4\n'), 'application/pdf');
+    }
+    const order = (
+      await observer.$queryRaw<{ name: string }[]>`
+        SELECT name FROM storage_catalogue_page(${EVIDENCE_BUCKET}, ${prefix}, '', 'infinity', 100)`
+    ).map((r) => r.name);
+    expect([order[0], ...order.slice(-4)]).toEqual([first, next, last, third, upper]);
+    expect(order.slice(1, -4).sort()).toEqual([...owned].sort());
+    const paths = async (page: { limit: number; after?: string }) =>
+      (await reconcile().orphans(EVIDENCE_BUCKET, { prefix, ...page })).map((o) => o.path);
+    // Two keys a page: [first, owned] then [owned, next] — the owned pair spans the boundary.
+    expect(await paths({ limit: 2 })).toEqual([first, next]);
+    expect(await paths({ limit: 2, after: next })).toEqual([last, third]);
+    // A page in the catalogue's order, not "C"'s.
+    expect(await paths({ limit: 2, after: last })).toEqual([third, upper]);
+    // One key a page: two pages of owned keys alone, then the orphan.
+    expect(await paths({ limit: 1, after: first })).toEqual([next]);
+    // Never more than the limit, though the page that fills it holds more orphans.
+    expect(await paths({ limit: 3 })).toEqual([first, next, last]);
+    expect(await paths({ limit: 10 })).toEqual([first, next, last, third, upper]);
   });
 
   it('does not count an in-flight upload as an orphan', async () => {
