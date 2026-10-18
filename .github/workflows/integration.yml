@@ -20,6 +20,9 @@ on:
       - 'turbo.json'
       - 'supabase/**'
       - '.github/actions/supabase-stack/**'
+      - 'infra/scripts/ci_database_image.py'
+      - 'infra/selfhost/database-image-policy.json'
+      - 'infra/selfhost/images.qa.lock.json'
       - '.github/workflows/integration.yml'
   pull_request:
     paths:
@@ -31,6 +34,9 @@ on:
       - 'turbo.json'
       - 'supabase/**'
       - '.github/actions/supabase-stack/**'
+      - 'infra/scripts/ci_database_image.py'
+      - 'infra/selfhost/database-image-policy.json'
+      - 'infra/selfhost/images.qa.lock.json'
       - '.github/workflows/integration.yml'
 
 concurrency:

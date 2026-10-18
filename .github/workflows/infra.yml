@@ -1,10 +1,10 @@
 name: Infrastructure
 on:
   pull_request:
-    paths: ['scripts/rls-probes.mjs', 'infra/**', '.github/workflows/**', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
+    paths: ['scripts/rls-probes.mjs', 'infra/**', '.github/actions/supabase-stack/**', '.github/workflows/**', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
   push:
     branches: [main]
-    paths: ['scripts/rls-probes.mjs', 'infra/**', '.github/workflows/**', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
+    paths: ['scripts/rls-probes.mjs', 'infra/**', '.github/actions/supabase-stack/**', '.github/workflows/**', '.gitignore', '.dockerignore', 'apps/*/Dockerfile']
 permissions:
   contents: read
 jobs:

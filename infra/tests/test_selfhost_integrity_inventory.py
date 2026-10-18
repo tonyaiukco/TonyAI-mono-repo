@@ -69,9 +69,15 @@ class InventoryTests(unittest.TestCase):
             data=payload();data[key].pop(next(iter(data[key])))
             with self.subTest(key=key),self.assertRaises(ValueError):probe.validate_report(json.dumps(data).encode())
 
-    def test_immutable_database_image_matches_reviewed_qa_lock(self):
+    def test_inventory_remains_bound_to_retained_generation(self):
+        self.assertEqual(probe.DB_IMAGE,
+                         'supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00')
+        # A future replacement image must never retarget this forensic helper.
         lock=json.loads((Path(__file__).resolve().parents[1]/'selfhost/images.qa.lock.json').read_text())
-        self.assertEqual(probe.DB_IMAGE,lock['services']['db']['image'])
+        item=container();item['image']=lock['services']['db']['image']
+        with patch.object(probe,'call',return_value=json.dumps(item).encode()) as call,self.assertRaises(ValueError):
+            probe.collect()
+        self.assertEqual(call.call_count,1)
 
     def test_foreign_stopped_or_exposed_container_never_executes_query(self):
         changes=[('name','/other'),('image','supabase/postgres:latest'),('project','other'),

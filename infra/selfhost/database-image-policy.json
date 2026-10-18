@@ -1,0 +1,19 @@
+{
+  "minimum_supautils": "3.2.3",
+  "cli_version": "2.115.0",
+  "cli_commit": "18ae43a34a2257458197b62f74e2a97e2b5cf7f9",
+  "image_tag": "supabase/postgres:17.6.1.159",
+  "image": "supabase/postgres@sha256:617b62a16858dc8436c1ded1970fa13e33539feb4c98b580cf6274b46b2ab1ef",
+  "config_digest": "sha256:1131ee74b2d711ec69ebb078a3ea87042c5bde7a5849aaa21ea868371be21fc7",
+  "platform": "linux/amd64",
+  "source_commit": "1fa57498313b7a2f866132058495c758f8a7a930",
+  "supautils": "3.4.0",
+  "pg_graphql": "1.6.1",
+  "reviewed_graphql_body_md5": "cf541948e5ba6c830440b810d5601e44",
+  "index_digest": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+  "attestation_manifest_digest": "sha256:5b88afef65027745b8382ba082761dbba0655a6dda1798b2bc2bcdbb16970657",
+  "attestation_digest": "sha256:c2b70789a0e43d061351f0d68f792c3e30242c5b0fbc059ad612994fba0fbedb",
+  "layer_digest": "sha256:ae2e3acb5669b6741754c4417028960543136047d8567830225db6555cc380a5",
+  "supautils_source_hash": "sha256-O2zVVVf2OFTCc4BYHuGJ67odU0TwMnTJQuz9uk+a4/0=",
+  "supautils_binary_sha256": "8226c53a3025eb377de2194e93cd36da328f1b678e33a567ffb1fa2c289a737d"
+}

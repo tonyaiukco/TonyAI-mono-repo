@@ -351,6 +351,50 @@ Independent review and the final executor/source hashes must be bound in a
 that survives terminal closure; this operational requirement does not substitute
 for stream hardening. No outer hard timeout or automatic retry is permitted.
 
+### Database image qualification before R2
+
+Every Supabase database image must include supautils >=3.2.3. The reviewed
+candidate is recorded in [database-image-policy.json](../selfhost/database-image-policy.json):
+CLI 2.115.0 and its default Postgres 17.6.1.159, pinned to the Linux/amd64
+manifest rather than a mutable tag. The QA composition changes only its database
+digest; the upstream template/SQL lock and other service images remain unchanged.
+This is a proposed upgrade for owner review, not deployment approval or a local
+CLI/stack upgrade. Keep reproduction and per-environment assessment private.
+
+Candidate provenance was checked through the registry index, amd64 manifest,
+config and attached SLSA build provenance. The attested
+[Postgres build source](https://github.com/supabase/postgres/blob/1fa57498313b7a2f866132058495c758f8a7a930/nix/ext/supautils.nix)
+pins supautils 3.4.0 and its source hash. The policy records those hashes and the
+actual `supautils.so` hash extracted from a digest-verified image layer. The
+binary exposes no plain version string; the version attribution uses the build
+source, not the image tag. Registry-attached provenance was hash-verified, not
+independently signature-verified. The upstream fixed release is
+[supautils 3.2.3](https://github.com/supabase/supautils/releases/tag/v3.2.3).
+
+The same layer's pg_graphql 1.6.1 SQL has the exact reviewed
+`graphql.increment_schema_version()` body hash from #186. Do not expand that
+allowlist to accommodate a changed platform body. Static equality does not prove
+the complete migrated runtime catalog or Storage reader ownership.
+
+The CI action first pulls the reviewed digest and seeds the pinned CLI's cached
+default tag; `SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io` keeps the registry
+explicit. It checks the running container's config digest and architecture
+before migration/seed. A changed CLI, linked-project override, reused database,
+wrong content or wrong architecture fails closed. No unsupported digest string
+is written into the CLI's version file. The isolated GitHub jobs must still
+prove full migration replay, `runtime-role.mjs check`/RLS probes, Storage reader
+integration, login/JWKS, actual API/web image smoke and E2E on this candidate.
+No local mock or historical #185 result substitutes for these checks.
+
+Before R2 approval, privately bind the owner-approved image policy, the unchanged
+upstream template/SQL, candidate integration evidence and each environment's
+assessment to the packet. Before bootstrap, qualify the complete QA composition
+on a separately authorized disposable target; CI's service composition is not
+the QA composition. Any unavailable proof remains an explicit gate. Never run
+the crash regression on a live/shared database. A private isolated regression
+needs its own disposable target and must show a refused statement with stable
+connections. Only Claude Code/the owner may upgrade the shared local CLI/stack.
+
 ### Q1-Q3 design freeze and R2 preparation
 
 Q1 reconciles the recorded R1 operation above; it does not convert the historical
@@ -405,6 +449,27 @@ controls (SPF/DKIM/DMARC); reserve pen-test **and retest** by the plan's 10-30 t
 10-26 or select SC2. Name backup custodian/operator and the independent human
 approver. Preparation does not contact vendors, book services or accept these
 decisions for the owner.
+
+Concrete owner-review defaults: reserve `10.80.4.0/27` for later nondelegated
+backup endpoints, subject to live VNet/peering/route and state collision checks;
+freeze exact endpoint IPs/IDs privately after that check. Prefer separate Sweden
+Central ZRS accounts and 30-day locked retention, with immutable uniquely named
+captures and a tested base/WAL dependency hold before reclamation. ZRS stays in
+the primary region but does not cover regional loss
+([redundancy behavior](https://learn.microsoft.com/en-us/azure/storage/common/storage-redundancy)).
+The backup foundation must qualify the upload format against immutability before
+locking; decide compatible soft-delete/versioning and cost there, not by guessing
+that a mutable WAL-G layout works. These defaults are proposals until the owner
+accepts them; retention cannot subsequently be shortened after locking.
+
+Use an existing managed private access route if one is available; otherwise
+propose Entra-authenticated point-to-site VPN in a separate network packet with
+explicit cost, gateway subnet and DNS-resolution design. It creates no R2
+resource. Primary/backup custodians, the independent human approver, recovery
+implementer and the credit balance/expiry/subscription binding require owner
+evidence. Propose two isolated fresh-host restores while the old host remains
+fenced, preserving the full-host-loss target above; reconcile that choice with
+the canonical drill wording before freezing Q3.
 
 Prepare a new R2 packet only in the operator's upcoming approval window:
 

@@ -273,7 +273,7 @@ Decisions 2026-10-10 (second), K3–K6, and their sub-decisions S1–S12 (the pl
 
 ### Prerequisites
 
-- **Node ≥ 22.12** (the API's email catalogue uses `intl-messageformat`, an ES module the CommonJS build `require`s — unflagged from 22.12; CI and the images run 22), **pnpm** (enable Corepack so the pinned version is used: `corepack enable`), **Docker Desktop** (running), **Supabase CLI ≥ 2.0** (`brew install supabase/tap/supabase`)
+- **Node ≥ 22.12** (the API's email catalogue uses `intl-messageformat`, an ES module the CommonJS build `require`s — unflagged from 22.12; CI and the images run 22), **pnpm** (enable Corepack so the pinned version is used: `corepack enable`), **Docker Desktop** (running), **Supabase CLI with an owner-qualified database image** ([image gate and proposed CLI pin](infra/runbooks/10-qa-clean-replacement.md#database-image-qualification-before-r2)); installation alone does not qualify the bundled database. The shared local stack belongs to Claude Code; obtain its owner's upgrade window before changing it.
 
 `pnpm setup` enforces the CLI floor and finishes with a login smoke check that prints how your project signs tokens (`HS256` shared secret or asymmetric via JWKS) — both are supported, so a newer CLI is fine.
 
@@ -427,7 +427,13 @@ wrapper death or terminal closure cannot sever its diagnostic streams. Both
 streams stay private on success/failure; real-child lifetime tests cover this
 boundary. The attempt marker still forbids automatic retry. Runbook 10
 [defines the pre-R2 design freeze and new-packet procedure](infra/runbooks/10-qa-clean-replacement.md#q1-q3-design-freeze-and-r2-preparation):
-private immutable Sweden backup storage belongs to a separate future writer/apply
+The [database image gate](infra/runbooks/10-qa-clean-replacement.md#database-image-qualification-before-r2)
+records the proposed CLI 2.115.0/database candidate and immutable provenance.
+CI binds actual database image content before migrations; candidate integration,
+QA-composition qualification and owner approval remain required. The shared
+local CLI/stack is upgraded only by its owner. Runbook 05's reader pre-check
+follows #186 and does not restore runtime Storage grants.
+Private immutable Sweden backup storage belongs to a separate future writer/apply
 packet, and any observed drift still fails closed. Fresh live evidence and owner
 decisions remain gates; intrinsic custody must retain the first
 environment's byte binding. Separately approved R1 executed on 2026-10-15: the exact
