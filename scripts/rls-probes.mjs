@@ -59,7 +59,7 @@ if (!URL_ || !ANON || !SERVICE) {
 const ENTRY_EMAIL = 'entry@tonyai.local';
 const ADMIN_EMAIL = 'admin@tonyai.local';
 const CONSULTANT_EMAIL = 'review@tonyai.local';
-const PASSWORD = 'TonyAI!2026';
+const PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI!2026';
 const TENANT_TABLES = [
   // `subsidiaries` was missing here until WP16 PR 2a, which is when it started
   // carrying contact PII (a named person's work email and phone). The blanket

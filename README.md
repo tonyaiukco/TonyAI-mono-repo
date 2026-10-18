@@ -273,7 +273,7 @@ Decisions 2026-10-10 (second), K3–K6, and their sub-decisions S1–S12 (the pl
 
 ### Prerequisites
 
-- **Node ≥ 22.12** (the API's email catalogue uses `intl-messageformat`, an ES module the CommonJS build `require`s — unflagged from 22.12; CI and the images run 22), **pnpm** (enable Corepack so the pinned version is used: `corepack enable`), **Docker Desktop** (running), **Supabase CLI ≥ 2.0** (`brew install supabase/tap/supabase`)
+- **Node ≥ 22.12** (the API's email catalogue uses `intl-messageformat`, an ES module the CommonJS build `require`s — unflagged from 22.12; CI and the images run 22), **pnpm** (enable Corepack so the pinned version is used: `corepack enable`), **Docker Desktop** (running), **Supabase CLI with an owner-qualified database image** ([image gate and proposed CLI pin](infra/runbooks/10-qa-clean-replacement.md#database-image-qualification-before-r2)); installation alone does not qualify the bundled database. The shared local stack belongs to Claude Code; obtain its owner's upgrade window before changing it.
 
 `pnpm setup` enforces the CLI floor and finishes with a login smoke check that prints how your project signs tokens (`HS256` shared secret or asymmetric via JWKS) — both are supported, so a newer CLI is fine.
 
@@ -367,8 +367,9 @@ foundation in Sweden Central (D2as_v7 for QA, D4as_v7 for pilot production),
 with separate QA and planned production resources. Provision QA first; production
 resources are not authorized yet. Both application and data layers must use Sweden
 Central; the QA target is **2026-11-15**. The former TRY 10,000 monthly limit has
-been removed. The owner reports a forthcoming USD 25,000 credit allocation; its
-activation, eligibility, expiry and balance are unverified. Separate owner-run helpers prepare
+been removed. On 2026-10-18 the owner set USD 5,000 as the credit planning
+assumption for internal QA; balance, eligibility and expiry are not independently
+verified. Documentary verification is deferred until production preparation. Separate owner-run helpers prepare
 persistent disks and Docker, pin the official Supabase snapshot/images, generate
 protected host credentials and test Auth before explicit HTTPS exposure.
 The application is not yet connected; backups, recovery targets and cloud QA
@@ -427,10 +428,31 @@ wrapper death or terminal closure cannot sever its diagnostic streams. Both
 streams stay private on success/failure; real-child lifetime tests cover this
 boundary. The attempt marker still forbids automatic retry. Runbook 10
 [defines the pre-R2 design freeze and new-packet procedure](infra/runbooks/10-qa-clean-replacement.md#q1-q3-design-freeze-and-r2-preparation):
-private immutable Sweden backup storage belongs to a separate future writer/apply
-packet, and any observed drift still fails closed. Fresh live evidence and owner
-decisions remain gates; intrinsic custody must retain the first
-environment's byte binding. Separately approved R1 executed on 2026-10-15: the exact
+The [database image gate](infra/runbooks/10-qa-clean-replacement.md#database-image-qualification-before-r2)
+records the replacement CLI 2.121.0/Postgres 17.11.0.004 candidate, supautils
+3.4.4 and immutable provenance. The minimum is now supautils 3.4.2 because of
+[GHSA-5pqj-rc76-r669](https://github.com/supabase/supautils/security/advisories/GHSA-5pqj-rc76-r669),
+[GHSA-v9vh-54vv-7vfg](https://github.com/supabase/supautils/security/advisories/GHSA-v9vh-54vv-7vfg),
+[GHSA-vxh6-6m4g-c39q](https://github.com/supabase/supautils/security/advisories/GHSA-vxh6-6m4g-c39q) and
+[GHSA-xj9m-rx42-rfc7](https://github.com/supabase/supautils/security/advisories/GHSA-xj9m-rx42-rfc7).
+The earlier 3.4.0 candidate and its R2 packet are withdrawn. CI pulls the reviewed
+digest from ECR Public, refuses CLI startup repository SQL, and binds actual
+database content before repository migrations. Final-SHA Integration/E2E and
+informed owner re-acceptance are required before a new R2 packet; complete
+QA-composition qualification remains a separate pre-bootstrap gate. The shared
+local CLI/stack is upgraded only by its owner. Runbook 05's reader pre-check
+follows #186 and does not restore runtime Storage grants.
+The CI action supplies `TONYAI_TEST_PASSWORD` to the disposable seed, E2E,
+RLS probes and image smoke so the fixture meets the unchanged 12-character Auth
+minimum. Local demo defaults remain unchanged; updating them belongs to the
+shared stack's later owner-led upgrade. The override does not enable cloud seeding.
+Private immutable Sweden backup storage belongs to a separate future writer/apply
+packet, and any observed drift still fails closed. October 18 read-only
+reconciliation evidence is retained privately; a future packet needs current
+resource and state bindings. The owner declined QA VPN and deferred extra custody/recovery design
+decisions until production preparation; they do not block isolated R2 planning.
+Exact R2 inputs, image acceptance and saved-plan review still apply. Intrinsic
+custody must retain the first environment's byte binding. Separately approved R1 executed on 2026-10-15: the exact
 containment NSG plan was applied, ten bound containers exited after SIGTERM,
 and the retained old VM was deallocated. ARM readback confirmed unchanged disk,
 NIC, IP, vault and lock metadata; nine fresh external TCP probes timed out.
@@ -1550,7 +1572,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 
 - **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
 - **Phase 1 — Core MVP (Scope 1 & 2)** ✅: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅, Targets & intensity ✅, Reports ✅ — **Phase 1 complete**.
-- **Phase 2 — Staging cloud & CI/CD** *(Azure QA target **2026-11-15**, executed as LP2; production environment LP2-04 remains planned)*: self-hosted Supabase on Azure **Sweden Central**, with the planned Container Apps application layer in the same region and connected to the reserved VNet subnet at environment creation. QA host/runtime work exists; application integration, SMTP/domain, migrations/runtime roles, buckets, backups and full acceptance remain incomplete. Use [runbook 07](infra/runbooks/07-selfhost.md); the Germany West Central / hosted Supabase Frankfurt route is legacy and gated for this subscription. The reported USD 25,000 credit allocation is unverified; the former TRY 10,000 monthly cap no longer applies. Owner-run rollout comes first; protected OIDC/ACR deployment, logs and exact-candidate acceptance still require integration and evidence. *(Re-baselined 2026-10-15: staging 2026-10-18 → QA 2026-11-15; Germany/Frankfurt superseded; Sweden Central keeps EU (KVKK/GDPR) residency.)*
+- **Phase 2 — Staging cloud & CI/CD** *(Azure QA target **2026-11-15**, executed as LP2; production environment LP2-04 remains planned)*: self-hosted Supabase on Azure **Sweden Central**, with the planned Container Apps application layer in the same region and connected to the reserved VNet subnet at environment creation. QA host/runtime work exists; application integration, SMTP/domain, migrations/runtime roles, buckets, backups and full acceptance remain incomplete. Use [runbook 07](infra/runbooks/07-selfhost.md); the Germany West Central / hosted Supabase Frankfurt route is legacy and gated for this subscription. The owner-reported USD 5,000 internal-QA credit planning assumption is unverified; the former TRY 10,000 monthly cap no longer applies. Owner-run rollout comes first; protected OIDC/ACR deployment, logs and exact-candidate acceptance still require integration and evidence. *(Re-baselined 2026-10-15: staging 2026-10-18 → QA 2026-11-15; Germany/Frankfurt superseded; Sweden Central keeps EU (KVKK/GDPR) residency.)*
 - **Phase 3 — Advanced** *(active)*: **WP7 UAT backlog & reviewer UI ✅ → WP15 UAT quick wins ✅ → WP16 locations in the subsidiary flow ✅ → WP17 completeness engine ✅ → WP18 withdrawal & re-attribution ✅ → WP19 review gate on every cell ✅ → WP20 report disclosure ✅ → WP21 anomaly baseline provenance ✅ → WP22 report column vocabulary + record actor names ✅ → WP8 bulk upload ✅ → UAT round 2 (open)** → **launch-critical:** i18n (TR/EN — a Turkish UI is a pilot requirement) + email notifications (Resend). Moved to Phase 5 on 2026-09-21: report sharing, Scope 3, supplier management, analytics, dark mode. A Python/FastAPI analytics microservice was **demoted to conditional** (2026-07-29): analytics lands in the existing API unless a concrete Python-library need is demonstrated.
 - **Phase 4 — Production launch** *(target: pilot in production **2027-02-01**, stretch 01-25, fallback 02-15 — set 2026-09-27; executed as LP0–LP6 in two parallel lanes, Claude Code and Codex)*: integrity first (audit atomicity, one concurrency protocol, tenant-grant invariant — LP1), then i18n + reporting context + factor-model and report-dataset contracts (LP3), onboarding + invitation/reset email, authoritative UK + Türkiye factors incl. refrigerants and mobile combustion, consistent reports, limits (LP4), and qualification: pen-test, load, restore, legal (LP5). **Pilot scope is Scope 1 & 2** — Scope 3 is stated as "not covered", never as zero.
 - **Phase 5 — Post-launch growth** *(LP7; GA dated after the pilot's first reporting close)*: Scope 3 → report sharing → supplier management → workflow notification emails → analytics; dark mode, the remaining report templates.

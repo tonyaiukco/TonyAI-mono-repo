@@ -11,6 +11,12 @@ import tempfile
 
 INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
+    ('CI advisory floor bypassed', 'ci_database_image.py', "    if version(policy['minimum_supautils']) < (3, 4, 2) or version(policy['supautils']) < version(policy['minimum_supautils']):", '    if False:'),
+    ('CI registry guard bypassed', 'ci_database_image.py', "    if os.environ.get('SUPABASE_INTERNAL_IMAGE_REGISTRY') != REGISTRY:", '    if False:'),
+    ('CI engine guard bypassed', 'ci_database_image.py', "    if (config['db']['major_version'] != 17 or config['db'].get('orioledb_version')\n            or config.get('experimental', {}).get('orioledb_version')):", '    if False:'),
+    ('CI startup SQL guard bypassed', 'ci_database_image.py', "    if (any(path.exists() or path.is_symlink() for path in\n            (root / 'supabase/migrations', root / 'supabase/seed.sql'))\n            or config['db'].get('migrations', {}).get('schema_paths', [])\n            or config['db'].get('seed', {}).get('sql_paths', ['./seed.sql']) not in ([], ['./seed.sql'])):", '    if False:'),
+    ('CI image identity bypassed', 'ci_database_image.py', "    if metadata != {'id': policy['config_digest'], 'os': 'linux', 'architecture': 'amd64'}:", '    if False:'),
+    ('CI running identity bypassed', 'ci_database_image.py', "    if metadata != {'id': policy['config_digest'], 'reference': REGISTRY + '/' + policy['image_tag'], 'running': True}:", '    if False:'),
     ('mail env drift check skipped', 'deploy_apps.py', "        verify_mail_environment(container.get('env', []), foundation, release, kind)", '        pass'),
     ('mail password validation skipped', 'mail_settings.py', "    if not isinstance(value, str) or not value.strip() or '\\n' in value or '\\r' in value:", '    if False:'),
     ('completed auth reconciliation skipped', 'supabase_setup.py', '        if reconcile_only:', '        if False:'),
@@ -178,8 +184,9 @@ def main():
                 shutil.copy2(root / relative, destination)
             shutil.copytree(root / 'packages/db/prisma/migrations', target.parent / 'packages/db/prisma/migrations')
             shutil.copytree(root / '.github/workflows', target.parent / '.github/workflows')
+            shutil.copytree(root / '.github/actions', target.parent / '.github/actions')
             pattern = 'test_*.py'
-            targeted = {'prepare_release.py':'test_prepare_release.py', 'candidate_artifact.py':'test_candidate_artifact.py',
+            targeted = {'ci_database_image.py':'test_ci_database_image.py', 'prepare_release.py':'test_prepare_release.py', 'candidate_artifact.py':'test_candidate_artifact.py',
                         'cloud_smoke.py':'test_cloud_smoke.py', 'terraform_run.py':'test_candidate_path.py',
                         'release_checks.py':'test_candidate_path.py', 'smoke-contract.mjs':'test_candidate_path.py',
                         'build-images.sh':'test_build_images.py',

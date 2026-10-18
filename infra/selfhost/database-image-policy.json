@@ -1,0 +1,30 @@
+{
+  "minimum_supautils": "3.4.2",
+  "security_advisories": [
+    "GHSA-5pqj-rc76-r669",
+    "GHSA-v9vh-54vv-7vfg",
+    "GHSA-vxh6-6m4g-c39q",
+    "GHSA-xj9m-rx42-rfc7"
+  ],
+  "cli_version": "2.121.0",
+  "cli_commit": "8a549dffa6bc5c88069c61c1f55ef55ad9b82ae2",
+  "image_tag": "supabase/postgres:17.11.0.004",
+  "image": "supabase/postgres@sha256:e85bc10ac5b141223b289e1e8dc8d448cf3df92501917149db0366b9c5aaf053",
+  "config_digest": "sha256:c4be96218454e68421a29c712e1a83c7a9fe186208c725d8bb2ebb474e2042f2",
+  "platform": "linux/amd64",
+  "source_commit": "d8666db883fd1bc3bc06654c8db1f8dc39812b82",
+  "supautils": "3.4.4",
+  "pg_graphql": "1.6.2",
+  "reviewed_graphql_body_md5": "cf541948e5ba6c830440b810d5601e44",
+  "index_digest": "sha256:b15d862126dd2dac02da524696ccfde2dcce2ceaee0a58973b2727befe492706",
+  "attestation_manifest_digest": "sha256:1ed799865d98603cf738136e4884bc3398d5450aa0d6b4b2eed7611f482cb9ca",
+  "attestation_digest": "sha256:3dedb1a083eccd54eb66649740279c9c4f796163c03fec4346de4d85adb6de27",
+  "layer_digest": "sha256:b594b09cdd92842c954d3a942e0e086d18d107ae743b29eca55d4abb71f820ed",
+  "supautils_source_hash": "sha256-Wsou5U7/Tuwj2E6aPEmlHg7uz7kGyBOGrb7UkjfEo9U=",
+  "supautils_binary_sha256": "d9cf21be28ce84a1c8d17500164d5d35d59cf67d991677adf396f1500ca23261",
+  "supautils_compat_patch_sha256": "bd29ca2fd2114bd45ae13966b3b5eeeaa49cb7fb3166cb327fdbb9716dafc57f",
+  "image_receipt_sha256": "d66e56d568036bb988fce42f6a77d99dcbebc8c17c2a82db22f1880443ae8509",
+  "image_receipt_path": "nix/store/8iibnmg3hkijs2nyzs5fmfmj8wkia6vs-receipt/receipt.json",
+  "postgresql": "17.11",
+  "postgresql_source_hash": "sha256-3Sfys8Wec+0UqjMkkBJCv2mgMqY0eAXydOYmAyLUKXk="
+}

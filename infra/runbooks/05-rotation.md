@@ -44,23 +44,36 @@ it is never a workload secret or an application environment variable.
    python3 infra/scripts/cloud_ops.py owner-psql --vault "$VAULT_NAME" --project-ref "$SUPABASE_PROJECT_REF" --source-sha '<reviewed-helper-full-sha>' --direct-secret-version '<selected-direct-url-version>'
    ```
 
-   Confirm the hosted `postgres` retains CREATEROLE and BYPASSRLS and can grant
-   USAGE on `storage` and SELECT on `storage.objects`:
+   Confirm the hosted `postgres` retains CREATEROLE and BYPASSRLS and can read
+   `storage.objects`. After the full migration chain, this owner executes the
+   two `public.storage_catalogue_*` SECURITY DEFINER readers. The runtime login
+   must have neither USAGE on `storage` nor direct SELECT on `storage.objects`;
+   do not restore the former LP1-03 grants. Grant options are not a steady-state
+   prerequisite for the readers:
 
    ```sql
    SHOW server_version;
    SELECT current_user, rolcreaterole, rolbypassrls
    FROM pg_roles WHERE rolname = current_user;
-   SELECT has_schema_privilege(current_user, 'storage', 'USAGE WITH GRANT OPTION') AS storage_usage_grant,
-          has_table_privilege(current_user, 'storage.objects', 'SELECT WITH GRANT OPTION') AS storage_select_grant;
+   SELECT has_schema_privilege(current_user, 'storage', 'USAGE') AS storage_usage,
+          has_table_privilege(current_user, 'storage.objects', 'SELECT') AS storage_select;
    BEGIN;
    CREATE ROLE lp1_probe BYPASSRLS;
    ROLLBACK;
    ```
 
    All four booleans must be true and the rolled-back role probe must succeed.
+   A fresh replay still executes the immutable LP1-03 migration's historical
+   GRANT statements before the later migration revokes them. Its migration owner
+   must be able to execute that chain; verify this in the isolated migration
+   rehearsal. Do not rewrite historical migrations or manually restore their
+   grants after the reader migration to satisfy this pre-check.
    `server_version` must be 17.x: the [owner reconciliation check](#owner-reconciliation-check)
    pins CHECK constraints by md5 of PostgreSQL 17's `pg_get_constraintdef` output.
+   After migration, run the owner reconciliation check and the runtime privilege
+   check below; the readers must exist, remain SECURITY DEFINER with the reviewed
+   search path, and their owner must retain SELECT and BYPASSRLS. The Storage
+   sweeper refuses a missing reader, an invoker or a filtered owner.
    Record the server version and probe output. If the probe fails, roll back or
    exit the session; never drop an existing role named `lp1_probe`. Stop and
    resolve with the platform owner on failure; do not weaken the migration or grant wider runtime privileges.
@@ -186,6 +199,12 @@ loader is confined; review every exposure. Attach full stdout and stderr with th
 
 1. Its CHECK pins are md5 hashes of PostgreSQL 17 output. Confirm `SHOW
    server_version` is 17.x in the same session before relying on it.
+   For an image minor-version change (including 17.6 to 17.11), re-run the
+   unchanged integrity checker against the migrated candidate: all 57 CHECK
+   and three FK definition pins must still match. Record the observed server
+   version and exact source/image with the integration evidence. A static
+   deparser comparison does not replace this catalog check; do not repin a
+   mismatch without separate review.
 2. It reads its integrity-function bodies from the checkout's migrations. Run it
    only from the deployed SHA; any other checkout can report false drift or miss
    real drift.

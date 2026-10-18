@@ -15,6 +15,8 @@ import stat
 import subprocess
 import sys
 
+# Historical retained generation only. Never repoint forensic inventory when the
+# future replacement's image lock changes; old-host access needs separate approval.
 DB_IMAGE = 'supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00'
 DOCKER = ['/usr/bin/docker', '--host', 'unix:///var/run/docker.sock']
 COUNTS = {

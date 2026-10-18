@@ -351,6 +351,78 @@ Independent review and the final executor/source hashes must be bound in a
 that survives terminal closure; this operational requirement does not substitute
 for stream hardening. No outer hard timeout or automatic retry is permitted.
 
+### Database image qualification before R2
+
+Every Supabase database image must include supautils >=3.4.2. The earlier
+3.2.3 floor covers a crash fix only; the superseded 3.4.0 candidate is withdrawn
+because it lacks the critical privilege-escalation fixes in
+[GHSA-5pqj-rc76-r669](https://github.com/supabase/supautils/security/advisories/GHSA-5pqj-rc76-r669),
+[GHSA-v9vh-54vv-7vfg](https://github.com/supabase/supautils/security/advisories/GHSA-v9vh-54vv-7vfg),
+[GHSA-vxh6-6m4g-c39q](https://github.com/supabase/supautils/security/advisories/GHSA-vxh6-6m4g-c39q) and
+[GHSA-xj9m-rx42-rfc7](https://github.com/supabase/supautils/security/advisories/GHSA-xj9m-rx42-rfc7).
+Use the advisory text and fixed-source ancestry, not only affected-range metadata:
+the first advisory explicitly includes 3.4.0 despite metadata ending at 3.3.0.
+The replacement
+candidate is recorded in [database-image-policy.json](../selfhost/database-image-policy.json):
+CLI 2.121.0 and its default Postgres 17.11.0.004, pinned to the Linux/amd64
+manifest rather than a mutable tag. The QA composition changes only its database
+digest; the upstream template/SQL lock and other service images remain unchanged.
+This is a proposed upgrade for owner review, not deployment approval or a local
+CLI/stack upgrade. Keep reproduction and per-environment assessment private.
+
+Candidate provenance was checked through the registry index, amd64 manifest,
+config and attached SLSA build provenance. The attested
+[Postgres build source](https://github.com/supabase/postgres/blob/d8666db883fd1bc3bc06654c8db1f8dc39812b82/nix/ext/supautils.nix)
+pins supautils 3.4.4, its recomputed Nix source hash and a glibc compatibility
+patch. The policy records those hashes, the actual `supautils.so` hash and the
+build receipt extracted from a digest-verified image layer. The receipt agrees
+with the source on supautils 3.4.4, pg_graphql 1.6.2 and PostgreSQL 17.11.
+The source descends from the fixes in
+[supautils 3.4.2](https://github.com/supabase/supautils/releases/tag/v3.4.2).
+The binary exposes no plain version string; version attribution uses source
+and image receipt, not the image tag. Registry-attached provenance is unsigned
+and hash-verified; this is not authenticated provenance or a reproduced build.
+
+The same layer's pg_graphql 1.6.2 SQL has the exact reviewed
+`graphql.increment_schema_version()` body hash from #186. Do not expand that
+allowlist to accommodate a changed platform body. Static equality does not prove
+the complete migrated runtime catalog or Storage reader ownership. The candidate
+[upstream migration disables pg_graphql by default](https://github.com/supabase/postgres/blob/d8666db883fd1bc3bc06654c8db1f8dc39812b82/migrations/db/migrations/20260421000000_pg_graphql-off-by-default.sql);
+bundled extension SQL does not mean the extension is installed. Integration tests
+must exercise unsafe definer detection through explicit rollback-only fixtures,
+without requiring removed platform helpers or enabling unused extensions in
+runtime startup.
+
+The CI action first pulls the reviewed digest and seeds the pinned CLI's cached
+default tag on `public.ecr.aws`; the index and amd64 manifest bytes match the
+qualified upstream image. It checks the running container's config digest and
+architecture before repository migration/seed. The guard refuses startup
+repository SQL paths, including `supabase/migrations` and `supabase/seed.sql`,
+because the CLI would execute them before the post-start check. Upstream platform
+bootstrap still runs during CLI startup. A changed CLI, linked-project override, reused database,
+wrong content or wrong architecture fails closed. No unsupported digest string
+is written into the CLI's version file. The isolated GitHub jobs must still
+prove full migration replay, `runtime-role.mjs check`/RLS probes, Storage reader
+integration, login/JWKS, actual API/web image smoke and E2E on this candidate.
+No local mock or historical #185 result substitutes for these checks.
+The PostgreSQL 17.6-to-17.11 move also requires the unchanged 57 CHECK and three
+FK definition pins to pass against the actual migrated candidate catalog under
+[runbook 05](05-rotation.md); static source comparison alone is insufficient.
+
+The earlier image acceptance and R2 packet are withdrawn. Complete independent
+review and final-SHA CI, including Integration and E2E, then obtain the owner's
+informed acceptance of this replacement candidate before generating any new R2
+packet. Preserve the old packet as evidence; do not refresh or apply it.
+
+Before R2 approval, privately bind the owner-approved image policy, the unchanged
+upstream template/SQL, candidate integration evidence and each environment's
+assessment to the packet. Before bootstrap, qualify the complete QA composition
+on a separately authorized disposable target; CI's service composition is not
+the QA composition. Any unavailable proof remains an explicit gate. Never run
+the crash regression on a live/shared database. A private isolated regression
+needs its own disposable target and must show a refused statement with stable
+connections. Only Claude Code/the owner may upgrade the shared local CLI/stack.
+
 ### Q1-Q3 design freeze and R2 preparation
 
 Q1 reconciles the recorded R1 operation above; it does not convert the historical
@@ -370,12 +442,16 @@ fresh controlled ownership projection and state hash before planning; neither
 cached backend metadata nor ARM IDs prove state ownership. A later serial is a
 change to investigate, not a reason to force it back to 11. Preserve the old
 active output and reserved delegated apps subnet. Recheck Sweden SKU/image
-availability and family/regional quota. Obtain authoritative credit balance,
-expiry and eligible-subscription evidence from the owner if account access cannot
-establish it; an enabled subscription does not verify the reported allocation.
+availability and family/regional quota. On 2026-10-18 the owner reported a $5,000
+credit balance for planning and deferred documentary balance/expiry verification
+for internal QA. Record this as an owner-reported assumption, not an independently
+verified balance or a spending cap. The observed enabled/sponsored subscription
+does not establish balance, expiry or credit eligibility; revisit before production.
 
-The following are design requirements for owner freeze **before R2 approval**;
-none creates resources or broadens R2's ten-create/one-subnet-update allowlist.
+The following are design requirements for the later backup/recovery package.
+The owner deferred the remaining detailed decisions for internal QA on 2026-10-18;
+they do not block the isolated R2 foundation. Record and resolve them before
+production. None creates resources or broadens R2's ten-create/one-subnet-update allowlist.
 The [Azure delivery plan, recovery track](../../docs/roadmap_docs/Azure_roadmap_plan.md#5-recovery-track-independent-workload-and-measurable-acceptance)
 sets the later implementation/review/apply sequence.
 
@@ -406,6 +482,35 @@ controls (SPF/DKIM/DMARC); reserve pen-test **and retest** by the plan's 10-30 t
 approver. Preparation does not contact vendors, book services or accept these
 decisions for the owner.
 
+Owner direction accepted on 2026-10-18: reserve `10.80.4.0/27` for later nondelegated
+backup endpoints, subject to live VNet/peering/route and state collision checks;
+freeze exact endpoint IPs/IDs privately after that check. Use separate Sweden
+Central ZRS accounts and 30-day locked retention, with immutable uniquely named
+captures and a tested base/WAL dependency hold before reclamation. ZRS stays in
+the primary region but does not cover regional loss
+([redundancy behavior](https://learn.microsoft.com/en-us/azure/storage/common/storage-redundancy)).
+The backup foundation must qualify the upload format against immutability before
+locking; decide compatible soft-delete/versioning and cost there, not by guessing
+that a mutable WAL-G layout works. The owner accepted the separate QA/production
+storage/state and writer boundaries above, including that locked retention cannot
+subsequently be shortened. Exact protocol, RBAC, IPs and custody remain to freeze;
+this direction does not authorize creating or locking storage.
+
+The owner declined a VPN for QA on 2026-10-18; reconsider private access before
+production. Keep the bounded operator `/32` strict-SSH management proposal for
+the future replacement; verify private DNS/TLS from an explicitly approved VNet
+host after bootstrap. An operator's laptop is not a qualified private vantage
+merely because SSH works. Do not start the retained VM to obtain that vantage.
+For internal QA, the owner explicitly deferred additional custody, independent
+recovery access and staffing decisions until production preparation. Keep these
+as open follow-ups, not additional R2 prerequisites; this does not widen SSH,
+change existing containment/tenant controls or approve R2 apply. Primary/backup
+custodians, the independent human recovery approver and recovery implementer
+remain unnamed. Propose two isolated fresh-host restores while the old host stays
+fenced, preserving the full-host-loss target above; reconcile the canonical drill
+wording when the later recovery package is frozen. Full Q3 recovery acceptance
+remains open; the internal-QA scope decision is not proof of recoverability.
+
 Prepare a new R2 packet only in the operator's upcoming approval window:
 
 1. Use the final reviewed clean source commit, exact executor/source hashes,
@@ -413,7 +518,8 @@ Prepare a new R2 packet only in the operator's upcoming approval window:
    session and verify its tenant/subscription; use original backend/config inputs,
    containment true, r02 values and an independent SSH public key. Do not copy
    examples over existing inputs or initialize/reconfigure state.
-2. Attach the frozen design inputs above and current R1 readback. Verify the
+2. Attach the R2-specific frozen inputs, the internal-QA deferrals above and
+   current R1 readback. Verify the
    existing backend/default workspace and controlled state ownership projection;
    freshly check every proposed resource ID, vault/DNS name and accessible state.
    The owner attests the relevant state inventory, including inaccessible states.
@@ -432,8 +538,10 @@ Prepare a new R2 packet only in the operator's upcoming approval window:
    hard-kill timeout, preservation/readback steps and the partial-recovery stop
    rule. R2 is Q4's separate action. This preparation never invokes apply.
 
-Q1/Q3 are not fully accepted while current state/drift evidence, design freeze,
-credit/subscription constraints or required owner decisions are missing. Local N2
+Q1/Q3 are not fully accepted while their current evidence and recovery design
+requirements remain open. Under the owner's internal-QA scope decision, the
+deferred credit/custody/backup details do not block isolated R2 preparation;
+exact R2 ownership, collision, image and saved-plan review still apply. Local N2
 verification closes only its implementation/test requirement; it cannot approve
 an R2 packet, complete PD-3 or promote LP2-01/02/03 from INTEGRATED.
 

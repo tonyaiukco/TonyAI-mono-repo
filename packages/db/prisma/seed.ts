@@ -36,6 +36,9 @@ import { assertLocalSeedTarget, seedActivityType } from './seed-guards';
  *  `findOrCreateRecord` AND by the rolling-baseline guard below, so the two
  *  cannot disagree about whether a seeded row seeds a baseline. */
 const SEED_RECORD_STATUS = ActivityRecordStatus.approved;
+// Disposable CI uses a shared fixture password that meets the current Auth
+// policy. Keep the existing local-stack default until its owner upgrades it.
+const SEED_PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI!2026';
 
 /** The average of a window, or null unless it is full — one definition for
  *  both loops, so the site series cannot drift from the company series. */
@@ -651,14 +654,14 @@ async function main() {
   await seedFactorLibrary();
 
   console.log('Seeding auth users + profiles...');
-  const adminId = await ensureAuthUser('admin@tonyai.local', 'TonyAI!2026', 'Tony Admin');
-  const entryId = await ensureAuthUser('entry@tonyai.local', 'TonyAI!2026', 'Eda Entry');
-  const reviewId = await ensureAuthUser('review@tonyai.local', 'TonyAI!2026', 'Cem Consultant');
+  const adminId = await ensureAuthUser('admin@tonyai.local', SEED_PASSWORD, 'Tony Admin');
+  const entryId = await ensureAuthUser('entry@tonyai.local', SEED_PASSWORD, 'Eda Entry');
+  const reviewId = await ensureAuthUser('review@tonyai.local', SEED_PASSWORD, 'Cem Consultant');
   // A second super_admin, because the approver may not be the record's
   // creator (decision D01, 2026-09-29): with one super_admin, nothing that
   // super_admin entered could ever be approved. The e2e suite and the UAT
   // catalogue approve as this user whatever admin@ created.
-  const approverId = await ensureAuthUser('approver@tonyai.local', 'TonyAI!2026', 'Arda Approver');
+  const approverId = await ensureAuthUser('approver@tonyai.local', SEED_PASSWORD, 'Arda Approver');
 
   await prisma.profile.upsert({
     where: { id: adminId },
@@ -1066,10 +1069,11 @@ const LOCATION_ACTIVITY = [
   );
 
   console.log('\nSeed complete.');
-  console.log('  super_admin -> admin@tonyai.local / TonyAI!2026 (sees all 5 subsidiaries)');
-  console.log('  super_admin -> approver@tonyai.local / TonyAI!2026 (a second approver: nobody approves a record they created)');
-  console.log('  data_entry  -> entry@tonyai.local / TonyAI!2026 (sees 2 subsidiaries)');
-  console.log('  consultant  -> review@tonyai.local / TonyAI!2026 (org-wide read; review/reject only, cannot approve)');
+  const passwordLabel = process.env.TONYAI_TEST_PASSWORD === undefined ? SEED_PASSWORD : '<configured test password>';
+  console.log(`  super_admin -> admin@tonyai.local / ${passwordLabel} (sees all 5 subsidiaries)`);
+  console.log(`  super_admin -> approver@tonyai.local / ${passwordLabel} (a second approver: nobody approves a record they created)`);
+  console.log(`  data_entry  -> entry@tonyai.local / ${passwordLabel} (sees 2 subsidiaries)`);
+  console.log(`  consultant  -> review@tonyai.local / ${passwordLabel} (org-wide read; review/reject only, cannot approve)`);
 }
 
 main()

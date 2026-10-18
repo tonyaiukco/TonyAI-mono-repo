@@ -91,12 +91,23 @@ describe('the runtime role', () => {
     );
   });
 
-  it("holds no USAGE on Storage's schema — LP1-03's grant back fails the check, by the grant and by the helpers it reaches", async () => {
+  it("rejects Storage grants and detects an unsafe definer made reachable by schema USAGE", async () => {
     const { role, definers, all } = await withRollback(owner, async (tx) => {
+      // Newer Storage releases removed the old prefix helpers. The application
+      // owner cannot CREATE in storage, so model schema-USAGE reachability in
+      // its own rolled-back schema without changing platform ownership/grants.
+      await tx.$executeRawUnsafe('CREATE SCHEMA zz_runtime_definer_fixture');
+      await tx.$executeRawUnsafe(
+        'CREATE FUNCTION zz_runtime_definer_fixture.unpinned() RETURNS integer LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$',
+      );
+      await tx.$executeRawUnsafe('REVOKE ALL ON FUNCTION zz_runtime_definer_fixture.unpinned() FROM PUBLIC');
+      await tx.$executeRawUnsafe('GRANT EXECUTE ON FUNCTION zz_runtime_definer_fixture.unpinned() TO tonyai_runtime');
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      expect(await checkReachableDefiners(query)).toEqual([]);
+      await tx.$executeRawUnsafe('GRANT USAGE ON SCHEMA zz_runtime_definer_fixture TO tonyai_runtime');
       // What LP1-03 granted, before `20261020120000_runtime_storage_readers`.
       await tx.$executeRawUnsafe('GRANT USAGE ON SCHEMA storage TO tonyai_runtime');
       await tx.$executeRawUnsafe('GRANT SELECT ON storage.objects TO tonyai_runtime');
-      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
       return {
         role: await checkRuntimeRole(query),
         definers: await checkReachableDefiners(query),
@@ -105,16 +116,10 @@ describe('the runtime role', () => {
     });
     const granted = ['tonyai_runtime was granted USAGE on schema storage', 'tonyai_runtime was granted SELECT on storage.objects'];
     expect(role).toEqual(expect.arrayContaining(granted));
-    const helpers = ['add_prefixes(text, text)', 'delete_leaf_prefixes(text[], text[])', 'delete_prefix(text, text)', 'lock_top_prefixes(text[], text[])'];
-    expect(definers).toEqual(
-      expect.arrayContaining(
-        helpers.map(
-          (fn) =>
-            `tonyai_runtime can run SECURITY DEFINER storage.${fn}, by calling it, and it does not pin its search_path with pg_temp last (config []) — a temporary type of the caller's would run as its owner`,
-        ),
-      ),
-    );
-    expect(definers.every((d) => d.startsWith('tonyai_runtime can run SECURITY DEFINER storage.'))).toBe(true);
+    const synthetic = "tonyai_runtime can run SECURITY DEFINER zz_runtime_definer_fixture.unpinned(), by calling it, and it does not pin its search_path with pg_temp last (config []) — a temporary type of the caller's would run as its owner";
+    expect(definers).toContain(synthetic);
+    // The unchanged local stack may still expose its legacy Storage helpers.
+    expect(definers.every((d) => d === synthetic || d.startsWith('tonyai_runtime can run SECURITY DEFINER storage.'))).toBe(true);
     expect(all).toEqual(expect.arrayContaining([...granted, ...definers]));
   });
 
@@ -123,9 +128,23 @@ describe('the runtime role', () => {
     // pg_graphql's event triggers run its schema-version bump as supabase_admin
     // after every DDL statement, a login's temporary objects included: only its
     // reviewed body lets it pass.
-    const live = (sql: string) => owner.$queryRawUnsafe<Record<string, unknown>[]>(sql);
-    expect(await checkReachableDefiners(live)).toEqual([]);
-    expect(await checkReachableDefiners(live, {})).toEqual(
+    // The candidate bundles pg_graphql but disables it by default. Install it
+    // only in this rolled-back transaction; never change runtime startup.
+    const events = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS pg_graphql');
+      const [extension] = await tx.$queryRaw<{ body: string }[]>`
+        SELECT md5(p.prosrc) AS body
+        FROM pg_extension e, pg_proc p
+        WHERE e.extname = 'pg_graphql'
+          AND p.oid = 'graphql.increment_schema_version()'::regprocedure`;
+      // Bind the reviewed body, as the production check does; the Claude-owned
+      // local stack need not share the candidate's extension version string.
+      expect(extension).toEqual({ body: 'cf541948e5ba6c830440b810d5601e44' });
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      expect(await checkReachableDefiners(query)).toEqual([]);
+      return checkReachableDefiners(query, {});
+    });
+    expect(events).toEqual(
       [FACTOR_LOADER_ROLE, RUNTIME_ROLE].flatMap((role) =>
         ['graphql_watch_ddl', 'graphql_watch_drop'].map(
           (trigger) =>
@@ -263,7 +282,10 @@ describe('the runtime role', () => {
 
 describe('the factor model is in force on this database (LP3-03)', () => {
   it('holds every integrity trigger, ENABLE ALWAYS, on its events, with its migration\'s function body; every key CHECK', async () => {
+    const [{ version }] = await runtime.$queryRaw<{ version: string }[]>`SELECT current_setting('server_version') AS version`;
+    expect(version).toMatch(/^17\./);
     expect(await checkIntegrityTriggers((sql: string) => runtime.$queryRawUnsafe(sql))).toEqual([]);
+    process.stdout.write(`Integrity catalog pins checked on PostgreSQL ${version}\n`);
   });
 
   it('leaves the table-level verbs (TRIGGER, TRUNCATE, REFERENCES, MAINTAIN) to the owners alone, now and by default', async () => {
