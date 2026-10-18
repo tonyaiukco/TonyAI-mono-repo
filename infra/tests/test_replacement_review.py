@@ -26,6 +26,14 @@ from test_replacement_plan import inputs, plan
 
 
 class ReplacementReviewTests(unittest.TestCase):
+    def spawn(self, process, stdout, stderr):
+        def start_process(command, **kwargs):
+            for name, data in (('stdout', stdout), ('stderr', stderr)):
+                kwargs[name].write(data)
+                kwargs[name].flush()
+            return process
+        return start_process
+
     def test_legacy_config_only_plan_and_apply_refuse_before_any_terraform_call(self):
         with tempfile.TemporaryDirectory() as folder:
             backend = Path(folder) / 'backend'; config = Path(folder) / 'inputs'
@@ -54,21 +62,21 @@ class ReplacementReviewTests(unittest.TestCase):
     def test_apply_deadline_sends_one_sigint_waits_and_never_kills(self):
         with self.saved_packet('R2') as (directory, approved):
             process = MagicMock(); process.returncode = 0
-            def communicate(**kwargs):
-                if process.communicate.call_count == 1:
+            def wait(**kwargs):
+                if process.wait.call_count == 1:
                     raise subprocess.TimeoutExpired('terraform', 900)
                 self.assertIs(signal.getsignal(signal.SIGINT), signal.SIG_IGN)
-                return b'partial-output', b'partial-error'
-            process.communicate.side_effect = communicate
+                return 0
+            process.wait.side_effect = wait
             def metadata(command, **kwargs):
                 self.assertNotIn('apply', command, 'Apply must not use subprocess.run and its timeout/SIGKILL path')
                 return subprocess.CompletedProcess(command, 0, encoded(plan('R2')), b'')
-            with patch.object(runner.subprocess, 'run', side_effect=metadata), patch.object(runner.subprocess, 'Popen', return_value=process) as popen:
+            with patch.object(runner.subprocess, 'run', side_effect=metadata), patch.object(runner.subprocess, 'Popen', side_effect=self.spawn(process, b'partial-output', b'partial-error')) as popen:
                 with self.assertRaises(ValueError): runner.apply('backend', 'inputs', 'R2', directory, approved)
             self.assertIs(popen.call_args.kwargs.get('start_new_session'), True)
             process.send_signal.assert_called_once_with(signal.SIGINT)
             process.kill.assert_not_called(); process.terminate.assert_not_called()
-            self.assertEqual(process.communicate.call_args_list[-1].kwargs, {})
+            self.assertEqual(process.wait.call_args_list[-1].kwargs, {})
             self.assertEqual((directory / 'apply.stderr.log').read_bytes(), b'partial-error')
             self.assertTrue((directory / 'apply-attempt.json').exists())
             self.assertFalse((directory / 'apply-completed.json').exists())
@@ -80,22 +88,23 @@ class ReplacementReviewTests(unittest.TestCase):
                 path = directory / (action + '.stdout.log')
                 write_new(path, b'original-diagnostics')
                 process = MagicMock(); process.returncode = 1
-                process.communicate.return_value = (b'new-output', b'new-error')
-                with patch.object(runner.subprocess, 'Popen', return_value=process):
+                process.wait.return_value = 1
+                with patch.object(runner.subprocess, 'Popen', return_value=process) as popen:
                     try:
                         with self.assertRaises(FileExistsError):
                             runner.terraform_capture(['terraform', action], {}, directory, action)
                     finally:
                         self.assertEqual(path.read_bytes(), b'original-diagnostics')
+                        popen.assert_not_called()
 
     def test_failed_apply_keeps_private_diagnostics_and_refuses_second_attempt(self):
         with self.saved_packet() as (directory, approved):
             process = MagicMock(); process.returncode = 1
-            process.communicate.return_value = (b'synthetic-stdout-secret', b'synthetic-stderr-secret')
+            process.wait.return_value = 1
             def result(command, **kwargs):
                 return subprocess.CompletedProcess(command, int('apply' in command),
                     b'synthetic-stdout-secret' if 'apply' in command else encoded(plan('R1')), b'synthetic-stderr-secret')
-            with patch.object(runner.subprocess, 'run', side_effect=result), patch.object(runner.subprocess, 'Popen', return_value=process) as popen, patch('sys.stdout', new_callable=io.StringIO) as output:
+            with patch.object(runner.subprocess, 'run', side_effect=result), patch.object(runner.subprocess, 'Popen', side_effect=self.spawn(process, b'synthetic-stdout-secret', b'synthetic-stderr-secret')) as popen, patch('sys.stdout', new_callable=io.StringIO) as output:
                 with self.assertRaises(ValueError): runner.apply('backend', 'inputs', 'R1', directory, approved)
                 for stream in ('stdout', 'stderr'):
                     path = directory / ('apply.' + stream + '.log')
@@ -109,8 +118,8 @@ class ReplacementReviewTests(unittest.TestCase):
     def test_plan_interrupt_keeps_diagnostics_without_binding_or_kill(self):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder) / 'packet'; process = MagicMock(); process.returncode = 1
-            process.communicate.side_effect = [KeyboardInterrupt(), (b'partial-plan', b'plan-error')]
-            with patch.object(runner, 'context', return_value=(['terraform'], {}, {}, inputs('R1'))), patch.object(runner, 'state', return_value={}), patch.object(runner.subprocess, 'Popen', return_value=process), patch.object(runner.subprocess, 'run', side_effect=AssertionError('Plan must not use subprocess.run')):
+            process.wait.side_effect = [KeyboardInterrupt(), 1]
+            with patch.object(runner, 'context', return_value=(['terraform'], {}, {}, inputs('R1'))), patch.object(runner, 'state', return_value={}), patch.object(runner.subprocess, 'Popen', side_effect=self.spawn(process, b'partial-plan', b'plan-error')), patch.object(runner.subprocess, 'run', side_effect=AssertionError('Plan must not use subprocess.run')):
                 with self.assertRaises(ValueError): runner.prepare('backend', 'inputs', 'R1', directory)
             process.send_signal.assert_called_once_with(signal.SIGINT); process.kill.assert_not_called()
             self.assertEqual((directory / 'plan.stdout.log').read_bytes(), b'partial-plan')

@@ -319,29 +319,123 @@ graceful completion without a second signal or SIGKILL. An operator interrupt
 uses the same path. That wait has no forced deadline; do not kill the wrapper to
 meet a maintenance estimate. Future executors must preserve this wait and must
 not impose an outer hard-kill timeout on the writer. Failed/interrupted plan or apply stdout/stderr is
-saved with exclusive mode-0600 files in the packet (`plan.stdout.log`,
+written directly to exclusive mode-0600 files in the packet (`plan.stdout.log`,
 `plan.stderr.log`, `apply.stdout.log`, `apply.stderr.log`), never printed. Those
 logs can contain sensitive provider diagnostics; do not publish or bulk-read them.
 Unsuccessful prepare packets are retained for private diagnosis and never reused.
 
 ### Pre-R2-apply gate: wrapper lifetime and diagnostic streams (N2)
 
-This gate is OPEN and must be closed before R2 apply. The current writer uses
-stdout/stderr pipes. If its wrapper dies after terminal closure or an outer kill,
-Terraform can receive SIGPIPE on its next output, interrupting state persistence
-or lock release despite its separate session. The existing SIGINT handling does
-not close this failure path. Do not treat the PR review as permission to apply.
+The local writer opens both streams as exclusive mode-0600 packet files with
+`O_CREAT|O_EXCL|O_NOFOLLOW` **before** starting Terraform. It validates the packet
+as an owner-only directory, refuses a symlinked directory and opens logs relative
+to that directory descriptor. Terraform receives regular file descriptors,
+`stdin=DEVNULL` and a separate session; no stdout/stderr PIPE reader depends on
+the wrapper remaining alive. Success returns stdout bytes from the same open
+file descriptor. Both logs remain private on success, failure or interruption;
+no provider output is printed. Failure opening either stream prevents spawning
+Terraform, leaves any already-created log in place, and never overwrites it.
 
-Before R2 apply, harden the writer to open both streams as exclusive mode-0600
-packet files with `O_CREAT|O_EXCL|O_NOFOLLOW` before starting Terraform, instead
-of pipes. Preserve failed/interrupted diagnostics, return required stdout on
-success, and never print private output. Verify with a harmless real child that
-parent death/closure cannot cause SIGPIPE through those streams, that successful
-output is returned, and that existing logs cannot be overwritten. Review the
-resulting delta and bind the final executor/source hashes in the approval packet.
-Also run the R2 executor from a session that survives terminal closure; this
-operational requirement does not substitute for the stream hardening. No outer
-hard timeout or automatic retry is permitted.
+Real harmless-child tests in `test_replacement_diagnostics.py` exercise wrapper
+SIGKILL, actual PTY terminal closure, output larger than pipe capacity, success,
+failure, SIGINT and private/exclusive file refusals. Mock deadline tests separately
+verify one SIGINT followed by an unbounded wait, without terminate/SIGKILL; apply
+regressions preserve the attempt marker and refuse a second attempt. These are
+local process/file guarantees, not proof of Azure state persistence or recovery.
+An externally killed wrapper cannot write a completion marker, even if Terraform
+later succeeds: retain the packet and investigate through the partial-recovery
+boundary below. Disk-full/host-loss failures are not solved by stream redirection.
+
+Independent review and the final executor/source hashes must be bound in a
+**new** approval packet before R2 apply. Also run the executor from a session
+that survives terminal closure; this operational requirement does not substitute
+for stream hardening. No outer hard timeout or automatic retry is permitted.
+
+### Q1-Q3 design freeze and R2 preparation
+
+Q1 reconciles the recorded R1 operation above; it does not convert the historical
+2026-10-15 observations into current evidence. Follow [runbook 00](00-session.md)
+session hygiene, then check the existing authenticated account against the
+original private contract before querying resources. Never print secret values,
+state contents or provider diagnostics. An unavailable login or inaccessible
+resource is an evidence gap, not an empty inventory or an authorization to change
+accounts, initialize a backend or relax policy. Record current results and their
+timestamps in the private packet and sanitized B9 PR handoff, not a new ledger.
+
+Reconcile current old-VM power state, exact containment rules, all three retained
+disks/attachments, NIC/subnets, both IPs, vault protections and three locks.
+Compare the original contract and existing backend/default workspace; the last
+recorded state had fifteen owned IDs, unchanged lineage and serial 11. Require a
+fresh controlled ownership projection and state hash before planning; neither
+cached backend metadata nor ARM IDs prove state ownership. A later serial is a
+change to investigate, not a reason to force it back to 11. Preserve the old
+active output and reserved delegated apps subnet. Recheck Sweden SKU/image
+availability and family/regional quota. Obtain authoritative credit balance,
+expiry and eligible-subscription evidence from the owner if account access cannot
+establish it; an enabled subscription does not verify the reported allocation.
+
+The following are design requirements for owner freeze **before R2 approval**;
+none creates resources or broadens R2's ten-create/one-subnet-update allowlist.
+The [Azure delivery plan, recovery track](../../docs/roadmap_docs/Azure_roadmap_plan.md#5-recovery-track-independent-workload-and-measurable-acceptance)
+sets the later implementation/review/apply sequence.
+
+| Boundary | Required frozen input and writer |
+| --- | --- |
+| Resource ownership | A future `selfhost-backup` writer has separate state/contracts for QA and production storage accounts, containers, retention, endpoint/DNS and backup RBAC. RI in SC1 or Codex in SC2 needs named file reservations first. Selfhost alone owns VNet/subnet/NSG writes; backup DNS is not also managed by application foundation. No second subnet writer, implicit state adoption or backup resource in R2. |
+| Private path | Reserve a nondelegated endpoint subnet and exact endpoint IPs in the existing VNet, outside old `10.80.0.0/24`, r02 `10.80.1.0/24` and apps `10.80.2.0/23`. Owner freeze must name the collision-checked CIDR, endpoint IDs and DNS link owner. Only a later selfhost packet adds the subnet/network policy; a later backup packet creates the Blob endpoint. Preserve default-deny and old/new isolation. |
+| Traffic and DNS | The later network manifest permits capture/recovery host -> exact Blob private endpoint TCP 443, with explicit DNS resolver and identity-token/platform dependencies. Bind approved operator private access and test DNS/TLS from that vantage. Resolve the account's normal Blob hostname privately via `privatelink.blob.core.windows.net`; do not use a guessed S3 URL. Disable storage public network access separately from creating the endpoint. [Azure private endpoint behavior](https://learn.microsoft.com/en-us/azure/storage/common/storage-private-endpoints). |
+| Sweden retention | Separate Sweden Central backup accounts, encrypted transport/storage, public blobs/shared-key access disabled. Owner selects redundancy within approved residency, capacity/cost, retention days and soft-delete/versioning policy compatible with the chosen capture format. Require locked time-based immutability before accepting captures; test format/retention first in the separately reviewed foundation packet. No mutable overwrite/garbage-collection dependency may undermine recovery. A locked policy cannot simply be shortened or removed; owner approval must name that consequence. [Azure immutability](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-storage-overview). |
+| Backup identities | Separate capture and restore/operator identities from API/web/deployer principals. Capture gets only scoped operations required by the validated upload protocol; no delete, retention-policy, key-listing or role-assignment capability. Restore gets scoped read plus separately approved target-host rights. Foundation administration owns retention/RBAC. Freeze exact role actions/scopes and prove denied deletion, public access, QA-to-production and app-to-backup access; a broad built-in role is not presumed sufficient. |
+| Custody | Name primary and backup custodians, eligible recovery-vault access, activation/alert route and private access independent of one home IP. Bind exact escrow versions, encryption material, source/image/host generations and restore manifests. Loss of the source host must not lose the only decryption key or operator instructions. Backup storage is separate from the existing Key Vault escrow; existing same-VM restore is not full-host recovery. |
+| Loss and proof | Target full VM/OS/database/object-disk loss, not merely `.env` loss: fresh disks/new host generation, old host fenced and retained, no source disk used to restore. Capture DB base/WAL, evidence/import bytes, configuration/escrow and encrypted Caddy TLS/account state. Bind a consistent recovery point, checksums and reclamation hold; preserve approved origins/images through an explicitly reviewed IP/DNS/identity cutover. Regional/subscription loss is outside this target and needs separate owner acceptance/design. |
+
+Before freezing this table, the owner must accept or revise the same-closed-
+environment maintenance drill and reconcile it with canonical isolated-restore
+and fresh-recreation wording. RPO <=15 minutes and RTO <=4 hours remain measured
+requirements: two timed drills with independent DB/object markers, login,
+download/hash, audit/seal and report reconciliation. Existing `wal-g.conf`, disk
+retention and Key Vault escrow do not implement that capture/recovery system.
+Disabled VM extensions and deny-all outbound rules exclude assuming VM Backup
+or an agent can simply be enabled. These are later BF/REC packages, not R3/R4
+implementation in Q1-Q3.
+
+Owner dependencies: choose SMTP processor/DPA, domain/DNS and verified sender
+controls (SPF/DKIM/DMARC); reserve pen-test **and retest** by the plan's 10-30 target
+(11-13 hard stop); name SC1's recovery implementer/capacity/reserved files by
+10-26 or select SC2. Name backup custodian/operator and the independent human
+approver. Preparation does not contact vendors, book services or accept these
+decisions for the owner.
+
+Prepare a new R2 packet only in the operator's upcoming approval window:
+
+1. Use the final reviewed clean source commit, exact executor/source hashes,
+   Terraform 1.13.3 and reviewed provider lock. Restore the existing authenticated
+   session and verify its tenant/subscription; use original backend/config inputs,
+   containment true, r02 values and an independent SSH public key. Do not copy
+   examples over existing inputs or initialize/reconfigure state.
+2. Attach the frozen design inputs above and current R1 readback. Verify the
+   existing backend/default workspace and controlled state ownership projection;
+   freshly check every proposed resource ID, vault/DNS name and accessible state.
+   The owner attests the relevant state inventory, including inaccessible states.
+3. Run `prepare --phase R2` into a new private packet directory. It is a planning
+   operation with Terraform's normal state locking; it does not authorize apply.
+   Reject **every nonempty `resource_drift`** under the current policy. If observed,
+   privately inspect exact address/action/before/after and request independent
+   review of any narrowly justified exception, then generate another plan. Never
+   infer a power-state-only change from the old deallocation record.
+4. Independently review the binary projection, full resource allowlist and all
+   source/input/tool/backend/account/state bindings, including before/after
+   stability. Bind the final executor SHA256 and every mutating argv/target in
+   the operation manifest. Any changed binding needs a new packet/review.
+5. Obtain explicit owner approval of that manifest and saved-plan binding within
+   the two-hour lifetime, with a durable terminal-independent session, no outer
+   hard-kill timeout, preservation/readback steps and the partial-recovery stop
+   rule. R2 is Q4's separate action. This preparation never invokes apply.
+
+Q1/Q3 are not fully accepted while current state/drift evidence, design freeze,
+credit/subscription constraints or required owner decisions are missing. Local N2
+verification closes only its implementation/test requirement; it cannot approve
+an R2 packet, complete PD-3 or promote LP2-01/02/03 from INTEGRATED.
 
 ### Partial R2 recovery boundary
 
