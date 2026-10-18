@@ -482,9 +482,9 @@ PD-3 remains OPEN. Follow runbook 10's separate R1–R4
 packages; the legacy selfhost apply command must not perform this replacement.
 
 Bounded R3 preparation now includes pinned public artifact staging, a local
-transfer archive, signature/package verification and a separately approved
+transfer archive, signature/package verification tooling and a separately approved
 offline toolchain installer that leaves services persistently masked. A manual
-GitHub Ubuntu 24.04 amd64 workflow prepares exact QA-composition smoke on the
+GitHub Ubuntu 24.04 amd64 workflow prepares QA composition smoke using recorded hosted Docker versions on the
 owner-selected disposable target. Its source/dispatch, full private regression,
 Realtime consumer proof, offline transfer/install qualification and live
 host/custody acceptance remain gates. See [runbook 10](infra/runbooks/10-qa-clean-replacement.md#accepted-r2-and-bounded-r3-preparation-2026-10-18).

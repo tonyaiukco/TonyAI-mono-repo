@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exact QA composition smoke on a fresh GitHub Ubuntu 24.04 amd64 runner only.
+"""QA composition smoke using hosted Docker tooling on a fresh GitHub Ubuntu 24.04 amd64 runner only.
 
 This deliberately does not emulate IMDS, Azure disks or custody acceptance.
 Never upload the runtime directory, Compose output, container logs or credentials.
@@ -11,9 +11,12 @@ import platform
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from r3_artifacts import ROOT, fetch, sha, write
 from selfhost_pin import validate, redact_gateway
 
+DOCKER = ['docker', '--host', 'unix:///var/run/docker.sock']
 PROJECT = 'tonyai-r3-disposable'
 ACTIVE = {'api-gw', 'auth', 'db', 'imgproxy', 'meta', 'realtime', 'rest', 'storage', 'studio'}
 
@@ -37,7 +40,7 @@ def require_runner(env, system, machine, os_release):
 
 
 def compose():
-    return ['docker', '--host', 'unix:///var/run/docker.sock', 'compose', '-p', PROJECT,
+    return [*DOCKER, 'compose', '-p', PROJECT,
             '--env-file', '.env', '-f', 'docker-compose.yml', '-f', 'compose.qa.yml',
             '-f', 'compose.https.yml', '-f', 'compose.r02.yml', '-f', 'compose.images.json']
 
@@ -58,11 +61,28 @@ def check_effective(config, lock):
         raise ValueError('Realtime GCM input differs.')
 
 
-def run(output):
+def tooling(node):
+    if not Path(node).is_absolute():
+        raise ValueError('Absolute setup-node executable required.')
+    version = capture([node, '--version']).decode().strip()
+    if version != 'v22.23.3':
+        raise ValueError('Disposable Node version differs.')
+    info = json.loads(capture(DOCKER + ['info', '--format', '{{json .}}']))
+    # .Id/config_digest comparison below is qualified only for the classic store.
+    if info.get('Driver') != 'overlay2' or any('containerd' in str(row).lower() for row in info.get('DriverStatus', [])):
+        raise ValueError('Only the classic overlay2 image store is supported by this smoke.')
+    return {'node_executable': node, 'node': version,
+            'docker': json.loads(capture(DOCKER + ['version', '--format', '{{json .}}'])),
+            'compose': capture(DOCKER + ['compose', 'version', '--short']).decode().strip(),
+            'image_store': 'classic-overlay2', 'pinned_engine_qualified': False}
+
+
+def run(output, node):
     require_runner(os.environ, platform.system(), platform.machine(), platform.freedesktop_os_release())
     if os.geteuid() != 0:
         raise ValueError('Disposable runner requires root for fixed QA bind paths.')
-    if capture(['docker', 'ps', '-aq']).strip() or Path('/srv/tonyai').exists():
+    versions = tooling(node)
+    if capture(DOCKER + ['ps', '-aq']).strip() or Path('/srv/tonyai').exists():
         raise ValueError('Runner is not empty; never remove another runtime.')
     os.umask(0o077)
     output = Path(output).absolute()
@@ -92,7 +112,7 @@ import { writeFileSync } from 'node:fs';
 const settings = createSettings('tonyai-staging-disposable.swedencentral.cloudapp.azure.com', 'qualification@example.invalid');
 writeFileSync(process.argv[1], Object.entries(settings).map(([k,v]) => `${k}='${v}'`).join('\n')+'\n', {flag:'wx',mode:0o600});
 """
-    capture(['node', '--input-type=module', '-e', script, str(runtime / '.env')], cwd=ROOT)
+    capture([node, '--input-type=module', '-e', script, str(runtime / '.env')], cwd=ROOT)
     for path in ('database/postgres', 'database/db-config', 'database/caddy-data', 'database/caddy-config', 'objects/storage'):
         Path('/srv/tonyai', path).mkdir(parents=True, mode=0o750)
     os.chdir(runtime)
@@ -101,8 +121,8 @@ writeFileSync(process.argv[1], Object.entries(settings).map(([k,v]) => `${k}='${
     check_effective(config, lock)
     images = {}
     for name, item in lock.items():
-        capture(['docker', 'pull', '--platform', 'linux/amd64', item['image']])
-        meta = json.loads(capture(['docker', 'image', 'inspect', item['image']]))[0]
+        capture(DOCKER + ['pull', '--platform', 'linux/amd64', item['image']])
+        meta = json.loads(capture(DOCKER + ['image', 'inspect', item['image']]))[0]
         if meta['Architecture'] != 'amd64' or meta['Os'] != 'linux' or item['image'] not in meta['RepoDigests']:
             raise ValueError('Image identity mismatch.')
         images[name] = meta['Id']
@@ -111,12 +131,12 @@ writeFileSync(process.argv[1], Object.entries(settings).map(([k,v]) => `${k}='${
         raise ValueError('Database image policy mismatch.')
     # Seed the image's intrinsic configuration on the disposable runner. This is
     # not a claim that the production mount/IMDS/escrow guards ran here.
-    container = capture(['docker', 'create', '--pull', 'never', '--entrypoint', 'true', lock['db']['image']]).decode().strip()
+    container = capture(DOCKER + ['create', '--pull', 'never', '--entrypoint', 'true', lock['db']['image']]).decode().strip()
     try:
-        capture(['docker', 'cp', '-a', container + ':/etc/postgresql-custom/.', '/srv/tonyai/database/db-config'])
+        capture(DOCKER + ['cp', '-a', container + ':/etc/postgresql-custom/.', '/srv/tonyai/database/db-config'])
     finally:
-        capture(['docker', 'rm', '-v', container])
-    metadata = capture(['docker', 'run', '--pull', 'never', '--rm', '--entrypoint', 'stat', lock['db']['image'], '-c', '%u:%g:%a', '/etc/postgresql-custom']).decode().strip()
+        capture(DOCKER + ['rm', '-v', container])
+    metadata = capture(DOCKER + ['run', '--pull', 'never', '--rm', '--entrypoint', 'stat', lock['db']['image'], '-c', '%u:%g:%a', '/etc/postgresql-custom']).decode().strip()
     uid, gid, mode = metadata.split(':')
     os.chown('/srv/tonyai/database/db-config', int(uid), int(gid))
     Path('/srv/tonyai/database/db-config').chmod(int(mode, 8))
@@ -126,7 +146,7 @@ writeFileSync(process.argv[1], Object.entries(settings).map(([k,v]) => `${k}='${
             raise ValueError('Database intrinsic key was not generated.')
         capture(compose() + ['up', '-d', '--pull', 'never', '--no-build', '--wait', '--wait-timeout', '240'])
         ids = capture(compose() + ['ps', '-q']).decode().split()
-        containers = json.loads(capture(['docker', 'inspect', *ids]))
+        containers = json.loads(capture(DOCKER + ['inspect', *ids]))
         observed = {}
         for item in containers:
             name = item['Config']['Labels']['com.docker.compose.service']
@@ -138,7 +158,7 @@ writeFileSync(process.argv[1], Object.entries(settings).map(([k,v]) => `${k}='${
             observed[name] = {'image_config': item['Image'], 'running': True}
         if set(observed) != ACTIVE:
             raise ValueError('Active services missing.')
-        report = {'status': 'COMPOSITION_SMOKE_PASS', 'qa_ready': False,
+        report = {'status': 'COMPOSITION_SMOKE_PASS', 'qa_ready': False, 'tooling': versions,
                   'source_sha': capture(['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip(),
                   'image_lock_sha256': sha(lock_bytes), 'services': observed,
                   'unproven': ['Private refused-statement/stable-connection regression',
@@ -154,9 +174,9 @@ writeFileSync(process.argv[1], Object.entries(settings).map(([k,v]) => `${k}='${
 
 if __name__ == '__main__':
     try:
-        if len(sys.argv) != 2:
+        if len(sys.argv) != 3:
             raise ValueError('Private output directory required.')
-        run(sys.argv[1])
+        run(sys.argv[1], sys.argv[2])
         print('PASS: composition smoke only; full R3 qualification remains gated.')
     except Exception:
         raise SystemExit('FAIL: disposable qualification refused or failed; no runtime output exported.')

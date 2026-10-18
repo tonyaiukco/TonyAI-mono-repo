@@ -7,8 +7,9 @@ activation. Failures preserve the attempt journal and service masks for review.
 import argparse
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
+import posixpath
 import subprocess
 import sys
 import tarfile
@@ -30,6 +31,28 @@ def verify_masks(directory=Path('/etc/systemd/system')):
         path = directory / service
         if not path.is_symlink() or os.readlink(path) != '/dev/null':
             raise ValueError('Persistent service mask missing.')
+
+
+def check_node_archive(node):
+    """Read every member before any host write; extraction repeats the data filter."""
+    root = 'node-v22.23.3-linux-x64'
+    with tarfile.open(node) as archive:
+        for member in archive:
+            name = PurePosixPath(member.name)
+            if (name.is_absolute() or '..' in name.parts
+                    or not (member.name == root or member.name.startswith(root + '/'))):
+                raise ValueError('Node archive root differs.')
+            if member.name == root and not member.isdir():
+                raise ValueError('Node archive root must be a directory.')
+            if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
+                raise ValueError('Node archive special member refused.')
+            if member.issym() or member.islnk():
+                target = member.linkname
+                resolved = posixpath.normpath(posixpath.join(posixpath.dirname(member.name), target) if member.issym() else target)
+                if target.startswith('/') or not (resolved == root or resolved.startswith(root + '/')):
+                    raise ValueError('Node archive link escapes its root.')
+            # Validate Python's extraction safety policy without extracting.
+            tarfile.data_filter(member, '/opt/tonyai-tools')
 
 
 def install(bundle, contract_path, approval_path, approved_hash):
@@ -77,6 +100,8 @@ def install(bundle, contract_path, approval_path, approved_hash):
         if probe.returncode == 0:
             raise ValueError('Existing Docker package state refused.')
     dependency_plan(lock, paths)
+    node = bundle / 'artifacts' / lock['node']['url'].rsplit('/', 1)[1]
+    check_node_archive(node)
     safe_path('/etc/tonyai', directory=True)
     write_new('/etc/tonyai/r3-install-attempt.json', encoded(expected))
     # Both dpkg maintainer scripts and systemd must be prevented from starting
@@ -97,14 +122,16 @@ def install(bundle, contract_path, approval_path, approved_hash):
             raise ValueError('Installed package readback differs.')
     verify_masks()
     Path('/opt/tonyai-tools').mkdir(mode=0o755)
-    node = bundle / 'artifacts' / lock['node']['url'].rsplit('/', 1)[1]
+    Path('/opt/tonyai-tools').chmod(0o755)
     with tarfile.open(node) as archive:
-        if any(not member.name.startswith('node-v22.23.3-linux-x64/') for member in archive):
-            raise ValueError('Node archive root differs.')
         archive.extractall('/opt/tonyai-tools', filter='data')
+    for path in Path('/opt/tonyai-tools').rglob('*'):
+        if path.is_dir() and not path.is_symlink():
+            path.chmod(0o755)
     if capture(['/opt/tonyai-tools/node-v22.23.3-linux-x64/bin/node', '--version']).strip() != 'v22.23.3':
         raise ValueError('Installed Node differs.')
     Path('/etc/docker').mkdir(mode=0o755, exist_ok=True)
+    Path('/etc/docker').chmod(0o755)
     write_new('/etc/docker/daemon.json', encoded(DAEMON))
     write_new('/etc/tonyai/docker-packages.txt', ''.join(item['name'] + '=' + item['version'] + '\n' for item in lock['packages']).encode())
     capture(['apt-mark', 'hold', *[item['name'] for item in lock['packages']]])

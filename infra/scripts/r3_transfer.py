@@ -11,8 +11,12 @@ import json
 import os
 from pathlib import Path
 import tarfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from r3_artifacts import ROOT, sha, verify, write
+from r3_toolchain import install_argv
 
 
 def prepare(directory, output):
@@ -43,7 +47,12 @@ def prepare(directory, output):
         'archive_sha256': sha(archive.read_bytes()),
         'manifest_sha256': sha((directory / 'manifest.json').read_bytes()),
         'toolchain_sha256': sha(reviewed), 'packages': lock['packages'], 'node': lock['node'],
-        'proposed_install_argv': ['apt-get', '--no-download', '--no-install-recommends', 'install', *packages],
+        'proposed_install_argv': ['python3', '-I', '-B', '/var/lib/tonyai-r3/r3/helpers/r3_install.py',
+            '--bundle', '/var/lib/tonyai-r3/r3', '--contract', '/etc/tonyai/replacement.json',
+            '--approval', '/var/lib/tonyai-r3/install-approval.json',
+            '--approved-sha256', '<SEPARATELY_APPROVED_INSTALL_APPROVAL_SHA256>'],
+        'installer_internal_apt_argv': install_argv(packages),
+        'invocation_note': '-B prevents helper __pycache__ writes that invalidate the manifest; never invoke apt directly.',
         'required_before_install': [
             'Authenticate new SSH host key independently; strict known-host verification for transfer',
             'Bind new VM UUID, resource IDs, OS and data disk IDs to fresh readback and IMDS',

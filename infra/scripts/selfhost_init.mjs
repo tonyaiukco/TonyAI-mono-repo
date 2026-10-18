@@ -1,9 +1,9 @@
 /** Fresh-host Supabase secrets. Uses Node crypto; never emits secrets or passes them in argv. */
 import { randomBytes, randomUUID, generateKeyPairSync, createHmac, createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, readdirSync, lstatSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 export const createSettings = (hostname, operatorEmail) => {
   const hex = (bytes) => randomBytes(bytes).toString('hex');
@@ -102,6 +102,6 @@ const main = () => {
   console.log('PASS: fresh QA credentials generated in the root-only runtime environment file.');
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { main(); } catch { console.error('FAIL: secret initialization refused or interrupted; inspect privately before retrying.'); process.exitCode = 1; }
 }

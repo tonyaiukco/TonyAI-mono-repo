@@ -10,7 +10,7 @@ permissions:
 jobs:
   infra:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -32,8 +32,9 @@ jobs:
         run: python3 -m unittest discover -s infra/tests -v
       - name: Selfhost initializer and destructive-path mutations
         run: |
-          node --test infra/tests/selfhost_init.test.mjs infra/tests/selfhost_smoke_expectations.test.mjs
+          node --test infra/tests/selfhost_init_entry.test.mjs infra/tests/selfhost_init.test.mjs infra/tests/selfhost_smoke_expectations.test.mjs
           python3 infra/tests/check_selfhost_runtime_mutations.py
+          python3 infra/tests/r3_mutations.py --output "$RUNNER_TEMP/r3-mutations.json"
       - name: Regression mutation checks
         run: python3 infra/tests/check_mutations.py
       - name: State security and writer policy

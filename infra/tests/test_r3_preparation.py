@@ -17,13 +17,22 @@ import r3_toolchain as toolchain
 import r3_install as install
 
 
+def bundle_manifest(root, files):
+    provenance = {}
+    for name in ('docker.asc', 'InRelease', 'Packages'):
+        artifacts.write(root / 'provenance' / name, b'public fixture')
+        provenance[name] = artifacts.sha(b'public fixture')
+        files['provenance/' + name] = provenance[name]
+    return {'format': 2, 'source_sha': 'a' * 40, 'provenance': provenance, 'files': files,
+            'image_transport': 'UNQUALIFIED', 'install_authorized': False}
+
+
 class Artifacts(unittest.TestCase):
     def bundle(self, folder):
         root = Path(folder)
         data = b'public-artifact'
         artifacts.write(root / 'artifacts/example', data)
-        manifest = {'format': 1, 'files': {'artifacts/example': artifacts.sha(data)},
-                    'image_transport': 'UNQUALIFIED', 'install_authorized': False, 'secrets_included': False}
+        manifest = bundle_manifest(root, {'artifacts/example': artifacts.sha(data)})
         artifacts.write(root / 'manifest.json', json.dumps(manifest).encode())
         return root, manifest
 
@@ -33,7 +42,7 @@ class Artifacts(unittest.TestCase):
             self.assertEqual(artifacts.verify(root), manifest)
 
     def test_changed_missing_extra_linked_or_secret_claim_refused(self):
-        for fault in ('changed', 'missing', 'extra', 'symlink', 'hardlink', 'authority', 'secret'):
+        for fault in ('changed', 'missing', 'extra', 'symlink', 'hardlink', 'authority', 'fifo', 'emptydir'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as folder:
                 root, manifest = self.bundle(folder)
                 path = root / 'artifacts/example'
@@ -43,8 +52,10 @@ class Artifacts(unittest.TestCase):
                 if fault == 'symlink':
                     path.unlink(); path.symlink_to('/etc/hosts')
                 if fault == 'hardlink': os.link(path, root / 'extra')
-                if fault in ('authority', 'secret'):
-                    manifest['install_authorized' if fault == 'authority' else 'secrets_included'] = True
+                if fault == 'fifo': os.mkfifo(root / 'pipe')
+                if fault == 'emptydir': (root / 'empty').mkdir()
+                if fault == 'authority':
+                    manifest['install_authorized'] = True
                     (root / 'manifest.json').write_text(json.dumps(manifest))
                 with self.assertRaises(ValueError): artifacts.verify(root)
 
@@ -69,16 +80,24 @@ class Artifacts(unittest.TestCase):
             lock_bytes = json.dumps(lock).encode()
             (root / 'r3-toolchain.lock.json').write_bytes(lock_bytes)
             files['r3-toolchain.lock.json'] = artifacts.sha(lock_bytes)
-            artifacts.write(root / 'manifest.json', json.dumps({'format': 1, 'files': files,
-                'image_transport': 'UNQUALIFIED', 'install_authorized': False, 'secrets_included': False}).encode())
+            artifacts.write(root / 'manifest.json', json.dumps(bundle_manifest(root, files)).encode())
             reviewed = Path(folder) / 'reviewed/infra/selfhost'; reviewed.mkdir(parents=True)
             (reviewed / 'r3-toolchain.lock.json').write_bytes(lock_bytes)
             output = Path(folder) / 'out'
             with patch.object(transfer, 'ROOT', Path(folder) / 'reviewed'):
+                (reviewed / 'r3-toolchain.lock.json').write_bytes(b'wrong reviewed lock')
+                with self.assertRaises(ValueError): transfer.prepare(root, output)
+                (reviewed / 'r3-toolchain.lock.json').write_bytes(lock_bytes)
+                bad_manifest = json.loads((root / 'manifest.json').read_bytes())
+                bad_manifest['files']['artifacts/unapproved.deb'] = 'a' * 64
+                with patch.object(transfer, 'verify', return_value=bad_manifest), self.assertRaises(ValueError):
+                    transfer.prepare(root, output)
                 proposal = transfer.prepare(root, output)
                 with self.assertRaises(FileExistsError): transfer.prepare(root, output)
             self.assertFalse(proposal['azure_mutations_authorized'])
-            self.assertIn('--no-download', proposal['proposed_install_argv'])
+            self.assertEqual(proposal['installer_internal_apt_argv'], toolchain.install_argv(['/var/lib/tonyai-r3/r3/artifacts/' + p['url'].rsplit('/', 1)[1] for p in lock['packages']]))
+            self.assertEqual(proposal['proposed_install_argv'][:4], ['python3', '-I', '-B', '/var/lib/tonyai-r3/r3/helpers/r3_install.py'])
+            self.assertEqual(proposal['proposed_install_argv'][4:], ['--bundle', '/var/lib/tonyai-r3/r3', '--contract', '/etc/tonyai/replacement.json', '--approval', '/var/lib/tonyai-r3/install-approval.json', '--approved-sha256', '<SEPARATELY_APPROVED_INSTALL_APPROVAL_SHA256>'])
             with tarfile.open(output / 'transfer.tar') as archive:
                 self.assertTrue(all(p.isfile() and p.name.startswith('r3/') and p.uid == 0 and p.mtime == 0 for p in archive))
 
@@ -108,43 +127,9 @@ class Qualification(unittest.TestCase):
                 if fault == 'gcm': bad['services']['realtime']['environment']['DB_ENC_KEY_GCM'] = 'a' * 31
                 with self.subTest(fault=fault), self.assertRaises(ValueError): qualification.check_effective(bad, lock)
 
-    def test_qualification_import_does_not_run_initializer(self):
-        source = (artifacts.ROOT / 'infra/scripts/selfhost_init.mjs').read_text()
-        self.assertIn('export const createSettings', source)
-        self.assertIn('import.meta.url === pathToFileURL(process.argv[1]).href', source)
 
 
 class OfflineInstall(unittest.TestCase):
-    def test_signed_chain_and_package_metadata_fail_closed(self):
-        for fault in (None, 'signature', 'fingerprint', 'release-index', 'archive', 'metadata'):
-            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as folder:
-                root = Path(folder); (root / 'provenance').mkdir(); (root / 'artifacts').mkdir()
-                (root / 'artifacts/engine.deb').write_bytes(b'archive')
-                (root / 'artifacts/node.tar.xz').write_bytes(b'node')
-                package_hash = artifacts.sha(b'archive')
-                index = ('Package: engine\nVersion: 1.0\nArchitecture: amd64\nSHA256: ' + package_hash + '\n').encode()
-                release = (artifacts.sha(index) + ' ' + str(len(index)) + ' stable/binary-amd64/Packages\n').encode()
-                if fault == 'release-index': release = b'wrong index binding'
-                provenance = {'docker.asc': b'key', 'InRelease': release, 'Packages': index}
-                for name, data in provenance.items(): (root / 'provenance' / name).write_bytes(data)
-                lock = {'docker_signing_fingerprint': 'PRIMARY',
-                        'provenance': dict(zip(('signing_key_sha256', 'InRelease_sha256', 'Packages_sha256'), map(artifacts.sha, provenance.values()))),
-                        'packages': [{'name': 'engine', 'version': '1.0', 'url': 'https://example/engine.deb', 'sha256': package_hash}],
-                        'node': {'url': 'https://example/node.tar.xz', 'sha256': artifacts.sha(b'node')}}
-                raw = json.dumps(lock).encode(); (root / 'r3-toolchain.lock.json').write_bytes(raw)
-                if fault == 'archive': (root / 'artifacts/engine.deb').write_bytes(b'changed')
-                def command(argv):
-                    if '--show-keys' in argv: return 'fpr:::::::::' + ('WRONG' if fault == 'fingerprint' else 'PRIMARY') + ':\n'
-                    if '--verify' in argv: return '[GNUPG:] ' + ('BADSIG PRIMARY' if fault == 'signature' else 'VALIDSIG PRIMARY 1 2 3 4 5 6 7 8 PRIMARY')
-                    if argv[0] == 'dpkg-deb': return 'engine\n' + ('2.0' if fault == 'metadata' else '1.0') + '\namd64\n'
-                    return ''
-                with patch.object(toolchain, 'verify'), patch.object(toolchain, 'capture', side_effect=command):
-                    if fault:
-                        with self.assertRaises(ValueError): toolchain.verify_toolchain(root, artifacts.sha(raw))
-                    else:
-                        result, paths = toolchain.verify_toolchain(root, artifacts.sha(raw))
-                        self.assertEqual(result, lock); self.assertEqual(paths, [str(root / 'artifacts/engine.deb')])
-
     def test_persistent_masks_must_all_survive_install_readback(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -156,23 +141,9 @@ class OfflineInstall(unittest.TestCase):
             (root / 'docker.service').symlink_to('/some/unit')
             with self.assertRaises(ValueError): install.verify_masks(root)
 
-    def test_transferred_lock_uses_explicit_approval_hash_not_repository(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            (root / 'r3-toolchain.lock.json').write_text('{}')
-            # Reaching provenance validation demonstrates no repo-relative read;
-            # a wrong approved hash must stop before signature/package commands.
-            with patch.object(toolchain, 'verify'), patch.object(toolchain, 'ROOT', root / 'absent'), patch.object(toolchain, 'capture') as capture:
-                with self.assertRaisesRegex(ValueError, 'Different toolchain lock'):
-                    toolchain.verify_toolchain(root, 'a' * 64)
-                with self.assertRaises(FileNotFoundError) as error:
-                    toolchain.verify_toolchain(root, artifacts.sha(b'{}'))
-                self.assertIn('provenance', str(error.exception))
-                capture.assert_not_called()
-
     def test_offline_dependency_closure_refuses_extra_remove_or_missing(self):
         lock = {'packages': [{'name': 'engine'}, {'name': 'cli'}]}
-        for output in ('Inst engine (1)\nInst cli (1)\nInst extra (2)', 'Inst engine (1)\nInst cli (1)\nRemv old', 'Inst engine (1)'):
+        for output in ('Inst engine (1)\nInst extra (2)', 'Inst engine (1)\nInst cli (1)\nInst extra (2)', 'Inst engine (1)\nInst cli (1)\nRemv old', 'Inst engine (1)'):
             with patch.object(toolchain, 'capture', return_value=output), self.assertRaises(ValueError):
                 toolchain.dependency_plan(lock, ['a.deb', 'b.deb'])
         with patch.object(toolchain, 'capture', return_value='Inst engine (1)\nInst cli (1)') as capture:

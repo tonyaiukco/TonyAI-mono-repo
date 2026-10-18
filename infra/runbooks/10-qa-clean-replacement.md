@@ -61,7 +61,8 @@ The owner selected a **fresh GitHub-hosted Ubuntu 24.04 amd64 runner** for
 composition qualification. The manually dispatched
 [`r3-qualification.yml`](../../.github/workflows/r3-qualification.yml) requires
 an exact source SHA equal to its dispatch ref, read-only repository permissions,
-no Azure credentials and an empty local Docker daemon/data directory. Publication
+no Azure credentials, no existing containers and no `/srv/tonyai` path. These
+checks do not establish an empty image cache or Docker data directory. Publication
 and dispatch need the owner's Git authorization and concrete source agreement.
 The local shared Supabase stack and both Azure hosts are not qualification targets.
 
@@ -71,6 +72,12 @@ starts only the nine unprofiled services on disposable data, checks exact runnin
 image/config identity and health, and emits status-only evidence. Production
 initialization keeps its full guards; the harness imports only pure credential
 generation. Its report is **composition smoke**, not complete qualification.
+It records the hosted Docker client/server and Compose versions, the absolute
+setup-node executable and its verified v22.23.3 version. It requires the classic
+`overlay2` image store before any pull/start because the config-digest comparisons
+are not qualified for the containerd image store. The runner engine is not
+reconfigured. Docker 29.9.1 / Compose 5.6.0 installation and image-store choice
+remain separate unqualified gates; a hosted smoke cannot close them.
 Before bootstrap, additionally prove the private refused-statement regression
 with stable connections, Realtime image/source correspondence and GCM consumer
 round-trip, and exact offline install/image-transport behavior. Keep the private
@@ -81,16 +88,29 @@ regression out of Git and never run it against the shared/live database.
 `r3-toolchain.lock.json` fixes Docker Engine/CLI, containerd, Buildx, Compose and
 Node 22.23.3 candidates by version and SHA256. Candidates are not qualified merely
 because they are pinned. `r3_artifacts.py stage <new-private-directory>` downloads
-only public pinned inputs; `verify` refuses changed, missing, extra or linked
-files. `r3_transfer.py --bundle <directory> --output <new-private-directory>`
+public inputs from a clean committed source tree. Format 2 records that source
+SHA and observed signing-key/InRelease/Packages hashes. It stages only explicitly
+allowlisted tracked helpers, never ignored/untracked scripts or the legacy
+`selfhost_docker.sh`. `verify` refuses changed, missing, extra, linked or special
+files and unlisted directories. This partial install bundle does not satisfy the
+final host source map, which still names the legacy installer; resolving that
+map is an explicit later bootstrap gate, not permission to run the legacy tool. `r3_transfer.py --bundle <directory> --output <new-private-directory>`
 creates a regular-file archive, its digest and an exact offline install proposal.
 Neither tool invokes SSH or executes an installation. No credential/environment
 file, database bytes or historical packet belongs in the archive.
 
-`r3_toolchain.py` verifies the pinned Docker primary key, InRelease signature,
-signed Packages hash, each archive hash/control metadata and exact five-package
+`r3_toolchain.py` implements verification of the pinned Docker primary key,
+exactly one InRelease signed block with no outer bytes, and only GPG-produced
+verified plaintext. It requires Suite noble and the SHA256 section binding of
+Packages. Mutable upstream index hashes are not lock pins: staging fetches the
+current signed chain and binds its observed hashes in the manifest. Offline
+verification uses those carried bytes and the same immutable package pins. It checks each archive hash/control metadata and exact five-package
 offline dependency closure. A missing dependency requires a new reviewed lock;
-never resolve candidates or allow downloads during live installation. Signature
+never resolve candidates or allow downloads during live installation. The exact
+five-package install requires the r02 OS already to satisfy `iptables`, `nftables`,
+`libseccomp2`, `libsystemd0` and Pre-Depends `init-system-helpers (>= 1.54~)`,
+plus the other pinned packages' dependencies. Record the real OS dependency
+closure before qualification and bootstrap; a hosted runner is not proof of it. Signature
 and package verification require Linux `gpg`/`dpkg-deb`; they are not claimed from
 the local macOS preparation. The Node archive uses its existing reviewed hash.
 See [Docker's package installation procedure](https://docs.docker.com/engine/install/ubuntu/#install-from-a-package).
@@ -99,11 +119,23 @@ See [Docker's package installation procedure](https://docs.docker.com/engine/ins
 root-owned bundle, exact approval hashes, r02 contract/IMDS identity, clean Ubuntu
 24.04 amd64 package state, an exclusive attempt journal, no-download package
 installation and installed-version readback. It suppresses package service starts
-with an exclusive policy and persistent service masks, installs Node and the
+with an exclusive host-wide `policy-rc.d` (exit 101) and persistent service masks, installs Node and the
 `live-restore:false` daemon policy, and **leaves services masked**. It does not
 format disks, generate credentials, install the final runtime source tree, load
 images or start Docker/containers. Existing/partial installation is refused;
 inspect and prepare a separate recovery action rather than delete the marker.
+The proposal names the exact `python3 -I -B .../helpers/r3_install.py` invocation
+and separately records its derived internal apt argv, including `--yes`,
+`--no-download` and `DPkg::Lock::Timeout=60`. Never run that apt argv directly:
+the installer establishes masks and the attempt journal first. `-B` is mandatory
+because helper `__pycache__` files invalidate the approved manifest. An apt lock
+timeout preserves the attempt and masks; it does not authorize a retry.
+The entire Node archive is checked before the first host write, accepting its
+root directory member while refusing foreign roots, traversal and escaping links.
+Tool and Node directories and `/etc/docker` are explicitly 0755 even under umask
+077; generated private metadata stays 0600. The policy blocks service actions
+for **all packages** until separately reviewed removal; do not run unrelated apt
+operations while this interrupted/pre-activation boundary is retained.
 Qualification of this stage and a reviewed unmask/guard/source-transfer sequence
 remain gates. Do not run the legacy Docker installer for r02.
 

@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import * as crypto from 'node:crypto';
 import { resolve } from 'node:path';
-const source = readFileSync(new URL('../scripts/selfhost_init.mjs', import.meta.url), 'utf8').replace(/^import .*;\n/gm, '').replace('export const', 'const').replace("process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href", 'true');
+const source = readFileSync(new URL('../scripts/selfhost_init.mjs', import.meta.url), 'utf8').replace(/^import .*;\n/gm, '').replace('export const', 'const').replace("process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)", 'true');
 const template = readFileSync(new URL('./fixtures/selfhost-template.txt', import.meta.url), 'utf8');
 const inventory = readFileSync(new URL('../selfhost/credential-template.json', import.meta.url), 'utf8');
 const run = (failure) => {

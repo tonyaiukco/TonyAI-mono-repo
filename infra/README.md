@@ -166,5 +166,5 @@ Terraform/owner artifacts are excluded.
 R3 preparation uses `r3_artifacts.py`, `r3_transfer.py`, `r3_toolchain.py` and
 `r3_install.py` for pinned offline inputs and a separately approved toolchain
 stage, plus `r3-qualification.yml` for the agreed fresh GitHub Ubuntu 24.04 amd64
-composition target. No preparation command grants cloud or bootstrap authority;
+composition smoke target. Format-2 bundles bind a clean source commit and observed signed-index hashes; pinned-engine/install qualification remains open. No preparation command grants cloud or bootstrap authority;
 [runbook 10](runbooks/10-qa-clean-replacement.md#accepted-r2-and-bounded-r3-preparation-2026-10-18) lists the outstanding proof and approval gates.
