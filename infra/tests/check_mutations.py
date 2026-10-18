@@ -178,6 +178,7 @@ def main():
                 shutil.copy2(root / relative, destination)
             shutil.copytree(root / 'packages/db/prisma/migrations', target.parent / 'packages/db/prisma/migrations')
             shutil.copytree(root / '.github/workflows', target.parent / '.github/workflows')
+            shutil.copytree(root / '.github/actions', target.parent / '.github/actions')
             pattern = 'test_*.py'
             targeted = {'prepare_release.py':'test_prepare_release.py', 'candidate_artifact.py':'test_candidate_artifact.py',
                         'cloud_smoke.py':'test_cloud_smoke.py', 'terraform_run.py':'test_candidate_path.py',

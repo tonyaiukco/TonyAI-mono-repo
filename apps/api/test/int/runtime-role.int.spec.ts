@@ -91,8 +91,15 @@ describe('the runtime role', () => {
     );
   });
 
-  it("holds no USAGE on Storage's schema — LP1-03's grant back fails the check, by the grant and by the helpers it reaches", async () => {
+  it("holds no USAGE on Storage's schema — a grant back fails the check, by the grant and by an unsafe definer it reaches", async () => {
     const { role, definers, all } = await withRollback(owner, async (tx) => {
+      // Newer Storage releases removed the old prefix helpers. Exercise the
+      // same unsafe reachability with a harmless, transaction-local fixture.
+      await tx.$executeRawUnsafe(
+        'CREATE FUNCTION storage.zz_unpinned_runtime_fixture() RETURNS integer LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$',
+      );
+      await tx.$executeRawUnsafe('REVOKE ALL ON FUNCTION storage.zz_unpinned_runtime_fixture() FROM PUBLIC');
+      await tx.$executeRawUnsafe('GRANT EXECUTE ON FUNCTION storage.zz_unpinned_runtime_fixture() TO tonyai_runtime');
       // What LP1-03 granted, before `20261020120000_runtime_storage_readers`.
       await tx.$executeRawUnsafe('GRANT USAGE ON SCHEMA storage TO tonyai_runtime');
       await tx.$executeRawUnsafe('GRANT SELECT ON storage.objects TO tonyai_runtime');
@@ -105,14 +112,8 @@ describe('the runtime role', () => {
     });
     const granted = ['tonyai_runtime was granted USAGE on schema storage', 'tonyai_runtime was granted SELECT on storage.objects'];
     expect(role).toEqual(expect.arrayContaining(granted));
-    const helpers = ['add_prefixes(text, text)', 'delete_leaf_prefixes(text[], text[])', 'delete_prefix(text, text)', 'lock_top_prefixes(text[], text[])'];
-    expect(definers).toEqual(
-      expect.arrayContaining(
-        helpers.map(
-          (fn) =>
-            `tonyai_runtime can run SECURITY DEFINER storage.${fn}, by calling it, and it does not pin its search_path with pg_temp last (config []) — a temporary type of the caller's would run as its owner`,
-        ),
-      ),
+    expect(definers).toContain(
+      "tonyai_runtime can run SECURITY DEFINER storage.zz_unpinned_runtime_fixture(), by calling it, and it does not pin its search_path with pg_temp last (config []) — a temporary type of the caller's would run as its owner",
     );
     expect(definers.every((d) => d.startsWith('tonyai_runtime can run SECURITY DEFINER storage.'))).toBe(true);
     expect(all).toEqual(expect.arrayContaining([...granted, ...definers]));
@@ -123,9 +124,21 @@ describe('the runtime role', () => {
     // pg_graphql's event triggers run its schema-version bump as supabase_admin
     // after every DDL statement, a login's temporary objects included: only its
     // reviewed body lets it pass.
-    const live = (sql: string) => owner.$queryRawUnsafe<Record<string, unknown>[]>(sql);
-    expect(await checkReachableDefiners(live)).toEqual([]);
-    expect(await checkReachableDefiners(live, {})).toEqual(
+    // The candidate bundles pg_graphql but disables it by default. Install it
+    // only in this rolled-back transaction; never change runtime startup.
+    const events = await withRollback(owner, async (tx) => {
+      await tx.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS pg_graphql');
+      const [extension] = await tx.$queryRaw<{ version: string; body: string }[]>`
+        SELECT e.extversion AS version, md5(p.prosrc) AS body
+        FROM pg_extension e, pg_proc p
+        WHERE e.extname = 'pg_graphql'
+          AND p.oid = 'graphql.increment_schema_version()'::regprocedure`;
+      expect(extension).toEqual({ version: '1.6.1', body: 'cf541948e5ba6c830440b810d5601e44' });
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      expect(await checkReachableDefiners(query)).toEqual([]);
+      return checkReachableDefiners(query, {});
+    });
+    expect(events).toEqual(
       [FACTOR_LOADER_ROLE, RUNTIME_ROLE].flatMap((role) =>
         ['graphql_watch_ddl', 'graphql_watch_drop'].map(
           (trigger) =>
