@@ -42,7 +42,10 @@ nine fresh external TCP probes timed out. The private/VNet probe remains open.
 This bounded operation does not prove database integrity, clean database shutdown
 or old-credential rejection. No replacement or data transfer occurred. See
 [runbook 10](10-qa-clean-replacement.md#executed-r1-evidence-and-limits) for the
-dated evidence boundary; PD-3 remains OPEN.
+dated evidence boundary; PD-3 remains OPEN. R2 later created isolated replacement
+infrastructure on 2026-10-18, with accepted control-plane readback and no bootstrap
+or data transfer. Consumed packet-02 is not replayable. See runbook 10's bounded
+R3 section for current preparation and the separate trust-acceptance gates.
 
 ### Credential exposure scope and closure gate
 

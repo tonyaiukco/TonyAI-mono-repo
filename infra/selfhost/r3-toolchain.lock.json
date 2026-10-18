@@ -1,0 +1,48 @@
+{
+  "format": 2,
+  "os": "ubuntu-24.04",
+  "architecture": "amd64",
+  "docker_signing_fingerprint": "9DC858229FC7DD38854AE2D88D81803C0EBFCD88",
+  "packages": [
+    {
+      "name": "containerd.io",
+      "version": "2.4.2-2~ubuntu.24.04~noble",
+      "architecture": "amd64",
+      "url": "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/containerd.io_2.4.2-2~ubuntu.24.04~noble_amd64.deb",
+      "sha256": "7327ab23182425e94b46a91567e9ddf0183f9b3a5ed53d5e2489f000dbf9cfe2"
+    },
+    {
+      "name": "docker-buildx-plugin",
+      "version": "0.38.0-1~ubuntu.24.04~noble",
+      "architecture": "amd64",
+      "url": "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/docker-buildx-plugin_0.38.0-1~ubuntu.24.04~noble_amd64.deb",
+      "sha256": "7094f8b50bc6b239292d475620424a531f7fa0763e466c52ffc3a4037e72bfc5"
+    },
+    {
+      "name": "docker-ce-cli",
+      "version": "5:29.9.1-1~ubuntu.24.04~noble",
+      "architecture": "amd64",
+      "url": "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/docker-ce-cli_29.9.1-1~ubuntu.24.04~noble_amd64.deb",
+      "sha256": "961968342af4738eb5fb5fc03f9834106c1e454bd010d574cf1a6feae9905efc"
+    },
+    {
+      "name": "docker-ce",
+      "version": "5:29.9.1-1~ubuntu.24.04~noble",
+      "architecture": "amd64",
+      "url": "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/docker-ce_29.9.1-1~ubuntu.24.04~noble_amd64.deb",
+      "sha256": "463a666215797c9f9ea7d0ad1751de5b2b3806a1b539a3550e16822ef34ccbfd"
+    },
+    {
+      "name": "docker-compose-plugin",
+      "version": "5.6.0-1~ubuntu.24.04~noble",
+      "architecture": "amd64",
+      "url": "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/docker-compose-plugin_5.6.0-1~ubuntu.24.04~noble_amd64.deb",
+      "sha256": "132266d499d9873aafcbe5b515997b8abd714914fa32a62ccac705c1ede7ca81"
+    }
+  ],
+  "node": {
+    "version": "22.23.3",
+    "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-x64.tar.xz",
+    "sha256": "df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de"
+  }
+}

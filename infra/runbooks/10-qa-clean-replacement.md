@@ -35,10 +35,122 @@ not denial by the NSG rule that explicitly permits that operator. These external
 timeouts are reachability evidence, not credential-rejection evidence. A stopped
 container is not proof of clean database shutdown or database integrity. Keep
 PD-3 OPEN and LP2-01/02/03 INTEGRATED. Old QA remains unavailable until separately
-approved replacement bootstrap and acceptance. R2–R4, measured recovery and full
-trust acceptance remain open; do not treat this R1 evidence as new authorization.
+approved replacement bootstrap and acceptance. R2 subsequently completed as
+recorded below; R3/R4, measured recovery and full trust acceptance remain open; do not treat this R1 evidence as new authorization.
 The approved packet and execution records remain private; their B9 handoff
 records the paths, checks, independent reviews and proposed ledger update.
+
+## Accepted R2 and bounded R3 preparation (2026-10-18)
+
+PRs #187, #188 and #189 are merged at base `d8b7df8`. N2 is implemented and
+reviewed. The owner-approved **packet-02 was applied once** on 2026-10-18,
+16:26:11–16:27:33 UTC: ten creates, one isolated VNet subnet append, zero destroys.
+Its control-plane/state readback was independently accepted. Packet-01 remains
+withdrawn; packet-02 is consumed. **Never replay, refresh or regenerate either
+packet.** Earlier pre-R2 procedures below are historical requirements, not the
+next operation. A repair/import/unlock/deletion requires a separate package.
+
+Fresh R3 GET/list/state-pull reconciliation on 2026-10-18 passed 27 checks for
+retained containment/resources, new resources, network and state/contract
+stability. Private evidence binds the script and observation times. No SSH,
+bootstrap, credential processing, network mutation or application deployment
+ran. Control-plane evidence does not establish guest isolation or QA readiness.
+LP2-01/02/03 remain INTEGRATED; PD-3 and full Q3 recovery acceptance remain open.
+
+The owner selected a **fresh GitHub-hosted Ubuntu 24.04 amd64 runner** for
+composition qualification. The manually dispatched
+[`r3-qualification.yml`](../../.github/workflows/r3-qualification.yml) requires
+an exact source SHA equal to its dispatch ref, read-only repository permissions,
+no Azure credentials, no existing containers and no `/srv/tonyai` path. These
+checks do not establish an empty image cache or Docker data directory. Publication
+and dispatch need the owner's Git authorization and concrete source agreement.
+The local shared Supabase stack and both Azure hosts are not qualification targets.
+
+`r3_qualification.py` uses the unchanged upstream v0.8.2 file/SQL hashes, QA,
+HTTPS and r02 overlays and all twelve locked images. It validates all profiles,
+starts only the nine unprofiled services on disposable data, checks exact running
+image/config identity and health, and emits status-only evidence. Production
+initialization keeps its full guards; the harness imports only pure credential
+generation. Its report is **composition smoke**, not complete qualification.
+It records the hosted Docker client/server and Compose versions, the absolute
+setup-node executable and its verified v22.23.3 version. It requires the classic
+`overlay2` image store before any pull/start because the config-digest comparisons
+are not qualified for the containerd image store. The runner engine is not
+reconfigured. Docker 29.9.1 / Compose 5.6.0 installation and image-store choice
+remain separate unqualified gates; a hosted smoke cannot close them.
+Before bootstrap, additionally prove the private refused-statement regression
+with stable connections, Realtime image/source correspondence and GCM consumer
+round-trip, and exact offline install/image-transport behavior. Keep the private
+regression out of Git and never run it against the shared/live database.
+
+### Pinned artifact and installation tooling
+
+`r3-toolchain.lock.json` fixes Docker Engine/CLI, containerd, Buildx, Compose and
+Node 22.23.3 candidates by version and SHA256. Candidates are not qualified merely
+because they are pinned. `r3_artifacts.py stage <new-private-directory>` downloads
+public inputs from a clean committed source tree. Format 2 records that source
+SHA and observed signing-key/InRelease/Packages hashes. It stages only explicitly
+allowlisted tracked helpers, never ignored/untracked scripts or the legacy
+`selfhost_docker.sh`. `verify` refuses changed, missing, extra, linked or special
+files and unlisted directories. This partial install bundle does not satisfy the
+final host source map, which still names the legacy installer; resolving that
+map is an explicit later bootstrap gate, not permission to run the legacy tool. `r3_transfer.py --bundle <directory> --output <new-private-directory>`
+creates a regular-file archive, its digest and an exact offline install proposal.
+Neither tool invokes SSH or executes an installation. No credential/environment
+file, database bytes or historical packet belongs in the archive.
+
+`r3_toolchain.py` implements verification of the pinned Docker primary key,
+exactly one InRelease signed block with no outer bytes, and only GPG-produced
+verified plaintext. It requires Suite noble and the SHA256 section binding of
+Packages. Mutable upstream index hashes are not lock pins: staging fetches the
+current signed chain and binds its observed hashes in the manifest. Offline
+verification uses those carried bytes and the same immutable package pins. It checks each archive hash/control metadata and exact five-package
+offline dependency closure. A missing dependency requires a new reviewed lock;
+never resolve candidates or allow downloads during live installation. The exact
+five-package install requires the r02 OS already to satisfy `iptables`, `nftables`,
+`libseccomp2`, `libsystemd0` and Pre-Depends `init-system-helpers (>= 1.54~)`,
+plus the other pinned packages' dependencies. Record the real OS dependency
+closure before qualification and bootstrap; a hosted runner is not proof of it. Signature
+and package verification require Linux `gpg`/`dpkg-deb`; they are not claimed from
+the local macOS preparation. The Node archive uses its existing reviewed hash.
+See [Docker's package installation procedure](https://docs.docker.com/engine/install/ubuntu/#install-from-a-package).
+
+`r3_install.py` implements only the separately approved offline toolchain stage:
+root-owned bundle, exact approval hashes, r02 contract/IMDS identity, clean Ubuntu
+24.04 amd64 package state, an exclusive attempt journal, no-download package
+installation and installed-version readback. It suppresses package service starts
+with an exclusive host-wide `policy-rc.d` (exit 101) and persistent service masks, installs Node and the
+`live-restore:false` daemon policy, and **leaves services masked**. It does not
+format disks, generate credentials, install the final runtime source tree, load
+images or start Docker/containers. Existing/partial installation is refused;
+inspect and prepare a separate recovery action rather than delete the marker.
+The proposal names the exact `python3 -I -B .../helpers/r3_install.py` invocation
+and separately records its derived internal apt argv, including `--yes`,
+`--no-download` and `DPkg::Lock::Timeout=60`. Never run that apt argv directly:
+the installer establishes masks and the attempt journal first. `-B` is mandatory
+because helper `__pycache__` files invalidate the approved manifest. An apt lock
+timeout preserves the attempt and masks; it does not authorize a retry.
+The entire Node archive is checked before the first host write, accepting its
+root directory member while refusing foreign roots, traversal and escaping links.
+Tool and Node directories and `/etc/docker` are explicitly 0755 even under umask
+077; generated private metadata stays 0600. The policy blocks service actions
+for **all packages** until separately reviewed removal; do not run unrelated apt
+operations while this interrupted/pre-activation boundary is retained.
+Qualification of this stage and a reviewed unmask/guard/source-transfer sequence
+remain gates. Do not run the legacy Docker installer for r02.
+
+The private bootstrap packet must bind these tools, transfer archive, every
+installed file/image, actual Node binary, OS/package metadata, new host identity,
+SSH trust, disk IDs and approved filesystem UUIDs, exact argv/order and failure
+preservation. It stays **NOT READY FOR BOOTSTRAP APPROVAL** while any proof is
+missing. Offline image transport must retain resolution by the locked repository
+digests; an archive load or mutable local tag alone is insufficient. No network
+egress change is implied by this offline proposal.
+
+Preserve the owner's QA VPN deferral and deferred custody/recovery/staffing
+choices. Backup endpoint reservation, ZRS/30-day retention direction and full
+loss/recovery proof remain later packages. Nothing here activates R4 or changes
+the active deployment contract.
 
 ## Selected design and alternatives
 
@@ -346,8 +458,8 @@ An externally killed wrapper cannot write a completion marker, even if Terraform
 later succeeds: retain the packet and investigate through the partial-recovery
 boundary below. Disk-full/host-loss failures are not solved by stream redirection.
 
-Independent review and the final executor/source hashes must be bound in a
-**new** approval packet before R2 apply. Also run the executor from a session
+Historical R2 prerequisite, satisfied for consumed packet-02: independent
+review and final executor/source hashes were bound in its approval packet. Also run the executor from a session
 that survives terminal closure; this operational requirement does not substitute
 for stream hardening. No outer hard timeout or automatic retry is permitted.
 
@@ -367,8 +479,8 @@ candidate is recorded in [database-image-policy.json](../selfhost/database-image
 CLI 2.121.0 and its default Postgres 17.11.0.004, pinned to the Linux/amd64
 manifest rather than a mutable tag. The QA composition changes only its database
 digest; the upstream template/SQL lock and other service images remain unchanged.
-This is a proposed upgrade for owner review, not deployment approval or a local
-CLI/stack upgrade. Keep reproduction and per-environment assessment private.
+The owner accepted this candidate for #187 and consumed R2 packet-02; this is
+not R3 deployment approval or authorization to upgrade the shared local stack. Keep reproduction and per-environment assessment private.
 
 Candidate provenance was checked through the registry index, amd64 manifest,
 config and attached SLSA build provenance. The attested
@@ -409,14 +521,10 @@ The PostgreSQL 17.6-to-17.11 move also requires the unchanged 57 CHECK and three
 FK definition pins to pass against the actual migrated candidate catalog under
 [runbook 05](05-rotation.md); static source comparison alone is insufficient.
 
-The earlier image acceptance and R2 packet are withdrawn. Complete independent
-review and final-SHA CI, including Integration and E2E, then obtain the owner's
-informed acceptance of this replacement candidate before generating any new R2
-packet. Preserve the old packet as evidence; do not refresh or apply it.
-
-Before R2 approval, privately bind the owner-approved image policy, the unchanged
-upstream template/SQL, candidate integration evidence and each environment's
-assessment to the packet. Before bootstrap, qualify the complete QA composition
+The earlier 3.4.0 image acceptance and packet-01 remain withdrawn. The replacement
+candidate, final-source CI/Integration/E2E and independent reviews were accepted
+for #187 and consumed packet-02. Preserve both packets unchanged; do not generate
+another R2 packet for the already-created resources. Before bootstrap, qualify the complete QA composition
 on a separately authorized disposable target; CI's service composition is not
 the QA composition. Any unavailable proof remains an explicit gate. Never run
 the crash regression on a live/shared database. A private isolated regression
@@ -511,7 +619,7 @@ fenced, preserving the full-host-loss target above; reconcile the canonical dril
 wording when the later recovery package is frozen. Full Q3 recovery acceptance
 remains open; the internal-QA scope decision is not proof of recoverability.
 
-Prepare a new R2 packet only in the operator's upcoming approval window:
+Historical packet-02 preparation procedure (already completed; do not execute again):
 
 1. Use the final reviewed clean source commit, exact executor/source hashes,
    Terraform 1.13.3 and reviewed provider lock. Restore the existing authenticated
@@ -557,15 +665,16 @@ where required, preservation and verification steps. A recovery exception does
 not relax this runner's no-import/no-delete policy or authorize a blanket retry.
 Do not infer ownership or import an unexpected same-name resource.
 
-The old VM is deallocated. A future R2 prepare may report `resource_drift`;
-the current policy must stop safely. Inspect that exact drift and review any
-needed policy revision before preparing a new approvable packet; do not ignore it.
+The old VM remains deallocated. If fresh read-only reconciliation finds drift,
+stop and prepare a separately scoped repair proposal; consumed packet-02 is not
+a repair path and must never be regenerated or replayed.
 
 ### Remaining bootstrap and probe gates
 
-The initial r02 NSG denies all outbound traffic. Temporary-egress and exact-package
-installation tooling are not implemented. R3 needs offline transfer or a separately
-approved bounded egress/install package before any bootstrap execution.
+The initial r02 NSG denies all outbound traffic. R3 now has local pinned artifact, transfer and offline toolchain-install
+preparation above. The complete install/source/image-transfer sequence still needs
+disposable qualification, independent review and exact owner approval. Temporary
+egress tooling is not implemented or authorized.
 
 `replacement_probe_owner.py` obtains the exact old forensic escrow version in
 owner process memory and pipes it over verified SSH to the new helper. It prints
