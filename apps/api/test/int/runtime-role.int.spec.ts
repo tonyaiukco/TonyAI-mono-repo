@@ -91,19 +91,23 @@ describe('the runtime role', () => {
     );
   });
 
-  it("holds no USAGE on Storage's schema — a grant back fails the check, by the grant and by an unsafe definer it reaches", async () => {
+  it("rejects Storage grants and detects an unsafe definer made reachable by schema USAGE", async () => {
     const { role, definers, all } = await withRollback(owner, async (tx) => {
-      // Newer Storage releases removed the old prefix helpers. Exercise the
-      // same unsafe reachability with a harmless, transaction-local fixture.
+      // Newer Storage releases removed the old prefix helpers. The application
+      // owner cannot CREATE in storage, so model schema-USAGE reachability in
+      // its own rolled-back schema without changing platform ownership/grants.
+      await tx.$executeRawUnsafe('CREATE SCHEMA zz_runtime_definer_fixture');
       await tx.$executeRawUnsafe(
-        'CREATE FUNCTION storage.zz_unpinned_runtime_fixture() RETURNS integer LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$',
+        'CREATE FUNCTION zz_runtime_definer_fixture.unpinned() RETURNS integer LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$',
       );
-      await tx.$executeRawUnsafe('REVOKE ALL ON FUNCTION storage.zz_unpinned_runtime_fixture() FROM PUBLIC');
-      await tx.$executeRawUnsafe('GRANT EXECUTE ON FUNCTION storage.zz_unpinned_runtime_fixture() TO tonyai_runtime');
+      await tx.$executeRawUnsafe('REVOKE ALL ON FUNCTION zz_runtime_definer_fixture.unpinned() FROM PUBLIC');
+      await tx.$executeRawUnsafe('GRANT EXECUTE ON FUNCTION zz_runtime_definer_fixture.unpinned() TO tonyai_runtime');
+      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
+      expect(await checkReachableDefiners(query)).toEqual([]);
+      await tx.$executeRawUnsafe('GRANT USAGE ON SCHEMA zz_runtime_definer_fixture TO tonyai_runtime');
       // What LP1-03 granted, before `20261020120000_runtime_storage_readers`.
       await tx.$executeRawUnsafe('GRANT USAGE ON SCHEMA storage TO tonyai_runtime');
       await tx.$executeRawUnsafe('GRANT SELECT ON storage.objects TO tonyai_runtime');
-      const query = (sql: string) => tx.$queryRawUnsafe<Record<string, unknown>[]>(sql);
       return {
         role: await checkRuntimeRole(query),
         definers: await checkReachableDefiners(query),
@@ -112,10 +116,9 @@ describe('the runtime role', () => {
     });
     const granted = ['tonyai_runtime was granted USAGE on schema storage', 'tonyai_runtime was granted SELECT on storage.objects'];
     expect(role).toEqual(expect.arrayContaining(granted));
-    expect(definers).toContain(
-      "tonyai_runtime can run SECURITY DEFINER storage.zz_unpinned_runtime_fixture(), by calling it, and it does not pin its search_path with pg_temp last (config []) — a temporary type of the caller's would run as its owner",
-    );
-    expect(definers.every((d) => d.startsWith('tonyai_runtime can run SECURITY DEFINER storage.'))).toBe(true);
+    expect(definers).toEqual([
+      "tonyai_runtime can run SECURITY DEFINER zz_runtime_definer_fixture.unpinned(), by calling it, and it does not pin its search_path with pg_temp last (config []) — a temporary type of the caller's would run as its owner",
+    ]);
     expect(all).toEqual(expect.arrayContaining([...granted, ...definers]));
   });
 
