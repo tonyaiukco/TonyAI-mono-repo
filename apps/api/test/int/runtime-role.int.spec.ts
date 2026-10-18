@@ -285,7 +285,7 @@ describe('the factor model is in force on this database (LP3-03)', () => {
     const [{ version }] = await runtime.$queryRaw<{ version: string }[]>`SELECT current_setting('server_version') AS version`;
     expect(version).toMatch(/^17\./);
     expect(await checkIntegrityTriggers((sql: string) => runtime.$queryRawUnsafe(sql))).toEqual([]);
-    console.info(`Integrity catalog pins checked on PostgreSQL ${version}`);
+    process.stdout.write(`Integrity catalog pins checked on PostgreSQL ${version}\n`);
   });
 
   it('leaves the table-level verbs (TRIGGER, TRUNCATE, REFERENCES, MAINTAIN) to the owners alone, now and by default', async () => {
