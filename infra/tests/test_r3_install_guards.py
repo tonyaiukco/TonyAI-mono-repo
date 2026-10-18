@@ -111,6 +111,7 @@ class Harness:
         assert (self.root / 'usr/sbin/policy-rc.d').stat().st_mode & 0o777 == 0o755
         for service in self.module.SERVICES: assert os.readlink(self.root / 'etc/systemd/system' / service) == '/dev/null'
         assert argv == install_argv(self.paths)
+        assert argv == ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '--no-download', '--no-install-recommends', '--yes', 'install', *self.paths]
         assert kwargs['stdin'] == subprocess.DEVNULL and kwargs['start_new_session'] is True
         if self.fault == 'mask-lost': (self.root / 'etc/systemd/system/docker.service').unlink()
         return types.SimpleNamespace(returncode=1 if self.fault == 'apt-failure' else 0, wait=lambda: None)

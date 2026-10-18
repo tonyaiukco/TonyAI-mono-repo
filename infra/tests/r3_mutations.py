@@ -67,6 +67,8 @@ add(q, 'empty-runner', "if capture(DOCKER + ['ps', '-aq']).strip() or Path('/srv
 add(q, 'image-identity', "if meta['Architecture'] != 'amd64' or meta['Os'] != 'linux' or item['image'] not in meta['RepoDigests']:", 'if False:')
 add(q, 'db-policy', "if lock['db']['image'] != policy['image'] or images['db'] != policy['config_digest']:", 'if False:')
 add(q, 'health', "if not state['Running'] or state.get('Health', {}).get('Status', 'healthy') != 'healthy':", 'if False:')
+add(q, 'public-source-files', "            path.chmod(0o755 if path.name.endswith('entrypoint.sh') else 0o644)", '            pass')
+add(q, 'public-source-directories', '            path.chmod(0o755)', '            pass')
 add(q, 'cleanup', "        capture(compose() + ['down', '--timeout', '30'])", '        pass')
 workflow('automatic-trigger', '  workflow_dispatch:', '  push:\n  workflow_dispatch:')
 workflow('write-permissions', '  contents: read', '  contents: write')

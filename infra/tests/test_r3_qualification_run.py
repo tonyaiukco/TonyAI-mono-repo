@@ -91,6 +91,11 @@ class Smoke(unittest.TestCase):
                     self.assertIs(summary['tooling']['pinned_engine_qualified'], False)
                     self.assertEqual(summary['tooling']['image_store'], 'classic-overlay2')
                     self.assertEqual(summary['tooling']['compose'], 'fixture-compose')
+                    runtime = output / 'runtime'
+                    self.assertEqual(runtime.stat().st_mode & 0o777, 0o755)
+                    for path in runtime.rglob('*'):
+                        expected_mode = 0o755 if path.is_dir() or path.name.endswith('entrypoint.sh') else 0o600 if path.name == '.env' else 0o644
+                        self.assertEqual(path.stat().st_mode & 0o777, expected_mode, str(path))
                     effective.assert_called_once_with({'fixture': True}, lock); redact.assert_called_once()
         finally:
             os.chdir(old_cwd); os.umask(mask)
