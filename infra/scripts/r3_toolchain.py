@@ -3,9 +3,11 @@ import json
 import re
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
-from r3_artifacts import ROOT, sha, verify
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from r3_artifacts import ROOT, HELPERS, RUNTIME, clean_source, source_bytes, sha, verify_snapshot, write
 
 
 def capture(argv):
@@ -77,9 +79,12 @@ def validate_lock(lock):
 
 def verify_toolchain(directory, approved_lock_sha256=None):
     directory = Path(directory).absolute()
-    manifest = verify(directory)
-    reviewed = (directory / 'r3-toolchain.lock.json').read_bytes()
-    expected_hash = approved_lock_sha256 or sha((ROOT / 'infra/selfhost/r3-toolchain.lock.json').read_bytes())
+    manifest, _, reviewed = verify_snapshot(directory)
+    expected_hash = approved_lock_sha256 or sha(source_bytes(clean_source(), 'infra/selfhost/r3-toolchain.lock.json'))
+    return verify_toolchain_snapshot(directory, manifest, reviewed, expected_hash)
+
+
+def verify_toolchain_snapshot(directory, manifest, reviewed, expected_hash):
     if sha(reviewed) != expected_hash:
         raise ValueError('Different toolchain lock.')
     lock = json.loads(reviewed)
@@ -101,6 +106,28 @@ def verify_toolchain(directory, approved_lock_sha256=None):
     return lock, paths
 
 
+def verify_source_manifest(manifest, source):
+    """Bind the complete staged file set to this commit, including hidden edits."""
+    read = lambda name: source_bytes(source, name)
+    lock_bytes = read('infra/selfhost/r3-toolchain.lock.json')
+    lock = json.loads(lock_bytes)
+    upstream = json.loads(read('infra/selfhost/upstream.lock.json'))
+    expected = {'runtime/' + name: digest for name, digest in upstream['files'].items()}
+    for name in RUNTIME:
+        target = 'compose.images.json' if name == 'images.qa.lock.json' else name
+        expected['runtime/' + target] = sha(read('infra/selfhost/' + name))
+    for name in HELPERS:
+        expected['helpers/' + name] = sha(read('infra/scripts/' + name))
+    expected['r3-toolchain.lock.json'] = sha(lock_bytes)
+    expected['database-image-policy.json'] = sha(read('infra/selfhost/database-image-policy.json'))
+    for item in lock['packages'] + [lock['node']]:
+        expected['artifacts/' + item['url'].rsplit('/', 1)[1]] = item['sha256']
+    expected.update({'provenance/' + name: value for name, value in manifest['provenance'].items()})
+    if manifest['files'] != expected:
+        raise ValueError('Bundle files differ from the committed source and pins.')
+    return lock_bytes
+
+
 def install_argv(paths, simulate=False):
     return ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '--no-download', '--no-install-recommends'] + (['--simulate'] if simulate else ['--yes']) + ['install', *paths]
 
@@ -110,3 +137,45 @@ def dependency_plan(lock, paths):
     planned = [line.split()[1] for line in output.splitlines() if line.startswith('Inst ')]
     if len(planned) != len(lock['packages']) or set(planned) != {item['name'] for item in lock['packages']} or any(line.startswith('Remv ') for line in output.splitlines()):
         raise ValueError('Offline plan must install exactly the five pinned packages, with no removal or extra dependency.')
+
+
+def provenance_receipt(directory, output):
+    """Retain public vendor evidence only after verification against this commit."""
+    directory = Path(directory).absolute()
+    source = clean_source()
+    manifest, manifest_bytes, lock_bytes = verify_snapshot(directory)
+    if manifest['source_sha'] != source:
+        raise ValueError('Vendor bundle source differs from the checked-out commit.')
+    approved_lock = verify_source_manifest(manifest, source)
+    lock, _ = verify_toolchain_snapshot(directory, manifest, lock_bytes, sha(approved_lock))
+    report = {
+        'format': 1, 'status': 'VENDOR_ARTIFACT_PROVENANCE_PASS',
+        'evidence_kind': 'real-vendor-artifacts-not-ci-fixture',
+        'source_sha': source,
+        'manifest_sha256': sha(manifest_bytes),
+        'lock_sha256': sha(lock_bytes),
+        'docker_signing_fingerprint': lock['docker_signing_fingerprint'],
+        'provenance_sha256': manifest['provenance'],
+        'packages': [{key: item[key] for key in ('name', 'version', 'architecture', 'sha256')}
+                     for item in lock['packages']],
+        'node': {key: lock['node'][key] for key in ('version', 'sha256')},
+        'qa_ready': False, 'install_authorized': False,
+        'unproven': ['Target OS dependency closure', 'Pinned engine and image store',
+                     'Offline installer lifecycle and reboot', 'Offline image transport',
+                     'Private database regression', 'Realtime source and GCM consumer',
+                     'Final host source map, SSH, disks and custody', 'R4 and application readiness'],
+    }
+    if clean_source() != source:
+        raise ValueError('Source changed during verification.')
+    write(Path(output), json.dumps(report, sort_keys=True, indent=2).encode())
+    return report
+
+
+if __name__ == '__main__':
+    try:
+        if len(sys.argv) != 3:
+            raise ValueError('Bundle and new receipt path required.')
+        provenance_receipt(sys.argv[1], sys.argv[2])
+        print('PASS: real vendor provenance receipt; installation and QA remain unqualified.')
+    except Exception:
+        raise SystemExit('FAIL: vendor verification refused; no receipt accepted.')

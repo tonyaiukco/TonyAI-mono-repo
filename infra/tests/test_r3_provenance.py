@@ -140,6 +140,16 @@ class Provenance(unittest.TestCase):
             with patch.object(toolchain, 'capture', side_effect=self.command), self.assertRaises(ValueError):
                 toolchain.verify_toolchain(self.root, self.approved)
 
+    def test_explicit_install_approval_does_not_require_git(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.fixture(Path(tmp))
+            with patch.object(toolchain, 'capture', side_effect=self.command), \
+                 patch.object(toolchain, 'clean_source', side_effect=AssertionError('Installer cannot use Git')), \
+                 patch.object(toolchain, 'source_bytes', side_effect=AssertionError('Installer cannot read checkout')):
+                lock, paths = toolchain.verify_toolchain(self.root, self.approved)
+            self.assertEqual(lock, self.lock)
+            self.assertEqual(len(paths), 5)
+
     def test_fetch_requires_https_at_source_and_redirect_and_digest(self):
         class Response(io.BytesIO): pass
         for url, redirected, expected, valid in [
