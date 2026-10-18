@@ -3,9 +3,11 @@ import copy
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 import yaml
@@ -169,6 +171,19 @@ class DatabaseImageTests(unittest.TestCase):
         self.assertLess(prepare, start); self.assertLess(start, verify); self.assertLess(verify, migrate)
         for index in (prepare, start, verify):
             self.assertEqual(steps[index]['env']['SUPABASE_INTERNAL_IMAGE_REGISTRY'], image.REGISTRY)
+
+    def test_disposable_fixture_password_meets_unchanged_auth_policy(self):
+        action = yaml.load((ROOT / '.github/actions/supabase-stack/action.yml').read_text(), Loader=yaml.BaseLoader)
+        steps = action['runs']['steps']
+        export = next(i for i, step in enumerate(steps) if step.get('name') == 'Export Supabase env')
+        seed = next(i for i, step in enumerate(steps) if step.get('name') == 'Migrate and seed')
+        self.assertLess(export, seed)
+        match = re.search(r'echo "TONYAI_TEST_PASSWORD=([^"\n]+)" >> "\$GITHUB_ENV"', steps[export]['run'])
+        self.assertIsNotNone(match)
+        config = tomllib.loads((ROOT / 'supabase/config.toml').read_text())
+        minimum = config['auth']['minimum_password_length']
+        self.assertGreaterEqual(minimum, 12)
+        self.assertGreaterEqual(len(match[1]), minimum)
 
     def test_candidate_qa_lock_and_ci_trigger_coverage(self):
         lock = json.loads((ROOT / 'infra/selfhost/images.qa.lock.json').read_text())

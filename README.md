@@ -442,6 +442,10 @@ informed owner re-acceptance are required before a new R2 packet; complete
 QA-composition qualification remains a separate pre-bootstrap gate. The shared
 local CLI/stack is upgraded only by its owner. Runbook 05's reader pre-check
 follows #186 and does not restore runtime Storage grants.
+The CI action supplies `TONYAI_TEST_PASSWORD` to the disposable seed, E2E,
+RLS probes and image smoke so the fixture meets the unchanged 12-character Auth
+minimum. Local demo defaults remain unchanged; updating them belongs to the
+shared stack's later owner-led upgrade. The override does not enable cloud seeding.
 Private immutable Sweden backup storage belongs to a separate future writer/apply
 packet, and any observed drift still fails closed. October 18 read-only
 reconciliation evidence is retained privately; a future packet needs current

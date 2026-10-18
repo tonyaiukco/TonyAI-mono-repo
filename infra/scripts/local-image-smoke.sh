@@ -51,7 +51,7 @@ docker cp "$web_id:/app/apps/web/.next/static" "$work_dir/static"
 echo 'Smoke: browser asset secret scan'
 python3 infra/scripts/scan_browser_assets.py "$work_dir/static"
 export SMOKE_PUBLIC_KEY="$NEXT_PUBLIC_SUPABASE_ANON_KEY"
-export SMOKE_PASSWORD_1='TonyAI!2026'
+export SMOKE_PASSWORD_1="${TONYAI_TEST_PASSWORD:-TonyAI!2026}"
 # Resolve seeded identity through login in memory, never by logging an auth response.
 export SMOKE_TARGET_JSON
 SMOKE_TARGET_JSON=$(node --input-type=module <<'JS'

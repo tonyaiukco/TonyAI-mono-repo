@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { INTERNAL_FACTOR_PUBLISHERS } from '@tonyai/shared-types';
 
-export const PASSWORD = 'TonyAI!2026';
+export const PASSWORD = process.env.TONYAI_TEST_PASSWORD ?? 'TonyAI!2026';
 export const ADMIN_EMAIL = 'admin@tonyai.local';
 export const ENTRY_EMAIL = 'entry@tonyai.local';
 /** Review-only: org-wide read, may review and reject, may NOT approve. Seeded

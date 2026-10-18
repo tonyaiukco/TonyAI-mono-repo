@@ -50,6 +50,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Public disposable fixture, shared by seed, E2E, RLS and image smoke.
+        # Current Auth enforces the configured minimum even for admin creation.
+        echo "TONYAI_TEST_PASSWORD=TonyAI-CI!2026" >> "$GITHUB_ENV"
         eval "$(supabase status -o env | grep -E '^(ANON_KEY|SERVICE_ROLE_KEY|JWT_SECRET|API_URL|DB_URL)=')"
         for required in ANON_KEY SERVICE_ROLE_KEY API_URL DB_URL; do
           if [ -z "${!required:-}" ]; then
