@@ -367,8 +367,9 @@ foundation in Sweden Central (D2as_v7 for QA, D4as_v7 for pilot production),
 with separate QA and planned production resources. Provision QA first; production
 resources are not authorized yet. Both application and data layers must use Sweden
 Central; the QA target is **2026-11-15**. The former TRY 10,000 monthly limit has
-been removed. The owner reports a forthcoming USD 25,000 credit allocation; its
-activation, eligibility, expiry and balance are unverified. Separate owner-run helpers prepare
+been removed. On 2026-10-18 the owner set USD 5,000 as the credit planning
+assumption for internal QA; balance, eligibility and expiry are not independently
+verified. Documentary verification is deferred until production preparation. Separate owner-run helpers prepare
 persistent disks and Docker, pin the official Supabase snapshot/images, generate
 protected host credentials and test Auth before explicit HTTPS exposure.
 The application is not yet connected; backups, recovery targets and cloud QA
@@ -434,9 +435,13 @@ QA-composition qualification and owner approval remain required. The shared
 local CLI/stack is upgraded only by its owner. Runbook 05's reader pre-check
 follows #186 and does not restore runtime Storage grants.
 Private immutable Sweden backup storage belongs to a separate future writer/apply
-packet, and any observed drift still fails closed. Fresh live evidence and owner
-decisions remain gates; intrinsic custody must retain the first
-environment's byte binding. Separately approved R1 executed on 2026-10-15: the exact
+packet, and any observed drift still fails closed. October 18 read-only checks confirmed the old VM remains
+deallocated, containment and retained resources match, and the bound default
+state retains fifteen owned IDs at serial 11. This does not establish absence
+of drift. The owner declined QA VPN and deferred extra custody/recovery design
+decisions until production preparation; they do not block isolated R2 planning.
+Exact R2 inputs, image acceptance and saved-plan review still apply. Intrinsic
+custody must retain the first environment's byte binding. Separately approved R1 executed on 2026-10-15: the exact
 containment NSG plan was applied, ten bound containers exited after SIGTERM,
 and the retained old VM was deallocated. ARM readback confirmed unchanged disk,
 NIC, IP, vault and lock metadata; nine fresh external TCP probes timed out.
@@ -1556,7 +1561,7 @@ Templates live in each package's `.env.example`. Never commit real `.env*` files
 
 - **Phase 0 — Foundation & vertical slice** ✅: auth, tenant isolation, subsidiaries CRUD, dashboard KPIs, RLS, tests.
 - **Phase 1 — Core MVP (Scope 1 & 2)** ✅: calc engine + factor library ✅, activity records + review workflow ✅, Data Entry UI ✅, Emissions Analytics ✅, dashboard Emissions Overview + tracking matrix ✅, locations level ✅, evidence upload ✅, anomaly detection ✅, period locking ✅, E2E + RLS probes ✅, Targets & intensity ✅, Reports ✅ — **Phase 1 complete**.
-- **Phase 2 — Staging cloud & CI/CD** *(Azure QA target **2026-11-15**, executed as LP2; production environment LP2-04 remains planned)*: self-hosted Supabase on Azure **Sweden Central**, with the planned Container Apps application layer in the same region and connected to the reserved VNet subnet at environment creation. QA host/runtime work exists; application integration, SMTP/domain, migrations/runtime roles, buckets, backups and full acceptance remain incomplete. Use [runbook 07](infra/runbooks/07-selfhost.md); the Germany West Central / hosted Supabase Frankfurt route is legacy and gated for this subscription. The reported USD 25,000 credit allocation is unverified; the former TRY 10,000 monthly cap no longer applies. Owner-run rollout comes first; protected OIDC/ACR deployment, logs and exact-candidate acceptance still require integration and evidence. *(Re-baselined 2026-10-15: staging 2026-10-18 → QA 2026-11-15; Germany/Frankfurt superseded; Sweden Central keeps EU (KVKK/GDPR) residency.)*
+- **Phase 2 — Staging cloud & CI/CD** *(Azure QA target **2026-11-15**, executed as LP2; production environment LP2-04 remains planned)*: self-hosted Supabase on Azure **Sweden Central**, with the planned Container Apps application layer in the same region and connected to the reserved VNet subnet at environment creation. QA host/runtime work exists; application integration, SMTP/domain, migrations/runtime roles, buckets, backups and full acceptance remain incomplete. Use [runbook 07](infra/runbooks/07-selfhost.md); the Germany West Central / hosted Supabase Frankfurt route is legacy and gated for this subscription. The owner-reported USD 5,000 internal-QA credit planning assumption is unverified; the former TRY 10,000 monthly cap no longer applies. Owner-run rollout comes first; protected OIDC/ACR deployment, logs and exact-candidate acceptance still require integration and evidence. *(Re-baselined 2026-10-15: staging 2026-10-18 → QA 2026-11-15; Germany/Frankfurt superseded; Sweden Central keeps EU (KVKK/GDPR) residency.)*
 - **Phase 3 — Advanced** *(active)*: **WP7 UAT backlog & reviewer UI ✅ → WP15 UAT quick wins ✅ → WP16 locations in the subsidiary flow ✅ → WP17 completeness engine ✅ → WP18 withdrawal & re-attribution ✅ → WP19 review gate on every cell ✅ → WP20 report disclosure ✅ → WP21 anomaly baseline provenance ✅ → WP22 report column vocabulary + record actor names ✅ → WP8 bulk upload ✅ → UAT round 2 (open)** → **launch-critical:** i18n (TR/EN — a Turkish UI is a pilot requirement) + email notifications (Resend). Moved to Phase 5 on 2026-09-21: report sharing, Scope 3, supplier management, analytics, dark mode. A Python/FastAPI analytics microservice was **demoted to conditional** (2026-07-29): analytics lands in the existing API unless a concrete Python-library need is demonstrated.
 - **Phase 4 — Production launch** *(target: pilot in production **2027-02-01**, stretch 01-25, fallback 02-15 — set 2026-09-27; executed as LP0–LP6 in two parallel lanes, Claude Code and Codex)*: integrity first (audit atomicity, one concurrency protocol, tenant-grant invariant — LP1), then i18n + reporting context + factor-model and report-dataset contracts (LP3), onboarding + invitation/reset email, authoritative UK + Türkiye factors incl. refrigerants and mobile combustion, consistent reports, limits (LP4), and qualification: pen-test, load, restore, legal (LP5). **Pilot scope is Scope 1 & 2** — Scope 3 is stated as "not covered", never as zero.
 - **Phase 5 — Post-launch growth** *(LP7; GA dated after the pilot's first reporting close)*: Scope 3 → report sharing → supplier management → workflow notification emails → analytics; dark mode, the remaining report templates.
