@@ -92,9 +92,12 @@ public inputs from a clean committed source tree. Format 2 records that source
 SHA and observed signing-key/InRelease/Packages hashes. It stages only explicitly
 allowlisted tracked helpers, never ignored/untracked scripts or the legacy
 `selfhost_docker.sh`. `verify` refuses changed, missing, extra, linked or special
-files and unlisted directories. This partial install bundle does not satisfy the
-final host source map, which still names the legacy installer; resolving that
-map is an explicit later bootstrap gate, not permission to run the legacy tool. `r3_transfer.py --bundle <directory> --output <new-private-directory>`
+files and unlisted directories. The r02 runtime contract now excludes and rejects
+the legacy installer, including a manifest rehashed to add it. The offline
+installer stays in its separately approved staging bundle; it is not a runtime
+helper. Existing host contracts that include the legacy file are historical and
+must not be silently rebound. This partial install bundle still does not satisfy
+the final host source map. `r3_transfer.py --bundle <directory> --output <new-private-directory>`
 creates a regular-file archive, its digest and an exact offline install proposal.
 Neither tool invokes SSH or executes an installation. No credential/environment
 file, database bytes or historical packet belongs in the archive.
@@ -151,6 +154,77 @@ Preserve the owner's QA VPN deferral and deferred custody/recovery/staffing
 choices. Backup endpoint reservation, ZRS/30-day retention direction and full
 loss/recovery proof remain later packages. Nothing here activates R4 or changes
 the active deployment contract.
+
+### Disposable qualification proposal and evidence boundary
+
+The next execution proposal uses the already selected **fresh GitHub-hosted
+Ubuntu 24.04 amd64** target. It is not dispatch approval. Before dispatch, the
+owner approves `.github/workflows/r3-qualification.yml` at a published, reviewed
+full commit SHA and the exact branch/tag ref resolving to that SHA. Bind the
+workflow's SHA256 and source tree, job names and inputs in the private proposal.
+An uncommitted patch has no executable source SHA: authorize publication first,
+finish independent review, and issue a source-bound addendum for separate dispatch
+approval. A merge with an identical tree still needs an explicit correspondence
+record; never rewrite historical evidence or carry its SHA binding forward.
+
+| Job | Permitted work and credentials | Evidence and limits |
+| --- | --- | --- |
+| `composition` (35 minutes) | Hosted Docker/Compose and setup-node 22.23.3; `contents: read`, checkout credentials not persisted; only existing `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` for read-only pulls. Generates isolated test credentials in the runner. | Source, actual tooling, image-lock hash and nine running service identities in the status-only job summary. Require the complete job, including project-scoped cleanup, to succeed. No pinned-engine, installer, dependency or QA acceptance. |
+| `package-provenance` (15 minutes) | Public HTTPS downloads only; no repository secrets, Azure/OIDC, SSH or DB credentials. `r3_artifacts.py stage` then `r3_toolchain.py <bundle> <new-receipt>`; no apt/install command. | Real Docker signature → current Packages index → five immutable archive hashes and control metadata; reviewed Node archive hash. Receipt explicitly says `real-vendor-artifacts-not-ci-fixture`, `qa_ready: false`, `install_authorized: false`. |
+
+Both jobs bind `inputs.source_sha` to `GITHUB_SHA` and checkout HEAD before their
+work. They run independently on fresh runners; one job passing does not qualify
+the other. The package job retains exactly six public files on success: receipt,
+format-2 manifest, toolchain lock, Docker key, InRelease and Packages. The artifact
+name binds source SHA, run ID and attempt; retention is **seven days**. No runtime
+directory, generated environment, rendered Compose, container logs, regression
+payload or credentials may be uploaded. The package archives are verified but
+not retained in this artifact; it is evidence, not an executable transfer bundle.
+CI's generated-key signed fixture proves verifier behavior only and cannot replace
+this vendor verification. A local download whose stage failed before GPG is
+incomplete input material, not a verified format-2 bundle or transfer candidate.
+
+Receipt issuance compares every helper, local runtime file and policy with
+`git show` at the source commit, checks upstream runtime hashes against that
+commit's upstream lock, and requires the exact artifact/provenance file set.
+The approved toolchain lock also comes from committed bytes; a clean Git status
+cannot hide `skip-worktree` changes. Manifest and lock hashes use the same bytes
+that were verified. CLI refusal exits nonzero; the workflow also requires the
+receipt file to be nonempty before upload. Existing explicit-hash installer
+verification remains Git-free and does not acquire new installation authority.
+
+After the approved run, save the run URL/ID/attempt, event, head SHA, job conclusions,
+runner image/version from setup logs, composition summary and six-file artifact
+to a **new private evidence directory before expiry**. Verify receipt source and
+manifest/lock/metadata hashes against the approved source; record artifact digest
+and local file hashes. Bind any later transfer to its own freshly staged and fully
+verified bundle. Preserve this evidence with the private R3 packet; do not change
+the owner's backup retention/custody decisions through CI artifact retention.
+
+On a source mismatch, missing verifier, signature/package mismatch, unsupported
+image store, pull throttling, startup or cleanup failure, stop. Never weaken pins,
+switch the engine/store, install missing tools, retry automatically or dump runtime
+diagnostics into public logs. A missing summary/artifact is missing evidence, never
+PASS. Retain safe job conclusion and failed step identity; GitHub discards the
+runner, including transient secrets and partial data. Do not promise recovery of
+private runner diagnostics after disposal. A retry needs a new owner-approved
+attempt proposal; scope/source changes require review and a new binding.
+
+### Remaining pre-bootstrap qualification packages
+
+These are preparation requirements, not jobs hidden in the smoke workflow:
+
+| Package | Exact proof required before closing its gate |
+| --- | --- |
+| Private DB regression | Privately reviewed and hash-bound refused-statement payload on the exact QA database digest/composition. Use persistent connections, record backend PID/session identity before and after each refusal, SQLSTATE, benign positive controls and continued independent-connection queries. Detect restart/reconnect/server instability; a refused statement alone is insufficient. Keep payload and raw diagnostics outside Git/public artifacts. Separately approve its private execution/delivery mechanism before running. |
+| Realtime source and GCM | Bind locked amd64 digest/config to upstream source/build evidence for v2.134.10, stating any unattested correspondence. Test the actual consumer's GCM write/read and restart persistence with generated synthetic keys, plus wrong-key/tamper refusal. The configured 32 ASCII bytes carry 192 bits entropy; configuration/health or a standalone crypto function is not consumer proof. |
+| Offline toolchain | Inventory the exact r02 Ubuntu image and installed package versions; prove all Depends/Pre-Depends and the no-download five-package apt plan. Qualify pinned Engine/Compose and image store, maintainer scripts, persistent masks, exclusive attempt journal, interrupted/lock-failure behavior, policy-rc.d removal and guarded unmask sequence on an explicitly approved disposable environment. A preloaded hosted runner cannot establish target OS dependency closure or an installer/reboot lifecycle. |
+| Offline image transport | Bind export archive hash and every locked repository digest/platform/config; import on an empty store with registry access denied and resolve every original digest. Prove `--pull never --no-build` starts the exact nine services. Docker save/load or mutable tags alone are not acceptance; transport format/store compatibility remains unselected until demonstrated. |
+| Final host source map | Bind every source/config/generated file, actual Node binary, installed package receipt and root ownership/modes, plus exact SSH/IMDS/disk/UUID/custody operations. Legacy `selfhost_docker.sh` is excluded. `selfhost_host_guard.sh` still conditionally downloads Node and writes systemd/SSH/daemon state: prepare and review an offline guard installation path before invoking it for r02. Final installation, unmask ordering and guarded reboot remain open. |
+
+The bootstrap packet remains **NOT_READY_FOR_BOOTSTRAP_APPROVAL** until all these
+gates and independent cross-lane review pass. Hosted smoke, package provenance,
+R2 infrastructure creation and unit tests do not establish full QA readiness.
 
 ## Selected design and alternatives
 

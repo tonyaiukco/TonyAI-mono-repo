@@ -487,7 +487,14 @@ offline toolchain installer that leaves services persistently masked. A manual
 GitHub Ubuntu 24.04 amd64 workflow prepares QA composition smoke using recorded hosted Docker versions on the
 owner-selected disposable target. Its source/dispatch, full private regression,
 Realtime consumer proof, offline transfer/install qualification and live
-host/custody acceptance remain gates. See [runbook 10](infra/runbooks/10-qa-clean-replacement.md#accepted-r2-and-bounded-r3-preparation-2026-10-18).
+host/custody acceptance remain gates. Its separate package job retains a source-bound
+vendor provenance receipt and five public metadata files for seven days; CI's
+signed fixture is not vendor-artifact verification. Receipt issuance checks the
+complete bundle source map against committed files and upstream pins, and hashes
+the verified manifest/lock bytes. Verification failure blocks evidence upload.
+The r02 runtime source contract
+rejects the legacy Docker installer; offline host-guard installation and reboot
+qualification remain open. See [runbook 10](infra/runbooks/10-qa-clean-replacement.md#disposable-qualification-proposal-and-evidence-boundary).
 Local preparation authorizes no SSH transfer, bootstrap, network change or R4 activation.
 
 LP4-01's [Auth and SMTP handoff](infra/runbooks/03-deploy.md#35-api-smtp-parameters-lp4-01-production-preparation-for-lp2-04)

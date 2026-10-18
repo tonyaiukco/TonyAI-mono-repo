@@ -117,13 +117,19 @@ def stage(destination):
 
 
 def verify(directory):
+    return verify_snapshot(directory)[0]
+
+
+def verify_snapshot(directory):
+    """Verify once, retaining the exact manifest and optional lock bytes checked."""
     directory = Path(directory).absolute()
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError('Regular bundle directory required.')
     manifest_path = directory / 'manifest.json'
     if manifest_path.is_symlink() or not stat.S_ISREG(manifest_path.lstat().st_mode) or manifest_path.stat().st_nlink != 1:
         raise ValueError('Symlinked manifest refused.')
-    manifest = json.loads(manifest_path.read_bytes())
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes)
     if (set(manifest) != {'format', 'source_sha', 'provenance', 'files', 'image_transport', 'install_authorized'}
             or manifest['format'] != 2 or not re.fullmatch('[a-f0-9]{40}', manifest['source_sha'])):
         raise ValueError('Unknown bundle format.')
@@ -149,13 +155,17 @@ def verify(directory):
             actual.add(path.relative_to(directory).as_posix())
     if actual != set(manifest['files']):
         raise ValueError('Unexpected or missing bundle file.')
+    lock_bytes = None
     for name, expected in manifest['files'].items():
         path = Path(name)
         if path.is_absolute() or '..' in path.parts or not re.fullmatch('[a-f0-9]{64}', expected):
             raise ValueError('Unsafe bundle path or hash.')
-        if sha((directory / path).read_bytes()) != expected:
+        data = (directory / path).read_bytes()
+        if sha(data) != expected:
             raise ValueError('Bundle digest mismatch.')
-    return manifest
+        if name == 'r3-toolchain.lock.json':
+            lock_bytes = data
+    return manifest, manifest_bytes, lock_bytes
 
 
 if __name__ == '__main__':

@@ -63,6 +63,22 @@ jobs:
         env:
           R3_BUNDLE: ${{ runner.temp }}/r3-public-artifacts
         run: |
-          python3 infra/scripts/r3_artifacts.py stage "$R3_BUNDLE"
-          PYTHONPATH=infra/scripts python3 -c 'import os; from r3_toolchain import verify_toolchain; verify_toolchain(os.environ["R3_BUNDLE"]); print("PASS: signed package provenance and metadata; no installation")'
+          python3 -I -B infra/scripts/r3_artifacts.py stage "$R3_BUNDLE"
+          python3 -I -B infra/scripts/r3_toolchain.py "$R3_BUNDLE" "$RUNNER_TEMP/r3-vendor-receipt.json"
+          test -s "$RUNNER_TEMP/r3-vendor-receipt.json"
+      - name: Retain only public vendor provenance evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r3-vendor-provenance-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/r3-vendor-receipt.json
+            ${{ runner.temp }}/r3-public-artifacts/manifest.json
+            ${{ runner.temp }}/r3-public-artifacts/r3-toolchain.lock.json
+            ${{ runner.temp }}/r3-public-artifacts/provenance/docker.asc
+            ${{ runner.temp }}/r3-public-artifacts/provenance/InRelease
+            ${{ runner.temp }}/r3-public-artifacts/provenance/Packages
       # No installer invocation: hosted runner dependencies differ from the r02 OS.
+      # Success-only, six explicit public files. Never upload the bundle/runtime,
+      # credentials, rendered Compose, container logs or private regression data.

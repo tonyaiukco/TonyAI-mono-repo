@@ -168,3 +168,11 @@ R3 preparation uses `r3_artifacts.py`, `r3_transfer.py`, `r3_toolchain.py` and
 stage, plus `r3-qualification.yml` for the agreed fresh GitHub Ubuntu 24.04 amd64
 composition smoke target. Format-2 bundles bind a clean source commit and observed signed-index hashes; pinned-engine/install qualification remains open. No preparation command grants cloud or bootstrap authority;
 [runbook 10](runbooks/10-qa-clean-replacement.md#accepted-r2-and-bounded-r3-preparation-2026-10-18) lists the outstanding proof and approval gates.
+The package job retains only six explicit public provenance files for seven days,
+including a receipt bound to the checked-out source and real vendor verification.
+That binding compares the complete bundle map to committed source bytes and
+upstream pins; Git status alone is insufficient. Receipt hashes use the exact
+manifest/lock bytes verified, and the upload requires a nonempty receipt.
+This evidence artifact contains no package archives and is not a transfer bundle.
+The r02 runtime contract rejects the legacy Docker installer; final offline host
+guard installation, unmask ordering and reboot proof remain separate gates.

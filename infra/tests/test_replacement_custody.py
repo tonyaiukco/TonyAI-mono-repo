@@ -19,7 +19,7 @@ def contract():
     files={path: value or 'a'*64 for path,value in layout.items()}
     for name in ('docker-compose.yml','compose.qa.yml','compose.https.yml','compose.r02.yml','compose.images.json','.env.example','Caddyfile','credential-template.json'):
         files.setdefault('/opt/tonyai/supabase/'+name,'a'*64)
-    for name in ('replacement_host.py','replacement_bundle.py','replacement_custody.py','replacement_custody_host.py','replacement_start.py','selfhost_pin.py','selfhost_init.mjs','selfhost_db_config.py','selfhost_disks.py','selfhost_docker.sh','selfhost_host_guard.sh'):
+    for name in ('replacement_host.py','replacement_bundle.py','replacement_custody.py','replacement_custody_host.py','replacement_start.py','selfhost_pin.py','selfhost_init.mjs','selfhost_db_config.py','selfhost_disks.py','selfhost_host_guard.sh'):
         files['/usr/local/lib/tonyai/'+name]='a'*64
     files['/usr/local/sbin/tonyai-runtime-guard']='a'*64
     group='/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging-data'
@@ -33,6 +33,16 @@ def contract():
 
 
 class ReplacementCustodyTests(unittest.TestCase):
+    def test_legacy_installer_is_rejected_even_with_rebound_manifest(self):
+        data = contract()
+        legacy = '/usr/local/lib/tonyai/selfhost_docker.sh'
+        self.assertNotIn(legacy, data['files'])
+        validate_contract(data)
+        data['files'][legacy] = 'a' * 64
+        data['source_sha256'] = digest(encoded(data['files']))
+        with self.assertRaisesRegex(ValueError, 'Incomplete bootstrap source manifest'):
+            validate_contract(data)
+
     def test_exact_host_identity_and_complete_source_layout(self):
         data=contract();validate_contract(data)
         compute=dict(resourceId=data['vm_id'],vmId=data['vm_uuid'],location='swedencentral',storageProfile={
