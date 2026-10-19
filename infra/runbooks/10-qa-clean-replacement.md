@@ -210,6 +210,30 @@ runner, including transient secrets and partial data. Do not promise recovery of
 private runner diagnostics after disposal. A retry needs a new owner-approved
 attempt proposal; scope/source changes require review and a new binding.
 
+For failures the composition script handles, its failure line contains only a
+fixed phase code and two cleanup states,
+for example `phase=DATABASE_START`, `seed_cleanup=SUCCEEDED`,
+`compose_cleanup=FAILED` (serialized as JSON after `FAIL: composition smoke`).
+The code-owned vocabulary covers runner/tooling guards, source staging, generated
+settings, Compose rendering/validation, image pulls/identity, database seed/start,
+service health, cleanup and report writing. It excludes exception text and class
+names, argv, environment values, URLs, rendered configuration and command output.
+These codes identify the failed operation or check, not its underlying cause.
+For handled failures, if cleanup also fails, the initial failing phase is retained and cleanup is marked
+separately. `NOT_STARTED` means that cleanup was not attempted; `SUCCEEDED` means
+its command returned zero, not independent proof of host or disk state. No success
+summary is created until project cleanup succeeds. Failure codes use the existing
+job log only: no additional artifact, runtime log export or automatic retry.
+Cancellation and job timeout are outside this handled-failure guarantee. SIGINT
+can raise `KeyboardInterrupt`, which escapes the script's `Exception` handlers;
+Python may print a traceback with source lines, exception classes and public
+command arguments, including an earlier exception during cleanup. Captured child
+stdout/stderr are not included in that traceback. SIGTERM or SIGKILL can terminate
+the process without any status line. Use the job conclusion and treat missing
+status or cleanup evidence as unknown, never success.
+Historical generic failures cannot be assigned a phase retroactively; preserve
+their evidence and establish any new result with a separately approved attempt.
+
 ### Remaining pre-bootstrap qualification packages
 
 These are preparation requirements, not jobs hidden in the smoke workflow:
