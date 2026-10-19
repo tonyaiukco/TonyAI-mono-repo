@@ -498,6 +498,10 @@ instead end with a Python traceback (source lines, exception classes and public
 command arguments, but not captured child stdout/stderr), or with no status line.
 A success summary is written only after
 project cleanup succeeds; a failed attempt still requires separate retry approval.
+The smoke interprets an omitted `create_host_path` as false only inside an explicit
+bind object rendered by Compose 2.38.2, whose serializer omits that false value.
+Other versions and ambiguous bind shapes retain strict validation; host validation
+and the reviewed mount policy are unchanged.
 The r02 runtime source contract
 rejects the legacy Docker installer; offline host-guard installation and reboot
 qualification remain open. See [runbook 10](infra/runbooks/10-qa-clean-replacement.md#disposable-qualification-proposal-and-evidence-boundary).
