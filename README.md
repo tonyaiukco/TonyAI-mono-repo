@@ -492,6 +492,12 @@ vendor provenance receipt and five public metadata files for seven days; CI's
 signed fixture is not vendor-artifact verification. Receipt issuance checks the
 complete bundle source map against committed files and upstream pins, and hashes
 the verified manifest/lock bytes. Verification failure blocks evidence upload.
+Composition failures handled by the script emit only fixed phase and cleanup-state
+codes, without exception text or runtime output. Cancellation or job timeout can
+instead end with a Python traceback (source lines, exception classes and public
+command arguments, but not captured child stdout/stderr), or with no status line.
+A success summary is written only after
+project cleanup succeeds; a failed attempt still requires separate retry approval.
 The r02 runtime source contract
 rejects the legacy Docker installer; offline host-guard installation and reboot
 qualification remain open. See [runbook 10](infra/runbooks/10-qa-clean-replacement.md#disposable-qualification-proposal-and-evidence-boundary).

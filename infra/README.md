@@ -174,5 +174,13 @@ That binding compares the complete bundle map to committed source bytes and
 upstream pins; Git status alone is insufficient. Receipt hashes use the exact
 manifest/lock bytes verified, and the upload requires a nonempty receipt.
 This evidence artifact contains no package archives and is not a transfer bundle.
+For failures it handles, the composition helper reports only a fixed phase/cleanup
+vocabulary, without exception text, commands or captured runtime output. Cancellation
+or job timeout can instead end with a Python traceback containing source lines,
+exception classes and public command arguments (not captured child stdout/stderr),
+or with no status line. For handled failures, it preserves
+the initial failing phase if cleanup also fails, and writes its success summary
+only after project cleanup returns successfully. No failure report adds an upload
+or grants retry authority.
 The r02 runtime contract rejects the legacy Docker installer; final offline host
 guard installation, unmask ordering and reboot proof remain separate gates.
