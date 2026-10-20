@@ -90,6 +90,9 @@ def install(bundle, contract_path, approval_path, approved_hash):
         validate_identity(contract, json.load(response)['compute'])
     forbidden = ['/usr/bin/docker', '/usr/bin/containerd', '/etc/docker/daemon.json', '/usr/sbin/policy-rc.d',
                  '/opt/tonyai-tools', '/var/lib/docker', '/var/lib/containerd', '/etc/tonyai/r3-install-attempt.json']
+    forbidden += ['/etc/tonyai/' + name for name in (
+        'r3-installed-receipt.json', 'r3-install-complete.json', 'r3-install-plan.txt',
+        'r3-install.stdout.log', 'r3-install.stderr.log', 'docker-packages.txt')]
     forbidden += [root + service for root in ('/run/systemd/system/', '/etc/systemd/system/') for service in SERVICES]
     if any(Path(p).exists() or Path(p).is_symlink() for p in forbidden):
         raise ValueError('Existing/partial installation refused; preserve and review.')
@@ -99,11 +102,14 @@ def install(bundle, contract_path, approval_path, approved_hash):
         probe = subprocess.run(['dpkg-query', '-W', '-f=${db:Status-Status}', item['name']], capture_output=True)
         if probe.returncode == 0:
             raise ValueError('Existing Docker package state refused.')
-    dependency_plan(lock, paths)
+    if capture(['dpkg', '--audit']).strip():
+        raise ValueError('Pending or inconsistent package state refused.')
+    plan = dependency_plan(lock, paths)
     node = bundle / 'artifacts' / lock['node']['url'].rsplit('/', 1)[1]
     check_node_archive(node)
     safe_path('/etc/tonyai', directory=True)
     write_new('/etc/tonyai/r3-install-attempt.json', encoded(expected))
+    write_new('/etc/tonyai/r3-install-plan.txt', plan.encode())
     # Both dpkg maintainer scripts and systemd must be prevented from starting
     # daemons before the separately reviewed mount/firewall/source guards exist.
     write_new('/usr/sbin/policy-rc.d', b'#!/bin/sh\nexit 101\n')
@@ -116,10 +122,12 @@ def install(bundle, contract_path, approval_path, approved_hash):
         process.wait()
         if process.returncode:
             raise ValueError('Offline installation failed; attempt/masks retained.')
+    installed = []
     for item in lock['packages']:
         actual = capture(['dpkg-query', '-W', '-f=${Package}\n${Version}\n${Architecture}\n${db:Status-Status}', item['name']]).splitlines()
         if actual != [item['name'], item['version'], 'amd64', 'installed']:
             raise ValueError('Installed package readback differs.')
+        installed.append(dict(zip(('name', 'version', 'architecture', 'status'), actual)))
     verify_masks()
     Path('/opt/tonyai-tools').mkdir(mode=0o755)
     Path('/opt/tonyai-tools').chmod(0o755)
@@ -135,6 +143,16 @@ def install(bundle, contract_path, approval_path, approved_hash):
     write_new('/etc/docker/daemon.json', encoded(DAEMON))
     write_new('/etc/tonyai/docker-packages.txt', ''.join(item['name'] + '=' + item['version'] + '\n' for item in lock['packages']).encode())
     capture(['apt-mark', 'hold', *[item['name'] for item in lock['packages']]])
+    node_binary = Path('/opt/tonyai-tools/node-v22.23.3-linux-x64/bin/node')
+    safe_path(node_binary)
+    info = node_binary.stat()
+    receipt = {'format': 1, 'approval_sha256': approved_hash, 'binding': expected,
+               'packages': installed, 'apt_plan_sha256': digest(plan.encode()),
+               'node': {'path': str(node_binary), 'sha256': digest(node_binary.read_bytes()),
+                        'version': '22.23.3', 'uid': info.st_uid, 'gid': info.st_gid,
+                        'mode': oct(info.st_mode & 0o7777)},
+               'services_masked': SERVICES, 'activation_authorized': False}
+    write_new('/etc/tonyai/r3-installed-receipt.json', encoded(receipt))
     write_new('/etc/tonyai/r3-install-complete.json', encoded(expected))
     # Deliberately keep masks/policy until a distinct reviewed activation stage.
     print('PASS: pinned toolchain installed; daemons remain masked. Bootstrap is not authorized.')

@@ -503,8 +503,15 @@ bind object rendered by Compose 2.38.2, whose serializer omits that false value.
 Other versions and ambiguous bind shapes retain strict validation; host validation
 and the reviewed mount policy are unchanged.
 The r02 runtime source contract
-rejects the legacy Docker installer; offline host-guard installation and reboot
-qualification remain open. See [runbook 10](infra/runbooks/10-qa-clean-replacement.md#disposable-qualification-proposal-and-evidence-boundary).
+rejects both legacy installation shells. Local tools now inspect pinned package
+control/scripts and Node bytes, render offline guard files and a full source plan,
+and verify an exact OCI transport archive without importing it. The installer
+checks exact APT install/configure candidates, rejects unknown action/prose lines,
+and uses `--no-remove` for simulation and installation. It retains an observed
+package/Node receipt. OCI metadata rejects duplicate/case-colliding keys and
+ambiguous descriptor/document fields. A separate dispatch-only offline-input analysis workflow retains public
+evidence; target dependency closure, real image import, guard installation and
+reboot qualification remain open. See [runbook 10](infra/runbooks/10-qa-clean-replacement.md#disposable-qualification-proposal-and-evidence-boundary).
 Local preparation authorizes no SSH transfer, bootstrap, network change or R4 activation.
 
 LP4-01's [Auth and SMTP handoff](infra/runbooks/03-deploy.md#35-api-smtp-parameters-lp4-01-production-preparation-for-lp2-04)

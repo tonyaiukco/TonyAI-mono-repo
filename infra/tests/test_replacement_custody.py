@@ -19,7 +19,7 @@ def contract():
     files={path: value or 'a'*64 for path,value in layout.items()}
     for name in ('docker-compose.yml','compose.qa.yml','compose.https.yml','compose.r02.yml','compose.images.json','.env.example','Caddyfile','credential-template.json'):
         files.setdefault('/opt/tonyai/supabase/'+name,'a'*64)
-    for name in ('replacement_host.py','replacement_bundle.py','replacement_custody.py','replacement_custody_host.py','replacement_start.py','selfhost_pin.py','selfhost_init.mjs','selfhost_db_config.py','selfhost_disks.py','selfhost_host_guard.sh'):
+    for name in ('replacement_host.py','replacement_bundle.py','replacement_custody.py','replacement_custody_host.py','replacement_start.py','selfhost_pin.py','selfhost_init.mjs','selfhost_db_config.py','selfhost_disks.py','r3_guard_files.py'):
         files['/usr/local/lib/tonyai/'+name]='a'*64
     files['/usr/local/sbin/tonyai-runtime-guard']='a'*64
     group='/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/tonyai-staging-data'

@@ -85,6 +85,8 @@ class Harness:
 
     def capture(self, argv):
         self.calls.append(tuple(argv))
+        if argv == ['dpkg', '--audit']:
+            return 'pending package' if self.fault == 'pending-package' else ''
         if argv[:2] == ['systemctl', 'mask']:
             if self.fault != 'mask-missing':
                 for service in argv[2:]:
@@ -111,10 +113,14 @@ class Harness:
         assert (self.root / 'usr/sbin/policy-rc.d').stat().st_mode & 0o777 == 0o755
         for service in self.module.SERVICES: assert os.readlink(self.root / 'etc/systemd/system' / service) == '/dev/null'
         assert argv == install_argv(self.paths)
-        assert argv == ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '--no-download', '--no-install-recommends', '--yes', 'install', *self.paths]
+        assert argv == ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '--no-download', '--no-remove', '--no-install-recommends', '--yes', 'install', *self.paths]
         assert kwargs['stdin'] == subprocess.DEVNULL and kwargs['start_new_session'] is True
         if self.fault == 'mask-lost': (self.root / 'etc/systemd/system/docker.service').unlink()
-        return types.SimpleNamespace(returncode=1 if self.fault == 'apt-failure' else 0, wait=lambda: None)
+        def wait():
+            if self.fault == 'wrapper-interrupt':
+                raise KeyboardInterrupt()
+        return types.SimpleNamespace(returncode=100 if self.fault == 'apt-lock-failure' else
+                                     1 if self.fault == 'apt-failure' else 0, wait=wait)
 
     def run(self):
         m = self.module
@@ -133,10 +139,20 @@ class Harness:
             mock(m, 'build_opener', return_value=opener)
             verifier = mock(m, 'verify_toolchain', side_effect=ValueError('verification') if self.fault == 'verification' else None,
                             return_value=(self.lock, self.paths))
-            plan = mock(m, 'dependency_plan', side_effect=ValueError('closure') if self.fault == 'closure' else None)
+            plan = mock(m, 'dependency_plan', side_effect=ValueError('closure') if self.fault == 'closure' else None,
+                        return_value='fixture exact offline plan\n')
             probe = mock(m.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0 if self.fault == 'installed' else 1))
             mock(m.subprocess, 'Popen', side_effect=self.popen)
             mock(m, 'capture', side_effect=self.capture)
+            original_write = m.write_new
+            def checked_write(path, data):
+                path = Path(path)
+                if path.name == 'r3-install-complete.json':
+                    assert (path.parent / 'r3-installed-receipt.json').is_file()
+                if path.name == 'r3-installed-receipt.json' and self.fault == 'receipt-write':
+                    raise ValueError('Receipt write failed')
+                return original_write(path, data)
+            mock(m, 'write_new', side_effect=checked_write)
             filter_call = mock(m.tarfile, 'data_filter', wraps=tarfile.data_filter)
             extract = tarfile.TarFile.extractall
             def extract_checked(archive, *args, **kwargs):
@@ -156,11 +172,33 @@ class Harness:
 
 
 class InstallGuards(unittest.TestCase):
+    def test_wrapper_interrupt_preserves_masks_and_never_claims_child_termination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            h = Harness(Path(tmp), 'wrapper-interrupt')
+            with self.assertRaises(KeyboardInterrupt):
+                h.run()
+            self.assertTrue((h.root / 'etc/tonyai/r3-install-attempt.json').exists())
+            self.assertTrue((h.root / 'usr/sbin/policy-rc.d').exists())
+            for service in h.module.SERVICES:
+                self.assertEqual(os.readlink(h.root / 'etc/systemd/system' / service), '/dev/null')
+            self.assertFalse((h.root / 'etc/tonyai/r3-install-complete.json').exists())
+            self.assertFalse((h.root / 'etc/tonyai/r3-installed-receipt.json').exists())
+
     def test_complete_real_directory_archive_and_files_only(self):
         for style in (None, 'files-only'):
             with self.subTest(style=style), tempfile.TemporaryDirectory() as tmp:
                 h = Harness(Path(tmp), style); h.run()
                 self.assertEqual(json.loads((h.root / 'etc/tonyai/r3-install-complete.json').read_bytes()), h.approval)
+                receipt = json.loads((h.root / 'etc/tonyai/r3-installed-receipt.json').read_bytes())
+                self.assertEqual(receipt['approval_sha256'], h.approved)
+                self.assertEqual(receipt['node']['sha256'], sha(b'fixture executable'))
+                self.assertEqual(receipt['node']['mode'], '0o755')
+                self.assertEqual(receipt['packages'], [
+                    {**{k: p[k] for k in ('name', 'version', 'architecture')}, 'status': 'installed'}
+                    for p in h.lock['packages']])
+                self.assertEqual((h.root / 'etc/tonyai/r3-install-plan.txt').read_bytes(), b'fixture exact offline plan\n')
+                self.assertEqual(receipt['apt_plan_sha256'], sha(b'fixture exact offline plan\n'))
+                self.assertIs(receipt['activation_authorized'], False)
                 daemon = json.loads((h.root / 'etc/docker/daemon.json').read_bytes()); self.assertIs(daemon['live-restore'], False)
                 self.assertIn(('apt-mark', 'hold', *[p['name'] for p in h.lock['packages']]), h.calls)
                 self.assertIn(('systemctl', 'mask', *h.module.SERVICES), h.calls)
@@ -175,9 +213,11 @@ class InstallGuards(unittest.TestCase):
                     'artifact_verifier_sha256', 'toolchain_lock_sha256', 'host_guard_sha256', 'bundle_helper_sha256', 'layout_sha256']
         paths = ['usr/bin/docker', 'usr/bin/containerd', 'etc/docker/daemon.json', 'usr/sbin/policy-rc.d',
                  'opt/tonyai-tools', 'var/lib/docker', 'var/lib/containerd', 'etc/tonyai/r3-install-attempt.json']
+        paths += ['etc/tonyai/' + name for name in ('r3-installed-receipt.json', 'r3-install-complete.json',
+                  'r3-install-plan.txt', 'r3-install.stdout.log', 'r3-install.stderr.log', 'docker-packages.txt')]
         paths += [root + '/' + s for root in ('etc/systemd/system', 'run/systemd/system') for s in ('docker.service', 'docker.socket', 'containerd.service')]
         faults = ['uid', 'platform', 'os', 'os-version', 'unsafe-root', 'unsafe-entry', 'approval-hash', 'helper-location',
-                  'contract', 'identity', 'verification', 'installed', 'closure', 'broken-mask',
+                  'contract', 'identity', 'verification', 'installed', 'closure', 'broken-mask', 'pending-package',
                   'foreign-root', 'absolute', 'traversal', 'symlink', 'hardlink', 'fifo', 'file-root']
         faults += ['env:' + v for v in ('APT_CONFIG', 'DPKG_ROOT', 'LD_PRELOAD', 'PYTHONPATH', 'PYTHONHOME', 'DEBIAN_FRONTEND')]
         faults += ['binding:' + key for key in bindings] + ['existing:' + path for path in paths]
@@ -189,10 +229,9 @@ class InstallGuards(unittest.TestCase):
                 self.assertFalse(any(call[0] == 'apt' for call in h.calls))
                 after = {str(p): p.read_bytes() for p in h.root.rglob('*') if p.is_file()}
                 self.assertEqual(before, after)
-                self.assertFalse((h.root / 'etc/tonyai/r3-install-complete.json').exists())
 
     def test_postwrite_failures_preserve_attempt_and_refuse_completion(self):
-        for fault in ('mask-missing', 'apt-failure', 'version', 'arch', 'status', 'mask-lost', 'node-version', 'hold-failure'):
+        for fault in ('mask-missing', 'apt-failure', 'apt-lock-failure', 'version', 'arch', 'status', 'mask-lost', 'node-version', 'hold-failure', 'receipt-write'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 h = Harness(Path(tmp), fault)
                 with self.assertRaises(ValueError): h.run()

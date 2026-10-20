@@ -8,6 +8,54 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class Workflow(unittest.TestCase):
+    def test_offline_input_analysis_is_dispatch_only_and_not_installation(self):
+        workflow = yaml.load((ROOT / '.github/workflows/r3-offline-inputs.yml').read_text(), Loader=yaml.BaseLoader)
+        self.assertEqual(set(workflow['on']), {'workflow_dispatch'})
+        self.assertEqual(workflow['permissions'], {'contents': 'read'})
+        self.assertEqual(set(workflow['jobs']), {'offline-inputs'})
+        job = workflow['jobs']['offline-inputs']
+        self.assertEqual(job['runs-on'], 'ubuntu-24.04')
+        self.assertEqual(job['timeout-minutes'], '15')
+        steps = job['steps']
+        self.assertEqual(steps[0]['with']['persist-credentials'], 'false')
+        script = steps[1]['run']
+        self.assertIn('test "$REVIEWED_SHA" = "$GITHUB_SHA"', script)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"', script)
+        self.assertEqual(workflow['on']['workflow_dispatch']['inputs']['source_sha']['required'], 'true')
+        self.assertEqual(workflow['on']['workflow_dispatch']['inputs']['source_sha']['type'], 'string')
+        self.assertEqual(steps[1]['env'], {'REVIEWED_SHA': '${{ inputs.source_sha }}'})
+        self.assertIn('[[ "$REVIEWED_SHA" =~ ^[a-f0-9]{40}$ ]]', script)
+        analysis = steps[2]['run']
+        for helper in ('r3_artifacts.py stage', 'r3_toolchain.py', 'r3_package_evidence.py', 'r3_guard_files.py'):
+            self.assertIn('python3 -I -B infra/scripts/' + helper, analysis)
+        for forbidden in ('sudo ', 'apt-get ', 'docker ', 'az ', 'ssh ', 'secrets.', 'continue-on-error'):
+            self.assertNotIn(forbidden, str(steps))
+        self.assertIn("python3 -I -B - <<'PY'", analysis)
+        self.assertIn("assert source == os.environ['GITHUB_SHA']", analysis)
+        self.assertIn("assert not subprocess.check_output(['git', 'status', '--porcelain']).strip()", analysis)
+        self.assertIn("prepare(report['node']['binary_sha256'], output / 'source-plan.json', bundle / 'runtime')", analysis)
+        self.assertIn("'source_sha': source", analysis)
+        self.assertIn("'files': files", analysis)
+        self.assertIn("files = {str(p.relative_to(output)): hashlib.sha256(p.read_bytes()).hexdigest()", analysis)
+        self.assertIn("'workflow_sha256': hashlib.sha256(Path('.github/workflows/r3-offline-inputs.yml').read_bytes()).hexdigest()", analysis)
+        self.assertIn("'status': 'INPUT_ANALYSIS_ONLY'", analysis)
+        self.assertIn("'qa_ready': False", analysis)
+        self.assertIn("'run_id': os.environ['GITHUB_RUN_ID']", analysis)
+        self.assertIn("'attempt': os.environ['GITHUB_RUN_ATTEMPT']", analysis)
+        self.assertIn("'install_authorized': False", analysis)
+        upload = steps[-1]
+        self.assertNotIn('if', upload)
+        self.assertEqual(upload['with']['name'], 'r3-offline-inputs-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}')
+        self.assertEqual(upload['with']['retention-days'], '7')
+        self.assertEqual(upload['with']['if-no-files-found'], 'error')
+        for line in upload['with']['path'].splitlines():
+            self.assertTrue(line.startswith('${{ runner.temp }}/r3-offline-inputs/'))
+            self.assertNotIn('**', line)
+        self.assertNotIn('/runtime', upload['with']['path'])
+        for step in steps:
+            if 'uses' in step:
+                self.assertRegex(step['uses'], r'^[^@]+@[a-f0-9]{40}$')
+
     def test_dispatch_permissions_sha_bindings_and_step_contexts(self):
         workflow = yaml.load((ROOT / '.github/workflows/r3-qualification.yml').read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(set(workflow['on']), {'workflow_dispatch'})

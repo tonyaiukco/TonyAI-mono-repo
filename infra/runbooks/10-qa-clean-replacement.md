@@ -248,6 +248,228 @@ software inventory is diagnostic context, not proof of the actual tool version
 or a successful composition. Local JSON-shape tests do not replace a new,
 separately approved hosted attempt.
 
+### Offline input qualification and host installation proposal
+
+The next bounded package adds **preparation**, not a bootstrap or transport PASS:
+
+- `r3_package_evidence.py <artifact-directory> <new-directory>` rehashes all six
+  public archives against the current lock, reads the five `.deb` control archives
+  without executing them, retains every control/maintainer-script file and records
+  Depends, Pre-Depends, Provides, Conflicts, Breaks and Replaces. It hashes the actual
+  Linux Node member without running it. It does not perform GPG verification or
+  solve target dependencies; pair it with `r3_toolchain.py` vendor provenance.
+- `r3_guard_files.py <new-directory>` renders four reviewed offline payloads:
+  SSH policy, host-fingerprint unit, Docker mount drop-in and runtime guard.
+  Absolute destinations, root uid/gid and modes are metadata. It never writes to
+  those destinations, downloads Node, reloads SSH, changes firewall rules or starts
+  a service. The r02 source contract now binds this renderer instead of
+  `selfhost_host_guard.sh`; old contracts are historical and must not be rebound
+  silently. **Neither `selfhost_docker.sh` nor `selfhost_host_guard.sh` is an r02
+  execution entrypoint.** Legacy host procedures remain unchanged.
+- `r3_source_plan.py <archive-derived-node-sha256> <new-json> --runtime <verified-runtime>`
+  computes the complete proposed contract file map and desired ownership/modes.
+  The extra generated `volumes/api/envoy/lds.qa.yaml` is bound separately to the
+  pinned template and the exact redaction checked by `check_source_tree`; it stays
+  outside the contract's static file set. Without `--runtime` its hash is explicitly
+  missing. Generated secrets/journals and custody evidence remain private and are
+  not public source artifacts. The caller-provided Node hash is not an installed
+  receipt; compare it with the independently verified archive and installed binary.
+- `r3_image_transport.py <oci-layout> <new-directory>` verifies all twelve original
+  locked repository-digest references, manifest/config/layer hashes and sizes,
+  linux/amd64 config identity and an exact blob set, then creates and re-reads a
+  deterministic `images.oci.tar` and receipt. A locked multi-platform index stays
+  unchanged: exactly one linux/amd64 child manifest and its config/layers are
+  carried, with both original and platform manifest digests recorded. Other
+  platforms are intentionally absent; missing/ambiguous amd64 children or nested
+  indexes fail closed. Exact metadata key allowlists reject duplicate/case-colliding
+  keys, alternate reference annotations, conflicting document types and platform
+  aliases. Layout roots require exactly the original ref.name annotation; hash-bound
+  upstream documents permit only enumerated descriptive/attestation annotations. No links, foreign-layer URLs, tags, extra or missing
+  selected-platform content. Realtime's current lock is such an index; replacing
+  its root with the child digest would lose the original identity.
+  It does not fetch/export/import images, decompress layers or qualify a Docker
+  store. The importing engine must validate layer diff IDs. Real image archive
+  hashes/config receipts cannot be invented from the lock or synthetic fixtures.
+
+The installer now retains its exact APT simulation and an **observed** package /
+Node receipt, bound to the approval, source helpers, manifest and contract. It
+refuses a nonempty `dpkg --audit` and requires both `Inst` and `Conf` actions to
+match the exact five package names/versions, with no removal or old-version
+replacement. Both simulation and real APT argv include `--no-remove`; only
+reviewed C-locale informational lines are accepted beside exact pinned actions.
+An unknown verb, purge or nonzero-removal summary is refused. It preserves `r3-install-attempt.json`, masks and policy on failure;
+`r3-install-complete.json` is written only after the receipt. A receipt without
+completion is partial evidence. The source map binds the deterministic package
+text separately; the observed receipt binds back to the approved contract rather
+than creating a circular contract/receipt hash.
+
+**Target dependency evidence.** Retained control-plane observation identifies
+Canonical / `ubuntu-24_04-lts` / `server` / `24.04.202609040` (exactVersion), as
+observed on 2026-10-18. A fresh control-plane read is required for a new guest
+packet; a historical observation is not current state. Image metadata, VM/disk
+IDs and architecture expectations are available through GET; installed versions,
+pending dpkg state, APT hooks, Essential packages, alternatives/providers and
+recursive dependency satisfaction require separately approved guest execution.
+The hosted runner's package inventory proves neither the Azure image nor its boot
+customizations. No guest inventory has been collected by this package.
+
+**Unimplemented guest execution gate:** before any guest proposal is executable,
+require a complete pre/post `dpkg-query` inventory diff and refuse completion
+unless only the five pinned packages changed. Bind actual APT stdout/stderr
+hashes and compare the executed transaction with the simulation; `--no-download`
+alone still permits cached archives. Observe apt-daily, apt-daily-upgrade and
+unattended-upgrades services/timers and package-manager activity before inventory
+and throughout the transaction. A reviewed isolation procedure and measured
+unchanged preconditions are required; no timer mutation is authorized here.
+The current installer does not enforce this full diff/timer gate, so its receipt
+and completion marker alone are insufficient for guest acceptance.
+
+**Open qualification questions:** retain a real Noble APT 2.7 simulation fixture
+(the parser currently refuses broken-list suffixes and unlisted prose, including
+local-archive selection notes; widen only against a reviewed exact fixture); re-observe masks at receipt
+creation, record policy bytes/holds and the detached APT PID, observe rather than
+assert Node version, bind installed files to archive md5sums and anchor the plan
+architecture. Transport still requires a selected exporter/importer; reads before
+size checks and packaging symlink races/partial archives need assessment before
+execution. Contract format 2 retains its label despite the changed required-file
+set: old maps fail closed and must never be silently rebound. These limits remain
+open; local fixture tests do not qualify a host.
+
+Hash-verified archive control data requires at least `libc6 >= 2.38` and
+`libseccomp2 >= 2.5.0` for containerd; `libc6 >= 2.34` for CLI; Engine requires
+`containerd.io >= 2.1.5`, CLI, iptables, nftables, `libc6 >= 2.34`, libsystemd0 and
+Pre-Depends `init-system-helpers >= 1.54~`. Buildx/Compose declare no Depends in
+these archives. This list is **direct edges, not complete closure**. Native APT /
+dpkg must resolve the full installed graph, including versioned providers and
+Essential-package assumptions. See [Debian relationships](https://www.debian.org/doc/debian-policy/ch-relationships.html)
+and [maintainer-script rules](https://www.debian.org/doc/debian-policy/ch-maintainerscripts.html).
+
+The guest inventory proposal is read-only: bind `/etc/os-release`, kernel,
+`dpkg --print-architecture`, boot ID and IMDS; collect `dpkg-query -W` with Package,
+Version, Architecture, Status, Depends, Pre-Depends, Provides and Essential fields;
+retain `/var/lib/dpkg/status`, `dpkg --audit`, APT configuration/hooks and package
+selection state privately. Use the pinned local archives and the existing
+`install_argv(..., simulate=True)` in C locale, with networking denied. Record
+full recursive native-solver dependency/provider/version resolution, no additional
+candidate, removal or unrelated configure action. Stop on any missing dependency;
+a new signed, pinned OS dependency bundle and review is required, never a live
+`apt update`, `--fix-broken` or download fallback. Inventory alone does not qualify
+installation, maintainer scripts or reboot.
+
+**Maintainer-script findings and disposable lifecycle proposal.** The retained
+real Engine/containerd postinst files call `deb-systemd-helper unmask/enable` and
+`deb-systemd-invoke start`; Engine also calls `invoke-rc.d`, creates the docker
+group and may load AppArmor policy. A mask check after apt is insufficient to
+prove that no intermediate start occurred. Monitor unit/socket/process state and
+retain timestamped transitions, helper versions, boot IDs and root-only journal
+receipts during the separately approved lifecycle test.
+
+The owner-selected fresh **GitHub Ubuntu 24.04 amd64** runner remains the hosted
+smoke/input-analysis target. It contains preinstalled packages and has no matching
+r02 IMDS identity; the production installer must refuse it. Never mock IMDS or
+remove the identity guard to claim an end-to-end production install. A job cannot
+provide normal reboot continuity. The separate proposal is one disposable
+Sweden Central VM on exact image `24.04.202609040`, isolated new OS/data disks,
+no live data, no recovery-vault role, no app network access and an approved
+out-of-band console/SSH trust channel. **No resources are provisioned here.**
+Before approval bind its exact resource IDs, network plan, costs, cleanup and an
+explicit qualification identity contract; the current r02-only installer cannot
+be executed on an arbitrary test VM. A reviewed qualification adapter must preserve
+the same installation core and bind the test identity, without becoming an r02
+bypass. Implementation and review of that adapter remain a prerequisite, not an
+implied action in the input-analysis workflow.
+
+Use isolated fresh disposable instances/snapshots for successful install, held
+APT/dpkg locks, interruption after journal/mask creation, interruption during
+maintainer scripts, and loss of the terminal/wrapper. APT's lock limit is 60 s;
+record actual exit, pending state and masks. No test retries a consumed installer
+attempt. The detached apt child can outlive an interrupted Python wrapper; preserve
+its PID/state and never infer termination, rollback or safe replay. On the success
+case verify five installed versions/architectures/statuses, holds, Node hash/version,
+receipt and masks before proceeding. Preexisting policy/masks, dirty package state,
+wrong hashes/identity, unsafe ownership and a consumed attempt must refuse before
+writes, including stale receipt/completion/plan/log/package-list outputs. Local
+mocks prove branch behavior only.
+
+**Offline guard installation and activation ordering (proposal only).** After
+separate approval, strict authenticated transfer of the hash-bound source/payload
+set, inventory and toolchain installation, an operator installs the four generated
+files exclusively (no overwrite; preflight every destination and parent), root:root,
+with the plan's 0644/0755 modes and safe directory chains. Bind the installer,
+renderer, runtime guard, all imported helpers and operator-side
+`replacement_escrow.py` in the execution packet. Require the matching completion /
+observed package receipt and archive-derived Node hash; use its absolute Node
+path, with no download or new PATH symlink. Verify fresh IMDS and approved disk
+IDs, separately approved filesystem UUIDs/fstab and whole mounts, complete file
+hashes/modes and `live-restore:false`/iptables daemon policy. A partial copy stops;
+no overwrite or rollback is automatic.
+
+Then, still with all three persistent masks in place: validate SSH using `sshd -t`,
+retain a second authenticated session, approve/reload SSH; verify units/drop-in,
+run `systemctl daemon-reload`, enable the host-fingerprint unit only, and run the
+reviewed runtime guard to establish/probe the ordered container IMDS/WireServer
+rules. The guard **mutates iptables**; this is not read-only inventory. Only after
+those checks and a separate activation approval, verify the exact installed
+`policy-rc.d` hash (exit 101), remove only that policy, recheck masks and guard
+state, disable package-created automatic boot activation for all three units and
+read back the enablement links, unmask containerd then docker service/socket, and explicitly start the
+daemon. Capture every transition. Socket unmasking must not precede the verified
+guards. Do not enable automatic container restart; all containers retain restart
+`no`. Require stopped services/containers after a normal reboot, then repeat
+identity/mount/source/firewall/custody gates before guarded start. A failed guard
+or missing disk must prevent start. This sequence is unexecuted; reboot and policy
+removal/unmask qualification remain OPEN.
+
+**Offline image execution proposal (not implemented by archive preparation).**
+Export all twelve locked references to a selected-platform OCI layout on an approved
+connected disposable acquisition worker; no mutable tag substitution. Preserve
+original index/manifest bytes and the selected amd64 config/layers, then run the transport
+verifier and bind its archive hash. Select the import mechanism only after a
+pinned Engine 29.9.1 / Compose 5.6.0 store compatibility experiment. Docker 29's
+[fresh-install store default](https://docs.docker.com/engine/storage/containerd/)
+is containerd; the existing smoke explicitly requires classic overlay2. Neither
+`ctr import` into an assumed namespace nor Docker save/load is accepted without
+Docker API readback of original repo digests. Changing daemon store policy or the
+smoke identity checks needs its own reviewed implementation.
+
+The import experiment must use an independently observed empty image/content store
+and no containers, with registry egress denied **before** import and throughout
+startup (record firewall/namespace rules, denial controls, DNS and connection
+attempts). Host/daemon/container paths must all be covered; a registry credential
+logout is not denial. Import only the approved hash-bound archive, inspect every
+original repository@digest through Docker's selected store, compare config/platform
+with the verified receipt and DB policy, then validate all profiles and start only
+`api-gw`, `auth`, `db`, `imgproxy`, `meta`, `realtime`, `rest`, `storage`, `studio`
+using the reviewed composition and `--pull never --no-build`. Read back nine exact
+container identities/health and config hashes; prove caddy/functions/supavisor
+remain inactive. Synthetic credentials and data only, project-scoped cleanup,
+no global prune, no runtime/log uploads. Missing digest resolution or attempted
+registry access is failure, never repaired by tagging, pulling or fallback images.
+The import driver, real OCI bytes/config receipts, actual denial and service
+execution remain required evidence; local synthetic fixtures close none of them.
+
+**Concrete next hosted proposal.** Publish/review this patch first; an uncommitted
+patch has no dispatchable source SHA. Then bind the full published SHA, tree,
+`.github/workflows/r3-offline-inputs.yml` SHA256 and branch ref in a new addendum,
+with a fresh ref equality check immediately before a separately approved single
+`workflow_dispatch` (`source_sha` equals ref HEAD). Job: `offline-inputs`, fresh
+Ubuntu 24.04 amd64, 15 minutes, `contents:read`, nonpersistent checkout, no repository
+secrets/Azure OIDC/SSH/DB credentials. It stages and verifies real public vendor
+inputs, extracts control scripts/Node hash, renders offline guard payload/source
+map and uploads only explicitly listed public analysis/provenance files for seven
+days. `binding.json` records source/run/attempt and every output hash. Capture ZIP
+and all file hashes before expiry. Any failure stops with no success upload or
+retry; preserve safe step conclusions and discard the runner. No machine-wide
+installation, image import or daemon operation occurs. This is useful input
+analysis, **not** a request to rerun the prior composition just to recover its
+summary, and not installer/dependency/transport qualification.
+
+Private DB regression and Realtime consumer qualification remain separate packages
+below. They depend on an accepted exact image/config/composition and private
+execution/delivery design; neither the new input job nor archive analysis includes
+their payloads or grants their execution. Preserve deferred VPN, custody, recovery
+and backup decisions. Bootstrap stays `NOT_READY_FOR_BOOTSTRAP_APPROVAL`.
+
 ### Remaining pre-bootstrap qualification packages
 
 These are preparation requirements, not jobs hidden in the smoke workflow:
@@ -258,7 +480,7 @@ These are preparation requirements, not jobs hidden in the smoke workflow:
 | Realtime source and GCM | Bind locked amd64 digest/config to upstream source/build evidence for v2.134.10, stating any unattested correspondence. Test the actual consumer's GCM write/read and restart persistence with generated synthetic keys, plus wrong-key/tamper refusal. The configured 32 ASCII bytes carry 192 bits entropy; configuration/health or a standalone crypto function is not consumer proof. |
 | Offline toolchain | Inventory the exact r02 Ubuntu image and installed package versions; prove all Depends/Pre-Depends and the no-download five-package apt plan. Qualify pinned Engine/Compose and image store, maintainer scripts, persistent masks, exclusive attempt journal, interrupted/lock-failure behavior, policy-rc.d removal and guarded unmask sequence on an explicitly approved disposable environment. A preloaded hosted runner cannot establish target OS dependency closure or an installer/reboot lifecycle. |
 | Offline image transport | Bind export archive hash and every locked repository digest/platform/config; import on an empty store with registry access denied and resolve every original digest. Prove `--pull never --no-build` starts the exact nine services. Docker save/load or mutable tags alone are not acceptance; transport format/store compatibility remains unselected until demonstrated. |
-| Final host source map | Bind every source/config/generated file, actual Node binary, installed package receipt and root ownership/modes, plus exact SSH/IMDS/disk/UUID/custody operations. Legacy `selfhost_docker.sh` is excluded. `selfhost_host_guard.sh` still conditionally downloads Node and writes systemd/SSH/daemon state: prepare and review an offline guard installation path before invoking it for r02. Final installation, unmask ordering and guarded reboot remain open. |
+| Final host source map | Bind every source/config/generated file, actual Node binary, installed package receipt and root ownership/modes, plus exact SSH/IMDS/disk/UUID/custody operations. Legacy `selfhost_docker.sh` is excluded. `selfhost_host_guard.sh` is now excluded from the r02 runtime contract. The offline renderer/source plan supplies an installation proposal only; actual file installation and observation still need approval. Final installation, unmask ordering and guarded reboot remain open. |
 
 The bootstrap packet remains **NOT_READY_FOR_BOOTSTRAP_APPROVAL** until all these
 gates and independent cross-lane review pass. Hosted smoke, package provenance,
