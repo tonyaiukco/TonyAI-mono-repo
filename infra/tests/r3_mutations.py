@@ -63,6 +63,13 @@ add('infra/scripts/r3_transfer.py', 'transfer-apt', "'installer_internal_apt_arg
 add('infra/scripts/r3_artifacts.py', 'stage-clean-source', '    source_sha = clean_source()', "    source_sha = git('rev-parse', 'HEAD').decode().strip()")
 add('infra/scripts/r3_artifacts.py', 'stage-helper-allowlist', '    for name in HELPERS:', "    for name in HELPERS + ('private.json',):")
 q = 'infra/scripts/r3_qualification.py'
+add(q, 'bind-default-version-gate', "if compose_version == '2.38.2':", 'if True:')
+add(q, 'bind-default-type-gate', "volume.get('type') == 'bind' and isinstance(bind, dict)", 'isinstance(bind, dict)')
+add(q, 'bind-default-overwrites-true', "bind.setdefault('create_host_path', False)", "bind['create_host_path'] = False")
+add(q, 'bind-default-normalization-missing', "bind.setdefault('create_host_path', False)", 'pass')
+add(q, 'bind-default-input-mutation', 'normalized = copy.deepcopy(config)', 'normalized = config')
+add(q, 'bind-default-version-forwarding', "check_effective(config, lock, compose_version=versions['compose'])", 'check_effective(config, lock)')
+add(q, 'effective-boundary-validator', '    validate(config)', '    pass')
 add(q, 'empty-runner', "if capture(DOCKER + ['ps', '-aq']).strip() or Path('/srv/tonyai').exists():", 'if False:')
 add(q, 'image-identity', "if meta['Architecture'] != 'amd64' or meta['Os'] != 'linux' or item['image'] not in meta['RepoDigests']:", 'if False:')
 add(q, 'db-policy', "if lock['db']['image'] != policy['image'] or images['db'] != policy['config_digest']:", 'if False:')

@@ -182,5 +182,10 @@ or with no status line. For handled failures, it preserves
 the initial failing phase if cleanup also fails, and writes its success summary
 only after project cleanup returns successfully. No failure report adds an upload
 or grants retry authority.
+Compose 2.38.2 omits a false `create_host_path` field in JSON. The smoke accounts
+for this only for that exact reported version and a present dictionary on a bind
+mount; explicit values are never overwritten. Unknown-version omissions, missing
+bind objects and enabled path creation remain refused. The shared host validator
+and explicit `create_host_path: false` source overlays are unchanged.
 The r02 runtime contract rejects the legacy Docker installer; final offline host
 guard installation, unmask ordering and reboot proof remain separate gates.

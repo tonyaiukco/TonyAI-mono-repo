@@ -4,6 +4,7 @@
 This deliberately does not emulate IMDS, Azure disks or custody acceptance.
 Never upload the runtime directory, Compose output, container logs or credentials.
 """
+import copy
 import json
 import os
 from pathlib import Path
@@ -46,7 +47,23 @@ def compose():
             '-f', 'compose.https.yml', '-f', 'compose.r02.yml', '-f', 'compose.images.json']
 
 
-def check_effective(config, lock):
+def normalize_bind_defaults(config, compose_version):
+    # Compose 2.38.2 uses compose-go 2.7.1: a non-null ServiceVolumeBind
+    # serializes CreateHostPath=false with json omitempty. Only this reviewed
+    # renderer gets that interpretation; newer schemas can have other defaults.
+    # Never infer it for a missing bind object or overwrite an explicit value.
+    normalized = copy.deepcopy(config)
+    if compose_version == '2.38.2':
+        for service in normalized['services'].values():
+            for volume in service.get('volumes', []):
+                bind = volume.get('bind')
+                if volume.get('type') == 'bind' and isinstance(bind, dict):
+                    bind.setdefault('create_host_path', False)
+    return normalized
+
+
+def check_effective(config, lock, *, compose_version=None):
+    config = normalize_bind_defaults(config, compose_version)
     validate(config)
     services = config['services']
     if set(services) != set(lock):
@@ -136,7 +153,7 @@ writeFileSync(process.argv[1], Object.entries(settings).map(([k,v]) => `${k}='${
     status.at('COMPOSE_RENDER')
     config = json.loads(capture(compose() + ['--profile', '*', 'config', '--format', 'json']))
     status.at('COMPOSE_VALIDATE')
-    check_effective(config, lock)
+    check_effective(config, lock, compose_version=versions['compose'])
     images = {}
     for name, item in lock.items():
         status.at('IMAGE_PULL')

@@ -36,7 +36,7 @@ FAULT_PHASES = {
 
 
 class Smoke(unittest.TestCase):
-    def exercise(self, root, fault=None):
+    def exercise(self, root, fault=None, rendered_config=None, compose_version='fixture-compose'):
         root = root.resolve(); self.calls = []
         m = types.ModuleType('rebased_qualification'); m.__file__ = str(SCRIPTS / 'r3_qualification.py')
         source = (SCRIPTS / 'r3_qualification.py').read_text().replace("'/srv/tonyai", "'" + str(root) + '/srv/tonyai')
@@ -65,7 +65,7 @@ class Smoke(unittest.TestCase):
                 return b'{"Client":{"Version":"fixture"},"Server":{"Version":"fixture"}}'
             if args == ['compose', 'version', '--short']:
                 if fault == 'compose-version': raise ValueError(SECRET)
-                return b'fixture-compose'
+                return compose_version.encode()
             if args == ['ps', '-aq']: return b'old' if fault == 'existing-container' else b''
             if args[0] == 'pull':
                 if fault == 'pull': raise TimeoutError(SECRET)
@@ -100,7 +100,8 @@ class Smoke(unittest.TestCase):
                 if fault == 'foreign-service': result[0]['Config']['Labels']['com.docker.compose.service'] = 'other'
                 return json.dumps(result).encode()
             if args[0] == 'compose':
-                if 'config' in args: return SECRET.encode() if fault == 'render' else b'{"fixture":true}'
+                if 'config' in args:
+                    return SECRET.encode() if fault == 'render' else json.dumps(rendered_config or {'fixture': True}).encode()
                 if 'up' in args:
                     if fault in ('up-failure', 'up-cleanup') or fault == 'services-start' and args[-1] != 'db': raise ValueError(SECRET)
                     if fault != 'missing-key': (root / 'srv/tonyai/database/db-config/pgsodium_root.key').touch()
@@ -122,7 +123,8 @@ class Smoke(unittest.TestCase):
                 mock(m.platform, 'freedesktop_os_release', return_value={'ID': 'ubuntu', 'VERSION_ID': '24.04'})
                 mock(m.os, 'geteuid', return_value=501 if fault == 'uid' else 0); mock(m.os, 'chown')
                 mock(m, 'capture', side_effect=capture); mock(m, 'fetch', return_value=b'public source')
-                effective = mock(m, 'check_effective'); redact = mock(m, 'redact_gateway')
+                effective = mock(m, 'check_effective', wraps=m.check_effective if rendered_config is not None else None)
+                redact = mock(m, 'redact_gateway')
                 if fault == 'fetch': mock(m, 'fetch', side_effect=TimeoutError(SECRET))
                 if fault == 'effective': effective.side_effect = ValueError(SECRET)
                 if fault == 'redact': redact.side_effect = ValueError(SECRET)
@@ -158,13 +160,14 @@ class Smoke(unittest.TestCase):
                     self.assertEqual(summary['tooling']['node'], 'v22.23.3')
                     self.assertIs(summary['tooling']['pinned_engine_qualified'], False)
                     self.assertEqual(summary['tooling']['image_store'], 'classic-overlay2')
-                    self.assertEqual(summary['tooling']['compose'], 'fixture-compose')
+                    self.assertEqual(summary['tooling']['compose'], compose_version)
                     runtime = output / 'runtime'
                     self.assertEqual(runtime.stat().st_mode & 0o777, 0o755)
                     for path in runtime.rglob('*'):
                         expected_mode = 0o755 if path.is_dir() or path.name.endswith('entrypoint.sh') else 0o600 if path.name == '.env' else 0o644
                         self.assertEqual(path.stat().st_mode & 0o777, expected_mode, str(path))
-                    effective.assert_called_once_with({'fixture': True}, lock); redact.assert_called_once()
+                    effective.assert_called_once_with(rendered_config or {'fixture': True}, lock, compose_version=compose_version)
+                    redact.assert_called_once()
         finally:
             os.chdir(old_cwd); os.umask(mask)
         if fault in ('runner', 'uid', 'node', 'docker-info', 'docker-version', 'compose-version', 'store', 'containerd', 'existing-container', 'existing-path'):
@@ -179,6 +182,14 @@ class Smoke(unittest.TestCase):
         for fault in (None, *FAULT_PHASES):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 self.exercise(Path(tmp), fault)
+
+    def test_compose_2382_render_passes_real_validation_before_image_pulls(self):
+        from test_r3_compose_validation import effective_config, mounts
+        config, _ = effective_config()
+        for volume in mounts(config): del volume['bind']['create_host_path']
+        with tempfile.TemporaryDirectory() as tmp:
+            self.exercise(Path(tmp), rendered_config=config, compose_version='2.38.2')
+        self.assertTrue(any(call[3:4] == ['pull'] for call in self.calls))
 
     def test_isolated_cli_imports_have_controlled_errors(self):
         import subprocess

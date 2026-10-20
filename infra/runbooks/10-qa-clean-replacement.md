@@ -234,6 +234,20 @@ status or cleanup evidence as unknown, never success.
 Historical generic failures cannot be assigned a phase retroactively; preserve
 their evidence and establish any new result with a separately approved attempt.
 
+The smoke's Compose JSON boundary has one renderer-specific normalization:
+[Compose 2.38.2](https://github.com/docker/compose/blob/v2.38.2/go.mod) uses
+[compose-go 2.7.1](https://github.com/compose-spec/compose-go/blob/v2.7.1/types/types.go),
+whose `ServiceVolumeBind.CreateHostPath` boolean omits false during JSON encoding.
+Only when the actual `compose version --short` is exactly `2.38.2`, a mount has
+`type: bind` and a present dictionary `bind`, the smoke supplies an omitted
+`create_host_path: false` to a copy before running the unchanged shared validator.
+Explicit values are preserved; missing/null bind objects and omissions from other
+versions remain refused. Do not generalize the default to newer schemas or change
+the source overlays to allow implicit directory creation. The runner image's
+software inventory is diagnostic context, not proof of the actual tool version
+or a successful composition. Local JSON-shape tests do not replace a new,
+separately approved hosted attempt.
+
 ### Remaining pre-bootstrap qualification packages
 
 These are preparation requirements, not jobs hidden in the smoke workflow:
