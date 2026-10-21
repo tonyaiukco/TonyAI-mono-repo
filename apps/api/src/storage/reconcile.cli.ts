@@ -13,7 +13,7 @@
  *   pnpm storage:reconcile --reclaim-orphans --apply [--older-than=168]
  *   pnpm storage:reconcile --forget-uploads      # after a DB restore, under the hold (see below)
  *
- *   --bucket=evidence|import-sources   one bucket (default: both)
+ *   --bucket=evidence|import-sources|report-artifacts   one bucket (default: every one)
  *   --limit=<n>                        rows/objects per check (default 500); a list that
  *                                      reaches it says `truncated: true`
  *   --allow-remote                     required for --sweep, --apply or --forget-uploads off a

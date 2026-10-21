@@ -979,38 +979,41 @@ async function main() {
     );
   }
 
-  // --- report_datasets (LP3-04 PR C, V5): the API's alone ------------------
-  // A retained dataset is read and written by the API (the runtime role)
-  // only: RLS on with no client policy, and nothing granted to anon,
-  // authenticated or the service role. Nothing is planted — the table's guard
-  // keeps a row until its organisation goes — so each role is shown refused by
-  // PRIVILEGE (42501), which an empty table cannot fake as "0 rows".
-  console.log('▸ report_datasets (no client access, the service role included)');
-  {
+  // --- report_datasets (LP3-04 PR C, V5) and report_issuances (PR D): the API's alone
+  // A retained dataset and an issuance are read and written by the API (the
+  // runtime role) only: RLS on with no client policy, and nothing granted to
+  // anon, authenticated or the service role. Nothing is planted — each table's
+  // guard keeps a row until its organisation goes — so each role is shown
+  // refused by PRIVILEGE (42501), which an empty table cannot fake as "0 rows".
+  for (const [table, forgedRow] of [
+    ['report_datasets', { id: randomUUID(), content: '{}' }],
+    ['report_issuances', { id: randomUUID(), status: 'final', gaps: [] }],
+  ]) {
+    console.log(`▸ ${table} (no client access, the service role included)`);
     const denied = (r) => Boolean(r.error) && /42501|permission denied/i.test(r.error);
     const adminToken = await getToken(ADMIN_EMAIL);
     const reads = {
-      anon: await count('report_datasets'),
-      entry: await count('report_datasets', { token }),
-      admin: await count('report_datasets', { token: adminToken }),
-      service: await count('report_datasets', { key: SERVICE, token: SERVICE }),
+      anon: await count(table),
+      entry: await count(table, { token }),
+      admin: await count(table, { token: adminToken }),
+      service: await count(table, { key: SERVICE, token: SERVICE }),
     };
     check(
-      'report_datasets: no client role reads it, not even the service role (refused by privilege)',
+      `${table}: no client role reads it, not even the service role (refused by privilege)`,
       Object.values(reads).every(denied),
       Object.entries(reads).map(([role, r]) => `${role}=${r.error?.slice(0, 3) ?? r.total}`).join(', '),
     );
     const forge = async (key, bearer) => {
-      const res = await fetch(`${URL_}/rest/v1/report_datasets`, {
+      const res = await fetch(`${URL_}/rest/v1/${table}`, {
         method: 'POST',
         headers: { apikey: key, Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-        body: JSON.stringify({ id: randomUUID(), content: '{}' }),
+        body: JSON.stringify(forgedRow),
       });
       return { ok: res.ok, body: res.ok ? '' : await res.text() };
     };
     const forged = [await forge(ANON, adminToken), await forge(SERVICE, SERVICE)];
     check(
-      'report_datasets: neither a client nor the service role can write one (42501)',
+      `${table}: neither a client nor the service role can write one (42501)`,
       forged.every((f) => !f.ok && /42501|permission denied/i.test(f.body)),
       forged.map((f) => (f.ok ? 'written' : f.body.slice(0, 60))).join(' | '),
     );

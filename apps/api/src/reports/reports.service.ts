@@ -1,7 +1,6 @@
-import { CapacityError } from '../common/runtime-limits';
 import { readRuntimeConfig } from '../common/runtime-config';
 import { QueryTooBroadError } from '../common/api-error';
-import { ForbiddenException, Injectable, OnModuleDestroy } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import type {
   ReportingContext,
@@ -20,7 +19,6 @@ import {
   PENDING_REVIEW_STATUSES,
   REPORT_TEMPLATES,
 } from '@tonyai/shared-types';
-import puppeteer, { TimeoutError, type Browser, type Page } from 'puppeteer';
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -50,6 +48,7 @@ import { ReportQueryDto } from './dto/report-query.dto';
 import { reportingContext } from '../common/reporting-context-query.dto';
 import { contextLabels } from './context-labels';
 import { buildReportHtml } from './report-html';
+import { PdfRenderer } from '../common/pdf-renderer';
 
 // Single source of truth for "committed": imported from the emissions service so
 // a report's summary tables and its own ledger can never silently diverge.
@@ -135,41 +134,16 @@ function factorStanding(
 }
 
 @Injectable()
-export class ReportsService implements OnModuleDestroy {
-  // Memoized launch promise: two concurrent first requests must share ONE
-  // Chromium instance (a naive null-check race would leak the loser).
+export class ReportsService {
   private readonly limits = readRuntimeConfig();
-  private pdfActive = false;
-  private browserPromise: Promise<Browser> | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly emissions: EmissionsService,
     private readonly auditLog: AuditService,
+    // The replica's one Chromium, shared with the issuances (LP3-04 PR D).
+    private readonly pdf: PdfRenderer,
   ) {}
-
-  async onModuleDestroy(): Promise<void> {
-    const browser = await this.browserPromise?.catch(() => null);
-    await browser?.close();
-    this.browserPromise = null;
-  }
-
-  private async getBrowser(): Promise<Browser> {
-    if (this.browserPromise) {
-      const existing = await this.browserPromise.catch(() => null);
-      if (existing?.connected) return existing;
-    }
-    this.browserPromise = puppeteer.launch({
-      headless: true,
-      timeout: this.limits.PDF_TIMEOUT_MS,
-      protocolTimeout: this.limits.PDF_TIMEOUT_MS,
-      // In containers we use the distro Chromium (PUPPETEER_EXECUTABLE_PATH);
-      // locally the var is unset and Puppeteer falls back to its bundled Chrome.
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-dev-shm-usage'],
-    });
-    return this.browserPromise;
-  }
 
   /**
    * Generating/exporting reports is denied to `data_entry`
@@ -568,75 +542,12 @@ export class ReportsService implements OnModuleDestroy {
 
   async generatePdf(user: RequestUser, q: SelectedReportQuery): Promise<Buffer> {
     this.assertCanGenerate(user);
-    // Cancellation kills the shared Chromium process. Keep its ownership
-    // exclusive even when operators allow concurrent CSV/Excel exports.
-    if (this.pdfActive) throw new CapacityError();
-    this.pdfActive = true;
-    try { return await this.renderPdf(user, q); }
-    finally { this.pdfActive = false; }
-  }
-
-  private killBrowser(browser?: Browser): void {
-    const child = browser?.process();
-    if (!child) return;
-    try {
-      if (process.platform === 'win32' || !child.pid) child.kill('SIGKILL');
-      else process.kill(-child.pid, 'SIGKILL');
-    } catch { child.kill('SIGKILL'); }
-  }
-
-  private async renderPdf(user: RequestUser, q: SelectedReportQuery): Promise<Buffer> {
     const data = await this.assemble(user, q);
     const html = buildReportHtml(data);
     this.assertOutputSize(html);
-
-    let browser: Browser | undefined;
-    let page: Page | undefined;
-    let expired = false;
-    const timer = setTimeout(() => {
-      expired = true;
-      // This replica admits one renderer. Killing its process aborts protocol
-      // work too, including a stuck newPage/print command; no detached render.
-      this.killBrowser(browser);
-    }, this.limits.PDF_TIMEOUT_MS);
-    timer.unref();
-    try {
-      browser = await this.getBrowser();
-      if (expired) throw new QueryTooBroadError();
-      page = await browser.newPage();
-      await page.setContent(html, { waitUntil: 'load', timeout: this.limits.PDF_TIMEOUT_MS });
-      const stream = await page.createPDFStream({
-        timeout: this.limits.PDF_TIMEOUT_MS,
-        format: 'A4', printBackground: true,
-        margin: { top: '12mm', bottom: '12mm', left: '10mm', right: '10mm' },
-      });
-      const chunks: Uint8Array[] = [];
-      let size = 0;
-      const reader = stream.getReader();
-      try {
-        for (;;) {
-          const result = await reader.read();
-          if (result.done) break;
-          size += result.value.byteLength;
-          if (size > this.limits.REPORT_MAX_BYTES) throw new QueryTooBroadError();
-          chunks.push(result.value);
-        }
-      } finally { await reader.cancel().catch(() => undefined); }
-      if (expired) throw new QueryTooBroadError();
-      clearTimeout(timer);
-      await this.audit(user, q, 'pdf', data.summary.recordCount, data.withdrawnTotals.count);
-      return Buffer.concat(chunks);
-    } catch (error) {
-      if (expired || error instanceof TimeoutError) throw new QueryTooBroadError();
-      throw error;
-    } finally {
-      clearTimeout(timer);
-      if (expired && browser) {
-        this.killBrowser(browser);
-        this.browserPromise = null;
-      }
-      await page?.close().catch(() => undefined);
-    }
+    const { bytes } = await this.pdf.render(html);
+    await this.audit(user, q, 'pdf', data.summary.recordCount, data.withdrawnTotals.count);
+    return bytes;
   }
 
   async generateExcel(user: RequestUser, q: SelectedReportQuery): Promise<Buffer> {

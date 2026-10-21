@@ -731,10 +731,13 @@ describe('the retained table (TA016, V5)', () => {
       (tx: Prisma.TransactionClient) => tx.$executeRaw`UPDATE report_datasets SET content = content WHERE id = ${id}::uuid`,
       (tx: Prisma.TransactionClient) => tx.$executeRaw`UPDATE report_datasets SET captured_by = gen_random_uuid() WHERE id = ${id}::uuid`,
       (tx: Prisma.TransactionClient) => tx.$executeRaw`DELETE FROM report_datasets WHERE id = ${id}::uuid`,
-      (tx: Prisma.TransactionClient) => tx.$executeRaw`TRUNCATE report_datasets`,
+      // CASCADE: since LP3-04 PR D an issuance's key references the table, so
+      // a plain TRUNCATE is refused by that key first (0A000, below).
+      (tx: Prisma.TransactionClient) => tx.$executeRaw`TRUNCATE report_datasets CASCADE`,
     ]) {
       expect(sqlState(await failure(withRollback(owner, statement)))).toBe('TA016');
     }
+    expect(sqlState(await failure(withRollback(owner, (tx) => tx.$executeRaw`TRUNCATE report_datasets`)))).toBe('0A000');
   });
 
   it('holds the runtime role to SELECT and INSERT, and the client roles to nothing', async () => {

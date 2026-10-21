@@ -6,14 +6,17 @@ export const EVIDENCE_BUCKET = 'evidence';
 /** Private bucket of applied imports' source files; each object is owned by one `import_batches` row. */
 export const IMPORT_SOURCES_BUCKET = 'import-sources';
 
-export const BUCKETS = [EVIDENCE_BUCKET, IMPORT_SOURCES_BUCKET] as const;
+/** Private bucket of issued reports' PDFs (LP3-04 PR D); each object is owned by one `report_issuances` row. */
+export const REPORT_ARTIFACTS_BUCKET = 'report-artifacts';
+
+export const BUCKETS = [EVIDENCE_BUCKET, IMPORT_SOURCES_BUCKET, REPORT_ARTIFACTS_BUCKET] as const;
 export type Bucket = (typeof BUCKETS)[number];
 
 export function isBucket(value: string): value is Bucket {
   return (BUCKETS as readonly string[]).includes(value);
 }
 
-type OwnerClient = Pick<PrismaClient, 'evidence' | 'importBatch'>;
+type OwnerClient = Pick<PrismaClient, 'evidence' | 'importBatch' | 'reportIssuance'>;
 
 /**
  * The table that owns each bucket's objects, as a lookup of the paths it
@@ -28,6 +31,10 @@ const OWNED: Record<Bucket, (client: OwnerClient, paths: string[]) => Promise<(s
     ),
   [IMPORT_SOURCES_BUCKET]: async (client, paths) =>
     (await client.importBatch.findMany({ where: { storagePath: { in: paths } }, select: { storagePath: true } })).map(
+      (r) => r.storagePath,
+    ),
+  [REPORT_ARTIFACTS_BUCKET]: async (client, paths) =>
+    (await client.reportIssuance.findMany({ where: { storagePath: { in: paths } }, select: { storagePath: true } })).map(
       (r) => r.storagePath,
     ),
 };

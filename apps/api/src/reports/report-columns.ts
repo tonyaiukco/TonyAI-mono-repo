@@ -1,6 +1,7 @@
 import { CATEGORY_ACTIVITY_TYPES, entityLabel, UNSPECIFIED_ACTIVITY_TYPE, type Category } from '@tonyai/shared-types';
 import { ANOMALY_BASELINE_PERIODS } from '@tonyai/shared-types';
 import { csvField, type CellValue } from '../common/csv-cell';
+import { escapeHtmlText } from '../common/html-escape';
 import type {
   ReportLedgerRow,
   ReportRowBase,
@@ -123,14 +124,8 @@ export function rawHtml(html: string): PdfCell {
   return { html };
 }
 
-/**
- * Escapes what the PDF interpolates. Quote-unaware on purpose — nothing
- * interpolates into an attribute, and the day something does this must grow
- * `"` and `'` with it.
- */
-export function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+/** Escapes what the PDF interpolates (`common/html-escape.ts`, shared with the issued report's). */
+export const esc = escapeHtmlText;
 
 /**
  * The PDF's number format — ONE decimal, where the CSV emits full precision.

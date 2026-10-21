@@ -411,6 +411,21 @@ async function ensureImportSourcesBucket(): Promise<void> {
 }
 
 /**
+ * Create the private `report-artifacts` bucket if it does not already exist:
+ * where an issued report's PDF is retained (LP3-04 PR D). Declared in
+ * `supabase/config.toml` too; this covers a stack started before it was.
+ */
+async function ensureReportArtifactsBucket(): Promise<void> {
+  const { error } = await admin.storage.createBucket('report-artifacts', {
+    public: false,
+    // Bytes: the 20 MiB of `REPORT_MAX_BYTES`'s default and config.toml.
+    fileSizeLimit: 20 * 1024 * 1024,
+    allowedMimeTypes: ['application/pdf'],
+  });
+  if (error && !/exist/i.test(error.message)) throw error;
+}
+
+/**
  * Attach one placeholder evidence file to a record, idempotently. A file
  * belongs to the record's subsidiary and reaches the record through a link
  * (WP8 PR7); the seed gives each record its own file. The object key keeps
@@ -706,6 +721,7 @@ async function main() {
   console.log('Seeding demo activity records (prototype data, Scope 1 & 2)...');
   await ensureEvidenceBucket();
   await ensureImportSourcesBucket();
+  await ensureReportArtifactsBucket();
   let activityCount = 0;
   let evidenceCount = 0;
 

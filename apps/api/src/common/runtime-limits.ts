@@ -22,6 +22,11 @@ const EXPORT_PATHS = new Set([
  * an ordinary read. */
 const REPORT_DATASETS_ROUTE = '/api/v1/report-datasets';
 const REPORT_DATASET_ROUTE = /^\/api\/v1\/report-datasets\/[^/]+$/;
+/** LP3-04 PR D: an issuance renders a PDF on the one Chromium and stores it;
+ * a download re-hashes up to `REPORT_MAX_BYTES` — both take the exports'
+ * quota and lease. The list and one issuance's metadata are ordinary reads. */
+const REPORT_ISSUANCES_ROUTE = '/api/v1/report-issuances';
+const REPORT_ISSUANCE_PDF_ROUTE = /^\/api\/v1\/report-issuances\/[^/]+\/pdf$/;
 
 export type RouteGroup = 'READ' | 'WRITE' | 'IMPORT' | 'EXPORT' | 'SUBMIT';
 export const routeGroup = (method: string, path: string): RouteGroup => {
@@ -32,6 +37,8 @@ export const routeGroup = (method: string, path: string): RouteGroup => {
   if (['GET', 'HEAD'].includes(method) && EXPORT_PATHS.has(route)) return 'EXPORT';
   if (method === 'POST' && route === REPORT_DATASETS_ROUTE) return 'EXPORT';
   if (['GET', 'HEAD'].includes(method) && REPORT_DATASET_ROUTE.test(route)) return 'EXPORT';
+  if (method === 'POST' && route === REPORT_ISSUANCES_ROUTE) return 'EXPORT';
+  if (['GET', 'HEAD'].includes(method) && REPORT_ISSUANCE_PDF_ROUTE.test(route)) return 'EXPORT';
   return ['GET', 'HEAD', 'OPTIONS'].includes(method) ? 'READ' : 'WRITE';
 };
 

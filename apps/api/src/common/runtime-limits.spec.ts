@@ -89,6 +89,13 @@ describe('bounded admission', () => {
     ['GET', '/api/v1/report-datasets?year=2026', 'READ'],
     ['POST', '/api/v1/report-datasets/id', 'WRITE'],
     ['GET', '/api/v1/report-datasets/id/extra', 'READ'],
+    // LP3-04 PR D: an issuance renders and stores a PDF; a download re-hashes one.
+    ['POST', '/api/v1/report-issuances', 'EXPORT'], ['POST', '/api/v1/Report-Issuances/', 'EXPORT'],
+    ['GET', '/api/v1/report-issuances/0b1d0000-0000-4000-8000-000000000001/pdf', 'EXPORT'],
+    ['HEAD', '/api/v1/report-issuances/ID/PDF/', 'EXPORT'],
+    ['GET', '/api/v1/report-issuances/0b1d0000-0000-4000-8000-000000000001', 'READ'],
+    ['GET', '/api/v1/report-issuances?year=2026', 'READ'],
+    ['POST', '/api/v1/report-issuances/id/pdf', 'WRITE'],
   ])('groups %s %s', (method, path, group) => expect(routeGroup(method, path)).toBe(group));
   it.each(['GET', 'HEAD'])('classifies every legacy and context export as EXPORT for %s', (method) => {
     for (const path of [REPORTING_CONTEXT_API_PATHS.pdf, REPORTING_CONTEXT_API_PATHS.excel, REPORTING_CONTEXT_API_PATHS.csv,

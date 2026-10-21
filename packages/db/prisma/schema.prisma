@@ -128,6 +128,7 @@ model Organisation {
   importBatches       ImportBatch[]
   inventoryBoundaries InventoryBoundary[]
   reportDatasets      ReportDataset[]
+  reportIssuances     ReportIssuance[]
   /// Set by the operator CLI's `offboard` (K6, D21): every user is disabled and
   /// the guard refuses the organisation's members; the start of D21's 90-day
   /// retention clock. The deletion itself is not built (it waits for D24).
@@ -988,6 +989,7 @@ model ReportDataset {
   capturedBy              String            @map("captured_by") @db.Uuid
   capturedAt              DateTime          @map("captured_at") @db.Timestamptz(6)
   content                 String
+  issuances               ReportIssuance[]
 
   @@index([organisationId, reportingYear, capturedAt(sort: Desc)])
   @@index([boundaryId, organisationId])
@@ -995,4 +997,53 @@ model ReportDataset {
   // in place before the table holds retained rows.
   @@unique([id, organisationId])
   @@map("report_datasets")
+}
+
+/// LP3-04 PR D — a retained dataset issued as a retained PDF (README "The
+/// issuance"; Decisions 2026-10-21). Append-only: the guard (TA017) binds an
+/// insert to its dataset — organisation, year, fingerprint and referenced
+/// set — admits a final only of a confirmed inventory without coverage gaps,
+/// stamps `issued_at` from the database's clock, and refuses every update,
+/// every delete but its organisation's own and TRUNCATE. API-only: RLS on with
+/// no client policy and no client grant; the runtime role inserts and reads.
+model ReportIssuance {
+  // The issuance's `issuanceId`, written by the API.
+  id                      String        @id @db.Uuid
+  organisationId          String        @map("organisation_id") @db.Uuid
+  // CASCADE from the organisation and from its dataset — a retained dataset
+  // goes only with its organisation (W10), and so does its issuance.
+  organisation            Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  datasetId               String        @map("dataset_id") @db.Uuid
+  dataset                 ReportDataset @relation(fields: [datasetId, organisationId], references: [id, organisationId], onDelete: Cascade, onUpdate: NoAction)
+  // The dataset's (the guard compares), so the list filters by year.
+  reportingYear           Int           @map("reporting_year")
+  canonicalization        String
+  datasetFingerprintHex   String        @map("dataset_fingerprint_hex") @db.Char(64)
+  // 'final' | 'partial' (CHECK); a final has no gap, a partial at least one.
+  status                  String
+  // The `ReportIssuanceGap[]` derived from the retained dataset: strings only.
+  gaps                    Json
+  // 'en' | 'tr' (CHECK; D16) and a `ReportTemplate` (CHECK).
+  language                String
+  template                String
+  includeMethodologyNotes Boolean       @map("include_methodology_notes")
+  includeEvidenceSummary  Boolean       @map("include_evidence_summary")
+  rendererVersion         String        @map("renderer_version")
+  // The opaque `pdf.artifactId`; the object is `<organisation>/<artifact>.pdf`
+  // (CHECK) in the `report-artifacts` bucket — one object, one row.
+  artifactId              String        @unique @map("artifact_id") @db.Uuid
+  storagePath             String        @unique @map("storage_path")
+  sizeBytes               Int           @map("size_bytes")
+  // SHA-256 of the STORED bytes, lowercase hex (CHECK) — re-verified on every download.
+  sha256                  String        @db.Char(64)
+  // The dataset's (the guard compares): the read rule's set, filtered in SQL by the list.
+  referencedSubsidiaryIds String[]      @map("referenced_subsidiary_ids") @db.Uuid
+  // Opaque, from the verified token; no foreign key (E6).
+  issuedBy                String        @map("issued_by") @db.Uuid
+  // Stamped by the guard from the database's clock, whatever the insert says.
+  issuedAt                DateTime      @default(now()) @map("issued_at") @db.Timestamptz(6)
+
+  @@unique([datasetId, language, template, includeMethodologyNotes, includeEvidenceSummary])
+  @@index([organisationId, reportingYear, issuedAt(sort: Desc)])
+  @@map("report_issuances")
 }

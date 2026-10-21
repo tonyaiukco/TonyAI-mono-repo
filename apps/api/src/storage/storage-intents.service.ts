@@ -96,7 +96,7 @@ export class UploadExpiredError extends ConflictException {
 export class RowsHiddenError extends Error {
   constructor() {
     super(
-      'Storage removal refused: this database role cannot see every row of evidence and import_batches, or the readers of storage.objects (storage_catalogue_page, storage_catalogue_has) are missing or do not run as a role that sees every object (each needs BYPASSRLS, ownership of the tables, or tables without RLS). Run it as the API\'s runtime role, tonyai_runtime (LP1-03).',
+      'Storage removal refused: this database role cannot see every row of evidence, import_batches and report_issuances, or the readers of storage.objects (storage_catalogue_page, storage_catalogue_has) are missing or do not run as a role that sees every object (each needs BYPASSRLS, ownership of the tables, or tables without RLS). Run it as the API\'s runtime role, tonyai_runtime (LP1-03).',
     );
     this.name = 'RowsHiddenError';
   }
@@ -334,7 +334,7 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
    */
   async seesEveryRow(client: Pick<Prisma.TransactionClient, '$queryRaw'> = this.prisma): Promise<boolean> {
     const [{ ok }] = await client.$queryRaw<{ ok: boolean | null }[]>`
-      SELECT count(*) = ${2 + CATALOGUE_READERS.length}
+      SELECT count(*) = ${3 + CATALOGUE_READERS.length}
              AND bool_and(
                r.rolsuper
                OR r.rolbypassrls
@@ -344,7 +344,7 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
       FROM (
         SELECT (SELECT oid FROM pg_roles WHERE rolname = current_user), t.oid
           FROM pg_class t
-         WHERE t.oid IN ('public.evidence'::regclass, 'public.import_batches'::regclass)
+         WHERE t.oid IN ('public.evidence'::regclass, 'public.import_batches'::regclass, 'public.report_issuances'::regclass)
         UNION ALL
         SELECT p.proowner, o.oid
           FROM pg_proc p

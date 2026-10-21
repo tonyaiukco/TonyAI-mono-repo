@@ -70,3 +70,17 @@ Any file attachment tied to a tenant-scoped entity (evidence, capacity reports, 
 objects themselves are asserted; `pnpm --filter @tonyai/api test:int` with `apps/api/.env` sourced). Live: a valid
 file (200 + row + sha256), a mismatched type (400, nothing stored), a signed URL (opens), a cross-tenant read (404),
 then `pnpm storage:reconcile --verify` (exit 0). Re-run `pnpm db:seed` and confirm the bucket + seeded files exist.
+
+**Learned on LP3-04 PR D (the issued reports' bucket, `report-artifacts`):**
+- **A file the API generates** (a report PDF) follows the same intent flow as an upload, with one more step:
+  after `storage.upload`, **download the object and hash it** — the stored bytes are what the row's SHA-256 must
+  describe; a mismatch abandons the upload before any row exists.
+- **Registering a bucket has a check the compiler does not catch:** `seesEveryRow`
+  (`storage-intents.service.ts`) counts the owner tables by regclass in SQL — add the new table there and raise the
+  count, or every removal in every bucket fails closed (`RowsHiddenError`). Also: the `RowsHiddenError` text, the
+  reconcile CLI's `--bucket` doc, `tenantPrefixes` in `test/int/storage.ts`, `supabase/config.toml`, the seed.
+- **Infra lists live outside this repo's lane:** the hosted bucket list (`infra/scripts/cloud_ops.py`,
+  `infra/supabase/verify.sql`) and the readiness probe (`apps/api/src/health-readiness.ts`) are Codex's — hand the
+  new bucket over in Open questions; the hosted bucket must exist before an API that writes to it is deployed.
+- **An organisation's deletion cascades the owning rows below the API**, so their objects become orphans for
+  `storage:reconcile --reclaim-orphans` — test it (`report-issuance.int.spec.ts`).

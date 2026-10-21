@@ -88,7 +88,8 @@ vi.mock('puppeteer', () => {
   return {
     TimeoutError: class TimeoutError extends Error {},
     default: {
-      launch: async () => ({ connected: true, newPage: async () => page(), close: async () => undefined, process: () => null }),
+      // `version()`: the shared PdfRenderer records the browser that printed (LP3-04 PR D).
+      launch: async () => ({ connected: true, version: async () => 'HeadlessChrome/int-test', newPage: async () => page(), close: async () => undefined, process: () => null }),
     },
   };
 });

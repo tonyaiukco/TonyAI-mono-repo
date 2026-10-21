@@ -122,3 +122,36 @@ Produce audit-ready file artifacts from live data. The **canonical exemplar** is
 - Neutralising the **xlsx** path. exceljs writes a string as a string cell and
   Excel does not evaluate one on open; prefixing there would stringify tCO₂e
   and break numeric parity with the CSV.
+
+## Retained artefacts — an ISSUED report (LP3-04 PR D, `apps/api/src/report-issuances/`)
+A download above is generated from live data on every request. A report that
+must stay what it was — a compliance record — is instead **issued once from a
+retained dataset and its bytes retained**; follow this pattern for any such
+artefact:
+- **Render only from retained data.** The HTML builder takes the retained
+  dataset (and what a pure gate derived from it), never a live read, a clock or
+  the factor library. Status and gaps are derived, never sent by the caller.
+- **Verify before trusting the retained row** (`issuance-gate.ts`): recompute its
+  fingerprint from the stored text, its referenced set, and anything derived
+  (assessments) from its own facts, and compare; compare any parent it embeds
+  against the parent's frozen rows under its `schemaVersion`. A mismatch is a
+  defect — log it and answer an internal error, never a refusal to act on.
+- **One Chromium per replica**: inject `PdfRenderer` (`common/pdf-renderer.ts`;
+  import `PdfRendererModule` — `reports/` is a lint-enforced sink nothing may
+  import), never a second `puppeteer.launch`; it refuses a
+  second concurrent render (429) and kills a timed-out one.
+- **Store through storage intents** (`supabase-storage`): `beginUpload` →
+  upload → **download and hash the STORED bytes** (that hash is the artefact's
+  fingerprint) → one transaction: `adoptUpload` first, the row, the audit row;
+  `abandonUpload` on every failure. The row is append-only (a guard trigger) and
+  carries the object key, size and SHA-256; the DTO carries an opaque id only.
+- **Serve the retained bytes, re-hashed** — stream them from the API after
+  checking size and SHA-256 (never a signed URL, never a re-render); missing
+  bytes are a coded 404 reported by id, changed bytes an internal error.
+- **Language is a parameter** (D16): a module catalogue `i18n/{en,tr}.json`
+  rendered with `intl-messageformat`, defaulting to the issuer's
+  `profiles.language`, recorded on the row and its audit row (`localise-ui`
+  Recipe C). Print no actor (retained bytes cannot be erased, D20).
+- **A unique key for "the same issuance"** (dataset, language, template,
+  options) checked before rendering and enforced by the index — a repeat is a
+  409, not a second artefact.

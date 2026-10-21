@@ -6,7 +6,8 @@ import type {
 /** LP3-04: additive contracts. The boundary's routes return an
  * `InventoryBoundarySnapshot` inside `InventoryBoundaryVersionDTO`; the dataset
  * routes capture, retain and serve a `ReportDataset` (PR C,
- * `CaptureReportDatasetRequest`); no issuance is produced yet.
+ * `CaptureReportDatasetRequest`); the issuance routes issue one as a retained
+ * PDF and serve its `ReportIssuance` and bytes (PR D, `IssueReportRequest`).
  * All timestamps use Date.prototype.toISOString() UTC spelling; months are calendar months of reportingYear.
  * Producers validate runtime inputs, referential integrity and the invariants
  * below. TypeScript shapes alone do not certify a complete inventory. */
@@ -341,6 +342,13 @@ export const REPORT_ISSUANCE_GAP_CODES = [
 export type ReportIssuanceGapCode = (typeof REPORT_ISSUANCE_GAP_CODES)[number];
 export interface ReportIssuanceGap {
   code: ReportIssuanceGapCode;
+  /** For a `coverage_gap` only (LP3-04 PR D): the dataset's coverage gap it
+   * carries — its own code and, where it has them, its entity and category —
+   * so an issuance names why it is partial without its dataset, one issuance
+   * gap per coverage gap. */
+  coverageCode?: ReportCoverageGapCode;
+  entity?: Pick<InventoryEntitySnapshot, 'subsidiaryId' | 'locationId'>;
+  category?: Category;
   sourceIds: readonly string[];
   obligationIds: readonly string[];
   recordIds: readonly string[];
@@ -425,4 +433,22 @@ export interface ReportDatasetSummary {
   selection: ReportDataset['selection'];
   boundary: Pick<InventoryBoundarySnapshot, 'id' | 'version' | 'decision'>;
   fingerprint: ReportDatasetFingerprint;
+}
+
+/** `POST /api/v1/report-issuances` (LP3-04 PR D; Decisions 2026-10-21): issue
+ * one retained dataset as a PDF. Its status and gaps derive from the retained
+ * dataset alone — never sent; the issuer is the verified token's (E6). A final
+ * is `super_admin`'s (W4: `report_final_forbidden` for a consultant); a
+ * partial is `super_admin`'s or a consultant's. One issuance per dataset,
+ * language, template and options (`report_already_issued`); another language
+ * or template is another issuance of the same dataset. */
+export interface IssueReportRequest {
+  datasetId: string;
+  template: ReportTemplate;
+  /** D16: the report's language, defaulting to the issuer's
+   * `profiles.language`; recorded on the issuance and its audit row. */
+  language?: Locale;
+  /** Default false, as the report exports'. */
+  includeMethodologyNotes?: boolean;
+  includeEvidenceSummary?: boolean;
 }
