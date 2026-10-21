@@ -29,7 +29,9 @@ Any file attachment tied to a tenant-scoped entity (evidence, capacity reports, 
   around a transaction by hand** (LP1-02; Storage has no transaction, and a hand-rolled "remove on failure" has
   deleted the bytes of a COMMITTED row when its acknowledgement was lost):
   - upload: `beginUpload(ref, origin)` → `storage.upload` (it never overwrites) → in the row's transaction, FIRST,
-    `adoptUpload(tx, intentId)` → write the row + audit; on any failure `abandonUpload(intentId, ref, error, origin)`;
+    `adoptUpload(tx, intentId)` → write the row + audit. On a failure BEFORE that transaction (the upload, a
+    read-back) `abandonUnadoptedUpload(intentId, ref, origin)` — no row can own the bytes; on one in or after it
+    `abandonUpload(intentId, ref, error, origin)` — it may have committed (see "Two abandonments, by phase" below);
   - removal: delete the row + audit + `enqueueDeletes(tx, refs, origin)` in ONE transaction, then `runNow(refs)` after
     the commit. The in-process sweeper retries anything that failed; `pnpm storage:reconcile` finds what no intent names.
   - origin = `{ reason, organisationId, subsidiaryId }` — operators read it; Sentry gets ids, never object keys.
@@ -70,3 +72,24 @@ Any file attachment tied to a tenant-scoped entity (evidence, capacity reports, 
 objects themselves are asserted; `pnpm --filter @tonyai/api test:int` with `apps/api/.env` sourced). Live: a valid
 file (200 + row + sha256), a mismatched type (400, nothing stored), a signed URL (opens), a cross-tenant read (404),
 then `pnpm storage:reconcile --verify` (exit 0). Re-run `pnpm db:seed` and confirm the bucket + seeded files exist.
+
+**Learned on LP3-04 PR D (the issued reports' bucket, `report-artifacts`):**
+- **A file the API generates** (a report PDF) follows the same intent flow as an upload, with one more step:
+  after `storage.upload`, **download the object and hash it** — the stored bytes are what the row's SHA-256 must
+  describe; a mismatch abandons the upload before any row exists.
+- **Two abandonments, by phase** (Codex's B9 review of #198, P2): a failure *before* the owning transaction began
+  (the upload, a read-back, a hash check) calls `abandonUnadoptedUpload` — no row can own the object, so it goes even
+  when the sweeper took the intent while the bytes were on their way (a late upload; `abandonUpload` would leave it an
+  orphan). A failure *in or after* the transaction calls `abandonUpload` — it may have committed with its
+  acknowledgement lost, so the bytes stay unless the intent still stands. Never use the first after the transaction
+  has run. Prove both with real Storage: a spied `upload` that ages its intent, sweeps, then sends the bytes
+  (`storage-recovery.int.spec.ts` for evidence and import, `report-issuance.int.spec.ts` for the report PDFs).
+- **Registering a bucket has a check the compiler does not catch:** `seesEveryRow`
+  (`storage-intents.service.ts`) counts the owner tables by regclass in SQL — add the new table there and raise the
+  count, or every removal in every bucket fails closed (`RowsHiddenError`). Also: the `RowsHiddenError` text, the
+  reconcile CLI's `--bucket` doc, `tenantPrefixes` in `test/int/storage.ts`, `supabase/config.toml`, the seed.
+- **Infra lists live outside this repo's lane:** the hosted bucket list (`infra/scripts/cloud_ops.py`,
+  `infra/supabase/verify.sql`) and the readiness probe (`apps/api/src/health-readiness.ts`) are Codex's — hand the
+  new bucket over in Open questions; the hosted bucket must exist before an API that writes to it is deployed.
+- **An organisation's deletion cascades the owning rows below the API**, so their objects become orphans for
+  `storage:reconcile --reclaim-orphans` — test it (`report-issuance.int.spec.ts`).

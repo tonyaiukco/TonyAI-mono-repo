@@ -198,6 +198,10 @@ export const RUNTIME_TABLE_PRIVILEGES = Object.freeze({
   // routes read — never an update or a delete (the guard, TA016, refuses
   // them for every writer but the organisation's own deletion).
   report_datasets: ['SELECT', 'INSERT'],
+  // LP3-04 PR D's issuances: an issuance inserts, the issuance routes and the
+  // Storage sweeper read — never an update or a delete (the guard, TA017,
+  // refuses them for every writer but the organisation's own deletion).
+  report_issuances: ['SELECT', 'INSERT'],
   // Prisma's migration history: neither readable nor writable.
   _prisma_migrations: [],
 });
@@ -980,6 +984,13 @@ export const INTEGRITY_TRIGGERS = Object.freeze([
   // the version and the subsidiaries whoever inserts.
   { table: 'report_datasets', trigger: 'report_datasets_guard', fn: 'report_datasets_guard', type: ROW | BEFORE | ON.insert | ON.update | ON.delete, definer: true },
   { table: 'report_datasets', trigger: 'report_datasets_before_truncate', fn: 'report_datasets_before_truncate', type: BEFORE | ON.truncate },
+  // LP3-04 PR D: an issuance issues a retained dataset of its organisation —
+  // its identity and read rule the dataset's, a final only of a confirmed
+  // inventory without a coverage gap — and is retained: never updated, nor
+  // deleted but with its organisation (TA017) — SECURITY DEFINER, to read the
+  // dataset whoever inserts — nor truncated.
+  { table: 'report_issuances', trigger: 'report_issuances_guard', fn: 'report_issuances_guard', type: ROW | BEFORE | ON.insert | ON.update | ON.delete, definer: true },
+  { table: 'report_issuances', trigger: 'report_issuances_before_truncate', fn: 'report_issuances_before_truncate', type: BEFORE | ON.truncate },
   // LP4-02 (27): a subsidiary's or a site's geography — what its records are
   // priced with — changes in the API's or the owner's session alone (TA015).
   // `locations` is guarded from here on: a later BEFORE UPDATE trigger could
@@ -1050,6 +1061,20 @@ export const INTEGRITY_CHECKS = Object.freeze([
   ['report_datasets', 'report_datasets_schema_check', '14dd828e62fc6a8879ad1d25e61e94cc'],
   ['report_datasets', 'report_datasets_selection_check', '8ff91db91299eba2a1b97fa4d1533b93'],
   ['report_datasets', 'report_datasets_selection_context_check', '30735b94defd559b810da8a1f204d001'],
+  // LP3-04 PR D: what an issuance is — its status and gaps' shapes, its
+  // language and template, its fingerprints, its object's key and its read set.
+  ['report_issuances', 'report_issuances_canonicalization_check', 'f9b402b94f66d58eb89299b84e9456eb'],
+  ['report_issuances', 'report_issuances_dataset_fingerprint_check', '4459873934ba79f6d7b34610fe9a7ef8'],
+  ['report_issuances', 'report_issuances_gaps_array_check', 'f40e527582ebbf907428c1ad49141ebb'],
+  ['report_issuances', 'report_issuances_gaps_status_check', 'e7cefa81a4d95ad95cbf92cc80ffe08f'],
+  ['report_issuances', 'report_issuances_language_check', 'cad0ea57e601bd22bed0d4192c91b579'],
+  ['report_issuances', 'report_issuances_referenced_check', 'a61fe632e52e8c2bc789ca1a3a429491'],
+  ['report_issuances', 'report_issuances_renderer_check', '679e026076e6eae9e57096ed26efc03c'],
+  ['report_issuances', 'report_issuances_sha256_check', 'c294edbecbbf522ce8f57ec2f6dfa160'],
+  ['report_issuances', 'report_issuances_size_check', '82e70c3b24094657943fc32f5da06414'],
+  ['report_issuances', 'report_issuances_status_check', '919699b71869ebcadb008b9da2bdbf58'],
+  ['report_issuances', 'report_issuances_storage_path_check', '906fed3699ccc5799a0237b72131c0e2'],
+  ['report_issuances', 'report_issuances_template_check', '5398385fae0fadb0eb85e01ba6376653'],
   ['unit_conversions', 'unit_conversions_activity_type_check', '93f97c3cb3164b22248b3f9dc0b31bc9'],
   ['unit_conversions', 'unit_conversions_calorific_basis_check', '87fcf58708e411abac6ea8b86c8ba832'],
   ['unit_conversions', 'unit_conversions_multiplier_check', 'b44055800a17e765590df1c5c881b412'],
@@ -1265,7 +1290,7 @@ function pinsPgTempLast(config) {
 /** The tables the integrity triggers guard: nothing else may hook into them. */
 const GUARDED_TABLES = Object.freeze([
   'activity_records', 'factor_releases', 'emission_factors', 'unit_conversions', 'factor_release_events', 'subsidiaries',
-  'inventory_boundaries', ...INVENTORY_BOUNDARY_ROW_TABLES, 'locations', 'report_datasets',
+  'inventory_boundaries', ...INVENTORY_BOUNDARY_ROW_TABLES, 'locations', 'report_datasets', 'report_issuances',
 ]);
 
 /** Every integrity trigger, CHECK and record key, present, in force and unaltered. */

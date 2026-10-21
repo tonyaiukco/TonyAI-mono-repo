@@ -36,9 +36,13 @@ export function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-/** The key prefixes a tenant's objects live under: evidence by subsidiary, import sources by organisation. */
+/** The key prefixes a tenant's objects live under: evidence by subsidiary, import sources and report PDFs by organisation. */
 export function tenantPrefixes(tenant: Pick<Tenant, 'subsidiaryId' | 'organisationId'>): Record<Bucket, string> {
-  return { evidence: `${tenant.subsidiaryId}/`, 'import-sources': `${tenant.organisationId}/` };
+  return {
+    evidence: `${tenant.subsidiaryId}/`,
+    'import-sources': `${tenant.organisationId}/`,
+    'report-artifacts': `${tenant.organisationId}/`,
+  };
 }
 
 /** Every object under the tenant's prefixes, from the catalogue (through its page reader). */

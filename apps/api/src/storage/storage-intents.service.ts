@@ -96,7 +96,7 @@ export class UploadExpiredError extends ConflictException {
 export class RowsHiddenError extends Error {
   constructor() {
     super(
-      'Storage removal refused: this database role cannot see every row of evidence and import_batches, or the readers of storage.objects (storage_catalogue_page, storage_catalogue_has) are missing or do not run as a role that sees every object (each needs BYPASSRLS, ownership of the tables, or tables without RLS). Run it as the API\'s runtime role, tonyai_runtime (LP1-03).',
+      'Storage removal refused: this database role cannot see every row of evidence, import_batches and report_issuances, or the readers of storage.objects (storage_catalogue_page, storage_catalogue_has) are missing or do not run as a role that sees every object (each needs BYPASSRLS, ownership of the tables, or tables without RLS). Run it as the API\'s runtime role, tonyai_runtime (LP1-03).',
     );
     this.name = 'RowsHiddenError';
   }
@@ -245,6 +245,37 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
   }
 
   /**
+   * After a failure BEFORE the owning row's transaction began — the upload
+   * itself, or a check of the stored bytes (LP3-04 PR D: the issuance reads
+   * its PDF back and hashes it). No transaction has run, so none can have
+   * adopted the intent and no row can own the object: unlike `abandonUpload`
+   * there is no lost acknowledgement to protect. If the intent is still an
+   * upload it becomes the delete. If it is gone — the sweeper abandoned it
+   * while the bytes were still on their way, its removal running before they
+   * landed, or a restore's `--forget-uploads` dropped it under the hold — a
+   * delete is enqueued anew (an existing one is reset, as `enqueueDeletes`
+   * does) and the late bytes go too (Codex's B9 review of #198, P2: an
+   * orphan PDF otherwise); under `STORAGE_CLEANUP_HOLD` it waits as an intent. Either way the object is removed now,
+   * and the removal still asks `ownedPaths` first, as every removal does.
+   * Never throws: what it cannot do, the sweeper does.
+   */
+  async abandonUnadoptedUpload(intentId: string, ref: ObjectRef, origin: Omit<IntentOrigin, 'reason'> = {}): Promise<void> {
+    try {
+      const { count } = await this.prisma.storageIntent.updateMany({
+        where: { id: intentId, kind: StorageIntentKind.upload },
+        data: { kind: StorageIntentKind.delete },
+      });
+      if (count === 0) await this.enqueueDeletes(this.prisma, [ref], { reason: 'upload.abandoned', ...origin });
+      await this.runNow([ref]);
+    } catch (error) {
+      this.logger.error(
+        `Could not abandon the unadopted upload of ${ref.bucket}/${ref.path}; the sweeper removes it if its intent stands`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  /**
    * In the transaction that deleted the rows owning these objects: record
    * that the objects must go. An object that already has a `delete` intent
    * gets that one reset — due now, its lease cleared — rather than a second:
@@ -334,7 +365,7 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
    */
   async seesEveryRow(client: Pick<Prisma.TransactionClient, '$queryRaw'> = this.prisma): Promise<boolean> {
     const [{ ok }] = await client.$queryRaw<{ ok: boolean | null }[]>`
-      SELECT count(*) = ${2 + CATALOGUE_READERS.length}
+      SELECT count(*) = ${3 + CATALOGUE_READERS.length}
              AND bool_and(
                r.rolsuper
                OR r.rolbypassrls
@@ -344,7 +375,7 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
       FROM (
         SELECT (SELECT oid FROM pg_roles WHERE rolname = current_user), t.oid
           FROM pg_class t
-         WHERE t.oid IN ('public.evidence'::regclass, 'public.import_batches'::regclass)
+         WHERE t.oid IN ('public.evidence'::regclass, 'public.import_batches'::regclass, 'public.report_issuances'::regclass)
         UNION ALL
         SELECT p.proowner, o.oid
           FROM pg_proc p

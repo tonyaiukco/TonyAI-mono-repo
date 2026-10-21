@@ -23,6 +23,7 @@ import { BulkUploadModule } from './bulk-upload/bulk-upload.module';
 import { UsersModule } from './users/users.module';
 import { InventoryBoundaryModule } from './inventory-boundary/inventory-boundary.module';
 import { ReportDatasetsModule } from './report-datasets/report-datasets.module';
+import { ReportIssuancesModule } from './report-issuances/report-issuances.module';
 import { HealthController } from './health.controller';
 import { RequestContextMiddleware } from './observability/request-context.middleware';
 
@@ -49,6 +50,7 @@ import { RequestContextMiddleware } from './observability/request-context.middle
     // LP3-04: the inventory boundary's routes (W1, W13).
     InventoryBoundaryModule,
     ReportDatasetsModule,
+    ReportIssuancesModule,
   ],
   controllers: [HealthController],
   providers: [RuntimeLimits, {

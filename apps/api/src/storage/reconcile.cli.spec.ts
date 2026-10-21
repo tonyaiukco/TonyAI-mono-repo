@@ -8,9 +8,9 @@ import { isLoopback, parseArgs, refuseUnsafe, REMOTE_MIN_ORPHAN_AGE_HOURS } from
  */
 
 describe('storage:reconcile — arguments', () => {
-  it('reports only by default, over both buckets, 500 per check, orphans past 7 days', () => {
+  it('reports only by default, over every bucket, 500 per check, orphans past 7 days', () => {
     expect(parseArgs([])).toMatchObject({
-      buckets: ['evidence', 'import-sources'],
+      buckets: ['evidence', 'import-sources', 'report-artifacts'],
       limit: 500,
       verify: false,
       sweep: false,

@@ -95,6 +95,8 @@ const ACTION_COLORS: Record<AuditAction, string> = {
   freeze: "bg-amber-500/15 text-amber-700 border-amber-500/30",
   // Violet, with `generate`: a report dataset captured and retained.
   capture: "bg-violet-500/15 text-violet-700 border-violet-500/30",
+  // Violet too: LP3-04 PR D — a retained dataset issued as a retained PDF.
+  issue: "bg-violet-500/15 text-violet-700 border-violet-500/30",
 };
 
 const NEUTRAL_ACTION = "bg-slate-500/15 text-slate-700 border-slate-500/30";

@@ -90,6 +90,7 @@ function createIntentsMock() {
     beginUpload: vi.fn().mockResolvedValue('intent-1'),
     adoptUpload: vi.fn().mockResolvedValue(undefined),
     abandonUpload: vi.fn().mockResolvedValue(undefined),
+    abandonUnadoptedUpload: vi.fn().mockResolvedValue(undefined),
     enqueueDeletes: vi.fn().mockResolvedValue(undefined),
     runNow: vi.fn().mockResolvedValue(undefined),
   };
@@ -542,17 +543,17 @@ describe('EvidenceService', () => {
       expect(storage.upload).not.toHaveBeenCalled();
     });
 
-    it('abandons the intent when the bytes cannot be stored, and writes no row', async () => {
+    it('abandons the intent as unadopted when the bytes cannot be stored — no row can own them — and writes no row', async () => {
       prisma.activityRecord.findUnique.mockResolvedValue(makeRecord({ id: 'rec-1' }));
       storage.upload.mockRejectedValue(new Error('storage down'));
 
       await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toThrow('storage down');
-      expect(intents.abandonUpload).toHaveBeenCalledWith(
+      expect(intents.abandonUnadoptedUpload).toHaveBeenCalledWith(
         'intent-1',
         { bucket: 'evidence', path: storage.upload.mock.calls[0][1] },
-        expect.anything(),
         ORIGIN,
       );
+      expect(intents.abandonUpload).not.toHaveBeenCalled();
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
@@ -571,7 +572,9 @@ describe('EvidenceService', () => {
       await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toThrow('insert failed');
 
       const key = storage.upload.mock.calls[0][1] as string;
+      // The transaction ran — it may have committed: only the conditional abandonment.
       expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', { bucket: 'evidence', path: key }, expect.anything(), ORIGIN);
+      expect(intents.abandonUnadoptedUpload).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
   });

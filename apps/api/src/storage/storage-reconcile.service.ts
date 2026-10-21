@@ -33,7 +33,7 @@ export interface Page {
   prefix?: string;
 }
 
-/** The SQL that differs between the two buckets: which table owns its objects. */
+/** The SQL that differs between the buckets: which table owns its objects. */
 const OWNERS: Record<Bucket, { owned: Prisma.Sql; rows: Prisma.Sql }> = {
   evidence: {
     owned: Prisma.sql`EXISTS (SELECT 1 FROM evidence e WHERE e.storage_path = o.name)`,
@@ -42,6 +42,11 @@ const OWNERS: Record<Bucket, { owned: Prisma.Sql; rows: Prisma.Sql }> = {
   'import-sources': {
     owned: Prisma.sql`EXISTS (SELECT 1 FROM import_batches b WHERE b.storage_path = o.name)`,
     rows: Prisma.sql`SELECT b.id, b.storage_path AS path, b.sha256 FROM import_batches b WHERE b.storage_path IS NOT NULL`,
+  },
+  // LP3-04 PR D: an issuance's sha256 is its stored PDF's, so `--verify` hashes it.
+  'report-artifacts': {
+    owned: Prisma.sql`EXISTS (SELECT 1 FROM report_issuances r WHERE r.storage_path = o.name)`,
+    rows: Prisma.sql`SELECT r.id, r.storage_path AS path, r.sha256 FROM report_issuances r`,
   },
 };
 

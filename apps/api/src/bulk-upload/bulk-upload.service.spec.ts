@@ -218,6 +218,7 @@ function build() {
     beginUpload: vi.fn().mockResolvedValue('intent-1'),
     adoptUpload: vi.fn().mockResolvedValue(undefined),
     abandonUpload: vi.fn().mockResolvedValue(undefined),
+    abandonUnadoptedUpload: vi.fn().mockResolvedValue(undefined),
   };
   const service = new BulkUploadService(
     prisma as unknown as PrismaService,
@@ -2289,7 +2290,9 @@ describe('BulkUploadService — import batches', () => {
     await expect(service.import(dataEntry(), csvFile([row()]), NOTHING)).rejects.toThrow('db down');
 
     // Abandoned, not removed directly: a removal that fails stays a retryable
-    // intent (it used to be a swallowed `.catch(() => undefined)`).
+    // intent (it used to be a swallowed `.catch(() => undefined)`). The
+    // transaction ran — it may have committed: the conditional abandonment.
+    expect(intents.abandonUnadoptedUpload).not.toHaveBeenCalled();
     expect(intents.abandonUpload).toHaveBeenCalledWith(
       'intent-1',
       { bucket: 'import-sources', path: storage.upload.mock.calls[0][1] },
@@ -2320,18 +2323,18 @@ describe('BulkUploadService — import batches', () => {
     expect(intents.abandonUpload).not.toHaveBeenCalled();
   });
 
-  it('abandons the intent and opens no batch when the file cannot be stored', async () => {
+  it('abandons the intent as unadopted and opens no batch when the file cannot be stored — no row can own it', async () => {
     const { prisma, storage, intents, service } = build();
     storage.upload.mockRejectedValue(new Error('storage down'));
 
     await expect(service.import(dataEntry(), csvFile([row()]), NOTHING)).rejects.toThrow('storage down');
 
-    expect(intents.abandonUpload).toHaveBeenCalledWith(
+    expect(intents.abandonUnadoptedUpload).toHaveBeenCalledWith(
       'intent-1',
       { bucket: 'import-sources', path: storage.upload.mock.calls[0][1] },
-      expect.anything(),
       { organisationId: 'org-1' },
     );
+    expect(intents.abandonUpload).not.toHaveBeenCalled();
     expect(prisma.importBatch.create).not.toHaveBeenCalled();
   });
 

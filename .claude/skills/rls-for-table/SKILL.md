@@ -138,3 +138,13 @@ added to a tenant table is readable by every role that can already read the row.
 Verified against the live database when WP21 added `anomaly_baseline_*` to
 `activity_records` — a `data_entry` JWT read both new columns with no grant in
 the migration, and `anon` read none.
+
+**Learned on LP3-04 PR D (the report issuances, a row bound to a parent row):**
+- **A child row that repeats its parent's identity** (`report_issuances` repeats its dataset's year, fingerprint and
+  referenced set) is held to it by the guard, reading the parent as a SECURITY DEFINER — and a timestamp the row
+  must not choose is stamped there (`NEW.issued_at := pg_catalog.now()`), whatever the insert says.
+- **Keep every new CHECK one flat condition** (or a flat AND list) so `pg_dump`/`pg_restore` prints the text
+  `runtime-role.mjs` pins (PR C follow-up (10)); compute the pins from `md5(pg_get_constraintdef(oid))` on a
+  migrated database and add the table to `INTEGRITY_CHECKS`, `INTEGRITY_TRIGGERS` and `GUARDED_TABLES`.
+- **A trigger runs before the CHECKs:** a guard that walks a jsonb array must not assume the CHECK already held
+  (`jsonb_array_elements` of an object raises 22023) — guard it with `CASE WHEN jsonb_typeof(…) = 'array'`.

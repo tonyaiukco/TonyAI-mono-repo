@@ -40,6 +40,7 @@ import {
   BoundaryIncompleteError,
 } from '../inventory-boundary/errors';
 import { UploadExpiredError } from '../storage/storage-intents.service';
+import { ReportAlreadyIssuedError, ReportFinalForbiddenError } from '../report-issuances/report-issuances.service';
 import { errorBody, errorCodeOf, QueryTooBroadError, ResourceNotFoundError, toErrorBody } from './api-error';
 import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from './coded-validation.pipe';
 import { ParseUuidParamPipe } from './parse-uuid-param.pipe';
@@ -124,6 +125,10 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   user_disabled: () => new UserDisabledError(),
   boundary_not_found: () => new ResourceNotFoundError('boundary_not_found'),
   report_dataset_not_found: () => new ResourceNotFoundError('report_dataset_not_found'),
+  report_issuance_not_found: () => new ResourceNotFoundError('report_issuance_not_found'),
+  report_artifact_missing: () => new NotFoundException(errorBody('report_artifact_missing', 'gone')),
+  report_final_forbidden: () => new ReportFinalForbiddenError(),
+  report_already_issued: () => new ReportAlreadyIssuedError(),
   boundary_frozen: () => new BoundaryFrozenError(),
   boundary_draft_open: () => new BoundaryDraftOpenError(),
   boundary_confirm_requires_copy: () => new BoundaryConfirmRequiresCopyError(),

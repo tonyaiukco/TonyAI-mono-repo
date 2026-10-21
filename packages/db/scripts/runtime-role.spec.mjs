@@ -244,8 +244,9 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     // seal check at the commit; LP3-04 PR B's freeze guard and truncate guard
     // on the boundary's header and its five row tables; LP4-02 (27)'s
     // geography guard on subsidiaries and sites; LP3-04 PR C's dataset guard
-    // and truncate guard on `report_datasets`.
-    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2);
+    // and truncate guard on `report_datasets`; PR D's issuance guard and
+    // truncate guard on `report_issuances`.
+    expect(INTEGRITY_TRIGGERS).toHaveLength(3 + 3 * 4 + 1 + 2 * 2 + 4 + 3 + 1 + 6 * 2 + 2 + 2 + 2);
     for (const table of ['subsidiaries', 'locations']) {
       expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === `${table}_geography_writer`)).toEqual({
         table,
@@ -258,7 +259,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
       'emission_factors_record_delete', 'emission_factors_record_insert', 'factor_releases_record_event',
       'inventory_applicability_cells_frozen', 'inventory_attribution_policies_frozen', 'inventory_boundaries_frozen',
       'inventory_boundary_sites_frozen', 'inventory_boundary_subsidiaries_frozen', 'inventory_sources_frozen',
-      'report_datasets_guard', 'unit_conversions_record_delete', 'unit_conversions_record_insert',
+      'report_datasets_guard', 'report_issuances_guard', 'unit_conversions_record_delete', 'unit_conversions_record_insert',
     ]);
     expect(INTEGRITY_TRIGGERS.find((t) => t.trigger === 'inventory_sources_before_truncate')).toMatchObject({
       fn: 'inventory_boundary_before_truncate',
@@ -336,7 +337,7 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
 
   it("reports any integrity function — definer or invoker — not pinned to pg_catalog, pg_temp (security-rls P1, Codex P1)", async () => {
     expect(FUNCTION_SEARCH_PATH).toBe('search_path=pg_catalog, pg_temp');
-    for (const trigger of ['report_datasets_guard', 'inventory_boundaries_frozen', 'factor_releases_record_event', 'emission_factors_before_update', 'activity_records_lifecycle_writer']) {
+    for (const trigger of ['report_datasets_guard', 'report_issuances_guard', 'inventory_boundaries_frozen', 'factor_releases_record_event', 'emission_factors_before_update', 'activity_records_lifecycle_writer']) {
       for (const config of [['search_path=""'], [], ['search_path=pg_temp, pg_catalog']]) {
         const problems = await check(tweak(trigger, { config }));
         expect(problems.length, `${trigger} ${JSON.stringify(config)}`).toBe(1);
@@ -382,8 +383,8 @@ describe('checkIntegrityTriggers (LP3-03)', () => {
     expect(guarded).toEqual([
       'activity_records', 'emission_factors', 'factor_release_events', 'factor_releases',
       'inventory_applicability_cells', 'inventory_attribution_policies', 'inventory_boundaries', 'inventory_boundary_sites',
-      'inventory_boundary_subsidiaries', 'inventory_sources', 'locations', 'report_datasets', 'subsidiaries',
-      'unit_conversions',
+      'inventory_boundary_subsidiaries', 'inventory_sources', 'locations', 'report_datasets', 'report_issuances',
+      'subsidiaries', 'unit_conversions',
     ]);
     for (const table of guarded) {
       expect(await check(allTriggers, allChecks, [{ table, rule: 'r' }])).toEqual([`unexpected rule r on ${table}`]);
@@ -898,6 +899,23 @@ describe("the runtime role's inventory boundary grants (LP3-04's write path)", (
     expect(INTEGRITY_TRIGGERS.filter((t) => t.table === 'report_datasets')).toEqual([
       { table: 'report_datasets', trigger: 'report_datasets_guard', fn: 'report_datasets_guard', type: 1 | 2 | 4 | 8 | 16, definer: true },
       { table: 'report_datasets', trigger: 'report_datasets_before_truncate', fn: 'report_datasets_before_truncate', type: 2 | 32 },
+    ]);
+  });
+
+  it('inserts and reads a report issuance — never updates or deletes one (LP3-04 PR D)', () => {
+    expect(RUNTIME_TABLE_PRIVILEGES.report_issuances).toEqual(['SELECT', 'INSERT']);
+    expect(RUNTIME_COLUMN_INSERTS.report_issuances).toBeUndefined();
+    expect(RUNTIME_COLUMN_UPDATES.report_issuances).toBeUndefined();
+    expect(INTEGRITY_TRIGGERS.filter((t) => t.table === 'report_issuances')).toEqual([
+      { table: 'report_issuances', trigger: 'report_issuances_guard', fn: 'report_issuances_guard', type: 1 | 2 | 4 | 8 | 16, definer: true },
+      { table: 'report_issuances', trigger: 'report_issuances_before_truncate', fn: 'report_issuances_before_truncate', type: 2 | 32 },
+    ]);
+    expect(INTEGRITY_CHECKS.filter(([table]) => table === 'report_issuances').map(([, name]) => name)).toEqual([
+      'report_issuances_canonicalization_check', 'report_issuances_dataset_fingerprint_check',
+      'report_issuances_gaps_array_check', 'report_issuances_gaps_status_check', 'report_issuances_language_check',
+      'report_issuances_referenced_check', 'report_issuances_renderer_check', 'report_issuances_sha256_check',
+      'report_issuances_size_check', 'report_issuances_status_check', 'report_issuances_storage_path_check',
+      'report_issuances_template_check',
     ]);
   });
 });

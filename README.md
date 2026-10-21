@@ -248,7 +248,7 @@ Additional guarantees:
 - **Token verification** — Supabase access tokens are accepted under both signing schemes: the legacy shared **HS256** secret and **asymmetric** keys (ES256/RS256) fetched from the project's JWKS. The key material fixes the algorithm allow‑list on each path, so a token can never downgrade a public key into an HMAC secret, and `alg: none` matches neither path. Tokens must carry `aud: authenticated`, `sub` and `exp`, which is what keeps the anon/service‑role keys (JWTs signed with the same secret) from being replayed as user tokens, and this project's issuer in `iss` — the key proves who signed, not for which project, so a correctly signed token from another Auth server sharing the secret or key set (a second environment, a copied `.env`) is refused. The issuer defaults to the origin of `SUPABASE_URL` + `/auth/v1`, what GoTrue stamps on a hosted project and on the local CLI (`http://127.0.0.1:54321/auth/v1`); `SUPABASE_JWT_ISSUER` replaces it exactly where the API reaches Auth through another address (a self-hosted project behind a private hostname). A correctly signed token with a wrong issuer — or a user token with none — is logged as a configuration error, at most once per five minutes per kind — producing one needs the signing key, and it means either the expected issuer is wrong or another Auth server shares the secret or key set (rotate it) — while the client gets the same 401. `SUPABASE_JWT_SCHEME` pins the accepted scheme; a boot-time check **refuses to start** with an unpinned scheme, the public demo secret, a `SUPABASE_JWT_ISSUER` that is not an exact printable-ASCII http(s) URL without credentials, or no determinable issuer. The issuer checks hold everywhere; the scheme and demo-secret checks are on by default and are relaxed only by an explicit `ALLOW_INSECURE_LOCAL_AUTH=true` **together with** a loopback `SUPABASE_URL` — deliberately not keyed on `NODE_ENV`, since the container image sets it locally and a plain `node dist/main.js` deployment sets nothing, so a copied `.env` pointed at a real project always fails closed.
 - **RBAC** — reads are tenant‑scoped for everyone; writes are split by object, not blanket‑`super_admin` (see the request lifecycle above and the Roles table below). The one rule that never bends: **only `super_admin` approves** — and never a record they created (segregation of duties, decision D01; only a record's author may submit it, `super_admin` included, so the submitter is always the creator) — and only `super_admin` mutates organisation structure.
 - **Lifecycle integrity (LP1-01)** — every write to an activity record, its evidence links or a period lock follows one protocol (`apps/api/src/activity-records/lifecycle-lock.ts`): a transaction-scoped advisory lock per reporting period (shared for record and evidence writers, exclusive for lock/unlock — so even a period with no lock row serialises a create against a lock), then `FOR UPDATE` row locks (records, then evidence files, each in key order), every gate re-checked against the locked row, and the change written **with its audit row through the same transaction** — neither commits without the other. A request that was valid against what it read, but lost a race to another writer, gets a **409 "This record was changed by someone else… Reload it and try again."** (`RecordChangedError`); nothing was written and the server never retries on its behalf. Evidence rows are deleted inside the transaction and their Storage objects only after it commits — through a `delete` intent that commits with them (LP1-02, below).
-- **Recoverable Storage effects (LP1-02)** — Storage has no transaction, so every object an API path writes or removes is first named in `storage_intents` (`apps/api/src/storage/storage-intents.service.ts`). An **upload** commits an `upload` intent before sending the bytes; the transaction that writes the owning row (evidence, or an import batch) deletes it — as its first statement — in the same commit. If that transaction fails the intent becomes a delete and the object is removed — but only while the intent is still there, so a transaction that committed although its acknowledgement was lost keeps its bytes. A **removal** (detach of a file's last link, `DELETE /evidence/:id`, a record delete) writes a `delete` intent with the row delete and its audit row, and removes the object after the commit. An object that already has a pending `delete` gets that intent reset (due now) rather than a second one, and a sweep closes an intent only under the lease it took — so bytes that land after a removal stay named. Whatever fails — the database, Storage, the process — leaves an intent that the in-process **sweeper** retries: every `STORAGE_SWEEP_INTERVAL_SECONDS` (default 300; `0` turns it off), at most 100 intents a pass, by lease (`claimed_until`, `SKIP LOCKED`) so replicas never remove the same object twice and no transaction is held across a Storage call, with exponential backoff (30 s doubling to 6 h, never giving up). An upload intent is abandoned only after 15 minutes. **Bytes a row still owns are never removed**, whatever an intent says, and objects are written with `upsert: false`, so nothing overwrites existing evidence. **`STORAGE_CLEANUP_HOLD=1` stops every removal** — set it while a backup or restore runs: intents wait, nothing is lost. The sweeper never removes an orphan (an object no row owns and no intent names) on its own: after a database restore such an object may be the only copy of a file the restored database no longer remembers. `pnpm storage:reconcile` reports orphans, rows whose object is missing, hash mismatches and stuck intents; it removes orphans only with `--reclaim-orphans --apply`, older than 7 days by default, and never under the hold. **Removal fails closed under a database role that RLS filters** — the owned-bytes guard is only as good as the rows it can see, so the sweeper hands its intents back and the CLI refuses to run unless the role bypasses RLS on `evidence`, `import_batches` and `storage.objects` (the owner role does; LP1-03's runtime role must). **After a database restore:** set `STORAGE_CLEANUP_HOLD=1` on every API process *and* in the shell running the tool (it is per process), run `pnpm storage:reconcile --forget-uploads` — upload intents restored from the restore point name bytes committed later, in the history the restore discarded, so they become reported orphans instead of being abandoned and removed — then `--verify`, and lift the hold only after reading the report.
+- **Recoverable Storage effects (LP1-02)** — Storage has no transaction, so every object an API path writes or removes is first named in `storage_intents` (`apps/api/src/storage/storage-intents.service.ts`). An **upload** commits an `upload` intent before sending the bytes; the transaction that writes the owning row (evidence, an import batch, or a report issuance) deletes it — as its first statement — in the same commit. If that transaction fails the intent becomes a delete and the object is removed — but only while the intent is still there, so a transaction that committed although its acknowledgement was lost keeps its bytes. A failure *before* that transaction began — an upload that reports a failure (evidence, an import's source file, a report PDF), or the issuance's read-back of its PDF — cannot have a committed owner, so its object is removed even when the sweeper took the intent while the bytes were on their way (`abandonUnadoptedUpload`). A **removal** (detach of a file's last link, `DELETE /evidence/:id`, a record delete) writes a `delete` intent with the row delete and its audit row, and removes the object after the commit. An object that already has a pending `delete` gets that intent reset (due now) rather than a second one, and a sweep closes an intent only under the lease it took — so bytes that land after a removal stay named. Whatever fails — the database, Storage, the process — leaves an intent that the in-process **sweeper** retries: every `STORAGE_SWEEP_INTERVAL_SECONDS` (default 300; `0` turns it off), at most 100 intents a pass, by lease (`claimed_until`, `SKIP LOCKED`) so replicas never remove the same object twice and no transaction is held across a Storage call, with exponential backoff (30 s doubling to 6 h, never giving up). An upload intent is abandoned only after 15 minutes. **Bytes a row still owns are never removed**, whatever an intent says, and objects are written with `upsert: false`, so nothing overwrites existing evidence. **`STORAGE_CLEANUP_HOLD=1` stops every removal** — set it while a backup or restore runs: intents wait, nothing is lost. The sweeper never removes an orphan (an object no row owns and no intent names) on its own: after a database restore such an object may be the only copy of a file the restored database no longer remembers. `pnpm storage:reconcile` reports orphans, rows whose object is missing, hash mismatches and stuck intents; it removes orphans only with `--reclaim-orphans --apply`, older than 7 days by default, and never under the hold. **Removal fails closed under a database role that RLS filters** — the owned-bytes guard is only as good as the rows it can see, so the sweeper hands its intents back and the CLI refuses to run unless the role bypasses RLS on `evidence`, `import_batches`, `report_issuances` and `storage.objects` (the owner role does; LP1-03's runtime role must). **After a database restore:** set `STORAGE_CLEANUP_HOLD=1` on every API process *and* in the shell running the tool (it is per process), run `pnpm storage:reconcile --forget-uploads` — upload intents restored from the restore point name bytes committed later, in the history the restore discarded, so they become reported orphans instead of being abandoned and removed — then `--verify`, and lift the hold only after reading the report.
 - **Audit immutability** — `audit_log` has SELECT‑only policies (super_admin) and **no** UPDATE/DELETE; it is append‑only, and the runtime role holds only INSERT and SELECT on it (LP1-03).
 - **Bounded input** — every free‑text column a write DTO accepts is length‑capped from one constant in `@tonyai/shared-types`: `periodValue` (records *and* period locks), `activityUnit` (records *and* the calculation preview), `varianceReason` (sharing `EXPLANATION_MAX_LENGTH` with the void reason and the reviewer's note — three explanations about a figure, one number), and all six subsidiary descriptors. All of them are unbounded `text` in Postgres and all of them reach a generated PDF, Excel sheet and CSV cell verbatim. The caps are app‑side only and deliberately so: `@MaxLength` counts Unicode code points while a Postgres `varchar(n)` counts them differently again, so a database bound would turn a would‑be 400 into a 500. Groundwork for bulk upload, where the multi‑megabyte cell actually arrives. A cap bounds how much padding can be stored, not whether it is stored, so `activityUnit` is also **whitespace‑normalised before it is bounded** (`storableUnit`): one plain space per run, matching the `\s` class `canonicalUnit` itself uses. The vocabulary trims AND collapses `\s+` to `_` before it looks a unit up, so a run does not have to vanish to be ignored — it maps onto the `_` of a multi‑word key. `us`, a **carriage return** and `gallons` was a valid ten‑character `us_gallons`, far under the cap, stored as sent into the column, the immutable snapshot's `inputUnit`, the audit row and all three exports; LF, TAB, VT, FF, U+2028, U+00A0 and U+FEFF behave the same, interior or not, and #111's derived aliases brought `kw`+CR+`h` down to four characters. Case and alias are resolved once, **at the write**: `activity_records.activity_unit` stores the vocabulary's canonical value (`kWh`, `MWh`, `cubic_metres`, …) via `storedUnit`, while the calculation snapshot keeps the entered spelling as `inputUnit` until the record is next edited — so `kw h`, `KWH` and `MWH` are one unit to every export and `GROUP BY`, `unitSymbol` never falls back to raw text, and the U+212A KELVIN SIGN homoglyph can no longer reach the column. A hand‑written migration (`20260917210000_canonical_stored_unit`) brings rows stored before the rule onto it without touching their snapshots.
 - **Caller text is cleaned where the API stores it, and named where it quotes it** — an upload's filename, the header cells an import refusal quotes, and every sentence that repeats a value back (the import report's cell refusals, the unit and period refusals, the calc engine's unit sentences, so the single-record API is covered too) pass through one rule in `apps/api/src/common/caller-text.ts`. It drops control characters and unpaired surrogates (Postgres refuses U+0000 inside `jsonb`, and half a surrogate pair fails the write too), the line and paragraph separators U+2028/U+2029, every format character except ZWJ, ZWNJ and the prepended concatenation marks that are drawn (U+0600-U+0605, U+06DD, U+070F, U+0890, U+0891, U+08E2, U+110BD, U+110CD), and the code points Unicode reserves as invisible but has not assigned. That takes the bidi controls and marks, the zero-width space and the word joiner, the invisible operators, and the tag characters, which spell out ASCII nobody sees. Text that is STORED (`sanitiseCallerText`: the filename and a refusal's reason, the only caller text the append-only `audit_log` holds) keeps everything else and is bounded in code points, so a cut never lands inside a character. A sentence instead QUOTES a value through `quoteCallerText`, which NAMES every character it cannot show — the dropped ones, the invisible ones the rule keeps (a variation selector, ZWJ), U+2800, and the `<`, `…` and `"` its own syntax is made of, so a file cannot forge one — writing each run in place: `Unrecognised column(s): "category<U+200B>", "<U+2063 x40>tco2e". Expected: …`. Naming rather than cleaning matters because the value is matched as written: a quote cleaned in silence named a column the file got right, and told a user their unit was `cubicmetres` when the cell held a BOM and a tab. Each quote is delimited and bounded twice — in units (a character or a whole marker, so padding cannot push a value out) and in code points (so the longest possible refusal still fits an audit row whole). A `$` is dropped from what the unit refusal quotes, because class-validator replaces `$value` in a finished message with the raw value as a `String.replace` replacement string: a 99,994-byte unit of `$value` tokens came back as an 18,563,231-byte 400. The import report bounds every message at `BULK_UPLOAD_MESSAGE_MAX_LENGTH` as well, after the failure has been classified by its raw text; before that, one XLSX shared string behind a thousand rows turned a 12,416-byte workbook into a 32,092,008-byte report, and the same file now returns 135,008 bytes. The issue count needs no cap of its own: each row is accepted or refused once, so the row cap bounds it.
@@ -574,7 +574,7 @@ Run from the repo root (Turborepo fans out to each package):
 | `pnpm e2e` | Playwright E2E: demo flow, gates, RBAC, smoke (requires Supabase running) |
 | `pnpm e2e:ui` | The same suite in Playwright's UI mode, for debugging one spec |
 | `pnpm rls:probe` | Live RLS containment probes via PostgREST (requires Supabase running) |
-| `pnpm storage:reconcile` | The database ↔ Storage reconciliation, both buckets (builds the API first; in the image: `node dist/storage/reconcile.cli.js`). Prints one JSON report: pending/stuck intents, **orphans** (objects no row owns and no intent names), **rows whose object is missing** (with the records an evidence file backs and their status) and evidence rows no record links to — reported, never deleted. `--verify` downloads and hashes up to `--limit` rows that carry a sha256; `--sweep` runs one sweep of pending intents now; `--reclaim-orphans` lists the orphans old enough to remove (`--older-than=<hours>`, default 168) and removes them with `--apply`, never while `STORAGE_CLEANUP_HOLD` is set. `--forget-uploads` (only under `STORAGE_CLEANUP_HOLD`) is the post-restore step above. `--sweep`, `--apply` and `--forget-uploads` off a loopback host need `--allow-remote` — a guard against a typo, not a control (a tunnel is "localhost" too) — and off loopback `--older-than` cannot go below 24 hours. Refuses to run under a role RLS filters. Exits 1 when something needs a person (missing or changed bytes, an unlinked row, a stuck intent). Replaces `pnpm evidence:reclaim` |
+| `pnpm storage:reconcile` | The database ↔ Storage reconciliation, every bucket — evidence, import sources and issued reports' PDFs (builds the API first; in the image: `node dist/storage/reconcile.cli.js`). Prints one JSON report: pending/stuck intents, **orphans** (objects no row owns and no intent names), **rows whose object is missing** (with the records an evidence file backs and their status) and evidence rows no record links to — reported, never deleted. `--verify` downloads and hashes up to `--limit` rows that carry a sha256; `--sweep` runs one sweep of pending intents now; `--reclaim-orphans` lists the orphans old enough to remove (`--older-than=<hours>`, default 168) and removes them with `--apply`, never while `STORAGE_CLEANUP_HOLD` is set. `--forget-uploads` (only under `STORAGE_CLEANUP_HOLD`) is the post-restore step above. `--sweep`, `--apply` and `--forget-uploads` off a loopback host need `--allow-remote` — a guard against a typo, not a control (a tunnel is "localhost" too) — and off loopback `--older-than` cannot go below 24 hours. Refuses to run under a role RLS filters. Exits 1 when something needs a person (missing or changed bytes, an unlinked row, a stuck intent). Replaces `pnpm evidence:reclaim` |
 | `pnpm onboarding <provision\|offboard\|reconcile>` | The operator's tenant boundary (D18, K3, K6; builds the API first; in the image: `node dist/onboarding/onboarding.cli.js`). **A dry run unless `--apply`**, `--operator=<email>` required and written to every audit row (`userId` null), `--allow-remote` needed to write off a loopback database or Supabase. Runs on `DIRECT_URL` and refuses any login but the tables' owner. `provision` creates an organisation (or takes `--organisation-id`) and its first `super_admin`, and sends the invitation; re-run, it completes a half-done provisioning and re-sends an unaccepted invitation (a fresh link), and changes nothing else. `offboard` marks the organisation offboarded (D21's clock; nothing is deleted), disables every member and bans them in Auth. `reconcile` retries Auth bans left pending and lists undelivered invitations. Locally `set -a; source apps/api/.env; set +a` first. Exits 1 while something needs a person |
 | `pnpm --filter @tonyai/api factor-release <load\|withdraw>` | The factor library's loader (LP4-02; builds with the API; in the image: `node dist/factor-releases/factor-release.cli.js`; no root wrapper, P9). **A dry run unless `--apply`**, `--operator=<firm or role>` (never a person — the library's record names it), `--allow-remote` needed to write off a loopback database. Runs on `FACTOR_LOADER_DATABASE_URL` and refuses any login but `tonyai_factor_loader`. `load --file=<release.json>` checks the file with `validateFactorReleaseImport` and loads the release, its rows and its seal in one transaction; re-run, it is a no-op, and other content under a loaded edition is refused; `--supersedes=<edition> --reason=<why>` withdraws the edition an erratum corrects in the same transaction. `withdraw --publisher --edition --reason` withdraws one release. See the `factor-release-import` skill |
 | `pnpm anomaly:probe` | Recompute the anomaly baseline (VAR §4) in SQL over every committed record: how many priors each was scored against, and whether the stored `anomalyFlag` still matches the pool beneath it (read-only; exits 1 on drift) |
@@ -663,6 +663,8 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/h
 | `DELETE` | `/inventory-boundaries/:id` | Delete an open version (204) | `super_admin` |
 | `POST` | `/report-datasets` | Capture a report dataset of a version (`boundaryId`; an extract by `subsidiaryId`/`scope`/`category`); an open version freezes first, unconfirmed — "The capture" | `super_admin`; consultant (a frozen version) |
 | `GET` | `/report-datasets?year=` · `/report-datasets/:id` | A year's datasets the caller may read; one, as retained (`report_dataset_not_found` unless every subsidiary it references is the caller's) | not data_entry |
+| `POST` | `/report-issuances` | Issue a retained dataset as a retained PDF (`datasetId`, `template`; `language` — else the issuer's —, `includeMethodologyNotes`, `includeEvidenceSummary`); status and gaps derived from the dataset alone — "The issuance" | `super_admin`; consultant a partial only (`report_final_forbidden`) |
+| `GET` | `/report-issuances?year=` · `/report-issuances/:id` · `/report-issuances/:id/pdf` | A year's issuances the caller may read; one's `ReportIssuance`; its retained PDF, re-hashed before it is served (`report_issuance_not_found` unless every subsidiary its dataset references is the caller's) | not data_entry |
 | `GET` | `/bulk-upload/template` | Download the import template (XLSX): sheet 1 is exactly the importer's ten columns, sheet 2 (invisible to the importer) names the caller's own reporting entities and the vocabularies | any |
 | `POST` | `/bulk-upload/activity-records` | Import activity records from a CSV/XLSX (multipart `file`, `dryRun` required — exactly `true` or `false`; an empty or missing value is a 400, never a default). Row-level report; 1,000 populated rows / 2 MB (and an XLSX may unpack to at most 16 MB); 5 imports per minute per user. A role that may not author records is refused before the file is parsed, and that refusal is audited (a 413 from the 2 MB limit and a 400 for a malformed `dryRun` happen before the service runs, so those two are not) | `data_entry`, `super_admin` |
 
@@ -1080,10 +1082,10 @@ the batch audit row after settled work, including the `failed` closing path.
 contracts exported by `@tonyai/shared-types`. Existing `ReportStatus`,
 `ReportMetaDTO`, context routes and report assembly are unchanged. The boundary's
 storage and its reader are shipped (LP3-04 PR B, below), its routes write and
-serve it ("The write path", below), and a dataset is captured, retained and
-served ("The capture", below); no final-issuance gate or retained-PDF endpoint
-exists yet (`ReportIssuance` stays dormant). In particular, today's count-based
-"approved" badge does not certify a complete inventory.
+serve it ("The write path", below), a dataset is captured, retained and
+served ("The capture", below), and a retained dataset is issued as a retained
+PDF through the final gate ("The issuance", below). Today's count-based
+"approved" badge still certifies nothing: only an issuance's `final` does.
 
 The dataset records one bounded, consistent capture of the declared boundary,
 records and their unchanged calculation snapshots, evidence references, period
@@ -1164,8 +1166,8 @@ gap, authoritative calculations and consistent GWP sets. Lock keys match exactly
 on `(subsidiaryId, reportingYear, reportingPeriod, periodValue)`; an annual obligation needs
 an `Annual` lock, not twelve monthly locks. `selection === 'extract'` always
 produces `partial` with `filtered_extract`, even when selected records are approved.
-Final has no gaps; partial has at least one. These are the issuance's producer
-requirements, dormant until it lands; the dataset they read is captured today.
+Final has no gaps; partial has at least one. The issuance applies these to the
+retained dataset alone ("The issuance", below).
 
 For **both dataset and issuance**, every lookup (capture, list, metadata, PDF
 retrieval and CSV/Excel projection) first requires requester `organisationId` to
@@ -1519,6 +1521,117 @@ referencing a subsidiary since deleted is no one's to read, never redacted. The
 capture and one dataset's read take the report exports' quota and their
 one-at-a-time lease (EXPORT); the list is a read.
 
+**The issuance (LP3-04 PR D; Decisions 2026-10-21, K1–K5).** A retained
+dataset is issued as a PDF whose exact bytes are retained; the PDF, its
+SHA-256 and the status the final gate derived are the issuance
+(`apps/api/src/report-issuances/`):
+
+| Method | Path | What | Who |
+|---|---|---|---|
+| `POST` | `/report-issuances` | Issue a retained dataset (`datasetId`, `template`; `language` — D16: else the issuer's `profiles.language` —, `includeMethodologyNotes`, `includeEvidenceSummary`, both default false); 201 with its `ReportIssuance` | `super_admin`; a consultant a partial only |
+| `GET` | `/report-issuances?year=` | A year's issuances the caller may read, newest first (at most 50) | every role but data_entry |
+| `GET` | `/report-issuances/:id` | One issuance's `ReportIssuance` | every role but data_entry |
+| `GET` | `/report-issuances/:id/pdf` | Its retained PDF, byte for byte, as an attachment — re-hashed first, never rendered again | every role but data_entry |
+
+**Read, then verified before it is trusted (K2).** One REPEATABLE READ snapshot
+reads the retained row under the read rule (`report_dataset_not_found`
+otherwise, as for the dataset's own routes), the issuer's language, a repeat of
+the same issuance, and the frozen version rebuilt from its stored rows. Then,
+outside any transaction, the dataset's text is held to its row: its fingerprint
+recomputed from it, parsed and canonicalised; its referenced set recomputed;
+its review, coverage, provenance and scope assessments **recomputed from its own
+retained facts** (the releases as the capture found them standing) and required
+equal to the retained ones; and its boundary required to be the frozen version
+as stored, compared whole under the dataset's `schemaVersion` (PR C follow-up
+(9); a later schema adds its own comparison, so a historic dataset is never held
+to a newer shape). TA016 binds a dataset to its version's header and declared
+subsidiaries only; these checks hold a row written past the API to its own
+facts and its version — a self-consistent forgery (statuses, locks or standings
+restated and everything recomputed) by a database-credential holder is beyond
+any check of the row against itself. Any mismatch is a defect: logged, answered
+as an internal error, nothing rendered or stored.
+
+**The final gate (D13, K4; `issuance-gate.ts`).** Status and gaps derive from
+the retained dataset alone — nothing is recalculated and no factor is read
+(V4). Final requires, of the selection's included obligations: the inventory,
+not an extract (`filtered_extract`); no coverage gap — `boundary_unconfirmed`,
+missing records or evidence, attribution, applicability and unmapped records
+among them, one `coverage_gap` each; every satisfying record approved or locked
+(`unapproved_record`, per obligation); every obligation's period locked, matched
+exactly on `(subsidiaryId, reportingYear, reportingPeriod, periodValue)` — twelve
+monthly locks never hold an annual obligation (`unlocked_period`, one per missing
+lock, naming every obligation it holds back); every counted figure authoritative
+(`non_authoritative_calculation`: a placeholder, fixture or withdrawn release,
+an uncalculated or legacy figure); and one GWP set across the counted all-GHG
+calculations (`gwp_set_mismatch` — the capture names two disagreeing sets, and
+the gate also fails closed on a null set beside a named one, K4). Anything else
+is partial, every gap named; final has none. A final is `super_admin`'s (W4):
+a consultant is refused one (`report_final_forbidden`, 403) after the read
+rule, before anything is rendered. **Today no release can be authoritative**
+(the publisher registry admits only the prototype and test publishers until
+LP4-02), so every issuance with counted records is partial; the only final is
+a confirmed boundary whose every category is excluded with its reason.
+
+**The PDF (D16, D20).** A pure function of the dataset and the gate's result
+(`issuance-html.ts`), in the issuance's language from the module's own en/tr
+catalogue (`i18n/`, parity-tested): status and the gaps that block a final, the
+Scope 1/2 figures as retained (a figure the dataset does not hold reads "Not
+calculated", never 0; a scope with no included source, or one an extract's
+scope or category filter leaves out, reads so; Scope 3 not covered), the boundary and selection, and the named exclusions with their
+reasons; the GHG Protocol detail template adds the coverage gaps, the counted
+ledger and the withdrawn records with their reasons; the options add
+the releases as they stood at capture and the evidence by file name; and an
+identity table — issuance, dataset, dataset fingerprint, capture time, renderer.
+Every string a person wrote is escaped; no actor is printed (the bytes are
+retained and cannot be erased). It is printed on the replica's **one Chromium**,
+`PdfRenderer` (`apps/api/src/common/pdf-renderer.ts`, one instance from `PdfRendererModule`), shared with the report
+exports and one render at a time (429 while one runs); `rendererVersion` records
+the renderer and the browser that printed it.
+
+**Retained, recoverably (LP1-02).** `beginUpload` → the bytes uploaded to the
+private `report-artifacts` bucket (PDF only, 20 MiB — `REPORT_MAX_BYTES`'s
+default; `supabase/config.toml` and the seed) under `<organisation>/<artifact>.pdf`,
+never overwriting → read back and hashed: the issuance's `pdf.fingerprint` is the
+SHA-256 of the **stored** bytes → one transaction: the intent adopted first, the
+row, its audit row (`report_issuance` / `issue`: dataset, fingerprint, status,
+gaps by code, language, template, options, renderer, the PDF's artifact id,
+SHA-256 and size). A failure **before** that transaction — the upload, the
+read-back, a hash that differs — removes the object whatever became of its
+intent (`abandonUnadoptedUpload`): no row can own it, even bytes that landed
+after the sweeper took a slow upload's intent (Codex's B9 review of #198). A
+failure **in or after** it abandons the upload only while its intent stands
+(`abandonUpload`), so a committed issuance whose acknowledgement was lost keeps
+its bytes; an upload the sweeper abandoned before the row adopted it answers
+`upload_expired` (409). The object's key never leaves the API — `artifactId` is
+opaque.
+
+**Retained table** (`report_issuances`, `20261021120000_lp3_04_report_issuances`):
+append-only like `audit_log` (K1: finals are not limited — the newest final of
+a year is the current one; a restatement chain is contract follow-up (3)). One
+issuance per dataset, language, template and options (K5, the unique key):
+a repeat is `report_already_issued` (409) — download the retained PDF instead;
+another language or template is another issuance of the same dataset. The guard
+(`report_issuances_guard`, SQLSTATE `TA017`, SECURITY DEFINER, every writer, the
+owner included) admits an insert only of a retained dataset of its own
+organisation whose year, canonicalization, fingerprint and referenced set the
+row repeats, whose gaps are the contract's codes, and — for a final — of an
+inventory whose boundary was confirmed and whose stored coverage holds no gap;
+it stamps `issued_at` from the database's clock; then it refuses every change,
+every delete but the organisation's own (as W10) and `TRUNCATE`. Flat CHECKs
+hold the rest: final ⇔ no gap, language, template, lowercase-hex SHA-256 and
+fingerprint, size, the object key the row's own. RLS is on with no client policy
+and no client grant, the service role included. An organisation's deletion takes
+its issuances; their objects become orphans that `storage:reconcile
+--reclaim-orphans` removes (never the sweeper on its own).
+
+**Download.** The retained bytes, re-hashed against the issuance before they
+are sent: bytes that differ are never served (an internal error, reported);
+bytes that are gone answer `report_artifact_missing` (404, reported to
+operators by id, never by key). `storage:reconcile --verify` hashes every
+issuance's object too. The issue and the download take the report exports'
+quota and lease (EXPORT); the list and one issuance's metadata are reads. The
+screen and the web client (`api.ts`) are LP4-03's (E9).
+
 ## Localisation and error codes
 
 LP3-01 laid the foundation the remaining screens (LP4-04), onboarding (LP4-01) and reports (LP4-03) build on. Turkish UI copy lives **only** in the `tr` catalogue (CLAUDE.md's one exception); keys, code and docs stay English. Recipes: the [`localise-ui`](.claude/skills/localise-ui/SKILL.md) skill.
@@ -1544,6 +1657,7 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | `organisations` | The holding company (top of the hierarchy); `offboarded_at` once the operator offboards it (LP4-01, D21) |
 | `inventory_boundaries` + `inventory_boundary_subsidiaries`, `inventory_boundary_sites`, `inventory_attribution_policies`, `inventory_applicability_cells`, `inventory_sources` | LP3-04 PR B: an organisation's declared inventory boundary per reporting year, one version per header — declared subsidiaries and sites with their operating months, D11's attribution policies, D12's applicability cells, D05's named sources. Immutable once frozen (`TA014`, every writer), names copied in as it freezes; deleted only with an open version or its organisation; a declared subsidiary or site stays. RLS SELECT-only; clients and the service role SELECT only; the runtime role inserts the rows (never updates one) and deletes only a subsidiary's whole declaration, inserts a header open and changes only its decision and freeze — the routes' grants. See "Inventory coverage and report datasets" |
 | `report_datasets` | LP3-04 PR C: one retained report dataset per capture — its exact JSON text (text, not jsonb), fingerprint, context, selection, capturer and referenced subsidiaries. Append-only (`TA016`, every writer): an insert names a frozen version of its organisation and year and agrees with its content; deleted only with its organisation. RLS on with no client policy and nothing granted to any client role, the service role included; the runtime role SELECT, INSERT. See "The capture" |
+| `report_issuances` | LP3-04 PR D: one issuance per retained dataset, language, template and options (the unique key; `report_already_issued`) — its derived status and gaps, the dataset's fingerprint and referenced subsidiaries, the renderer, the issuer (opaque) and its retained PDF's opaque artifact id, object key (`<organisation>/<artifact>.pdf` in `report-artifacts`, CHECKed), size and SHA-256 of the stored bytes. Append-only (`TA017`, every writer): an insert issues a retained dataset of its organisation — year, fingerprint and referenced set the dataset's — a final only of a confirmed inventory without coverage gaps; `issued_at` is the database's clock; deleted only with its organisation. RLS on with no client policy and nothing granted to any client role; the runtime role SELECT, INSERT. See "The issuance" |
 | `invitations` | One per invited profile (LP4-01): `status` `pending` → `sent` → `accepted`, or `revoked`; the email's language, the inviter (null for the operator), attempts and the last failed step with a short code. Operational state: RLS on with no policy and nothing granted to any client role, the service role included |
 | `subsidiaries` | Companies within an organisation (geography — updated only by the API, audited, or the owner: `TA015` — sector, status, included scopes, reporting contact, and `tracking_granularity` — whether completeness is measured for the whole entity or per location) |
 | `locations` | Facilities within a subsidiary (their geography, too, updated only by the API, audited, or the owner: `TA015`) |
@@ -1571,6 +1685,8 @@ Postgres `public` schema (managed by Prisma); Supabase owns the `auth` schema. `
 | `consultant` | Organisation‑wide read + review/reject (**review‑only** — may not enter, edit or submit data, and may not approve) |
 | `data_entry` | Limited to assigned subsidiaries; submit activity data |
 | `executive_viewer` | Read‑only dashboards and reports |
+
+Report datasets and issuances (LP3-04, W3/W4): `super_admin` captures and issues — the only role that issues a **final**; a consultant captures a frozen version and issues **partials** (`report_final_forbidden` on a dataset that qualifies as final); `executive_viewer` reads them; `data_entry` neither captures, issues nor reads one.
 
 ---
 

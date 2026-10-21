@@ -121,6 +121,36 @@ async function evidenceObjects() {
   return (await tenantObjects(observer, tenant)).filter((o) => o.bucket === EVIDENCE_BUCKET);
 }
 
+/**
+ * `base` whose transaction loses its acknowledgement ONCE — the first one after
+ * which `committed()` holds: it really commits, the caller sees `message`.
+ * Every other transaction is acknowledged.
+ */
+function lostAckOnce(base: PrismaService, message: string, committed: () => Promise<boolean>): PrismaService {
+  let lost = false;
+  return new Proxy(base, {
+    get(target, prop) {
+      if (prop === '$transaction') {
+        return async (...args: unknown[]) => {
+          const result = await (target.$transaction as (...x: unknown[]) => Promise<unknown>)(...args);
+          if (!lost && (await committed())) {
+            lost = true;
+            throw new Error(message);
+          }
+          return result;
+        };
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as PrismaService;
+}
+
+/** The owned-bytes guard's alerts this test logged (a removal asked for bytes a row owns). */
+function stillOwnsAlerts(): string[] {
+  return vi.mocked(Logger.prototype.error).mock.calls.map((c) => String(c[0])).filter((m) => /still owns/.test(m));
+}
+
 /** A draft with the engine's own figure, which a submit's recompute accepts (K11). */
 async function draft(data: Partial<Prisma.ActivityRecordUncheckedCreateInput> = {}) {
   return createRecord(a, tenant, data, { priced: true });
@@ -251,19 +281,10 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
     quiet();
     const record = await draft();
     const LOST = 'connection reset after COMMIT (LP1-02 test)';
-    // The transaction really commits; the caller sees an error anyway.
-    const lostAck = new Proxy(a, {
-      get(target, prop) {
-        if (prop === '$transaction') {
-          return async (...args: unknown[]) => {
-            await (target.$transaction as (...x: unknown[]) => Promise<unknown>)(...args);
-            throw new Error(LOST);
-          };
-        }
-        const value = Reflect.get(target, prop, target);
-        return typeof value === 'function' ? value.bind(target) : value;
-      },
-    }) as PrismaService;
+    // The transaction that writes the row really commits; the caller sees an
+    // error anyway. Only that one — any later transaction (a removal's owned-
+    // bytes read) is acknowledged, as it would be.
+    const lostAck = lostAckOnce(a, LOST, async () => (await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })) > 0);
 
     const result = await outcome(
       lifecycleServices(lostAck, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()),
@@ -273,6 +294,9 @@ describe('LP1-02 — an evidence upload, failed at each boundary', () => {
     const row = await observer.evidence.findFirstOrThrow({ where: { subsidiaryId: tenant.subsidiaryId } });
     await expectIntactBytes(row);
     expect(await intents()).toEqual([]);
+    // Kept because no removal was ever asked for — not because the owned-bytes
+    // guard caught one, which alerts an operator ("LP3-04 PR D follow-ups" (20), `qa-auditor`).
+    expect(stillOwnsAlerts()).toEqual([]);
   });
 
   it('the process dies after the upload: the sweeper abandons the intent after its grace and removes the object', async () => {
@@ -1214,6 +1238,19 @@ describe('LP1-02 — an applied import\'s source file, failed at each boundary',
     expect(await intents()).toEqual([]);
   });
 
+  it("the batch row's commit succeeds but its acknowledgement is lost: the batch KEEPS its file", async () => {
+    quiet();
+    const LOST = 'connection reset after COMMIT (import test)';
+    const lostAck = lostAckOnce(a, LOST, async () => (await batches()).length > 0);
+    expect(((await outcome(importer(lostAck).import(tenant.users.dataEntry, csv(), { dryRun: false }))) as Error).message).toBe(LOST);
+    const [batch] = await batches();
+    expect(batch).toBeDefined();
+    expect(sha256(await storage.download(IMPORT_SOURCES_BUCKET, batch!.storagePath!))).toBe(batch!.sha256);
+    expect(await intents()).toEqual([]);
+    // No removal asked for — the conditional abandonment, never the unadopted one (`qa-auditor` M4).
+    expect(stillOwnsAlerts()).toEqual([]);
+  });
+
   it('the batch row cannot be written: the file is removed and the intent closed', async () => {
     quiet();
     const noBatch = a.$extends({
@@ -1254,6 +1291,64 @@ describe('LP1-02 — an applied import\'s source file, failed at each boundary',
     await makeDue();
     await sweeper().sweep();
     expect(await sources()).toEqual([]);
+    expect(await intents()).toEqual([]);
+  });
+});
+
+/**
+ * "LP3-04 PR D follow-ups" (20), the siblings of Codex's B9 P2 on #198: an
+ * upload the sweeper expired while its bytes were still on their way (its
+ * removal ran before they landed), which then reports a failure although the
+ * bytes did land. Before the owning transaction no row can own them, so they
+ * must go — at once, and nothing left for another sweep. `abandonUpload` used
+ * to leave them an orphan only `storage:reconcile` would find.
+ */
+describe('LP1-02 — a late upload that then reports a failure: removed, never an orphan', () => {
+  /** Waits until the sweeper has taken the intent, then sends the real bytes — late — and reports a failure anyway. */
+  function lateFailingUpload() {
+    const send = storage.upload.bind(storage);
+    return vi.spyOn(storage, 'upload').mockImplementationOnce(async (bucket, path, body, contentType) => {
+      const intent = await observer.storageIntent.findFirstOrThrow({ where: { bucket, objectPath: path } });
+      expect(intent.kind).toBe('upload');
+      await observer.$executeRaw`
+        UPDATE storage_intents
+        SET created_at = now() - ${UPLOAD_GRACE_SECONDS + 60}::int * interval '1 second'
+        WHERE id = ${intent.id}::uuid`;
+      const swept = await sweeper().sweep();
+      expect(swept.abandoned).toBeGreaterThanOrEqual(1);
+      expect(await observer.storageIntent.count({ where: { id: intent.id } })).toBe(0);
+      await send(bucket, path, body, contentType);
+      expect(await objectExists(observer, bucket as Bucket, path)).toBe(true);
+      throw new Error(INJECTED);
+    });
+  }
+
+  it('an evidence upload: no row, no object, no intent — and nothing for another sweep', async () => {
+    quiet();
+    const record = await draft();
+    const upload = lateFailingUpload();
+    const result = await outcome(lifecycleServices(a, storage).evidence.upload(tenant.users.dataEntry, record.id, pdfFile()));
+    expect((result as Error).message).toBe(INJECTED);
+    const path = upload.mock.calls[0]![1];
+    expect(await objectExists(observer, EVIDENCE_BUCKET, path)).toBe(false);
+    expect(await observer.evidence.count({ where: { subsidiaryId: tenant.subsidiaryId } })).toBe(0);
+    expect(await intents()).toEqual([]);
+    await sweeper().sweep();
+    expect(await evidenceObjects()).toEqual([]);
+    expect(await intents()).toEqual([]);
+  });
+
+  it("an applied import's source file: no batch, no object, no intent — and nothing for another sweep", async () => {
+    quiet();
+    const upload = lateFailingUpload();
+    const result = await outcome(importer(a).import(tenant.users.dataEntry, importCsv(), { dryRun: false }));
+    expect((result as Error).message).toBe(INJECTED);
+    const path = upload.mock.calls[0]![1];
+    expect(await objectExists(observer, IMPORT_SOURCES_BUCKET, path)).toBe(false);
+    expect(await observer.importBatch.count({ where: { organisationId: tenant.organisationId } })).toBe(0);
+    expect(await intents()).toEqual([]);
+    await sweeper().sweep();
+    expect((await tenantObjects(observer, tenant)).filter((o) => o.bucket === IMPORT_SOURCES_BUCKET)).toEqual([]);
     expect(await intents()).toEqual([]);
   });
 });

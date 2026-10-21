@@ -2363,6 +2363,12 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** LP3-04 PR C: a report dataset — of another organisation, referencing a
    *  subsidiary outside the caller's current access, or none at all. */
   report_dataset_not_found: 404,
+  /** LP3-04 PR D: a report issuance — of another organisation, its dataset
+   *  referencing a subsidiary outside the caller's current access, or none. */
+  report_issuance_not_found: 404,
+  /** LP3-04 PR D: the issuance exists but its retained PDF is gone from
+   *  Storage (reported to operators); it is never re-rendered. */
+  report_artifact_missing: 404,
   /** D19: the account (or its organisation, offboarded) is disabled. Refused
    *  on the next request, whatever token it carries; the web signs it out. */
   account_disabled: 401,
@@ -2373,6 +2379,9 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** An administrator acting on their own account — their role or their
    *  access to the product. Ask another super_admin (LP1-03, LP4-01). */
   own_account_forbidden: 403,
+  /** LP3-04 PR D (W4): the dataset qualifies as final, and only a
+   *  super_admin issues a final report; a consultant issues partials. */
+  report_final_forbidden: 403,
   /** Subsidiary grants belong to data_entry users only (LP1-03): other roles
    *  read their whole organisation, and a stored grant would widen access on
    *  a later role change. */
@@ -2417,6 +2426,9 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
    *  reviewer returns a submitted one first). No params. */
   calculation_stale: 409,
   upload_expired: 409,
+  /** LP3-04 PR D: this dataset is already issued in this language, template
+   *  and options; its PDF is retained — download it instead. */
+  report_already_issued: 409,
   /** A complete read/export exceeds its work or output budget after authorization,
    * over the caller's accessible set only. Inaccessible filters equal empty sets.
    * No partial result. Body depends only on this code: fixed message, no params
@@ -4550,6 +4562,11 @@ export const AUDIT_ACTIONS = [
    *  summarises it — the dataset itself is retained whole. `entity:
    *  'report_dataset'`. */
   'capture',
+  /** LP3-04 PR D: a retained dataset issued as a retained PDF; the diff names
+   *  the dataset, its fingerprint, the status, the gaps by code, the language,
+   *  template and renderer, and the PDF's SHA-256 and size. `entity:
+   *  'report_issuance'`. */
+  'issue',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -4582,6 +4599,8 @@ export const AUDIT_ENTITIES = [
   'inventory_boundary',
   // LP3-04 PR C: a retained report dataset; `entityId` is its `datasetId`.
   'report_dataset',
+  // LP3-04 PR D: a report issuance; `entityId` is its `issuanceId`.
+  'report_issuance',
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

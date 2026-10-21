@@ -139,6 +139,15 @@ allowed_mime_types = [
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]
 
+# Private bucket for issued reports' PDFs (LP3-04 PR D; one object per
+# `report_issuances` row, `<organisation>/<artifact>.pdf`). Never public — the
+# API streams the retained bytes after re-hashing them; never re-rendered. The
+# 20 MiB is `REPORT_MAX_BYTES`'s default, the most a render may produce.
+[storage.buckets.report-artifacts]
+public = false
+file_size_limit = "20MiB"
+allowed_mime_types = ["application/pdf"]
+
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ExcelJS from 'exceljs';
 import puppeteer from 'puppeteer';
 import { ReportsService } from './reports.service';
+import { PdfRenderer } from '../common/pdf-renderer';
 import { buildReportHtml } from './report-html';
 import {
   activityTypeLabel,
@@ -56,6 +57,7 @@ vi.mock('puppeteer', () => ({
   default: {
     launch: vi.fn(async () => ({
       connected: true,
+      version: vi.fn(async () => 'HeadlessChrome/stub'),
       newPage: vi.fn(async () => pdfPage),
       close: vi.fn(),
     })),
@@ -239,6 +241,7 @@ describe('ReportsService', () => {
       prisma as unknown as PrismaService,
       emissions as unknown as EmissionsService,
       auditMock(),
+      new PdfRenderer(),
     );
   });
 
@@ -2138,6 +2141,7 @@ describe('ReportsService — activity types and factor standing (LP3-03)', () =>
       prisma as unknown as PrismaService,
       { summary: vi.fn().mockResolvedValue(SUMMARY) } as unknown as EmissionsService,
       auditMock(),
+      new PdfRenderer(),
     );
   });
 
@@ -2319,7 +2323,7 @@ describe('server-configured report budgets', () => {
       const prisma = createPrismaMock();
       prisma.activityRecord.groupBy.mockResolvedValue([{ status: 'approved', _count: { _all: 2 } }, { status: 'voided', _count: { _all: 1 } }]);
       const emissions = { summary: vi.fn() };
-      const service = new ReportsService(prisma as never, emissions as never, auditMock());
+      const service = new ReportsService(prisma as never, emissions as never, auditMock(), new PdfRenderer());
       expect((await service.meta(admin, 2024)).recordLimit).toBe(2);
       await expect(service.assemble(admin, q)).rejects.toMatchObject({ status: 422 });
       expect(emissions.summary).not.toHaveBeenCalled();
@@ -2330,7 +2334,7 @@ describe('server-configured report budgets', () => {
     vi.stubEnv('REPORT_RECORD_LIMIT', '2');
     try {
       const prisma = createPrismaMock();
-      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock());
+      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
       stubRecords(prisma, [makeRecord({ id: 'a' }), makeRecord({ id: 'b' })]);
       expect((await service.assemble(admin, q)).records).toHaveLength(2);
       for (const [args] of prisma.activityRecord.findMany.mock.calls) expect(args.omit).toEqual({ input: true });
@@ -2343,7 +2347,7 @@ describe('server-configured report budgets', () => {
     vi.stubEnv('REPORT_EVIDENCE_LINK_LIMIT', '1');
     try {
       const prisma = createPrismaMock();
-      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock());
+      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
       stubRecords(prisma, [makeRecord({ evidenceLinks: [{ evidence: { id: 'e1', fileName: 'invoice.pdf', _count: { links: 1 } } }] })]);
       expect((await service.assemble(admin, q)).records[0].evidenceCount).toBe(1);
       await expect(service.assemble(admin, q)).resolves.toBeDefined();
@@ -2358,7 +2362,7 @@ describe('PDF renderer ownership and output limits', () => {
   it('accepts exactly the output ceiling and cancels an oversized stream before audit', async () => {
     vi.stubEnv('REPORT_MAX_BYTES', '100000');
     const cancel = vi.fn();
-    const service = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock());
+    const service = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
     try {
       pdfPage.createPDFStream.mockImplementationOnce(async () => new ReadableStream({
         start(controller) { controller.enqueue(new Uint8Array(100000)); controller.close(); },
@@ -2378,10 +2382,10 @@ describe('PDF renderer ownership and output limits', () => {
     let rejectRender: (error: Error) => void = () => undefined;
     const kill = vi.fn(() => rejectRender(new Error('browser disconnected')));
     vi.mocked(puppeteer.launch).mockResolvedValueOnce({
-      connected: true, newPage: async () => pdfPage, process: () => ({ kill }), close: async () => undefined,
+      connected: true, version: async () => 'HeadlessChrome/stub', newPage: async () => pdfPage, process: () => ({ kill }), close: async () => undefined,
     } as never);
     pdfPage.createPDFStream.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRender = reject; }));
-    const service = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock());
+    const service = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
     audit.record.mockClear();
     try {
       const first = service.generatePdf(admin, q);
@@ -2401,7 +2405,7 @@ describe('review regression reports', () => {
     try {
       const prisma = createPrismaMock();
       prisma.activityRecord.groupBy.mockResolvedValue([{ status: 'approved', _count: { _all: 2 } }]);
-      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock());
+      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
       stubRecords(prisma, [makeRecord({ id: 'a' }), makeRecord({ id: 'b' })]);
       expect((await service.assemble(admin, q)).records).toHaveLength(2);
       for (const [args] of prisma.activityRecord.findMany.mock.calls) expect(args.omit).toEqual({ input: true });
@@ -2411,7 +2415,7 @@ describe('review regression reports', () => {
     vi.stubEnv('REPORT_MAX_BYTES', '100');
     try {
       const prisma = createPrismaMock();
-      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock());
+      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
       stubRecords(prisma, [makeRecord({ id: 'a' })]);
       await expect(service.assemble(admin, q)).rejects.toMatchObject({ status: 422 });
     } finally { vi.unstubAllEnvs(); }
@@ -2420,14 +2424,14 @@ describe('review regression reports', () => {
 
 describe('export byte boundaries independently of source budgets', () => {
   it('accepts exact CSV bytes and refuses one byte above before audit', async () => {
-    const initial = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock());
+    const initial = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
     const data = await initial.assemble(admin, q);
     vi.spyOn(initial, 'assemble').mockResolvedValue(data);
     const bytes = Buffer.byteLength(await initial.generateCsv(admin, q));
     try {
       for (const limit of [bytes, bytes - 1]) {
         vi.stubEnv('REPORT_MAX_BYTES', String(limit));
-        const service = new ReportsService(createPrismaMock() as never, {} as never, auditMock());
+        const service = new ReportsService(createPrismaMock() as never, {} as never, auditMock(), new PdfRenderer());
         vi.spyOn(service, 'assemble').mockResolvedValue(data); audit.record.mockClear();
         if (limit === bytes) expect(Buffer.byteLength(await service.generateCsv(admin, q))).toBe(bytes);
         else { await expect(service.generateCsv(admin, q)).rejects.toMatchObject({ status: 422 }); expect(audit.record).not.toHaveBeenCalled(); }
@@ -2435,13 +2439,13 @@ describe('export byte boundaries independently of source budgets', () => {
     } finally { vi.unstubAllEnvs(); }
   });
   it('accepts exact XLSX bytes and refuses one byte above before audit', async () => {
-    const initial = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock());
+    const initial = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
     const data = await initial.assemble(admin, q);
     vi.stubEnv('REPORT_MAX_BYTES', '100');
     const writeBuffer = vi.fn().mockResolvedValueOnce(Buffer.alloc(100)).mockResolvedValueOnce(Buffer.alloc(101));
     const xlsx = vi.spyOn(ExcelJS.Workbook.prototype, 'xlsx', 'get').mockReturnValue({ writeBuffer } as never);
     try {
-      const service = new ReportsService(createPrismaMock() as never, {} as never, auditMock());
+      const service = new ReportsService(createPrismaMock() as never, {} as never, auditMock(), new PdfRenderer());
       vi.spyOn(service, 'assemble').mockResolvedValue(data);
       expect((await service.generateExcel(admin, q)).length).toBe(100); audit.record.mockClear();
       await expect(service.generateExcel(admin, q)).rejects.toMatchObject({ status: 422 });
@@ -2457,7 +2461,7 @@ it('accepts the exact serialized source budget and rejects one byte less', async
     for (const maximum of [bytes, bytes - 1]) {
       vi.stubEnv('REPORT_MAX_BYTES', String(maximum));
       const prisma = createPrismaMock(); stubRecords(prisma, [record]);
-      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock());
+      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
       if (maximum === bytes) await expect(service.assemble(admin, q)).resolves.toMatchObject({ records: expect.any(Array) });
       else await expect(service.assemble(admin, q)).rejects.toMatchObject({ status: 422 });
     }
