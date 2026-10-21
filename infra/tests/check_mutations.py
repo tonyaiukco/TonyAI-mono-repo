@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 INFRA = Path(__file__).resolve().parents[1]
 MUTANTS = [
@@ -165,10 +166,14 @@ MUTANTS = [
 
 def main():
     # A green control run prevents existing failures masquerading as killed mutants.
+    started = time.monotonic()
+    print('START: full unmodified infrastructure baseline', flush=True)
     result = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(INFRA / 'tests')], capture_output=True)
     if result.returncode:
         sys.exit('FAIL: unmodified tests do not pass; mutation evidence is invalid.')
-    for name, filename, before, after in MUTANTS:
+    print(f'PASS: full baseline ({time.monotonic() - started:.2f}s)', flush=True)
+    for number, (name, filename, before, after) in enumerate(MUTANTS, 1):
+        mutant_started = time.monotonic()
         with tempfile.TemporaryDirectory(prefix='tonyai-infra-mutant-') as directory:
             target = Path(directory) / 'infra'
             target.mkdir()
@@ -193,7 +198,18 @@ def main():
                         'release_secrets.py':'test_rotation_rehearsal.py',
                         'cloud_ops.py':'test_security_failures.py',
                         'supabase_auth.py':'test_auth_lifecycle_settings.py',
-                        'supabase_setup.py':'test_setup_orchestration.py'}
+                        'supabase_setup.py':'test_setup_orchestration.py',
+                        'github_environment.py':'test_github_policy.py',
+                        'candidate.py':'test_candidate_path.py',
+                        'bootstrap_backend.py':'test_backend.py',
+                        'deploy_apps.py':'test_deploy_versions.py',
+                        'configure_oidc.py':'test_oidc_ownership.py',
+                        'pooler.py':'test_security_failures.py',
+                        'check_browser_key.py':'test_security_failures.py',
+                        'runtime_urls.py':'test_pooler_metadata.py',
+                        'secure_transport.py':'test_review_boundaries.py',
+                        'foundation_contract.py':'test_review_boundaries.py',
+                        'supabase_project.py':'test_supabase_resume.py'}
             if filename.startswith('.github/'): pattern = 'test_workflow_security.py'
             else: pattern = targeted.get(filename, pattern)
             # Keep a full suite control above; run each mutant against its direct
@@ -206,14 +222,20 @@ def main():
                 'helper SHA guard removed': 'test_review_boundaries.py',
                 'bucket size readback removed': 'test_review_boundaries.py',
                 'bucket MIME readback removed': 'test_review_boundaries.py',
+                'admin bypass check removed': 'test_review_boundaries.py',
+                'main repository preflight skipped': 'test_review_boundaries.py',
+                'repository binding removed': 'test_review_boundaries.py',
             }
             pattern = overrides.get(name, pattern)
             if name.startswith('mail '): pattern = 'test_mail_settings.py'
             if name.startswith('runtime ') and filename != 'cloud_ops.py': pattern = 'test_runtime_[dl]*.py'
+            print(f'[{number}/{len(MUTANTS)}] START: {name} | {pattern}', flush=True)
+            control_started = time.monotonic()
             control = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(target / 'tests'), '-p', pattern],
                                      cwd=target.parent, capture_output=True)
             if control.returncode:
                 sys.exit('INVALID: unmodified disposable-copy tests do not pass: ' + name)
+            control_seconds = time.monotonic() - control_started
             path = target.parent / filename if filename.startswith('.github/') else target / 'scripts' / filename
             source = path.read_text()
             if source.count(before) != 1:
@@ -230,6 +252,7 @@ suite = unittest.defaultTestLoader.discover(sys.argv[1], pattern=sys.argv[2])
 result = unittest.TextTestRunner(stream=sys.stderr).run(suite)
 print(json.dumps({'failures': len(result.failures), 'errors': len(result.errors)}))
 """
+            test_started = time.monotonic()
             result = subprocess.run([sys.executable, '-c', runner, str(target / 'tests'), pattern], cwd=target.parent, capture_output=True, text=True)
             if result.returncode:
                 sys.exit('INVALID: mutation test process failed: ' + name)
@@ -238,8 +261,11 @@ print(json.dumps({'failures': len(result.failures), 'errors': len(result.errors)
                 sys.exit('INVALID: mutation caused a test error, not an assertion failure: ' + name)
             if not summary['failures']:
                 sys.exit('SURVIVED: ' + name)
-            print('KILLED: ' + name)
-    print(f'PASS: all {len(MUTANTS)} mutations detected by assertion failures, with no test errors.')
+            print(f'KILLED: {name} | control={control_seconds:.2f}s '
+                  f'mutant={time.monotonic() - test_started:.2f}s '
+                  f'total={time.monotonic() - mutant_started:.2f}s', flush=True)
+    print(f'PASS: all {len(MUTANTS)} mutations detected by assertion failures, with no test errors. '
+          f'Total={time.monotonic() - started:.2f}s', flush=True)
 
 
 if __name__ == '__main__':

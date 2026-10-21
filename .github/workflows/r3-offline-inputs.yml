@@ -1,0 +1,86 @@
+name: R3 offline input analysis
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact reviewed source commit, equal to dispatch ref
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  offline-inputs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Bind input analysis to reviewed source
+        env:
+          REVIEWED_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$REVIEWED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$REVIEWED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+      - name: Verify public archives and prepare offline evidence
+        env:
+          R3_BUNDLE: ${{ runner.temp }}/r3-public-artifacts
+          R3_EVIDENCE: ${{ runner.temp }}/r3-offline-inputs
+        run: |
+          umask 077
+          mkdir "$R3_EVIDENCE"
+          python3 -I -B infra/scripts/r3_artifacts.py stage "$R3_BUNDLE"
+          python3 -I -B infra/scripts/r3_toolchain.py "$R3_BUNDLE" "$R3_EVIDENCE/vendor-receipt.json"
+          python3 -I -B infra/scripts/r3_package_evidence.py "$R3_BUNDLE/artifacts" "$R3_EVIDENCE/packages"
+          python3 -I -B infra/scripts/r3_guard_files.py "$R3_EVIDENCE/guard"
+          python3 -I -B - <<'PY'
+          import hashlib, json, os, shutil, subprocess, sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path('infra/scripts').resolve()))
+          from r3_source_plan import prepare
+          output = Path(os.environ['R3_EVIDENCE'])
+          bundle = Path(os.environ['R3_BUNDLE'])
+          for name in ('manifest.json', 'r3-toolchain.lock.json', 'provenance/docker.asc',
+                       'provenance/InRelease', 'provenance/Packages'):
+              target = output / name
+              target.parent.mkdir(mode=0o700, exist_ok=True)
+              shutil.copyfile(bundle / name, target)
+          report = json.loads((output / 'packages/package-analysis.json').read_bytes())
+          prepare(report['node']['binary_sha256'], output / 'source-plan.json', bundle / 'runtime')
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert source == os.environ['GITHUB_SHA']
+          assert not subprocess.check_output(['git', 'status', '--porcelain']).strip()
+          files = {str(p.relative_to(output)): hashlib.sha256(p.read_bytes()).hexdigest()
+                   for p in output.rglob('*') if p.is_file()}
+          binding = {'source_sha': source, 'run_id': os.environ['GITHUB_RUN_ID'],
+                     'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'files': files,
+                     'workflow_sha256': hashlib.sha256(Path('.github/workflows/r3-offline-inputs.yml').read_bytes()).hexdigest(),
+                     'status': 'INPUT_ANALYSIS_ONLY', 'qa_ready': False, 'install_authorized': False}
+          with (output / 'binding.json').open('x') as stream:
+              json.dump(binding, stream, indent=2)
+          PY
+      - name: Retain public input evidence only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r3-offline-inputs-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/r3-offline-inputs/binding.json
+            ${{ runner.temp }}/r3-offline-inputs/vendor-receipt.json
+            ${{ runner.temp }}/r3-offline-inputs/source-plan.json
+            ${{ runner.temp }}/r3-offline-inputs/manifest.json
+            ${{ runner.temp }}/r3-offline-inputs/r3-toolchain.lock.json
+            ${{ runner.temp }}/r3-offline-inputs/provenance/docker.asc
+            ${{ runner.temp }}/r3-offline-inputs/provenance/InRelease
+            ${{ runner.temp }}/r3-offline-inputs/provenance/Packages
+            ${{ runner.temp }}/r3-offline-inputs/packages/package-analysis.json
+            ${{ runner.temp }}/r3-offline-inputs/packages/containerd.io/*
+            ${{ runner.temp }}/r3-offline-inputs/packages/docker-ce/*
+            ${{ runner.temp }}/r3-offline-inputs/packages/docker-ce-cli/*
+            ${{ runner.temp }}/r3-offline-inputs/packages/docker-buildx-plugin/*
+            ${{ runner.temp }}/r3-offline-inputs/packages/docker-compose-plugin/*
+            ${{ runner.temp }}/r3-offline-inputs/guard/*
+      # No sudo, apt install, Docker, Azure, SSH or private runtime artifacts.
+      # This job does not qualify target dependencies or the installer lifecycle.

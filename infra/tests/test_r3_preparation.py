@@ -142,14 +142,31 @@ class OfflineInstall(unittest.TestCase):
             with self.assertRaises(ValueError): install.verify_masks(root)
 
     def test_offline_dependency_closure_refuses_extra_remove_or_missing(self):
-        lock = {'packages': [{'name': 'engine'}, {'name': 'cli'}]}
-        for output in ('Inst engine (1)\nInst extra (2)', 'Inst engine (1)\nInst cli (1)\nInst extra (2)', 'Inst engine (1)\nInst cli (1)\nRemv old', 'Inst engine (1)'):
+        lock = {'packages': [{'name': 'engine', 'version': '1'}, {'name': 'cli', 'version': '1'}]}
+        valid = 'Inst engine (1)\nInst cli (1)\nConf engine (1)\nConf cli (1)'
+        for output in ('Inst engine (1)\nInst extra (2)', 'Inst engine (1)\nInst cli (1)\nInst extra (2)', 'Inst engine (1)\nInst cli (1)\nRemv old', 'Inst engine (1)',
+                       'Inst engine (2)\nInst cli (1)', 'Inst engine [0] (1)\nInst cli (1)',
+                       'Inst engine (1)\nInst engine (1)', 'Inst engine:arm64 (1)\nInst cli (1)',
+                       valid + '\nConf unrelated (1)', valid + '\nConf engine (1)', valid.replace('Conf cli (1)', 'Conf cli (2)'),
+                       valid.replace('Conf cli (1)', 'Conf engine (1)'),
+                       valid.replace('Inst engine (1)', 'Inst engine (2)'),
+                       valid.replace('Inst engine (1)', 'Inst engine [0] (1)'),
+                       valid.replace('Inst cli (1)', 'Inst extra (1)'),
+                       valid + '\nInst engine (1)', valid + '\nRemv old (1)',
+                       valid + '\nPurg docker.io [24.0.7-0ubuntu4]', valid + '\nFoo bar (1)',
+                       valid + '\n0 upgraded, 2 newly installed, 1 to remove and 0 not upgraded.',
+                       valid + '\n  Purg docker.io [24.0.7-0ubuntu4]',
+                       valid.replace('Conf cli (1)', '')):
             with patch.object(toolchain, 'capture', return_value=output), self.assertRaises(ValueError):
                 toolchain.dependency_plan(lock, ['a.deb', 'b.deb'])
-        with patch.object(toolchain, 'capture', return_value='Inst engine (1)\nInst cli (1)') as capture:
-            toolchain.dependency_plan(lock, ['a.deb', 'b.deb'])
+        with patch.object(toolchain, 'capture', return_value=valid) as capture:
+            self.assertEqual(toolchain.dependency_plan(lock, ['a.deb', 'b.deb']), valid)
             self.assertIn('--simulate', capture.call_args.args[0])
             self.assertIn('--no-download', capture.call_args.args[0])
+            self.assertIn('--no-remove', capture.call_args.args[0])
+        info = 'Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following NEW packages will be installed:\n  engine cli\n0 upgraded, 2 newly installed, 0 to remove and 0 not upgraded.\n'
+        with patch.object(toolchain, 'capture', return_value=info + valid):
+            self.assertEqual(toolchain.dependency_plan(lock, ['a.deb', 'b.deb']), info + valid)
 
     def test_nonroot_install_refuses_before_artifact_or_host_access(self):
         with patch.object(install.os, 'geteuid', return_value=501), patch.object(install, 'verify_toolchain') as verify:

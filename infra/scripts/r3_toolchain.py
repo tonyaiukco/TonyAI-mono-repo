@@ -129,14 +129,44 @@ def verify_source_manifest(manifest, source):
 
 
 def install_argv(paths, simulate=False):
-    return ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '--no-download', '--no-install-recommends'] + (['--simulate'] if simulate else ['--yes']) + ['install', *paths]
+    return ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '--no-download', '--no-remove', '--no-install-recommends'] + (['--simulate'] if simulate else ['--yes']) + ['install', *paths]
 
 
 def dependency_plan(lock, paths):
     output = capture(install_argv(paths, simulate=True))
-    planned = [line.split()[1] for line in output.splitlines() if line.startswith('Inst ')]
-    if len(planned) != len(lock['packages']) or set(planned) != {item['name'] for item in lock['packages']} or any(line.startswith('Remv ') for line in output.splitlines()):
+    # A name-only check can accept a different candidate or a replacement of
+    # existing package state. APT's C-locale simulation has no old [version]
+    # field for these fresh installations.
+    lines = [line for line in output.splitlines() if line.startswith('Inst ')]
+    planned = [re.fullmatch(r'Inst ([a-z0-9.+-]+) \(([^ ()]+)(?: [^()]*)?\)', line) for line in lines]
+    expected = {(item['name'], item['version']) for item in lock['packages']}
+    configured = [re.fullmatch(r'Conf ([a-z0-9.+-]+) \(([^ ()]+)(?: [^()]*)?\)', line)
+                  for line in output.splitlines() if line.startswith('Conf ')]
+    # Fail closed on every unrecognised line, including alternate APT actions.
+    # Only reviewed C-locale informational prose is allowed beside Inst/Conf.
+    informational = (
+        r'', r'Reading package lists\.\.\.', r'Building dependency tree\.\.\.',
+        r'Reading state information\.\.\.', r'The following NEW packages will be installed:',
+        rf'0 upgraded, {len(expected)} newly installed, 0 to remove and [0-9]+ not upgraded\.',
+        r'Need to get (?:0 B|0 B/[0-9.]+ [kMGT]?B) of archives\.',
+        r'After this operation, [0-9.]+ [kMGT]?B of additional disk space will be used\.',
+    )
+    names = {name for name, _ in expected}
+    for line in output.splitlines():
+        if line.startswith(('Inst ', 'Conf ')):
+            continue
+        if any(re.fullmatch(pattern, line) for pattern in informational):
+            continue
+        if line.startswith('  ') and line.split() and set(line.split()) <= names:
+            continue
+        raise ValueError('Unreviewed APT action or informational line.')
+    if (any(match is None for match in planned) or len(planned) != len(expected)
+            or {match.groups() for match in planned if match} != expected
+            or any(match is None for match in configured) or len(configured) != len(expected)
+            or {match.groups() for match in configured if match} != expected
+            or any(line.startswith('Remv ') for line in output.splitlines())):
         raise ValueError('Offline plan must install exactly the five pinned packages, with no removal or extra dependency.')
+    return output
 
 
 def provenance_receipt(directory, output):

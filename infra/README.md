@@ -146,6 +146,14 @@ The selfhost mutation runner preserves the repository's `infra/` layout and
 Terraform source dependencies in each disposable copy. Each unmodified copy must
 pass before a mutation is applied; setup/import errors are never valid kills.
 
+`check_mutations.py` runs a full infrastructure baseline once, then uses the
+relevant test module for each of its 119 regression mutants, retaining a clean
+control in every disposable copy. This avoids repeatedly invoking unrelated
+loader mutations and subprocess fixtures. Progress includes the mutant name,
+test selector and control/mutant/total durations, flushed as each result arrives.
+Syntax failures, process failures and test errors are invalid evidence; a mutant
+must cause an assertion failure. The separate R3 and Terraform checks still run.
+
 For a checkout already bound to a live backend, run offline init/validate/test
 in a disposable source copy with a separate local `TF_DATA_DIR` and
 `-backend=false`; preserve the original backend metadata and remote state.
@@ -187,5 +195,14 @@ for this only for that exact reported version and a present dictionary on a bind
 mount; explicit values are never overwritten. Unknown-version omissions, missing
 bind objects and enabled path creation remain refused. The shared host validator
 and explicit `create_host_path: false` source overlays are unchanged.
-The r02 runtime contract rejects the legacy Docker installer; final offline host
-guard installation, unmask ordering and reboot proof remain separate gates.
+The r02 runtime contract rejects both legacy installation shells.
+`r3_package_evidence.py`, `r3_guard_files.py` and `r3_source_plan.py` prepare public
+archive analysis, offline guard payloads and a proposed source map.
+`r3_image_transport.py` verifies/packages the selected-platform OCI closure retaining
+the original root, without importing it. Duplicate/case-colliding keys, foreign
+descriptor fields and conflicting document types are refused. Exact APT
+install/configure candidates, `--no-remove` and observed package/Node receipts
+strengthen the installer. The dispatch-only `r3-offline-inputs.yml` runs public
+input analysis alone. Target closure, actual import/digest resolution, guard
+installation, unmask ordering and reboot proof remain separate gates; see the
+[bounded proposal](runbooks/10-qa-clean-replacement.md#offline-input-qualification-and-host-installation-proposal).
