@@ -313,23 +313,80 @@ recursive dependency satisfaction require separately approved guest execution.
 The hosted runner's package inventory proves neither the Azure image nor its boot
 customizations. No guest inventory has been collected by this package.
 
-**Unimplemented guest execution gate:** before any guest proposal is executable,
-require a complete pre/post `dpkg-query` inventory diff and refuse completion
-unless only the five pinned packages changed. Bind actual APT stdout/stderr
-hashes and compare the executed transaction with the simulation; `--no-download`
-alone still permits cached archives. Observe apt-daily, apt-daily-upgrade and
-unattended-upgrades services/timers and package-manager activity before inventory
-and throughout the transaction. A reviewed isolation procedure and measured
-unchanged preconditions are required; no timer mutation is authorized here.
-The current installer does not enforce this full diff/timer gate, so its receipt
-and completion marker alone are insufficient for guest acceptance.
+**Implemented local guards; guest qualification still open:** the installer now
+queries the complete `dpkg-query -W` inventory (Package, Architecture, Version,
+full Status, Essential, Depends, Pre-Depends and Provides). Duplicate/malformed
+rows and any existing target package, including another architecture, refuse.
+It requires the same inventory after simulation immediately before APT, exactly
+the five pinned additions after APT, and only those five hold transitions before
+the receipt. Every pre-existing row must remain identical; `dpkg --audit` must
+be empty at the initial, post-APT and receipt boundaries.
+
+The separately established isolation must leave `apt-daily.timer`,
+`apt-daily-upgrade.timer`, `apt-daily.service`, `apt-daily-upgrade.service` and
+`unattended-upgrades.service` persistently masked, inactive/dead, with no pending
+job (systemd v255's explicit empty `Job=` value) and service `MainPID=0`.
+The installer observes these states and activation timestamps
+before inventory, before spawning APT, during wait polling, after APT and at the
+receipt boundary. It checks package-manager processes and probes existing native
+package lock inodes at idle boundaries without creating/deleting/bypassing them.
+Only the APT child's process group, bound to its PID/start identity, is permitted
+during APT. Both simulation and execution explicitly set `-o Dpkg::Use-Pty=0`:
+APT 2.7's default PTY path otherwise calls `setsid()` in its dpkg child even with
+stdin from `/dev/null`, violating this group constraint. The transfer proposal
+inherits that same option; a separate-session manager remains refused. Without
+the PTY, dpkg output is retained in the installer's stdout/stderr files instead
+of APT's `/var/log/apt/term.log` terminal capture. A read failure or changed state refuses completion, preserving the
+attempt, child PID, observations and logs. An interrupted observer does not prove
+the detached child stopped. **No apt unit is stopped, masked or unmasked by this
+code.** The isolation procedure needs separate review and owner approval.
+
+APT writes a dedicated, exclusively reserved `/etc/tonyai/r3-install.dpkg.log`
+through `Dpkg::Options::=--log=...`, replacing dpkg's default log destination for
+this invocation; `/var/log/dpkg.log` will not contain this transaction.
+The [documented dpkg log](https://manpages.ubuntu.com/manpages/noble/man1/dpkg.1.html)
+must show exactly the five new installs from `<none>`, their exact configure
+versions and terminal installed states. Unknown records, upgrades/removals,
+extra packages (including unrelated trigger processing), missing or repeated
+actions refuse. The validated simulation and structured actual actions must
+agree on the exact pins; human APT prose is not compared byte-for-byte.
+The existing strict simulation parser is not broadened here.
+
+**CL-P2-3 — explicit guest blocker:** the pinned containerd/CLI/Engine archives
+ship payloads below `/usr/share/man`. If the target has interested man-db
+triggers, dpkg can process them successfully and the strict non-pin transaction
+guard then refuses after APT has changed the host. No receipt is emitted and
+the one-shot attempt cannot be reused. Target man-db presence, trigger interests,
+path exclusions and other APT hooks (including packagekit activation) are not
+qualified. Before proposing guest installation, resolve them from target
+readback and a real Noble transaction fixture under a separately reviewed
+policy. Do not broaden trigger acceptance or disable triggers merely to pass
+this guard. Local synthetic refusal tests do not close this blocker.
+
+Install approval and installed receipt are now **format 2**; approval binds
+`r3_package_state.py` and `r3_apt_observer.py` in addition to the existing source
+hashes. Both helpers are in the staged allowlist, not the runtime host map.
+Old install approvals are refused; old bundles and prior execution evidence must
+not be rebound. The receipt hashes actual APT stdout/stderr, dpkg log, all four
+inventories, simulation streams and every private observation under
+`/etc/tonyai/r3-package-evidence/`. This directory and log are preflighted against
+partial/reused output. No receipt/completion is written on a failed gate.
+
+Sampling is bounded observation, not continuous exclusion of every transient or
+privileged writer. Real Noble simulation/transaction fixtures, native dpkg/APT
+lock behavior, reviewed isolation, target dependency closure and lifecycle/reboot
+proof remain open. Local synthetic tests do not qualify these. **No guest proposal
+becomes executable from this code change or its receipt alone.**
 
 **Open qualification questions:** retain a real Noble APT 2.7 simulation fixture
 (the parser currently refuses broken-list suffixes and unlisted prose, including
-local-archive selection notes; widen only against a reviewed exact fixture); re-observe masks at receipt
-creation, record policy bytes/holds and the detached APT PID, observe rather than
-assert Node version, bind installed files to archive md5sums and anchor the plan
-architecture. Transport still requires a selected exporter/importer; reads before
+local-archive selection notes; widen only against a reviewed exact fixture).
+Qualify the newly implemented receipt mask/hold observations and detached APT PID
+records on the guest. The structured log guard is not a complete chronological
+lifecycle validator; installed-status ordering still needs real-fixture proof.
+Policy-byte observation, observed Node version rather than an asserted field,
+installed-file correspondence to archive md5sums and anchoring the plan
+architecture remain open. Transport still requires a selected exporter/importer; reads before
 size checks and packaging symlink races/partial archives need assessment before
 execution. Contract format 2 retains its label despite the changed required-file
 set: old maps fail closed and must never be silently rebound. These limits remain

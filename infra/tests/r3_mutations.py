@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Targeted call-site mutations in a disposable source copy. No cloud or Docker."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -32,8 +33,8 @@ install('contract-call', 'contract = validate_contract(json.loads(contract_bytes
 install('imds-call', "        validate_identity(contract, json.load(response)['compute'])", '        pass')
 install('replay-forbidden', 'if any(Path(p).exists() or Path(p).is_symlink() for p in forbidden):', 'if False:')
 install('existing-packages', 'if probe.returncode == 0:', 'if False:')
-install('closure-call', '    plan = dependency_plan(lock, paths)', "    plan = ''")
-install('pending-package-audit', "    if capture(['dpkg', '--audit']).strip():", '    if False:')
+install('closure-call', '    plan = dependency_plan(lock, paths, simulation)', "    plan = ''; simulation.update(stdout=b'', stderr=b'', returncode=0)")
+install('pending-package-audit', "    if capture(['dpkg', '--audit']).strip():\n        raise ValueError('Pending or inconsistent package state refused.')", "    if False:\n        raise ValueError('Pending or inconsistent package state refused.')")
 toolchain('plan-configured-versions', "            or {match.groups() for match in configured if match} != expected", '')
 toolchain('plan-candidate-versions', "            or {match.groups() for match in planned if match} != expected", '')
 install('archive-prewrite', '    check_node_archive(node)', '    pass')
@@ -62,7 +63,7 @@ add('infra/scripts/r3_artifacts.py', 'fetch-digest', 'if expected is not None an
 add('infra/scripts/r3_artifacts.py', 'fetch-redirect', "if not response.url.startswith('https://'):", 'if False:')
 add('infra/scripts/r3_transfer.py', 'transfer-lock', "if (directory / 'r3-toolchain.lock.json').read_bytes() != reviewed:", 'if False:')
 add('infra/scripts/r3_transfer.py', 'transfer-invocation', "['python3', '-I', '-B',", "['python3', '-I',")
-add('infra/scripts/r3_transfer.py', 'transfer-apt', "'installer_internal_apt_argv': install_argv(packages)", "'installer_internal_apt_argv': ['apt-get', 'install', *packages]")
+add('infra/scripts/r3_transfer.py', 'transfer-apt', "'installer_internal_apt_argv': install_argv(packages, transaction_log='/etc/tonyai/r3-install.dpkg.log')", "'installer_internal_apt_argv': ['apt-get', 'install', *packages]")
 add('infra/scripts/r3_artifacts.py', 'stage-clean-source', '    source_sha = clean_source()', "    source_sha = git('rev-parse', 'HEAD').decode().strip()")
 add('infra/scripts/r3_artifacts.py', 'stage-helper-allowlist', '    for name in HELPERS:', "    for name in HELPERS + ('private.json',):")
 q = 'infra/scripts/r3_qualification.py'
@@ -207,6 +208,52 @@ add(O, 'oci-upstream-annotation-values', '    if any(not isinstance(item, str) f
 add(O, 'oci-config-media', "        if config.get('mediaType', manifest['config']['mediaType']) != manifest['config']['mediaType']:", '        if False:')
 add(O, 'oci-root-digest-binding', "        if ref.split('@')[-1] != entry['digest']:", '        if False:')
 
+# Inventory/observation guards: synthetic discriminating faults, not guest proof.
+PS = 'infra/scripts/r3_package_state.py'
+AO = 'infra/scripts/r3_apt_observer.py'
+add(PS, 'inventory-duplicate', '        if key in result:', '        if False:')
+add(PS, 'inventory-existing-any-arch', "    if any(row['name'] in targets for row in before.values()):", '    if False:')
+add(PS, 'inventory-exact-set', 'set(after) != set(before) | set(pins)', 'False')
+add(PS, 'inventory-unchanged-existing', '    if any(after[key] != row for key, row in before.items()):', '    if False:')
+add(PS, 'inventory-pin-version', "pin['name'], 'amd64', pin['version'], 'hold ok installed'", "pin['name'], 'amd64', row['version'], 'hold ok installed'")
+add(PS, 'inventory-hold-metadata', '    if final != expected:', '    if False:')
+# Removing the install-set check alone is equivalent: full configure coverage
+# plus configure-requires-install still proves it. Exercise both bypassed guards.
+install_coverage = """        if action == 'configure' and name not in actions['install']:
+            raise ValueError('Dpkg configure precedes install.')
+        actions[action][name] = pins[name]
+    if (set(actions['install']) != set(pins)"""
+add(PS, 'transaction-install-coverage', install_coverage,
+    install_coverage.replace("action == 'configure' and name not in actions['install']", 'False')
+                    .replace("set(actions['install']) != set(pins)", 'False'))
+add(PS, 'transaction-complete-configures', "set(actions['configure']) != set(pins)", 'False')
+add(PS, 'transaction-terminal-status', "states != {name: 'installed' for name in pins}", 'False')
+add(PS, 'transaction-install-old-version', "('<none>', pins[name]) if action == 'install'", "(old, pins[name]) if action == 'install'")
+add(PS, 'transaction-configure-version', "else (pins[name], '<none>')", "else (old, '<none>')")
+add(PS, 'transaction-duplicate-action', " or name in actions[action]", '')
+add(PS, 'transaction-configure-order', "        if action == 'configure' and name not in actions['install']:", '        if False:')
+add(AO, 'observation-active', " or fields['ActiveState'] != 'inactive'", '')
+add(AO, 'observation-persistent-mask', "fields['UnitFileState'] != 'masked'", 'False')
+add(AO, 'observation-pending-job', " or fields['Job'] != ''", '')
+add(AO, 'observation-main-pid', "or fields.get('MainPID', '0') != '0'", 'or False')
+add(AO, 'observation-transition', "    if baseline is not None and observation['units'] != baseline['units']:", '    if False:')
+add(AO, 'observation-foreign-process', "        if child is None or item['pgrp'] != child['pid']:", '        if False:')
+add(AO, 'observation-reused-pid', "current != child or current['pgrp'] != child['pid']", "current['pgrp'] != child['pid']")
+add(AO, 'observation-lock-probe', '            fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)', '            pass')
+add(AO, 'observation-no-process-scan', '    found = processes()', '    found = []')
+install('inventory-pre-execute', '    if inventory(pre_execute_raw) != before:', '    if False:')
+install('inventory-post-diff', '    diff = inventory_diff(before, after, lock)', "    diff = {}")
+install('inventory-final-holds', '    held_inventory(after, final, lock)', '    pass')
+install('transaction-log-validation', '    observed_actions = transaction(private_read(transaction_path).decode(), lock)', '    observed_actions = {}')
+install('observation-validation', '        validate_observation(observed, initial_state, child)', '        pass')
+install('observation-during-apt', "                sample('apt-running', child)", '                pass')
+install('receipt-stdout-binding', "'stdout_sha256': digest(private_read('/etc/tonyai/r3-install.stdout.log'))", "'stdout_sha256': 'f' * 64")
+install('receipt-stderr-binding', "'stderr_sha256': digest(private_read('/etc/tonyai/r3-install.stderr.log'))", "'stderr_sha256': 'f' * 64")
+install('receipt-dpkg-binding', "'dpkg_log_sha256': digest(private_read(transaction_path))", "'dpkg_log_sha256': 'f' * 64")
+
+# Coupled native-contract fixes: explicit non-PTY execution and native Job=.
+toolchain('dpkg-pty-option', ", '-o', 'Dpkg::Use-Pty=0'", '')
+add(AO, 'observation-zero-job-accepted', "fields['Job'] != ''", "fields['Job'] not in ('', '0')")
 
 def mutation_command(file, python_command, node_command):
     """Full R3 baseline first; exercise each mutation with its relevant suites."""
@@ -217,6 +264,8 @@ def mutation_command(file, python_command, node_command):
     elif file.endswith(('r3_image_transport.py', 'r3_guard_files.py', 'r3_package_evidence.py',
                         'r3_source_plan.py', 'replacement_host.py')):
         suites = ['test_r3_offline_package']
+    elif file.endswith(('r3_package_state.py', 'r3_apt_observer.py')):
+        suites = ['test_r3_package_state', 'test_r3_install_guards']
     elif file.endswith('r3_install.py'):
         suites = ['test_r3_install_guards', 'test_r3_preparation']
     elif file.endswith('r3_transfer.py'):
@@ -238,6 +287,12 @@ def main(output):
         root.chmod(0o755)
         for name in ('infra/scripts', 'infra/tests', 'infra/selfhost', '.github/workflows'):
             shutil.copytree(ROOT / name, root / name, ignore=shutil.ignore_patterns('__pycache__'))
+        # Bind the bytes actually exercised in this disposable copy, not only
+        # the checkout observed by an external command wrapper.
+        def source_hashes():
+            return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in sorted(root.rglob('*')) if path.is_file() and '__pycache__' not in path.parts}
+        tested_source = source_hashes()
         command = [sys.executable, '-B', '-m', 'unittest', 'discover', '-s', 'infra/tests', '-p', 'test_r3*.py']
         baseline = subprocess.run(command, cwd=root, capture_output=True)
         if baseline.returncode: raise SystemExit(baseline.stderr.decode())
@@ -259,10 +314,13 @@ def main(output):
                 results.append({'name': name, 'file': file, 'command': test_command, 'result': 'KILLED' if result.returncode else 'SURVIVED',
                                 'diagnostic': (result.stdout + result.stderr).decode()[-3000:] if result.returncode else ''})
             finally: path.write_text(original)
+        if source_hashes() != tested_source:
+            raise ValueError('Disposable test source changed outside the restored mutations.')
     report = {'baseline': 'PASS', 'node_baseline': 'PASS', 'mutations': results, 'killed': sum(r['result'] == 'KILLED' for r in results),
-              'survived': [r['name'] for r in results if r['result'] == 'SURVIVED'], 'invalid': 0}
+              'survived': [r['name'] for r in results if r['result'] == 'SURVIVED'], 'invalid': 0,
+              'source_sha256': tested_source, 'source_unchanged': True}
     with Path(output).open('x') as stream: json.dump(report, stream, indent=2)
-    print(json.dumps({k: v for k, v in report.items() if k != 'mutations'}))
+    print(json.dumps({k: v for k, v in report.items() if k not in ('mutations', 'source_sha256')}))
     return bool(report['survived'])
 
 

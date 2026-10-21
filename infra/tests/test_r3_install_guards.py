@@ -18,17 +18,22 @@ SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
 from r3_artifacts import sha
 from r3_toolchain import install_argv
+from r3_package_state import INVENTORY_ARGV
+import r3_apt_observer as observer
+from r3_package_fixtures import baseline, installed, render, trace, observation
 
 
 class Harness:
     def __init__(self, root, fault=None):
         root = root.resolve()
         self.root, self.fault, self.calls = root, fault, []
+        self.inventory_calls = 0
+        self.observation_calls = 0
         self.bundle = root / 'var/lib/tonyai-r3/r3'; self.helpers = self.bundle / 'helpers'
         for name in ('etc/tonyai', 'etc/systemd/system', 'run/systemd/system', 'usr/sbin', 'usr/bin', 'opt'):
             (root / name).mkdir(parents=True)
         self.helpers.mkdir(parents=True)
-        for name in ('r3_toolchain.py', 'r3_artifacts.py', 'replacement_host.py', 'replacement_bundle.py', 'replacement-source-layout.json'):
+        for name in ('r3_toolchain.py', 'r3_artifacts.py', 'r3_package_state.py', 'r3_apt_observer.py', 'replacement_host.py', 'replacement_bundle.py', 'replacement-source-layout.json'):
             shutil.copyfile(SCRIPTS / name, self.helpers / name)
         source = (SCRIPTS / 'r3_install.py').read_text()
         source = re.sub(r"'/(etc|usr|opt|var|run)/", lambda m: "'" + str(root) + '/' + m.group(1) + '/', source)
@@ -43,8 +48,9 @@ class Harness:
         (self.bundle / 'manifest.json').write_text('{"fixture": true}')
         self.contract = root / 'contract.json'; self.contract.write_text('{"fixture": true}'); self.contract.chmod(0o600)
         h = lambda name: sha((self.helpers / name).read_bytes())
-        self.approval = {'format': 1, 'action': 'r02-offline-toolchain-install', 'contract_sha256': sha(self.contract.read_bytes()),
+        self.approval = {'format': 2, 'action': 'r02-offline-toolchain-install', 'contract_sha256': sha(self.contract.read_bytes()),
             'manifest_sha256': sha((self.bundle / 'manifest.json').read_bytes()), 'installer_sha256': h('r3_install.py'),
+            'package_state_sha256': h('r3_package_state.py'), 'apt_observer_sha256': h('r3_apt_observer.py'),
             'toolchain_verifier_sha256': h('r3_toolchain.py'), 'artifact_verifier_sha256': h('r3_artifacts.py'),
             'toolchain_lock_sha256': sha((self.bundle / 'r3-toolchain.lock.json').read_bytes()),
             'host_guard_sha256': h('replacement_host.py'), 'bundle_helper_sha256': h('replacement_bundle.py'),
@@ -85,6 +91,18 @@ class Harness:
 
     def capture(self, argv):
         self.calls.append(tuple(argv))
+        if argv == INVENTORY_ARGV:
+            self.inventory_calls += 1
+            n = self.inventory_calls
+            rows = baseline() if n <= 2 else installed(self.lock, held=n >= 4)
+            if self.fault == 'man-db-trigger':
+                rows['man-db:amd64'] = {**rows['base:amd64'], 'name': 'man-db', 'version': '2.12.0-4build2', 'essential': ''}
+            if self.fault == 'pre-inventory-change' and n == 2: rows['base:amd64']['version'] = '2'
+            if self.fault == 'unrelated-inventory' and n == 3: rows['base:amd64']['depends'] = 'different'
+            if self.fault == 'final-inventory' and n == 4: rows['base:amd64']['status'] = 'hold ok installed'
+            if self.fault == 'pin-metadata-change' and n == 4: rows[self.lock['packages'][0]['name'] + ':amd64']['depends'] = 'different'
+            if self.fault == 'missing-hold' and n == 4: rows = installed(self.lock)
+            return render(rows)
         if argv == ['dpkg', '--audit']:
             return 'pending package' if self.fault == 'pending-package' else ''
         if argv[:2] == ['systemctl', 'mask']:
@@ -112,15 +130,42 @@ class Harness:
         assert (self.root / 'usr/sbin/policy-rc.d').read_bytes() == b'#!/bin/sh\nexit 101\n'
         assert (self.root / 'usr/sbin/policy-rc.d').stat().st_mode & 0o777 == 0o755
         for service in self.module.SERVICES: assert os.readlink(self.root / 'etc/systemd/system' / service) == '/dev/null'
-        assert argv == install_argv(self.paths)
-        assert argv == ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '--no-download', '--no-remove', '--no-install-recommends', '--yes', 'install', *self.paths]
+        log = self.root / 'etc/tonyai/r3-install.dpkg.log'
+        assert log.read_bytes() == b''
+        assert argv == install_argv(self.paths, transaction_log=log)
+        assert argv == ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '-o', 'Dpkg::Use-Pty=0', '--no-download', '--no-remove', '--no-install-recommends', '-o', 'Dpkg::Options::=--log=' + str(log), '--yes', 'install', *self.paths]
+        data = trace(self.lock)
+        if self.fault == 'dpkg-extra': data += '2026-10-21 12:00:00 remove base:amd64 1.0 <none>\n'
+        if self.fault == 'man-db-trigger': data += '2026-10-21 12:00:00 trigproc man-db:amd64 2.12.0-4build2 <none>\n'
+        log.write_text(data if self.fault != 'dpkg-empty' else '')
+        kwargs['stdout'].write(b'fixture stdout\n'); kwargs['stderr'].write(b'fixture stderr\n')
         assert kwargs['stdin'] == subprocess.DEVNULL and kwargs['start_new_session'] is True
         if self.fault == 'mask-lost': (self.root / 'etc/systemd/system/docker.service').unlink()
-        def wait():
+        waits = []
+        def wait(timeout):
+            assert timeout == 0.25
             if self.fault == 'wrapper-interrupt':
                 raise KeyboardInterrupt()
+            if not waits:
+                waits.append(True)
+                raise subprocess.TimeoutExpired(argv, timeout)
         return types.SimpleNamespace(returncode=100 if self.fault == 'apt-lock-failure' else
-                                     1 if self.fault == 'apt-failure' else 0, wait=wait)
+                                     1 if self.fault == 'apt-failure' else 0, wait=wait, pid=4242)
+
+    def observe(self, check_locks=True):
+        self.observation_calls += 1
+        state = observation(); state['locks_probed'] = check_locks
+        if not check_locks:
+            # Source-derived non-PTY shape; the executed argv is asserted above.
+            state['processes'] = [{'pid': 4242, 'pgrp': 4242, 'start_ticks': 1, 'comm': 'apt-get'},
+                                  {'pid': 4250, 'pgrp': 4242, 'start_ticks': 2, 'comm': 'dpkg'}]
+        if self.fault == 'units-active' or self.fault == 'units-changed' and self.observation_calls == 4:
+            state['units']['apt-daily.timer']['ActiveState'] = 'active'
+        if self.fault == 'observer-error' and self.observation_calls == 4:
+            raise ValueError('Observation unavailable')
+        if self.fault == 'foreign-process' and self.observation_calls == 4:
+            state['processes'] = [{'pid': 5000, 'pgrp': 5000, 'start_ticks': 1, 'comm': 'apt'}]
+        return state
 
     def run(self):
         m = self.module
@@ -139,8 +184,15 @@ class Harness:
             mock(m, 'build_opener', return_value=opener)
             verifier = mock(m, 'verify_toolchain', side_effect=ValueError('verification') if self.fault == 'verification' else None,
                             return_value=(self.lock, self.paths))
-            plan = mock(m, 'dependency_plan', side_effect=ValueError('closure') if self.fault == 'closure' else None,
-                        return_value='fixture exact offline plan\n')
+            def simulate(lock, paths, diagnostics):
+                if self.fault == 'closure': raise ValueError('closure')
+                diagnostics.update(stdout=b'fixture exact offline plan\n', stderr=b'fixture simulation stderr\n', returncode=0)
+                return 'fixture exact offline plan\n'
+            plan = mock(m, 'dependency_plan', side_effect=simulate)
+            mock(m, 'observe', side_effect=self.observe)
+            child_identity = {'pid': 4242, 'pgrp': 4242, 'start_ticks': 1}
+            mock(m, 'process_identity', return_value=child_identity)
+            mock(observer, 'process_identity', return_value=child_identity)
             probe = mock(m.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0 if self.fault == 'installed' else 1))
             mock(m.subprocess, 'Popen', side_effect=self.popen)
             mock(m, 'capture', side_effect=self.capture)
@@ -162,7 +214,7 @@ class Harness:
             stack.enter_context(redirect_stdout(io.StringIO()))
             m.install(self.bundle, self.contract, self.approval_path, 'f' * 64 if self.fault == 'approval-hash' else self.approved)
             verifier.assert_called_once_with(self.bundle, self.approval['toolchain_lock_sha256'])
-            plan.assert_called_once_with(self.lock, self.paths)
+            self.assert_plan(plan)
             contract.assert_called_once_with({'fixture': True}); identity.assert_called_once_with({'fixture': True}, {'vmId': 'fixture'})
             self.request = opener.open.call_args.args[0]
             assert self.request.full_url == 'http://169.254.169.254/metadata/instance?api-version=2021-02-01'
@@ -170,8 +222,26 @@ class Harness:
             assert probe.call_count == 5
             assert filter_call.call_count >= 2
 
+    def assert_plan(self, plan):
+        assert plan.call_count == 1
+        assert plan.call_args.args[:2] == (self.lock, self.paths)
+        assert plan.call_args.args[2]['returncode'] == 0
+
 
 class InstallGuards(unittest.TestCase):
+    def test_man_db_trigger_is_still_a_post_apt_guest_blocker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            h = Harness(Path(tmp), 'man-db-trigger')
+            with self.assertRaisesRegex(ValueError, 'Unexpected dpkg transaction package'):
+                h.run()
+            self.assertEqual(sum(call[0] == 'apt' for call in h.calls), 1)
+            evidence = h.root / 'etc/tonyai/r3-package-evidence'
+            self.assertTrue((evidence / 'inventory-after.txt').is_file())
+            self.assertTrue((h.root / 'etc/tonyai/r3-install-attempt.json').is_file())
+            self.assertFalse((h.root / 'etc/tonyai/r3-installed-receipt.json').exists())
+            self.assertFalse((h.root / 'etc/tonyai/r3-install-complete.json').exists())
+            self.assertFalse(any(call[:2] == ('apt-mark', 'hold') for call in h.calls))
+
     def test_wrapper_interrupt_preserves_masks_and_never_claims_child_termination(self):
         with tempfile.TemporaryDirectory() as tmp:
             h = Harness(Path(tmp), 'wrapper-interrupt')
@@ -199,6 +269,20 @@ class InstallGuards(unittest.TestCase):
                 self.assertEqual((h.root / 'etc/tonyai/r3-install-plan.txt').read_bytes(), b'fixture exact offline plan\n')
                 self.assertEqual(receipt['apt_plan_sha256'], sha(b'fixture exact offline plan\n'))
                 self.assertIs(receipt['activation_authorized'], False)
+                tx = receipt['package_transaction']
+                self.assertEqual(receipt['format'], 2)
+                self.assertEqual(tx['stdout_sha256'], sha(b'fixture stdout\n'))
+                self.assertEqual(tx['stderr_sha256'], sha(b'fixture stderr\n'))
+                self.assertEqual(tx['dpkg_log_sha256'], sha(trace(h.lock).encode()))
+                self.assertEqual(tx['returncode'], 0)
+                self.assertIn('added', tx['inventory_diff'])
+                self.assertEqual(tx['inventory_diff']['added'], sorted(p['name'] + ':amd64' for p in h.lock['packages']))
+                self.assertIs(tx['held'], True)
+                evidence = h.root / 'etc/tonyai/r3-package-evidence'
+                self.assertEqual(tx['evidence_sha256'], {f.name: sha(f.read_bytes()) for f in evidence.iterdir()})
+                self.assertEqual(tx['evidence_sha256']['simulation.stderr.log'], sha(b'fixture simulation stderr\n'))
+                self.assertEqual(h.inventory_calls, 4)
+                self.assertEqual(h.observation_calls, 7)
                 daemon = json.loads((h.root / 'etc/docker/daemon.json').read_bytes()); self.assertIs(daemon['live-restore'], False)
                 self.assertIn(('apt-mark', 'hold', *[p['name'] for p in h.lock['packages']]), h.calls)
                 self.assertIn(('systemctl', 'mask', *h.module.SERVICES), h.calls)
@@ -210,15 +294,17 @@ class InstallGuards(unittest.TestCase):
 
     def test_every_prewrite_guard(self):
         bindings = ['format', 'action', 'contract_sha256', 'manifest_sha256', 'installer_sha256', 'toolchain_verifier_sha256',
-                    'artifact_verifier_sha256', 'toolchain_lock_sha256', 'host_guard_sha256', 'bundle_helper_sha256', 'layout_sha256']
+                    'artifact_verifier_sha256', 'toolchain_lock_sha256', 'host_guard_sha256', 'bundle_helper_sha256', 'layout_sha256',
+                    'package_state_sha256', 'apt_observer_sha256']
         paths = ['usr/bin/docker', 'usr/bin/containerd', 'etc/docker/daemon.json', 'usr/sbin/policy-rc.d',
                  'opt/tonyai-tools', 'var/lib/docker', 'var/lib/containerd', 'etc/tonyai/r3-install-attempt.json']
         paths += ['etc/tonyai/' + name for name in ('r3-installed-receipt.json', 'r3-install-complete.json',
-                  'r3-install-plan.txt', 'r3-install.stdout.log', 'r3-install.stderr.log', 'docker-packages.txt')]
+                  'r3-install-plan.txt', 'r3-install.stdout.log', 'r3-install.stderr.log', 'docker-packages.txt',
+                  'r3-package-evidence', 'r3-install.dpkg.log')]
         paths += [root + '/' + s for root in ('etc/systemd/system', 'run/systemd/system') for s in ('docker.service', 'docker.socket', 'containerd.service')]
         faults = ['uid', 'platform', 'os', 'os-version', 'unsafe-root', 'unsafe-entry', 'approval-hash', 'helper-location',
                   'contract', 'identity', 'verification', 'installed', 'closure', 'broken-mask', 'pending-package',
-                  'foreign-root', 'absolute', 'traversal', 'symlink', 'hardlink', 'fifo', 'file-root']
+                  'foreign-root', 'absolute', 'traversal', 'symlink', 'hardlink', 'fifo', 'file-root', 'units-active']
         faults += ['env:' + v for v in ('APT_CONFIG', 'DPKG_ROOT', 'LD_PRELOAD', 'PYTHONPATH', 'PYTHONHOME', 'DEBIAN_FRONTEND')]
         faults += ['binding:' + key for key in bindings] + ['existing:' + path for path in paths]
         for fault in faults:
@@ -231,7 +317,9 @@ class InstallGuards(unittest.TestCase):
                 self.assertEqual(before, after)
 
     def test_postwrite_failures_preserve_attempt_and_refuse_completion(self):
-        for fault in ('mask-missing', 'apt-failure', 'apt-lock-failure', 'version', 'arch', 'status', 'mask-lost', 'node-version', 'hold-failure', 'receipt-write'):
+        for fault in ('mask-missing', 'apt-failure', 'apt-lock-failure', 'version', 'arch', 'status', 'mask-lost', 'node-version', 'hold-failure', 'receipt-write',
+                      'pre-inventory-change', 'unrelated-inventory', 'final-inventory', 'missing-hold', 'pin-metadata-change',
+                      'dpkg-extra', 'dpkg-empty', 'units-changed', 'observer-error', 'foreign-process'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 h = Harness(Path(tmp), fault)
                 with self.assertRaises(ValueError): h.run()
@@ -239,6 +327,9 @@ class InstallGuards(unittest.TestCase):
                 self.assertTrue((h.root / 'usr/sbin/policy-rc.d').is_file())
                 self.assertFalse((h.root / 'etc/tonyai/r3-install-complete.json').exists())
                 if fault == 'mask-missing': self.assertFalse(any(call[0] == 'apt' for call in h.calls))
+                if fault == 'mask-lost':
+                    self.assertFalse((h.root / 'opt/tonyai-tools').exists())
+                    self.assertFalse(any(call[0].endswith('/bin/node') for call in h.calls))
                 self.assertFalse(any('unmask' in c or 'start' in c or '--runtime' in c for c in h.calls))
 
 

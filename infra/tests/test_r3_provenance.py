@@ -213,7 +213,7 @@ class Provenance(unittest.TestCase):
                 with self.assertRaises(ValueError): artifacts.clean_source()
                 with self.assertRaises(ValueError): artifacts.source_bytes(source, 'public')
             self.assertNotIn('selfhost_docker.sh', artifacts.HELPERS)
-            self.assertEqual(set(artifacts.HELPERS), {'r3_artifacts.py', 'r3_toolchain.py', 'r3_install.py',
+            self.assertEqual(set(artifacts.HELPERS), {'r3_artifacts.py', 'r3_toolchain.py', 'r3_install.py', 'r3_package_state.py', 'r3_apt_observer.py',
                 'replacement_host.py', 'replacement_bundle.py', 'replacement-source-layout.json', 'selfhost_init.mjs', 'selfhost_pin.py'})
 
 
