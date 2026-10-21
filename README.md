@@ -508,7 +508,18 @@ control/scripts and Node bytes, render offline guard files and a full source pla
 and verify an exact OCI transport archive without importing it. The installer
 checks exact APT install/configure candidates, rejects unknown action/prose lines,
 and uses `--no-remove` for simulation and installation. It retains an observed
-package/Node receipt. OCI metadata rejects duplicate/case-colliding keys and
+package/Node receipt. The format-2 install approval binds the reviewed source,
+contract and manifest hashes; the receipt additionally binds complete package
+inventories, exact five-pin dpkg actions, APT output hashes and sampled
+package-manager isolation. Simulation and installation pin `Dpkg::Use-Pty=0` to
+keep dpkg in the observed APT process group. The observer requires systemd's
+native empty `Job=` value. Apt timers/services must already be persistently
+masked and inactive under a separately approved procedure; the installer does
+not change them. Unexpected inventory/action/state changes refuse completion.
+These guards have synthetic fixture tests, not target qualification. The pins
+ship man-page payloads: a target with interested man-db triggers can be changed
+by APT before the strict transaction guard refuses. Target trigger policy and a
+real Noble fixture therefore block guest execution. OCI metadata rejects duplicate/case-colliding keys and
 ambiguous descriptor/document fields. A separate dispatch-only offline-input analysis workflow retains public
 evidence; target dependency closure, real image import, guard installation and
 reboot qualification remain open. See [runbook 10](infra/runbooks/10-qa-clean-replacement.md#disposable-qualification-proposal-and-evidence-boundary).

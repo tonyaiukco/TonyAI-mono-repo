@@ -93,7 +93,7 @@ def inspect(artifacts, output):
                   'dpkg --audit, apt configuration/hooks and installed Essential package health',
                   'Recursive dependency/provider/version resolution by native APT/dpkg on the exact image',
                   'Exact five-package no-download/no-remove plan, zero removals, no additional candidates',
-                  'Full pre/post dpkg inventory diff: refuse completion unless only the five pins changed; not enforced by current installer',
+                  'Qualify the installer full pre/post dpkg inventory diff and exact five-pin transaction on the target',
                   'Observed apt-daily/upgrade timers and unattended-upgrades state; reviewed transaction isolation',
                   'Actual APT stdout/stderr hashes and executed-versus-simulated transaction comparison',
                   'Maintainer-script and trigger effects under masks, interruption, lock failure and reboot'],

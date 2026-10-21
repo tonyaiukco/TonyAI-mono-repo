@@ -202,7 +202,14 @@ archive analysis, offline guard payloads and a proposed source map.
 the original root, without importing it. Duplicate/case-colliding keys, foreign
 descriptor fields and conflicting document types are refused. Exact APT
 install/configure candidates, `--no-remove` and observed package/Node receipts
-strengthen the installer. The dispatch-only `r3-offline-inputs.yml` runs public
+strengthen the installer. `r3_package_state.py` checks complete pre/post inventories
+and exact five-pin dpkg log actions; `r3_apt_observer.py` samples already-masked
+apt units, process identity and boundary lock contention. The format-2 install
+approval binds both new helpers; the format-2 receipt binds inventories, APT
+stdout/stderr, the dedicated dpkg log and observations. Old approvals cannot be
+reused. No apt timer/service mutation is performed. A real Noble fixture, reviewed
+isolation procedure and lifecycle qualification remain required before any guest
+proposal becomes executable. The dispatch-only `r3-offline-inputs.yml` runs public
 input analysis alone. Target closure, actual import/digest resolution, guard
 installation, unmask ordering and reboot proof remain separate gates; see the
 [bounded proposal](runbooks/10-qa-clean-replacement.md#offline-input-qualification-and-host-installation-proposal).

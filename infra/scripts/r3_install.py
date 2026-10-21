@@ -13,6 +13,7 @@ import posixpath
 import subprocess
 import sys
 import tarfile
+import time
 from urllib.request import Request, build_opener, ProxyHandler
 
 # Support python3 -I -B on the transferred root-owned helper directory.
@@ -20,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from replacement_bundle import encoded, write_new, private_read, digest
 from replacement_host import validate_contract, validate_identity, safe_path
 from r3_toolchain import verify_toolchain, dependency_plan, install_argv, capture
+from r3_package_state import INVENTORY_ARGV, inventory, require_absent, inventory_diff, held_inventory, transaction
+from r3_apt_observer import observe, validate as validate_observation, process_identity
 
 DAEMON = {'log-driver': 'local', 'log-opts': {'max-size': '10m', 'max-file': '3'},
           'live-restore': False, 'firewall-backend': 'iptables'}
@@ -71,10 +74,12 @@ def install(bundle, contract_path, approval_path, approved_hash):
     approval = json.loads(approval_bytes)
     contract_bytes = private_read(contract_path)
     contract = validate_contract(json.loads(contract_bytes))
-    expected = {'format': 1, 'action': 'r02-offline-toolchain-install',
+    expected = {'format': 2, 'action': 'r02-offline-toolchain-install',
                 'contract_sha256': digest(contract_bytes),
                 'manifest_sha256': digest((bundle / 'manifest.json').read_bytes()),
                 'installer_sha256': digest(Path(__file__).read_bytes()),
+                'package_state_sha256': digest(Path(__file__).with_name('r3_package_state.py').read_bytes()),
+                'apt_observer_sha256': digest(Path(__file__).with_name('r3_apt_observer.py').read_bytes()),
                 'toolchain_verifier_sha256': digest(Path(__file__).with_name('r3_toolchain.py').read_bytes()),
                 'artifact_verifier_sha256': digest(Path(__file__).with_name('r3_artifacts.py').read_bytes()),
                 'toolchain_lock_sha256': digest((bundle / 'r3-toolchain.lock.json').read_bytes()),
@@ -92,36 +97,94 @@ def install(bundle, contract_path, approval_path, approved_hash):
                  '/opt/tonyai-tools', '/var/lib/docker', '/var/lib/containerd', '/etc/tonyai/r3-install-attempt.json']
     forbidden += ['/etc/tonyai/' + name for name in (
         'r3-installed-receipt.json', 'r3-install-complete.json', 'r3-install-plan.txt',
-        'r3-install.stdout.log', 'r3-install.stderr.log', 'docker-packages.txt')]
+        'r3-install.stdout.log', 'r3-install.stderr.log', 'docker-packages.txt',
+        'r3-package-evidence', 'r3-install.dpkg.log')]
     forbidden += [root + service for root in ('/run/systemd/system/', '/etc/systemd/system/') for service in SERVICES]
     if any(Path(p).exists() or Path(p).is_symlink() for p in forbidden):
         raise ValueError('Existing/partial installation refused; preserve and review.')
     # A dedicated toolchain install must not overwrite pre-existing package state.
     lock, paths = verify_toolchain(bundle, approval['toolchain_lock_sha256'])
+    initial_state = observe()
+    validate_observation(initial_state)
+    before_raw = capture(INVENTORY_ARGV)
+    before = inventory(before_raw)
+    require_absent(before, lock)
     for item in lock['packages']:
         probe = subprocess.run(['dpkg-query', '-W', '-f=${db:Status-Status}', item['name']], capture_output=True)
         if probe.returncode == 0:
             raise ValueError('Existing Docker package state refused.')
     if capture(['dpkg', '--audit']).strip():
         raise ValueError('Pending or inconsistent package state refused.')
-    plan = dependency_plan(lock, paths)
+    simulation = {}
+    plan = dependency_plan(lock, paths, simulation)
     node = bundle / 'artifacts' / lock['node']['url'].rsplit('/', 1)[1]
     check_node_archive(node)
     safe_path('/etc/tonyai', directory=True)
     write_new('/etc/tonyai/r3-install-attempt.json', encoded(expected))
     write_new('/etc/tonyai/r3-install-plan.txt', plan.encode())
+    evidence = Path('/etc/tonyai/r3-package-evidence')
+    evidence.mkdir(mode=0o700)
+    write_new(evidence / 'inventory-before.txt', before_raw.encode())
+    write_new(evidence / 'simulation.stdout.log', simulation['stdout'])
+    write_new(evidence / 'simulation.stderr.log', simulation['stderr'])
+    write_new(evidence / 'initial-state.json', encoded(initial_state))
+    samples = []
+
+    def sample(phase, child=None):
+        # Persist each observation before accepting it. A failed read also leaves
+        # a refusal record; a detached APT child is never presumed terminated.
+        name = f'state-{len(samples):04d}.json'
+        try:
+            observed = observe(check_locks=child is None)
+        except Exception:
+            write_new(evidence / name, encoded({'phase': phase, 'observation_failed': True}))
+            raise
+        write_new(evidence / name, encoded({'phase': phase, 'monotonic_ns': time.monotonic_ns(),
+                                          'child': child, 'observation': observed}))
+        samples.append(name)
+        validate_observation(observed, initial_state, child)
+
     # Both dpkg maintainer scripts and systemd must be prevented from starting
     # daemons before the separately reviewed mount/firewall/source guards exist.
     write_new('/usr/sbin/policy-rc.d', b'#!/bin/sh\nexit 101\n')
     Path('/usr/sbin/policy-rc.d').chmod(0o755)
     capture(['systemctl', 'mask', *SERVICES])
     verify_masks()
+    sample('before-apt')
+    pre_execute_raw = capture(INVENTORY_ARGV)
+    write_new(evidence / 'inventory-pre-execute.txt', pre_execute_raw.encode())
+    if inventory(pre_execute_raw) != before:
+        raise ValueError('Package inventory changed after simulation.')
+    sample('before-spawn')
+    transaction_path = Path('/etc/tonyai/r3-install.dpkg.log')
+    write_new(transaction_path, b'')
+    executed_argv = install_argv(paths, transaction_log=transaction_path)
     # Regular exclusive logs survive terminal/wrapper loss; no automatic retry.
     with open('/etc/tonyai/r3-install.stdout.log', 'xb') as out, open('/etc/tonyai/r3-install.stderr.log', 'xb') as err:
-        process = subprocess.Popen(install_argv(paths), stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
-        process.wait()
+        process = subprocess.Popen(executed_argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
+        write_new(evidence / 'child.json', encoded({'pid': process.pid, 'argv': executed_argv}))
+        try:
+            child = process_identity(Path('/proc') / str(process.pid))
+        except FileNotFoundError:
+            child = None
+        while True:
+            try:
+                process.wait(timeout=0.25)
+                break
+            except subprocess.TimeoutExpired:
+                if child is None:
+                    raise ValueError('Missing package-manager child identity.')
+                sample('apt-running', child)
         if process.returncode:
             raise ValueError('Offline installation failed; attempt/masks retained.')
+    sample('after-apt')
+    if capture(['dpkg', '--audit']).strip():
+        raise ValueError('Post-install package audit failed.')
+    after_raw = capture(INVENTORY_ARGV)
+    write_new(evidence / 'inventory-after.txt', after_raw.encode())
+    after = inventory(after_raw)
+    diff = inventory_diff(before, after, lock)
+    observed_actions = transaction(private_read(transaction_path).decode(), lock)
     installed = []
     for item in lock['packages']:
         actual = capture(['dpkg-query', '-W', '-f=${Package}\n${Version}\n${Architecture}\n${db:Status-Status}', item['name']]).splitlines()
@@ -143,11 +206,28 @@ def install(bundle, contract_path, approval_path, approved_hash):
     write_new('/etc/docker/daemon.json', encoded(DAEMON))
     write_new('/etc/tonyai/docker-packages.txt', ''.join(item['name'] + '=' + item['version'] + '\n' for item in lock['packages']).encode())
     capture(['apt-mark', 'hold', *[item['name'] for item in lock['packages']]])
+    sample('before-receipt')
+    final_raw = capture(INVENTORY_ARGV)
+    write_new(evidence / 'inventory-final.txt', final_raw.encode())
+    final = inventory(final_raw)
+    inventory_diff(before, final, lock, held=True)
+    held_inventory(after, final, lock)
+    if capture(['dpkg', '--audit']).strip():
+        raise ValueError('Final package audit failed.')
+    sample('receipt-boundary')
+    verify_masks()
     node_binary = Path('/opt/tonyai-tools/node-v22.23.3-linux-x64/bin/node')
     safe_path(node_binary)
     info = node_binary.stat()
-    receipt = {'format': 1, 'approval_sha256': approved_hash, 'binding': expected,
+    evidence_hashes = {f.name: digest(private_read(f)) for f in evidence.iterdir()}
+    receipt = {'format': 2, 'approval_sha256': approved_hash, 'binding': expected,
                'packages': installed, 'apt_plan_sha256': digest(plan.encode()),
+               'package_transaction': {'inventory_diff': diff, 'held': True, 'actions': observed_actions,
+                   'executed_argv': executed_argv, 'returncode': process.returncode,
+                   'stdout_sha256': digest(private_read('/etc/tonyai/r3-install.stdout.log')),
+                   'stderr_sha256': digest(private_read('/etc/tonyai/r3-install.stderr.log')),
+                   'dpkg_log_sha256': digest(private_read(transaction_path)), 'evidence_sha256': evidence_hashes,
+                   'observation_limit': 'Sampled units/processes and boundary lock probes; not continuous exclusion of privileged writers.'},
                'node': {'path': str(node_binary), 'sha256': digest(node_binary.read_bytes()),
                         'version': '22.23.3', 'uid': info.st_uid, 'gid': info.st_gid,
                         'mode': oct(info.st_mode & 0o7777)},

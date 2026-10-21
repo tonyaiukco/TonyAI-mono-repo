@@ -128,12 +128,23 @@ def verify_source_manifest(manifest, source):
     return lock_bytes
 
 
-def install_argv(paths, simulate=False):
-    return ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '--no-download', '--no-remove', '--no-install-recommends'] + (['--simulate'] if simulate else ['--yes']) + ['install', *paths]
+def install_argv(paths, simulate=False, transaction_log=None):
+    options = [] if transaction_log is None else ['-o', 'Dpkg::Options::=--log=' + str(transaction_log)]
+    # APT 2.7's default PTY path calls setsid() in its dpkg child. Disable it
+    # explicitly so the observer's bound APT process group remains applicable.
+    return ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '-o', 'Dpkg::Use-Pty=0', '--no-download', '--no-remove', '--no-install-recommends'] + options + (['--simulate'] if simulate else ['--yes']) + ['install', *paths]
 
 
-def dependency_plan(lock, paths):
-    output = capture(install_argv(paths, simulate=True))
+def dependency_plan(lock, paths, diagnostics=None):
+    if diagnostics is None:
+        output = capture(install_argv(paths, simulate=True))
+    else:
+        result = subprocess.run(install_argv(paths, simulate=True), capture_output=True,
+                                timeout=120, stdin=subprocess.DEVNULL)
+        diagnostics.update(stdout=result.stdout, stderr=result.stderr, returncode=result.returncode)
+        if result.returncode:
+            raise ValueError('Offline simulation failed.')
+        output = result.stdout.decode()
     # A name-only check can accept a different candidate or a replacement of
     # existing package state. APT's C-locale simulation has no old [version]
     # field for these fresh installations.

@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-HELPERS = ('r3_artifacts.py', 'r3_toolchain.py', 'r3_install.py', 'replacement_host.py',
+HELPERS = ('r3_artifacts.py', 'r3_toolchain.py', 'r3_install.py', 'r3_package_state.py', 'r3_apt_observer.py', 'replacement_host.py',
            'replacement_bundle.py', 'replacement-source-layout.json', 'selfhost_init.mjs', 'selfhost_pin.py')
 RUNTIME = ('compose.qa.yml', 'compose.https.yml', 'compose.r02.yml', 'Caddyfile',
            'credential-template.json', 'images.qa.lock.json', 'upstream.lock.json')

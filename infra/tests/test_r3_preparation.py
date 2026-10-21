@@ -95,7 +95,10 @@ class Artifacts(unittest.TestCase):
                 proposal = transfer.prepare(root, output)
                 with self.assertRaises(FileExistsError): transfer.prepare(root, output)
             self.assertFalse(proposal['azure_mutations_authorized'])
-            self.assertEqual(proposal['installer_internal_apt_argv'], toolchain.install_argv(['/var/lib/tonyai-r3/r3/artifacts/' + p['url'].rsplit('/', 1)[1] for p in lock['packages']]))
+            self.assertEqual(proposal['installer_internal_apt_argv'], toolchain.install_argv(['/var/lib/tonyai-r3/r3/artifacts/' + p['url'].rsplit('/', 1)[1] for p in lock['packages']], transaction_log='/etc/tonyai/r3-install.dpkg.log'))
+            self.assertEqual(proposal['installer_internal_apt_argv'][:5],
+                             ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '-o', 'Dpkg::Use-Pty=0'])
+            self.assertEqual(proposal['install_approval_format'], 2)
             self.assertEqual(proposal['proposed_install_argv'][:4], ['python3', '-I', '-B', '/var/lib/tonyai-r3/r3/helpers/r3_install.py'])
             self.assertEqual(proposal['proposed_install_argv'][4:], ['--bundle', '/var/lib/tonyai-r3/r3', '--contract', '/etc/tonyai/replacement.json', '--approval', '/var/lib/tonyai-r3/install-approval.json', '--approved-sha256', '<SEPARATELY_APPROVED_INSTALL_APPROVAL_SHA256>'])
             with tarfile.open(output / 'transfer.tar') as archive:
@@ -130,6 +133,15 @@ class Qualification(unittest.TestCase):
 
 
 class OfflineInstall(unittest.TestCase):
+    def test_simulation_and_install_pin_non_pty_dpkg(self):
+        for simulate in (False, True):
+            for log in (None, '/etc/tonyai/r3-install.dpkg.log'):
+                with self.subTest(simulate=simulate, log=log):
+                    argv = toolchain.install_argv(['one.deb'], simulate=simulate, transaction_log=log)
+                    self.assertEqual(argv[:5], ['apt-get', '-o', 'DPkg::Lock::Timeout=60', '-o', 'Dpkg::Use-Pty=0'])
+                    self.assertEqual(argv.count('Dpkg::Use-Pty=0'), 1)
+                    self.assertIn('--simulate' if simulate else '--yes', argv)
+
     def test_persistent_masks_must_all_survive_install_readback(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
