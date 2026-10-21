@@ -48,8 +48,11 @@ import { readIssuanceRows, toIssuance, type IssuanceRow } from './issuance-store
  *  4. RETAIN, recoverably (LP1-02): `beginUpload` → upload (never upsert) →
  *     the bytes read back and hashed — the contract's fingerprint is of the
  *     STORED bytes — → one transaction: `adoptUpload` FIRST, the row (its
- *     guard, TA017, binds it to the dataset), its audit row. Any failure
- *     abandons the upload, so no object outlives a refused issuance.
+ *     guard, TA017, binds it to the dataset), its audit row. A failure before
+ *     that transaction removes the object whatever became of the intent
+ *     (`abandonUnadoptedUpload`: no row can own it); one in or after it
+ *     abandons the upload only while the intent stands (`abandonUpload`: a
+ *     committed issuance whose acknowledgement was lost keeps its bytes).
  *
  * Nothing is recalculated and no factor is read (V4): every figure is the
  * retained dataset's. A download re-hashes the retained bytes and never
@@ -209,7 +212,9 @@ export class ReportIssuancesService {
         throw new Error(`Report issuance ${issuanceId}: the stored PDF is not the rendered one.`);
       }
     } catch (error) {
-      await this.intents.abandonUpload(intentId, ref, error, origin);
+      // Before the ownership transaction: no row can own the bytes, even if
+      // the sweeper took the intent while they were on their way.
+      await this.intents.abandonUnadoptedUpload(intentId, ref, origin);
       throw error;
     }
 

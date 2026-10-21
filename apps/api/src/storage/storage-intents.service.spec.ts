@@ -158,3 +158,90 @@ describe('StorageIntentsService — after the commit, never throws', () => {
     logged.mockRestore();
   });
 });
+
+describe('StorageIntentsService — abandonUpload, after the owning transaction ran', () => {
+  it('with the intent gone and an ordinary cause — the transaction may have committed — enqueues and removes nothing', async () => {
+    const prisma = { storageIntent: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn() };
+    const s = new StorageIntentsService(prisma as unknown as PrismaService, {} as StorageService);
+    const runNow = vi.spyOn(s, 'runNow').mockResolvedValue(undefined);
+    await s.abandonUpload('intent-1', { bucket: 'report-artifacts', path: 'org-1/a.pdf' }, new Error('ack lost'), { organisationId: 'org-1' });
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    expect(runNow).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * A failure BEFORE the owning transaction (Codex's B9 review of #198, P2): no
+ * row can own the object, so it goes whatever became of the intent — the
+ * real-Storage proof is report-issuance.int.spec.ts ("a late upload").
+ */
+describe('StorageIntentsService — abandonUnadoptedUpload', () => {
+  const ref = { bucket: 'report-artifacts' as const, path: 'org-1/a.pdf' };
+  function service(prisma: Partial<Record<string, unknown>>) {
+    const s = new StorageIntentsService(prisma as unknown as PrismaService, {} as StorageService);
+    const runNow = vi.spyOn(s, 'runNow').mockResolvedValue(undefined);
+    return { s, runNow };
+  }
+
+  it('turns a standing upload intent into the delete and removes the object now — nothing enqueued beside it', async () => {
+    const prisma = { storageIntent: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) }, $executeRaw: vi.fn() };
+    const { s, runNow } = service(prisma);
+    await s.abandonUnadoptedUpload('intent-1', ref, { organisationId: 'org-1' });
+    expect(prisma.storageIntent.updateMany).toHaveBeenCalledWith({ where: { id: 'intent-1', kind: 'upload' }, data: { kind: 'delete' } });
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    expect(runNow).toHaveBeenCalledWith([ref]);
+  });
+
+  it('with the intent gone — the sweeper took it while the bytes were on their way — enqueues the delete anew and removes the object now', async () => {
+    const prisma = { storageIntent: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn().mockResolvedValue(1) };
+    const { s, runNow } = service(prisma);
+    await s.abandonUnadoptedUpload('intent-1', ref, { organisationId: 'org-1' });
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = prisma.$executeRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+    expect(strings.join('?')).toMatch(/INSERT INTO storage_intents[\s\S]*'delete'[\s\S]*ON CONFLICT \(bucket, object_path\) DO UPDATE/);
+    expect(values).toEqual(['report-artifacts', 'upload.abandoned', 'org-1', null, ['org-1/a.pdf']]);
+    expect(runNow).toHaveBeenCalledWith([ref]);
+    expect(prisma.storageIntent.updateMany.mock.invocationCallOrder[0]).toBeLessThan(runNow.mock.invocationCallOrder[0]);
+  });
+
+  it('logs a database failure instead of throwing over the request\'s own error', async () => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const prisma = { storageIntent: { updateMany: vi.fn().mockRejectedValue(new Error('db down')) } };
+    const { s, runNow } = service(prisma);
+    await expect(s.abandonUnadoptedUpload('intent-1', ref)).resolves.toBeUndefined();
+    expect(logged.mock.calls[0][0]).toContain('unadopted upload');
+    expect(runNow).not.toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
+  it('with the intent gone and its re-enqueue failing: logged, resolved, nothing removed (`security-rls` P3)', async () => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const prisma = { storageIntent: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) }, $executeRaw: vi.fn().mockRejectedValue(new Error('db down')) };
+    const { s, runNow } = service(prisma);
+    await expect(s.abandonUnadoptedUpload('intent-1', ref)).resolves.toBeUndefined();
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(runNow).not.toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
+  it('under STORAGE_CLEANUP_HOLD the re-enqueued delete waits as an intent: nothing is claimed or removed (`security-rls` P3)', async () => {
+    vi.stubEnv('STORAGE_CLEANUP_HOLD', '1');
+    const warned = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const remove = vi.fn();
+      const prisma = {
+        storageIntent: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        $executeRaw: vi.fn().mockResolvedValue(1), $queryRaw: vi.fn(), $transaction: vi.fn(),
+      };
+      const s = new StorageIntentsService(prisma as unknown as PrismaService, { remove } as unknown as StorageService);
+      await s.abandonUnadoptedUpload('intent-1', ref);
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(remove).not.toHaveBeenCalled();
+    } finally {
+      warned.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+});

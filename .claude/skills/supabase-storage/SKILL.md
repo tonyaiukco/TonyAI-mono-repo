@@ -75,6 +75,14 @@ then `pnpm storage:reconcile --verify` (exit 0). Re-run `pnpm db:seed` and confi
 - **A file the API generates** (a report PDF) follows the same intent flow as an upload, with one more step:
   after `storage.upload`, **download the object and hash it** — the stored bytes are what the row's SHA-256 must
   describe; a mismatch abandons the upload before any row exists.
+- **Two abandonments, by phase** (Codex's B9 review of #198, P2): a failure *before* the owning transaction began
+  (the upload, a read-back, a hash check) calls `abandonUnadoptedUpload` — no row can own the object, so it goes even
+  when the sweeper took the intent while the bytes were on their way (a late upload; `abandonUpload` would leave it an
+  orphan). A failure *in or after* the transaction calls `abandonUpload` — it may have committed with its
+  acknowledgement lost, so the bytes stay unless the intent still stands. Never use the first after the transaction
+  has run. Prove both with real Storage: a spied `upload` that ages its intent, sweeps, then sends the bytes. (The
+  evidence and import uploads still call `abandonUpload` in their pre-transaction catch — "LP3-04 PR D follow-ups"
+  (20), for their own PR; a new caller follows this rule.)
 - **Registering a bucket has a check the compiler does not catch:** `seesEveryRow`
   (`storage-intents.service.ts`) counts the owner tables by regclass in SQL — add the new table there and raise the
   count, or every removal in every bucket fails closed (`RowsHiddenError`). Also: the `RowsHiddenError` text, the

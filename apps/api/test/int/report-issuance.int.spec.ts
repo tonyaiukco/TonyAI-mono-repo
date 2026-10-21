@@ -595,6 +595,12 @@ describe('the retained PDF, failed at each boundary (LP1-02)', () => {
     expect(row).toBeDefined();
     expect(sha256(await storage.download(REPORT_ARTIFACTS_BUCKET, row.storagePath))).toBe(row.sha256);
     expect(await artifactIntents()).toEqual([]);
+    // Kept because no removal was ever asked for — not because the owned-bytes
+    // guard caught one (that logs "still owns" and pages an operator): the
+    // ownership transaction's failure takes the conditional abandonment only
+    // (`qa-auditor`'s re-review: the bytes alone cannot tell the two apart).
+    const logged = vi.mocked(Logger.prototype.error).mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).not.toMatch(/still owns/);
   }, 60_000);
 
   it('the sweeper abandons the upload before the row adopts it: 409 upload_expired, nothing is left', async () => {
@@ -613,6 +619,105 @@ describe('the retained PDF, failed at each boundary (LP1-02)', () => {
     expect(refused).toBeInstanceOf(UploadExpiredError);
     expect((refused as UploadExpiredError).getStatus()).toBe(409);
     expect(await issuanceRows()).toEqual([]);
+    expect(await artifactIntents()).toEqual([]);
+  }, 60_000);
+});
+
+/**
+ * Codex's B9 review of #198 (P2): a LATE upload — the sweeper took the intent,
+ * aged past its grace, while the bytes were still on their way, so its removal
+ * ran before they landed — followed by a failure BEFORE the ownership
+ * transaction. No row can own those bytes, so they must go: removed at once,
+ * nothing left for another sweep. Real PostgreSQL and Storage; only the
+ * spied Storage call is delayed or failed. The controls beside it: the same
+ * late upload refused at adoption (`UploadExpiredError`), and a committed
+ * issuance whose acknowledgement was lost, which keeps its bytes (above).
+ */
+describe('a late upload, then a failure before the ownership transaction (Codex B9 P2)', () => {
+  let user: RequestUser;
+  let datasetId: string;
+
+  beforeEach(async () => {
+    datasetId = await finalDataset();
+    user = await withAccess(admin());
+  });
+
+  /** Holds the upload until the sweeper has taken its intent, then sends the real bytes — late; `thenFail` reports a failure after they landed. */
+  function lateUpload(thenFail?: Error) {
+    const real = storage.upload.bind(storage);
+    return vi.spyOn(storage, 'upload').mockImplementationOnce(async (bucket, path, body, contentType) => {
+      const intent = await owner.storageIntent.findFirstOrThrow({ where: { bucket, objectPath: path } });
+      expect(intent.kind).toBe('upload');
+      await owner.$executeRaw`
+        UPDATE storage_intents SET created_at = now() - ${UPLOAD_GRACE_SECONDS + 60}::int * interval '1 second' WHERE id = ${intent.id}::uuid`;
+      const swept = await new StorageIntentsService(runtime, localStorage()).sweep();
+      expect(swept.abandoned).toBeGreaterThanOrEqual(1);
+      expect(await owner.storageIntent.count({ where: { id: intent.id } })).toBe(0);
+      await real(bucket, path, body, contentType);
+      expect(await objectExists(runtime, REPORT_ARTIFACTS_BUCKET, path)).toBe(true);
+      if (thenFail) throw thenFail;
+    });
+  }
+
+  /** Nothing of the issuance is left — no row, no audit row, no intent, no object — and another sweep finds nothing either. */
+  async function nothingLeft(upload: ReturnType<typeof lateUpload>) {
+    const path = upload.mock.calls[0]![1];
+    expect(await issuanceRows()).toEqual([]);
+    expect(await issueAudits()).toEqual([]);
+    expect(await artifactIntents()).toEqual([]);
+    expect(await objectExists(runtime, REPORT_ARTIFACTS_BUCKET, path)).toBe(false);
+    await new StorageIntentsService(runtime, localStorage()).sweep();
+    expect(await artifacts()).toEqual([]);
+    expect(await artifactIntents()).toEqual([]);
+  }
+
+  it.each([
+    ['the read-back fails (a Storage outage)', () => vi.spyOn(storage, 'download').mockRejectedValueOnce(new Error(INJECTED)), INJECTED],
+    ['the stored bytes are not the rendered ones', () => vi.spyOn(storage, 'download').mockResolvedValueOnce(Buffer.from('%PDF-1.4 not these')), /stored PDF is not the rendered one/],
+  ] as const)('%s: the late bytes are removed — no orphan', async (_what, fail, message) => {
+    quiet();
+    const upload = lateUpload();
+    fail();
+    const refused = await failure(issuer().issue(user, { datasetId, template: 'executive_summary' }));
+    expect((refused as Error).message).toMatch(message);
+    await nothingLeft(upload);
+  }, 60_000);
+
+  it('the upload reports a failure after its bytes landed: removed too', async () => {
+    quiet();
+    const upload = lateUpload(new Error(INJECTED));
+    expect(((await failure(issuer().issue(user, { datasetId, template: 'executive_summary' }))) as Error).message).toBe(INJECTED);
+    await nothingLeft(upload);
+  }, 60_000);
+
+  it('control: the same late upload, read back intact, is refused at adoption — 409 upload_expired, removed', async () => {
+    quiet();
+    const upload = lateUpload();
+    const refused = await failure(issuer().issue(user, { datasetId, template: 'executive_summary' }));
+    expect(refused).toBeInstanceOf(UploadExpiredError);
+    await nothingLeft(upload);
+  }, 60_000);
+
+  it('the two abandonments differ only where they must: after the transaction a gone intent keeps the bytes; before it, they go', async () => {
+    quiet();
+    const intents = new StorageIntentsService(runtime, localStorage());
+    const place = async () => {
+      const path = `${t.organisationId}/${randomUUID()}.pdf`;
+      const ref = { bucket: REPORT_ARTIFACTS_BUCKET as typeof REPORT_ARTIFACTS_BUCKET, path };
+      const id = await intents.beginUpload(ref, { reason: 'report_issuance.upload', organisationId: t.organisationId });
+      // The intent gone and the bytes there — as after an adoption, or after a sweep and a late upload.
+      await owner.storageIntent.deleteMany({ where: { id } });
+      await storage.upload(REPORT_ARTIFACTS_BUCKET, path, Buffer.from('%PDF-1.4 x'), 'application/pdf');
+      return { id, ref, path };
+    };
+    // A failure from the ownership transaction on: it may have committed — the bytes stay.
+    const ambiguous = await place();
+    await intents.abandonUpload(ambiguous.id, ambiguous.ref, new Error('ack lost'), { organisationId: t.organisationId });
+    expect(await objectExists(runtime, REPORT_ARTIFACTS_BUCKET, ambiguous.path)).toBe(true);
+    // A failure before it: nothing can own them — they go.
+    const unadopted = await place();
+    await intents.abandonUnadoptedUpload(unadopted.id, unadopted.ref, { organisationId: t.organisationId });
+    expect(await objectExists(runtime, REPORT_ARTIFACTS_BUCKET, unadopted.path)).toBe(false);
     expect(await artifactIntents()).toEqual([]);
   }, 60_000);
 });

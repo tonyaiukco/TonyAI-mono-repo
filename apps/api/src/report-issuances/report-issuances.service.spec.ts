@@ -50,7 +50,10 @@ let prisma: { $transaction: ReturnType<typeof vi.fn>; $queryRaw: ReturnType<type
 let audit: { record: ReturnType<typeof vi.fn> };
 let pdf: { render: ReturnType<typeof vi.fn> };
 let storage: { upload: ReturnType<typeof vi.fn>; download: ReturnType<typeof vi.fn> };
-let intents: { beginUpload: ReturnType<typeof vi.fn>; adoptUpload: ReturnType<typeof vi.fn>; abandonUpload: ReturnType<typeof vi.fn> };
+let intents: {
+  beginUpload: ReturnType<typeof vi.fn>; adoptUpload: ReturnType<typeof vi.fn>;
+  abandonUpload: ReturnType<typeof vi.fn>; abandonUnadoptedUpload: ReturnType<typeof vi.fn>;
+};
 let service: ReportIssuancesService;
 
 function arrange(d: ReportDataset): void {
@@ -86,6 +89,7 @@ beforeEach(() => {
     beginUpload: vi.fn(async () => { calls.push('begin'); return 'intent-1'; }),
     adoptUpload: vi.fn(async () => { calls.push('adopt'); }),
     abandonUpload: vi.fn(async () => { calls.push('abandon'); }),
+    abandonUnadoptedUpload: vi.fn(async () => { calls.push('abandon-unadopted'); }),
   };
   service = new ReportIssuancesService(prisma as never, audit as never, pdf as never, storage as never, intents as never);
 });
@@ -129,6 +133,7 @@ describe('issue — a final', () => {
     );
     expect(storage.upload).toHaveBeenCalledWith(REPORT_ARTIFACTS_BUCKET, expect.any(String), PDF, 'application/pdf');
     expect(intents.abandonUpload).not.toHaveBeenCalled();
+    expect(intents.abandonUnadoptedUpload).not.toHaveBeenCalled();
   });
 
   it('reads in one REPEATABLE READ snapshot and writes the row in a transaction of its own', async () => {
@@ -254,19 +259,34 @@ describe('issue — refused before rendering', () => {
 });
 
 describe('issue — every failure after the intent abandons it (LP1-02)', () => {
-  it('Storage refuses the bytes: abandoned, no row', async () => {
+  // Before the ownership transaction no row can own the bytes: they go even if
+  // the sweeper took the intent meanwhile (Codex's B9 P2). From the
+  // transaction on, only while the intent stands (a lost acknowledgement).
+  const unadopted = () => {
+    expect(intents.abandonUnadoptedUpload).toHaveBeenCalledWith('intent-1', { bucket: REPORT_ARTIFACTS_BUCKET, path: expect.any(String) }, { organisationId: ORG });
+    expect(intents.abandonUpload).not.toHaveBeenCalled();
+    expect(tx.reportIssuance.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  };
+
+  it('Storage refuses the bytes: abandoned as unadopted, no row', async () => {
     const cause = new Error('storage down');
     storage.upload.mockRejectedValueOnce(cause);
     expect(await refusal(issue())).toBe(cause);
-    expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', { bucket: REPORT_ARTIFACTS_BUCKET, path: expect.any(String) }, cause, { organisationId: ORG });
-    expect(tx.reportIssuance.create).not.toHaveBeenCalled();
+    unadopted();
   });
 
-  it('the stored bytes are not the rendered ones: abandoned, no row — the fingerprint is of the STORED bytes', async () => {
+  it('the stored bytes are not the rendered ones: abandoned as unadopted, no row — the fingerprint is of the STORED bytes', async () => {
     storage.download.mockResolvedValueOnce(Buffer.from('%PDF-1.4 other'));
     expect((await refusal(issue()) as Error).message).toMatch(/stored PDF is not the rendered one/);
-    expect(intents.abandonUpload).toHaveBeenCalled();
-    expect(tx.reportIssuance.create).not.toHaveBeenCalled();
+    unadopted();
+  });
+
+  it('the stored bytes cannot be read back: abandoned as unadopted, no row', async () => {
+    const cause = new Error('read-back outage');
+    storage.download.mockRejectedValueOnce(cause);
+    expect(await refusal(issue())).toBe(cause);
+    unadopted();
   });
 
   it('the sweeper took the upload during a slow render: 409 upload_expired, abandoned with that cause', async () => {
@@ -299,6 +319,20 @@ describe('issue — every failure after the intent abandons it (LP1-02)', () => 
     audit.record.mockRejectedValueOnce(cause);
     expect(await refusal(issue())).toBe(cause);
     expect(intents.abandonUpload).toHaveBeenCalledWith('intent-1', expect.anything(), cause, { organisationId: ORG });
+  });
+
+  it('a failure in or after the ownership transaction never takes the unadopted path — a lost acknowledgement keeps its bytes', async () => {
+    for (const fail of [
+      () => intents.adoptUpload.mockRejectedValueOnce(new Error('adopt failed')),
+      () => tx.reportIssuance.create.mockRejectedValueOnce(new Error('insert failed')),
+      () => audit.record.mockRejectedValueOnce(new Error('audit failed')),
+    ]) {
+      intents.abandonUpload.mockClear(); intents.abandonUnadoptedUpload.mockClear();
+      fail();
+      await refusal(issue());
+      expect(intents.abandonUpload).toHaveBeenCalledTimes(1);
+      expect(intents.abandonUnadoptedUpload).not.toHaveBeenCalled();
+    }
   });
 
   it('the renderer refused (busy or too large): no intent was ever begun', async () => {

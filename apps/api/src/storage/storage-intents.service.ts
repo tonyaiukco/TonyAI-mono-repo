@@ -245,6 +245,37 @@ export class StorageIntentsService implements OnApplicationBootstrap, OnModuleDe
   }
 
   /**
+   * After a failure BEFORE the owning row's transaction began — the upload
+   * itself, or a check of the stored bytes (LP3-04 PR D: the issuance reads
+   * its PDF back and hashes it). No transaction has run, so none can have
+   * adopted the intent and no row can own the object: unlike `abandonUpload`
+   * there is no lost acknowledgement to protect. If the intent is still an
+   * upload it becomes the delete. If it is gone — the sweeper abandoned it
+   * while the bytes were still on their way, its removal running before they
+   * landed, or a restore's `--forget-uploads` dropped it under the hold — a
+   * delete is enqueued anew (an existing one is reset, as `enqueueDeletes`
+   * does) and the late bytes go too (Codex's B9 review of #198, P2: an
+   * orphan PDF otherwise); under `STORAGE_CLEANUP_HOLD` it waits as an intent. Either way the object is removed now,
+   * and the removal still asks `ownedPaths` first, as every removal does.
+   * Never throws: what it cannot do, the sweeper does.
+   */
+  async abandonUnadoptedUpload(intentId: string, ref: ObjectRef, origin: Omit<IntentOrigin, 'reason'> = {}): Promise<void> {
+    try {
+      const { count } = await this.prisma.storageIntent.updateMany({
+        where: { id: intentId, kind: StorageIntentKind.upload },
+        data: { kind: StorageIntentKind.delete },
+      });
+      if (count === 0) await this.enqueueDeletes(this.prisma, [ref], { reason: 'upload.abandoned', ...origin });
+      await this.runNow([ref]);
+    } catch (error) {
+      this.logger.error(
+        `Could not abandon the unadopted upload of ${ref.bucket}/${ref.path}; the sweeper removes it if its intent stands`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  /**
    * In the transaction that deleted the rows owning these objects: record
    * that the objects must go. An object that already has a `delete` intent
    * gets that one reset — due now, its lease cleared — rather than a second:
