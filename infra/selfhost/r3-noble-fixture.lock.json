@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "purpose": "FIXTURE_DIAGNOSTIC_ONLY",
+  "image_base": "https://cloud-images.ubuntu.com/releases/noble/release-20261017/",
+  "image": "ubuntu-24.04-server-cloudimg-amd64.img",
+  "image_sha256": "04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94",
+  "manifest": "ubuntu-24.04-server-cloudimg-amd64.manifest",
+  "manifest_sha256": "78d7da6ab1556daa6c0f685bf4e0e3da36395f170e8fad411d7ba032f14d08c2",
+  "image_signing_fingerprint": "D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81",
+  "fixture_uuid": "d7fa1822-80db-4cba-9ef1-6e63549fe928",
+  "runner_packages": {
+    "qemu-system-x86": "1:8.2.2+ds-0ubuntu1.18",
+    "qemu-utils": "1:8.2.2+ds-0ubuntu1.18",
+    "genisoimage": "9:1.1.11-3.5"
+  },
+  "age_url": "https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz",
+  "age_archive_sha256": "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10",
+  "age_version": "v1.3.2"
+}
