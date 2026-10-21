@@ -731,18 +731,24 @@ describe('roles and subsidiary access', () => {
     const extra = await owner.subsidiary.create({ data: { organisationId: A.organisationId, legalName: `Int-test subsidiary 2 ${tag}`, geographyCode: 'UK' } });
     const target = A.users.dataEntry.id;
     const s = services(null);
-    const before = await owner.auditLog.count({ where: { entityId: target, entity: 'subsidiary_access' } });
-    const updated = await s.lifecycle.replaceAccess(A.users.superAdmin, target, [extra.id, extra.id]);
-    expect(updated.subsidiaryIds).toEqual([extra.id]);
-    const changes = await owner.auditLog.findMany({ where: { entityId: target, entity: 'subsidiary_access' }, orderBy: { createdAt: 'asc' } });
-    expect(changes.slice(before).map((r) => [r.action, (r.diff as { subsidiaryId: string }).subsidiaryId])).toEqual([
-      ['delete', A.subsidiaryId],
-      ['create', extra.id],
-    ]);
-    await s.lifecycle.replaceAccess(A.users.superAdmin, target, [extra.id]); // nothing to change
-    expect(await owner.auditLog.count({ where: { entityId: target, entity: 'subsidiary_access' } })).toBe(before + 2);
-    // Restore the fixture's grant.
-    await s.lifecycle.replaceAccess(A.users.superAdmin, target, [A.subsidiaryId]);
+    const where = { entityId: target, entity: 'subsidiary_access' };
+    const earlier = new Set((await owner.auditLog.findMany({ where, select: { id: true } })).map((r) => r.id));
+    try {
+      const updated = await s.lifecycle.replaceAccess(A.users.superAdmin, target, [extra.id, extra.id]);
+      expect(updated.subsidiaryIds).toEqual([extra.id]);
+      // One transaction's rows can share `created_at` to the millisecond (and
+      // tied rows come back in storage order), so they are compared as a set,
+      // never by their order ("LP3-04 PR D follow-ups" (21)).
+      const changes = (await owner.auditLog.findMany({ where })).filter((r) => !earlier.has(r.id));
+      expect(changes.map((r) => `${r.action} ${(r.diff as { subsidiaryId: string }).subsidiaryId}`).sort()).toEqual(
+        [`delete ${A.subsidiaryId}`, `create ${extra.id}`].sort(),
+      );
+      await s.lifecycle.replaceAccess(A.users.superAdmin, target, [extra.id]); // nothing to change
+      expect(await owner.auditLog.count({ where })).toBe(earlier.size + 2);
+    } finally {
+      // Restore the fixture's grant — whatever failed above, so no later test inherits it.
+      await s.lifecycle.replaceAccess(A.users.superAdmin, target, [A.subsidiaryId]);
+    }
   });
 
   it("refuses another tenant's subsidiary, grants for another role, and another tenant's user (404, as none)", async () => {
@@ -952,8 +958,10 @@ describe('the operator CLI (D18, K3, K6) — on the owner login', () => {
       delivery: { delivered: true },
     });
     expect(sent).toHaveLength(2);
-    const resend = await owner.auditLog.findMany({ where: { organisationId: orgId, action: 'invite' }, orderBy: { createdAt: 'asc' } });
-    expect(resend.map((r) => [r.userId, (r.diff as { resend?: boolean; operator?: string }).resend ?? false, (r.diff as { operator?: string }).operator])).toEqual([
+    const resend = await owner.auditLog.findMany({ where: { organisationId: orgId, action: 'invite' } });
+    // As a set: two quick runs' rows can share `created_at` to the millisecond ((21)).
+    expect(resend.map((r) => [r.userId, (r.diff as { resend?: boolean; operator?: string }).resend ?? false, (r.diff as { operator?: string }).operator])
+      .sort((x, y) => Number(x[1]) - Number(y[1]))).toEqual([
       [null, false, 'ops@tonyai.test'],
       [null, true, 'ops@tonyai.test'],
     ]);

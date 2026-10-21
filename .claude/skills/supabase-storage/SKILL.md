@@ -29,7 +29,9 @@ Any file attachment tied to a tenant-scoped entity (evidence, capacity reports, 
   around a transaction by hand** (LP1-02; Storage has no transaction, and a hand-rolled "remove on failure" has
   deleted the bytes of a COMMITTED row when its acknowledgement was lost):
   - upload: `beginUpload(ref, origin)` → `storage.upload` (it never overwrites) → in the row's transaction, FIRST,
-    `adoptUpload(tx, intentId)` → write the row + audit; on any failure `abandonUpload(intentId, ref, error, origin)`;
+    `adoptUpload(tx, intentId)` → write the row + audit. On a failure BEFORE that transaction (the upload, a
+    read-back) `abandonUnadoptedUpload(intentId, ref, origin)` — no row can own the bytes; on one in or after it
+    `abandonUpload(intentId, ref, error, origin)` — it may have committed (see "Two abandonments, by phase" below);
   - removal: delete the row + audit + `enqueueDeletes(tx, refs, origin)` in ONE transaction, then `runNow(refs)` after
     the commit. The in-process sweeper retries anything that failed; `pnpm storage:reconcile` finds what no intent names.
   - origin = `{ reason, organisationId, subsidiaryId }` — operators read it; Sentry gets ids, never object keys.
@@ -80,9 +82,8 @@ then `pnpm storage:reconcile --verify` (exit 0). Re-run `pnpm db:seed` and confi
   when the sweeper took the intent while the bytes were on their way (a late upload; `abandonUpload` would leave it an
   orphan). A failure *in or after* the transaction calls `abandonUpload` — it may have committed with its
   acknowledgement lost, so the bytes stay unless the intent still stands. Never use the first after the transaction
-  has run. Prove both with real Storage: a spied `upload` that ages its intent, sweeps, then sends the bytes. (The
-  evidence and import uploads still call `abandonUpload` in their pre-transaction catch — "LP3-04 PR D follow-ups"
-  (20), for their own PR; a new caller follows this rule.)
+  has run. Prove both with real Storage: a spied `upload` that ages its intent, sweeps, then sends the bytes
+  (`storage-recovery.int.spec.ts` for evidence and import, `report-issuance.int.spec.ts` for the report PDFs).
 - **Registering a bucket has a check the compiler does not catch:** `seesEveryRow`
   (`storage-intents.service.ts`) counts the owner tables by regclass in SQL — add the new table there and raise the
   count, or every removal in every bucket fails closed (`RowsHiddenError`). Also: the `RowsHiddenError` text, the

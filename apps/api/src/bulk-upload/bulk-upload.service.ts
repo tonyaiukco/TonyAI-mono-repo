@@ -972,7 +972,10 @@ export class BulkUploadService {
           : 'text/csv',
       );
     } catch (error) {
-      await this.intents.abandonUpload(intentId, ref, error, { organisationId: user.organisationId });
+      // Before the batch's transaction: no row can own the bytes, even if the
+      // sweeper took the intent while they were on their way ("LP3-04 PR D
+      // follow-ups" (20)).
+      await this.intents.abandonUnadoptedUpload(intentId, ref, { organisationId: user.organisationId });
       throw error;
     }
     try {
