@@ -1137,3 +1137,125 @@ targets the **accepted replacement host**, not the preserved old host. SMTP
 provider/residency remains undecided; Namecheap stays deferred. Full application
 QA and measured database **and file-byte** restore/RPO/RTO remain launch gates.
 LP2-01/02/03 stay INTEGRATED, not DONE. Preserve #175/#178 Open questions.
+
+## Native Noble fixture (A)
+
+This is a preparation and diagnostic mechanism, not execution authority or an
+installed-target receipt. The accepted order remains R3 → R4 → Sweden application
+foundation → API/web deployment → QA acceptance. Azure guest inventory is a
+separate packet B with a separate approval. Customer data is excluded.
+
+### Exact execution proposal
+
+After publication is separately requested, prepare the owner approval from the
+actual published commit and workflow ref. Bind `source_sha`, selected branch ref,
+`r3-native-noble.yml` and all `r3_noble_*`/reused helper hashes, both lock hashes,
+the normalized recipient SHA256 and public-key fingerprint, repository, job
+`native-noble`, runner `ubuntu-24.04`/Linux/X64/GitHub-hosted, and the proposed
+single dispatch. No earlier SHA's review/test/approval is transferred. The
+controller verifies checkout HEAD, every tracked blob (including hidden index
+flags), the complete clean worktree, workflow SHA/ref, and attempt 1 before any
+runner package mutation; it rechecks source before and after the VM. Reusing an
+attempt marker or rerunning a job refuses. An approval ledger must also prohibit
+a second fresh dispatch: a new run ID is not itself new authorization.
+
+The workflow has `contents: read` only, no OIDC, environment secrets or persisted
+checkout credentials, and a 50-minute job timeout. Its sole controller command is
+`python3 -I -B infra/scripts/r3_noble_fixture.py`; dispatch inputs pass through
+environment values rather than shell interpolation. The controller strips the
+inherited environment before child commands. The job does not invoke Azure,
+SSH, production helpers, shared Supabase, or the legacy install shell.
+
+The exact argv builders and bounded phases are in `r3_noble_fixture.py`,
+`r3_noble_inputs.py`, and `r3_noble_guest.py`. The approval must bind their
+exact argv templates and public input hashes. Allowed runtime substitutions are
+the GitHub run ID, runner temporary root and newly allocated private work directory;
+retain the actual expanded argv and paths in run evidence:
+
+- Encryption setup: pinned age archive, version verification and public recipient
+  validation (120-second staging budget). The key is a public SSH RSA/Ed25519
+  recipient with no comment; its normalized two fields plus newline must match
+  `recipient_sha256`. No private key is uploaded or read by this job.
+- Runner preparation: `sudo -n apt-get update` (180 seconds), then
+  `sudo -n apt-get --yes --no-install-recommends install` with the three exact
+  name/version pairs in `r3-noble-fixture.lock.json` (300 seconds). Capture before/
+  after runner inventories, actual versions and streams. Normal runner-tool
+  dependencies are recorded separately; they are not the guest five-pin plan.
+  Missing/retired pins refuse; no fallback version or automatic retry. Privileged
+  runner APT groups require privileged kill/reap on interruption. This is never
+  run on the owner's machine.
+- Public input staging (600 seconds plus bounded verification commands): dated
+  Canonical Noble amd64 image and manifest with pinned SHA256s, signed checksum
+  verification against the pinned Canonical key, and the existing five Docker
+  package pins authenticated by the signed vendor index. The actual signed
+  metadata bytes are retained. No target bundle, Node archive, private database,
+  container image transport or customer input is imported.
+- ISO preparation and QEMU: read-only input ISO plus NoCloud seed, actual boot
+  file hashes and rereads, qcow2 format/no-backing check, disposable 16 GiB overlay;
+  `q35,accel=tcg`, 2 CPUs, 4096 MiB, fixed fixture UUID, `-nic none`, no monitor,
+  host mounts or Docker socket. No assumption that the hosted runner already
+  contains QEMU. Native VM deadline 1200 seconds. QEMU group is killed/reaped on
+  completion, error or deadline. Detached-child interruption remains an open
+  qualification question; a process-group kill is not a universal containment
+  claim.
+- Guest: root only in that fixture UUID, read-only ISO, Ubuntu 24.04 amd64,
+  observed systemd PID 1 and executable hashes. Capture package versions,
+  dependency/provides fields, configuration/hook/path-exclusion bytes, man-db
+  trigger registry/script, package payload lists, unit/process observations and
+  native lock probes. Initial audit and exact-pin absence precede simulation.
+  Use unchanged production `install_argv` (`Dpkg::Use-Pty=0`) and the same strict
+  simulation/inventory/transaction parsers. No apt unit, hook, trigger or package
+  policy is disabled or rewritten. Diagnostic unit observations allow stable
+  original unit configuration but refuse jobs, foreign package writers and
+  changes; this does **not** satisfy production's persistently masked-unit gate.
+- One native APT install is possible only after the strict simulation and
+  pre-execute inventory pass. Installation timeout 360 seconds; full guest phase
+  deadline 900 seconds. Retain actual stdout/stderr and dedicated dpkg log.
+  Capture after inventory/audit before transaction validation. Holds occur only
+  if the strict five-pin transaction passes; final inventory permits only those
+  five hold transitions. On refusal, no holds/completion receipt; bounded actual
+  after/final snapshots are attempted, with missing steps explicitly recorded.
+  Failure recovery reserves 120 seconds for commands and 60 for export.
+
+### Evidence and stop conditions
+
+Raw guest evidence travels over a dedicated virtio serial channel with a bounded
+write-all frame, size and SHA256. Host validation allows only fixed regular tar
+members, checks source/input/run correspondence and file hashes, and recomputes
+successful simulation, inventory, transaction and holds checks from retained
+bytes. It never extracts a guest archive onto the host. Serial output, native
+configuration, inventories, transaction streams, runner preparation logs, source
+manifest, signed metadata, boot hashes and failure records stay in the encrypted
+private archive. No raw diagnostic paths are in the upload allowlist.
+
+Only `fixture-evidence.tar.age`, `binding.json`, and `summary.json` may be uploaded,
+with seven-day retention. The public binding contains source/ref/workflow/lock,
+run/attempt/job and recipient hashes. The public summary distinguishes refused,
+sealed and review-required states. A seal failure removes partial ciphertext;
+there is no plaintext fallback. Cancellation/hard runner termination can prevent
+final sealing/upload entirely. Such a run is partial/unknown and consumed; no
+automatic retry or assertion of complete evidence.
+
+Before expiry, download once into a **new private evidence directory**, verify
+public binding against owner approval and GitHub run API readback (run ID,
+attempt, head SHA, workflow ref/job/conclusion and artifact identity), rehash the
+ciphertext, and preserve that readback. Owner-controlled decryption must use the
+already-approved key and separately available tooling; do not install tooling or
+read the private key during preparation. Compare decrypted archive and retention
+manifest hashes with the public summary, validate all retained file hashes and
+native frame correspondence, and independently review failures and actual
+native results. Do not extract arbitrary tar paths; validate regular-file names
+before any extraction. Record any unavailable decryption/readback as an open gate.
+
+CL-P2-3 remains open even if this workflow succeeds. The diagnostic provides real
+Noble APT/dpkg behavior, man payloads, trigger interests/hooks and the actual
+transaction for review. A strict simulation refusal may prevent installation;
+retain it without widening grammar or forcing progress. A man-db transaction
+refusal after installation demonstrates the existing risk in a disposable VM;
+it does not authorize accepting that trigger on Azure. Target dependency closure
+requires separately approved B evidence from the exact Azure image/VM, complete
+native dependency resolution and reviewed isolation/trigger policy. Hosted runner
+or fixture inventories cannot substitute. Retain all other R3 gates and P3
+questions, including sampled-writer limits, lifecycle ordering, log rereads,
+content correspondence and detached children. Bootstrap stays
+`NOT_READY_FOR_BOOTSTRAP_APPROVAL`.

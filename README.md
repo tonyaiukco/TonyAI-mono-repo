@@ -502,6 +502,12 @@ The smoke interprets an omitted `create_host_path` as false only inside an expli
 bind object rendered by Compose 2.38.2, whose serializer omits that false value.
 Other versions and ambiguous bind shapes retain strict validation; host validation
 and the reviewed mount policy are unchanged.
+A separate [native Noble fixture](infra/runbooks/10-qa-clean-replacement.md#native-noble-fixture-a)
+workflow is available for a separately approved, single diagnostic attempt on
+that fresh hosted runner. It boots a pinned public Noble image in a disposable
+VM without a NIC, retains raw outputs only inside owner-encrypted evidence,
+and refuses unexpected package activity without changing trigger or service
+policy. Its result does not substitute for Azure target inventory or close R3.
 The r02 runtime source contract
 rejects both legacy installation shells. Local tools now inspect pinned package
 control/scripts and Node bytes, render offline guard files and a full source plan,

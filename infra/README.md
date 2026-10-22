@@ -213,3 +213,16 @@ proposal becomes executable. The dispatch-only `r3-offline-inputs.yml` runs publ
 input analysis alone. Target closure, actual import/digest resolution, guard
 installation, unmask ordering and reboot proof remain separate gates; see the
 [bounded proposal](runbooks/10-qa-clean-replacement.md#offline-input-qualification-and-host-installation-proposal).
+
+### Native Noble diagnostic fixture (A)
+
+`r3-native-noble.yml` prepares a disposable native VM on the selected fresh
+GitHub-hosted `ubuntu-24.04` amd64 runner. It requires its own exact published
+source/ref and single-dispatch approval. Local tests and publication alone do
+not authorize it. See [the fixture procedure](runbooks/10-qa-clean-replacement.md#native-noble-fixture-a).
+The controller stages only public pinned inputs, installs explicitly pinned
+QEMU/ISO tools on that ephemeral runner, boots a pinned Canonical cloud image
+without a NIC or host mounts, and retains encrypted diagnostics. This is separate
+from Azure inventory packet B, production installation, and composition smoke.
+No service/trigger disabling or strict-parser relaxation is included. A refusal
+can be useful diagnostic evidence; it does not qualify the target.
