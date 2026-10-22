@@ -145,6 +145,11 @@ def dependency_plan(lock, paths, diagnostics=None):
         if result.returncode:
             raise ValueError('Offline simulation failed.')
         output = result.stdout.decode()
+    return validate_dependency_plan(lock, output)
+
+
+def validate_dependency_plan(lock, output):
+    """Validate retained C-locale native output using the same strict grammar."""
     # A name-only check can accept a different candidate or a replacement of
     # existing package state. APT's C-locale simulation has no old [version]
     # field for these fresh installations.
