@@ -1167,7 +1167,8 @@ inherited environment before child commands. The job does not invoke Azure,
 SSH, production helpers, shared Supabase, or the legacy install shell.
 
 The exact argv builders and bounded phases are in `r3_noble_fixture.py`,
-`r3_noble_inputs.py`, and `r3_noble_guest.py`. The approval must bind their
+`r3_noble_inputs.py`, `r3_noble_guest.py`, and the staged fixture-only
+`r3_noble_identity.py`. The approval must bind their
 exact argv templates and public input hashes. Allowed runtime substitutions are
 the GitHub run ID, runner temporary root and newly allocated private work directory;
 retain the actual expanded argv and paths in run evidence:
@@ -1216,6 +1217,52 @@ retain the actual expanded argv and paths in run evidence:
   five hold transitions. On refusal, no holds/completion receipt; bounded actual
   after/final snapshots are attempted, with missing steps explicitly recorded.
   Failure recovery reserves 120 seconds for commands and 60 for export.
+
+An already-decided initial baseline `Foreign fixture package writer` refusal
+attempts one optional `baseline-refusal-identity.json` before the result file
+hashes are finalized. It preserves the original refusal and does not reach
+simulation, installation or holds. There is no capture on the normal path or
+for later/pending-unit refusals. Missing, reused, exited, unreadable, changed or
+truncated observations remain explicit; the snapshot cannot prove continuous
+inactivity or establish an exemption from the existing process guard.
+This capture requires a successfully returned and appended observation. A writer
+holding a probed package lock can cause `probe_locks` to fail before that point;
+such a refusal gets no identity snapshot. This is not a complete writer census.
+
+The snapshot reads only the first 16 already-observed PIDs, preserving the
+original observation separately and recording the omitted count. It brackets
+bounded stat/cmdline (4 KiB)/cgroup (16 KiB)/exe-link reads with PID/start-time
+checks. It records the executable link, never follows its dynamic target, and
+does not read process environments. One `systemctl show unattended-upgrades.service
+--no-pager --property=MainPID,ControlGroup,InvocationID,ExecStart,FragmentPath,DropInPaths`
+query retains its argv, exit and bounded streams (16 KiB each) privately, with
+a two-second query timeout and reserved cleanup time. Reported drop-in/argv
+paths are not opened; nonempty drop-ins remain an effective-unit evidence gap.
+
+Only three fixed regular-file paths may supply content/hash and ownership/mode
+metadata: `/usr/share/unattended-upgrades/unattended-upgrade-shutdown`,
+`/usr/bin/unattended-upgrade`, and
+`/usr/lib/systemd/system/unattended-upgrades.service`. Intermediate and final
+symlinks and special files refuse. Scripts have a 1 MiB individual cap, the
+unit a 128 KiB cap, and the combined fixed-file payload a 1 MiB cap. Before/after
+metadata differences are recorded, not treated as immutable content proof.
+All byte strings use base64 and SHA256; no arbitrary observed path is executed.
+
+Collection, serialization and atomic no-overwrite retention use a ten-second
+deadline within the existing failure-command budget, without extending the
+guest/job limit or export reserve. Native scheduling and interrupted cleanup
+still need qualification; local timeout tests are not a universal real-time
+guarantee. Errors/interruption preserve the original refusal and
+are recorded in `checks.refusal_identity`; an incomplete snapshot is never
+published as a complete file. An error record does not mean the snapshot is
+absent: cleanup or a deadline after atomic linking can leave a complete,
+hash-bound member alongside the error. Read the member list and verify its
+hashes independently; the host does not cross-check that error record against
+member presence. The serialized snapshot is capped at 2 MiB on
+both collection and host readback. It is an optional allowed refusal member,
+not a required success member; successful evidence forbids it, while older
+evidence without it stays readable. It is hash-bound inside the native frame
+and follows the existing encryption-only custody route, never public upload.
 
 ### Evidence and stop conditions
 
