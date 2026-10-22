@@ -15,7 +15,8 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from r3_noble_common import ENV, FILE_LIMIT, STREAM_LIMIT, digest, encoded, file_hash, kill_group, read, run, write
-from r3_noble_guest import GUEST_FILES
+from r3_noble_guest import GUEST_FILES, GUEST_REQUIRED_FILES
+from r3_noble_identity import SNAPSHOT, SNAPSHOT_LIMIT
 from r3_noble_inputs import ROOT, WORKFLOW, recipient, seed, stage, stage_age
 
 
@@ -70,7 +71,8 @@ def validate_frame(data, expected):
     with tarfile.open(fileobj=io.BytesIO(body), mode='r:') as tar:
         for member in tar:
             if (member.name not in GUEST_FILES or member.name in entries or not member.isfile()
-                    or member.size > FILE_LIMIT or member.size < 0 or member.pax_headers):
+                    or member.size > (SNAPSHOT_LIMIT if member.name == SNAPSHOT else FILE_LIMIT)
+                    or member.size < 0 or member.pax_headers):
                 raise ValueError('Unexpected native evidence archive member')
             total += member.size
             if total > STREAM_LIMIT:
@@ -86,12 +88,21 @@ def validate_frame(data, expected):
             or result.get('target_qualified') is not False
             or result.get('status') not in ('REFUSED', 'DIAGNOSTIC_PASS_REVIEW_REQUIRED')):
         raise ValueError('Unexpected native result')
+    if SNAPSHOT in entries:
+        context = json.loads(entries[SNAPSHOT])
+        if (result['status'] != 'REFUSED' or result.get('phase') != 'native-baseline'
+                or result.get('install_attempted') is not False
+                or result.get('failure_type') != 'ValueError'
+                or result.get('failure') != 'Foreign fixture package writer'
+                or context.get('format') != 1 or context.get('purpose') != 'REFUSAL_CONTEXT_ONLY'
+                or context.get('identity_proves_inactivity') is not False):
+            raise ValueError('Identity context is only valid for baseline process refusal')
     if result['status'] == 'DIAGNOSTIC_PASS_REVIEW_REQUIRED':
         from r3_noble_guest import COMMANDS
         from r3_package_state import inventory, inventory_diff, held_inventory, transaction
         from r3_toolchain import validate_dependency_plan
         lock = json.loads(read(ROOT / 'infra/selfhost/r3-toolchain.lock.json'))
-        required = GUEST_FILES
+        required = GUEST_REQUIRED_FILES
         if (set(entries) != required or not result.get('install_attempted') or result.get('not_reached')
                 or result.get('phase') != 'complete'):
             raise ValueError('Incomplete native pass')

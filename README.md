@@ -508,6 +508,10 @@ that fresh hosted runner. It boots a pinned public Noble image in a disposable
 VM without a NIC, retains raw outputs only inside owner-encrypted evidence,
 and refuses unexpected package activity without changing trigger or service
 policy. Its result does not substitute for Azure target inventory or close R3.
+An initial foreign-process refusal also attempts one bounded private identity
+snapshot (argv, process/unit relationships and fixed public-image file bytes).
+The refusal remains unchanged; this context neither proves inactivity nor
+authorizes a process exception or another attempt.
 The r02 runtime source contract
 rejects both legacy installation shells. Local tools now inspect pinned package
 control/scripts and Node bytes, render offline guard files and a full source plan,

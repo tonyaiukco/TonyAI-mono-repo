@@ -13,7 +13,7 @@ from r3_noble_common import digest, encoded, file_hash, read, run, write
 from r3_toolchain import validate_lock, verify_index
 
 ROOT = Path(__file__).resolve().parents[2]
-HELPERS = ('r3_noble_common.py', 'r3_noble_guest.py', 'r3_toolchain.py',
+HELPERS = ('r3_noble_common.py', 'r3_noble_guest.py', 'r3_noble_identity.py', 'r3_toolchain.py',
            'r3_artifacts.py', 'r3_package_state.py', 'r3_apt_observer.py')
 WORKFLOW = '.github/workflows/r3-native-noble.yml'
 

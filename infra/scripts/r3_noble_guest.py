@@ -10,6 +10,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from r3_noble_common import STREAM_LIMIT, digest, encoded, file_hash, read, run, write
+from r3_noble_identity import SNAPSHOT, retain as retain_refusal_identity
 from r3_apt_observer import UNITS, observe, process_identity
 from r3_package_state import INVENTORY_ARGV, held_inventory, inventory, inventory_diff, require_absent, transaction
 from r3_toolchain import install_argv, validate_dependency_plan, validate_lock
@@ -21,8 +22,9 @@ COMMANDS = ('os', 'arch', 'kernel', 'config', 'before', 'pre-execute', 'after', 
             'audit-initial', 'audit-post', 'audit-final', 'simulate', 'install', 'holds',
             'metadata-0', 'metadata-1', 'metadata-2', 'metadata-3', 'metadata-4',
             'payload-0', 'payload-1', 'payload-2', 'payload-3', 'payload-4')
-GUEST_FILES = {'manifest.json', 'result.json', 'transaction.log', 'observations.json', 'native-files.json', 'native-state.json'} | {
+GUEST_REQUIRED_FILES = {'manifest.json', 'result.json', 'transaction.log', 'observations.json', 'native-files.json', 'native-state.json'} | {
     name + suffix for name in COMMANDS for suffix in ('.stdout', '.stderr', '.command.json', '.exit.json')}
+GUEST_FILES = GUEST_REQUIRED_FILES | {SNAPSHOT}
 
 
 def fixture_observation(value, baseline=None, child=None):
@@ -219,6 +221,15 @@ def main():
     finally:
         signal.alarm(180)
         command_deadline = time.monotonic() + 120  # Reserve 60 seconds for export.
+        if (result['phase'] == 'native-baseline' and not result['install_attempted']
+                and result.get('failure_type') == 'ValueError'
+                and result.get('failure') == 'Foreign fixture package writer'
+                and baseline is None and len(observations) == 1
+                and observations[0]['child'] is None):
+            try:
+                result['checks']['refusal_identity'] = retain_refusal_identity(OUTPUT, observations[0]['value'], command_deadline)
+            except BaseException as exc:
+                result['checks']['refusal_identity'] = {'error': type(exc).__name__}
         # Failure snapshots are labelled actual observations, never fabricated passes.
         for label in ('after', 'final'):
             if not (OUTPUT / (label + '.command.json')).exists():
