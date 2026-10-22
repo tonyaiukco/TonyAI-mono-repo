@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MIN_PASSWORD_LENGTH, passwordProblem, setPasswordFailureKey } from "@/lib/auth-view";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
+import { useReportingContextStore } from "@/lib/store";
 
 /**
  * The second step of an emailed link (LP4-01): `/auth/confirm` signed the
@@ -51,6 +52,8 @@ export function SetPasswordForm() {
     // Whoever asked for the reset link may not be the only one holding a session.
     if (flow === "recovery") await supabase.auth.signOut({ scope: "others" }).catch(() => undefined);
     toast.success(t("setPassword.saved"));
+    // A new session: the previous person's remembered reporting context goes (LP3-02 N1).
+    useReportingContextStore.getState().clear();
     router.replace("/");
     router.refresh();
   }

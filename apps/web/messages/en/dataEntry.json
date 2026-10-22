@@ -98,5 +98,6 @@
       "fixture": "Test fixture — not authoritative",
       "withdrawn": "Withdrawn"
     }
-  }
+  },
+  "invalidLinkYear": "This link's reporting year is not valid, so the link was not applied."
 }

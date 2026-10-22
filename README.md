@@ -71,7 +71,7 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 | Automated tests (unit + E2E) and live RLS containment probes — **the counts live in [Testing](#testing)**, so there is one place to keep in sync | ✅ |
 | Every record names **who entered it, who decided it and who withdrew it** — resolved at read time from `profiles`, never copied onto the row | ✅ |
 | A category with **no emission factor can still be recorded**, and every surface says so — the entry stores an explicit "not calculated" snapshot instead of a number, and contributes to no total (WP17; today only Water, which is tracked by invoice while no authoritative water factor exists) | ✅ |
-| Reporting years 2015–2026 (WP15/DE-9); the demo dataset and factor library live in one `DEMO_YEAR`, and any year without factors says so instead of failing silently | ✅ |
+| Reporting years 2000–2100 with D06's 2026 default (LP3-02); the demo dataset and factor library live in one `DEMO_YEAR`, and any year without factors says so instead of failing silently. One year/subsidiary/scope/category selection is carried in the URL across the dashboard, emissions, intensity and reports (LP3-02 N1) | ✅ |
 | One-command local bootstrap (`pnpm setup`) | ✅ |
 | 7 AI subagents + reusable skills + `CLAUDE.md` rules | ✅ |
 | Data Entry UI wired to the live calculation engine (activity value + unit → tCO₂e preview, draft → submit), with a **collection-status panel** saying whether the subsidiary's year is actually finished — how many invoices it needs, how many are keyed in, how many anyone has approved (WP17) | ✅ |
@@ -658,7 +658,7 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/h
 | `POST` `PATCH` `DELETE` | `/denominators`(`/:id`) | Manage an intensity denominator | `super_admin` |
 | `GET` | `/intensity` | Emissions per configured denominator, per metric (`?year=`) | any |
 | `GET` | `/reports/meta` | Report completeness/status for a year (badge + data warning) | any |
-| `GET` | `/reports/pdf` | Branded audit‑ready PDF (Puppeteer; methodology + evidence appendices) | all except `data_entry` |
+| `GET` | `/reports/pdf` | Branded audit‑ready PDF (Puppeteer; methodology + evidence appendices). Every export answers `HEAD` 405 (LP3-02 (15)) | all except `data_entry` |
 | `GET` | `/reports/excel` | Excel export: Summary / Raw Activity Data / Withdrawn Records / Factors Used sheets | all except `data_entry` |
 | `GET` | `/reports/csv` | CSV export of the committed ledger **plus the withdrawn rows**, one table | all except `data_entry` |
 | `GET` | `/inventory-boundaries?reportingYear=` | One year's inventory boundary versions, newest first (a data_entry user's: those declaring a subsidiary it is granted) — "The write path" | any |
@@ -716,11 +716,12 @@ Period locking (FR §4.2): a `super_admin` closes one subsidiary's reporting per
 
 ---
 
-### Reporting context contract (LP3-02 PR A)
+### Reporting context contract (LP3-02)
 
-**PR A publishes the shared contract. Context summary, tracking-matrix, intensity,
-report metadata and PDF/Excel/CSV routes are implemented. Annual screen and URL
-wiring remains pending.** Existing routes and clients
+**PR A published the shared contract; the context summary, tracking-matrix,
+intensity, report metadata and PDF/Excel/CSV routes are implemented, and N1
+wired the dashboard, emissions (absolute and intensity) and reports screens to
+them through one URL-carried context (below).** Existing routes and clients
 retain their response shapes. The expanded `REPORTING_YEARS` list already affects
 existing year selectors: the accepted range is **2000–2100 inclusive**, matching
 the API's existing DTO bounds. `DEFAULT_REPORTING_YEAR` stays **2026** (D06),
@@ -738,7 +739,7 @@ access or factor availability. APIs must recheck access on every request and kee
 an inaccessible selection empty instead of broadening it to the accessible set.
 
 The implementation must make the URL authoritative for this context across
-navigation, refreshes and exports. Resolve **each field** in this order: a valid,
+navigation, refreshes and exports. Resolve **each field** in this order, scope and category as one pair: a valid,
 explicit URL value; otherwise its remembered selection, if one exists; otherwise
 `DEFAULT_REPORTING_YEAR` for year, all accessible subsidiaries for subsidiary,
 and unfiltered scope/category. Write the resolved year into the canonical URL.
@@ -752,6 +753,65 @@ record status, sort and export formatting remain view-local options. Clients
 strip view-local `status`, `search`, `sort`, `limit` and `cursor`, but refuse a
 defined `locationId`, `period` or `periodValue` (including null) before fetching:
 silently dropping those would broaden the requested inventory.
+
+**URL and screens (N1).** `apps/web/lib/reporting-context-url.ts` is the grammar:
+`?year=2027&subsidiaryId=<id>|all&scope=1|2|3|all&category=<Category>|all`. Each
+key is read from its raw text. An empty value, a repeated key, a leading zero
+(`02027`, `01`), an id without the 8-4-4-4-12 hex shape, a wrong-case category or
+an explicit scope/category conflict is refused: the screen names every refused
+key, loads no context data and offers one explicit way out (the default
+selection); it never substitutes a default or remembered value. `all` is the URL-only clear
+value. The canonical URL carries the four keys once, in that order, then the
+page's own keys. `useReportingContext` (`lib/use-reporting-context.ts`) resolves
+each field (URL, then remembered, then default; scope and category together) and
+writes the canonical URL with the History API, which Next's router follows at
+once and without a server round trip — `router.replace` on load kept a route
+fetch in flight, and `LocaleSync`'s `router.refresh()` after sign-in was lost
+under it (any client navigation during that refresh still discards it; Open
+questions). Each selection is a
+history entry, so Back returns to the previous one. The remembered selection is
+in memory only (`useReportingContextStore`), per user, cleared at every sign-in
+and dropped on any Supabase auth event for another user or a sign-out (another
+tab's included): a reload is the URL's job, and a sidebar link without a query inherits
+the last selection. `ReportingContextBar` (year, subsidiary, scope, category; the
+TR/EN `reportingContext` catalogue) never decides access: a selection outside the
+caller's set stays selected as *Unavailable subsidiary*, and every context route
+answers it empty.
+
+The screens: the dashboard's Emissions Overview (summary and tracking matrix; its
+deep links into Data Entry carry the selected year); the emissions summary,
+breakdown and ledger (the selected year and subsidiary; scope and category filter
+the ledger too); intensity (`reportingIntensity`, each metric disclosing how many
+selected subsidiaries contribute and how many committed records have no usable
+figure); and Reports (preview through `reportingSummary` and `reportingMeta`; an
+export sends exactly the context the preview on screen was computed for and stays
+disabled until that preview has loaded). Trends is the one explicit all-year
+comparison: labelled *All years*, it inherits only the subsidiary. Targets
+inherit only the subsidiary, and say so. A scope or category shows a *Filtered
+view* notice on the dashboard and a *Filtered extract* notice on Reports
+(follow-up (10) stays LP4-03's); with one subsidiary selected, the dashboard's
+location count is that subsidiary's. Every load carries a sequence
+token, so an older answer cannot replace a newer selection; a load that fails
+clears the previous selection's figures (and the intensity panel's deletable
+denominators) instead of leaving them under the new bar; a mutation's follow-up
+refresh (a target or denominator saved or removed, a withdrawal) reads the
+selection on screen when it completes, not the one it started in; and the
+dashboard's subsidiary drawer closes on a new selection, its row always read
+from the matrix on screen. Data Entry deep links read their year by the same rule; an invalid one
+refuses the whole link with a visible message and applies none of it (the form
+keeps its own defaults). The legacy annual clients (`reportMeta`,
+`downloadReport`, `trackingMatrix`, `intensity`) are `@deprecated`; no screen
+calls them.
+
+**Bounds (follow-ups (19), (15)).** The context DTO's `subsidiaryId` must have the
+id shape (`UUID_SHAPE`, not lowercased: the acknowledgement echoes it verbatim,
+and an uppercase spelling matches no stored id, so it answers empty); the legacy
+report DTOs accept a blank selector (whitespace included; its meaning is open
+question (2)) or that id shape, at most 36 characters — a NUL, markup or a bidi
+control no longer reaches the generation audit row (a NUL used to fail its jsonb
+with a 500 after the whole artifact was built). Every export, context and legacy PDF/Excel/CSV, answers HEAD `405` with
+`Allow: GET` (`ExportGetOnlyGuard`) before anything is assembled or audited; the
+refused HEAD still spends the EXPORT quota, because the runtime limits run first.
 
 The following GET paths are relative to
 `/api/v1`, declared once in `REPORTING_CONTEXT_API_PATHS`; the web calls them only
@@ -820,7 +880,8 @@ implement D11/D12 attribution/applicability or D13 final/PARTIAL reporting, whic
 remain LP3-04/LP4-03 work. Consumers still need request-generation/cancellation
 guards so an older response cannot replace a newer selection.
 
-Implementation obligations before activating the context routes:
+Implementation obligations before activating the context routes (met: the routes
+in #167/#170, the URL in N1):
 
 - Classify `/reports/context/{pdf,excel,csv}` as **EXPORT** under #160, preserving
   `RATE_EXPORT_PER_MINUTE` (5) and the `reports` concurrency lease
@@ -851,6 +912,20 @@ Contract/client tests cover year bounds, context preservation and rejection,
 denominator coverage and export requests. Completing LP3-02 also requires the
 two-year/two-subsidiary reconciliation, URL and refresh behavior, 2027 missing
 factor refusal, and live API/browser evidence on an authorized isolated environment.
+N1 adds them. `reporting-context-reconciliation.int.spec.ts` runs two years × two
+subsidiaries × three filters, plus an empty 2027, on the real database, auth and
+runtime role: summary, matrix, intensity numerator, report meta, CSV ledger and
+generation audit each match a figure computed from the fixture; a 2027
+calculation is refused with `no_factor`; a data_entry granted one subsidiary is
+never broadened. It also proves HEAD 405 on all six exports and a NUL, markup or bidi selector
+refused with no audit row. `e2e/reporting-context.spec.ts` covers
+canonicalisation, Back and Forward (with their data), reload and sidebar
+navigation, the export's own request, a remembered selection forgotten when
+someone else signs in, Back closing an open drawer, a target deletion held until
+after a new selection refreshing the new one, a refused link that loads nothing,
+an inaccessible selection, Data Entry's refused year and the Turkish copy; D06 under a 2027
+clock is a unit test (a faked browser clock makes every Supabase session look
+expired).
 
 ### Bounded access contract (LP4-05 PR A)
 
@@ -1021,7 +1096,8 @@ uses Azure ingress's rightmost supplied forwarded address. Do not enable Azure
 mode on a directly reachable Node listener. Staging verification must exercise
 spoofed forwarded headers through the actual ingress before public acceptance.
 Authentication and tenant scoping remain in the existing guard; limits use its
-verified user identity. GET and implicit HEAD exports share their budget, as do
+verified user identity. GET and HEAD exports share their budget (an export
+refuses HEAD with 405 after the limits have counted it), as do
 case variants accepted by Express. Exact public health/readiness probes are
 exempt; authenticated synthetic checks are not.
 
@@ -1718,8 +1794,8 @@ The web app has route (`error.tsx`), root (`global-error.tsx`) and 404 boundarie
 
 ## Testing
 
-- **Unit (Vitest, DB‑free):** **1,992 tests across 62 files** — **1,589 across 47 files** in `apps/api`, **82** in `packages/shared-types`, **41** in `packages/db` and **280 across 13 files** in `apps/web`, measured with `turbo --force` on 2026-09-20 (`isCalculated()` is the predicate every total, export cell and screen branches on, and mutating it used to stay green across the whole API suite; the completeness view module is the other, since the sentences it builds are the whole of what a data-entry user is told about whether their year is finished), covering the calculation engine, tenant scoping, RBAC, lifecycle gates, delete guards, targets/intensity math, report assembly, DTO validation, request logging and JWT verification (both signing schemes, incl. algorithm‑confusion and `alg: none` forgeries) with a mocked Prisma client. The mock hands `$transaction` callbacks a **separate client with its own spies**, so "this write happened inside the transaction" is an assertion that can actually fail. Run `pnpm test`.
-- **E2E (Playwright):** **116 tests across 29 specs** (`playwright test --list`, 2026-09-20) against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, the review queue and audit trail, locations + the subsidiary control panel + the nested create, evidence retention (including one file shared by two records surviving the first and going with its last link), Turkish filenames, grid regions, targets, the two canonical-on-write rules (a period is one period whatever the caller capitalises; the stored unit is the vocabulary's spelling while the calculation snapshot keeps the entered one), the bulk importer's server-side 2 MiB cap (a 413 the browser's own preflight can never produce), reports (including a figure withdrawn through the API coming back out of the export with its reason), and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
+- **Unit (Vitest, DB‑free):** **4,301 tests across 146 files** — **2,937 across 107 files** in `apps/api`, **349** in `packages/shared-types`, **163** in `packages/db` and **852 across 28 files** in `apps/web`, measured with `turbo --force` on 2026-10-22 (`isCalculated()` is the predicate every total, export cell and screen branches on, and mutating it used to stay green across the whole API suite; the completeness view module is the other, since the sentences it builds are the whole of what a data-entry user is told about whether their year is finished), covering the calculation engine, tenant scoping, RBAC, lifecycle gates, delete guards, targets/intensity math, report assembly, DTO validation, request logging and JWT verification (both signing schemes, incl. algorithm‑confusion and `alg: none` forgeries) with a mocked Prisma client. The mock hands `$transaction` callbacks a **separate client with its own spies**, so "this write happened inside the transaction" is an assertion that can actually fail. Run `pnpm test`.
+- **E2E (Playwright):** **124 tests across 30 specs** (`playwright test --list`, 2026-10-22) against the real UI + API + Supabase — the full demo lifecycle (enter → live preview → evidence → submit → approve → visible), the three submit gates (evidence / anomaly / locked-period), RBAC + tenant isolation, the review queue and audit trail, locations + the subsidiary control panel + the nested create, evidence retention (including one file shared by two records surviving the first and going with its last link), Turkish filenames, grid regions, targets, the two canonical-on-write rules (a period is one period whatever the caller capitalises; the stored unit is the vocabulary's spelling while the calculation snapshot keeps the entered one), the bulk importer's server-side 2 MiB cap (a 413 the browser's own preflight can never produce), reports (including a figure withdrawn through the API coming back out of the export with its reason), and analytics/dashboard smoke. Every write lives in the unseeded `quarterly` space; `globalSetup`/`globalTeardown` wipe it so runs are idempotent and the seed is preserved. Auto‑starts the api + web servers; Supabase must be running. Run `pnpm e2e`. (Shared helpers, safe-period conventions and the API-token flow are captured in the `e2e-flow` skill.)
 
   Five of those specs are **WP8's bulk-upload layer**. Four are its **structural half** — the claims the unit suite is structurally unable to reach, each of which survived a mutation there: the multipart **field name** (closed over inside a generated interceptor class, and the browser can only ever send `file`), `defParamCharset` on a Turkish filename **into the report and the append‑only audit row**, the DTO↔route binding for bulk submit (without it the id cap and the UUID shape are both unenforced), the **N+1 audit rows** an import writes, tenant isolation asserted **on the database row** rather than on the response, the throttle **keyed per user** (its default tracker is the socket address, which behind a proxy is one bucket for the whole product), and — for the first time — the panel's confirm dialog, its double‑click window and the two‑files‑in‑flight race, none of which had ever run in a browser. The fifth, `drafts-bulk-submit.spec.ts`, covers the checkbox list on Previous submissions — that a rule the unit suite proved actually reaches the screen as a checkbox, that ticking it reaches the endpoint, and that a refusal arrives as a sentence rather than as a missing control with no explanation. `drafts-bulk-submit-evidence.spec.ts` adds the path none of those five reach, on an evidence‑required category: a Fuel draft whose invoice is attached through the Evidence vault gains its checkbox in place — no reload, no refetch, and only on that row — and then really sends. `bulk-upload-xlsx.spec.ts` puts an XLSX through the whole stack, which no other spec did: a workbook saved by a spreadsheet writer dry-runs row for row; a workbook built to kill the old exceljs loader (a dropdown over the whole sheet, a merge to its last cell, a defined name over all of it and a column span past XFD) is answered, and the API is still there to answer the next request; and a merged import cell and a zip bomb are refused in words.
 

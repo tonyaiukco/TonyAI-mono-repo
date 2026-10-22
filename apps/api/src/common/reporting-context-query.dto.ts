@@ -7,6 +7,7 @@ import {
   CATEGORIES, isReportingContext, REPORTING_YEAR_MIN, REPORTING_YEAR_MAX,
   type Category, type ReportingContext,
 } from '@tonyai/shared-types';
+import { UUID_SHAPE } from './parse-uuid-param.pipe';
 
 // Preserve arrays and malformed strings for validation instead of coercing them.
 export const integerQuery = ({ value }: { value: unknown }) =>
@@ -42,9 +43,12 @@ export class ReportingContextQueryDto implements ReportingContext {
   @Validate(ReportingContextConstraint)
   year!: number;
 
+  /** (19): an id's shape, which bounds what an export writes into its audit
+   * row and labels. Not lowercased: the context is echoed verbatim, and an
+   * uppercase spelling matches no stored id, so it answers empty. */
   @IsOptional()
   @IsString()
-  @Matches(/\S/)
+  @Matches(UUID_SHAPE)
   subsidiaryId?: string;
 
   @IsOptional()

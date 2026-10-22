@@ -1,0 +1,32 @@
+{
+  "label": "Reporting selection",
+  "year": "Reporting year",
+  "subsidiary": "Subsidiary",
+  "allSubsidiaries": "All accessible subsidiaries",
+  "unavailableSubsidiary": "Unavailable subsidiary",
+  "unavailableNotice": "The selected subsidiary is not available to you, so nothing is shown for it.",
+  "scope": "Scope",
+  "allScopes": "All Scopes",
+  "scopeValue": "Scope {scope}",
+  "category": "Category",
+  "allCategories": "All Categories",
+  "invalidTitle": "This link's reporting selection is not valid",
+  "invalidBody": "Nothing has been loaded. Refused: {fields}.",
+  "invalidReset": "Use the default selection",
+  "fields": {
+    "year": "reporting year",
+    "subsidiaryId": "subsidiary",
+    "scope": "scope",
+    "category": "category"
+  },
+  "allYears": "All years",
+  "allYearsHint": "Compares every reporting year for the selected subsidiaries; the year, scope and category selections do not apply here.",
+  "filteredExtract": "Filtered extract: this report covers {filters} only, not the year's whole inventory. Its status describes the filtered records alone.",
+  "intensityCoverage": "{contributing} of {selected} selected subsidiaries have this denominator for {year}.",
+  "intensityUncalculated": "Committed records without a usable figure, left out of this intensity: {count}.",
+  "intensityGroupOnly": "For all accessible subsidiaries only revenue intensity is shown. Select one subsidiary for physical metrics.",
+  "filteredView": "Filtered view: these figures cover {filters} only, not the year's whole inventory.",
+  "targetsHint": "Targets keep their own baseline, target and progress years; only the subsidiary selection applies here.",
+  "loadFailed": "The figures for this selection could not be loaded.",
+  "retry": "Try again"
+}

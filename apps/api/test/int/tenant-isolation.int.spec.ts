@@ -288,6 +288,8 @@ interface Res {
  * (`qa-auditor` P3-2).
  */
 const VOLATILE_HEADERS = new Set(['date', 'etag', 'x-request-id', 'keep-alive', 'connection']);
+/** (15): an export answers HEAD 405, naming GET — and generates nothing. */
+const headRefused = (res: Res) => res.status === 405 && JSON.parse(res.headers).some(([name, value]: [string, string]) => name === 'allow' && value === 'GET') && !res.generated;
 
 async function call(role: Role, method: string, path: string, body?: unknown): Promise<Res> {
   const headers: Record<string, string> = { authorization: `Bearer ${await tokenFor(A.users[role].id)}` };
@@ -639,10 +641,9 @@ const ID_ROUTES: Route[] = [
       path: (i) => `${path}?year=2026&subsidiaryId=${i.subsidiaryId}${filter}`,
       own: { role: 'consultant', prepare: recordIn(ActivityRecordStatus.approved), ok: (res) => res.status === 200 && live(dataOf(res)) },
     })),
-    // HEAD too: Express answers it with the GET handler, which generates the
-    // file and audits it — today's behaviour, characterised ("LP3-02
-    // context-route follow-ups" (15)): when (15) lands, HEAD's rows part from
-    // GET's generation assertions and keep its equivalence, RBAC and admission.
+    // HEAD too: Express answers it with the GET handler, so an export refuses
+    // it before generating or auditing anything ("LP3-02 context-route
+    // follow-ups" (15)) — B's selection, an unknown one and A's own alike.
     ...CONTEXT_EXPORTS.flatMap(([path, rest]) =>
       (['GET', 'HEAD'] as const).map((method): Route => ({
         name: `${method} ${path}?subsidiaryId=${filter}`,
@@ -655,7 +656,7 @@ const ID_ROUTES: Route[] = [
         own: {
           role: 'consultant',
           prepare: recordIn(ActivityRecordStatus.approved),
-          ok: (res) => res.status === 200 && (method === 'HEAD' || res.text.includes(subsidiaryNameA)),
+          ok: (res) => method === 'HEAD' ? headRefused(res) : res.status === 200 && res.text.includes(subsidiaryNameA),
         },
       })),
     ),
@@ -1129,6 +1130,13 @@ describe("context exports with B's selection, as each of A's roles: the same fil
         const foreign = await audited(() => call(role, method, url(B.subsidiaryId)));
         const missing = await audited(() => call(role, method, url(missingId)));
         const context = `${role} ${method} ${path}`;
+        if (method === 'HEAD') {
+          // (15): refused before anything is read, for every role — no file, no trail.
+          expect([headRefused(foreign.res), headRefused(missing.res)], `${context}: ${foreign.res.status}`).toStrictEqual([true, true]);
+          expect([foreign.rows, missing.rows], context).toStrictEqual([[], []]);
+          expect(normalise(foreign.res, { subsidiaryId: B.subsidiaryId } as Ids), context).toBe(normalise(missing.res, { subsidiaryId: missingId } as Ids));
+          continue;
+        }
         if (role === 'dataEntry') {
           // data_entry exports nothing — for any selection, and leaves no trail.
           expect([foreign.res.status, missing.res.status], context).toStrictEqual([403, 403]);
@@ -1172,6 +1180,11 @@ describe("context exports with B's selection, as each of A's roles: the same fil
       // its ledger where the template has one), audits its record as counted
       // and its withdrawal as withdrawn, and lists the withdrawal's reason.
       const own = await audited(() => call('consultant', method, url(A.subsidiaryId)));
+      if (method === 'HEAD') {
+        expect(headRefused(own.res), `${method} ${path}: ${own.res.status}`).toBe(true);
+        expect(own.rows, `${method} ${path}`).toStrictEqual([]);
+        return;
+      }
       expect(own.res.status, own.res.text.slice(0, 200)).toBe(200);
       expect(own.rows.map((r) => r.diff), `${method} ${path}`).toEqual([
         expect.objectContaining({ subsidiaryId: A.subsidiaryId, recordCount: 1, voidedCount: 1 }),
@@ -1275,14 +1288,15 @@ describe('context exports are EXPORT work (#160, #168): one report at a time, an
     const previous = config.RATE_EXPORT_PER_MINUTE;
     config.RATE_EXPORT_PER_MINUTE = 5;
     try {
-      const spend: [string, 'GET' | 'HEAD'][] = [
-        ['/reports/csv?year=2026&template=executive_summary', 'GET'],
-        [csv, 'GET'],
-        ['/reports/excel?year=2026&template=executive_summary', 'GET'],
-        ['/reports/context/excel?year=2026&template=executive_summary', 'GET'],
-        [csv, 'HEAD'],
+      // A refused HEAD (15) still spends one: the limits run before the refusal.
+      const spend: [string, 'GET' | 'HEAD', number][] = [
+        ['/reports/csv?year=2026&template=executive_summary', 'GET', 200],
+        [csv, 'GET', 200],
+        ['/reports/excel?year=2026&template=executive_summary', 'GET', 200],
+        ['/reports/context/excel?year=2026&template=executive_summary', 'GET', 200],
+        [csv, 'HEAD', 405],
       ];
-      for (const [path, method] of spend) expect((await call('consultant', method, path)).status, `${method} ${path}`).toBe(200);
+      for (const [path, method, status] of spend) expect((await call('consultant', method, path)).status, `${method} ${path}`).toBe(status);
       const sixth = await call('consultant', 'GET', '/reports/context/pdf?year=2026&template=executive_summary');
       expect(sixth.status, sixth.text.slice(0, 200)).toBe(429);
       expect((JSON.parse(sixth.text) as { code?: unknown }).code).toBe('rate_limited');

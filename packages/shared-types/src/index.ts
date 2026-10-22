@@ -531,15 +531,25 @@ export const isReportingYear = (value: unknown): value is ReportingYear =>
 /**
  * One annual inventory selection (LP3-02, owner decisions 2026-10-10).
  * The URL is authoritative; refreshes, navigation and exports retain these
- * fields. Resolve EACH field in order: a valid explicit URL value; otherwise
- * its remembered selection, if any; otherwise DEFAULT_REPORTING_YEAR for year,
- * all accessible subsidiaries for subsidiaryId, and no scope/category filter.
+ * fields. Resolve EACH field in order — scope and category as one pair: a
+ * valid explicit URL value; otherwise its remembered selection, if any;
+ * otherwise DEFAULT_REPORTING_YEAR for year, all accessible subsidiaries for
+ * subsidiaryId, and no scope/category filter.
  * Write the resolved year into the canonical URL. An invalid explicit URL
  * value is refused, never replaced by remembered state or a default. Duplicate
  * URL keys and a resolved category/scope conflict are validation failures too.
  *
+ * Canonical link (LP3-02 N1): every key once, in this order, each resolved
+ * optional field serialised explicitly — `all` is the URL-only clear value,
+ * mapped to omission before validation — so a shared link never inherits the
+ * recipient's remembered narrowing: `?year=2027&subsidiaryId=all&scope=all&category=all`.
+ * Scope and category resolve together: when either appears in the URL (a
+ * clear included), both come from it. Web grammar: `apps/web/lib/reporting-context-url.ts`.
+ *
  * Omitted subsidiaryId means ALL ACCESSIBLE subsidiaries, not necessarily the
- * whole organisation. A selected subsidiary includes its company- and site-
+ * whole organisation. The context routes accept a subsidiaryId only in the
+ * hyphenated 8-4-4-4-12 hex id shape (LP3-02 (19)); `isReportingContext`
+ * checks only that it is a non-blank string. A selected subsidiary includes its company- and site-
  * attributed records; it is not a company-only or site selector. Every API
  * request rechecks access; an inaccessible selection stays empty, never falls
  * back to the accessible set. Selection is not authorisation.
@@ -589,15 +599,16 @@ export const matchesReportingContext = (value: unknown, expected: ReportingConte
   REPORTING_CONTEXT_KEYS.every((key) => value[key] === expected[key]);
 
 /**
- * Additive, dormant routes until LP3-02's API implementation lands. Separate
- * paths make an older API refuse with 404 instead of silently ignoring filters
- * (the legacy intensity controller ignores unknown query keys). Existing
- * clients/routes keep their old envelopes. No CORS/header negotiation needed
- * for binary exports: only the new paths implement this contract.
- * Before activating pdf/excel/csv, classify these paths as EXPORT under #160,
- * with the export quota and reports concurrency lease. Derive the EXPORT set
- * from this constant plus the legacy paths, and test routeGroup for both sets.
- * The legacy exact-path regex would otherwise classify context exports READ.
+ * The context routes (LP3-02; live since #167/#170, on screen since N1).
+ * Separate paths make an older API refuse with 404 instead of silently
+ * ignoring filters (the legacy intensity controller ignores unknown query
+ * keys). Existing clients/routes keep their old envelopes. No CORS/header
+ * negotiation needed for binary exports: only the new paths implement this
+ * contract. pdf/excel/csv are EXPORT work under #160 — the export quota and
+ * the reports concurrency lease — with the EXPORT set derived from this
+ * constant plus the legacy paths (`apps/api/src/common/runtime-limits.ts`).
+ * Every export, context or legacy, answers HEAD 405 (`Allow: GET`) before it
+ * assembles or audits anything.
  */
 export const REPORTING_CONTEXT_API_PATHS = {
   summary: '/emissions/context/summary',

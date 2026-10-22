@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/card";
 import { Leaf } from "lucide-react";
 import { toast } from "sonner";
+import { useReportingContextStore } from "@/lib/store";
 
 // `useSearchParams` needs a Suspense boundary for the page to prerender.
 export default function LoginPage() {
@@ -58,6 +59,8 @@ function LoginForm() {
       return;
     }
     toast.success(t("signIn.success"));
+    // A new session: the previous person's remembered reporting context goes (LP3-02 N1).
+    useReportingContextStore.getState().clear();
     router.push("/");
     router.refresh();
   }
