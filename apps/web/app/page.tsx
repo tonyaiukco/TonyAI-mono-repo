@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useState, useMemo, useEffect, useRef } from 'react';
+import { Suspense, useCallback, useState, useMemo, useEffect, useRef } from 'react';
+import { useTranslations } from 'use-intl';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/dashboard/sidebar';
 import { KPICards } from '@/components/dashboard/kpi-cards';
@@ -8,6 +9,7 @@ import { TrackingMatrix } from '@/components/dashboard/tracking-matrix';
 import { AlertsPanel } from '@/components/dashboard/alerts-panel';
 import { EmissionsCharts } from '@/components/dashboard/emissions-charts';
 import { SubsidiaryDetail } from '@/components/dashboard/subsidiary-detail';
+import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -32,12 +34,13 @@ import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
+import { useReportingContext } from '@/lib/use-reporting-context';
 import {
   buildKpiData,
   matrixToAlerts,
   matrixToSubsidiaries,
 } from '@/lib/dashboard-view';
-import { DEFAULT_REPORTING_YEAR, mayAuthorRecords } from '@/lib/types';
+import { mayAuthorRecords } from '@/lib/types';
 import type {
   DashboardKpi,
   EmissionsSummary,
@@ -52,13 +55,35 @@ const statusClass: Record<string, string> = {
   inactive: 'bg-red-500/15 text-red-600 border-red-500/30',
 };
 
+/** `useReportingContext` reads the URL (`useSearchParams`), which Next wants under a Suspense boundary. */
 export default function CarbonDashboard() {
+  return (
+    <Suspense fallback={null}>
+      <CarbonDashboardInner />
+    </Suspense>
+  );
+}
+
+function CarbonDashboardInner() {
   const router = useRouter();
   const { user, setUser } = useAuthStore();
+  // LP3-02 N1: the one reporting selection, carried in the URL.
+  const tContext = useTranslations('reportingContext');
+  const tCategory = useTranslations('categories');
+  const contextView = useReportingContext();
+  const contextKey = contextView.status === 'ready' ? contextView.key : null;
+  const context = useMemo(
+    () => (contextView.status === 'ready' ? contextView.context : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [contextKey],
+  );
 
   // Live data (API: /me, /kpi, /subsidiaries, /emissions/summary, /emissions/tracking-matrix)
   const [kpi, setKpi] = useState<DashboardKpi | null>(null);
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
+  // Whether `subsidiaries` was ever answered: a failed load is not "none of
+  // them is yours", which the bar would say of a selected one.
+  const [subsidiariesKnown, setSubsidiariesKnown] = useState(false);
   const [summary, setSummary] = useState<EmissionsSummary | null>(null);
   const [matrix, setMatrix] = useState<TrackingMatrixDTO | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,9 +92,17 @@ export default function CarbonDashboard() {
   // Drill-down detail sheet (view model mapped from the live tracking matrix)
   // The matrix ROW, not the mock view model: the drawer needs `coverage`,
   // `trackingGranularity` and `locationCount`, all of which
-  // `matrixToSubsidiaries` drops.
-  const [selectedRow, setSelectedRow] = useState<TrackingMatrixRow | null>(null);
+  // `matrixToSubsidiaries` drops. Kept as the subsidiary and the selection it
+  // was opened in, and the row read from the matrix on screen: a stored row
+  // outlived its selection, so Back showed one year's figures beside another
+  // year's invoice grid (Codex B9 P2-3).
+  const [selected, setSelected] = useState<{ key: string | null; subsidiaryId: string } | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  // A new selection — the bar, Back/Forward, a refused link — closes the drawer.
+  if (selected !== null && selected.key !== contextKey) {
+    setSelected(null);
+    setDetailOpen(false);
+  }
   const [refreshFailures, setRefreshFailures] = useState(0);
   const inFlight = useRef(false);
 
@@ -98,23 +131,23 @@ export default function CarbonDashboard() {
       const [kpiData, list, summaryData, matrixData] = await Promise.all([
         api.kpi(),
         api.listSubsidiaries(),
-        // Same year as the matrix below. These two feed ONE set of KPI cards
-        // (`buildKpiData`), so an unscoped total sitting beside a 2024-only
-        // completeness bar would put two different time ranges in one row with
-        // neither of them labelled.
-        api.emissionsSummary({ year: DEFAULT_REPORTING_YEAR }),
+        // ONE context for both: they feed one set of KPI cards (`buildKpiData`),
+        // so a total and a completeness bar of different years, subsidiaries or
+        // filters would sit in one row with neither labelled. An invalid link
+        // loads neither (LP3-02 N1).
+        context ? api.reportingSummary(context) : Promise.resolve(null),
         // A year, not "everything": without one the endpoint folds every year
         // into a single cell, so a subsidiary complete for 2023 and empty for
-        // 2024 read as complete. A completeness view that spans years states
-        // nothing about either.
-        api.trackingMatrix({ year: DEFAULT_REPORTING_YEAR }),
+        // 2024 read as complete.
+        context ? api.reportingMatrix(context) : Promise.resolve(null),
       ]);
       // A response from a superseded request must not overwrite a newer one.
       if (mine !== loadSeq.current) return;
       setKpi(kpiData);
       setSubsidiaries(list);
-      setSummary(summaryData);
-      setMatrix(matrixData);
+      setSubsidiariesKnown(true);
+      setSummary(summaryData?.data ?? null);
+      setMatrix(matrixData?.data ?? null);
       setRefreshFailures(0);
     } catch (e) {
       // An expired session is the MOST likely failure on the focus path — it is
@@ -125,7 +158,13 @@ export default function CarbonDashboard() {
         router.push('/login');
         return;
       }
+      // A newer request owns the screen now; this failure says nothing about it.
+      if (mine !== loadSeq.current) return;
       if (!silent) {
+        // A load the user asked for — a new selection — that failed must not
+        // leave the previous selection's figures under the new bar (`qa-auditor` P2-1).
+        setSummary(null);
+        setMatrix(null);
         toast.error((e as Error).message);
       } else {
         // Swallowing one transient failure is right; swallowing them forever is
@@ -133,18 +172,26 @@ export default function CarbonDashboard() {
         setRefreshFailures((n) => n + 1);
       }
     } finally {
-      inFlight.current = false;
-      if (!silent) setLoading(false);
+      // Only the latest request ends the loading state: an older one finishing
+      // first would show its predecessor's figures under the newest selection.
+      if (mine === loadSeq.current) {
+        inFlight.current = false;
+        if (!silent) setLoading(false);
+      }
     }
-  }, [router]);
+  }, [router, context]);
 
   useEffect(() => {
     api
       .me()
       .then(setUser)
       .catch((e) => toast.error((e as Error).message));
+  }, [setUser]);
+
+  // Again whenever the selection changes; the sequence token drops the older answer.
+  useEffect(() => {
     void loadDashboard();
-  }, [loadDashboard, setUser]);
+  }, [loadDashboard]);
 
   /**
    * Refresh when the tab comes back into focus (round-1 DASH-1).
@@ -181,17 +228,36 @@ export default function CarbonDashboard() {
     () => (matrix ? matrixToSubsidiaries(matrix) : []),
     [matrix],
   );
+  // The card's locations are the selection's: with one subsidiary selected,
+  // GET /kpi's total for every accessible subsidiary would sit beside
+  // "1 company". Both count every location a subsidiary owns.
+  const selectedLocations =
+    context?.subsidiaryId !== undefined && matrix
+      ? matrix.rows.reduce((n, row) => n + row.locationCount, 0)
+      : (kpi?.totalLocations ?? null);
   const emissionsKpiData = useMemo(
     () =>
       summary && matrix
-        ? buildKpiData(summary, matrix, kpi?.totalLocations ?? null)
+        ? buildKpiData(summary, matrix, selectedLocations)
         : null,
-    [summary, matrix, kpi],
+    [summary, matrix, selectedLocations],
   );
+  // A scope or category narrows the overview to an extract of the year.
+  const filterLabel = context
+    ? [
+        context.scope !== undefined ? tContext('scopeValue', { scope: context.scope }) : null,
+        context.category !== undefined ? tCategory(context.category) : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
   const liveAlerts = useMemo(() => (matrix ? matrixToAlerts(matrix) : []), [matrix]);
 
+  const selectedRow = selected
+    ? (matrix?.rows.find((row) => row.subsidiaryId === selected.subsidiaryId) ?? null)
+    : null;
   const handleMatrixSubsidiaryClick = (row: TrackingMatrixRow) => {
-    setSelectedRow(row);
+    setSelected({ key: contextKey, subsidiaryId: row.subsidiaryId });
     setDetailOpen(true);
   };
 
@@ -203,7 +269,8 @@ export default function CarbonDashboard() {
     const params = new URLSearchParams({
       subsidiaryId: row.subsidiaryId,
       category,
-      year: String(DEFAULT_REPORTING_YEAR),
+      // The year the grid shows, which is the selected one.
+      year: String(matrix?.reportingYear ?? context?.year),
     });
     router.push(`/data-entry?${params.toString()}`);
   };
@@ -231,7 +298,7 @@ export default function CarbonDashboard() {
       // The year the GRID was fetched for, not the module default. Equal today;
       // the first year picker would otherwise send the user to a different year
       // than the one they were looking at.
-      year: String(matrix?.reportingYear ?? DEFAULT_REPORTING_YEAR),
+      year: String(matrix?.reportingYear ?? context?.year),
       locationId,
       period: 'monthly',
       periodValue: month,
@@ -410,8 +477,23 @@ export default function CarbonDashboard() {
               Committed Scope 1 &amp; 2 activity records. Year-over-year trends
               arrive once prior-year data exists.
             </p>
+            {contextView.status === 'ready' ? (
+              <ReportingContextBar
+                context={contextView.context}
+                subsidiaries={subsidiariesKnown ? subsidiaries : null}
+                onSelect={contextView.select}
+              />
+            ) : null}
 
-            {loading ? (
+            {contextView.status === 'ready' && filterLabel && (
+              <p className="text-sm text-blue-800" data-testid="filtered-view">
+                {tContext('filteredView', { filters: filterLabel })}
+              </p>
+            )}
+
+            {contextView.status === 'invalid' ? (
+              <ReportingContextInvalid invalid={contextView.invalid} onReset={contextView.reset} />
+            ) : loading ? (
               <p className="py-12 text-center text-sm text-muted-foreground">Loading…</p>
             ) : !emissionsKpiData || !matrix ? (
               <p className="py-12 text-center text-sm text-muted-foreground">

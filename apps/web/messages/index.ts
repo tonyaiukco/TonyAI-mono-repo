@@ -7,6 +7,7 @@ import enErrors from "./en/errors.json";
 import enNav from "./en/nav.json";
 import enNumbers from "./en/numbers.json";
 import enPeriods from "./en/periods.json";
+import enReportingContext from "./en/reportingContext.json";
 import enUsers from "./en/users.json";
 import trAuth from "./tr/auth.json";
 import trCategories from "./tr/categories.json";
@@ -16,6 +17,7 @@ import trErrors from "./tr/errors.json";
 import trNav from "./tr/nav.json";
 import trNumbers from "./tr/numbers.json";
 import trPeriods from "./tr/periods.json";
+import trReportingContext from "./tr/reportingContext.json";
 import trUsers from "./tr/users.json";
 
 /**
@@ -36,6 +38,7 @@ import trUsers from "./tr/users.json";
  *   dataEntry   the Data Entry screen
  *   auth        sign-in, forgot password, the email-link and set-password screens (LP4-01)
  *   users       user and access management (LP4-01)
+ *   reportingContext  the annual screens' year/subsidiary/scope/category selection (LP3-02 N1)
  */
 const en = {
   common: enCommon,
@@ -47,6 +50,7 @@ const en = {
   dataEntry: enDataEntry,
   auth: enAuth,
   users: enUsers,
+  reportingContext: enReportingContext,
 };
 
 export type Messages = typeof en;
@@ -61,6 +65,7 @@ const tr: Messages = {
   dataEntry: trDataEntry,
   auth: trAuth,
   users: trUsers,
+  reportingContext: trReportingContext,
 };
 
 export const MESSAGES: Readonly<Record<Locale, Messages>> = { en, tr };

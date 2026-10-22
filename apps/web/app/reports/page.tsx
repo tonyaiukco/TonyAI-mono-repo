@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'use-intl';
 import { useRouter } from 'next/navigation';
 import { withdrawalNotice } from '@/lib/report-view';
 import { Sidebar } from '@/components/dashboard/sidebar';
@@ -43,11 +44,14 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
+import { useReportingContext } from '@/lib/use-reporting-context';
+import { reportingContextKey } from '@/lib/reporting-context-url';
+import { ReportingContextBar, ReportingContextInvalid, selectionAvailable } from '@/components/reporting-context/reporting-context-bar';
 import { REPORT_TEMPLATES } from '@/lib/types';
-import { DEFAULT_REPORTING_YEAR, REPORTING_YEARS } from '@/lib/types';
 import type {
   EmissionsSummary,
   ReportExportType,
+  ReportingContext,
   ReportMetaDTO,
   ReportStatus,
   ReportTemplate,
@@ -65,43 +69,89 @@ const STATUS_BADGE: Record<ReportStatus, { label: string; className: string }> =
 
 const fmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
 
+/** `useReportingContext` reads the URL (`useSearchParams`), which Next wants under a Suspense boundary. */
 export default function ReportsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ReportsPageInner />
+    </Suspense>
+  );
+}
+
+function ReportsPageInner() {
   const router = useRouter();
   const { user, setUser } = useAuthStore();
+  const tContext = useTranslations('reportingContext');
+  const tCategory = useTranslations('categories');
 
-  // Config (FR §5.3 — filter-aware, year-scoped v1)
+  // LP3-02 N1: year, subsidiary, scope and category come from the URL — the
+  // same selection the dashboard and emissions screens carry.
+  const contextView = useReportingContext();
+  const contextKey = contextView.status === 'ready' ? contextView.key : null;
+  const context = useMemo(
+    () => (contextView.status === 'ready' ? contextView.context : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [contextKey],
+  );
+
+  // View-local export options (FR §5.3)
   const [template, setTemplate] = useState<ReportTemplate>('executive_summary');
-  const [year, setYear] = useState<number>(DEFAULT_REPORTING_YEAR);
-  const [subsidiaryId, setSubsidiaryId] = useState(''); // '' = whole organisation
   const [includeMethodology, setIncludeMethodology] = useState(true);
   const [includeEvidence, setIncludeEvidence] = useState(false);
 
   // Live data
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
+  const [subsidiariesLoaded, setSubsidiariesLoaded] = useState(false);
   const [summary, setSummary] = useState<EmissionsSummary | null>(null);
   const [meta, setMeta] = useState<ReportMetaDTO | null>(null);
+  // The context the preview on screen was computed for. Exports send exactly
+  // this, so a file can never describe a selection the preview did not show.
+  const [shown, setShown] = useState<ReportingContext | null>(null);
   const [loading, setLoading] = useState(true);
+  // A failed preview says so (with a retry) instead of a skeleton that never ends.
+  const [previewFailed, setPreviewFailed] = useState(false);
   const [downloading, setDownloading] = useState<ReportExportType | null>(null);
+  const loadSeq = useRef(0);
 
   const refresh = useCallback(async () => {
+    const mine = ++loadSeq.current;
+    // Nothing of the previous selection stays on screen while the new one loads:
+    // the completeness card, the withdrawal notice and the draft warning read `meta`.
+    setShown(null);
+    setSummary(null);
+    setMeta(null);
+    setPreviewFailed(false);
+    if (!context) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const [s, m] = await Promise.all([
-        api.emissionsSummary({ year, subsidiaryId: subsidiaryId || undefined }),
-        api.reportMeta({ year, subsidiaryId: subsidiaryId || undefined }),
-      ]);
-      setSummary(s);
-      setMeta(m);
+      const [s, m] = await Promise.all([api.reportingSummary(context), api.reportingMeta(context)]);
+      if (mine !== loadSeq.current) return;
+      setSummary(s.data);
+      setMeta(m.data);
+      setShown(context);
     } catch (e) {
+      if (mine !== loadSeq.current) return;
+      setSummary(null);
+      setMeta(null);
+      setPreviewFailed(true);
       toast.error((e as Error).message);
     } finally {
-      setLoading(false);
+      if (mine === loadSeq.current) setLoading(false);
     }
-  }, [year, subsidiaryId]);
+  }, [context]);
 
   useEffect(() => {
     api.me().then(setUser).catch((e) => toast.error((e as Error).message));
-    api.listSubsidiaries().then(setSubsidiaries).catch((e) => toast.error((e as Error).message));
+    api
+      .listSubsidiaries()
+      .then((list) => {
+        setSubsidiaries(list);
+        setSubsidiariesLoaded(true);
+      })
+      .catch((e) => toast.error((e as Error).message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -110,12 +160,13 @@ export default function ReportsPage() {
   }, [refresh]);
 
   async function handleDownload(kind: ReportExportType) {
+    // Only the selection the preview shows, and only once it is on screen.
+    if (!shown || !context || reportingContextKey(shown) !== reportingContextKey(context)) return;
     setDownloading(kind);
     try {
-      await api.downloadReport(kind, {
+      await api.downloadReportingReport(kind, {
+        ...shown,
         template,
-        year,
-        subsidiaryId: subsidiaryId || undefined,
         includeMethodologyNotes: includeMethodology,
         includeEvidenceSummary: includeEvidence,
       });
@@ -134,11 +185,29 @@ export default function ReportsPage() {
   }
 
   const canGenerate = !!user && user.role !== 'data_entry'; // permissions §"Generate and export reports"
+  const exportReady = !!shown && !!context && !loading && reportingContextKey(shown) === reportingContextKey(context);
   const totals = summary?.totals ?? { scope1: 0, scope2: 0, scope3: 0, total: 0 };
   const templateName = REPORT_TEMPLATES.find((t) => t.id === template)?.name ?? template;
-  const subsidiaryName = subsidiaryId
-    ? (subsidiaries.find((s) => s.id === subsidiaryId)?.tradingName ?? null)
+  const shownSubsidiary = shown?.subsidiaryId
+    ? (subsidiaries.find((s) => s.id === shown.subsidiaryId) ?? null)
     : null;
+  const subsidiaryName = shown?.subsidiaryId
+    ? shownSubsidiary
+      ? (shownSubsidiary.tradingName ?? shownSubsidiary.legalName)
+      : selectionAvailable(shown, subsidiariesLoaded ? subsidiaries : null) === false
+        ? tContext('unavailableSubsidiary')
+        : null
+    : null;
+  // A scope or category narrows the file to an extract (follow-up (10): its
+  // status badge describes the filtered records alone).
+  const filterLabel = shown
+    ? [
+        shown.scope !== undefined ? tContext('scopeValue', { scope: shown.scope }) : null,
+        shown.category !== undefined ? tCategory(shown.category) : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
   const badge = meta ? STATUS_BADGE[meta.status] : null;
 
   const pieData = useMemo(
@@ -195,38 +264,26 @@ export default function ReportsPage() {
                   <CardTitle className="text-base">Report configuration</CardTitle>
                 </CardHeader>
                 <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div className="sm:col-span-3">
+                    <Field label={tContext('label')}>
+                      {contextView.status === 'ready' ? (
+                        <ReportingContextBar
+                          context={contextView.context}
+                          subsidiaries={subsidiariesLoaded ? subsidiaries : null}
+                          onSelect={contextView.select}
+                          disabled={downloading !== null}
+                        />
+                      ) : (
+                        <ReportingContextInvalid invalid={contextView.invalid} onReset={contextView.reset} />
+                      )}
+                    </Field>
+                  </div>
                   <Field label="Template">
                     <Select value={template} onValueChange={(v) => setTemplate(v as ReportTemplate)}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {REPORT_TEMPLATES.map((t) => (
                           <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field label="Scope">
-                    <Select
-                      value={subsidiaryId || '__all__'}
-                      onValueChange={(v) => setSubsidiaryId(v === '__all__' ? '' : v)}
-                    >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all__">Whole organisation</SelectItem>
-                        {subsidiaries.map((s) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.tradingName ?? s.legalName} ({s.geographyCode})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field label="Reporting year">
-                    <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {REPORTING_YEARS.map((y) => (
-                          <SelectItem key={y} value={String(y)}>{y}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -257,6 +314,16 @@ export default function ReportsPage() {
                 </div>
               )}
 
+              {filterLabel && (
+                <div
+                  className="flex items-start gap-2 rounded-lg border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-800"
+                  data-testid="filtered-extract"
+                >
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{tContext('filteredExtract', { filters: filterLabel })}</span>
+                </div>
+              )}
+
               {/* Data warning (report_page.md §9) */}
               {meta && meta.incompleteRatio > 0.15 && (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -269,7 +336,17 @@ export default function ReportsPage() {
               )}
 
               {/* Preview canvas (report_page.md §4-§6) */}
-              {loading ? (
+              {contextView.status === 'invalid' ? null : previewFailed ? (
+                <div
+                  className="flex flex-col items-center gap-3 rounded-lg border border-border bg-card p-12 text-center text-sm"
+                  role="alert"
+                  data-testid="preview-failed"
+                >
+                  <AlertTriangle className="h-8 w-8 text-[#B91C1C]" />
+                  <p className="text-muted-foreground">{tContext('loadFailed')}</p>
+                  <Button variant="outline" onClick={() => void refresh()}>{tContext('retry')}</Button>
+                </div>
+              ) : loading || !shown ? (
                 <Skeleton className="h-[480px] w-full" />
               ) : (
                 <Card className="border-2 border-primary/20">
@@ -282,8 +359,9 @@ export default function ReportsPage() {
                           <h2 className="text-xl font-bold text-primary">{meta?.organisationName ?? "—"}</h2>
                         </div>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          {templateName} · Reporting year {year}
+                          {templateName} · Reporting year {shown.year}
                           {subsidiaryName ? ` · ${subsidiaryName}` : ''}
+                          {filterLabel ? ` · ${filterLabel}` : ''}
                         </p>
                       </div>
                       {badge && (
@@ -391,7 +469,7 @@ export default function ReportsPage() {
                   <Button
                     className="w-full justify-start gap-2"
                     onClick={() => handleDownload('pdf')}
-                    disabled={downloading !== null}
+                    disabled={downloading !== null || !exportReady}
                   >
                     <FileText className="h-4 w-4" />
                     {downloading === 'pdf' ? 'Generating PDF…' : 'Download PDF'}
@@ -400,7 +478,7 @@ export default function ReportsPage() {
                     variant="outline"
                     className="w-full justify-start gap-2"
                     onClick={() => handleDownload('excel')}
-                    disabled={downloading !== null}
+                    disabled={downloading !== null || !exportReady}
                   >
                     <FileSpreadsheet className="h-4 w-4" />
                     {downloading === 'excel' ? 'Generating Excel…' : 'Export Excel'}
@@ -409,7 +487,7 @@ export default function ReportsPage() {
                     variant="outline"
                     className="w-full justify-start gap-2"
                     onClick={() => handleDownload('csv')}
-                    disabled={downloading !== null}
+                    disabled={downloading !== null || !exportReady}
                   >
                     <Table2 className="h-4 w-4" />
                     {downloading === 'csv' ? 'Generating CSV…' : 'Export CSV'}

@@ -1,14 +1,15 @@
 import type { ReportingContext, ReportingMetaResponse } from '@tonyai/shared-types';
 import { ReportingContextQueryDto, reportingContext } from '../common/reporting-context-query.dto';
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { ReportsService } from './reports.service';
+import { ExportGetOnlyGuard } from './export-get-only.guard';
 import { ReportMetaQueryDto, ReportQueryDto, ReportingExportQueryDto } from './dto/report-query.dto';
 
 export function filename(q: ReportQueryDto & Pick<ReportingContext, 'scope' | 'category'>, ext: string): string {
-  // Sanitize: subsidiaryId is only @IsString-validated (seed ids aren't RFC-4122
+  // Sanitize: a legacy subsidiaryId is only length-bounded (seed ids aren't RFC-4122
   // UUIDs), and a quote/CRLF here would corrupt the Content-Disposition header.
   const sub = q.subsidiaryId
     ? `-${q.subsidiaryId.replace(/[^A-Za-z0-9-]/g, '').slice(0, 8)}`
@@ -29,16 +30,19 @@ export class ReportsController {
   }
 
   @Get('context/pdf')
+  @UseGuards(ExportGetOnlyGuard)
   contextPdf(@CurrentUser() user: RequestUser, @Query() q: ReportingExportQueryDto, @Res() res: Response) {
     return this.pdf(user, q, res);
   }
 
   @Get('context/excel')
+  @UseGuards(ExportGetOnlyGuard)
   contextExcel(@CurrentUser() user: RequestUser, @Query() q: ReportingExportQueryDto, @Res() res: Response) {
     return this.excel(user, q, res);
   }
 
   @Get('context/csv')
+  @UseGuards(ExportGetOnlyGuard)
   contextCsv(@CurrentUser() user: RequestUser, @Query() q: ReportingExportQueryDto, @Res() res: Response) {
     return this.csv(user, q, res);
   }
@@ -51,6 +55,7 @@ export class ReportsController {
 
   /** Audit-ready branded PDF (FR §5.1). Streams as a download. */
   @Get('pdf')
+  @UseGuards(ExportGetOnlyGuard)
   async pdf(
     @CurrentUser() user: RequestUser,
     @Query() q: ReportQueryDto,
@@ -68,6 +73,7 @@ export class ReportsController {
 
   /** Multi-sheet Excel export: Summary / Raw Activity Data / Factors Used (FR §5.2). */
   @Get('excel')
+  @UseGuards(ExportGetOnlyGuard)
   async excel(
     @CurrentUser() user: RequestUser,
     @Query() q: ReportQueryDto,
@@ -86,6 +92,7 @@ export class ReportsController {
 
   /** CSV export of the committed records ledger (FR §5.2). */
   @Get('csv')
+  @UseGuards(ExportGetOnlyGuard)
   async csv(
     @CurrentUser() user: RequestUser,
     @Query() q: ReportQueryDto,

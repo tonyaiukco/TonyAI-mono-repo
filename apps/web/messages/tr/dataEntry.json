@@ -98,5 +98,6 @@
       "fixture": "Test verisi — yetkili kaynağa dayalı değil",
       "withdrawn": "Geri çekilmiş"
     }
-  }
+  },
+  "invalidLinkYear": "Bu bağlantıdaki raporlama yılı geçerli değil; bu yüzden bağlantı uygulanmadı."
 }

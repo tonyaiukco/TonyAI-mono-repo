@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -62,6 +62,9 @@ interface TargetsPanelProps {
   canManage: boolean;
   subsidiaries: SubsidiaryDTO[];
   nameById: Map<string, string>;
+  /** The page's selected subsidiary (LP3-02 N1). Targets inherit only this:
+   * they keep their own baseline, target and progress years. */
+  subsidiaryId?: string;
 }
 
 const emptyForm = {
@@ -74,7 +77,7 @@ const emptyForm = {
 };
 
 /** Targets tab (WP5): live reduction targets + progress; super_admin CRUD. */
-export function TargetsPanel({ canManage, subsidiaries, nameById }: TargetsPanelProps) {
+export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }: TargetsPanelProps) {
   const [targets, setTargets] = useState<TargetDTO[]>([]);
   const [progress, setProgress] = useState<TargetProgressDTO[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,21 +98,37 @@ export function TargetsPanel({ canManage, subsidiaries, nameById }: TargetsPanel
     return m;
   }, [progress]);
 
+  // A slower answer for an earlier selection must not land over a newer one.
+  const loadSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const mine = ++loadSeq.current;
     setLoading(true);
     try {
-      const [t, p] = await Promise.all([api.listTargets(), api.targetProgress()]);
+      const [t, p] = await Promise.all([api.listTargets({ subsidiaryId }), api.targetProgress({ subsidiaryId })]);
+      if (mine !== loadSeq.current) return;
       setTargets(t);
       setProgress(p);
     } catch (e) {
+      if (mine !== loadSeq.current) return;
+      // Never the previous subsidiary's targets under the new selection.
+      setTargets([]);
+      setProgress([]);
       toast.error((e as Error).message);
     } finally {
-      setLoading(false);
+      if (mine === loadSeq.current) setLoading(false);
     }
-  }, []);
+  }, [subsidiaryId]);
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+  // A mutation's follow-up refresh runs for the selection on screen when the
+  // mutation completes, not the one captured when it started: that refresh
+  // would be the newest request and land an obsolete selection's rows under
+  // the current bar (Codex B9 P2-2).
+  const refreshLatest = useRef(refresh);
+  useEffect(() => {
+    refreshLatest.current = refresh;
   }, [refresh]);
 
   async function handleCreate() {
@@ -142,7 +161,7 @@ export function TargetsPanel({ canManage, subsidiaries, nameById }: TargetsPanel
       setForm(emptyForm);
       baselineInput.setValue(null);
       targetInput.setValue(null);
-      await refresh();
+      await refreshLatest.current();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -154,7 +173,7 @@ export function TargetsPanel({ canManage, subsidiaries, nameById }: TargetsPanel
     try {
       await api.deleteTarget(t.id);
       toast.success('Target removed');
-      await refresh();
+      await refreshLatest.current();
     } catch (e) {
       toast.error((e as Error).message);
     }
