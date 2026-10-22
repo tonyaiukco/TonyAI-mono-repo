@@ -21,6 +21,7 @@ describe('verified-user runtime admission', () => {
   it.each([
     ['RATE_READ_PER_MINUTE', 'GET', '/api/v1/records'],
     ['RATE_WRITE_PER_MINUTE', 'POST', '/api/v1/records'],
+    ['RATE_READ_PER_MINUTE', 'POST', '/api/v1/calculations/preview'],
     ['RATE_IMPORT_PER_MINUTE', 'POST', '/api/v1/bulk-upload/activity-records'],
     ['RATE_SUBMIT_PER_MINUTE', 'POST', '/api/v1/activity-records/bulk-submit'],
     ['RATE_EXPORT_PER_MINUTE', 'GET', '/api/v1/reports/pdf'],
@@ -77,6 +78,40 @@ describe('verified-user runtime admission', () => {
     work.complete();
     expect(await guard.canActivate(c.context)).toBe(true);
     b.req.runtimeLease.release(); c.req.runtimeLease.release();
+  });
+  it("admits Data Entry's live preview without a mutation permit, so it never refuses the user's own submit", async () => {
+    const guard = new RuntimeAuthGuard(auth as never, policy());
+    // The debounced preview is still running when Submit is pressed (nightly
+    // e2e, 2026-10-22: the submit was refused 429 instead of its evidence gate).
+    const previews = ['a', 'b', 'c'].map((user) => request('/api/v1/calculations/preview', 'POST', user));
+    for (const preview of previews) expect(await guard.canActivate(preview.context)).toBe(true);
+    const submit = request('/api/v1/activity-records/id/submit', 'POST', 'a');
+    expect(await guard.canActivate(submit.context)).toBe(true);
+    const other = request('/api/v1/records', 'POST', 'b');
+    expect(await guard.canActivate(other.context)).toBe(true);
+    // Writes still hold their permits: a third user's write beyond the API-wide
+    // two is refused, while a GET export (no mutation) is not …
+    await expect(guard.canActivate(request('/api/v1/records', 'POST', 'c').context)).rejects.toBeInstanceOf(CapacityError);
+    const exported = request('/api/v1/reports/pdf', 'GET', 'c');
+    expect(await guard.canActivate(exported.context)).toBe(true);
+    // … and with an API-wide permit free again, the same user's next write
+    // still meets their own one — a preview does not.
+    other.req.runtimeLease.release();
+    await expect(guard.canActivate(request('/api/v1/records', 'PATCH', 'a').context)).rejects.toBeInstanceOf(CapacityError);
+    const during = request('/api/v1/calculations/preview', 'POST', 'a');
+    expect(await guard.canActivate(during.context)).toBe(true);
+    [...previews, submit, exported, during].forEach((r) => r.req.runtimeLease.release());
+  });
+  it('spends a preview from the READ budget, never the WRITE budget a save or submit needs', async () => {
+    vi.stubEnv('RATE_WRITE_PER_MINUTE', '1');
+    const guard = new RuntimeAuthGuard(auth as never, policy());
+    for (let i = 0; i < 3; i++) {
+      const preview = request('/api/v1/calculations/preview', 'POST');
+      expect(await guard.canActivate(preview.context)).toBe(true); preview.req.runtimeLease.release();
+    }
+    const save = request('/api/v1/records', 'POST');
+    expect(await guard.canActivate(save.context)).toBe(true); save.req.runtimeLease.release();
+    await expect(guard.canActivate(request('/api/v1/records', 'POST').context)).rejects.toBeInstanceOf(CapacityError);
   });
   it('honors authentication refusal and maps only pre-work pool exhaustion', async () => {
     const p = policy(); const r = request('/api/v1/records', 'POST');

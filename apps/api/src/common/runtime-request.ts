@@ -37,7 +37,8 @@ export class RuntimeAuthGuard implements CanActivate {
         lease?.releases.push(this.limits.acquire('http', c.HTTP_MAX_INFLIGHT));
         if (group === 'IMPORT') lease?.releases.push(this.limits.acquire('imports', c.IMPORT_CONCURRENCY));
         if (group === 'EXPORT') lease?.releases.push(this.limits.acquire('reports', c.REPORT_CONCURRENCY));
-        if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+        // A read-only POST (`routeGroup`'s READ) takes no mutation permit.
+        if (group !== 'READ' && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
           lease?.releases.push(this.limits.acquire('mutations', c.MUTATION_CONCURRENCY));
           lease?.releases.push(this.limits.acquire(`mutation:${user.id}`, c.MUTATION_USER_CONCURRENCY));
         }

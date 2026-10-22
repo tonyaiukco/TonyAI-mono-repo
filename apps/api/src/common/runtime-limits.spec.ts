@@ -96,6 +96,11 @@ describe('bounded admission', () => {
     ['GET', '/api/v1/report-issuances/0b1d0000-0000-4000-8000-000000000001', 'READ'],
     ['GET', '/api/v1/report-issuances?year=2026', 'READ'],
     ['POST', '/api/v1/report-issuances/id/pdf', 'WRITE'],
+    // Data Entry's live preview only reads; nothing else on its path does.
+    ['POST', '/api/v1/calculations/preview', 'READ'], ['POST', '/api/v1/Calculations/PREVIEW/?year=2026', 'READ'],
+    ['PUT', '/api/v1/calculations/preview', 'WRITE'], ['PATCH', '/api/v1/calculations/preview', 'WRITE'],
+    ['DELETE', '/api/v1/calculations/preview', 'WRITE'], ['POST', '/api/v1/calculations/preview/id', 'WRITE'],
+    ['POST', '/api/v1/calculations/previews', 'WRITE'], ['POST', '/api/v1/calculations', 'WRITE'],
   ])('groups %s %s', (method, path, group) => expect(routeGroup(method, path)).toBe(group));
   it.each(['GET', 'HEAD'])('classifies every legacy and context export as EXPORT for %s', (method) => {
     for (const path of [REPORTING_CONTEXT_API_PATHS.pdf, REPORTING_CONTEXT_API_PATHS.excel, REPORTING_CONTEXT_API_PATHS.csv,
