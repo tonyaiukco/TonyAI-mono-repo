@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'use-intl';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/dashboard/sidebar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -62,8 +63,9 @@ import { api, ApiError } from '@/lib/api';
 import { anomalyStatement } from '@/lib/anomaly-view';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
+import { useReportingContext } from '@/lib/use-reporting-context';
+import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
 import { CATEGORIES, isCalculated, unitSymbol } from '@/lib/types';
-import { DEFAULT_REPORTING_YEAR } from '@/lib/types';
 import { NOT_CALCULATED_LABEL, NO_FACTOR_LABEL } from '@/lib/calculation-display';
 import {
   VOID_REASON_MAX_LENGTH,
@@ -79,7 +81,7 @@ import type {
   ActivityRecordStatus,
   DataViewMode,
   EmissionsSummary,
-  IntensityResponseDTO,
+  ReportingIntensityData,
   SubsidiaryDTO,
 } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -156,29 +158,53 @@ function scopeColorFor(scope: number): string {
   return scope === 1 ? SCOPE_COLORS.scope1 : scope === 2 ? SCOPE_COLORS.scope2 : SCOPE_COLORS.scope3;
 }
 
+/** `useReportingContext` reads the URL (`useSearchParams`), which Next wants under a Suspense boundary. */
 export default function EmissionsAnalysisPage() {
+  return (
+    <Suspense fallback={null}>
+      <EmissionsAnalysisPageInner />
+    </Suspense>
+  );
+}
+
+function EmissionsAnalysisPageInner() {
   const router = useRouter();
   const { user, setUser } = useAuthStore();
+  const tContext = useTranslations('reportingContext');
+  // LP3-02 N1: the one reporting selection, carried in the URL. Summary,
+  // breakdown, the ledger and intensity use it; Trends is the explicit
+  // all-year comparison; targets inherit only the subsidiary.
+  const contextView = useReportingContext();
+  const contextKey = contextView.status === 'ready' ? contextView.key : null;
+  const context = useMemo(
+    () => (contextView.status === 'ready' ? contextView.context : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [contextKey],
+  );
+  const scopeFilter: ScopeFilter = context?.scope ? (`scope${context.scope}` as ScopeFilter) : 'all';
+  const categoryFilter: string = context?.category ?? 'all';
 
   const [activeTab, setActiveTab] = useState('summary');
-  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all');
-  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRecord, setSelectedRecord] = useState<ActivityRecordDTO | null>(null);
   const [contributorBasis, setContributorBasis] = useState<'subsidiary' | 'category'>('subsidiary');
   const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>('monthly');
   const [historyCategory, setHistoryCategory] = useState<string>('all');
   const [dataViewMode, setDataViewMode] = useState<DataViewMode>('absolute');
-  const [intensity, setIntensity] = useState<IntensityResponseDTO | null>(null);
+  const [intensity, setIntensity] = useState<ReportingIntensityData | null>(null);
 
   // Live data
   const [summary, setSummary] = useState<EmissionsSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  // Trends: every year for the selected subsidiaries (the comparison view).
+  const [trendSummary, setTrendSummary] = useState<EmissionsSummary | null>(null);
+  const [trendLoading, setTrendLoading] = useState(true);
 
   const [records, setRecords] = useState<ActivityRecordDTO[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(true);
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
+  const [subsidiariesLoaded, setSubsidiariesLoaded] = useState(false);
 
   // Withdrawal (void). Kept next to the drawer it belongs to rather than in a
   // child component, because the write has to land in three places at once —
@@ -194,73 +220,137 @@ export default function EmissionsAnalysisPage() {
     return m;
   }, [subsidiaries]);
 
-  const scopeNum = useMemo<1 | 2 | 3 | undefined>(() => {
-    if (scopeFilter === 'all') return undefined;
-    return Number(scopeFilter.replace('scope', '')) as 1 | 2 | 3;
-  }, [scopeFilter]);
+  const scopeNum = context?.scope;
+  const selectedYear = context?.year;
+  const selectedSubsidiaryId = context?.subsidiaryId;
+
+  // Sequence tokens: a slower answer for an earlier selection must not land
+  // over a newer one (README "Reporting context contract").
+  const summarySeq = useRef(0);
+  const trendSeq = useRef(0);
+  const recordsSeq = useRef(0);
 
   const loadSummary = useCallback(async () => {
+    if (!context) return;
+    const mine = ++summarySeq.current;
     setSummaryLoading(true);
     try {
-      const s = await api.emissionsSummary({
-        scope: scopeNum,
-        category: categoryFilter === 'all' ? undefined : (categoryFilter as never),
-      });
-      setSummary(s);
+      const { data } = await api.reportingSummary(context);
+      if (mine !== summarySeq.current) return;
+      setSummary(data);
       setSummaryError(null);
     } catch (e) {
+      if (mine !== summarySeq.current) return;
+      // Never the previous selection's figures under the new bar (`qa-auditor` P2-1).
+      setSummary(null);
       setSummaryError(errMessage(e));
       toast.error(errMessage(e));
     } finally {
-      setSummaryLoading(false);
+      if (mine === summarySeq.current) setSummaryLoading(false);
     }
-  }, [scopeNum, categoryFilter]);
+  }, [context]);
 
-  // Identity + one-off datasets (subsidiaries for names, records for the ledger).
+  // An explicit history view (EmissionsSummaryParams): no year, on purpose.
+  const hasContext = context !== null;
+  const loadTrends = useCallback(async () => {
+    if (!hasContext) return;
+    const mine = ++trendSeq.current;
+    setTrendLoading(true);
+    try {
+      const s = await api.emissionsSummary({ subsidiaryId: selectedSubsidiaryId });
+      if (mine !== trendSeq.current) return;
+      setTrendSummary(s);
+    } catch (e) {
+      if (mine !== trendSeq.current) return;
+      setTrendSummary(null);
+      toast.error(errMessage(e));
+    } finally {
+      if (mine === trendSeq.current) setTrendLoading(false);
+    }
+  }, [hasContext, selectedSubsidiaryId]);
+
+  /** The selected year's ledger. A subsidiary the caller cannot see answers empty. */
+  const fetchRecords = useCallback(
+    () =>
+      selectedYear === undefined
+        ? Promise.resolve<ActivityRecordDTO[]>([])
+        : api.listActivityRecords({ year: selectedYear, subsidiaryId: selectedSubsidiaryId }),
+    [selectedYear, selectedSubsidiaryId],
+  );
+
+  // Identity + subsidiaries (names, the selection's labels).
   useEffect(() => {
     api.me().then(setUser).catch((e) => toast.error(errMessage(e)));
-
-    (async () => {
-      try {
-        const [subs, recs] = await Promise.all([
-          api.listSubsidiaries(),
-          api.listActivityRecords(),
-        ]);
-        setSubsidiaries(subs);
-        setRecords(recs);
-      } catch (e) {
-        toast.error(errMessage(e));
-      } finally {
-        setRecordsLoading(false);
-      }
-    })();
+    api
+      .listSubsidiaries()
+      .then((list) => {
+        setSubsidiaries(list);
+        setSubsidiariesLoaded(true);
+      })
+      .catch((e) => toast.error(errMessage(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Aggregated summary — refetched whenever the scope/category filter changes.
+  // The ledger — again whenever the year or subsidiary changes.
+  useEffect(() => {
+    if (selectedYear === undefined) return;
+    const mine = ++recordsSeq.current;
+    setRecordsLoading(true);
+    fetchRecords()
+      .then((recs) => {
+        if (mine === recordsSeq.current) setRecords(recs);
+      })
+      .catch((e) => {
+        if (mine !== recordsSeq.current) return;
+        setRecords([]);
+        toast.error(errMessage(e));
+      })
+      .finally(() => {
+        if (mine === recordsSeq.current) setRecordsLoading(false);
+      });
+  }, [fetchRecords, selectedYear]);
+
+  // Aggregates — again whenever the selection changes.
   useEffect(() => {
     void loadSummary();
   }, [loadSummary]);
+  useEffect(() => {
+    void loadTrends();
+  }, [loadTrends]);
+
+  // What a mutation's follow-up refresh reads when it completes: the current
+  // selection's loaders, never the ones captured when it started — those would
+  // be the newest requests and land an obsolete selection under the bar.
+  const latestLoaders = useRef({ loadSummary, loadTrends });
+  const contextKeyRef = useRef(contextKey);
+  useEffect(() => {
+    latestLoaders.current = { loadSummary, loadTrends };
+    contextKeyRef.current = contextKey;
+  }, [loadSummary, loadTrends, contextKey]);
 
   const isSuperAdmin = user?.role === 'super_admin';
-  // The most recent year with data drives the intensity denominators in view.
-  const dataYear = useMemo(
-    () =>
-      records.reduce<number>(
-        (max, r) => Math.max(max, r.reportingYear),
-        DEFAULT_REPORTING_YEAR,
-      ),
-    [records],
-  );
   const intensityAvailable = (intensity?.metrics.length ?? 0) > 0;
   // super_admin can always open the panel (to configure the first denominator);
   // viewers only when configured metrics exist ("only valid configured metrics").
   const intensityEnabled = intensityAvailable || isSuperAdmin;
 
   // Intensity availability + values (drives the Absolute/Intensity toggle).
+  // The selected context's intensity — not "the latest year with data".
   useEffect(() => {
-    api.intensity({ year: dataYear }).then(setIntensity).catch(() => {});
-  }, [dataYear]);
+    if (!context) return;
+    let current = true;
+    api
+      .reportingIntensity(context)
+      .then((result) => {
+        if (current) setIntensity(result.data);
+      })
+      .catch(() => {
+        if (current) setIntensity(null);
+      });
+    return () => {
+      current = false;
+    };
+  }, [context]);
 
   async function handleLogout() {
     await getSupabaseBrowserClient().auth.signOut();
@@ -283,6 +373,9 @@ export default function EmissionsAnalysisPage() {
    * copies of the same fact, and the withdrawal changes all three.
    */
   async function handleVoid(record: ActivityRecordDTO) {
+    // The selection the withdrawal started in; the user may change it before
+    // the request settles (Codex B9 P2-2).
+    const startKey = contextKeyRef.current;
     const reason = voidReason.trim();
     // The button that opens the confirmation is disabled while this holds, so
     // arriving here means the text changed under the dialog. Fail closed rather
@@ -302,7 +395,7 @@ export default function EmissionsAnalysisPage() {
       // Every KPI, chart and category total here comes from the server summary,
       // not from `records`. Patching the row alone would leave the tiles
       // reporting an inventory that still contains the figure just withdrawn.
-      await loadSummary();
+      await Promise.all([latestLoaders.current.loadSummary(), latestLoaders.current.loadTrends()]);
     } catch (e) {
       // Re-read BEFORE saying anything, and on ANY failure rather than only on
       // the statuses that mean "your page is stale" (someone else voided it:
@@ -315,15 +408,17 @@ export default function EmissionsAnalysisPage() {
       // that had in fact just been withdrawn.
       let settled = false;
       try {
-        const fresh = await api.listActivityRecords();
-        setRecords(fresh);
+        // The record's own ledger decides what is said; it replaces the list
+        // only while that ledger is still the one on screen.
+        const fresh = await fetchRecords();
+        if (contextKeyRef.current === startKey) setRecords(fresh);
         const current = fresh.find((r) => r.id === record.id) ?? null;
         setSelectedRecord(current);
         if (current?.status === 'voided') {
           toast.success(voidSuccessMessage(current));
           setVoidReason('');
           settled = true;
-          await loadSummary();
+          await Promise.all([latestLoaders.current.loadSummary(), latestLoaders.current.loadTrends()]);
         } else if (!current) {
           // The record is gone from under the drawer. Clear the reason with it,
           // or text typed for this record pre-fills the box for whichever one
@@ -410,11 +505,11 @@ export default function EmissionsAnalysisPage() {
   );
 
   const currentTrendData = useMemo(() => {
-    if (!summary) return [];
-    if (trendPeriod === 'quarterly') return summary.trend.quarterly;
-    if (trendPeriod === 'yearly') return summary.trend.yearly;
-    return summary.trend.monthly;
-  }, [summary, trendPeriod]);
+    if (!trendSummary) return [];
+    if (trendPeriod === 'quarterly') return trendSummary.trend.quarterly;
+    if (trendPeriod === 'yearly') return trendSummary.trend.yearly;
+    return trendSummary.trend.monthly;
+  }, [trendSummary, trendPeriod]);
 
   // Change from the first to the last point of the selected trend series.
   const trendChange = useMemo(() => {
@@ -449,26 +544,21 @@ export default function EmissionsAnalysisPage() {
 
   // --- Loading / error gates for the analytics body -------------------------
 
-  if (summaryError && !summary) {
-    return (
-      <div className="flex min-h-screen bg-background">
-        <Sidebar />
-        <main className="flex-1 ml-[280px]">
-          <div className="flex h-screen flex-col items-center justify-center gap-4 p-6 text-center">
-            <AlertTriangle className="h-10 w-10 text-[#B91C1C]" />
-            <div>
-              <h2 className="text-lg font-semibold text-foreground">Couldn&apos;t load analytics</h2>
-              <p className="mt-1 text-sm text-muted-foreground">{summaryError}</p>
-            </div>
-            <Button onClick={() => void loadSummary()} className="gap-2">
-              <RefreshCw className="h-4 w-4" />
-              Try again
-            </Button>
-          </div>
-        </main>
+  // Shown in place of the analytics, under the selection bar, so another
+  // selection stays one click away when this one cannot load.
+  const analyticsError = summaryError && !summary ? (
+    <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-border bg-card p-12 text-center">
+      <AlertTriangle className="h-10 w-10 text-[#B91C1C]" />
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Couldn&apos;t load analytics</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{summaryError}</p>
       </div>
-    );
-  }
+      <Button onClick={() => void loadSummary()} className="gap-2">
+        <RefreshCw className="h-4 w-4" />
+        Try again
+      </Button>
+    </div>
+  ) : null;
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -486,34 +576,6 @@ export default function EmissionsAnalysisPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              {/* Scope Toggle */}
-              <Select value={scopeFilter} onValueChange={(v) => setScopeFilter(v as ScopeFilter)}>
-                <SelectTrigger className="w-[140px] bg-card border-border">
-                  <SelectValue placeholder="All Scopes" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Scopes</SelectItem>
-                  <SelectItem value="scope1">Scope 1</SelectItem>
-                  <SelectItem value="scope2">Scope 2</SelectItem>
-                  <SelectItem value="scope3">Scope 3</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* Category Filter */}
-              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger className="w-[180px] bg-card border-border">
-                  <SelectValue placeholder="All Categories" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Categories</SelectItem>
-                  {CATEGORIES.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
               {/* Absolute / Intensity view toggle (WP5) */}
               <div className="flex items-center rounded-lg border border-border bg-card p-1">
                 <button
@@ -579,13 +641,26 @@ export default function EmissionsAnalysisPage() {
             </span>
           </div>
 
+          {/* The one reporting selection (LP3-02 N1): year, subsidiary, scope, category. */}
+          {contextView.status === 'ready' && (
+            <ReportingContextBar
+              context={contextView.context}
+              subsidiaries={subsidiariesLoaded ? subsidiaries : null}
+              onSelect={contextView.select}
+            />
+          )}
+
           {/* Absolute view = the tabbed analytics; Intensity view = the panel (WP5) */}
-          {dataViewMode === 'intensity' ? (
+          {contextView.status === 'invalid' ? (
+            <ReportingContextInvalid invalid={contextView.invalid} onReset={contextView.reset} />
+          ) : !context ? null : analyticsError ? (
+            analyticsError
+          ) : dataViewMode === 'intensity' ? (
             <IntensityPanel
               canManage={isSuperAdmin}
               subsidiaries={subsidiaries}
               nameById={nameById}
-              year={dataYear}
+              context={context}
             />
           ) : (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
@@ -1007,11 +1082,24 @@ export default function EmissionsAnalysisPage() {
 
             {/* Targets Tab — live reduction targets + progress (WP5) */}
             <TabsContent value="targets" className="space-y-6">
-              <TargetsPanel canManage={isSuperAdmin} subsidiaries={subsidiaries} nameById={nameById} />
+              <p className="text-sm text-muted-foreground" data-testid="targets-subsidiary-only">
+                {tContext('targetsHint')}
+              </p>
+              <TargetsPanel
+                canManage={isSuperAdmin}
+                subsidiaries={subsidiaries}
+                nameById={nameById}
+                subsidiaryId={context.subsidiaryId}
+              />
             </TabsContent>
 
             {/* Trends Tab */}
             <TabsContent value="trends" className="space-y-6">
+              {/* The explicit comparison: every year, never the selected one alone. */}
+              <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="trends-all-years">
+                <Badge variant="outline">{tContext('allYears')}</Badge>
+                <span>{tContext('allYearsHint')}</span>
+              </div>
               <div className="flex items-center gap-4">
                 <div className="flex items-center rounded-lg border border-border bg-card p-1">
                   {(['monthly', 'quarterly', 'yearly'] as const).map((period) => (
@@ -1031,10 +1119,10 @@ export default function EmissionsAnalysisPage() {
                 </div>
               </div>
 
-              {summaryLoading ? (
+              {trendLoading ? (
                 <Skeleton className="h-[400px] w-full" />
               ) : currentTrendData.length === 0 ? (
-                <EmptyState message={`No ${trendPeriod} data for the selected filters.`} />
+                <EmptyState message={`No ${trendPeriod} data for the selected subsidiaries.`} />
               ) : (
                 <>
                   <Card className="border-border bg-card">

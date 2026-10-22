@@ -58,6 +58,7 @@ const verdictOf = (rec: {
 import { cn } from "@/lib/utils";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
+import { parseReportingYearParam } from "@/lib/reporting-context-url";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import { CoveragePanel } from "@/components/data-entry/coverage-panel";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
@@ -405,9 +406,22 @@ function DataEntryPageInner() {
         // can actually see: an id outside the accessible set would leave the
         // Radix Select bound to a value with no matching item, i.e. a silently
         // blank control rather than an error.
+        // A link's year is read exactly as written (LP3-02 N1). An invalid one
+        // refuses the whole link, visibly: falling back to the default year
+        // would open the form — and its "records already exist" check — on a
+        // year the link never named.
+        const yearParams = searchParams.getAll("year");
+        const wantedYear =
+          yearParams.length === 0 ? undefined
+            : yearParams.length === 1 ? parseReportingYearParam(yearParams[0])
+              : null;
+        if (wantedYear === null) {
+          toast.error(t("invalidLinkYear"));
+          if (list[0]) setSubsidiaryId(list[0].id);
+          return;
+        }
         const wantedSub = searchParams.get("subsidiaryId");
         const wantedCategory = searchParams.get("category");
-        const wantedYear = Number(searchParams.get("year"));
 
         if (wantedSub && !list.some((sub) => sub.id === wantedSub)) {
           toast.error("That subsidiary is not available to you.");
@@ -425,9 +439,7 @@ function DataEntryPageInner() {
             toast.error(`Unknown category "${wantedCategory}".`);
           }
         }
-        if ((REPORTING_YEARS as readonly number[]).includes(wantedYear)) {
-          setReportingYear(wantedYear);
-        }
+        if (wantedYear !== undefined) setReportingYear(wantedYear);
         // The invoice grid's extra coordinates, validated the same way as the
         // rest: an unknown location or a non-canonical month is dropped rather
         // than trusted, so a hand-edited URL cannot put the form somewhere it
@@ -467,9 +479,7 @@ function DataEntryPageInner() {
         if (wantedCategory && (CATEGORIES as readonly string[]).includes(wantedCategory)) {
           deepLink.current = {
             category: wantedCategory,
-            year: (REPORTING_YEARS as readonly number[]).includes(wantedYear)
-              ? wantedYear
-              : DEFAULT_REPORTING_YEAR,
+            year: wantedYear ?? DEFAULT_REPORTING_YEAR,
             // The VALIDATED value, not the raw one. They diverged: the form
             // control used the checked value while the matcher below narrowed
             // on whatever the URL said, so a rejected foreign location silently

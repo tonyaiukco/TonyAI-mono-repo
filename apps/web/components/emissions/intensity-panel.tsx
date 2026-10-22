@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'use-intl';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -35,7 +36,8 @@ import {
 import type {
   DenominatorDTO,
   IntensityMetricKey,
-  IntensityResponseDTO,
+  ReportingContext,
+  ReportingIntensityData,
   SubsidiaryDTO,
 } from '@/lib/types';
 
@@ -46,12 +48,15 @@ interface IntensityPanelProps {
   canManage: boolean;
   subsidiaries: SubsidiaryDTO[];
   nameById: Map<string, string>;
-  year: number;
+  /** The page's reporting context (LP3-02 N1): year, subsidiary, scope and category. */
+  context: ReportingContext;
 }
 
 /** Intensity view (WP5): emissions per configured denominator + super_admin CRUD. */
-export function IntensityPanel({ canManage, subsidiaries, nameById, year }: IntensityPanelProps) {
-  const [intensity, setIntensity] = useState<IntensityResponseDTO | null>(null);
+export function IntensityPanel({ canManage, subsidiaries, nameById, context }: IntensityPanelProps) {
+  const t = useTranslations('reportingContext');
+  const year = context.year;
+  const [intensity, setIntensity] = useState<ReportingIntensityData | null>(null);
   const [denominators, setDenominators] = useState<DenominatorDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
@@ -67,24 +72,41 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
   const valueInput = useDecimalInput();
   const valueCheck = checkDecimal(valueInput.parsed, 'positive');
 
+  // A slower answer for an earlier selection must not land over a newer one.
+  const loadSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const mine = ++loadSeq.current;
     setLoading(true);
     try {
       const [i, d] = await Promise.all([
-        api.intensity({ year }),
-        api.listDenominators({ year }),
+        api.reportingIntensity(context),
+        api.listDenominators({ year: context.year, subsidiaryId: context.subsidiaryId }),
       ]);
-      setIntensity(i);
+      if (mine !== loadSeq.current) return;
+      setIntensity(i.data);
       setDenominators(d);
     } catch (e) {
+      if (mine !== loadSeq.current) return;
+      // Neither the previous selection's figures nor its deletable denominators
+      // stay under the new bar (Codex B9 P2-1).
+      setIntensity(null);
+      setDenominators([]);
       toast.error((e as Error).message);
     } finally {
-      setLoading(false);
+      if (mine === loadSeq.current) setLoading(false);
     }
-  }, [year]);
+  }, [context]);
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+  // A mutation's follow-up refresh runs for the selection on screen when the
+  // mutation completes, not the one captured when it started: that refresh
+  // would be the newest request and land an obsolete selection's rows under
+  // the current bar (Codex B9 P2-2).
+  const refreshLatest = useRef(refresh);
+  useEffect(() => {
+    refreshLatest.current = refresh;
   }, [refresh]);
 
   async function handleCreate() {
@@ -104,7 +126,7 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
       toast.success('Denominator configured');
       setAddOpen(false);
       valueInput.setValue(null);
-      await refresh();
+      await refreshLatest.current();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -116,7 +138,7 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
     try {
       await api.deleteDenominator(d.id);
       toast.success('Denominator removed');
-      await refresh();
+      await refreshLatest.current();
     } catch (e) {
       toast.error((e as Error).message);
     }
@@ -127,6 +149,7 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
   }
 
   const metrics = intensity?.metrics ?? [];
+  const selectedCount = intensity?.selectedSubsidiaryIds.length ?? 0;
 
   return (
     <div className="space-y-6">
@@ -208,6 +231,10 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
         )}
       </div>
 
+      {context.subsidiaryId === undefined && (
+        <p className="text-xs text-muted-foreground">{t('intensityGroupOnly')}</p>
+      )}
+
       {metrics.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
@@ -237,6 +264,16 @@ export function IntensityPanel({ canManage, subsidiaries, nameById, year }: Inte
                 <p className="text-xs text-muted-foreground">
                   {wholeFmt.format(m.emissionsTotal)} tCO₂e ÷ {wholeFmt.format(m.denominatorTotal)} {m.unit}
                 </p>
+                {/* Coverage is disclosed, never assumed (D14): a subsidiary
+                    without this denominator is missing, not zero. */}
+                <p className="text-xs text-muted-foreground" data-testid="intensity-coverage">
+                  {t('intensityCoverage', { contributing: m.contributingSubsidiaryIds.length, selected: selectedCount, year })}
+                </p>
+                {m.uncalculatedRecordCount > 0 && (
+                  <p className="text-xs text-amber-600">
+                    {t('intensityUncalculated', { count: m.uncalculatedRecordCount })}
+                  </p>
+                )}
               </CardContent>
             </Card>
           ))}

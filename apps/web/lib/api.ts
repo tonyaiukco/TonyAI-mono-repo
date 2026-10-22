@@ -339,8 +339,8 @@ async function downloadReportingReport(kind: ReportExportType, params: Reporting
 }
 
 export const api = {
-  // LP3-02 PR A: dormant until the context routes land. Legacy consumers below
-  // remain unchanged; the implementation PR moves annual screens together.
+  // LP3-02: the annual screens (dashboard, emissions, intensity, reports) read
+  // and export through these, with the URL's one reporting context (N1).
   reportingSummary: (params: ReportingContext) =>
     apiReporting<EmissionsSummary>(REPORTING_CONTEXT_API_PATHS.summary, params),
   reportingMatrix: async (params: ReportingContext) => {
@@ -662,6 +662,7 @@ export const api = {
     apiFetch<{ id: string; deleted: true }>(`/denominators/${id}`, {
       method: "DELETE",
     }),
+  /** @deprecated LP3-02 N1: annual screens use `reportingIntensity`; no screen calls this. */
   intensity: (params: { year?: number; subsidiaryId?: string } = {}) => {
     const search = new URLSearchParams();
     if (params.year !== undefined) search.set("year", String(params.year));
@@ -671,6 +672,7 @@ export const api = {
   },
 
   // --- Reports (WP6, FR §5) ---
+  /** @deprecated LP3-02 N1: Reports uses `reportingMeta`; no screen calls this. */
   reportMeta: async (params: { year: number; subsidiaryId?: string }) => {
     const search = new URLSearchParams({ year: String(params.year) });
     if (params.subsidiaryId) search.set("subsidiaryId", params.subsidiaryId);
@@ -680,7 +682,8 @@ export const api = {
     }
     return result;
   },
-  /** Download a generated report artifact and hand it to the browser. */
+  /** Download a generated report artifact and hand it to the browser.
+   * @deprecated LP3-02 N1: Reports uses `downloadReportingReport`; no screen calls this. */
   downloadReport: async (kind: ReportExportType, params: ReportParams): Promise<void> => {
     const search = new URLSearchParams({
       template: params.template,
@@ -789,6 +792,7 @@ export const api = {
       `/emissions/summary${qs ? `?${qs}` : ""}`,
     );
   },
+  /** @deprecated LP3-02 N1: the dashboard uses `reportingMatrix`; no screen calls this. */
   trackingMatrix: (params: { year?: number; subsidiaryId?: string } = {}) => {
     const search = new URLSearchParams();
     if (params.year !== undefined) search.set("year", String(params.year));

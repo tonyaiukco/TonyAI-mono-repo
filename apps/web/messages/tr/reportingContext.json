@@ -1,0 +1,32 @@
+{
+  "label": "Raporlama seçimi",
+  "year": "Raporlama yılı",
+  "subsidiary": "Bağlı şirket",
+  "allSubsidiaries": "Erişilebilir tüm bağlı şirketler",
+  "unavailableSubsidiary": "Erişilemeyen bağlı şirket",
+  "unavailableNotice": "Seçilen bağlı şirkete erişiminiz yok; bu yüzden onun için hiçbir şey gösterilmiyor.",
+  "scope": "Kapsam",
+  "allScopes": "Tüm kapsamlar",
+  "scopeValue": "Kapsam {scope}",
+  "category": "Kategori",
+  "allCategories": "Tüm kategoriler",
+  "invalidTitle": "Bu bağlantının raporlama seçimi geçersiz",
+  "invalidBody": "Hiçbir veri yüklenmedi. Reddedilen: {fields}.",
+  "invalidReset": "Varsayılan seçimi kullan",
+  "fields": {
+    "year": "raporlama yılı",
+    "subsidiaryId": "bağlı şirket",
+    "scope": "kapsam",
+    "category": "kategori"
+  },
+  "allYears": "Tüm yıllar",
+  "allYearsHint": "Seçili bağlı şirketlerin tüm raporlama yıllarını karşılaştırır; yıl, kapsam ve kategori seçimleri burada uygulanmaz.",
+  "filteredExtract": "Filtrelenmiş döküm: bu rapor yılın tüm envanterini değil, yalnızca {filters} kapsamını içerir. Gösterilen durum yalnızca filtrelenen kayıtları anlatır.",
+  "intensityCoverage": "Seçili {selected} bağlı şirketten {contributing} tanesinin {year} için bu paydası var.",
+  "intensityUncalculated": "Kullanılabilir değeri olmadığı için bu yoğunluğa dahil edilmeyen kesinleşmiş kayıt: {count}.",
+  "intensityGroupOnly": "Erişilebilir tüm bağlı şirketler için yalnızca gelir yoğunluğu gösterilir. Fiziksel metrikler için tek bir bağlı şirket seçin.",
+  "filteredView": "Filtrelenmiş görünüm: bu rakamlar yılın tüm envanterini değil, yalnızca {filters} kapsamını içerir.",
+  "targetsHint": "Hedefler kendi baz, hedef ve ilerleme yıllarını korur; burada yalnızca bağlı şirket seçimi uygulanır.",
+  "loadFailed": "Bu seçimin rakamları yüklenemedi.",
+  "retry": "Tekrar dene"
+}

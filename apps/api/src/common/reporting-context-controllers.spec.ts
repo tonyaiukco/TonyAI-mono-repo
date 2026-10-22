@@ -31,9 +31,10 @@ const { IntensityController } = controllerModule<typeof import('../intensity/int
     ...dependencies, './intensity.service': { IntensityService: class {} },
   },
 );
-const user = { id: 'caller', accessibleSubsidiaryIds: ['sub-1'] } as RequestUser;
-const expected = { year: 2027, subsidiaryId: 'sub-1', scope: 1 as const, category: 'Fuel' as const };
-const raw = { year: '2027', subsidiaryId: 'sub-1', scope: '1', category: 'Fuel' };
+const SUB = '22222222-2222-2222-2222-222222222201';
+const user = { id: 'caller', accessibleSubsidiaryIds: [SUB] } as RequestUser;
+const expected = { year: 2027, subsidiaryId: SUB, scope: 1 as const, category: 'Fuel' as const };
+const raw = { year: '2027', subsidiaryId: SUB, scope: '1', category: 'Fuel' };
 const pipe = new CodedValidationPipe(GLOBAL_VALIDATION_OPTIONS);
 
 describe('compiled context controllers and their real query pipe', () => {
@@ -55,7 +56,8 @@ describe('compiled context controllers and their real query pipe', () => {
     expect(await controller[handler](user, query)).toEqual({ context: expected, data });
     expect(call).toHaveBeenCalledTimes(1);
     expect(call).toHaveBeenCalledWith(user, expected);
-    for (const invalid of [{ ...raw, year: undefined }, { ...raw, subsidiaryId: '' }, { ...raw, scope: '2' }]) {
+    for (const invalid of [{ ...raw, year: undefined }, { ...raw, subsidiaryId: '' }, { ...raw, scope: '2' },
+      { ...raw, subsidiaryId: 'sub-1' }]) {
       await expect(pipe.transform(invalid, { type: 'query', metatype }))
         .rejects.toMatchObject({ response: { code: 'validation_failed' } });
     }
