@@ -27,6 +27,12 @@ const REPORT_DATASET_ROUTE = /^\/api\/v1\/report-datasets\/[^/]+$/;
  * quota and lease. The list and one issuance's metadata are ordinary reads. */
 const REPORT_ISSUANCES_ROUTE = '/api/v1/report-issuances';
 const REPORT_ISSUANCE_PDF_ROUTE = /^\/api\/v1\/report-issuances\/[^/]+\/pdf$/;
+/** A POST that only reads: Data Entry's debounced live preview looks up a
+ * factor and stores nothing, so it is admitted as a read — the READ quota and
+ * no mutation permit. With one, it held the user's single permit
+ * (`MUTATION_USER_CONCURRENCY`), and a Save or Submit pressed while it ran was
+ * refused 429; it also held one of the API-wide permits every write needs. */
+const READ_ONLY_POSTS = new Set(['/api/v1/calculations/preview']);
 
 export type RouteGroup = 'READ' | 'WRITE' | 'IMPORT' | 'EXPORT' | 'SUBMIT';
 export const routeGroup = (method: string, path: string): RouteGroup => {
@@ -39,6 +45,7 @@ export const routeGroup = (method: string, path: string): RouteGroup => {
   if (['GET', 'HEAD'].includes(method) && REPORT_DATASET_ROUTE.test(route)) return 'EXPORT';
   if (method === 'POST' && route === REPORT_ISSUANCES_ROUTE) return 'EXPORT';
   if (['GET', 'HEAD'].includes(method) && REPORT_ISSUANCE_PDF_ROUTE.test(route)) return 'EXPORT';
+  if (method === 'POST' && READ_ONLY_POSTS.has(route)) return 'READ';
   return ['GET', 'HEAD', 'OPTIONS'].includes(method) ? 'READ' : 'WRITE';
 };
 

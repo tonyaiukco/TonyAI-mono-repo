@@ -1,10 +1,14 @@
+import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import {
   login,
   pickByFieldLabel,
   selectSubsidiary,
   ADMIN_EMAIL,
+  API_BASE,
+  E2E_YEAR,
   EVIDENCE_FIXTURE,
+  bearer,
   getAccessToken,
   createCommittedRecord,
   lockPeriod,
@@ -14,7 +18,9 @@ import {
 /**
  * The three submit/write gates surfaced in the UI (each unit-tested at the
  * service layer; here we prove the page enforces + toasts them). Each gate uses
- * its own subsidiary so tuples and anomaly baselines never overlap.
+ * its own subsidiary so tuples and anomaly baselines never overlap. One API
+ * check sits beside them: the page's own live preview never takes a submit's
+ * admission, which once hid the evidence gate behind a 429.
  */
 
 async function selectScope(page: import('@playwright/test').Page, subsidiaryOption: string, periodValue: string) {
@@ -35,6 +41,29 @@ test('gate: evidence-required category blocks submit until a file is attached', 
   // Submit without uploading evidence → API 400, surfaced as a toast.
   await page.getByRole('button', { name: 'Submit for review' }).click();
   await expect(page.getByText(/requires at least one evidence file/i)).toBeVisible();
+});
+
+test("gate: Data Entry's live preview never takes the user's submit admission (API)", async ({ request }) => {
+  // The page's debounced POST /calculations/preview can still be running when
+  // Submit is pressed. It only reads, so it holds no mutation permit. While it
+  // did, one of each pair below was refused 429 every time, and the nightly of
+  // 2026-10-22 saw the submit lose: the evidence gate above never showed.
+  const headers = bearer(await getAccessToken(request, ADMIN_EMAIL));
+  // A well-formed id no record has: admission takes the permit before the
+  // handler answers 404, so nothing is written and nothing needs cleaning up.
+  const submitUrl = `${API_BASE}/activity-records/${randomUUID()}/submit`;
+  const outcomes = new Set<string>();
+  for (let round = 0; round < 25; round++) {
+    const [preview, submit] = await Promise.all([
+      request.post(`${API_BASE}/calculations/preview`, {
+        headers,
+        data: { category: 'Electricity', geographyCode: 'UK', reportingYear: E2E_YEAR, value: 8000, unit: 'kWh' },
+      }),
+      request.post(submitUrl, { headers }),
+    ]);
+    outcomes.add(`preview ${preview.status()} · submit ${submit.status()}`);
+  }
+  expect([...outcomes]).toEqual(['preview 200 · submit 404']);
 });
 
 test('gate: anomalous value shows the banner and blocks submit without a variance comment', async ({

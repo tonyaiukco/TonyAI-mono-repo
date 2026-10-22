@@ -1048,14 +1048,14 @@ in `infra/config/runtime-limits.json`. Configuration changes require a restart.
 | Setting | Default | Applies to |
 |---|---:|---|
 | `RATE_IP_PER_MINUTE` | 120 | Non-probe requests before authentication/parsing (CORS preflight excluded) |
-| `RATE_READ_PER_MINUTE`, `RATE_WRITE_PER_MINUTE` | 120 / 60 | Verified user, grouped across read/mutation routes |
+| `RATE_READ_PER_MINUTE`, `RATE_WRITE_PER_MINUTE` | 120 / 60 | Verified user, grouped across read/mutation routes (`POST /calculations/preview` only reads, so it counts as a read) |
 | `RATE_EXPORT_PER_MINUTE`, `RATE_IMPORT_PER_MINUTE`, `RATE_SUBMIT_PER_MINUTE` | 5 / 5 / 10 | Verified user, grouped across each expensive operation |
 | `RATE_MAX_KEYS` | 10,000 | Library throttle storage; new keys refused at capacity |
 | `HTTP_MAX_INFLIGHT` | 32 | Authenticated work, after body reception |
 | `HTTP_IP_MAX_INFLIGHT` | 8 | Requests receiving or executing per trusted client IP |
 | `UPLOAD_CONCURRENCY` / `UPLOAD_USER_CONCURRENCY` | 2 / 1 | Buffered uploads globally / per verified user |
 | `SHUTDOWN_GRACE_MS` | 120000 | Drain before provider destruction; at least max(bulk deadline, PDF timeout) + 50000, at most 3600000 |
-| `MUTATION_CONCURRENCY`, `MUTATION_USER_CONCURRENCY` | 2 / 1 | Mutations globally and per verified user |
+| `MUTATION_CONCURRENCY`, `MUTATION_USER_CONCURRENCY` | 2 / 1 | Mutations globally and per verified user — never the read-only preview, which would otherwise refuse the same user's save or submit |
 | `HTTP_HEADER_BYTES` | 16,384 | HTTP parser header bytes |
 | `HTTP_HEADERS_TIMEOUT_MS`, `HTTP_BODY_TIMEOUT_MS`, `HTTP_KEEPALIVE_MS` | 10,000 / 30,000 / 5,000 | Header reception, body reception, idle keep-alive |
 | `BODY_MAX_BYTES`, `BODY_MAX_PARAMETERS` | 102,400 / 100 | JSON/form body bytes and flat form parameters (LP3-04's declaration `PUT` reads up to its own 1 MB, set in code — "The write path") |
