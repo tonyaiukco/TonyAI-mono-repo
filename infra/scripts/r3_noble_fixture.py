@@ -84,13 +84,19 @@ def validate_frame(data, expected):
         raise ValueError('Native source/input correspondence differs')
     if result.get('files') != {k: digest(v) for k, v in entries.items() if k != 'result.json'}:
         raise ValueError('Native evidence manifest differs')
-    if (result.get('purpose') != 'FIXTURE_DIAGNOSTIC_ONLY' or result.get('qa_ready') is not False
+    maintenance = expected.get('purpose') == 'FIXTURE_MAINTENANCE_ONLY'
+    from r3_noble_guest import POLICY_FILES
+    if not maintenance and set(entries) & POLICY_FILES:
+        raise ValueError('Maintenance evidence in original diagnostic')
+    if (result.get('purpose') != expected.get('purpose')
+            or expected.get('purpose') not in ('FIXTURE_DIAGNOSTIC_ONLY', 'FIXTURE_MAINTENANCE_ONLY')
+            or result.get('qa_ready') is not False
             or result.get('target_qualified') is not False
             or result.get('status') not in ('REFUSED', 'DIAGNOSTIC_PASS_REVIEW_REQUIRED')):
         raise ValueError('Unexpected native result')
     if SNAPSHOT in entries:
         context = json.loads(entries[SNAPSHOT])
-        if (result['status'] != 'REFUSED' or result.get('phase') != 'native-baseline'
+        if (maintenance or result['status'] != 'REFUSED' or result.get('phase') != 'native-baseline'
                 or result.get('install_attempted') is not False
                 or result.get('failure_type') != 'ValueError'
                 or result.get('failure') != 'Foreign fixture package writer'
@@ -98,15 +104,15 @@ def validate_frame(data, expected):
                 or context.get('identity_proves_inactivity') is not False):
             raise ValueError('Identity context is only valid for baseline process refusal')
     if result['status'] == 'DIAGNOSTIC_PASS_REVIEW_REQUIRED':
-        from r3_noble_guest import COMMANDS
+        from r3_noble_guest import COMMANDS, POLICY_COMMANDS, POLICY_FILES
         from r3_package_state import inventory, inventory_diff, held_inventory, transaction
         from r3_toolchain import validate_dependency_plan
         lock = json.loads(read(ROOT / 'infra/selfhost/r3-toolchain.lock.json'))
-        required = GUEST_REQUIRED_FILES
+        required = GUEST_REQUIRED_FILES | (POLICY_FILES if maintenance else set())
         if (set(entries) != required or not result.get('install_attempted') or result.get('not_reached')
                 or result.get('phase') != 'complete'):
             raise ValueError('Incomplete native pass')
-        for name in COMMANDS:
+        for name in COMMANDS + (POLICY_COMMANDS if maintenance else ()):
             exit_value = json.loads(entries[name + '.exit.json'])
             if (exit_value['returncode'] != 0 or exit_value.get('failure_type') is not None
                     or exit_value['stdout_sha256'] != digest(entries[name + '.stdout'])
@@ -116,9 +122,54 @@ def validate_frame(data, expected):
         if before != pre or any(entries[n + '.stdout'] for n in ('audit-initial', 'audit-post', 'audit-final')):
             raise ValueError('Native boundary audit/inventory differs')
         validate_dependency_plan(lock, entries['simulate.stdout'].decode())
+        if maintenance:
+            import r3_install_policy as policy_module
+            import r3_maintenance
+            policy = policy_module.load(entries['installation-policy.json'], expected['policy_sha256'])
+            facts_before = json.loads(entries['policy-facts-before.json'])
+            policy_module.preflight(policy, read(ROOT / 'infra/selfhost/r3-toolchain.lock.json'), before,
+                entries['config.stdout'], facts_before, entries['unit-config.stdout'], json.loads(entries['cache-before.json']))
+            if (json.loads(entries['policy-facts-after.json']) != facts_before
+                    or any(inventory(entries[n + '.stdout'].decode()) != before
+                           for n in ('isolation-inventory', 'pre-stop-inventory'))):
+                raise ValueError('Maintenance policy/inventory drift')
+            r3_maintenance.validate_evidence(*(json.loads(entries[name + '.json']) for name in
+                ('maintenance-intent', 'maintenance-final', 'maintenance-complete')))
+            stop = json.loads(entries['maintenance-pre-stop.json'])
+            r3_maintenance.eligible(stop['observation'], inspect=lambda _item: stop['helper'])
+            from r3_package_state import INVENTORY_ARGV
+            commands = {'unit-config': ['systemctl', 'cat', *r3_maintenance.UNITS],
+                        'pre-stop-inventory': INVENTORY_ARGV, 'isolation-inventory': INVENTORY_ARGV,
+                        'maintenance-mask': ['systemctl', 'mask', *r3_maintenance.UNITS],
+                        'maintenance-stop-timers': ['systemctl', 'stop', *r3_maintenance.TIMERS],
+                        'maintenance-stop-services': ['systemctl', 'stop', *r3_maintenance.SERVICES]}
+            if any(json.loads(entries[name + '.command.json']).get('argv') != argv for name, argv in commands.items()):
+                raise ValueError('Maintenance command argv differs')
+            # Independently read every transaction sample using production's
+            # isolation validator; a forged guest check cannot waive the guard.
+            from r3_apt_observer import validate as validate_isolation
+            baseline = json.loads(entries['maintenance-final.json'])
+            observations = json.loads(entries['observations.json'])
+            if not observations:
+                raise ValueError('Missing isolated observations')
+            for item in observations:
+                # Do not inspect the controller's /proc for a guest child.
+                value = item['value']
+                validate_isolation({**value, 'processes': []}, baseline)
+                child = item['child']
+                if value.get('locks_probed') is not (child is None):
+                    raise ValueError('Missing/mismatched guest boundary lock evidence')
+                if any(child is None or proc['pgrp'] != child['pid'] for proc in value['processes']):
+                    raise ValueError('Foreign process in isolated guest evidence')
+            actions = policy_module.trigger_transaction(entries['transaction.log'].decode(), lock, policy)
+        else:
+            actions = transaction(entries['transaction.log'].decode(), lock)
         checks = {'inventory': inventory_diff(before, after, lock),
-                  'transaction': transaction(entries['transaction.log'].decode(), lock),
+                  'transaction': actions,
                   'final_inventory': inventory_diff(before, final, lock, held=True)}
+        if maintenance:
+            checks['cache_effects'] = policy_module.cache_effects(
+                json.loads(entries['cache-before.json']), json.loads(entries['cache-after.json']), policy)
         held_inventory(after, final, lock)
         if checks != result.get('checks'):
             raise ValueError('Native strict check readback differs')
@@ -228,7 +279,7 @@ def seal(work, raw, publish, binding):
 def main():
     os.umask(0o077)
     # The only inputs taken from the runner environment are public dispatch/run bindings.
-    names = ('R3_SOURCE_SHA', 'R3_RECIPIENT', 'R3_RECIPIENT_SHA256', 'GITHUB_SHA', 'GITHUB_REF',
+    names = ('R3_SOURCE_SHA', 'R3_RECIPIENT', 'R3_RECIPIENT_SHA256', 'R3_INSTALL_POLICY', 'R3_INSTALL_POLICY_SHA256', 'GITHUB_SHA', 'GITHUB_REF',
              'GITHUB_WORKFLOW_SHA', 'GITHUB_WORKFLOW_REF', 'GITHUB_EVENT_NAME', 'GITHUB_RUN_ID',
              'GITHUB_RUN_ATTEMPT', 'GITHUB_REPOSITORY', 'RUNNER_ENVIRONMENT', 'RUNNER_OS', 'RUNNER_ARCH',
              'RUNNER_TEMP', 'ImageOS', 'ImageVersion')
@@ -237,6 +288,11 @@ def main():
     os.environ.update(ENV)
     source = source_binding(env)
     key = recipient(env['R3_RECIPIENT'], env['R3_RECIPIENT_SHA256'])
+    policy_bytes = None
+    if env['R3_INSTALL_POLICY'] or env['R3_INSTALL_POLICY_SHA256']:
+        from r3_install_policy import load as load_policy
+        policy_bytes = env['R3_INSTALL_POLICY'].encode()
+        load_policy(policy_bytes, env['R3_INSTALL_POLICY_SHA256'])
     root = Path(env['RUNNER_TEMP'])
     if not root.is_absolute() or not root.is_dir() or root.is_symlink():
         raise ValueError('Runner temporary directory required')
@@ -251,6 +307,8 @@ def main():
                'run_id': source['run_id'], 'attempt': 1, 'job': source['job'],
                'workflow_sha256': source['workflow_sha256'], 'recipient_sha256': env['R3_RECIPIENT_SHA256'],
                'fixture_lock_sha256': file_hash(ROOT / 'infra/selfhost/r3-noble-fixture.lock.json')}
+    if policy_bytes is not None:
+        binding['installation_policy_sha256'] = digest(policy_bytes)
     write(raw / 'source.json', encoded(source))
     write(raw / 'runner.json', encoded({k: env[k] for k in ('RUNNER_OS', 'RUNNER_ARCH', 'ImageOS', 'ImageVersion')}))
     summary = {'format': 1, 'status': 'REFUSED', 'phase': 'encryption-tool', 'sealed': False,
@@ -271,7 +329,7 @@ def main():
             raise ValueError('Runner tool versions differ')
         run(['dpkg-query', '-W'], raw, 'runner-after')
         summary['phase'] = 'public-inputs'
-        inputs = stage(work, raw, lock, source, time.monotonic() + 600)
+        inputs = stage(work, raw, lock, source, time.monotonic() + 600, policy_bytes)
         expected = json.loads(read(inputs / 'manifest.json'))
         seed(work / 'seed', source)
         run(['genisoimage', '-quiet', '-r', '-J', '-V', 'R3INPUT', '-o', str(work / 'input.iso'), str(inputs)], raw, 'input-iso')

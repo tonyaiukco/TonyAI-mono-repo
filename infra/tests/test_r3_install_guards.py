@@ -167,7 +167,7 @@ class Harness:
             state['processes'] = [{'pid': 5000, 'pgrp': 5000, 'start_ticks': 1, 'comm': 'apt'}]
         return state
 
-    def run(self):
+    def run(self, policy_path=None):
         m = self.module
         with ExitStack() as stack:
             def mock(obj, name, **kwargs): return stack.enter_context(patch.object(obj, name, **kwargs))
@@ -212,7 +212,7 @@ class Harness:
                 return extract(archive, *args, **kwargs)
             mock(m.tarfile.TarFile, 'extractall', new=extract_checked)
             stack.enter_context(redirect_stdout(io.StringIO()))
-            m.install(self.bundle, self.contract, self.approval_path, 'f' * 64 if self.fault == 'approval-hash' else self.approved)
+            m.install(self.bundle, self.contract, self.approval_path, 'f' * 64 if self.fault == 'approval-hash' else self.approved, policy_path)
             verifier.assert_called_once_with(self.bundle, self.approval['toolchain_lock_sha256'])
             self.assert_plan(plan)
             contract.assert_called_once_with({'fixture': True}); identity.assert_called_once_with({'fixture': True}, {'vmId': 'fixture'})

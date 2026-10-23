@@ -506,12 +506,21 @@ A separate [native Noble fixture](infra/runbooks/10-qa-clean-replacement.md#nati
 workflow is available for a separately approved, single diagnostic attempt on
 that fresh hosted runner. It boots a pinned public Noble image in a disposable
 VM without a NIC, retains raw outputs only inside owner-encrypted evidence,
-and refuses unexpected package activity without changing trigger or service
-policy. Its result does not substitute for Azure target inventory or close R3.
+and, by default, refuses unexpected package activity without changing trigger or
+service policy. Its result does not substitute for Azure target inventory or close R3.
 An initial foreign-process refusal also attempts one bounded private identity
 snapshot (argv, process/unit relationships and fixed public-image file bytes).
 The refusal remains unchanged; this context neither proves inactivity nor
 authorizes a process exception or another attempt.
+The separately selected [R3 maintenance policy](infra/runbooks/10-qa-clean-replacement.md#opt-in-maintenance-installation-policy-r3-policy-01)
+adds a declared five-unit isolation phase and exact reviewed man-db trigger/cache
+accounting. It requires externally reviewed policy bytes and a new source-bound
+execution approval; no runnable target policy is supplied or inferred. Native
+triggers stay enabled and the five additions/holds remain exact. The original
+diagnostic mode and format-2 strict installer remain available without this opt-in;
+maintenance installation requires format 3. Unknown PackageKit activation, hook or
+effect closure blocks preparation for execution. No workflow, Azure installation,
+unmask/reboot qualification or QA acceptance is established by this code.
 The r02 runtime source contract
 rejects both legacy installation shells. Local tools now inspect pinned package
 control/scripts and Node bytes, render offline guard files and a full source plan,
