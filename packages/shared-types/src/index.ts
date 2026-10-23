@@ -2348,6 +2348,11 @@ export type GenericErrorCode = keyof typeof GENERIC_ERROR_STATUS;
 export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** A path id that is not a UUID. */
   invalid_id: 400,
+  /** LP4-04: an activity value above `ACTIVITY_VALUE_MAX` — the record write
+   *  DTOs' `activityValue` or the preview's `value`, when that is the body's
+   *  only refusal (with others it stays `validation_failed`). No params: the
+   *  catalogue states the bound, and a spec pins it to the constant. */
+  activity_value_too_large: 400,
   /** params: `category` (canonical, from `CATEGORIES`). */
   evidence_required: 400,
   variance_reason_required: 400,
@@ -4867,6 +4872,16 @@ export interface BulkUploadRowIssue {
 export const BULK_UPLOAD_ERROR_CODES = [
   /** The row failed DTO validation (type, range, vocabulary, length). */
   'invalid',
+  /**
+   * LP4-04 (D15): the activity value has a comma. A file's numbers are
+   * dot-decimal in every language (`1234.5`); `1,5` or `1.234,5` is refused
+   * rather than guessed, because a wrong guess misstates the figure a
+   * thousandfold.
+   */
+  'wrong_decimal_separator',
+  /** LP4-04: the activity value is above `ACTIVITY_VALUE_MAX` — the same
+   *  refusal as the record API's `activity_value_too_large`. */
+  'activity_value_too_large',
   /** Another row in the SAME file already claims this reporting slot. */
   'duplicate_in_file',
   /** A stored record already claims this reporting slot. */
@@ -4931,7 +4946,10 @@ export type BulkUploadIssueCode = BulkUploadErrorCode | BulkUploadWarningCode;
  * `{row, tCo2e}` would have to re-parse the file in the browser to name the
  * entity, period and category — a second implementation of row semantics.
  * `periodValue` is the CANONICAL spelling the server will store, not the one
- * the file wrote, so the preview shows what actually lands.
+ * the file wrote, so the preview shows what actually lands. So are
+ * `activityValue` and `activityUnit` (LP4-04, D15): a file is read dot-decimal,
+ * and the preview shows the number read, so a Turkish `1.234` meant as a
+ * thousand is seen as 1.234 before anything is applied.
  *
  * `tCo2e` is `null` when the category is tracked but not calculated (Water).
  * Sum only the non-null values — a client folding with `?? 0` turns "no figure
@@ -4953,6 +4971,13 @@ export interface BulkUploadAcceptedRow {
    * for a category that names none (LP4-02).
    */
   activityType: string | null;
+  /** The quantity the server read from the cell, as it stores it — a number,
+   *  never the cell's text; a client formats it by the user's locale and must
+   *  not round it away. */
+  activityValue: number;
+  /** The unit as the server stores it (its canonical spelling, `kWh` for a
+   *  file's `KWH`). */
+  activityUnit: string;
   tCo2e: number | null;
   anomalous: boolean;
 }
