@@ -3,6 +3,14 @@ name: R3 native Noble diagnostic
 on:
   workflow_dispatch:
     inputs:
+      purpose:
+        description: Collection reads policy inputs only; diagnostic retains the existing installation path
+        required: true
+        type: choice
+        default: diagnostic
+        options:
+          - diagnostic
+          - policy-collection
       source_sha:
         description: Exact owner-approved published commit (must equal the selected ref and workflow SHA)
         required: true
@@ -46,6 +54,7 @@ jobs:
           persist-credentials: false
       - name: One bounded disposable native fixture
         env:
+          R3_PURPOSE: ${{ inputs.purpose }}
           R3_SOURCE_SHA: ${{ inputs.source_sha }}
           R3_RECIPIENT: ${{ inputs.recipient }}
           R3_RECIPIENT_SHA256: ${{ inputs.recipient_sha256 }}
