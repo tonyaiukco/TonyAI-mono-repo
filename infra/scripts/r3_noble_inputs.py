@@ -14,7 +14,8 @@ from r3_toolchain import validate_lock, verify_index
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPERS = ('r3_noble_common.py', 'r3_noble_guest.py', 'r3_noble_identity.py', 'r3_toolchain.py',
-           'r3_artifacts.py', 'r3_package_state.py', 'r3_apt_observer.py')
+           'r3_artifacts.py', 'r3_package_state.py', 'r3_apt_observer.py',
+           'r3_install_policy.py', 'r3_maintenance.py')
 WORKFLOW = '.github/workflows/r3-native-noble.yml'
 
 
@@ -88,7 +89,7 @@ def verify_image_signature(work, lock, raw):
             raise ValueError('Signed image checksum differs')
 
 
-def stage(work, raw, lock, source, deadline):
+def stage(work, raw, lock, source, deadline, policy_bytes=None):
     for name in ('SHA256SUMS', 'SHA256SUMS.gpg'):
         fetch(lock['image_base'] + name, work / name, 1_000_000, deadline)
     fp = lock['image_signing_fingerprint']
@@ -119,10 +120,14 @@ def stage(work, raw, lock, source, deadline):
         write(raw / ('docker-' + name), read(inputs / 'provenance' / name, 32 * 1024**2))
     for name in HELPERS:
         write(inputs / 'helpers' / name, read(ROOT / 'infra/scripts' / name))
+    if policy_bytes is not None:
+        write(inputs / 'installation-policy.json', policy_bytes)
     files = {str(p.relative_to(inputs)): file_hash(p) for p in inputs.rglob('*') if p.is_file()}
     manifest = {'format': 1, 'purpose': 'FIXTURE_DIAGNOSTIC_ONLY', 'source': source,
                 'image_sha256': lock['image_sha256'], 'fixture_uuid': lock['fixture_uuid'],
                 'provenance': provenance, 'files': files}
+    if policy_bytes is not None:
+        manifest.update(purpose='FIXTURE_MAINTENANCE_ONLY', policy_sha256=digest(policy_bytes))
     write(inputs / 'manifest.json', encoded(manifest))
     write(raw / 'input-manifest.json', encoded(manifest))
     # Keep the signed image metadata and public artifact hashes inside encryption.

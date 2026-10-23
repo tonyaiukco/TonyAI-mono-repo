@@ -15,6 +15,14 @@ on:
         description: SHA256 of the normalized public recipient plus one newline
         required: true
         type: string
+      installation_policy:
+        description: Optional separately reviewed PUBLIC fixture policy JSON (hashes only); empty retains original diagnostic
+        required: false
+        type: string
+      installation_policy_sha256:
+        description: Exact SHA256 of installation_policy UTF-8 bytes; separate maintenance execution approval required
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -41,6 +49,8 @@ jobs:
           R3_SOURCE_SHA: ${{ inputs.source_sha }}
           R3_RECIPIENT: ${{ inputs.recipient }}
           R3_RECIPIENT_SHA256: ${{ inputs.recipient_sha256 }}
+          R3_INSTALL_POLICY: ${{ inputs.installation_policy }}
+          R3_INSTALL_POLICY_SHA256: ${{ inputs.installation_policy_sha256 }}
         run: python3 -I -B infra/scripts/r3_noble_fixture.py
       - name: Retain ciphertext and public correspondence only
         if: always()

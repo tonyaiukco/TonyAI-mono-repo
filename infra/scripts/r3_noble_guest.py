@@ -11,7 +11,9 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from r3_noble_common import STREAM_LIMIT, digest, encoded, file_hash, read, run, write
 from r3_noble_identity import SNAPSHOT, retain as retain_refusal_identity
-from r3_apt_observer import UNITS, observe, process_identity
+from r3_apt_observer import UNITS, observe, process_identity, validate as isolated_observation
+import r3_install_policy as install_policy
+import r3_maintenance
 from r3_package_state import INVENTORY_ARGV, held_inventory, inventory, inventory_diff, require_absent, transaction
 from r3_toolchain import install_argv, validate_dependency_plan, validate_lock
 
@@ -24,7 +26,13 @@ COMMANDS = ('os', 'arch', 'kernel', 'config', 'before', 'pre-execute', 'after', 
             'payload-0', 'payload-1', 'payload-2', 'payload-3', 'payload-4')
 GUEST_REQUIRED_FILES = {'manifest.json', 'result.json', 'transaction.log', 'observations.json', 'native-files.json', 'native-state.json'} | {
     name + suffix for name in COMMANDS for suffix in ('.stdout', '.stderr', '.command.json', '.exit.json')}
-GUEST_FILES = GUEST_REQUIRED_FILES | {SNAPSHOT}
+POLICY_COMMANDS = ('unit-config', 'isolation-inventory', 'pre-stop-inventory', 'maintenance-mask',
+                   'maintenance-stop-timers', 'maintenance-stop-services')
+POLICY_FILES = {'installation-policy.json', 'policy-facts-before.json', 'policy-facts-after.json',
+                'cache-before.json', 'cache-after.json', 'maintenance-intent.json',
+                'maintenance-final.json', 'maintenance-complete.json', 'maintenance-pre-stop.json'} | {
+    name + suffix for name in POLICY_COMMANDS for suffix in ('.stdout', '.stderr', '.command.json', '.exit.json')}
+GUEST_FILES = GUEST_REQUIRED_FILES | {SNAPSHOT} | POLICY_FILES
 
 
 def fixture_observation(value, baseline=None, child=None):
@@ -64,7 +72,7 @@ def verify_input():
     actual = {str(p.relative_to(INPUT)): file_hash(p) for p in INPUT.rglob('*') if p.is_file() and p.name != 'manifest.json'}
     if actual != manifest['files'] or any(p.is_symlink() for p in INPUT.rglob('*')):
         raise ValueError('Fixture input changed')
-    if manifest['purpose'] != 'FIXTURE_DIAGNOSTIC_ONLY':
+    if manifest['purpose'] not in ('FIXTURE_DIAGNOSTIC_ONLY', 'FIXTURE_MAINTENANCE_ONLY'):
         raise ValueError('Wrong input purpose')
     write(OUTPUT / 'manifest.json', encoded(manifest))
     return manifest
@@ -136,7 +144,7 @@ def main():
     result = {'format': 1, 'purpose': 'FIXTURE_DIAGNOSTIC_ONLY', 'qa_ready': False,
               'target_qualified': False, 'status': 'REFUSED', 'phase': 'identity',
               'install_attempted': False, 'checks': {}, 'source': None}
-    observations, baseline = [], None
+    observations, baseline, policy = [], None, None
     def alarm(_sig, _frame):
         raise TimeoutError('Guest deadline')
     signal.signal(signal.SIGALRM, alarm)
@@ -158,13 +166,18 @@ def main():
         observations.append({'elapsed': time.monotonic() - started, 'child': child, 'value': value})
         if len(observations) > 1000:
             raise ValueError('Observation count limit')
-        fixture_observation(value, baseline, child)
+        (isolated_observation if policy is not None else fixture_observation)(value, baseline, child)
         return value
     started = time.monotonic()
     command_deadline = started + 900
     try:
         manifest = verify_input()
         result['source'] = manifest['source']
+        result['purpose'] = manifest['purpose']
+        if manifest['purpose'] == 'FIXTURE_MAINTENANCE_ONLY':
+            policy_bytes = read(INPUT / 'installation-policy.json', 65536)
+            policy = install_policy.load(policy_bytes, manifest.get('policy_sha256'))
+            write(OUTPUT / 'installation-policy.json', policy_bytes)
         if command(['dpkg', '--print-architecture'], 'arch').strip() != b'amd64':
             raise ValueError('Wrong fixture architecture')
         os_text = command(['cat', '/etc/os-release'], 'os').decode()
@@ -178,7 +191,7 @@ def main():
         before = snap('before')
         audit('audit-initial')
         native_files()
-        command(['apt-config', 'dump'], 'config')
+        apt_config = command(['apt-config', 'dump'], 'config')
         paths = []
         for index, pin in enumerate(lock['packages']):
             path = str(INPUT / 'artifacts' / pin['url'].rsplit('/', 1)[1])
@@ -190,6 +203,22 @@ def main():
             command(['dpkg-deb', '--contents', path], 'payload-' + str(index))
             paths.append(path)
         require_absent(before, lock)
+        if policy is not None:
+            result['phase'] = 'maintenance-preflight'
+            policy_facts = install_policy.facts()
+            unit_config = command(['systemctl', 'cat', *UNITS], 'unit-config')
+            cache_before = install_policy.cache_snapshot()
+            install_policy.preflight(policy, read(INPUT / 'r3-toolchain.lock.json'), before,
+                                     apt_config, policy_facts, unit_config, cache_before)
+            write(OUTPUT / 'policy-facts-before.json', encoded(policy_facts))
+            install_policy.cache_effects(cache_before, cache_before)
+            write(OUTPUT / 'cache-before.json', encoded(cache_before))
+            result['phase'] = 'maintenance-isolation'
+            r3_maintenance.isolate(OUTPUT, before, lambda phase, timeout: inventory(command(INVENTORY_ARGV,
+                'pre-stop-inventory' if phase == 'pre-stop' else 'isolation-inventory', timeout=timeout).decode()),
+                                   command, min(command_deadline - 30, time.monotonic() + 180))
+            if install_policy.facts() != policy_facts:
+                raise ValueError('Native policy files changed during isolation')
         baseline = sample()
         result['phase'] = 'simulation'
         output = command(install_argv(paths, simulate=True), 'simulate', sample=sample).decode()
@@ -204,7 +233,17 @@ def main():
         after = snap('after')
         audit('audit-post')
         result['checks']['inventory'] = inventory_diff(before, after, lock)
-        result['checks']['transaction'] = transaction(read(OUTPUT / 'transaction.log').decode(), lock)
+        text = read(OUTPUT / 'transaction.log').decode()
+        if policy is not None:
+            after_facts = install_policy.facts()
+            write(OUTPUT / 'policy-facts-after.json', encoded(after_facts))
+            cache_after = install_policy.cache_snapshot()
+            write(OUTPUT / 'cache-after.json', encoded(cache_after))
+            result['checks']['cache_effects'] = install_policy.cache_effects(cache_before, cache_after, policy)
+            if after_facts != policy_facts:
+                raise ValueError('Native policy files changed after transaction')
+        result['checks']['transaction'] = (transaction(text, lock) if policy is None else
+                                           install_policy.trigger_transaction(text, lock, policy))
         sample()
         result['phase'] = 'holds'
         command(['apt-mark', 'hold', *[p['name'] for p in lock['packages']]], 'holds', sample=sample)
@@ -245,7 +284,8 @@ def main():
                     result['checks'][label + '_failure'] = type(exc).__name__
         write(OUTPUT / 'observations.json', encoded(observations))
         result['files'] = {p.name: file_hash(p) for p in OUTPUT.iterdir() if p.is_file()}
-        result['not_reached'] = [name for name in COMMANDS if not (OUTPUT / (name + '.command.json')).exists()]
+        commands = COMMANDS + (POLICY_COMMANDS if policy is not None else ())
+        result['not_reached'] = [name for name in commands if not (OUTPUT / (name + '.command.json')).exists()]
         write(OUTPUT / 'result.json', encoded(result))
         with open(PORT, 'wb', buffering=0) as port:
             write_all(port, archive(OUTPUT))

@@ -339,7 +339,9 @@ the PTY, dpkg output is retained in the installer's stdout/stderr files instead
 of APT's `/var/log/apt/term.log` terminal capture. A read failure or changed state refuses completion, preserving the
 attempt, child PID, observations and logs. An interrupted observer does not prove
 the detached child stopped. **No apt unit is stopped, masked or unmasked by this
-code.** The isolation procedure needs separate review and owner approval.
+original format-2 code.** The isolation procedure needs separate review and owner
+approval. The opt-in R3-POLICY-01 implementation below introduces a distinct
+format-3 maintenance contract; it does not reuse a format-2 approval.
 
 APT writes a dedicated, exclusively reserved `/etc/tonyai/r3-install.dpkg.log`
 through `Dpkg::Options::=--log=...`, replacing dpkg's default log destination for
@@ -1306,3 +1308,97 @@ or fixture inventories cannot substitute. Retain all other R3 gates and P3
 questions, including sampled-writer limits, lifecycle ordering, log rereads,
 content correspondence and detached children. Bootstrap stays
 `NOT_READY_FOR_BOOTSTRAP_APPROVAL`.
+
+
+## Opt-in maintenance installation policy (R3-POLICY-01)
+
+The owner approved design/implementation of this revision on 2026-10-23. That
+approval changes the earlier prohibition on service-state changes for a declared
+five-unit maintenance phase and the blanket rejection of all non-pin trigger
+records. It does not approve publication, workflow dispatch, SSH/guest execution,
+Azure mutation or deployment. Previous A attempts stay consumed/refused; old B
+remains separately bound, unapproved and unexecuted. Native triggers stay enabled.
+
+`r3_install_policy.py` accepts only explicit hash-bound format-1 policy data with
+purpose `R3_MAINTENANCE_INSTALL`. Its complete key set is `format`, `purpose`,
+`toolchain_sha256`, `inventory_sha256`, `apt_config_sha256`, `unit_config_sha256`,
+`facts_sha256`, `cache_before_sha256`, `review_sha256`, and `triggers`. The inventory
+hash is over canonical JSON of the parsed full inventory; effective APT and
+`systemctl cat` output hashes are over exact bytes. Facts include the complete
+fixed configuration directory membership and guarded files' hashes, lengths,
+ownership/modes, plus the PackageKit activation predicate. No symlink ancestors
+are accepted. Cache baseline is likewise canonical JSON, bounded in size/count.
+A missing or different datum refuses before the first service mutation.
+
+Only one trigger identity is currently supported: an already-installed
+`man-db:amd64` at the explicitly reviewed version. It carries
+`effects_review_sha256` and `effects`: exact cache-relative paths mapped to
+`action` (`added`, `changed`, `removed`), `kind` (`file`, `directory`), `uid`, `gid`,
+`mode`, and `max_bytes`. No glob, executable cache file, wildcard trigger or
+on-the-fly learning is supported. All expected deltas must occur and no other
+delta may occur. The pending/processing/half-configured/installed trigger sequence
+must occur once, in order, within the five-pin unpack/configure transaction.
+Unknown actions, timestamps moving backwards, identities, versions or incomplete
+states refuse. The original `transaction(text, lock)` still rejects non-pin records.
+
+A review hash is a binding to separately retained review, not a proof that someone
+reviewed it. No executable fixture/target policy is shipped here. The retained A
+snapshot is insufficient to produce one: mandb/config/helper closure, actual
+cache effects and conditional APT hooks remain to be qualified. The PackageKit
+service-file + D-Bus-socket activation predicate currently refuses even if a
+policy hash matches; this code does not disable that hook, stop a sixth service,
+or exempt packagekitd from foreign-writer checks. Needrestart, update-notifier,
+dpkg-preconfigure and other effective hooks need explicit review as well. Historical
+B omits effective hook/path-exclusion bodies and must be extended/reviewed in a new
+private packet before claiming those facts. Do not silently rebind old B.
+
+`r3_maintenance.py` only enters isolation. It records an exclusive intent, original
+unit state and any precisely identified shutdown helper. That identity permits a
+normal service stop, never an exemption during installation. It persistently masks
+only the five enumerated package-manager units, stops their timers, then rechecks
+jobs/processes/locks and full inventory immediately before stopping services.
+Actual/pending package work refuses before service stop. A final observation must
+show all five masked/inactive with no writer/job, idle native locks and unchanged
+inventory. Commands and callback budgets share the deadline; completion after
+expiry is refused. No lock deletion, forced writer kill, package repair, unrelated
+service change or automatic unmask is performed. A failed stop may leave a systemd
+job pending; retain masks/journal and inspect, never infer cancellation from the
+local systemctl process ending. Blocking proc reads remain a qualification limit,
+not a hard real-time guarantee.
+
+The original workflow mode is unchanged when both optional inputs are empty.
+For the new mode, `installation_policy` is exact **public fixture-only JSON** and
+`installation_policy_sha256` is the SHA256 of those exact UTF-8 bytes (including
+any newline). These are public dispatch fields, not a channel for target secrets
+or private configuration bodies. The policy is checked before runner mutation,
+carried on the read-only ISO, and bound by manifest purpose
+`FIXTURE_MAINTENANCE_ONLY`. Raw observations remain inside owner encryption.
+Required private members add policy/facts/cache records, maintenance intent,
+pre-stop/final/completion records and all command streams/argv/exit records. The
+controller rechecks policy bindings, isolation, exact maintenance argv, inventories,
+lock-probe correspondence, trigger chronology and cache deltas. A result remains
+`DIAGNOSTIC_PASS_REVIEW_REQUIRED`, `target_qualified=false`, `qa_ready=false`.
+Neither JSON checks nor cache-local observations prove global filesystem confinement.
+Independent review of actual script behavior and other effects remains mandatory.
+
+Target installation is explicit opt-in: `r3_transfer.py --policy <private-file>`
+adds a separate `maintenance-policy.json` member beside the verified `r3/` bundle
+and proposes `r3_install.py ... --policy /var/lib/tonyai-r3/maintenance-policy.json`.
+The transfer proposal remains `NOT_EXECUTABLE_APPROVAL`. Format-3 approval changes
+the action to `r02-maintenance-toolchain-install`, binds `policy_sha256` and the
+four additional helper byte hashes (`r3_install_policy.py`, `r3_maintenance.py`,
+`r3_noble_common.py`, `r3_noble_identity.py`), besides all existing source/contract
+bindings. Format-2 approval cannot select this path. The receipt is format 3 and
+retains policy/config/cache/isolation evidence. Five additions and final holds,
+unchanged pre-existing final inventory and clean audits are still required.
+
+This package implements isolation entry and policy/evidence enforcement. It does
+not implement or authorize the separate release/unmask/reboot stage, nor qualify
+it from local mocks. Before target execution, qualify that lifecycle together with
+native transaction, Engine/Compose/store, dependencies, empty-store registry-denied
+image transport, nine services, private DB stable-session regression, Realtime
+source/GCM, installed source/modes/identity and custody. All retained P3 findings,
+CL-P2-3 and the delivery order remain; bootstrap is
+`NOT_READY_FOR_BOOTSTRAP_APPROVAL`. Never dispatch the unchanged old A just to
+rediscover helper identity, and never interpret this development decision as a
+new execution approval.
