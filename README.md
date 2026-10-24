@@ -521,6 +521,22 @@ diagnostic mode and format-2 strict installer remain available without this opt-
 maintenance installation requires format 3. Unknown PackageKit activation, hook or
 effect closure blocks preparation for execution. No workflow, Azure installation,
 unmask/reboot qualification or QA acceptance is established by this code.
+The [policy evidence collection path](infra/runbooks/10-qa-clean-replacement.md#collection-only-policy-evidence-a-and-b)
+adds `purpose=policy-collection` for A and a new private B packet generator,
+`infra/scripts/r3_policy_packet.py`. It captures bounded policy inputs without
+entering maintenance, simulation, installation or holds. Both use the same
+all-section validator; partial evidence stays private and never becomes an
+executable policy. B requires a separately completed source/target/custody proposal
+and fresh approval bound to the exact packet path and host-key fingerprint;
+historical B is not rebound. Collection rejects APT line-comment redirection and
+unit reload/warning drift, retains partial evidence without aggregate hashes, and
+uses source-only controller imports plus replacement-independent Git checks.
+Source verification refuses Git filter/include/diff configuration, redirected or
+partial-clone worktrees, and nonempty or symlinked Git info attributes before
+status/object reads; lazy object fetching is disabled. Index or HEAD gitlinks
+are refused before status can enter a child repository.
+Collection remains evidence for
+semantic review, not native installation qualification or bootstrap approval.
 The r02 runtime source contract
 rejects both legacy installation shells. Local tools now inspect pinned package
 control/scripts and Node bytes, render offline guard files and a full source plan,

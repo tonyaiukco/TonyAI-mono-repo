@@ -71,19 +71,24 @@ def validate_frame(data, expected):
     with tarfile.open(fileobj=io.BytesIO(body), mode='r:') as tar:
         for member in tar:
             if (member.name not in GUEST_FILES or member.name in entries or not member.isfile()
-                    or member.size > (SNAPSHOT_LIMIT if member.name == SNAPSHOT else FILE_LIMIT)
+                    or member.size > (24 * 1024 * 1024 if member.name == 'policy-evidence.json' else SNAPSHOT_LIMIT if member.name == SNAPSHOT else FILE_LIMIT)
                     or member.size < 0 or member.pax_headers):
                 raise ValueError('Unexpected native evidence archive member')
             total += member.size
             if total > STREAM_LIMIT:
                 raise ValueError('Native evidence archive limit')
             entries[member.name] = tar.extractfile(member).read()
-    result = json.loads(entries['result.json'])
-    manifest = json.loads(entries['manifest.json'])
+    from r3_install_policy import unique
+    result = json.loads(entries['result.json'], object_pairs_hook=unique)
+    manifest = json.loads(entries['manifest.json'], object_pairs_hook=unique)
     if manifest != expected or result.get('source') != expected['source']:
         raise ValueError('Native source/input correspondence differs')
     if result.get('files') != {k: digest(v) for k, v in entries.items() if k != 'result.json'}:
         raise ValueError('Native evidence manifest differs')
+    if expected.get('purpose') == 'FIXTURE_POLICY_COLLECTION_ONLY':
+        return validate_collection(entries, result, expected)
+    if 'policy-evidence.json' in entries:
+        raise ValueError('Collection evidence in installation mode')
     maintenance = expected.get('purpose') == 'FIXTURE_MAINTENANCE_ONLY'
     from r3_noble_guest import POLICY_FILES
     if not maintenance and set(entries) & POLICY_FILES:
@@ -173,6 +178,29 @@ def validate_frame(data, expected):
         held_inventory(after, final, lock)
         if checks != result.get('checks'):
             raise ValueError('Native strict check readback differs')
+    return result
+
+
+def validate_collection(entries, result, expected):
+    from r3_noble_guest import COLLECTION_FILES, COMMANDS, POLICY_COMMANDS, collection_binding
+    from r3_policy_validate import validate
+    keys = {'format', 'purpose', 'qa_ready', 'target_qualified', 'install_attempted', 'status',
+            'phase', 'source', 'checks', 'not_reached', 'files'}
+    failed = 'failure_type' in result
+    if (set(result) != keys | ({'failure_type'} if failed else set())
+            or type(result.get('format')) is not int or result['format'] != 1
+            or set(entries) != COLLECTION_FILES or result.get('purpose') != expected['purpose']
+            or result.get('qa_ready') is not False or result.get('target_qualified') is not False
+            or result.get('install_attempted') is not False or result.get('phase') != 'collection'
+            or result.get('not_reached') != list(COMMANDS + POLICY_COMMANDS)):
+        raise ValueError('Invalid collection-only frame')
+    checked = validate(entries['policy-evidence.json'], collection_binding(expected))
+    if failed:
+        checked.update(status='PARTIAL_REVIEW_REQUIRED', policy_input_hashes={})
+    expected_status = checked['status']
+    if (result.get('checks') != checked or result.get('status') != expected_status
+            or failed and result['failure_type'] not in ('OSError', 'ValueError', 'TimeoutError', 'RuntimeError', 'UnicodeError')):
+        raise ValueError('Collection readback differs')
     return result
 
 
@@ -279,7 +307,7 @@ def seal(work, raw, publish, binding):
 def main():
     os.umask(0o077)
     # The only inputs taken from the runner environment are public dispatch/run bindings.
-    names = ('R3_SOURCE_SHA', 'R3_RECIPIENT', 'R3_RECIPIENT_SHA256', 'R3_INSTALL_POLICY', 'R3_INSTALL_POLICY_SHA256', 'GITHUB_SHA', 'GITHUB_REF',
+    names = ('R3_PURPOSE', 'R3_SOURCE_SHA', 'R3_RECIPIENT', 'R3_RECIPIENT_SHA256', 'R3_INSTALL_POLICY', 'R3_INSTALL_POLICY_SHA256', 'GITHUB_SHA', 'GITHUB_REF',
              'GITHUB_WORKFLOW_SHA', 'GITHUB_WORKFLOW_REF', 'GITHUB_EVENT_NAME', 'GITHUB_RUN_ID',
              'GITHUB_RUN_ATTEMPT', 'GITHUB_REPOSITORY', 'RUNNER_ENVIRONMENT', 'RUNNER_OS', 'RUNNER_ARCH',
              'RUNNER_TEMP', 'ImageOS', 'ImageVersion')
@@ -293,6 +321,10 @@ def main():
         from r3_install_policy import load as load_policy
         policy_bytes = env['R3_INSTALL_POLICY'].encode()
         load_policy(policy_bytes, env['R3_INSTALL_POLICY_SHA256'])
+    purpose = env['R3_PURPOSE'] or 'diagnostic'
+    if purpose not in ('diagnostic', 'policy-collection') or (purpose == 'policy-collection' and policy_bytes is not None):
+        raise ValueError('Invalid collection purpose/policy combination')
+    collection_only = purpose == 'policy-collection'
     root = Path(env['RUNNER_TEMP'])
     if not root.is_absolute() or not root.is_dir() or root.is_symlink():
         raise ValueError('Runner temporary directory required')
@@ -303,7 +335,7 @@ def main():
     raw.mkdir(mode=0o700)
     publish.mkdir(mode=0o700)
     lock = json.loads(read(ROOT / 'infra/selfhost/r3-noble-fixture.lock.json'))
-    binding = {'format': 1, 'source_sha': source['sha'], 'source_ref': source['ref'],
+    binding = {'format': 1, 'purpose': purpose, 'source_sha': source['sha'], 'source_ref': source['ref'],
                'run_id': source['run_id'], 'attempt': 1, 'job': source['job'],
                'workflow_sha256': source['workflow_sha256'], 'recipient_sha256': env['R3_RECIPIENT_SHA256'],
                'fixture_lock_sha256': file_hash(ROOT / 'infra/selfhost/r3-noble-fixture.lock.json')}
@@ -329,7 +361,7 @@ def main():
             raise ValueError('Runner tool versions differ')
         run(['dpkg-query', '-W'], raw, 'runner-after')
         summary['phase'] = 'public-inputs'
-        inputs = stage(work, raw, lock, source, time.monotonic() + 600, policy_bytes)
+        inputs = stage(work, raw, lock, source, time.monotonic() + 600, policy_bytes, collection_only)
         expected = json.loads(read(inputs / 'manifest.json'))
         seed(work / 'seed', source)
         run(['genisoimage', '-quiet', '-r', '-J', '-V', 'R3INPUT', '-o', str(work / 'input.iso'), str(inputs)], raw, 'input-iso')
@@ -378,7 +410,7 @@ def main():
         write(publish / 'binding.json', encoded(binding))
         write(publish / 'summary.json', encoded(summary))
     print('Native fixture finished. Inspect the encrypted evidence and public binding; no target qualification claimed.')
-    return 0 if summary['status'] == 'DIAGNOSTIC_PASS_REVIEW_REQUIRED' and summary['sealed'] else 1
+    return 0 if summary['status'] in ('DIAGNOSTIC_PASS_REVIEW_REQUIRED', 'COLLECTED_REVIEW_REQUIRED') and summary['sealed'] else 1
 
 
 if __name__ == '__main__':

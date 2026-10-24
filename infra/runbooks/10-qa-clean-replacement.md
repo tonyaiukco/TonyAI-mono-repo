@@ -1402,3 +1402,188 @@ CL-P2-3 and the delivery order remain; bootstrap is
 `NOT_READY_FOR_BOOTSTRAP_APPROVAL`. Never dispatch the unchanged old A just to
 rediscover helper identity, and never interpret this development decision as a
 new execution approval.
+
+
+## Collection-only policy evidence (A and B)
+
+`R3_POLICY_EVIDENCE_COLLECTION` closes the tooling gap before installation-policy
+construction. It does not modify R3-POLICY-01 or manufacture a reviewed policy.
+The maintenance guest still preflights before isolation; callers must not guess
+policy hashes to collect a baseline. Historical A approvals remain consumed and
+historical B remains prepared/unapproved/unexecuted at its original source.
+
+### Shared bounded contract
+
+`r3_policy_evidence.py` collects a format-1 private document with exact purpose,
+binding, sections, and explicit false qualification/installation/policy flags.
+`r3_policy_validate.py` independently checks every section, fixed argv, stream
+length/hash, file metadata/body hash, directory membership, cache structure and
+source/purpose binding. JSON duplicate keys, unknown fields/sections, unsafe paths,
+oversized records and incomplete correspondences cannot pass. Every section is
+`ok`, `error`, or `not_reached`; command failure and dirty audit are partial.
+Known directory members disappearing between listing and read are errors. The
+collector checkpoints before deciding completeness; errors retain prior sections.
+A validator rejection preserves the captured bytes privately for diagnosis.
+
+The fixed commands are full dpkg inventory/audit, architecture,
+effective `apt-config dump`, five-unit `systemctl cat`, and five-unit fragment/path
+queries before/after. Public OS release is a bounded direct file record. There is no arbitrary command/path input. The fixed files
+match current installation-policy facts; extra native hook executables are separate
+review evidence and do not alter the canonical policy facts hash. Exact names
+observed in historical fixture A informed the read allowlist, including the
+fixture's kernel trigger filename. This is read-scope review, not fresh evidence
+or acceptance of hook effects. Unknown names remain `UNREVIEWED_PATH`; extending
+the scope requires code review, never automatic discovery of credential files.
+
+Raw bodies are limited to 128 KiB each for fixed native config/scripts and reviewed
+directory members. Binary guard files are hashed within an 8 MiB limit. Directory
+membership is bounded to 256 entries; man cache is bounded to 4096 entries and
+32 MiB of hashed file bytes. Command streams are bounded to 2 MiB each and 30
+seconds, collection to a 240-second budget with an outer 300-second deadline.
+The document cap is 24 MiB. Descriptor-relative reads reject symlinks, hardlinks,
+non-regular files, changed metadata/content and oversized input. The D-Bus socket
+is only inspected, never opened. PackageKit's service-file/socket predicate is
+reported as true, false or unknown; true remains an installer eligibility blocker.
+No hook suppression, sixth-service stop or writer exemption is added.
+
+Before native APT configuration is queried, the collector checks the exact
+reviewed files/membership and refuses include directives or configuration-root
+redirection, including quoted, percent-encoded and comment-split forms and the
+APT config-index directive. Three conservative views are checked: raw normalized
+bytes, the original quote-aware C/C++ view, and the physical-line preprocessing in
+[APT 2.8.2 configuration.cc](https://github.com/Debian/apt/blob/39d24618587e28b2dd2cae04ed2393056869f771/apt-pkg/contrib/configuration.cc#L865).
+The third view resets quote parity on each physical line, completes any pending
+block comment, strips `//` then non-magic `#` comments, then strips block comments.
+Only block-comment state persists between lines. It preserves the case-sensitive
+`#clear`, `#include`, and `#x-apt-configure-index` prefix exceptions before the
+conservative redirection scan. This is a read-scope filter, not a complete APT
+parser or semantic approval. Harmless literal shell hash comments remain readable.
+Unit dump paths must identify exactly the five known fragments in
+fixed system directories; unreviewed drop-ins or alternate paths refuse that
+section. Both path queries must return exactly `Id`, `FragmentPath`, `DropInPaths`
+and `NeedDaemonReload=no` for each unit. Nonempty stderr from either path query,
+`systemctl cat` or `apt-config dump` makes evidence partial with no aggregate hashes.
+The first path-query warning prevents the unit dump. This follows
+[systemd 255's reload predicate](https://github.com/systemd/systemd/blob/db11bab38ccf1ed257f310d29070843d4c58ea01/src/core/unit.c#L3909)
+and its [successful cat command with a stderr warning](https://github.com/systemd/systemd/blob/db11bab38ccf1ed257f310d29070843d4c58ea01/src/systemctl/systemctl-edit.c#L82).
+Reload detection compares observed paths and mtimes; it does not prove an atomic
+snapshot or absence of every privileged content rewrite. Before/after scope correspondence and exact unit body correspondence
+are independently checked. This preserves actual native command bytes instead
+of substituting a staged configuration. These observations are not a filesystem
+snapshot and do not contain a concurrent privileged swap-and-restore attack.
+No private keys, APT auth files, token stores or general environment dumps are
+collection inputs. Effective APT and unit output can still contain sensitive
+configuration, so all raw bytes remain in private/encrypted custody.
+
+`COLLECTED_REVIEW_REQUIRED` means structurally complete collection only.
+`PARTIAL_REVIEW_REQUIRED` never supplies the aggregate policy-input hashes.
+Neither status proves global write/read confinement, installation effects or
+semantic hook closure. A substantive independent script/config/effect review and
+exact permitted-effect map remain required; hashing a review file is insufficient.
+A cache baseline cannot prove post-install effects. Sampling, blocking reads,
+lifecycle/writer/content/detached-child and other retained P3 questions remain open.
+
+### A: explicit fixture purpose
+
+The workflow's default `purpose=diagnostic` retains strict/optional-maintenance
+behavior. Select `purpose=policy-collection` only with a separate exact-source,
+recipient and single-attempt execution approval; installation-policy inputs must
+be empty. Its ISO manifest is `FIXTURE_POLICY_COLLECTION_ONLY`. Guest dispatch
+enters a separate collection function before the installation function, including
+cleanup. It cannot reach maintenance isolation, simulation, installation, holds,
+unmask, repair or daemon-start. The existing disposable QEMU identity, no NIC/no
+host sharing, source/run/attempt binding and encrypted export are preserved.
+Runner-tool preparation remains the existing hosted-runner setup.
+
+The private guest frame has exactly `manifest.json`, `policy-evidence.json` and
+`result.json`. Command evidence is embedded in the shared document. The controller
+uses the collection validator and never treats this frame as an installation
+receipt. A process refusal is not needed to collect policy evidence. Incomplete
+transport stays a refusal/partial capture, never an automatic retry.
+
+### B: separate packet, receiver and validator
+
+Offline preparation (no guest or cloud access):
+
+```sh
+python3 -I -B infra/scripts/r3_policy_packet.py --destination /private/tmp/new-policy-packet
+```
+
+This creates new files exclusively: `proposal.json`, `guest.py`, and `packet.json`.
+The draft binds the exact collector/receiver/helper/toolchain source hash map and
+verified base commit only when the tree is clean and all mapped Git blobs match.
+Otherwise `base_sha` is null, explicitly marking an unverified development draft.
+`published_sha`, target and custody are deliberately null; the draft
+cannot execute. After separate publication and fresh target/custody preparation,
+use `--proposal <new-complete-proposal.json>` with another fresh destination to
+render that exact proposal. No historical packet is edited or rebound.
+
+The complete proposal retains false `execution_authorized` and
+`historical_B_rebound` flags: authorization is a separate owner record. Source
+binds base/published commit, exact files and canonical source-map SHA256. Target
+binds selected IMDS fields (`resourceId`, `vmId`, `location`, `subscriptionId`,
+`publisher`, `offer`, `sku`, `version`), connection host/user, and the complete
+private control-plane identity/image/disks/network record. Custody binds exact
+local public known-hosts, SSH public identity and age tool paths/hashes, plus the
+public encryption recipient/hash. SSH uses only that public identity with the
+existing signing agent; the receiver never reads a private key. Paths reject
+OpenSSH expansion/whitespace syntax. Guest modules are delivered through stdin
+and loaded in memory; no source upload or package installation is performed.
+
+`r3_policy_receive.py` requires `--packet`, `--approval`,
+`--approval-sha256`, and `--execute`. The exact owner authorization record must
+bind action `ONE_POLICY_EVIDENCE_COLLECTION`, one attempt, proposal SHA256 and
+an owner authorization reference and `packet_path`, the canonical absolute path of
+the new packet directory. A copied packet cannot reuse that approval at another
+path; its exclusive local attempt marker still prevents repetition in place.
+This is not global replay prevention across deleted/restored state or other hosts.
+It also binds a private control-plane/host-key
+readback observed within 15 minutes. Its `host_key_fingerprint` is the OpenSSH
+`SHA256:` fingerprint of the decoded public key, separate from the custody file
+hash. The known-hosts file must contain exactly one ordinary, marker-free
+`ssh-ed25519` key line for the exact connection host: no CA, wildcard, alias,
+comment or extra line. The receiver verifies current source against
+published Git blobs (including hidden working-tree edits), exact rendered payload,
+all helper hashes, target/custody and approval before consuming an exclusive
+attempt marker. Git runs with a fixed environment, global/system config disabled,
+`--no-replace-objects`, `GIT_NO_REPLACE_OBJECTS=1`, and `core.fsmonitor=false`
+so status queries cannot invoke a repository-local filesystem-monitor hook. Ignored files under
+`infra/scripts` and `infra/selfhost` also refuse execution. Before status/object
+reads, a local key-name query with `--no-includes` refuses `filter.*`, `include.*`,
+`includeIf.*`, `diff.*`, `extensions.worktreeConfig`, `extensions.partialClone`,
+`remote.*.promisor` and `core.worktree`; nonempty, symlinked or nonregular Git
+`info/attributes` also refuses. `GIT_NO_LAZY_FETCH=1` disables implicit missing-object
+fetches. Both index and HEAD tree metadata are checked for mode `160000` gitlinks
+before status: a child repository has independent config and is outside this
+source-verification scope. These conservative configuration restrictions avoid repository-defined
+program execution during source validation. They are preflight observations,
+not protection against concurrent replacement of Git metadata or the interpreter.
+The documented direct
+`python3 -I -B` CLI establishes an empty private bytecode-cache prefix before local
+imports; `-B` alone does not prevent loading stale/unchecked bytecode. None of
+these files is an authorizer by itself.
+
+The receiver probes encryption locally before SSH, then uses fixed strict host-key
+checking with explicit `UpdateHostKeys=no`, `CheckHostIP=no`, no forwarding or
+remote shell expansion of supplied values. The
+selected fixed IMDS endpoint bypasses proxies and refuses redirects. Guest identity
+and boot ID are observed before/after collection and compared independently;
+control-plane/image mismatch or a reboot cannot yield complete evidence. Output
+and stderr are bounded and retained at 0600 in a new 0700 private capture directory,
+including failed/partial transport. The local transport deadline is 360 seconds.
+SIGINT/SIGTERM are recorded and deferred to bounded child cleanup, capture/seal
+and partial-summary finalization. The original transport failure and individual
+cleanup errors are retained separately; streams are unbuffered. SIGKILL, host
+loss and remote detached-child termination remain outside this guarantee. Local SSH exit
+never proves remote child exit after a disconnect.
+
+The receiver seals private capture with the bound age tool and recipient; only
+ciphertext and the minimal collection summary are exportable. It does not publish
+anything. The offline `validate_target()` function validates all shared evidence
+and identity correspondence, replacing the old limited-core readback contract.
+No guest invocation, new A run, SSH, Azure mutation, provisioning, deployment or
+workflow dispatch is authorized by development or publication of this code.
+
+R3 and CL-P2-3 remain OPEN; bootstrap remains
+`NOT_READY_FOR_BOOTSTRAP_APPROVAL`. Delivery order remains R3 → R4 → Sweden
+application foundation → API/web deployment → QA acceptance.

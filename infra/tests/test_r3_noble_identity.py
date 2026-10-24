@@ -263,7 +263,8 @@ class GuestAndFrame(unittest.TestCase):
             inp.mkdir()
             (inp / 'r3-toolchain.lock.json').write_bytes(common.encoded(PINS))
             manifest = {'source': {'sha': 'a' * 40, 'run_id': '123'}, 'purpose': 'FIXTURE_DIAGNOSTIC_ONLY'}
-            def verify():
+            (inp / 'manifest.json').write_bytes(common.encoded(manifest))
+            def verify(_purposes):
                 for key, value in [('manifest.json', manifest), ('native-files.json', {}), ('native-state.json', {})]:
                     common.write(out / key, common.encoded(value))
                 return manifest
@@ -482,7 +483,7 @@ class GuestAndFrame(unittest.TestCase):
     def test_helper_is_staged_and_required_set_unchanged(self):
         self.assertIn('r3_noble_identity.py', inputs.HELPERS)
         self.assertEqual(len(guest.GUEST_REQUIRED_FILES), 102)
-        self.assertEqual(guest.GUEST_FILES - guest.GUEST_REQUIRED_FILES, {identity.SNAPSHOT} | guest.POLICY_FILES)
+        self.assertEqual(guest.GUEST_FILES - guest.GUEST_REQUIRED_FILES, {identity.SNAPSHOT} | guest.POLICY_FILES | {'policy-evidence.json'})
 
 
 if __name__ == '__main__':
