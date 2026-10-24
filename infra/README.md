@@ -226,3 +226,11 @@ without a NIC or host mounts, and retains encrypted diagnostics. This is separat
 from Azure inventory packet B, production installation, and composition smoke.
 No service/trigger disabling or strict-parser relaxation is included. A refusal
 can be useful diagnostic evidence; it does not qualify the target.
+
+The separate `purpose=snap-leaf-diagnostic` observes only `/usr/bin/snap`
+metadata and uninterpreted symlink text, without opening or resolving the target.
+It has a distinct three-file private frame and independent validation. A stable
+observation is `DIAGNOSTIC_OBSERVED_REVIEW_REQUIRED`, never installation or policy
+qualification. Existing pinned runner/image/artifact staging still occurs and
+requires its own exact dispatch approval; package inputs remain inert in this
+route. See the [snap diagnostic scope](runbooks/10-qa-clean-replacement.md#fixed-snap-leaf-diagnostic).
