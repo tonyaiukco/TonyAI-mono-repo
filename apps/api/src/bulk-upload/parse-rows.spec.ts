@@ -81,8 +81,17 @@ describe('isCommaFigure', () => {
     expect(isCommaFigure(raw)).toBe(true);
   });
 
-  it.each(['1.5', '1200', '', ',', 'abc,d', '1,5 kWh', '=1,5', '+1,5', '1;5'])('%s is not', (raw) => {
+  it.each(['1.5', '1200', '', ',', ',.,', '-,', 'abc,d', '1,5 kWh', '=1,5', '+1,5', '1;5'])('%s is not', (raw) => {
     expect(isCommaFigure(raw)).toBe(false);
+  });
+
+  it('answers a huge failing cell in linear time — no backtracking on one character class', () => {
+    // `/^-?[\d.,]*\d[\d.,]*$/` took 17.6 s on 131k characters of this shape.
+    const cell = `${'1'.repeat(500_000)},x`;
+    const started = performance.now();
+    expect(isCommaFigure(cell)).toBe(false);
+    expect(isCommaFigure(`${'1,'.repeat(250_000)}1`)).toBe(true);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });
 

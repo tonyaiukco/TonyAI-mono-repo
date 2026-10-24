@@ -516,5 +516,8 @@ export function strictNumber(raw: string): number | null {
  */
 export function isCommaFigure(raw: string): boolean {
   const trimmed = raw.trim();
-  return trimmed.includes(',') && /^-?[\d.,]*\d[\d.,]*$/.test(trimmed);
+  // Two linear tests, never `[\d.,]*\d[\d.,]*`: adjacent quantifiers over one
+  // class backtrack quadratically on a failing cell, and a 2 MiB cell would
+  // block the event loop for an hour (security-rls, LP4-04 review).
+  return trimmed.includes(',') && /^-?[\d.,]+$/.test(trimmed) && /\d/.test(trimmed);
 }
