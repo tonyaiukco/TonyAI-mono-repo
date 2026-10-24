@@ -352,11 +352,23 @@ add('infra/scripts/r3_policy_validate.py', 'policy-context-errno-type', "type(it
 add('infra/scripts/r3_policy_validate.py', 'policy-context-cleanup-bound', "len(value['cleanup']) <= 2", 'True')
 add('infra/scripts/r3_policy_validate.py', 'policy-context-error-class', "require(value['error'] == 'OSError')", 'require(True)')
 
+
+add('infra/scripts/r3_access_identity_diagnostic.py', 'identity-diagnostic-flags', "all(value[k] is False for k in ('access_verified', 'qualification', 'installation_success'))", 'True')
+add('infra/scripts/r3_access_identity_diagnostic.py', 'identity-diagnostic-complete-fields', "all(x['kind'] == 'string' and 1 <= x['characters'] <= 2048 for x in fields.values())", 'True')
+add('infra/scripts/r3_access_identity_diagnostic.py', 'identity-diagnostic-response-size', 'type(count) is int and 1 <= count <= 32768', 'True')
+add('infra/scripts/r3_access_identity_diagnostic.py', 'identity-diagnostic-deadline', 'signal.alarm(30)', 'signal.alarm(60)')
+add('infra/scripts/r3_access_repair_contract.py', 'identity-diagnostic-prior-delivery-hash', "sha256(encoded(previous)) == prior['delivery_sha256']", 'True')
+add('infra/scripts/r3_access_repair_contract.py', 'identity-diagnostic-prior-source', "previous_proposal['source']['published_sha'] == prior['source_sha']", 'True')
+add('infra/scripts/r3_access_repair_control.py', 'identity-diagnostic-terminal-state', "view.get('executionState') == prior['execution_state']", 'True')
+add('infra/scripts/r3_access_repair_control.py', 'identity-diagnostic-location', 'actual.lower() == expected.lower()', 'True')
+
 def mutation_command(file, python_command, node_command):
     """Full R3 baseline first; exercise each mutation with its relevant suites."""
-    if file.endswith('.mjs'):
+    if file.startswith('infra/scripts/r3_access_'):
+        suites = ['test_r3_access_repair', 'test_r3_access_delivery', 'test_r3_access_custody', 'test_r3_access_identity_diagnostic']
+    elif file.endswith('.mjs'):
         return node_command
-    if file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
+    elif file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
         suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context']
     elif file.startswith('.github/workflows/'):
         suites = ['test_r3_workflow']

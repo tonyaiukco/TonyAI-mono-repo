@@ -22,7 +22,7 @@ from r3_access_repair import public_line, require
 from r3_policy_target import IMDS_FIELDS
 
 ROOT = Path(__file__).resolve().parents[2]
-MODULES = (*COLLECTION_MODULES, 'r3_access_repair', 'r3_access_repair_guest', 'r3_access_repair_export')
+MODULES = (*COLLECTION_MODULES, 'r3_access_repair', 'r3_access_repair_guest', 'r3_access_repair_export', 'r3_access_identity_diagnostic')
 HELPERS = tuple(dict.fromkeys(('r3_access_repair_packet', 'r3_policy_packet',
     'r3_access_repair_contract', 'r3_access_repair_control', 'r3_access_repair_transport',
     'r3_access_repair_custody', 'r3_access_repair_receive',
@@ -82,7 +82,18 @@ raise SystemExit(0 if result['status'] == 'EXPORTED_REVIEW_REQUIRED' else 2)
 '''
 
 
-def prepare(destination, target_proposal, public_key, public_key_sha256, bindings=None):
+def diagnostic_payload(proposal):
+    prefix = payload(proposal).split(b'from r3_access_repair_guest import main\n', 1)[0]
+    return prefix + b'''from r3_access_identity_diagnostic import main
+result = main(proposal)
+data = json.dumps(result, sort_keys=True).encode()
+if len(data) > 4096:
+    raise ValueError('Diagnostic bound exceeded')
+sys.stdout.buffer.write(data + b'\\n')
+'''
+
+
+def prepare(destination, target_proposal, public_key, public_key_sha256, bindings=None, *, identity_diagnostic=False):
     from r3_access_repair_contract import PURPOSE, requests
     raw = read(public_key)
     public_line(raw, public_key_sha256)
@@ -103,10 +114,12 @@ def prepare(destination, target_proposal, public_key, public_key_sha256, binding
                 'source': {'published_sha': published, 'files': files, 'sha256': digest(encoded(files))},
                 'target_imds': imds, 'public_key': raw.decode('ascii'),
                 'public_key_sha256': public_key_sha256, 'execution_authorized': False}
+    if identity_diagnostic:
+        proposal['purpose'] = 'R3_ACCESS_IDENTITY_DIAGNOSTIC'
     destination.mkdir(mode=0o700)
     write(destination / 'proposal.json', encoded(proposal))
-    write(destination / 'guest.py', payload(proposal))
-    write(destination / 'export.py', export_payload(proposal))
+    write(destination / 'guest.py', diagnostic_payload(proposal) if identity_diagnostic else payload(proposal))
+    write(destination / 'export.py', b'' if identity_diagnostic else export_payload(proposal))
     plan = {'format': 1, 'purpose': PURPOSE, 'packet_path': str(destination.resolve()),
             'proposal_sha256': digest(encoded(proposal)), 'guest_sha256': digest(read(destination / 'guest.py')),
             'export_sha256': digest(read(destination / 'export.py')),
@@ -114,6 +127,8 @@ def prepare(destination, target_proposal, public_key, public_key_sha256, binding
             'client': bindings.get('client'), 'handler_trust': bindings.get('handler_trust'),
             'design_decision_sha256': bindings.get('design_decision_sha256'),
             'requests': requests(proposal, read(destination / 'guest.py'))}
+    if identity_diagnostic:
+        plan['prior_command'] = bindings.get('prior_command')
     write(destination / 'delivery.json', encoded(plan))
     write(destination / 'packet.json', encoded({
         'state': 'DRAFT_NOT_EXECUTION_READY_UNAPPROVED_UNEXECUTED',
@@ -140,7 +155,8 @@ if __name__ == '__main__':
     parser.add_argument('--public-key', type=Path, required=True)
     parser.add_argument('--public-key-sha256', required=True)
     parser.add_argument('--bindings', type=Path, help='Optional publication/client/design bindings; never execution authority')
+    parser.add_argument('--identity-diagnostic', action='store_true', help='Distinct metadata-only purpose; never repair replay')
     args = parser.parse_args()
     from r3_access_repair_contract import load as strict_load
     prepare(args.destination, args.target_proposal, args.public_key, args.public_key_sha256,
-            strict_load(read(args.bindings)) if args.bindings else None)
+            strict_load(read(args.bindings)) if args.bindings else None, identity_diagnostic=args.identity_diagnostic)
