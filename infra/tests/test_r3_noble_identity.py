@@ -483,7 +483,7 @@ class GuestAndFrame(unittest.TestCase):
     def test_helper_is_staged_and_required_set_unchanged(self):
         self.assertIn('r3_noble_identity.py', inputs.HELPERS)
         self.assertEqual(len(guest.GUEST_REQUIRED_FILES), 102)
-        self.assertEqual(guest.GUEST_FILES - guest.GUEST_REQUIRED_FILES, {identity.SNAPSHOT} | guest.POLICY_FILES | {'policy-evidence.json'})
+        self.assertEqual(guest.GUEST_FILES - guest.GUEST_REQUIRED_FILES, {identity.SNAPSHOT} | guest.POLICY_FILES | {'policy-evidence.json', 'snap-leaf.json'})
 
 
 if __name__ == '__main__':

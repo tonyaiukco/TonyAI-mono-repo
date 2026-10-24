@@ -71,7 +71,7 @@ def validate_frame(data, expected):
     with tarfile.open(fileobj=io.BytesIO(body), mode='r:') as tar:
         for member in tar:
             if (member.name not in GUEST_FILES or member.name in entries or not member.isfile()
-                    or member.size > (24 * 1024 * 1024 if member.name == 'policy-evidence.json' else SNAPSHOT_LIMIT if member.name == SNAPSHOT else FILE_LIMIT)
+                    or member.size > (16384 if member.name == 'snap-leaf.json' else 24 * 1024 * 1024 if member.name == 'policy-evidence.json' else SNAPSHOT_LIMIT if member.name == SNAPSHOT else FILE_LIMIT)
                     or member.size < 0 or member.pax_headers):
                 raise ValueError('Unexpected native evidence archive member')
             total += member.size
@@ -85,6 +85,10 @@ def validate_frame(data, expected):
         raise ValueError('Native source/input correspondence differs')
     if result.get('files') != {k: digest(v) for k, v in entries.items() if k != 'result.json'}:
         raise ValueError('Native evidence manifest differs')
+    if expected.get('purpose') == 'FIXTURE_SNAP_LEAF_DIAGNOSTIC':
+        return validate_snap(entries, result, expected)
+    if 'snap-leaf.json' in entries:
+        raise ValueError('Snap evidence in another purpose')
     if expected.get('purpose') == 'FIXTURE_POLICY_COLLECTION_ONLY':
         return validate_collection(entries, result, expected)
     if 'policy-evidence.json' in entries:
@@ -201,6 +205,24 @@ def validate_collection(entries, result, expected):
     if (result.get('checks') != checked or result.get('status') != expected_status
             or failed and result['failure_type'] not in ('OSError', 'ValueError', 'TimeoutError', 'RuntimeError', 'UnicodeError')):
         raise ValueError('Collection readback differs')
+    return result
+
+
+def validate_snap(entries, result, expected):
+    from r3_noble_guest import SNAP_FILES, snap_binding
+    from r3_snap_leaf import validate
+    from r3_install_policy import unique
+    keys = {'format', 'purpose', 'qa_ready', 'target_qualified', 'install_attempted',
+            'status', 'phase', 'source', 'checks', 'files'}
+    if (set(entries) != SNAP_FILES or set(result) != keys
+            or type(result.get('format')) is not int or result['format'] != 1
+            or result.get('purpose') != expected['purpose'] or result.get('phase') != 'snap-leaf'
+            or any(result.get(k) is not False for k in ('qa_ready', 'target_qualified', 'install_attempted'))):
+        raise ValueError('Snap result contract differs')
+    value = json.loads(entries['snap-leaf.json'], object_pairs_hook=unique)
+    checked = validate(value, snap_binding(expected))
+    if result['checks'] != checked or result['status'] != checked['status']:
+        raise ValueError('Snap diagnostic readback differs')
     return result
 
 
@@ -322,7 +344,7 @@ def main():
         policy_bytes = env['R3_INSTALL_POLICY'].encode()
         load_policy(policy_bytes, env['R3_INSTALL_POLICY_SHA256'])
     purpose = env['R3_PURPOSE'] or 'diagnostic'
-    if purpose not in ('diagnostic', 'policy-collection') or (purpose == 'policy-collection' and policy_bytes is not None):
+    if purpose not in ('diagnostic', 'policy-collection', 'snap-leaf-diagnostic') or (purpose == 'snap-leaf-diagnostic' and policy_bytes is not None) or (purpose == 'policy-collection' and policy_bytes is not None):
         raise ValueError('Invalid collection purpose/policy combination')
     collection_only = purpose == 'policy-collection'
     root = Path(env['RUNNER_TEMP'])
@@ -361,7 +383,8 @@ def main():
             raise ValueError('Runner tool versions differ')
         run(['dpkg-query', '-W'], raw, 'runner-after')
         summary['phase'] = 'public-inputs'
-        inputs = stage(work, raw, lock, source, time.monotonic() + 600, policy_bytes, collection_only)
+        options = {'snap_leaf': True} if purpose == 'snap-leaf-diagnostic' else {}
+        inputs = stage(work, raw, lock, source, time.monotonic() + 600, policy_bytes, collection_only, **options)
         expected = json.loads(read(inputs / 'manifest.json'))
         seed(work / 'seed', source)
         run(['genisoimage', '-quiet', '-r', '-J', '-V', 'R3INPUT', '-o', str(work / 'input.iso'), str(inputs)], raw, 'input-iso')
@@ -410,7 +433,7 @@ def main():
         write(publish / 'binding.json', encoded(binding))
         write(publish / 'summary.json', encoded(summary))
     print('Native fixture finished. Inspect the encrypted evidence and public binding; no target qualification claimed.')
-    return 0 if summary['status'] in ('DIAGNOSTIC_PASS_REVIEW_REQUIRED', 'COLLECTED_REVIEW_REQUIRED') and summary['sealed'] else 1
+    return 0 if summary['status'] in ('DIAGNOSTIC_PASS_REVIEW_REQUIRED', 'COLLECTED_REVIEW_REQUIRED', 'DIAGNOSTIC_OBSERVED_REVIEW_REQUIRED') and summary['sealed'] else 1
 
 
 if __name__ == '__main__':
