@@ -1475,6 +1475,20 @@ No private keys, APT auth files, token stores or general environment dumps are
 collection inputs. Effective APT and unit output can still contain sensitive
 configuration, so all raw bytes remain in private/encrypted custody.
 
+An initial `/usr/bin/snap` file-read `OSError` may include strict optional
+`context`: format 1, a fixed syscall-stage enum, numeric errno (or null), and up
+to two cleanup-stage/errno records. No exception message, filename, link target,
+extra metadata or new syscall is collected. Existing no-follow, regular-file,
+single-link, size and stability checks remain in force. Missing paths and
+timeouts keep their existing classifications; a cleanup failure cannot turn
+absence into success or replace an already recorded primary read error.
+Context is allowed only on this initial snap error, never on another section,
+an `ok` result or a `prior` value. Older context-free evidence is still accepted.
+The same source/run/attempt/image binding, three-member guest frame, 240-second
+collection budget, 300-second guest alarm and encrypted export apply. This is
+same-attempt diagnostic evidence, not proof of the cause of an older run; it
+remains `PARTIAL_REVIEW_REQUIRED` with no aggregate policy-input hashes.
+
 `COLLECTED_REVIEW_REQUIRED` means structurally complete collection only.
 `PARTIAL_REVIEW_REQUIRED` never supplies the aggregate policy-input hashes.
 Neither status proves global write/read confinement, installation effects or

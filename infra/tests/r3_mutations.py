@@ -272,7 +272,7 @@ add('infra/scripts/r3_policy_evidence.py', 'policy-unknown-read', 'if name not i
 add('infra/scripts/r3_policy_evidence.py', 'policy-drift', 'elif again != section:', 'elif False:')
 add('infra/scripts/r3_policy_evidence.py', 'policy-deadline-class', 'class CollectionDeadline(BaseException):', 'class CollectionDeadline(Exception):')
 add('infra/scripts/r3_policy_evidence.py', 'policy-reread-deadline', "        if time.monotonic() >= deadline:\n            sections[name] = {'state': 'error', 'error': 'TimeoutError', 'prior': section['value']}\n            checkpoint(value)\n            continue", '        if False:\n            continue')
-add('infra/scripts/r3_policy_capture.py', 'policy-path-recheck', '            same(before, os.stat(Path(path).name, dir_fd=parent, follow_symlinks=False))', '            pass')
+add('infra/scripts/r3_policy_capture.py', 'policy-path-recheck', "            same(before, observed('stat-path', os.stat, Path(path).name, dir_fd=parent, follow_symlinks=False))", '            pass')
 add('infra/scripts/r3_policy_capture.py', 'policy-length-recheck', 'if len(data) != before.st_size:', 'if False:')
 add('infra/scripts/r3_policy_receive.py', 'policy-packet-path', "and approval.get('packet_path') == str(packet.resolve())", 'and True')
 add('infra/scripts/r3_policy_receive.py', 'policy-payload', 'require(guest == payload(proposal))', 'require(True)')
@@ -342,12 +342,22 @@ add('infra/scripts/r3_policy_git.py', 'policy-gitlinks', "if any(entry.startswit
 add('infra/scripts/r3_policy_git.py', 'policy-index-gitlinks', "git(root, 'ls-files', '--stage', '-z')", "b''")
 add('infra/scripts/r3_policy_git.py', 'policy-head-gitlinks', "git(root, 'ls-tree', '-r', '-z', head)", "b''")
 
+add('infra/scripts/r3_policy_capture.py', 'policy-context-nofollow', 'os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW', 'os.O_RDONLY | os.O_NONBLOCK')
+add('infra/scripts/r3_policy_capture.py', 'policy-context-primary-cleanup', 'if primary is None or isinstance(primary, FileNotFoundError):', 'if True:')
+add('infra/scripts/r3_policy_evidence.py', 'policy-context-capture-scope', "snap_context=name == 'file:/usr/bin/snap'", 'snap_context=True')
+add('infra/scripts/r3_policy_validate.py', 'policy-context-validation-scope', "snap_context=path == '/usr/bin/snap'", 'snap_context=True')
+add('infra/scripts/r3_policy_validate.py', 'policy-context-extra-fields', "set(value) == {'format', 'stage', 'errno', 'cleanup'}", 'True')
+add('infra/scripts/r3_policy_validate.py', 'policy-context-stage', "require(item['stage'] in stages)", 'require(True)')
+add('infra/scripts/r3_policy_validate.py', 'policy-context-errno-type', "type(item['errno']) is int", "isinstance(item['errno'], int)")
+add('infra/scripts/r3_policy_validate.py', 'policy-context-cleanup-bound', "len(value['cleanup']) <= 2", 'True')
+add('infra/scripts/r3_policy_validate.py', 'policy-context-error-class', "require(value['error'] == 'OSError')", 'require(True)')
+
 def mutation_command(file, python_command, node_command):
     """Full R3 baseline first; exercise each mutation with its relevant suites."""
     if file.endswith('.mjs'):
         return node_command
     if file.startswith('infra/scripts/r3_policy_') or file.endswith(('r3_noble_guest.py', 'r3_noble_fixture.py', 'r3_noble_inputs.py')):
-        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config']
+        suites = ['test_r3_policy_evidence', 'test_r3_policy_target', 'test_r3_policy_regressions', 'test_r3_policy_controller', 'test_r3_policy_approval', 'test_r3_policy_git_config', 'test_r3_policy_error_context']
     elif file.startswith('.github/workflows/'):
         suites = ['test_r3_workflow']
     elif file.endswith(('r3_image_transport.py', 'r3_guard_files.py', 'r3_package_evidence.py',
