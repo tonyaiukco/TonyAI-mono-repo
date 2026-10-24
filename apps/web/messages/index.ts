@@ -1,5 +1,6 @@
 import type { Locale } from "@/lib/types";
 import enAuth from "./en/auth.json";
+import enBoundary from "./en/boundary.json";
 import enCategories from "./en/categories.json";
 import enCommon from "./en/common.json";
 import enDashboard from "./en/dashboard.json";
@@ -12,6 +13,7 @@ import enReportingContext from "./en/reportingContext.json";
 import enReports from "./en/reports.json";
 import enUsers from "./en/users.json";
 import trAuth from "./tr/auth.json";
+import trBoundary from "./tr/boundary.json";
 import trCategories from "./tr/categories.json";
 import trCommon from "./tr/common.json";
 import trDashboard from "./tr/dashboard.json";
@@ -46,6 +48,7 @@ import trUsers from "./tr/users.json";
  *   dashboard   the dashboard's KPI words LP4-03 PR B changed (the rest is LP4-04's)
  *   reports     the Reports screen — live preview and issued reports — and the
  *               boundary coverage card the dashboard and Data Entry share (LP4-03 PR B)
+ *   boundary    the inventory boundary editor, and the coverage card's link to it (LP4-03 PR C)
  */
 const en = {
   common: enCommon,
@@ -60,6 +63,7 @@ const en = {
   users: enUsers,
   reportingContext: enReportingContext,
   reports: enReports,
+  boundary: enBoundary,
 };
 
 export type Messages = typeof en;
@@ -77,6 +81,7 @@ const tr: Messages = {
   users: trUsers,
   reportingContext: trReportingContext,
   reports: trReports,
+  boundary: trBoundary,
 };
 
 export const MESSAGES: Readonly<Record<Locale, Messages>> = { en, tr };

@@ -18,6 +18,7 @@ import type {
   ReportTemplate,
   UserRole,
 } from '@/lib/types';
+import { BoundaryLink } from '@/components/inventory-boundary/boundary-link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -242,6 +243,7 @@ export function IssuedReports({ year, role, language }: { year: number; role: Us
                   </div>
                 )
               )}
+              <BoundaryLink year={year} />
               {loaded.datasets.length === 0 && <p className="text-muted-foreground">{t('noDatasets', { year })}</p>}
               {loaded.datasets.map((d) => {
                 const preview = previews[d.datasetId];

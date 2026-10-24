@@ -1,0 +1,192 @@
+{
+  "title": "Envanter sınırı",
+  "subtitle": "Bir yılın envanterinin kapsadığı bağlı şirketler, sahalar, kategoriler ve adlandırılmış kaynaklar",
+  "readOnly": "Bir sınırı yalnızca bir süper yönetici beyan edebilir, onaylayabilir ya da silebilir. Siz görüntüleyebilirsiniz.",
+  "grantedView": "Yalnızca erişiminiz olan bağlı şirketleri görüyorsunuz; bu sürümün beyan ettiği diğer bağlı şirketler gösterilmez.",
+  "openExists": "Sürüm {version} açık. Başka bir sürüme başlamadan önce onu düzenleyin ya da silin.",
+  "versions": {
+    "title": "{year} sürümleri",
+    "label": "Sürüm {version}",
+    "labelWithYear": "Sürüm {version} · {year}",
+    "empty": "{year} için beyan edilmiş bir sınır yok. Beyan etmek için bir sürüme başlayın.",
+    "emptyReader": "{year} için okuyabileceğiniz beyan edilmiş bir sınır yok.",
+    "failed": "Sürümler yüklenemedi.",
+    "retry": "Yeniden dene",
+    "column": {
+      "version": "Sürüm",
+      "state": "Durum",
+      "created": "Oluşturulma",
+      "decided": "Onay"
+    }
+  },
+  "state": {
+    "open": "Açık",
+    "confirmed": "Onaylandı",
+    "frozenUnconfirmed": "Donduruldu, onaylanmadı"
+  },
+  "stateNote": {
+    "open": "Açık: düzenlenebilir, ardından onaylanabilir ya da silinebilir. Ondan yakalanan bir rapor onu onaylamadan dondurur.",
+    "confirmed": "Onaylandı ve donduruldu: hiçbir değişiklik kabul etmez. Yeni bilgiler yeni bir sürüm gerektirir.",
+    "frozenUnconfirmed": "Bir rapor yakalaması tarafından onaylanmadan donduruldu: hiçbir değişiklik kabul etmez ve onaylanamaz. Onaylamak için ondan yeni bir sürüm başlatın."
+  },
+  "actions": {
+    "copySelected": "Sürüm {version}'den yeni sürüm",
+    "copyPrevious": "{year} sürüm {version}'i kopyala",
+    "startEmpty": "Boş bir sürüm başlat",
+    "confirm": "Sürümü onayla",
+    "delete": "Sürümü sil",
+    "declare": "Beyan et",
+    "edit": "Düzenle",
+    "view": "Görüntüle",
+    "remove": "Kaldır",
+    "declareFor": "{name} için beyan et",
+    "editFor": "{name} beyanını düzenle",
+    "viewFor": "{name} beyanını görüntüle",
+    "removeFor": "{name} beyanını kaldır"
+  },
+  "summary": {
+    "declared": "{total} bağlı şirketten {declared} tanesi beyan edildi",
+    "gaps": "Eksikler: {count}",
+    "noGaps": "Eksik yok"
+  },
+  "subsidiaries": {
+    "empty": "Gösterilecek bağlı şirket yok.",
+    "notDeclared": "Beyan edilmedi",
+    "monthRange": "{first} – {last}",
+    "column": {
+      "name": "Bağlı şirket",
+      "months": "Aylar",
+      "sites": "Sahalar",
+      "sources": "Kaynaklar",
+      "gaps": "Eksikler",
+      "actions": "İşlemler"
+    },
+    "status": {
+      "inactive": "Pasif",
+      "pending": "Beklemede"
+    }
+  },
+  "toast": {
+    "created": "Sürüm {version} başlatıldı.",
+    "confirmed": "Sürüm {version} onaylandı.",
+    "deleted": "Sürüm {version} silindi.",
+    "removed": "{name} sürümden kaldırıldı.",
+    "saved": "{name} kaydedildi.",
+    "savedWithGaps": "Sürüm onaylanmadan önce giderilecek eksikler: {count}",
+    "frozenElsewhere": "Bu sürüm bu arada donduruldu; değişiklik kabul etmiyor.",
+    "changedElsewhere": "{name}, siz açtıktan sonra başka biri tarafından değiştirildi. Yeniden açın ve değişikliğinizi tekrar yapın.",
+    "versionChanged": "Sürüm {version}, siz incelerken başka biri tarafından değiştirildi. Onaylamadan önce yeniden inceleyin.",
+    "fixIssues": "Kaydetmeden önce düzeltilecek sorunlar: {count}"
+  },
+  "confirmDialog": {
+    "title": "Sürüm {version} onaylansın mı?",
+    "body": "Onaylamak sürümü kalıcı olarak dondurur: artık düzenlenemez ya da silinemez ve ondan nihai bir rapor kesinleştirilebilir.",
+    "undeclared": "Beyan edilmedikleri için envanterin dışında kalanlar: {names}",
+    "blockedEmpty": "Önce en az bir bağlı şirket beyan edin.",
+    "blockedGaps": "Önce eksikleri giderin: {count}",
+    "cancel": "Vazgeç",
+    "confirm": "Onayla"
+  },
+  "deleteDialog": {
+    "title": "Sürüm {version} silinsin mi?",
+    "body": "Açık sürüm ve içindeki her beyan silinir. Bu geri alınamaz.",
+    "cancel": "Vazgeç",
+    "confirm": "Sil"
+  },
+  "removeDialog": {
+    "title": "{name} kaldırılsın mı?",
+    "body": "{name} beyanı bu sürümden kaldırılır.",
+    "cancel": "Vazgeç",
+    "confirm": "Kaldır"
+  },
+  "gaps": {
+    "saved": "Kaydedilen beyandaki eksikler",
+    "line": "{label} — {where}",
+    "lineWithSources": "{label} — {where}: {sources}"
+  },
+  "link": {
+    "edit": "Sınırı beyan et ya da düzenle",
+    "view": "Sınırı görüntüle"
+  },
+  "editor": {
+    "title": "{name} — sürüm {version}",
+    "description": "Bu bağlı şirketin envanterinin kapsadığı aylar, sahalar, kategoriler ve adlandırılmış kaynaklar.",
+    "readOnly": "Bu beyan salt okunur.",
+    "company": "Şirket",
+    "choose": "Seçin…",
+    "months": "Envanterdeki aylar",
+    "firstMonth": "İlk ay",
+    "lastMonth": "Son ay",
+    "sites": "Sahalar",
+    "sitesHint": "Beyan edilen bir saha envanterin bir varlığıdır. Bir sahayı kaldırmak onun kararlarını ve kaynaklarını da kaldırır.",
+    "noLocations": "Bu bağlı şirketin lokasyonu yok.",
+    "noSitesDeclared": "Beyan edilmiş saha yok.",
+    "siteFirstMonth": "{site} için ilk ay",
+    "siteLastMonth": "{site} için son ay",
+    "categories": "Kategoriler",
+    "categoriesHint": "Her kategori için şirkete mi yoksa sahalarına mı atandığını ve ne sıklıkla raporlandığını seçin, ardından her varlık için dahil olup olmadığına karar verin.",
+    "level": "{category}: atandığı yer",
+    "levelNone": "Karar verilmedi",
+    "levels": {
+      "company": "Şirket",
+      "sites": "Sahaları"
+    },
+    "cadence": "{category}: raporlama sıklığı",
+    "notSelected": "bu atama tarafından kullanılmıyor",
+    "decision": "{entity} için {category}",
+    "cellNone": "Karar yok",
+    "applicability": {
+      "included": "Dahil",
+      "excluded": "Hariç",
+      "undetermined": "Belirlenmedi"
+    },
+    "reason": "Gerekçe",
+    "reasonFor": "{entity} için {category} gerekçesi",
+    "sources": "Adlandırılmış kaynaklar",
+    "sourcesHint": "Envanterin saydığı ya da hariç olarak adlandırdığı bir sayaç, fatura veya varlık. Dahil bir kaynak önce kategorisinin atamasını gerektirir.",
+    "addSource": "Kaynak ekle",
+    "noSources": "Adlandırılmış kaynak yok.",
+    "sourceName": "Ad",
+    "sourceNameFor": "Kaynak {n} adı",
+    "sourceEntityFor": "Kaynak {n} varlığı",
+    "removeSourceFor": "Kaynak {n}'i kaldır",
+    "mappingFor": "Kaynak {n} eşlemesi",
+    "mappings": {
+      "mapped": "Bir kategori",
+      "unsupported": "Desteklenmeyen"
+    },
+    "categoryFor": "Kaynak {n} kategorisi",
+    "activityTypeFor": "Kaynak {n} faaliyet türü",
+    "unsupportedReason": "Neden hiçbir kategoriye eşlenmediği",
+    "unsupportedReasonFor": "Kaynak {n} neden hiçbir kategoriye eşlenmiyor",
+    "scopeFor": "Kaynak {n} kapsamı",
+    "scope1": "Kapsam 1",
+    "scope2": "Kapsam 2",
+    "sourceDecisionFor": "Kaynak {n} kararı",
+    "sourceCadenceFor": "Kaynak {n} raporlama sıklığı",
+    "sourceReasonFor": "Kaynak {n} gerekçesi",
+    "evidenceFor": "Kaynak {n} kanıtı",
+    "evidenceNone": "Kanıt yok",
+    "evidenceCadence": "Kanıt: {cadence}",
+    "save": "Kaydet",
+    "saving": "Kaydediliyor…",
+    "cancel": "Vazgeç",
+    "close": "Kapat",
+    "issues": {
+      "monthsOrder": "Son ay ilk aydan önce geliyor.",
+      "siteMonthsOrder": "Sahanın son ayı ilk ayından önce geliyor.",
+      "siteOutsideMonths": "Bir sahanın ayları bağlı şirketin ayları içinde olmalı.",
+      "siteNotDeclared": "Bu saha beyan edilmedi.",
+      "textRequired": "Zorunlu.",
+      "textTooLong": "En fazla {max} karakter.",
+      "textInvalid": "İzin verilmeyen bir karakter içeriyor.",
+      "categoryRequired": "Bir kategori seçin.",
+      "activityTypeRequired": "Bir faaliyet türü seçin.",
+      "scopeRequired": "Bir kapsam seçin.",
+      "cadenceRequired": "Ne sıklıkla raporlandığını seçin.",
+      "evidenceRequired": "Kanıt gerekip gerekmediğini ve ne sıklıkla gerektiğini seçin.",
+      "policyRequired": "Dahil bir {category} kaynağı, yukarıda {category} atamasını gerektirir.",
+      "duplicateIncluded": "Başka bir dahil kaynak aynı varlık, kategori ve faaliyet türüne sahip."
+    }
+  }
+}

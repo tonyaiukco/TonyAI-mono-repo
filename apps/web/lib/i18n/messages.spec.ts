@@ -94,6 +94,8 @@ describe("the catalogues", () => {
       // A unit, a file kind, a format with no words (LP4-03 PR B).
       ...['tonnes', 'columns.tco2e', 'coverage.gapCount', 'issued.downloadPdf', 'issued.downloadXlsx', 'issued.downloadCsv', 'issued.issuanceLine']
         .map((key) => `reports.${key}`),
+      // Formats with no words (LP4-03 PR C).
+      ...['subsidiaries.monthRange', 'gaps.line', 'gaps.lineWithSources'].map((key) => `boundary.${key}`),
     ]);
     const other = leaves(MESSAGES[locale]);
     for (const [key, message] of en) {
