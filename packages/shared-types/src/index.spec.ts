@@ -47,6 +47,7 @@ import {
   BULK_SUBMIT_MAX_IDS,
   BULK_UPLOAD_MAX_ROWS,
   EVIDENCE_MAX_LINKED_RECORDS,
+  ENGLISH_ENTITY_WORDS,
 } from './index';
 
 /**
@@ -469,6 +470,14 @@ describe('entityLabel — one phrase for the reporting entity', () => {
     // audit-ready export, which reads as a missing value, not as a level.
     expect(entityLabel({ locationName: '   ' })).toBe('Whole company');
     expect(entityLabel({ locationId: 'l', locationName: '  Izmir Plant  ' })).toBe('Izmir Plant');
+  });
+
+  it("takes a screen's own two phrases, by the same rule", () => {
+    const words = { wholeCompany: 'W', unnamedSite: 'U' };
+    expect(entityLabel({}, words)).toBe('W');
+    expect(entityLabel({ locationId: 'loc-1' }, words)).toBe('U');
+    expect(entityLabel({ locationId: 'loc-1', locationName: ' Izmir ' }, words)).toBe('Izmir');
+    expect(ENGLISH_ENTITY_WORDS).toEqual({ wholeCompany: 'Whole company', unnamedSite: 'Site (name unavailable)' });
   });
 });
 
