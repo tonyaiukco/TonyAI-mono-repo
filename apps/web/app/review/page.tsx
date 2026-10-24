@@ -46,18 +46,21 @@ import { anomalyStatement } from "@/lib/anomaly-view";
 import { useAuthStore } from "@/lib/store";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
+  entityLabel,
   isCalculated,
+  LOCALE_FORMAT_TAGS,
   PENDING_REVIEW_STATUSES,
   unitSymbol,
   type ActivityRecordDTO,
   type ActivityRecordPageFilters,
   type EvidenceDTO,
+  type Locale,
   type SubsidiaryDTO,
 } from "@/lib/types";
 import { appendById, isStaleCursor } from "@/lib/cursor-pages";
-import { entityLabel } from "@/lib/void-view";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
-import { useActorWords, useEntityWords, useRecordWords } from "@/lib/i18n/hooks";
+import { useActorWords, useEntityWords, useErrorToast, useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
+import { formatNumber } from "@/lib/i18n/number";
 import { waitingLabel } from "@/lib/review-view";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
@@ -75,16 +78,12 @@ const STATUS_COLORS: Record<string, string> = {
   under_review: "bg-[#FEF3C7] text-[#92400E] font-semibold",
 };
 
-function humanise(value: string): string {
-  return value.replace(/_/g, " ");
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", {
+function formatDate(iso: string, locale: Locale): string {
+  return new Intl.DateTimeFormat(LOCALE_FORMAT_TAGS[locale], {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  });
+  }).format(new Date(iso));
 }
 
 export default function ReviewPage() {
@@ -92,6 +91,9 @@ export default function ReviewPage() {
   const tAnomaly = useTranslations("anomaly");
   const tEvidence = useTranslations("evidence");
   const tCommon = useTranslations("common");
+  const t = useTranslations("review");
+  const showError = useErrorToast();
+  const showStableError = useStableErrorToast();
   const entityWords = useEntityWords();
   const actorWords = useActorWords();
   const recordWords = useRecordWords();
@@ -183,15 +185,12 @@ export default function ReviewPage() {
       setRows([]);
       setNextCursor(null);
       setTotal(null);
-      if (e instanceof ApiError && e.status === 401) {
-        toast.error("Your session has expired — please sign in again.");
-      } else {
-        toast.error((e as Error).message);
-      }
+      // A 401 reads "Your session has expired" from the catalogue, as before.
+      showStableError(e);
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
-  }, [queueFilters]);
+  }, [queueFilters, showStableError]);
 
   async function loadMore() {
     const filters = chainFilters.current;
@@ -205,7 +204,7 @@ export default function ReviewPage() {
       setNextCursor(page.nextCursor);
     } catch (e) {
       if (seq !== loadSeq.current) return;
-      toast.error((e as Error).message);
+      showError(e);
       // A cursor refused after a deployment: start the queue again.
       if (isStaleCursor(e)) void loadRef.current();
     } finally {
@@ -268,7 +267,7 @@ export default function ReviewPage() {
       setEvidenceCursor(page.nextCursor);
     } catch (e) {
       if (selectedId.current !== recordId) return;
-      toast.error((e as Error).message);
+      showError(e);
       if (!isStaleCursor(e)) return;
       // A cursor refused after a deployment: the files start again from their
       // first page, for the record still open (Codex P2-3).
@@ -299,7 +298,7 @@ export default function ReviewPage() {
       const { url } = await api.getEvidenceUrl(id);
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     }
   }
 
@@ -345,17 +344,13 @@ export default function ReviewPage() {
       // selection on screen now — and the cursor chain starts over.
       void loadRef.current({ quiet: true });
       toast.success(
-        verb === "review"
-          ? "Taken into review"
-          : verb === "approve"
-            ? "Record approved"
-            : "Record rejected — the reason is now visible to the submitter",
+        verb === "review" ? t("toast.reviewed") : verb === "approve" ? t("toast.approved") : t("toast.rejected"),
       );
     } catch (e) {
       // 409 includes locks and concurrent changes; 400 is a state-machine refusal. Both mean the
       // queue this page is showing is stale, so reload rather than leave the
       // reviewer clicking a row that can no longer move.
-      toast.error((e as Error).message);
+      showError(e);
       if (e instanceof ApiError && (e.status === 409 || e.status === 400)) {
         void loadRef.current();
       }
@@ -374,10 +369,11 @@ export default function ReviewPage() {
         <div className="p-8 space-y-6">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold">Review Queue</h1>
+              <h1 className="text-2xl font-semibold">{t("title")}</h1>
               <p className="text-sm text-muted-foreground">
-                Records awaiting a decision
-                {user ? ` · ${user.fullName ?? user.email} (${tRoles(`roles.${user.role}`)})` : ""}
+                {user
+                  ? t("subtitleUser", { name: user.fullName ?? user.email, role: tRoles(`roles.${user.role}`) })
+                  : t("subtitle")}
               </p>
             </div>
             <SignOutButton onClick={handleLogout} />
@@ -398,15 +394,14 @@ export default function ReviewPage() {
               <CardContent className="flex items-start gap-3 py-8">
                 <ShieldAlert className="h-5 w-5 text-amber-500 shrink-0" />
                 <div className="space-y-1">
-                  <p className="font-medium">
-                    Reviewing is done by a consultant or a super_admin
-                  </p>
+                  <p className="font-medium">{t("gate.title")}</p>
                   <p className="text-sm text-muted-foreground">
                     {/* Visibility is tenant-scoped; role and distinct authorship
                         decide which review actions are offered. */}
-                    This is not hidden data — records you can already see on the
-                    Emissions page are the same ones being decided here. Your role
-                    is <span className="font-mono">{user.role}</span>.
+                    {t.rich("gate.body", {
+                      role: user.role,
+                      mono: (chunks) => <span className="font-mono">{chunks}</span>,
+                    })}
                   </p>
                 </div>
               </CardContent>
@@ -419,10 +414,10 @@ export default function ReviewPage() {
                   onValueChange={(v) => setSubsidiaryId(v)}
                 >
                   <SelectTrigger className="w-[260px]">
-                    <SelectValue placeholder="All subsidiaries" />
+                    <SelectValue placeholder={t("allSubsidiaries")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ANY}>All subsidiaries</SelectItem>
+                    <SelectItem value={ANY}>{t("allSubsidiaries")}</SelectItem>
                     {subsidiaries.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.legalName}
@@ -431,7 +426,7 @@ export default function ReviewPage() {
                   </SelectContent>
                 </Select>
                 <span className="text-sm text-muted-foreground ml-auto" data-testid="review-queue-total">
-                  {total === null ? "—" : total} awaiting review
+                  {t("awaitingReview", { count: total === null ? "—" : formatNumber(total, locale) })}
                 </span>
               </div>
 
@@ -440,16 +435,16 @@ export default function ReviewPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Subsidiary</TableHead>
-                        <TableHead>Period</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead className="text-right">Activity</TableHead>
-                        <TableHead className="text-right">tCO₂e</TableHead>
-                        <TableHead>Status</TableHead>
+                        <TableHead>{t("columns.subsidiary")}</TableHead>
+                        <TableHead>{t("columns.period")}</TableHead>
+                        <TableHead>{t("columns.category")}</TableHead>
+                        <TableHead className="text-right">{t("columns.activity")}</TableHead>
+                        <TableHead className="text-right">{tCommon("tco2e")}</TableHead>
+                        <TableHead>{t("columns.status")}</TableHead>
                         {/* The author submits drafts and rejected records; this
                             column identifies that author, while Waiting uses submittedAt. */}
-                        <TableHead>Entered by</TableHead>
-                        <TableHead>Waiting</TableHead>
+                        <TableHead>{t("columns.enteredBy")}</TableHead>
+                        <TableHead>{t("columns.waiting")}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -468,9 +463,9 @@ export default function ReviewPage() {
                             className="text-center py-8 text-muted-foreground"
                             data-testid="review-queue-failed"
                           >
-                            The queue for this selection could not be loaded.{" "}
+                            {t("loadFailed")}{" "}
                             <Button variant="link" size="sm" className="h-auto p-0" onClick={() => void load()}>
-                              Retry
+                              {t("retry")}
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -483,7 +478,7 @@ export default function ReviewPage() {
                             {/* An empty queue is the good outcome here, not an
                                 error — say so, so it does not read as a failed
                                 load. */}
-                            Nothing is waiting for review.
+                            {t("empty")}
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -509,25 +504,24 @@ export default function ReviewPage() {
                               )}
                             </TableCell>
                             <TableCell className="text-sm whitespace-nowrap">
-                              {row.periodValue} {row.reportingYear}
+                              {t("periodYear", { period: recordWords.period(row.periodValue), year: row.reportingYear })}
                             </TableCell>
                             <TableCell className="text-sm">
                               <span className="flex items-center gap-2">
-                                {row.category}
+                                {recordWords.category(row.category)}
                                 {row.anomalyFlag && (
                                   <AlertTriangle className="h-4 w-4 text-amber-500" />
                                 )}
                               </span>
                             </TableCell>
                             <TableCell className="text-right text-sm font-mono">
-                              {row.activityValue.toLocaleString("en-GB")}{" "}
+                              {formatNumber(row.activityValue, locale)}{" "}
                               {unitSymbol(row.activityUnit)}
                             </TableCell>
                             <TableCell className="text-right text-sm font-mono">
-                              {formatTCo2e(row.calculation, (v) =>
-                                v.toLocaleString("en-GB", {
-                                  maximumFractionDigits: 3,
-                                }),
+                              {formatTCo2e(
+                                row.calculation,
+                                (v) => formatNumber(v, locale, { maximumFractionDigits: 3 }),
                                 tCommon("notCalculated"),
                               )}
                             </TableCell>
@@ -538,7 +532,7 @@ export default function ReviewPage() {
                                   STATUS_COLORS[row.status],
                                 )}
                               >
-                                {humanise(row.status)}
+                                {recordWords.status(row.status)}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-sm whitespace-nowrap">
@@ -572,7 +566,7 @@ export default function ReviewPage() {
                                   submission time. An em dash means never
                                   submitted — never a fallback to `createdAt`,
                                   which is the misstatement this replaced. */}
-                              {waitingLabel(row.submittedAt)}
+                              {waitingLabel(row.submittedAt, { t, locale })}
                             </TableCell>
                           </TableRow>
                         ))
@@ -586,13 +580,15 @@ export default function ReviewPage() {
                 <span className="text-sm text-muted-foreground" data-testid="review-queue-shown">
                   {loading || rows.length === 0
                     ? ""
-                    : `Showing ${rows.length}${total === null ? "" : ` of ${total}`} — the longest wait first`}
+                    : total === null
+                      ? t("shown", { shown: formatNumber(rows.length, locale) })
+                      : t("shownOf", { shown: formatNumber(rows.length, locale), total: formatNumber(total, locale) })}
                 </span>
                 <LoadMoreButton
                   hasMore={nextCursor !== null && !loading}
                   loading={loadingMore}
                   onClick={() => void loadMore()}
-                  label="Load more"
+                  label={t("loadMore")}
                   testId="review-queue-load-more"
                 />
               </div>
@@ -614,37 +610,39 @@ export default function ReviewPage() {
           <SheetHeader>
             <SheetTitle>
               {selected
-                ? `${selected.category} · ${selected.periodValue} ${selected.reportingYear}`
+                ? t("sheet.title", {
+                    category: recordWords.category(selected.category),
+                    period: recordWords.period(selected.periodValue),
+                    year: selected.reportingYear,
+                  })
                 : ""}
             </SheetTitle>
           </SheetHeader>
           {selected && (
             <div className="space-y-5 mt-4 text-sm">
               <div className="grid grid-cols-3 gap-2">
-                <span className="text-muted-foreground">Subsidiary</span>
+                <span className="text-muted-foreground">{t("sheet.subsidiary")}</span>
                 <span className="col-span-2">
                   {subsidiaryName(selected.subsidiaryId)}
                 </span>
-                <span className="text-muted-foreground">Reporting entity</span>
+                <span className="text-muted-foreground">{t("sheet.entity")}</span>
                 <span className="col-span-2">{entityLabel(selected, entityWords)}</span>
-                <span className="text-muted-foreground">Activity</span>
+                <span className="text-muted-foreground">{t("sheet.activity")}</span>
                 <span className="col-span-2 font-mono">
-                  {selected.activityValue.toLocaleString("en-GB")}{" "}
+                  {formatNumber(selected.activityValue, locale)}{" "}
                   {unitSymbol(selected.activityUnit)}
                 </span>
-                <span className="text-muted-foreground">Emissions</span>
+                <span className="text-muted-foreground">{t("sheet.emissions")}</span>
                 <span className="col-span-2 font-mono">
                   {isCalculated(selected.calculation) ? (
-                    `${selected.calculation.tCo2e.toLocaleString("en-GB", {
-                      maximumFractionDigits: 3,
-                    })} tCO₂e`
+                    t("tonnes", { value: formatNumber(selected.calculation.tCo2e, locale, { maximumFractionDigits: 3 }) })
                   ) : (
                     <span className="font-sans text-muted-foreground">
                       {tCommon("notCalculated")}
                     </span>
                   )}
                 </span>
-                <span className="text-muted-foreground">Factor</span>
+                <span className="text-muted-foreground">{t("sheet.factor")}</span>
                 <span className="col-span-2 text-xs">
                   {/* The reviewer is signing off on a number, so the provenance
                       of that number belongs on this screen, not one click away.
@@ -652,18 +650,18 @@ export default function ReviewPage() {
                       thing on the screen: an approval here commits an entry to
                       the inventory that carries no emissions figure at all. */}
                   {isCalculated(selected.calculation)
-                    ? `${selected.calculation.source} v${selected.calculation.version}`
+                    ? t("sheet.factorSource", { source: selected.calculation.source, version: selected.calculation.version })
                     : tCommon("noFactor")}
                 </span>
                 {/* Both, because they answer different questions: when the
                     work was started, and when it reached this queue. They are
                     the same date only for a record submitted the day it was
                     drafted. */}
-                <span className="text-muted-foreground">Created</span>
+                <span className="text-muted-foreground">{t("sheet.created")}</span>
                 <span className="col-span-2">
-                  {formatDate(selected.createdAt)}
+                  {formatDate(selected.createdAt, locale)}
                 </span>
-                <span className="text-muted-foreground">Submitted</span>
+                <span className="text-muted-foreground">{t("sheet.submitted")}</span>
                 <span
                   className={cn(
                     "col-span-2",
@@ -672,16 +670,16 @@ export default function ReviewPage() {
                   )}
                 >
                   {selected.submittedAt === null
-                    ? "not recorded"
-                    : formatDate(selected.submittedAt)}
+                    ? t("sheet.notRecorded")
+                    : formatDate(selected.submittedAt, locale)}
                 </span>
                 {/* Both actors, always — including "not reviewed yet", which is
                     a fact about the record a reviewer needs, and which a field
                     that appeared only once populated would hide. */}
                 {(
                   [
-                    ["Entered by", selected.createdBy, selected.createdByName],
-                    ["Reviewed by", selected.reviewedBy, selected.reviewedByName],
+                    [t("sheet.enteredBy"), selected.createdBy, selected.createdByName],
+                    [t("sheet.reviewedBy"), selected.reviewedBy, selected.reviewedByName],
                   ] as const
                 ).map(([label, id, name]) => {
                   const actor = recordActorLabel(id, name, actorWords);
@@ -708,7 +706,7 @@ export default function ReviewPage() {
                 <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 space-y-1">
                   <p className="flex items-center gap-2 font-medium text-sky-900">
                     <AlertTriangle className="h-4 w-4" />
-                    No emissions figure for this entry
+                    {t("sheet.noFigure")}
                   </p>
                   <p className="text-xs text-sky-900/80">
                     {notCalculatedReason(selected.calculation)}
@@ -730,8 +728,8 @@ export default function ReviewPage() {
                   </p>
                   <p className="text-xs text-amber-900/80">
                     {selected.varianceReason
-                      ? `Submitter's explanation: ${selected.varianceReason}`
-                      : "No explanation was recorded."}
+                      ? t("sheet.explanation", { reason: selected.varianceReason })
+                      : t("sheet.noExplanation")}
                   </p>
                 </div>
               )}
@@ -753,7 +751,7 @@ export default function ReviewPage() {
 
               {selected.reviewNote && (
                 <div className="rounded-lg border bg-muted/40 p-3 space-y-1">
-                  <p className="font-medium">Previous review note</p>
+                  <p className="font-medium">{t("sheet.previousNote")}</p>
                   <p className="text-xs text-muted-foreground">
                     {selected.reviewNote}
                   </p>
@@ -763,25 +761,24 @@ export default function ReviewPage() {
               <div className="space-y-2">
                 <p className="text-muted-foreground flex items-center gap-2">
                   <Paperclip className="h-4 w-4" />
-                  Evidence
+                  {t("sheet.evidence")}
                 </p>
                 {evidenceError ? (
                   <p className="text-xs text-red-600">
-                    Could not load the evidence for this record — do not decide
-                    it until you can see the files.{" "}
+                    {t("sheet.evidenceFailed")}{" "}
                     <button
                       type="button"
                       className="underline"
                       onClick={() => setSelected({ ...selected })}
                     >
-                      Retry
+                      {t("retry")}
                     </button>
                   </p>
                 ) : evidence === null ? (
                   <Skeleton className="h-8 w-full" />
                 ) : evidence.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    No files attached.
+                    {t("sheet.noFiles")}
                   </p>
                 ) : (
                   <ul className="space-y-1">
@@ -818,7 +815,7 @@ export default function ReviewPage() {
                   hasMore={evidence !== null && evidenceCursor !== null && !evidenceError}
                   loading={false}
                   onClick={() => void loadMoreEvidence()}
-                  label="Load more files"
+                  label={t("sheet.loadMoreFiles")}
                   testId="review-evidence-load-more"
                 />
               </div>
@@ -828,18 +825,17 @@ export default function ReviewPage() {
                   htmlFor="review-reason"
                   className="text-muted-foreground"
                 >
-                  Reason (required to reject)
+                  {t("sheet.reasonLabel")}
                 </label>
                 <Textarea
                   id="review-reason"
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="What must the submitter change?"
+                  placeholder={t("sheet.reasonPlaceholder")}
                   rows={3}
                 />
                 <p className="text-xs text-muted-foreground">
-                  A rejection sends this text back to the submitter, so it has to
-                  say what to fix.
+                  {t("sheet.reasonHint")}
                 </p>
               </div>
 
@@ -850,7 +846,7 @@ export default function ReviewPage() {
                     disabled={busy}
                     onClick={() => act("review", selected)}
                   >
-                    Start review
+                    {t("sheet.startReview")}
                   </Button>
                 )}
                 {canReview && (
@@ -859,7 +855,7 @@ export default function ReviewPage() {
                     disabled={busy || !reason.trim()}
                     onClick={() => act("reject", selected)}
                   >
-                    Reject
+                    {t("sheet.reject")}
                   </Button>
                 )}
                 {canApprove && (
@@ -867,19 +863,18 @@ export default function ReviewPage() {
                     disabled={busy}
                     onClick={() => act("approve", selected)}
                   >
-                    Approve
+                    {t("sheet.approve")}
                   </Button>
                 )}
               </div>
               {user?.role === "super_admin" && selected.createdBy === user.id && (
                 <p className="text-xs text-muted-foreground">
-                  You cannot approve a record you entered.
+                  {t("sheet.selfApproval")}
                 </p>
               )}
               {user?.role === "consultant" && (
                 <p className="text-xs text-muted-foreground">
-                  Approval is reserved for a super_admin — as a consultant you can
-                  take a record into review or send it back.
+                  {t("sheet.consultantNote")}
                 </p>
               )}
             </div>

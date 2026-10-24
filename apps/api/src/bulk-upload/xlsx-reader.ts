@@ -2,6 +2,7 @@ import { checkParserDeadline } from '../common/work-deadline';
 import { isUtf8 } from 'node:buffer';
 import { StringDecoder } from 'node:string_decoder';
 import { BadRequestException } from '@nestjs/common';
+import { errorBody } from '../common/api-error';
 import { SaxesParser, type SaxesTagNS } from 'saxes';
 import { UnpackBudget, ZipArchive, unreadableWorkbook } from './zip-reader';
 
@@ -140,7 +141,7 @@ async function readWorkbookFile(
   const workbookPart = found.workbook ?? fail();
   const workbook = await readWorkbook(read(workbookPart));
   if (workbook.firstSheet === undefined) {
-    throw new BadRequestException(WORKBOOK_HAS_NO_SHEETS);
+    throw new BadRequestException(errorBody('bulk_workbook_no_sheets', WORKBOOK_HAS_NO_SHEETS));
   }
   const firstSheet = workbook.firstSheet ?? fail();
 
@@ -152,7 +153,7 @@ async function readWorkbookFile(
   const sheet = found.sheet ?? fail();
   // A chart sheet sits in the same list; it has no cells to import.
   if (!sheet.type.endsWith('/worksheet')) {
-    throw new BadRequestException(FIRST_SHEET_NOT_A_WORKSHEET);
+    throw new BadRequestException(errorBody('bulk_workbook_first_sheet_not_worksheet', FIRST_SHEET_NOT_A_WORKSHEET));
   }
 
   const sharedStrings =
@@ -243,7 +244,7 @@ async function parseXml(part: Buffer, handlers: XmlHandlers): Promise<void> {
   // is charged BEFORE a part is returned, so the total scanned over one read
   // can never exceed `XLSX_MAX_UNPACKED_BYTES`.
   if (!isUtf8(part) || part.includes(0)) {
-    throw new BadRequestException(WORKBOOK_NOT_UTF8);
+    throw new BadRequestException(errorBody('bulk_workbook_encoding', WORKBOOK_NOT_UTF8));
   }
   const parser = new SaxesParser<{ xmlns: true; position: false }>({
     xmlns: true,

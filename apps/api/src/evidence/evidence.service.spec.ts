@@ -444,6 +444,16 @@ describe('EvidenceService', () => {
       await expect(
         service.upload(dataEntry(), 'rec-1', makeFile()),
       ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toMatchObject({
+        response: { code: 'evidence_record_not_editable', params: { status: 'approved' } },
+      });
+      // The record's own status, not a constant.
+      prisma.activityRecord.findUnique.mockResolvedValue(
+        makeRecord({ id: 'rec-1', status: ActivityRecordStatus.submitted }),
+      );
+      await expect(service.upload(dataEntry(), 'rec-1', makeFile())).rejects.toMatchObject({
+        response: { code: 'evidence_record_not_editable', params: { status: 'submitted' } },
+      });
       expect(storage.upload).not.toHaveBeenCalled();
     });
 
@@ -681,6 +691,8 @@ describe('EvidenceService', () => {
       const body = (error as BadRequestException).getResponse() as EvidenceLinkRefusedDTO;
       expect(body.refused).toEqual([{ recordId: foreign, reason: 'Activity record not found' }]);
       expect(body.message).toMatch(/^1 of the 2 records cannot take this file, so nothing was uploaded/);
+      // Coded with counts only — never the caller's ids (LP4-04 PR C).
+      expect(body).toMatchObject({ statusCode: 400, code: 'evidence_records_refused', params: { refused: 1, total: 2 } });
       expect(storage.upload).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });
@@ -697,6 +709,13 @@ describe('EvidenceService', () => {
           makeFile(),
         ),
       ).rejects.toThrow(/more than one subsidiary/);
+      await expect(
+        service.uploadForRecords(
+          dataEntry({ accessibleSubsidiaryIds: ['sub-1', 'sub-2'] }),
+          ['aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000002'],
+          makeFile(),
+        ),
+      ).rejects.toMatchObject({ response: { code: 'evidence_records_mixed_subsidiaries' } });
       expect(storage.upload).not.toHaveBeenCalled();
     });
 
@@ -1135,6 +1154,9 @@ describe('EvidenceService', () => {
       prisma.evidence.findUnique.mockResolvedValue(makeEvidence([open, locked]));
       prisma.activityRecord.findMany.mockResolvedValue([open, locked]);
       await expect(service.remove(dataEntry(), 'ev-1')).rejects.toThrow(/can no longer change.*is locked/);
+      await expect(service.remove(dataEntry(), 'ev-1')).rejects.toMatchObject({
+        response: { code: 'evidence_backs_locked_records', params: { count: 1 } },
+      });
       expect(intents.runNow).not.toHaveBeenCalled();
       expect(prisma.evidence.delete).not.toHaveBeenCalled();
     });

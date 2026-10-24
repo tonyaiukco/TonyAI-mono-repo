@@ -16,7 +16,6 @@ import type {
 } from '@/lib/types';
 import { ApiError } from '@/lib/api';
 import type { DescribeError, ErrorWords } from './bulk-submit-view';
-import enErrors from '@/messages/en/errors.json';
 import enEntry from '@/messages/en/dataEntry.json';
 
 /**
@@ -137,16 +136,6 @@ export function preflightFile(
   if (file.size === 0) return t('preflight.empty');
   return null;
 }
-
-/**
- * A short name for every issue the server can report.
- *
- * Exhaustive on purpose: `Record<BulkUploadIssueCode, string>` means adding a
- * code in `@tonyai/shared-types` is a COMPILE ERROR here rather than a blank
- * label in front of a user. The audit screen's action-colour map already works
- * this way for the same reason.
- */
-export const ISSUE_CODE_LABEL: Record<BulkUploadIssueCode, string> = enErrors.bulkUploadIssues;
 
 /** The column names as a person reads them. Exhaustive for the same reason. */
 export const COLUMN_LABEL: Record<BulkUploadColumn, string> = enEntry.bulkColumns;

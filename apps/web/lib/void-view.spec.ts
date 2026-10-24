@@ -3,7 +3,6 @@ import {
   VOID_REASON_MAX_LENGTH,
   VOID_REASON_MIN_LENGTH,
   canOfferVoid,
-  entityLabel as entityLabelWith,
   voidConsequence as voidConsequenceWith,
   voidReasonError as voidReasonErrorWith,
   voidSuccessMessage as voidSuccessMessageWith,
@@ -12,6 +11,7 @@ import {
 import { copyFor, recordWordsFor } from '@/lib/i18n/testing';
 import type { Locale } from '@/lib/types';
 import { entityLabel as sharedEntityLabel } from '@/lib/types';
+const entityLabelWith = sharedEntityLabel;
 import type {
   ActivityCalculationSnapshot,
   ActivityRecordDTO,
@@ -339,10 +339,11 @@ describe('the void path in Turkish', () => {
   });
 });
 
-describe("entityLabel keeps shared-types' rule (the generated report's)", () => {
-  // The rule exists twice — here with the screen's words, in shared-types with
-  // the report's English. Every case must name the same entity, or the dialog
-  // and the PDF an auditor keeps would call one record two things.
+describe("entityLabel: the screen's English words are the report's", () => {
+  // One rule, in shared-types (LP4-04 slice 2 PR C, follow-up (10)): the
+  // screens pass the catalogue's words, the report its English constants.
+  // Every case must name the same entity in English, or the dialog and the
+  // PDF an auditor keeps would call one record two things.
   it.each([
     { locationId: 'loc-1', locationName: 'Istanbul HQ' },
     { locationId: 'loc-1', locationName: null },

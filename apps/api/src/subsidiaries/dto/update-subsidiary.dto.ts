@@ -12,8 +12,10 @@ import {
 } from 'class-validator';
 import {
   GEOGRAPHY_CODES,
+  SUBSIDIARY_STATUSES,
   SUBSIDIARY_TEXT_MAX_LENGTH,
   TRACKING_GRANULARITIES,
+  type SubsidiaryStatus,
   type TrackingGranularity,
 } from '@tonyai/shared-types';
 import { blankToNull } from '../../common/blank-to-null';
@@ -91,8 +93,8 @@ export class UpdateSubsidiaryDto {
   contactPhone?: string | null;
 
   @IsOptional()
-  @IsIn(['active', 'inactive', 'pending'])
-  reportingStatus?: 'active' | 'inactive' | 'pending';
+  @IsIn(SUBSIDIARY_STATUSES as readonly string[])
+  reportingStatus?: SubsidiaryStatus;
 
   /** Only the three GHG Protocol scopes exist. Unbounded integers were accepted
    *  and stored (`[99]` returned 200), which the Edit dialog now makes a

@@ -252,7 +252,11 @@ export class EvidenceService {
     }
     if (!EDITABLE_STATUSES.has(record.status)) {
       return new BadRequestException(
-        `Cannot modify evidence on a record in status "${record.status}"`,
+        errorBody(
+          'evidence_record_not_editable',
+          `Cannot modify evidence on a record in status "${record.status}"`,
+          { status: record.status },
+        ),
       );
     }
     if (locked) {
@@ -347,7 +351,10 @@ export class EvidenceService {
     const subsidiaries = new Set(found.map((r) => r.subsidiaryId));
     if (refused.length === 0 && subsidiaries.size > 1) {
       throw new BadRequestException(
-        'These records belong to more than one subsidiary. One file evidences records of one subsidiary — upload it once per subsidiary.',
+        errorBody(
+          'evidence_records_mixed_subsidiaries',
+          'These records belong to more than one subsidiary. One file evidences records of one subsidiary — upload it once per subsidiary.',
+        ),
       );
     }
 
@@ -362,8 +369,11 @@ export class EvidenceService {
       labels.push(`${recordLabel(record)} — ${refusal.message}`);
     }
     if (refused.length > 0) {
+      const message = `${refused.length} of the ${ids.length} records cannot take this file, so nothing was uploaded: ${labels.join('; ')}`;
       const body: EvidenceLinkRefusedDTO = {
-        message: `${refused.length} of the ${ids.length} records cannot take this file, so nothing was uploaded: ${labels.join('; ')}`,
+        ...errorBody('evidence_records_refused', message, { refused: refused.length, total: ids.length }),
+        code: 'evidence_records_refused',
+        message,
         refused,
       };
       throw new BadRequestException(body);
@@ -625,9 +635,13 @@ export class EvidenceService {
     if (refusals.length > 0) {
       if (records.length === 1) throw refusals[0].refusal;
       throw new ConflictException(
-        `This file also backs records that can no longer change, so it cannot be deleted: ${refusals
-          .map(({ record, refusal }) => `${recordLabel(record)} — ${refusal.message}`)
-          .join('; ')}. Remove it from each editable record instead.`,
+        errorBody(
+          'evidence_backs_locked_records',
+          `This file also backs records that can no longer change, so it cannot be deleted: ${refusals
+            .map(({ record, refusal }) => `${recordLabel(record)} — ${refusal.message}`)
+            .join('; ')}. Remove it from each editable record instead.`,
+          { count: refusals.length },
+        ),
       );
     }
 

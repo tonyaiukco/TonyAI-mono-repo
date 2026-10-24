@@ -3,7 +3,6 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
-  NotFoundException,
 } from '@nestjs/common';
 import {
   Prisma,
@@ -13,7 +12,13 @@ import {
   type Subsidiary,
 } from '@tonyai/db';
 import { PENDING_REVIEW_STATUSES } from '@tonyai/shared-types';
-import type { SubsidiaryDTO, SubsidiarySummaryDTO } from '@tonyai/shared-types';
+import type {
+  SubsidiaryBlockerCount,
+  SubsidiaryBlockerKind,
+  SubsidiaryDTO,
+  SubsidiarySummaryDTO,
+} from '@tonyai/shared-types';
+import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
@@ -117,10 +122,10 @@ export class SubsidiariesService {
   async get(user: RequestUser, id: string): Promise<SubsidiaryDTO> {
     // Tenant isolation: ids outside the accessible set are treated as not found.
     if (!user.accessibleSubsidiaryIds.includes(id)) {
-      throw new NotFoundException('Subsidiary not found');
+      throw new ResourceNotFoundError('subsidiary_not_found');
     }
     const s = await this.prisma.subsidiary.findUnique({ where: { id } });
-    if (!s) throw new NotFoundException('Subsidiary not found');
+    if (!s) throw new ResourceNotFoundError('subsidiary_not_found');
     return this.toDTO(s);
   }
 
@@ -283,10 +288,13 @@ export class SubsidiariesService {
   private assertHasLocations(count: number): void {
     if (count === 0) {
       throw new BadRequestException(
-        'Add at least one location before tracking this subsidiary by location — ' +
-          'the completeness rule counts one invoice per location per month, and ' +
-          'with no locations every slot is vacuously covered — a subsidiary ' +
-          'holding no data at all would read as complete.',
+        errorBody(
+          'subsidiary_location_required',
+          'Add at least one location before tracking this subsidiary by location — ' +
+            'the completeness rule counts one invoice per location per month, and ' +
+            'with no locations every slot is vacuously covered — a subsidiary ' +
+            'holding no data at all would read as complete.',
+        ),
       );
     }
   }
@@ -394,6 +402,7 @@ export class SubsidiariesService {
       ...reportable,
       // The guard's own sentences, not a second set written for the UI.
       blockers: refusal?.blockers ?? [],
+      blockerCounts: refusal?.counts ?? [],
       // Named explicitly rather than `Object.values(counts).every(...)`. That
       // form made the dependency run backwards: because `counts` was typed off
       // the DTO, every future summary field would have been forced into the
@@ -447,6 +456,8 @@ export class SubsidiariesService {
   private static describeBlockers(c: SubsidiaryDependentCounts): {
     message: string;
     blockers: string[];
+    /** The same dependents as facts, in `blockers`' order (LP4-04 PR C). */
+    counts: SubsidiaryBlockerCount[];
   } | null {
     if (c.terminalRecords > 0) {
       const message =
@@ -455,41 +466,52 @@ export class SubsidiariesService {
         'their evidence. Those records cannot be deleted at any point, so a ' +
         'subsidiary that has reported data stays. Set its status to "inactive" ' +
         'to retire it instead.';
-      return { message, blockers: [message] };
+      return { message, blockers: [message], counts: [{ kind: 'terminalRecords', count: c.terminalRecords }] };
     }
     if (c.frozenBoundaryVersions > 0) {
       const message =
         `This subsidiary is declared in ${c.frozenBoundaryVersions} confirmed or captured inventory ` +
         'boundary version(s), which record the inventory a report was issued from and never ' +
         'change, so a subsidiary declared in one stays. Set its status to "inactive" to retire it instead.';
-      return { message, blockers: [message] };
+      return {
+        message,
+        blockers: [message],
+        counts: [{ kind: 'frozenBoundaryVersions', count: c.frozenBoundaryVersions }],
+      };
     }
 
     // Nothing terminal — so everything below IS removable, and the message
     // should say how rather than send the user to "inactive" for a subsidiary
     // that is genuinely disposable (a typo in the create form, most often).
     const blockers: string[] = [];
-    if (c.reviewRecords > 0) blockers.push(`${c.reviewRecords} record(s) awaiting review`);
-    if (c.openRecords > 0) blockers.push(`${c.openRecords} draft or rejected record(s)`);
+    const counts: SubsidiaryBlockerCount[] = [];
+    const add = (kind: SubsidiaryBlockerKind, phrase: string): void => {
+      blockers.push(phrase);
+      counts.push({ kind, count: c[kind] });
+    };
+    if (c.reviewRecords > 0) add('reviewRecords', `${c.reviewRecords} record(s) awaiting review`);
+    if (c.openRecords > 0) add('openRecords', `${c.openRecords} draft or rejected record(s)`);
     // `c.locations` is deliberately absent: deleting the subsidiary removes its
     // own record-free locations, audited, so they are never something the user
     // must clear first. Only ones holding records block, and for a different
     // reason — see below.
     if (c.locationsHoldingForeignRecords > 0) {
-      blockers.push(
+      add(
+        'locationsHoldingForeignRecords',
         `${c.locationsHoldingForeignRecords} location(s) holding a record that belongs to another subsidiary`,
       );
     }
-    if (c.periodLocks > 0) blockers.push(`${c.periodLocks} closed reporting period(s)`);
-    if (c.targets > 0) blockers.push(`${c.targets} reduction target(s)`);
-    if (c.denominators > 0) blockers.push(`${c.denominators} intensity denominator(s)`);
+    if (c.periodLocks > 0) add('periodLocks', `${c.periodLocks} closed reporting period(s)`);
+    if (c.targets > 0) add('targets', `${c.targets} reduction target(s)`);
+    if (c.denominators > 0) add('denominators', `${c.denominators} intensity denominator(s)`);
     if (c.openBoundaryVersions > 0) {
-      blockers.push(`${c.openBoundaryVersions} open inventory boundary version(s) declaring it`);
+      add('openBoundaryVersions', `${c.openBoundaryVersions} open inventory boundary version(s) declaring it`);
     }
     if (blockers.length === 0) return null;
 
     return {
       blockers,
+      counts,
       message:
         `This subsidiary still holds ${blockers.join(', ')}. Deleting it would ` +
         'destroy them without an audit entry for each. Remove them first ' +
@@ -511,7 +533,7 @@ export class SubsidiariesService {
     const refusal = SubsidiariesService.describeBlockers(
       await this.countDependents(db, id),
     );
-    if (refusal) throw new ConflictException(refusal.message);
+    if (refusal) throw new ConflictException(errorBody('subsidiary_in_use', refusal.message));
   }
 
   /**
@@ -588,10 +610,10 @@ export class SubsidiariesService {
    */
   private async loadScoped(user: RequestUser, id: string): Promise<Subsidiary> {
     if (!user.accessibleSubsidiaryIds.includes(id)) {
-      throw new NotFoundException('Subsidiary not found');
+      throw new ResourceNotFoundError('subsidiary_not_found');
     }
     const row = await this.prisma.subsidiary.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('Subsidiary not found');
+    if (!row) throw new ResourceNotFoundError('subsidiary_not_found');
     return row;
   }
 }

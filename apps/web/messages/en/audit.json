@@ -1,0 +1,46 @@
+{
+  "title": "Audit Trail",
+  "subtitle": "Append-only record of audited changes",
+  "subtitleUser": "Append-only record of audited changes · {name} ({role})",
+  "forbidden": {
+    "title": "Only a super_admin can read the audit trail",
+    "body": "The trail spans every subsidiary in the organisation, so it is restricted at both the API and the database. Your role is <mono>{role}</mono>."
+  },
+  "filterPlaceholder": "Filter this page…",
+  "allEntities": "All entities",
+  "allActions": "All actions",
+  "entriesOne": "{count} entry",
+  "entriesMany": "{count} entries",
+  "columns": {
+    "when": "When",
+    "actor": "Actor",
+    "role": "Role at the time",
+    "action": "Action",
+    "entity": "Entity",
+    "change": "Change"
+  },
+  "emptySearch": "No entries on this page match that text. The text filter only searches the loaded page — use the entity and action filters, or another page, to search the whole trail.",
+  "empty": "No audit entries match these filters.",
+  "notRecorded": "not recorded",
+  "system": "system",
+  "transition": "{from} → {to}",
+  "page": "Page {page} of {pages}",
+  "previous": "Previous",
+  "next": "Next",
+  "sheet": {
+    "title": "{action} · {entity}",
+    "when": "When",
+    "actor": "Actor",
+    "role": "Role at the time",
+    "entityId": "Entity id",
+    "change": "Change"
+  },
+  "batch": {
+    "refused": "refused",
+    "dryRun": "dry run",
+    "wouldImport": "{count} would import",
+    "imported": "{count} imported",
+    "refusedCount": "{count} refused",
+    "submittedOf": "{submitted} of {requested} submitted"
+  }
+}

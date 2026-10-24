@@ -48,6 +48,12 @@ async function refusal(buffer: Buffer): Promise<string> {
   return (error as Error).message;
 }
 
+/** The refusal's code (LP4-04 slice 2 PR C, M3). */
+async function refusalCode(buffer: Buffer): Promise<unknown> {
+  const error = await read(buffer).catch((e: unknown) => e);
+  return ((error as BadRequestException).getResponse() as { code?: unknown }).code;
+}
+
 const inline = (ref: string, text: string) =>
   `<c r="${ref}" t="inlineStr"><is><t>${text}</t></is></c>`;
 const oneRow = (...cells: string[]) => `<row r="1">${cells.join('')}</row>`;
@@ -308,6 +314,13 @@ describe('readFirstWorksheet — which sheet, and where its cells sit', () => {
       }),
     );
     expect(message).toBe(WORKBOOK_UNREADABLE);
+    expect(
+      await refusalCode(
+        xlsx({
+          workbookXml: `<workbook xmlns="${SPREADSHEETML}" xmlns:r="${OFFICE_RELATIONSHIPS}"><sheets><sheet name="A" sheetId="1"/><sheet name="B" sheetId="2" r:id="rId1"/></sheets></workbook>`,
+        }),
+      ),
+    ).toBe('bulk_workbook_unreadable');
   });
 
   it('refuses a workbook that lists no sheets', async () => {
@@ -315,6 +328,9 @@ describe('readFirstWorksheet — which sheet, and where its cells sit', () => {
       xlsx({ workbookXml: `<workbook xmlns="${SPREADSHEETML}"><sheets/></workbook>` }),
     );
     expect(message).toBe(WORKBOOK_HAS_NO_SHEETS);
+    expect(await refusalCode(xlsx({ workbookXml: `<workbook xmlns="${SPREADSHEETML}"><sheets/></workbook>` }))).toBe(
+      'bulk_workbook_no_sheets',
+    );
   });
 
   it('refuses a chart sheet in first place, saying so', async () => {
@@ -324,6 +340,13 @@ describe('readFirstWorksheet — which sheet, and where its cells sit', () => {
       }),
     );
     expect(message).toBe(FIRST_SHEET_NOT_A_WORKSHEET);
+    expect(
+      await refusalCode(
+        xlsx({
+          workbookRelsXml: `<Relationships xmlns="${PACKAGE_RELATIONSHIPS}"><Relationship Id="rId1" Type="${OFFICE_RELATIONSHIPS}/chartsheet" Target="chartsheets/sheet1.xml"/></Relationships>`,
+        }),
+      ),
+    ).toBe('bulk_workbook_first_sheet_not_worksheet');
   });
 
   it('reads a Strict OOXML workbook', async () => {

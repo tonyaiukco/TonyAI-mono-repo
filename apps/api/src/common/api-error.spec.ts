@@ -12,6 +12,7 @@ import { ThrottlerException } from '@nestjs/throttler';
 import {
   ACTIVITY_VALUE_MAX,
   API_ERROR_PARAMS,
+  EVIDENCE_MAX_SIZE_BYTES,
   API_ERROR_STATUS,
   DOMAIN_ERROR_STATUS,
   type ApiErrorCode,
@@ -41,6 +42,8 @@ import {
   BoundaryIncompleteError,
 } from '../inventory-boundary/errors';
 import { UploadExpiredError } from '../storage/storage-intents.service';
+import { checkEvidenceFile } from '../evidence/file-content';
+import { unpackedTooLarge, unreadableWorkbook } from '../bulk-upload/zip-reader';
 import { ReportAlreadyIssuedError, ReportFinalForbiddenError } from '../report-issuances/report-issuances.service';
 import { errorBody, errorCodeOf, QueryTooBroadError, ResourceNotFoundError, toErrorBody } from './api-error';
 import { plainToInstance } from 'class-transformer';
@@ -150,7 +153,80 @@ const THROWERS: Record<DomainErrorCode, () => HttpException> = {
   boundary_draft_open: () => new BoundaryDraftOpenError(),
   boundary_confirm_requires_copy: () => new BoundaryConfirmRequiresCopyError(),
   boundary_incomplete: () => new BoundaryIncompleteError(),
+  // LP4-04 slice 2 PR C (M3). The services' throw sites are pinned by their
+  // own specs (code and params); a sync helper is called here where one exists.
+  target_not_found: () => new ResourceNotFoundError('target_not_found'),
+  denominator_not_found: () => new ResourceNotFoundError('denominator_not_found'),
+  import_batch_not_found: () => new ResourceNotFoundError('import_batch_not_found'),
+  import_source_not_retained: () => new NotFoundException(errorBody('import_source_not_retained', 'none')),
+  import_source_missing: () => new NotFoundException(errorBody('import_source_missing', 'gone')),
+  subsidiary_location_required: () => new BadRequestException(errorBody('subsidiary_location_required', 'x')),
+  subsidiary_in_use: () => new ConflictException(errorBody('subsidiary_in_use', 'x')),
+  location_in_boundary: () => new ConflictException(errorBody('location_in_boundary', 'x', { count: 2 })),
+  location_has_records: () => new ConflictException(errorBody('location_has_records', 'x', { count: 1 })),
+  location_declared_during_delete: () => new ConflictException(errorBody('location_declared_during_delete', 'x')),
+  period_lock_value_invalid: () =>
+    new BadRequestException(errorBody('period_lock_value_invalid', 'x', { granularity: 'quarterly' })),
+  period_records_awaiting_review: () =>
+    new ConflictException(errorBody('period_records_awaiting_review', 'x', { pending: 2 })),
+  period_records_rejected: () => new ConflictException(errorBody('period_records_rejected', 'x', { rejected: 1 })),
+  period_records_open: () =>
+    new ConflictException(errorBody('period_records_open', 'x', { pending: 2, rejected: 1 })),
+  period_already_locked: () => new ConflictException(errorBody('period_already_locked', 'x')),
+  target_year_order: () => new BadRequestException(errorBody('target_year_order', 'x')),
+  target_not_reduction: () => new BadRequestException(errorBody('target_not_reduction', 'x')),
+  denominator_duplicate: () => new ConflictException(errorBody('denominator_duplicate', 'x')),
+  evidence_file_missing: () => thrown(() => checkEvidenceFile(undefined)),
+  evidence_file_type: () => thrown(() => checkEvidenceFile(evidenceFile('text/html', 'x'))),
+  evidence_file_too_large: () =>
+    thrown(() => checkEvidenceFile({ ...evidenceFile('application/pdf', 'x'), size: EVIDENCE_MAX_SIZE_BYTES + 1 })),
+  evidence_file_empty: () => thrown(() => checkEvidenceFile(evidenceFile('application/pdf', ''))),
+  evidence_file_macro: () => new BadRequestException(errorBody('evidence_file_macro', 'x')),
+  evidence_file_mismatch: () => thrown(() => checkEvidenceFile(evidenceFile('application/pdf', 'not a pdf'))),
+  evidence_record_not_editable: () =>
+    new BadRequestException(errorBody('evidence_record_not_editable', 'x', { status: 'approved' })),
+  evidence_records_mixed_subsidiaries: () =>
+    new BadRequestException(errorBody('evidence_records_mixed_subsidiaries', 'x')),
+  evidence_records_refused: () =>
+    new BadRequestException(errorBody('evidence_records_refused', 'x', { refused: 1, total: 2 })),
+  evidence_backs_locked_records: () =>
+    new ConflictException(errorBody('evidence_backs_locked_records', 'x', { count: 1 })),
+  record_period_invalid: () =>
+    new BadRequestException(errorBody('record_period_invalid', 'x', { granularity: 'monthly' })),
+  record_not_editable: () => new BadRequestException(errorBody('record_not_editable', 'x', { status: 'approved' })),
+  record_not_submittable: () =>
+    new BadRequestException(errorBody('record_not_submittable', 'x', { status: 'approved' })),
+  record_not_reviewable: () => new BadRequestException(errorBody('record_not_reviewable', 'x', { status: 'draft' })),
+  record_not_approvable: () => new BadRequestException(errorBody('record_not_approvable', 'x', { status: 'draft' })),
+  record_not_voidable: () => new BadRequestException(errorBody('record_not_voidable', 'x', { status: 'locked' })),
+  record_not_rejectable: () => new BadRequestException(errorBody('record_not_rejectable', 'x', { status: 'draft' })),
+  bulk_file_missing: () => new BadRequestException(errorBody('bulk_file_missing', 'x')),
+  bulk_file_type: () => new BadRequestException(errorBody('bulk_file_type', 'x')),
+  bulk_file_empty: () => new BadRequestException(errorBody('bulk_file_empty', 'x')),
+  bulk_no_rows: () => new BadRequestException(errorBody('bulk_no_rows', 'x')),
+  bulk_too_many_rows: () => new BadRequestException(errorBody('bulk_too_many_rows', 'x', { rows: 2, max: 1 })),
+  bulk_file_encoding: () => new BadRequestException(errorBody('bulk_file_encoding', 'x')),
+  bulk_workbook_encoding: () => new BadRequestException(errorBody('bulk_workbook_encoding', 'x')),
+  bulk_workbook_unreadable: () => unreadableWorkbook(),
+  bulk_workbook_no_sheets: () => new BadRequestException(errorBody('bulk_workbook_no_sheets', 'x')),
+  bulk_workbook_first_sheet_not_worksheet: () => new BadRequestException(errorBody('bulk_workbook_first_sheet_not_worksheet', 'x')),
+  bulk_workbook_too_large: () => unpackedTooLarge(10 * 1024 * 1024),
 };
+
+/** What `fn` threw — it must throw. */
+function thrown(fn: () => unknown): HttpException {
+  try {
+    fn();
+  } catch (e) {
+    return e as HttpException;
+  }
+  throw new Error('expected a refusal');
+}
+
+function evidenceFile(mimetype: string, content: string): Express.Multer.File {
+  const buffer = Buffer.from(content);
+  return { mimetype, buffer, size: buffer.length, originalname: 'f' } as Express.Multer.File;
+}
 
 describe('every domain code, as the client receives it', () => {
   it('keeps budget refusals byte-identical despite caller text, counts and extra fields', () => {

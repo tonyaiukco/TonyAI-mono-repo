@@ -1,3 +1,6 @@
+import { formatNumber } from '@/lib/i18n/number';
+import type { ViewCopy } from '@/lib/i18n/view-translator';
+
 /**
  * How long a record has been sitting, in whole days — the number the review
  * queue puts in front of a reviewer.
@@ -48,7 +51,11 @@ export function daysSince(
  * knows when it arrived is the one wrong answer a reviewer would act on, and
  * it is the answer every seeded record would get.
  */
-export function waitingLabel(iso: string | null, now: number = Date.now()): string {
+export function waitingLabel(
+  iso: string | null,
+  { t, locale }: ViewCopy<'waitingDays'>,
+  now: number = Date.now(),
+): string {
   const days = daysSince(iso, now);
-  return days === null ? '—' : `${days}d`;
+  return days === null ? '—' : t('waitingDays', { days: formatNumber(days, locale) });
 }

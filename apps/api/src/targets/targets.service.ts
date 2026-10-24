@@ -2,8 +2,8 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
-  NotFoundException,
 } from '@nestjs/common';
+import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { ActivityRecordStatus, Prisma, type Target } from '@tonyai/db';
 import { COUNTED_STATUSES as SHARED_COUNTED_STATUSES } from '@tonyai/shared-types';
 import type {
@@ -106,11 +106,14 @@ export class TargetsService {
     targetTCo2e: number,
   ): void {
     if (targetYear <= baselineYear) {
-      throw new BadRequestException('targetYear must be after baselineYear');
+      throw new BadRequestException(errorBody('target_year_order', 'targetYear must be after baselineYear'));
     }
     if (targetTCo2e >= baselineTCo2e) {
       throw new BadRequestException(
-        'targetTCo2e must be below baselineTCo2e (a target is a strict reduction)',
+        errorBody(
+          'target_not_reduction',
+          'targetTCo2e must be below baselineTCo2e (a target is a strict reduction)',
+        ),
       );
     }
   }
@@ -134,7 +137,7 @@ export class TargetsService {
   async create(user: RequestUser, dto: CreateTargetDto): Promise<TargetDTO> {
     this.assertCanManage(user);
     if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
-      throw new NotFoundException('Subsidiary not found');
+      throw new ResourceNotFoundError('subsidiary_not_found');
     }
     this.assertCoherent(
       dto.baselineYear,
@@ -178,7 +181,7 @@ export class TargetsService {
       !existing ||
       !user.accessibleSubsidiaryIds.includes(existing.subsidiaryId)
     ) {
-      throw new NotFoundException('Target not found');
+      throw new ResourceNotFoundError('target_not_found');
     }
     this.assertCoherent(
       dto.baselineYear ?? existing.baselineYear,
@@ -225,7 +228,7 @@ export class TargetsService {
       !existing ||
       !user.accessibleSubsidiaryIds.includes(existing.subsidiaryId)
     ) {
-      throw new NotFoundException('Target not found');
+      throw new ResourceNotFoundError('target_not_found');
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.target.delete({ where: { id } });

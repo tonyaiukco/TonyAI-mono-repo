@@ -22,5 +22,10 @@
     "Q3": "Q3",
     "Q4": "Q4",
     "Annual": "Annual"
+  },
+  "granularityInline": {
+    "monthly": "monthly",
+    "quarterly": "quarterly",
+    "annual": "annual"
   }
 }

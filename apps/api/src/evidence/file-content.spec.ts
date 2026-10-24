@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { BadRequestException } from '@nestjs/common';
+import { EVIDENCE_MAX_SIZE_BYTES } from '@tonyai/shared-types';
 import { zip } from '../../test/xlsx';
 import { checkEvidenceFile, downloadName } from './file-content';
 
@@ -31,6 +32,39 @@ function refusal(run: () => unknown): string {
   }
   throw new Error('expected a refusal');
 }
+
+/** The refusal's code and params (LP4-04 slice 2 PR C, M3). */
+function coded(run: () => unknown): { code?: unknown; params?: unknown } {
+  try {
+    run();
+  } catch (error) {
+    const { code, params } = (error as BadRequestException).getResponse() as Record<string, unknown>;
+    return params === undefined ? { code } : { code, params };
+  }
+  throw new Error('expected a refusal');
+}
+
+describe('checkEvidenceFile — each refusal carries its code', () => {
+  it('codes every refusal, its params canonical — the declared type never echoed', () => {
+    expect(coded(() => checkEvidenceFile(undefined))).toEqual({ code: 'evidence_file_missing' });
+    expect(coded(() => checkEvidenceFile(file('text/html', Buffer.from('<b>'))))).toEqual({ code: 'evidence_file_type' });
+    expect(
+      coded(() => checkEvidenceFile({ ...file('application/pdf', Buffer.from('%PDF-1.7')), size: EVIDENCE_MAX_SIZE_BYTES + 1 })),
+    ).toEqual({ code: 'evidence_file_too_large', params: { limitMb: 10 } });
+    expect(coded(() => checkEvidenceFile(file('application/pdf', Buffer.alloc(0))))).toEqual({ code: 'evidence_file_empty' });
+    expect(coded(() => checkEvidenceFile(file('image/png', Buffer.from('not a png'))))).toEqual({
+      code: 'evidence_file_mismatch',
+      params: { kind: 'PNG' },
+    });
+    // The English sentence keeps saying what was sent.
+    expect(refusal(() => checkEvidenceFile(file('text/html', Buffer.from('<b>'))))).toBe(
+      'Unsupported file type "text/html". Allowed: PDF, JPG, PNG, XLSX, CSV.',
+    );
+    expect(refusal(() => checkEvidenceFile({ ...file('application/pdf', Buffer.from('%PDF')), size: EVIDENCE_MAX_SIZE_BYTES + 1 }))).toBe(
+      'File exceeds the 10 MB limit',
+    );
+  });
+});
 
 describe('checkEvidenceFile — the bytes must be what the upload claims', () => {
   it('accepts a PDF, an image, a workbook and a CSV whose bytes match their type', () => {
@@ -96,6 +130,7 @@ describe('checkEvidenceFile — the bytes must be what the upload claims', () =>
       },
     ]);
     expect(refusal(() => checkEvidenceFile(file(XLSX, macro)))).toMatch(/macros/);
+    expect(coded(() => checkEvidenceFile(file(XLSX, macro)))).toEqual({ code: 'evidence_file_macro' });
     expect(refusal(() => checkEvidenceFile(file(XLSX, vba)))).toMatch(/macros/);
   });
 

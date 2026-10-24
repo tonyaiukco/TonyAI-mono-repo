@@ -1,5 +1,6 @@
 "use client";
 
+import type { ActivityTypeKey, ContextFieldKey, UnitBlockedKey, UnitLabelKey } from "@/lib/i18n/message-keys";
 import { conversionNote } from "@/lib/conversion-view";
 import { canSubmitEntry, saveErrorDescription } from "@/lib/record-lifecycle-view";
 
@@ -1135,7 +1136,7 @@ function DataEntryPageInner() {
                         <SelectContent>
                           {activityTypes.map((type) => (
                             <SelectItem key={type.value} value={type.value}>
-                              {t(`activityTypes.${type.value}` as never)}
+                              {t(`activityTypes.${type.value}` as ActivityTypeKey)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1297,7 +1298,7 @@ function DataEntryPageInner() {
                               rather than an error. */}
                           {unitsForCategory(category).map((u) => (
                             <SelectItem key={u.value} value={u.value}>
-                              {tUnits(`label.${u.value}` as never)}
+                              {tUnits(`label.${u.value}` as UnitLabelKey)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1312,7 +1313,7 @@ function DataEntryPageInner() {
                     if (spec?.blocked) {
                       return (
                         <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900">
-                          {tUnits(`blocked.${spec.value}` as never)}
+                          {tUnits(`blocked.${spec.value}` as UnitBlockedKey)}
                         </p>
                       );
                     }
@@ -1335,9 +1336,9 @@ function DataEntryPageInner() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {CONTEXT_FIELDS[contextSet].map((f) => {
-                    const key = `context.${contextSet}.${f.id}` as never;
-                    const label = t(`${key}.label` as never);
-                    const placeholder = f.placeholder ? t(`${key}.placeholder` as never) : undefined;
+                    const key = `context.${contextSet}.${f.id}`;
+                    const label = t(`${key}.label` as ContextFieldKey<"label">);
+                    const placeholder = f.placeholder ? t(`${key}.placeholder` as ContextFieldKey<"placeholder">) : undefined;
                     return (
                       <Field key={f.id} label={label}>
                         {f.type === "select" ? (

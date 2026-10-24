@@ -53,11 +53,12 @@ import {
   type SubsidiaryDTO,
   type UserRole,
   type UserSummaryDTO,
+  USER_ROLES,
 } from "@/lib/types";
 import { accessSummary, appendPage, canResend, invitationNote, replaceUser } from "@/lib/users-view";
 import { cn } from "@/lib/utils";
 
-const ROLES: readonly UserRole[] = ["super_admin", "consultant", "data_entry", "executive_viewer"];
+const ROLES: readonly UserRole[] = USER_ROLES;
 
 const STATUS_STYLES: Record<UserSummaryDTO["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30",

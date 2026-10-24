@@ -1,5 +1,6 @@
 import { inflateRawSync } from 'node:zlib';
 import { BadRequestException } from '@nestjs/common';
+import { errorBody } from '../common/api-error';
 
 /**
  * Just enough of the ZIP container to read the parts of an `.xlsx` — with a
@@ -26,14 +27,19 @@ import { BadRequestException } from '@nestjs/common';
 export const WORKBOOK_UNREADABLE = 'The file could not be read as a workbook.';
 
 export function unreadableWorkbook(): BadRequestException {
-  return new BadRequestException(WORKBOOK_UNREADABLE);
+  return new BadRequestException(errorBody('bulk_workbook_unreadable', WORKBOOK_UNREADABLE));
 }
 
 const MIB = 1024 * 1024;
 
 export function unpackedTooLarge(limitBytes: number): BadRequestException {
+  const limitMb = limitBytes / MIB;
   return new BadRequestException(
-    `The workbook is larger than ${limitBytes / MIB} MB once unpacked. Remove unused formatting, or split it into smaller files.`,
+    errorBody(
+      'bulk_workbook_too_large',
+      `The workbook is larger than ${limitMb} MB once unpacked. Remove unused formatting, or split it into smaller files.`,
+      { limitMb },
+    ),
   );
 }
 

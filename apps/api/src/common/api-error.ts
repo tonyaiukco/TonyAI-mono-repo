@@ -69,6 +69,9 @@ const NOT_FOUND_MESSAGES = {
   boundary_not_found: 'Inventory boundary not found',
   report_dataset_not_found: 'Report dataset not found',
   report_issuance_not_found: 'Report issuance not found',
+  target_not_found: 'Target not found',
+  denominator_not_found: 'Denominator not found',
+  import_batch_not_found: 'Import not found',
 } as const satisfies Partial<Record<ApiErrorCode, string>>;
 export type NotFoundCode = keyof typeof NOT_FOUND_MESSAGES;
 

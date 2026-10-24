@@ -4,7 +4,7 @@ import { useLocale, useMessages, useTranslations } from "use-intl";
 import { describeApiError, type ErrorDescription, type ErrorTranslator } from "./errors";
 import { recordWordsOf, type RecordWords, type RootTranslator } from "@/lib/vocabulary";
 import type { CompletenessCopy } from "@/lib/completeness-view";
-import type { EntityWords } from "@/lib/void-view";
+import type { EntityWords } from "@/lib/types";
 import type { ActorWords } from "@/lib/record-actor";
 
 /** `describeApiError` bound to the current language. */

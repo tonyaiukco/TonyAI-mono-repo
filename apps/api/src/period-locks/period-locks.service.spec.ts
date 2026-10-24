@@ -133,6 +133,22 @@ describe('PeriodLocksService', () => {
     await expect(
       service.lock(superAdmin(), { ...CREATE_DTO, periodValue: 'Quarter1' }),
     ).rejects.toBeInstanceOf(BadRequestException);
+    // Coded with the canonical granularity only — the value sent never rides
+    // in the params (caller text).
+    const refusal = await service
+      .lock(superAdmin(), { ...CREATE_DTO, periodValue: 'Quarter1' })
+      .catch((e: BadRequestException) => e.getResponse());
+    expect(refusal).toMatchObject({
+      code: 'period_lock_value_invalid',
+      params: { granularity: CREATE_DTO.reportingPeriod },
+    });
+    expect(JSON.stringify((refusal as { params: unknown }).params)).not.toMatch(/Quarter1/);
+    // A granularity past the DTO is not echoed either (security-rls P3-1).
+    const past = await service
+      .lock(superAdmin(), { ...CREATE_DTO, reportingPeriod: 'weekly<b>' as never })
+      .catch((e: BadRequestException) => e.getResponse());
+    expect(past).toMatchObject({ code: 'period_lock_value_invalid' });
+    expect((past as { params?: unknown }).params).toBeUndefined();
   });
 
   it('quotes the value it refuses, naming what it cannot show', async () => {
@@ -205,6 +221,9 @@ describe('PeriodLocksService', () => {
     await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toThrow(
       /^2 record\(s\) in this period are still awaiting review/,
     );
+    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toMatchObject({
+      response: { code: 'period_records_awaiting_review', params: { pending: 2 } },
+    });
     expect(prisma.tx.periodLock.create).not.toHaveBeenCalled();
     expect(prisma.tx.activityRecord.updateMany).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
@@ -248,6 +267,9 @@ describe('PeriodLocksService', () => {
       /^1 rejected record\(s\) are waiting for their authors/,
     );
     await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toMatchObject({
+      response: { code: 'period_records_rejected', params: { rejected: 1 } },
+    });
     expect(prisma.tx.periodLock.create).not.toHaveBeenCalled();
   });
 
@@ -260,6 +282,9 @@ describe('PeriodLocksService', () => {
     await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toThrow(
       /2 record\(s\).*awaiting review.*; 1 rejected record\(s\).* before locking\.$/,
     );
+    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toMatchObject({
+      response: { code: 'period_records_open', params: { pending: 2, rejected: 1 } },
+    });
   });
 
   it('locking an already-locked period maps P2002 to 409', async () => {
@@ -272,6 +297,9 @@ describe('PeriodLocksService', () => {
     await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toBeInstanceOf(
       ConflictException,
     );
+    await expect(service.lock(superAdmin(), CREATE_DTO)).rejects.toMatchObject({
+      response: { code: 'period_already_locked', message: 'This reporting period is already locked.' },
+    });
   });
 
   it('unlock deletes the row, reverts locked records to approved, and audits', async () => {

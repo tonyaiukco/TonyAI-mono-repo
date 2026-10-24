@@ -1,8 +1,7 @@
 "use client";
 
-import { useTranslations } from "use-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useCallback, useEffect, useState } from "react";
-import { toast } from "sonner";
 import { ChevronLeft, ChevronRight, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
@@ -34,14 +33,21 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
-import { actorLabel, summariseBatch } from "@/lib/audit-view";
+import { actorLabel, summariseBatch, type AuditActorWords, type AuditBatchKey } from "@/lib/audit-view";
+import { formatNumber } from "@/lib/i18n/number";
+import { useRecordWords, useStableErrorToast } from "@/lib/i18n/hooks";
+import type { ViewCopy } from "@/lib/i18n/view-translator";
+import type { RecordWords } from "@/lib/vocabulary";
 import { useAuthStore } from "@/lib/store";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import {
   AUDIT_ACTIONS,
   AUDIT_ENTITIES,
+  isUserRole,
+  LOCALE_FORMAT_TAGS,
   type AuditAction,
   type AuditLogDTO,
+  type Locale,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -103,16 +109,18 @@ const ACTION_COLORS: Record<AuditAction, string> = {
 
 const NEUTRAL_ACTION = "bg-slate-500/15 text-slate-700 border-slate-500/30";
 
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("en-GB", {
+function formatDateTime(iso: string, locale: Locale): string {
+  return new Intl.DateTimeFormat(LOCALE_FORMAT_TAGS[locale], {
     day: "2-digit",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  });
+  }).format(new Date(iso));
 }
 
+/** An action or entity code as the trail shows it — a raw identifier in every
+ *  language (M2), its underscores spaced. */
 function humanise(value: string): string {
   return value.replace(/_/g, " ");
 }
@@ -122,18 +130,22 @@ function humanise(value: string): string {
  * conservative: the diff shape varies per entity, so anything not recognised
  * falls back to nothing rather than guessing and misreporting a change.
  */
-function summarise(row: AuditLogDTO): string | null {
+function summarise(
+  row: AuditLogDTO,
+  copy: ViewCopy<AuditBatchKey | "transition">,
+  words: RecordWords,
+): string | null {
   const diff = row.diff;
   if (!diff) return null;
   const transition = diff.transition as { from?: string; to?: string } | undefined;
   if (transition?.from && transition?.to) {
-    return `${humanise(transition.from)} → ${humanise(transition.to)}`;
+    return copy.t("transition", { from: words.status(transition.from), to: words.status(transition.to) });
   }
   if (row.entity === "report") {
     const parts = [diff.template, diff.exportType, diff.year].filter(Boolean);
     return parts.length ? parts.join(" · ") : null;
   }
-  if (diff.bulk === true) return summariseBatch(diff);
+  if (diff.bulk === true) return summariseBatch(diff, copy);
   const after = diff.after as Record<string, unknown> | undefined;
   const before = diff.before as Record<string, unknown> | undefined;
   const name = (after?.legalName ?? after?.name ?? before?.legalName ?? before?.name) as
@@ -144,6 +156,14 @@ function summarise(row: AuditLogDTO): string | null {
 
 export default function AuditPage() {
   const tRoles = useTranslations("users");
+  const t = useTranslations("audit");
+  const tCommon = useTranslations("common");
+  const locale = useLocale();
+  const recordWords = useRecordWords();
+  const showStableError = useStableErrorToast();
+  const actorWords: AuditActorWords = { system: t("system"), deleted: tCommon("actor.deleted") };
+  /** A role as the trail names it; a retired one as stored. */
+  const roleName = (role: string) => (isUserRole(role) ? tRoles(`roles.${role}`) : role);
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
@@ -182,15 +202,14 @@ export default function AuditPage() {
         setForbidden(true);
         setRows([]);
         setTotal(0);
-      } else if (e instanceof ApiError && e.status === 401) {
-        toast.error("Your session has expired — please sign in again.");
       } else {
-        toast.error((e as Error).message);
+        // A 401 reads "Your session has expired" from the catalogue, as before.
+        showStableError(e);
       }
     } finally {
       setLoading(false);
     }
-  }, [entity, action, offset, readWindow]);
+  }, [entity, action, offset, readWindow, showStableError]);
 
   useEffect(() => {
     void load();
@@ -231,14 +250,15 @@ export default function AuditPage() {
         <div className="p-8 space-y-6">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold">Audit Trail</h1>
+              <h1 className="text-2xl font-semibold">{t("title")}</h1>
               <p className="text-sm text-muted-foreground">
                 {/* Precise on purpose: this records mutations that go through
                     the API's audited paths. It is not a claim that nothing else
                     can ever change — user management, when it lands, must be
                     audited too or this line becomes false. */}
-                Append-only record of audited changes
-                {user ? ` · ${user.fullName ?? user.email} (${tRoles(`roles.${user.role}`)})` : ""}
+                {user
+                  ? t("subtitleUser", { name: user.fullName ?? user.email, role: tRoles(`roles.${user.role}`) })
+                  : t("subtitle")}
               </p>
             </div>
             <SignOutButton onClick={handleLogout} />
@@ -249,11 +269,12 @@ export default function AuditPage() {
               <CardContent className="flex items-start gap-3 py-8">
                 <ShieldAlert className="h-5 w-5 text-amber-500 shrink-0" />
                 <div className="space-y-1">
-                  <p className="font-medium">Only a super_admin can read the audit trail</p>
+                  <p className="font-medium">{t("forbidden.title")}</p>
                   <p className="text-sm text-muted-foreground">
-                    The trail spans every subsidiary in the organisation, so it is
-                    restricted at both the API and the database. Your role is{" "}
-                    <span className="font-mono">{user?.role}</span>.
+                    {t.rich("forbidden.body", {
+                      role: user?.role ?? "",
+                      mono: (chunks) => <span className="font-mono">{chunks}</span>,
+                    })}
                   </p>
                 </div>
               </CardContent>
@@ -266,7 +287,7 @@ export default function AuditPage() {
                     here and saw "no matches" would otherwise conclude that
                     person never acted. Entity/action below are server-side. */}
                 <Input
-                  placeholder="Filter this page…"
+                  placeholder={t("filterPlaceholder")}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="max-w-xs"
@@ -279,10 +300,10 @@ export default function AuditPage() {
                   }}
                 >
                   <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="All entities" />
+                    <SelectValue placeholder={t("allEntities")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ANY}>All entities</SelectItem>
+                    <SelectItem value={ANY}>{t("allEntities")}</SelectItem>
                     {AUDIT_ENTITIES.map((e) => (
                       <SelectItem key={e} value={e}>
                         {humanise(e)}
@@ -298,10 +319,10 @@ export default function AuditPage() {
                   }}
                 >
                   <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="All actions" />
+                    <SelectValue placeholder={t("allActions")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ANY}>All actions</SelectItem>
+                    <SelectItem value={ANY}>{t("allActions")}</SelectItem>
                     {AUDIT_ACTIONS.map((a) => (
                       <SelectItem key={a} value={a}>
                         {humanise(a)}
@@ -310,7 +331,7 @@ export default function AuditPage() {
                   </SelectContent>
                 </Select>
                 <span className="text-sm text-muted-foreground ml-auto">
-                  {total} {total === 1 ? "entry" : "entries"}
+                  {t(total === 1 ? "entriesOne" : "entriesMany", { count: formatNumber(total, locale) })}
                 </span>
               </div>
 
@@ -319,12 +340,12 @@ export default function AuditPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>When</TableHead>
-                        <TableHead>Actor</TableHead>
-                        <TableHead>Role at the time</TableHead>
-                        <TableHead>Action</TableHead>
-                        <TableHead>Entity</TableHead>
-                        <TableHead>Change</TableHead>
+                        <TableHead>{t("columns.when")}</TableHead>
+                        <TableHead>{t("columns.actor")}</TableHead>
+                        <TableHead>{t("columns.role")}</TableHead>
+                        <TableHead>{t("columns.action")}</TableHead>
+                        <TableHead>{t("columns.entity")}</TableHead>
+                        <TableHead>{t("columns.change")}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -342,9 +363,7 @@ export default function AuditPage() {
                             colSpan={6}
                             className="text-center py-8 text-muted-foreground"
                           >
-                            {search.trim()
-                              ? "No entries on this page match that text. The text filter only searches the loaded page — use the entity and action filters, or another page, to search the whole trail."
-                              : "No audit entries match these filters."}
+                            {search.trim() ? t("emptySearch") : t("empty")}
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -355,11 +374,11 @@ export default function AuditPage() {
                             onClick={() => setSelected(row)}
                           >
                             <TableCell className="text-sm whitespace-nowrap">
-                              {formatDateTime(row.createdAt)}
+                              {formatDateTime(row.createdAt, locale)}
                             </TableCell>
                             <TableCell className="text-sm">
                               {(() => {
-                                const actor = actorLabel(row);
+                                const actor = actorLabel(row, actorWords);
                                 return actor.muted ? (
                                   <span className="text-muted-foreground italic">
                                     {actor.text}
@@ -371,13 +390,13 @@ export default function AuditPage() {
                             </TableCell>
                             <TableCell className="text-sm">
                               {row.role ? (
-                                <span className="font-mono text-xs">{row.role}</span>
+                                <span className="text-xs">{roleName(row.role)}</span>
                               ) : (
                                 // Pre-WP7 rows have no role. Saying so is more
                                 // honest than rendering today's role, which
                                 // would misstate who was allowed to do what.
                                 <span className="text-muted-foreground text-xs">
-                                  not recorded
+                                  {t("notRecorded")}
                                 </span>
                               )}
                             </TableCell>
@@ -396,7 +415,7 @@ export default function AuditPage() {
                             </TableCell>
                             <TableCell className="text-sm">{humanise(row.entity)}</TableCell>
                             <TableCell className="text-sm text-muted-foreground">
-                              {summarise(row) ?? "—"}
+                              {summarise(row, { t, locale }, recordWords) ?? "—"}
                             </TableCell>
                           </TableRow>
                         ))
@@ -408,7 +427,7 @@ export default function AuditPage() {
 
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
-                  Page {page} of {pages}
+                  {t("page", { page: formatNumber(page, locale), pages: formatNumber(pages, locale) })}
                 </span>
                 <div className="flex gap-2">
                   <Button
@@ -417,7 +436,7 @@ export default function AuditPage() {
                     disabled={offset === 0 || loading}
                     onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
                   >
-                    <ChevronLeft className="h-4 w-4" /> Previous
+                    <ChevronLeft className="h-4 w-4" /> {t("previous")}
                   </Button>
                   <Button
                     variant="outline"
@@ -425,7 +444,7 @@ export default function AuditPage() {
                     disabled={offset + PAGE_SIZE >= total || loading}
                     onClick={() => setOffset(offset + PAGE_SIZE)}
                   >
-                    Next <ChevronRight className="h-4 w-4" />
+                    {t("next")} <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
@@ -438,29 +457,29 @@ export default function AuditPage() {
         <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
           <SheetHeader>
             <SheetTitle>
-              {selected ? `${selected.action} · ${humanise(selected.entity)}` : ""}
+              {selected ? t("sheet.title", { action: selected.action, entity: humanise(selected.entity) }) : ""}
             </SheetTitle>
           </SheetHeader>
           {selected && (
             <div className="space-y-4 mt-4 text-sm">
               <div className="grid grid-cols-3 gap-2">
-                <span className="text-muted-foreground">When</span>
-                <span className="col-span-2">{formatDateTime(selected.createdAt)}</span>
-                <span className="text-muted-foreground">Actor</span>
+                <span className="text-muted-foreground">{t("sheet.when")}</span>
+                <span className="col-span-2">{formatDateTime(selected.createdAt, locale)}</span>
+                <span className="text-muted-foreground">{t("sheet.actor")}</span>
                 <span className="col-span-2">
-                  {actorLabel(selected).text}
+                  {actorLabel(selected, actorWords).text}
                 </span>
-                <span className="text-muted-foreground">Role at the time</span>
-                <span className="col-span-2 font-mono text-xs">
-                  {selected.role ?? "not recorded"}
+                <span className="text-muted-foreground">{t("sheet.role")}</span>
+                <span className="col-span-2 text-xs">
+                  {selected.role ? roleName(selected.role) : t("notRecorded")}
                 </span>
-                <span className="text-muted-foreground">Entity id</span>
+                <span className="text-muted-foreground">{t("sheet.entityId")}</span>
                 <span className="col-span-2 font-mono text-xs break-all">
                   {selected.entityId ?? "—"}
                 </span>
               </div>
               <div>
-                <p className="text-muted-foreground mb-1">Change</p>
+                <p className="text-muted-foreground mb-1">{t("sheet.change")}</p>
                 <pre className="rounded-lg bg-muted/60 p-3 text-xs overflow-x-auto">
                   {JSON.stringify(selected.diff, null, 2) ?? "—"}
                 </pre>

@@ -488,7 +488,13 @@ export function factorActivityTypeFor(
 
 // Data Entry Types
 // Canonical 4-role enum (aligned with docs/tech_docs technical_analysis.md §4 and Prisma user_role)
-export type UserRole = 'super_admin' | 'consultant' | 'data_entry' | 'executive_viewer';
+export const USER_ROLES = ['super_admin', 'consultant', 'data_entry', 'executive_viewer'] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+
+/** A stored role this build knows — a retired one is shown as stored. */
+export function isUserRole(role: string): role is UserRole {
+  return (USER_ROLES as readonly string[]).includes(role);
+}
 
 /**
  * May this user author activity records — create, edit, delete, submit, and
@@ -812,7 +818,10 @@ export interface DataSubmission {
 }
 
 // Subsidiary & Location Management Types
-export type SubsidiaryStatus = 'active' | 'inactive' | 'pending';
+/** Every subsidiary status, in the order a screen offers them (LP4-04 slice 2
+ *  PR C: the API's DTOs and the web's lists read this one list). */
+export const SUBSIDIARY_STATUSES = ['pending', 'active', 'inactive'] as const;
+export type SubsidiaryStatus = (typeof SUBSIDIARY_STATUSES)[number];
 
 /**
  * How completeness is measured for one subsidiary (WP17 / round-1 DE-2 + DASH-3).
@@ -1503,6 +1512,25 @@ export interface CreateSubsidiaryInput {
  */
 export type UpdateSubsidiaryInput = Omit<Partial<CreateSubsidiaryInput>, 'locations'>;
 
+/** What can stand in the way of deleting a subsidiary (`SubsidiarySummaryDTO`). */
+export const SUBSIDIARY_BLOCKER_KINDS = [
+  'terminalRecords',
+  'frozenBoundaryVersions',
+  'reviewRecords',
+  'openRecords',
+  'locationsHoldingForeignRecords',
+  'periodLocks',
+  'targets',
+  'denominators',
+  'openBoundaryVersions',
+] as const;
+export type SubsidiaryBlockerKind = (typeof SUBSIDIARY_BLOCKER_KINDS)[number];
+
+export interface SubsidiaryBlockerCount {
+  kind: SubsidiaryBlockerKind;
+  count: number;
+}
+
 /**
  * Everything hanging off one subsidiary, counted server-side.
  *
@@ -1552,6 +1580,13 @@ export interface SubsidiarySummaryDTO {
    * short phrase per remaining dependent, in the order they should be cleared.
    */
   blockers: string[];
+  /**
+   * The same refusal as facts a screen words in its own language (LP4-04
+   * slice 2 PR C): one entry per dependent `blockers` names, in the same
+   * order, each with its count. A `terminalRecords` or
+   * `frozenBoundaryVersions` entry stands alone, as its sentence does.
+   */
+  blockerCounts: SubsidiaryBlockerCount[];
   /**
    * True while anything above still hangs off the subsidiary — a statement
    * about DEPENDENCIES only.
@@ -2467,6 +2502,89 @@ export const DOMAIN_ERROR_STATUS = Object.freeze({
   /** LP3-04 PR D: this dataset is already issued in this language, template
    *  and options; its PDF is retained — download it instead. */
   report_already_issued: 409,
+  /** LP4-04 slice 2 PR C (M3): the not-found kinds a pilot user meets that
+   *  had only the generic `not_found`. Same shape as every other 404. */
+  target_not_found: 404,
+  denominator_not_found: 404,
+  import_batch_not_found: 404,
+  /** The import kept no source file (one made before sources were retained). */
+  import_source_not_retained: 404,
+  /** The import's row says its source was kept, and Storage has no bytes
+   *  (reported to operators) — `evidence_content_missing`'s twin. */
+  import_source_missing: 404,
+  /** Tracking by location needs at least one location (WP17). */
+  subsidiary_location_required: 400,
+  /** Something still depends on the subsidiary. Its English `message` names
+   *  every dependent, and a screen shows it in English (`SubsidiarySummaryDTO`
+   *  carries the same facts as `blockerCounts`). No params. */
+  subsidiary_in_use: 409,
+  /** params: `count` — the inventory boundary versions declaring the site. */
+  location_in_boundary: 409,
+  /** params: `count` — the activity records recorded at the site. */
+  location_has_records: 409,
+  /** A boundary version declared the site while it was being deleted. */
+  location_declared_during_delete: 409,
+  /** params: `granularity` (canonical: `monthly`, `quarterly`, `annual`).
+   *  The value the caller sent is never echoed. */
+  period_lock_value_invalid: 400,
+  /** params: `pending` — records in the period still awaiting review. */
+  period_records_awaiting_review: 409,
+  /** params: `rejected` — rejected records waiting for their authors. */
+  period_records_rejected: 409,
+  /** params: `pending` and `rejected`, both above zero. */
+  period_records_open: 409,
+  period_already_locked: 409,
+  /** A target's year must come after its baseline year. */
+  target_year_order: 400,
+  /** A target is a strict reduction from its baseline. */
+  target_not_reduction: 400,
+  /** One denominator per subsidiary, year and metric. */
+  denominator_duplicate: 409,
+  evidence_file_missing: 400,
+  /** The declared type is not one evidence accepts; never echoed. */
+  evidence_file_type: 400,
+  /** params: `limitMb`. */
+  evidence_file_too_large: 400,
+  evidence_file_empty: 400,
+  evidence_file_macro: 400,
+  /** params: `kind` — the type the file claims (`PDF`, `JPG`, `PNG`, `XLSX`,
+   *  `CSV`), a fixed label. */
+  evidence_file_mismatch: 400,
+  /** params: `status` (canonical, an `ActivityRecordStatus`). */
+  evidence_record_not_editable: 400,
+  /** One file evidences records of one subsidiary. */
+  evidence_records_mixed_subsidiaries: 400,
+  /** params: `refused` and `total`. Its English `message` names each refused
+   *  record (the body's `refused[]` too), and a screen shows it in English. */
+  evidence_records_refused: 400,
+  /** params: `count` — the records the file backs that can no longer change.
+   *  Its English `message` names them, and a screen shows it in English. */
+  evidence_backs_locked_records: 409,
+  /** params: `granularity` (canonical) — absent when the granularity sent was
+   *  not canonical (a bulk row's text). The value sent is never echoed. */
+  record_period_invalid: 400,
+  /** params: `status` (canonical, an `ActivityRecordStatus`) on each below. */
+  record_not_editable: 400,
+  record_not_submittable: 400,
+  record_not_reviewable: 400,
+  record_not_approvable: 400,
+  record_not_voidable: 400,
+  record_not_rejectable: 400,
+  /** The bulk upload's file-level refusals (M3); its per-row sentences, and
+   *  the refusals naming a cell or a caller's column, stay generic. */
+  bulk_file_missing: 400,
+  bulk_file_type: 400,
+  bulk_file_empty: 400,
+  bulk_no_rows: 400,
+  /** params: `rows` (the populated rows) and `max`. */
+  bulk_too_many_rows: 400,
+  bulk_file_encoding: 400,
+  bulk_workbook_encoding: 400,
+  bulk_workbook_unreadable: 400,
+  bulk_workbook_no_sheets: 400,
+  bulk_workbook_first_sheet_not_worksheet: 400,
+  /** params: `limitMb` — the unpacked size limit. */
+  bulk_workbook_too_large: 400,
   /** A complete read/export exceeds its work or output budget after authorization,
    * over the caller's accessible set only. Inaccessible filters equal empty sets.
    * No partial result. Body depends only on this code: fixed message, no params
@@ -2487,15 +2605,37 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorCode, number>> = Object.f
 export const API_ERROR_CODES = Object.freeze(Object.keys(API_ERROR_STATUS)) as readonly ApiErrorCode[];
 
 /**
- * The params each code carries — exactly these keys, every time — so a
- * catalogue message can name them (`{period}`). A code absent here carries
- * none. Values are canonical (a `PERIOD_VALUES` or `CATEGORIES` entry, a year),
+ * The params each code carries — at most these keys, and these every time
+ * unless the code's own comment says one may be absent (`record_period_invalid`
+ * leaves out a granularity that is not canonical) — so a catalogue message can
+ * name them (`{period}`); a screen given an incomplete set falls back to the
+ * status's generic sentence. A code absent here carries none. Values are canonical (a `PERIOD_VALUES` or `CATEGORIES` entry, a year),
  * never caller text or an id, and the web translates the vocabularies.
  */
 export const API_ERROR_PARAMS: Readonly<Partial<Record<ApiErrorCode, readonly string[]>>> =
   Object.freeze({
     evidence_required: Object.freeze(['category']),
     period_locked: Object.freeze(['period', 'year']),
+    location_in_boundary: Object.freeze(['count']),
+    location_has_records: Object.freeze(['count']),
+    period_lock_value_invalid: Object.freeze(['granularity']),
+    period_records_awaiting_review: Object.freeze(['pending']),
+    period_records_rejected: Object.freeze(['rejected']),
+    period_records_open: Object.freeze(['pending', 'rejected']),
+    evidence_file_too_large: Object.freeze(['limitMb']),
+    evidence_file_mismatch: Object.freeze(['kind']),
+    evidence_record_not_editable: Object.freeze(['status']),
+    evidence_records_refused: Object.freeze(['refused', 'total']),
+    evidence_backs_locked_records: Object.freeze(['count']),
+    record_period_invalid: Object.freeze(['granularity']),
+    record_not_editable: Object.freeze(['status']),
+    record_not_submittable: Object.freeze(['status']),
+    record_not_reviewable: Object.freeze(['status']),
+    record_not_approvable: Object.freeze(['status']),
+    record_not_voidable: Object.freeze(['status']),
+    record_not_rejectable: Object.freeze(['status']),
+    bulk_too_many_rows: Object.freeze(['rows', 'max']),
+    bulk_workbook_too_large: Object.freeze(['limitMb']),
   });
 
 export type ApiErrorParams = Readonly<Record<string, string | number>>;
@@ -3313,6 +3453,13 @@ export interface ActivityRecordDTO {
   status: ActivityRecordStatus;
   activityValue: number;
   activityUnit: string;
+  /**
+   * The category's Additional Context, keyed by field. A value is a JSON
+   * number for a numeric field saved since LP4-04 slice 2 (M4), or a string —
+   * every text field, and a numeric one saved before then (dot-decimal text,
+   * which the web reads back as the number it meant). Never assume one shape
+   * per key across records.
+   */
   input: Record<string, unknown> | null;
   /** Immutable snapshot written at create/update time. Narrow it with
    *  `isCalculated()` before reading `tCo2e` or any factor field — an
@@ -3634,6 +3781,18 @@ export const WHOLE_COMPANY_ENTITY_LABEL = 'Whole company';
  */
 export const UNNAMED_SITE_ENTITY_LABEL = 'Site (name unavailable)';
 
+/** The two phrases `entityLabel` falls back on — a screen passes its
+ *  catalogue's (`common.entity.*`); the report keeps the English ones. */
+export interface EntityWords {
+  wholeCompany: string;
+  unnamedSite: string;
+}
+
+export const ENGLISH_ENTITY_WORDS: EntityWords = Object.freeze({
+  wholeCompany: WHOLE_COMPANY_ENTITY_LABEL,
+  unnamedSite: UNNAMED_SITE_ENTITY_LABEL,
+});
+
 /**
  * The reporting entity in one phrase — the site's name, or the whole company.
  *
@@ -3652,13 +3811,16 @@ export const UNNAMED_SITE_ENTITY_LABEL = 'Site (name unavailable)';
  * Whitespace is trimmed first: a location named "   " would otherwise print as
  * a blank cell, which reads as a missing value rather than as a level.
  */
-export function entityLabel(record: {
-  locationId?: string | null;
-  locationName?: string | null;
-}): string {
+export function entityLabel(
+  record: {
+    locationId?: string | null;
+    locationName?: string | null;
+  },
+  words: EntityWords = ENGLISH_ENTITY_WORDS,
+): string {
   const named = record.locationName?.trim();
   if (named) return named;
-  return record.locationId ? UNNAMED_SITE_ENTITY_LABEL : WHOLE_COMPANY_ENTITY_LABEL;
+  return record.locationId ? words.unnamedSite : words.wholeCompany;
 }
 
 /**
@@ -4069,11 +4231,14 @@ export interface EvidenceLinkRefusal {
  * nothing is uploaded and nothing is linked, and every refused record is named.
  *
  * Not the only 400 that route returns. A request-level refusal — records of
- * more than one subsidiary, or a missing or refused file — is the ordinary
- * `{ message }` body, and malformed `recordIds` get the validation body
- * (`message: string[]`). Only this one carries `refused`.
+ * more than one subsidiary (`evidence_records_mixed_subsidiaries`), or a
+ * missing or refused file (`evidence_file_*`) — is the ordinary error body, and
+ * malformed `recordIds` get the validation body (`message: string[]`). Only
+ * this one carries `refused`; its code is `evidence_records_refused`, its
+ * params the refused and requested counts (LP4-04 slice 2 PR C).
  */
-export interface EvidenceLinkRefusedDTO {
+export interface EvidenceLinkRefusedDTO extends Omit<ApiErrorBody, 'code' | 'message'> {
+  code: 'evidence_records_refused';
   message: string;
   refused: EvidenceLinkRefusal[];
 }
@@ -4129,7 +4294,12 @@ export interface EmissionsBySubsidiary {
 
 /** One point on a time-series trend, split by scope. */
 export interface EmissionsTrendPoint {
-  /** Bucket label, e.g. "2024", "2024-Q1" or "January 2024". */
+  /**
+   * The bucket, in exactly one of three forms the web re-words
+   * (`trendLabel`): a year `YYYY` (`"2024"`), a quarter `YYYY-Qn`
+   * (`"2024-Q1"`), or a month `<Month> YYYY` with the month a canonical
+   * `PERIOD_VALUES.monthly` entry (`"January 2024"`). Never localised here.
+   */
   period: string;
   scope1: number;
   scope2: number;

@@ -2,8 +2,8 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
-  NotFoundException,
 } from '@nestjs/common';
+import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { Prisma, type SubsidiaryDenominator } from '@tonyai/db';
 import { GROUP_INTENSITY_METRICS } from '@tonyai/shared-types';
 import type {
@@ -119,7 +119,7 @@ export class IntensityService {
   ): Promise<DenominatorDTO> {
     this.assertCanManage(user);
     if (!user.accessibleSubsidiaryIds.includes(dto.subsidiaryId)) {
-      throw new NotFoundException('Subsidiary not found');
+      throw new ResourceNotFoundError('subsidiary_not_found');
     }
     try {
       const created = await this.prisma.$transaction(async (tx) => {
@@ -152,7 +152,7 @@ export class IntensityService {
         e.code === 'P2002'
       ) {
         throw new ConflictException(
-          'A denominator for this subsidiary, year and metric already exists.',
+          errorBody('denominator_duplicate', 'A denominator for this subsidiary, year and metric already exists.'),
         );
       }
       throw e;
@@ -172,7 +172,7 @@ export class IntensityService {
       !existing ||
       !user.accessibleSubsidiaryIds.includes(existing.subsidiaryId)
     ) {
-      throw new NotFoundException('Denominator not found');
+      throw new ResourceNotFoundError('denominator_not_found');
     }
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.subsidiaryDenominator.update({
@@ -206,7 +206,7 @@ export class IntensityService {
       !existing ||
       !user.accessibleSubsidiaryIds.includes(existing.subsidiaryId)
     ) {
-      throw new NotFoundException('Denominator not found');
+      throw new ResourceNotFoundError('denominator_not_found');
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.subsidiaryDenominator.delete({ where: { id } });

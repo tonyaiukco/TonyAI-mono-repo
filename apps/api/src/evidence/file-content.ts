@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
 import { BadRequestException } from '@nestjs/common';
+import { errorBody } from '../common/api-error';
 import {
   EVIDENCE_ALLOWED_MIME_TYPES,
   EVIDENCE_MAX_SIZE_BYTES,
@@ -179,27 +180,41 @@ function contentMatches(declared: EvidenceMimeType, bytes: Buffer): boolean | 'm
  * 400 the uploader can act on.
  */
 export function checkEvidenceFile(file: Express.Multer.File | undefined): CheckedEvidenceFile {
-  if (!file) throw new BadRequestException('No file provided');
+  if (!file) throw new BadRequestException(errorBody('evidence_file_missing', 'No file provided'));
   const declared = file.mimetype;
   if (!isEvidenceMimeType(declared)) {
+    // The declared type is caller text: the English sentence keeps it, the
+    // code's params never do.
     throw new BadRequestException(
-      `Unsupported file type "${declared}". Allowed: PDF, JPG, PNG, XLSX, CSV.`,
+      errorBody('evidence_file_type', `Unsupported file type "${declared}". Allowed: PDF, JPG, PNG, XLSX, CSV.`),
     );
   }
   if (file.size > EVIDENCE_MAX_SIZE_BYTES) {
-    throw new BadRequestException('File exceeds the 10 MB limit');
+    const limitMb = EVIDENCE_MAX_SIZE_BYTES / 1024 / 1024;
+    throw new BadRequestException(
+      errorBody('evidence_file_too_large', `File exceeds the ${limitMb} MB limit`, { limitMb }),
+    );
   }
   const bytes = file.buffer;
-  if (!bytes || bytes.length === 0) throw new BadRequestException('The file is empty.');
+  if (!bytes || bytes.length === 0) {
+    throw new BadRequestException(errorBody('evidence_file_empty', 'The file is empty.'));
+  }
   const matches = contentMatches(declared, bytes);
   if (matches === 'macro') {
     throw new BadRequestException(
-      'Workbooks with macros cannot be evidence. Save a copy as an .xlsx workbook without macros and upload that.',
+      errorBody(
+        'evidence_file_macro',
+        'Workbooks with macros cannot be evidence. Save a copy as an .xlsx workbook without macros and upload that.',
+      ),
     );
   }
   if (!matches) {
     throw new BadRequestException(
-      `The file's contents are not a ${LABELS[declared]} file, although its name or type says so. Upload the original document.`,
+      errorBody(
+        'evidence_file_mismatch',
+        `The file's contents are not a ${LABELS[declared]} file, although its name or type says so. Upload the original document.`,
+        { kind: LABELS[declared] },
+      ),
     );
   }
   return {

@@ -677,6 +677,9 @@ async function main() {
   // super_admin entered could ever be approved. The e2e suite and the UAT
   // catalogue approve as this user whatever admin@ created.
   const approverId = await ensureAuthUser('approver@tonyai.local', SEED_PASSWORD, 'Arda Approver');
+  // Read-only (LP4-04 slice 2 PR C, M5): the fourth role the UAT catalogue's
+  // journeys cover — dashboards, Emissions and reports, no writes anywhere.
+  const viewerId = await ensureAuthUser('viewer@tonyai.local', SEED_PASSWORD, 'Vera Viewer');
 
   await prisma.profile.upsert({
     where: { id: adminId },
@@ -705,6 +708,15 @@ async function main() {
     where: { id: reviewId },
     update: { role: UserRole.consultant, organisationId: ORG_ID },
     create: { id: reviewId, email: 'review@tonyai.local', fullName: 'Cem Consultant', role: UserRole.consultant, organisationId: ORG_ID },
+  });
+
+  // Like the consultant, NO userSubsidiaryAccess rows: grants belong to
+  // data_entry users only (LP1-03, `access_role_mismatch`); an executive
+  // viewer reads the whole organisation.
+  await prisma.profile.upsert({
+    where: { id: viewerId },
+    update: { role: UserRole.executive_viewer, organisationId: ORG_ID },
+    create: { id: viewerId, email: 'viewer@tonyai.local', fullName: 'Vera Viewer', role: UserRole.executive_viewer, organisationId: ORG_ID },
   });
 
   // data_entry user can only access two of the five subsidiaries (tenant isolation demo)
@@ -1090,6 +1102,7 @@ const LOCATION_ACTIVITY = [
   console.log(`  super_admin -> approver@tonyai.local / ${passwordLabel} (a second approver: nobody approves a record they created)`);
   console.log(`  data_entry  -> entry@tonyai.local / ${passwordLabel} (sees 2 subsidiaries)`);
   console.log(`  consultant  -> review@tonyai.local / ${passwordLabel} (org-wide read; review/reject only, cannot approve)`);
+  console.log(`  executive_viewer -> viewer@tonyai.local / ${passwordLabel} (org-wide read only)`);
 }
 
 main()

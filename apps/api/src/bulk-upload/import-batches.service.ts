@@ -12,6 +12,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { actorDisplayName, resolveProfiles } from '../common/resolve-profiles';
 import { evidenceReadyWhere } from '../activity-records/activity-records.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import { StorageObjectMissingError, StorageService } from '../storage/storage.service';
 import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
 import { captureException } from '../observability/sentry';
@@ -92,7 +93,7 @@ export class ImportBatchesService {
   async sourceUrl(user: RequestUser, id: string): Promise<EvidenceUrlDTO> {
     const batch = await this.visibleBatch(user, id);
     if (!batch.storagePath) {
-      throw new NotFoundException('This import has no source file.');
+      throw new NotFoundException(errorBody('import_source_not_retained', 'This import has no source file.'));
     }
     let url: string;
     try {
@@ -115,7 +116,10 @@ export class ImportBatchesService {
         userId: user.id,
       });
       throw new NotFoundException(
-        "This import's source file is missing from storage. The problem has been reported to the administrators.",
+        errorBody(
+          'import_source_missing',
+          "This import's source file is missing from storage. The problem has been reported to the administrators.",
+        ),
       );
     }
     return { url, expiresIn: SIGNED_URL_TTL_SECONDS };
@@ -155,7 +159,7 @@ export class ImportBatchesService {
   private async visibleBatch(user: RequestUser, id: string): Promise<ImportBatch> {
     const batch = await this.prisma.importBatch.findUnique({ where: { id } });
     if (!batch || !this.canSee(user, batch)) {
-      throw new NotFoundException('Import not found');
+      throw new ResourceNotFoundError('import_batch_not_found');
     }
     return batch;
   }

@@ -4,14 +4,14 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import { ResourceNotFoundError } from '../common/api-error';
+import { errorBody, ResourceNotFoundError } from '../common/api-error';
 import {
   ActivityRecordStatus,
   Prisma,
   type PeriodLock,
 } from '@tonyai/db';
 import { PENDING_REVIEW_STATUSES as SHARED_PENDING_REVIEW } from '@tonyai/shared-types';
-import { canonicalPeriodValue } from '@tonyai/shared-types';
+import { canonicalPeriodValue, REPORTING_PERIODS } from '@tonyai/shared-types';
 import type { CursorPage, PeriodLockDTO, ReportingPeriod } from '@tonyai/shared-types';
 import {
   cursorBinding,
@@ -161,10 +161,19 @@ export class PeriodLocksService {
     const periodValue = canonicalPeriodValue(dto.reportingPeriod, dto.periodValue);
     if (periodValue === null) {
       throw new BadRequestException(
-        // Quoted through the one rule, like its twin on the record path: the
-        // value is capped at 32 by the DTO, but a U+202E in it still reverses
-        // the rest of the sentence in the toast that shows it.
-        `"${quoteCallerText(dto.periodValue)}" is not a valid period for a ${dto.reportingPeriod} lock.`,
+        errorBody(
+          'period_lock_value_invalid',
+          // Quoted through the one rule, like its twin on the record path: the
+          // value is capped at 32 by the DTO, but a U+202E in it still reverses
+          // the rest of the sentence in the toast that shows it. The code's
+          // params never carry it (caller text).
+          `"${quoteCallerText(dto.periodValue)}" is not a valid period for a ${dto.reportingPeriod} lock.`,
+          // Canonical only, as on the record path: the DTO's @IsIn is the
+          // pipe's, and a caller past it must not put its text in params.
+          (REPORTING_PERIODS as readonly string[]).includes(dto.reportingPeriod)
+            ? { granularity: dto.reportingPeriod }
+            : undefined,
+        ),
       );
     }
 
@@ -202,7 +211,14 @@ export class PeriodLocksService {
               ? [`${rejected} rejected record(s) are waiting for their authors — have them corrected and resubmitted, or deleted`]
               : []),
           ];
-          throw new ConflictException(`${parts.join('; ')} before locking.`);
+          const message = `${parts.join('; ')} before locking.`;
+          throw new ConflictException(
+            pendingReview > 0 && rejected > 0
+              ? errorBody('period_records_open', message, { pending: pendingReview, rejected })
+              : pendingReview > 0
+                ? errorBody('period_records_awaiting_review', message, { pending: pendingReview })
+                : errorBody('period_records_rejected', message, { rejected }),
+          );
         }
         const row = await tx.periodLock.create({
           data: {
@@ -241,7 +257,7 @@ export class PeriodLocksService {
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === 'P2002'
       ) {
-        throw new ConflictException('This reporting period is already locked.');
+        throw new ConflictException(errorBody('period_already_locked', 'This reporting period is already locked.'));
       }
       throw asLostRace(e);
     }

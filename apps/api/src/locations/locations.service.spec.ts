@@ -80,6 +80,14 @@ describe('LocationsService', () => {
       await expect(service.get(user, 'loc-x')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+      // The same coded body a missing id gets — nothing of the row in it.
+      await expect(service.get(user, 'loc-x')).rejects.toMatchObject({
+        response: { code: 'location_not_found', message: 'Location not found' },
+      });
+      prisma.location.findUnique.mockResolvedValue(null);
+      await expect(service.get(user, 'loc-x')).rejects.toMatchObject({
+        response: { code: 'location_not_found', message: 'Location not found' },
+      });
     });
   });
 
@@ -98,7 +106,7 @@ describe('LocationsService', () => {
 
       await expect(
         service.create(user, { subsidiaryId: 'sub-999', name: 'HQ', geographyCode: 'TR' }),
-      ).rejects.toBeInstanceOf(NotFoundException);
+      ).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
       expect(prisma.txClient.location.create).not.toHaveBeenCalled();
     });
 
@@ -261,6 +269,13 @@ describe('LocationsService', () => {
       prisma.inventoryBoundarySite.count.mockResolvedValue(2);
 
       await expect(service.remove(user, existing.id)).rejects.toThrow(/declared in 2 inventory boundary version\(s\)/);
+      await expect(service.remove(user, existing.id)).rejects.toMatchObject({
+        response: { code: 'location_in_boundary', params: { count: 2 } },
+      });
+      prisma.inventoryBoundarySite.count.mockResolvedValue(7);
+      await expect(service.remove(user, existing.id)).rejects.toMatchObject({
+        response: { code: 'location_in_boundary', params: { count: 7 } },
+      });
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
@@ -300,6 +315,7 @@ describe('LocationsService', () => {
       const refusal = await service.remove(user, existing.id).catch((e: unknown) => e);
       expect(refusal).toBeInstanceOf(ConflictException);
       expect((refusal as Error).message).toMatch(/inventory boundary version/);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({ code: 'location_declared_during_delete' });
     });
 
     it('refuses to delete a location that records are attached to', async () => {
@@ -313,6 +329,9 @@ describe('LocationsService', () => {
       prisma.activityRecord.count.mockResolvedValue(3);
 
       await expect(service.remove(user, existing.id)).rejects.toThrow(/3 activity record/);
+      await expect(service.remove(user, existing.id)).rejects.toMatchObject({
+        response: { code: 'location_has_records', params: { count: 3 } },
+      });
       expect(prisma.txClient.location.delete).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
     });

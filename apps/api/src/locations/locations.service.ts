@@ -2,7 +2,6 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
-  NotFoundException,
 } from '@nestjs/common';
 import { Prisma, type Location, type Subsidiary } from '@tonyai/db';
 import type { LocationDTO } from '@tonyai/shared-types';
@@ -10,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { boundaryGuardRefused } from '../inventory-boundary/errors';
+import { errorBody, ResourceNotFoundError } from '../common/api-error';
 // `CreateSubsidiaryLocationDto` is the base of `CreateLocationDto` and is what
 // the shared writer takes: the parameter used to build its own
 // `Omit<CreateLocationDto, 'subsidiaryId'>`, which made the shape's THIRD
@@ -34,7 +34,7 @@ export class TrustedParent {
   /** The caller checked the role AND `accessibleSubsidiaryIds` first. */
   static becauseInAccessibleSet(user: RequestUser, subsidiaryId: string): TrustedParent {
     if (!user.accessibleSubsidiaryIds.includes(subsidiaryId)) {
-      throw new NotFoundException('Subsidiary not found');
+      throw new ResourceNotFoundError('subsidiary_not_found');
     }
     return new TrustedParent(subsidiaryId);
   }
@@ -91,7 +91,7 @@ export class LocationsService {
       !location ||
       !user.accessibleSubsidiaryIds.includes(location.subsidiaryId)
     ) {
-      throw new NotFoundException('Location not found');
+      throw new ResourceNotFoundError('location_not_found');
     }
     return location;
   }
@@ -242,9 +242,13 @@ export class LocationsService {
     const versions = await this.prisma.inventoryBoundarySite.count({ where: { locationId } });
     if (versions > 0) {
       throw new ConflictException(
-        `This location is declared in ${versions} inventory boundary version(s), which record the sites ` +
-          'an inventory covers and the months each operated. Remove it from an open version first; ' +
-          'a confirmed or captured version never changes, so a location declared in one stays.',
+        errorBody(
+          'location_in_boundary',
+          `This location is declared in ${versions} inventory boundary version(s), which record the sites ` +
+            'an inventory covers and the months each operated. Remove it from an open version first; ' +
+            'a confirmed or captured version never changes, so a location declared in one stays.',
+          { count: versions },
+        ),
       );
     }
   }
@@ -272,11 +276,15 @@ export class LocationsService {
       // moved OR deleted, so for those the honest answer is that the location
       // stays — it is part of what the reported figures mean.
       throw new ConflictException(
-        `${count} activity record(s) are recorded at this location. Deleting it ` +
-          'would leave them showing a different geography than the one they ' +
-          'were calculated with. Re-target any draft records to another ' +
-          'location first; a location with committed records stays, because it ' +
-          'is part of what those figures mean.',
+        errorBody(
+          'location_has_records',
+          `${count} activity record(s) are recorded at this location. Deleting it ` +
+            'would leave them showing a different geography than the one they ' +
+            'were calculated with. Re-target any draft records to another ' +
+            'location first; a location with committed records stays, because it ' +
+            'is part of what those figures mean.',
+          { count },
+        ),
       );
     }
   }
@@ -340,8 +348,11 @@ export class LocationsService {
       if (boundaryGuardRefused(err)) {
         await this.assertNotDeclared(id);
         throw new ConflictException(
-          'This location was declared in an inventory boundary version when it was being deleted, so it ' +
-            'was not deleted. Check the inventory boundary and try again.',
+          errorBody(
+            'location_declared_during_delete',
+            'This location was declared in an inventory boundary version when it was being deleted, so it ' +
+              'was not deleted. Check the inventory boundary and try again.',
+          ),
         );
       }
       throw err;

@@ -48,6 +48,56 @@ describe("a code the catalogue knows", () => {
   });
 });
 
+describe("LP4-04 slice 2 PR C's codes (M3)", () => {
+  it("words a record status and a granularity in the user's language", () => {
+    const status = new ApiError('Cannot modify a record in status "under_review"', 400, "record_not_editable", { status: "under_review" });
+    expect(describe_(status, "en").title).toBe('Cannot modify a record in status "under review"');
+    expect(describe_(status, "tr").title).toBe('Durumu "incelemede" olan bir kayıt değiştirilemez.');
+    const period = new ApiError("x", 400, "period_lock_value_invalid", { granularity: "quarterly" });
+    expect(describe_(period, "en").title).toBe("That is not a valid period for a quarterly lock.");
+    expect(describe_(period, "tr").title).toBe("Bu, çeyreklik bir kilit için geçerli bir dönem değil.");
+  });
+
+  it("groups every count param — a period's pending records too", () => {
+    const pending = new ApiError("x", 409, "period_records_awaiting_review", { pending: 1200 });
+    expect(describe_(pending, "tr").title).toMatch(/^Bu dönemde 1\.200 kayıt/);
+    expect(describe_(pending, "en").title).toMatch(/^1,200 record\(s\)/);
+    const big = new ApiError("x", 400, "evidence_file_too_large", { limitMb: 1024 });
+    expect(describe_(big, "en").title).toBe("File exceeds the 1,024 MB limit");
+  });
+
+  it("groups a count by the locale, and leaves a year as it is", () => {
+    const rows = new ApiError("x", 400, "bulk_too_many_rows", { rows: 1001, max: 1000 });
+    expect(describe_(rows, "en").title).toBe("The file has 1,001 rows; the limit is 1,000. Split it and upload the parts.");
+    expect(describe_(rows, "tr").title).toBe("Dosyada 1.001 satır var; sınır 1.000. Dosyayı bölüp parçaları yükleyin.");
+  });
+
+  it("an unknown status or granularity is shown as sent, never invented", () => {
+    const e = new ApiError("x", 400, "record_not_submittable", { status: "archived" });
+    expect(describe_(e, "tr").title).toMatch(/"archived"/);
+  });
+
+  it("a refusal naming each dependent or record keeps that English, and Turkish adds it beneath", () => {
+    for (const [code, status, params] of [
+      ["subsidiary_in_use", 409, undefined],
+      ["evidence_records_refused", 400, { refused: 1, total: 2 }],
+      ["evidence_backs_locked_records", 409, { count: 1 }],
+    ] as const) {
+      const sentence = "This subsidiary still holds 2 record(s) awaiting review, …";
+      const e = new ApiError(sentence, status, code, params);
+      expect(describe_(e, "en")).toEqual({ title: sentence });
+      expect(describe_(e, "tr").description).toBe(sentence);
+      expect(describe_(e, "tr").title).not.toBe(sentence);
+    }
+  });
+
+  it("drops a caller's text the server's sentence quoted — the catalogue never echoes it", () => {
+    const e = new ApiError('Unsupported file type "text/html<script>". Allowed: …', 400, "evidence_file_type");
+    expect(describe_(e, "en").title).toBe("Unsupported file type. Allowed: PDF, JPG, PNG, XLSX, CSV.");
+    expect(describe_(e, "tr").description).toBeUndefined();
+  });
+});
+
 describe("a calculation refusal keeps its lookup-specific English (independent review P3-7)", () => {
   const sentence = 'Unit "litres" is not valid for "Electricity". Accepted: kWh, MWh.';
   const refusal = new ApiError(sentence, 400, "unit_not_for_category");

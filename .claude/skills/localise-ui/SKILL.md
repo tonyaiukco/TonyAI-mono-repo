@@ -128,6 +128,15 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
 5. Build shared-types before the API typechecks against it:
    `pnpm --filter @tonyai/shared-types build`.
 
+Params the web words for you (`localiseParams`): `period` (`periods.values`),
+`category`, `status` (`recordStatus.inline`), `granularity`
+(`periods.granularityInline`), and the counts in `COUNT_PARAMS` (grouped by
+the locale). Never echo caller text: a sentence that quoted it on the server
+drops it in the catalogue (`evidence_file_type`, `period_lock_value_invalid`).
+A refusal whose sentence names facts no param may carry (each record, each
+dependent) joins `SERVER_DETAILED`, and its facts go on the DTO where a screen
+needs them (`SubsidiarySummaryDTO.blockerCounts`).
+
 ## Recipe C — server-side copy (emails, reports; LP4-01, LP4-03)
 
 Follow D16 (README "Localisation and error codes"): the report's language is a
@@ -157,10 +166,28 @@ role), the error and 404 pages, the tab title, Reports, Users, the boundary
 editor, the dashboard and its components, Emissions, targets and intensity
 (PR B — `lib/void-view.ts`, `lib/record-actor.ts` and `entityLabel` take their
 words; `calculation-display`'s English constants and `lib/utils.formatNumber`
-are gone; the Data Entry modules' English fallbacks are required arguments).
-Left: Subsidiaries (list, detail, locations, period locks), Review (beyond the
-words PR B passes it) and Audit (PR C); the server's per-row bulk sentences;
-a calculation refusal's reason (`calculation.reason`, K5); the trend and grid
-labels the API builds are re-worded on the web (`trendLabel`,
-`lib/emissions-view.ts`); about 60 API refusals that still carry only a
-generic code (PR C).
+are gone; the Data Entry modules' English fallbacks are required arguments),
+Subsidiaries (list, detail, locations, period locks), Review and Audit (PR C —
+`lib/{subsidiaries,audit,review}-view.ts`; the subsidiary-status vocabulary
+`subsidiaryStatus`; `entityLabel` lives in shared-types and takes the screen's
+words) and the refusals a pilot user meets (PR C, M3: 46 domain codes — the
+404s per kind, the business-rule 400/409s, the bulk upload's file-level
+refusals).
+
+Deliberately left, each with its reason:
+- **Stored or server-built English shown as data:** a calculation refusal's
+  `reason` (K5); the server's per-row bulk sentences; an audit row's stored
+  `diff.reason`, names and raw diff; the trend and grid labels the API builds
+  are re-worded on the web (`trendLabel`), anything else shown as sent.
+- **Identifiers:** audit action and entity codes (M2, humanised the same in
+  every language); a role shown in monospace as the identifier it is (the
+  Review and Audit gate cards).
+- **Generic codes on purpose:** the role-only 403s; refusals whose sentence
+  names a cell, a caller's column or row (`unrecognised columns`, merged
+  cells, `Row(s) … name a reporting entity …`) — their English is the server's
+  (K5); multer's own `File too large` and `Unexpected field`.
+- **Codes whose English names facts no param may carry** show the server's
+  sentence in English and the catalogue's beneath-it pattern in Turkish
+  (`SERVER_DETAILED` in `lib/i18n/errors.ts`): `subsidiary_in_use` (each
+  dependent), `evidence_records_refused` and `evidence_backs_locked_records`
+  (each record), and every calculation refusal.

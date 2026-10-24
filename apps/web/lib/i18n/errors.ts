@@ -9,6 +9,7 @@ import {
   type GenericErrorCode,
   type Locale,
 } from "@/lib/types";
+import { formatNumber } from "@/lib/i18n/number";
 
 /**
  * From a failed call to what the screen says (LP3-01). A screen never shows
@@ -53,22 +54,42 @@ const SERVER_WORDED: ReadonlySet<GenericErrorCode> = new Set([
   "payload_too_large",
 ]);
 
-/** Specific codes whose English sentence says more than the catalogue's. */
-const SERVER_DETAILED: ReadonlySet<ApiErrorCode> = new Set(CALCULATION_REFUSAL_CODES);
+/** Specific codes whose English sentence says more than the catalogue's: a
+ *  calculation refusal names its lookup; a subsidiary's or a shared file's
+ *  refusal names each dependent or record (LP4-04 slice 2 PR C) — facts no
+ *  param may carry. */
+const SERVER_DETAILED: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
+  ...CALCULATION_REFUSAL_CODES,
+  "subsidiary_in_use",
+  "evidence_records_refused",
+  "evidence_backs_locked_records",
+]);
+
+/** Params that are counts or sizes: grouped by the user's locale. */
+const COUNT_PARAMS: ReadonlySet<string> = new Set(["count", "pending", "rejected", "refused", "total", "rows", "max", "limitMb"]);
 
 /** A body with no JSON message gets this from `api.ts` — not a sentence. */
 const STATUS_ONLY = /^API \d{3}$/;
 
 /**
- * Params as the catalogue reads them: a period and a category in the user's
- * language — they arrive canonical. A plain `{year}` argument is printed as
- * given, never grouped (`qa-auditor` F6), so numbers pass through.
+ * Params as the catalogue reads them: a period, a category, a record status
+ * and a granularity in the user's language — they arrive canonical. A count
+ * (`COUNT_PARAMS`) is grouped by the locale; a plain `{year}` argument is
+ * printed as given, never grouped (`qa-auditor` F6).
  */
-export function localiseParams(params: ApiErrorParams | undefined, t: ErrorTranslator): Record<string, string | number> {
+export function localiseParams(
+  params: ApiErrorParams | undefined,
+  t: ErrorTranslator,
+  locale: Locale,
+): Record<string, string | number> {
   const out: Record<string, string | number> = {};
   for (const [key, value] of Object.entries(params ?? {})) {
     if (key === "period" && t.has(`periods.values.${value}`)) out[key] = t(`periods.values.${value}`);
     else if (key === "category" && t.has(`categories.${value}`)) out[key] = t(`categories.${value}`);
+    else if (key === "status" && t.has(`recordStatus.inline.${value}`)) out[key] = t(`recordStatus.inline.${value}`);
+    else if (key === "granularity" && t.has(`periods.granularityInline.${value}`)) {
+      out[key] = t(`periods.granularityInline.${value}`);
+    } else if (COUNT_PARAMS.has(key) && typeof value === "number") out[key] = formatNumber(value, locale);
     else out[key] = value;
   }
   return out;
@@ -90,7 +111,7 @@ export function describeApiError(error: unknown, t: ErrorTranslator, locale: Loc
     // render as a broken sentence: the status's generic one is better.
     const complete = (API_ERROR_PARAMS[code] ?? []).every((name) => error.params?.[name] !== undefined);
     if (!complete) return describeApiError(new ApiError(error.message, error.status), t, locale);
-    const title = t(`errors.codes.${code}`, localiseParams(error.params, t));
+    const title = t(`errors.codes.${code}`, localiseParams(error.params, t, locale));
     const detail = SERVER_DETAILED.has(code) && !STATUS_ONLY.test(error.message) ? error.message : undefined;
     if (detail && locale === "en") return { title: detail };
     return { title, ...(detail ? { description: detail } : {}) };

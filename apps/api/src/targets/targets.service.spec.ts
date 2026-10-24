@@ -201,24 +201,32 @@ describe('TargetsService', () => {
     await expect(
       service.create(admin, { ...validInput, subsidiaryId: 'sub-999' }),
     ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      service.create(admin, { ...validInput, subsidiaryId: 'sub-999' }),
+    ).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
   });
 
   it('create rejects an incoherent target (target year not after baseline)', async () => {
     await expect(
       service.create(admin, { ...validInput, targetYear: 2023 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({
+      response: { code: 'target_year_order', message: 'targetYear must be after baselineYear' },
+    });
   });
 
   it('create rejects a target above the baseline (not a reduction)', async () => {
     await expect(
       service.create(admin, { ...validInput, targetTCo2e: 2000 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ response: { code: 'target_not_reduction' } });
   });
 
   it('create rejects a zero-reduction target (baseline == target)', async () => {
     await expect(
       service.create(admin, { ...validInput, targetTCo2e: validInput.baselineTCo2e }),
     ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.create(admin, { ...validInput, targetTCo2e: validInput.baselineTCo2e }),
+    ).rejects.toMatchObject({ response: { code: 'target_not_reduction' } });
   });
 
   it('create writes the target and an audit row (entity target)', async () => {
@@ -240,6 +248,12 @@ describe('TargetsService', () => {
     await expect(service.remove(admin, 'tgt-1')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+    // A foreign id and a missing one answer the same coded body.
+    const foreign = await service.remove(admin, 'tgt-1').catch((e: NotFoundException) => e.getResponse());
+    prisma.target.findUnique.mockResolvedValue(null);
+    const missing = await service.update(admin, 'tgt-1', { name: 'x' }).catch((e: NotFoundException) => e.getResponse());
+    expect(foreign).toEqual({ statusCode: 404, error: 'Not Found', message: 'Target not found', code: 'target_not_found' });
+    expect(missing).toEqual(foreign);
   });
 
   it('progress is n/a when no committed year exists after the baseline', async () => {

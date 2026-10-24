@@ -5,7 +5,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { QueryTooBroadError, ResourceNotFoundError } from '../common/api-error';
+import { errorBody, QueryTooBroadError, ResourceNotFoundError } from '../common/api-error';
 import {
   ActivityRecordStatus,
   Prisma,
@@ -50,6 +50,7 @@ import {
   type ReportingPeriod,
   mayAuthorRecords,
   recordActivityTypesFor,
+  REPORTING_PERIODS,
 } from '@tonyai/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { quoteCallerText } from '../common/caller-text';
@@ -308,7 +309,16 @@ function requireCanonicalPeriodValue(
   const canonical = canonicalPeriodValue(reportingPeriod, periodValue);
   if (canonical === null) {
     throw new BadRequestException(
-      `"${quoteCallerText(periodValue)}" is not a valid period for a ${reportingPeriod} record.`,
+      errorBody(
+        'record_period_invalid',
+        `"${quoteCallerText(periodValue)}" is not a valid period for a ${reportingPeriod} record.`,
+        // Canonical only: a bulk row's granularity is the file's text until
+        // checked, and params never carry caller text — without the param the
+        // screen shows its generic sentence.
+        (REPORTING_PERIODS as readonly string[]).includes(reportingPeriod)
+          ? { granularity: reportingPeriod }
+          : undefined,
+      ),
     );
   }
   return canonical;
@@ -550,7 +560,9 @@ export class ActivityRecordsService {
     }
     if (!EDITABLE_STATUSES.has(record.status)) {
       throw new BadRequestException(
-        `Cannot modify a record in status "${record.status}"`,
+        errorBody('record_not_editable', `Cannot modify a record in status "${record.status}"`, {
+          status: record.status,
+        }),
       );
     }
   }
@@ -1346,7 +1358,11 @@ export class ActivityRecordsService {
       regate(seen, record, () => {
         if (!SUBMITTABLE_STATUSES.has(record.status)) {
           throw new BadRequestException(
-            `Only a draft or rejected record can be submitted (current status "${record.status}")`,
+            errorBody(
+              'record_not_submittable',
+              `Only a draft or rejected record can be submitted (current status "${record.status}")`,
+              { status: record.status },
+            ),
           );
         }
         // Only the author submits (decision D02, 2026-09-29) — a draft as much
@@ -1444,7 +1460,11 @@ export class ActivityRecordsService {
       regate(seen, record, () => {
         if (record.status !== ActivityRecordStatus.submitted) {
           throw new BadRequestException(
-            `Only a submitted record can be taken into review (current status "${record.status}")`,
+            errorBody(
+              'record_not_reviewable',
+              `Only a submitted record can be taken into review (current status "${record.status}")`,
+              { status: record.status },
+            ),
           );
         }
       });
@@ -1467,7 +1487,11 @@ export class ActivityRecordsService {
           record.status !== ActivityRecordStatus.under_review
         ) {
           throw new BadRequestException(
-            `Only a submitted or under_review record can be approved (current status "${record.status}")`,
+            errorBody(
+              'record_not_approvable',
+              `Only a submitted or under_review record can be approved (current status "${record.status}")`,
+              { status: record.status },
+            ),
           );
         }
       });
@@ -1540,8 +1564,12 @@ export class ActivityRecordsService {
           // rejected records can simply be deleted, and submitted/under_review ones
           // rejected — none of them needs this.
           throw new BadRequestException(
-            `Only an approved record can be voided (current status "${record.status}"). ` +
-              'A locked period must be unlocked first.',
+            errorBody(
+              'record_not_voidable',
+              `Only an approved record can be voided (current status "${record.status}"). ` +
+                'A locked period must be unlocked first.',
+              { status: record.status },
+            ),
           );
         }
       });
@@ -1573,7 +1601,11 @@ export class ActivityRecordsService {
           record.status !== ActivityRecordStatus.under_review
         ) {
           throw new BadRequestException(
-            `Only a submitted or under_review record can be rejected (current status "${record.status}")`,
+            errorBody(
+              'record_not_rejectable',
+              `Only a submitted or under_review record can be rejected (current status "${record.status}")`,
+              { status: record.status },
+            ),
           );
         }
       });

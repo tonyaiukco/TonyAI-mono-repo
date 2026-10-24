@@ -11,6 +11,7 @@ import {
 } from '@/lib/types';
 import type {
   BulkUploadAcceptedRow,
+  BulkUploadIssueCode,
   BulkUploadReportDTO,
   BulkUploadRowIssue,
 } from '@/lib/types';
@@ -23,7 +24,6 @@ import {
   bulkActivityLabel,
   fileAcceptAttribute,
   groupIssues as groupIssuesIn,
-  ISSUE_CODE_LABEL,
   readAmountLabel,
   MAX_ISSUE_ROWS_PER_GROUP,
   preflightFile as preflightFileIn,
@@ -37,6 +37,16 @@ import {
 import { copyFor, describeFor } from '@/lib/i18n/testing';
 // The screens pass their language's copy; these specs assert the English
 // catalogue — the text the panel showed before LP4-04.
+
+/**
+ * A short name for every issue the server can report — the English catalogue,
+ * typed exhaustive: a code added in `@tonyai/shared-types` is a COMPILE ERROR
+ * here (`tsc` collects specs) rather than a blank label in front of a user.
+ * Moved here from the module, its only users being these specs (LP4-04 slice 2
+ * follow-up (15)).
+ */
+const ISSUE_CODE_LABEL: Record<BulkUploadIssueCode, string> = en.bulkUploadIssues;
+
 const up = () => copyFor('bulkUpload');
 const applyConfirmation = (r: BulkUploadReportDTO) => applyConfirmationIn(r, up());
 const applySuccessMessage = (r: BulkUploadReportDTO) => applySuccessMessageIn(r, up());

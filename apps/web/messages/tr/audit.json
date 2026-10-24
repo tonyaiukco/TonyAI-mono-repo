@@ -1,0 +1,46 @@
+{
+  "title": "Denetim İzi",
+  "subtitle": "Denetlenen değişikliklerin yalnızca eklenebilen kaydı",
+  "subtitleUser": "Denetlenen değişikliklerin yalnızca eklenebilen kaydı · {name} ({role})",
+  "forbidden": {
+    "title": "Denetim izini yalnızca bir süper yönetici okuyabilir",
+    "body": "İz, kuruluştaki her bağlı şirketi kapsadığı için hem API'de hem veritabanında kısıtlanmıştır. Rolünüz: <mono>{role}</mono>."
+  },
+  "filterPlaceholder": "Bu sayfada ara…",
+  "allEntities": "Tüm varlıklar",
+  "allActions": "Tüm işlemler",
+  "entriesOne": "{count} kayıt",
+  "entriesMany": "{count} kayıt",
+  "columns": {
+    "when": "Zaman",
+    "actor": "Yapan",
+    "role": "O andaki rol",
+    "action": "İşlem",
+    "entity": "Varlık",
+    "change": "Değişiklik"
+  },
+  "emptySearch": "Bu sayfada o metinle eşleşen kayıt yok. Metin filtresi yalnızca yüklenen sayfada arar — izin tamamında aramak için varlık ve işlem filtrelerini ya da başka bir sayfayı kullanın.",
+  "empty": "Bu filtrelerle eşleşen denetim kaydı yok.",
+  "notRecorded": "kaydedilmemiş",
+  "system": "sistem",
+  "transition": "{from} → {to}",
+  "page": "Sayfa {page} / {pages}",
+  "previous": "Önceki",
+  "next": "Sonraki",
+  "sheet": {
+    "title": "{action} · {entity}",
+    "when": "Zaman",
+    "actor": "Yapan",
+    "role": "O andaki rol",
+    "entityId": "Varlık kimliği",
+    "change": "Değişiklik"
+  },
+  "batch": {
+    "refused": "reddedildi",
+    "dryRun": "deneme",
+    "wouldImport": "{count} içe aktarılacaktı",
+    "imported": "{count} içe aktarıldı",
+    "refusedCount": "{count} reddedildi",
+    "submittedOf": "{requested} kaydın {submitted} tanesi gönderildi"
+  }
+}

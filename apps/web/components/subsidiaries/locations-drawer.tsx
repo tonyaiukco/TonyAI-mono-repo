@@ -8,6 +8,8 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { MapPin } from 'lucide-react';
+import { useLocale, useTranslations } from 'use-intl';
+import { locationCountLine } from '@/lib/subsidiaries-view';
 import { LocationsPanel } from './locations-panel';
 import type { LocationDTO, SubsidiaryDTO } from '@/lib/types';
 
@@ -38,6 +40,8 @@ export function LocationsDrawer({
   onClose,
   onChanged,
 }: LocationsDrawerProps) {
+  const t = useTranslations('subsidiaries');
+  const locale = useLocale();
   return (
     <Sheet open={!!subsidiary} onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="w-[440px] overflow-y-auto sm:max-w-[440px]">
@@ -46,11 +50,10 @@ export function LocationsDrawer({
             <SheetHeader>
               <SheetTitle className="flex items-center gap-2">
                 <MapPin className="h-4 w-4 text-primary" />
-                Operational locations
+                {t('locations.drawerTitle')}
               </SheetTitle>
               <SheetDescription>
-                {subsidiary.tradingName ?? subsidiary.legalName} ·{' '}
-                {locations.length} location{locations.length === 1 ? '' : 's'}
+                {locationCountLine(subsidiary.tradingName ?? subsidiary.legalName, locations.length, { t, locale })}
               </SheetDescription>
             </SheetHeader>
 

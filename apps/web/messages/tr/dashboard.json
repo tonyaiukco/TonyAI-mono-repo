@@ -45,11 +45,6 @@
       "geography": "Coğrafya",
       "sector": "Sektör",
       "status": "Durum"
-    },
-    "status": {
-      "active": "aktif",
-      "pending": "beklemede",
-      "inactive": "pasif"
     }
   },
   "overview": {

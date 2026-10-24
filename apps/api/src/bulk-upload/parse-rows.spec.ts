@@ -211,6 +211,7 @@ describe('parseRows — CSV', () => {
     const file = Buffer.concat([csv(ROW), CP1254]);
     await expect(parseRows(file, 'rapor.csv')).rejects.toThrow(BadRequestException);
     await expect(parseRows(file, 'rapor.csv')).rejects.toThrow(FILE_NOT_UTF8);
+    await expect(parseRows(file, 'rapor.csv')).rejects.toMatchObject({ response: { code: 'bulk_file_encoding' } });
   });
 
   it('refuses the file the offending byte is in, not the row', async () => {
@@ -220,6 +221,7 @@ describe('parseRows — CSV', () => {
     const good = Array.from({ length: 499 }, () => ROW);
     const file = Buffer.concat([csv(...good, ROW), CP1254]);
     await expect(parseRows(file, 'rapor.csv')).rejects.toThrow(FILE_NOT_UTF8);
+    await expect(parseRows(file, 'rapor.csv')).rejects.toMatchObject({ response: { code: 'bulk_file_encoding' } });
   });
 
   it('characterises the Node behaviour the guard exists for: a lossy decode', () => {
@@ -653,6 +655,10 @@ describe('parseRows — XLSX', () => {
     // opens perfectly in Excel, and nothing server-side would otherwise tell
     // an encoding refusal apart from a corrupt archive.
     expect(await refusal(xlsx({ sheetXml }))).toBe(WORKBOOK_NOT_UTF8);
+    // Pinned at the real throw site (qa-auditor P2).
+    await expect(parseRows(xlsx({ sheetXml }), 'data.xlsx')).rejects.toMatchObject({
+      response: { code: 'bulk_workbook_encoding' },
+    });
   });
 
   describe('characters a spreadsheet can write but Postgres cannot store', () => {
@@ -899,6 +905,9 @@ describe('parseRows — the row cap belongs to the parser', () => {
     await expect(parseRows(csv(...rows), 'big.csv')).rejects.toThrow(
       /limit is 1000/,
     );
+    await expect(parseRows(csv(...rows), 'big.csv')).rejects.toMatchObject({
+      response: { code: 'bulk_too_many_rows', params: { rows: 1001, max: 1000 } },
+    });
     // 1,000 is fine — the boundary, not an approximation of it.
     const ok = Array.from({ length: 1000 }, (_, i) =>
       ROW.replace(',2024,', `,${2000 + (i % 100)},`),
@@ -1209,6 +1218,9 @@ describe('parseRows — a hostile workbook costs nothing', () => {
     await expect(parseRows(bomb, 'bomb.xlsx')).rejects.toThrow(
       'The workbook is larger than 16 MB once unpacked. Remove unused formatting, or split it into smaller files.',
     );
+    await expect(parseRows(bomb, 'bomb.xlsx')).rejects.toMatchObject({
+      response: { code: 'bulk_workbook_too_large', params: { limitMb: 16 } },
+    });
   });
 
   it('counts every part it unpacks against one limit', async () => {
@@ -1378,5 +1390,19 @@ describe('cooperative parser deadline', () => {
       await expect(withParserDeadline(() => { time = 5; return parseRows(csv(ROW), 'data.csv'); })).rejects.toBeInstanceOf(BadRequestException);
       await expect(parseRows(csv(ROW), 'data.csv')).resolves.toHaveLength(1);
     } finally { clock.mockRestore(); vi.unstubAllEnvs(); }
+  });
+});
+
+describe('the file-level refusals carry their codes at their own throw sites (LP4-04 slice 2 PR C)', () => {
+  it('an empty CSV is bulk_file_empty', async () => {
+    await expect(parseRows(Buffer.from(''), 'empty.csv')).rejects.toMatchObject({
+      response: { code: 'bulk_file_empty', message: 'The file is empty.' },
+    });
+  });
+
+  it('an extension neither reader takes is bulk_file_type', async () => {
+    await expect(parseRows(Buffer.from('a,b'), 'notes.txt')).rejects.toMatchObject({
+      response: { code: 'bulk_file_type' },
+    });
   });
 });

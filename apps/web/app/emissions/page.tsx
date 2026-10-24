@@ -65,7 +65,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
-import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, LOCALE_FORMAT_TAGS, isCalculated, unitSymbol } from '@/lib/types';
+import { ACTIVITY_RECORD_SEARCH_MAX_LENGTH, CATEGORIES, LOCALE_FORMAT_TAGS, entityLabel, isCalculated, unitSymbol } from '@/lib/types';
 import type { Locale } from '@/lib/types';
 import { formatNumber, formatReadAmount } from '@/lib/i18n/number';
 import { showErrorToast, useActorWords, useDescribeError, useEntityWords, useRecordWords } from '@/lib/i18n/hooks';
@@ -73,7 +73,6 @@ import { emissionsError, trendLabel } from '@/lib/emissions-view';
 import {
   VOID_REASON_MAX_LENGTH,
   canOfferVoid,
-  entityLabel,
   voidConsequence,
   voidReasonError,
   voidSuccessMessage,

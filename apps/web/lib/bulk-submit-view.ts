@@ -19,7 +19,6 @@ import { formatNumber } from '@/lib/i18n/number';
 import type { ViewCopy } from '@/lib/i18n/view-translator';
 import type { ErrorDescription } from '@/lib/i18n/errors';
 import type { RecordWords } from '@/lib/vocabulary';
-import enErrors from '@/messages/en/errors.json';
 
 /**
  * The client half of bulk submit: which imported rows can even be sent, what
@@ -31,10 +30,6 @@ import enErrors from '@/messages/en/errors.json';
  */
 
 export { BULK_SUBMIT_MAX_IDS, needsEvidenceBeforeSubmit } from '@/lib/types';
-
-/** What each refusal is called on screen. Exhaustive, so a new code is a
- *  compile error here rather than a blank label in front of a user. */
-export const SUBMIT_ISSUE_LABEL: Record<BulkSubmitIssueCode, string> = enErrors.bulkIssues;
 
 /** The `bulkSubmit` catalogue keys this module words its sentences with. */
 export type BulkSubmitKey =

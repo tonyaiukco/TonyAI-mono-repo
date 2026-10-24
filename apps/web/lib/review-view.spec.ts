@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { daysSince, waitingLabel } from './review-view';
+import { daysSince, waitingLabel as waitingLabelWith } from './review-view';
+import { copyFor } from '@/lib/i18n/testing';
+
+const waitingLabel = (iso: string | null, now?: number) => waitingLabelWith(iso, copyFor('review'), now);
 
 /**
  * The review queue's waiting column. It is the only number on that screen a
@@ -81,6 +84,13 @@ describe('waitingLabel', () => {
     // the seed writes records straight to `approved` without submitting them.
     expect(waitingLabel(null, NOW)).toBe('—');
     expect(waitingLabel('not a date', NOW)).toBe('—');
+  });
+
+  it('reads in Turkish, its count grouped', () => {
+    expect(waitingLabelWith('2026-08-26T13:00:00.000Z', copyFor('review', 'tr'), NOW)).toBe('1 g');
+    expect(waitingLabelWith('2023-08-28T12:00:00.000Z', copyFor('review', 'tr'), NOW)).toBe('1.096 g');
+    expect(waitingLabelWith('2023-08-28T12:00:00.000Z', copyFor('review'), NOW)).toBe('1,096d');
+    expect(waitingLabelWith(null, copyFor('review', 'tr'), NOW)).toBe('—');
   });
 });
 

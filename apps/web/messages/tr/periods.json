@@ -22,5 +22,10 @@
     "Q3": "3. çeyrek",
     "Q4": "4. çeyrek",
     "Annual": "Yıllık"
+  },
+  "granularityInline": {
+    "monthly": "aylık",
+    "quarterly": "çeyreklik",
+    "annual": "yıllık"
   }
 }
