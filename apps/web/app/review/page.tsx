@@ -267,10 +267,15 @@ export default function ReviewPage() {
       try {
         const first = await readEvidencePage(recordId);
         if (selectedId.current !== recordId) return;
+        setEvidenceError(false);
         setEvidence(first.items);
         setEvidenceCursor(first.nextCursor);
       } catch {
-        if (selectedId.current === recordId) setEvidenceError(true);
+        if (selectedId.current !== recordId) return;
+        // The error state's Retry reloads the record; no stale cursor is left
+        // behind a second "load more" (Codex P3 on the re-check).
+        setEvidenceCursor(null);
+        setEvidenceError(true);
       }
     }
   }
@@ -803,7 +808,7 @@ export default function ReviewPage() {
                   </ul>
                 )}
                 <LoadMoreButton
-                  hasMore={evidence !== null && evidenceCursor !== null}
+                  hasMore={evidence !== null && evidenceCursor !== null && !evidenceError}
                   loading={false}
                   onClick={() => void loadMoreEvidence()}
                   label="Load more files"

@@ -146,3 +146,52 @@ test('review evidence starts again from its first page when a cursor is refused 
   await expect(sheet.getByTestId('review-evidence-load-more')).toHaveCount(0);
   expect(calls).toEqual(['first', 'stale-cursor', 'first']);
 });
+
+test('a failed evidence restart shows the error, offers no stale Load more, and Retry recovers it (re-check P3)', async ({ page, request }) => {
+  const id = await pending(request, 'Q4');
+  const calls: string[] = [];
+  await page.route((url) => url.pathname.endsWith(`/activity-records/${id}/evidence`), async (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    calls.push(cursor ?? 'first');
+    if (calls.length === 1) {
+      return route.fulfill({
+        headers: CORS,
+        json: {
+          items: [{
+            id: '00000000-0000-4000-8000-0000000000f3', subsidiaryId: SUB.gas, fileName: 'stale-page.pdf',
+            mimeType: 'application/pdf', sizeBytes: 4, uploadedBy: '00000000-0000-4000-8000-0000000000f2',
+            createdAt: new Date().toISOString(),
+            linkedRecords: [{ id, category: 'Natural Gas', reportingYear: YEAR, periodValue: 'Q4', locationName: null, status: 'submitted' }],
+          }],
+          limit: 50,
+          nextCursor: 'stale-cursor',
+        },
+      });
+    }
+    if (cursor) {
+      return route.fulfill({ status: 400, headers: CORS, json: { statusCode: 400, code: 'validation_failed', message: ['cursor is invalid'] } });
+    }
+    // The restart itself fails once; Retry then reads the real first page.
+    if (calls.length === 3) {
+      return route.fulfill({ status: 500, headers: CORS, json: { statusCode: 500, code: 'internal_error', message: 'Simulated outage' } });
+    }
+    return route.continue();
+  });
+
+  const gasName = await legalName(request, SUB.gas);
+  await login(page, ADMIN_EMAIL);
+  await page.goto('/review');
+  await page.locator('table tbody tr').filter({ hasText: `Q4 ${YEAR}` }).filter({ hasText: gasName }).click();
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByText('stale-page.pdf')).toBeVisible();
+
+  await sheet.getByTestId('review-evidence-load-more').click();
+  await expect(sheet.getByText(/Could not load the evidence for this record/)).toBeVisible();
+  // No Load more is left to resend a cursor the API refused.
+  await expect(sheet.getByTestId('review-evidence-load-more')).toHaveCount(0);
+
+  await sheet.getByRole('button', { name: 'Retry' }).click();
+  await expect(sheet.getByText('sample-invoice.pdf')).toBeVisible();
+  await expect(sheet.getByText(/Could not load the evidence for this record/)).toHaveCount(0);
+  expect(calls).toEqual(['first', 'stale-cursor', 'first', 'first']);
+});
