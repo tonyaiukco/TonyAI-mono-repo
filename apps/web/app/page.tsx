@@ -244,6 +244,8 @@ function CarbonDashboardInner() {
     () => (matrix ? matrixToSubsidiaries(matrix) : []),
     [matrix],
   );
+  // Scope 1 + 2 is not covered by a Scope 3 selection: the cards and the chart say so, never 0.
+  const scope3Only = !!context && selectsScope3Only(context, (c) => CATEGORY_SCOPE_MAP[c as Category]);
   // The card's locations are the selection's: with one subsidiary selected,
   // GET /kpi's total for every accessible subsidiary would sit beside
   // "1 company". Both count every location a subsidiary owns.
@@ -517,7 +519,7 @@ function CarbonDashboardInner() {
                 <KPICards
                   data={emissionsKpiData}
                   reportingYear={matrix?.reportingYear ?? null}
-                  scope3Only={!!context && selectsScope3Only(context, (c) => CATEGORY_SCOPE_MAP[c as Category])}
+                  scope3Only={scope3Only}
                   byLocationCount={
                     matrix?.rows.filter(
                       (r) => r.trackingGranularity === 'location',
@@ -543,7 +545,7 @@ function CarbonDashboardInner() {
                     <AlertsPanel alerts={liveAlerts} reportingYear={matrix?.reportingYear ?? null} />
                   </div>
                   <div className="lg:col-span-2">
-                    <EmissionsCharts subsidiaries={matrixSubsidiaries} />
+                    <EmissionsCharts subsidiaries={matrixSubsidiaries} notCovered={scope3Only} />
                   </div>
                 </div>
               </div>

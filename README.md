@@ -1923,9 +1923,11 @@ The dashboard's figure is **data entry progress**, never coverage, with the
 same coverage card beside it, and its Total is Scope 1 + 2 as every report's
 (Scope 3 on its own card, "Not covered — outside the total") — so are each
 subsidiary's figure in the table, the bar chart and the detail drawer
-(`scope12Total`), and a Scope 3 selection reads "Not covered", never 0. A
-coverage read refused for capacity is retried once (`lib/report-preview.ts`),
-then the card says the coverage is unavailable — never left out. Data Entry
+(`scope12Total`), and a Scope 3 selection reads "Not covered", never 0 —
+on the cards, the chart and a subsidiary's drawer. A coverage read refused
+for capacity is retried once when the server's `Retry-After` is short
+(`lib/report-preview.ts`; a longer one is not retried early), then the card
+says the coverage is unavailable — never left out. Data Entry
 shows the selected subsidiary's coverage card beside the invoice panel; a
 data_entry user granted part of an organisation whose boundary declares other
 subsidiaries reads `not_readable` there — the expected answer (Decisions

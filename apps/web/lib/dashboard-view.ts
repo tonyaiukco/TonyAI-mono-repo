@@ -21,9 +21,15 @@ import type {
  * (LP4-03 K4). The row's own `totalTCo2e` also sums its Scope 3 cells, so the
  * table, the bar chart and the detail drawer would otherwise add up to more
  * than the dashboard's Total (`architect` P1 on LP4-03 PR B).
+ *
+ * `null` when the row holds no Scope 1 or 2 cell — the matrix keeps only the
+ * selection's categories, so a Scope 3 selection excluded them: not covered,
+ * never a measured 0 (Codex B9 P2-2 on PR B).
  */
-export function scope12Total(row: TrackingMatrixRow): number {
-  return row.cells.reduce((sum, cell) => (cell.scope === 3 ? sum : sum + (cell.tCo2e ?? 0)), 0);
+export function scope12Total(row: TrackingMatrixRow): number | null {
+  const covered = row.cells.filter((cell) => cell.scope !== 3);
+  if (covered.length === 0) return null;
+  return covered.reduce((sum, cell) => sum + (cell.tCo2e ?? 0), 0);
 }
 
 function rowToViewModel(row: TrackingMatrixRow): Subsidiary {
@@ -48,7 +54,9 @@ function rowToViewModel(row: TrackingMatrixRow): Subsidiary {
     name: row.subsidiaryName,
     shortName: row.subsidiaryName,
     sector: row.sector ?? "—",
-    totalEmissions: scope12Total(row),
+    // 0 for a row the selection leaves uncovered: the chart is told so on its
+    // own (`notCovered`) and draws no bar at all.
+    totalEmissions: scope12Total(row) ?? 0,
     completionRate: Math.round((row.completeCount / row.categoryCount) * 100),
     categories,
   };

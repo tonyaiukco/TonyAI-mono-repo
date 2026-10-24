@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { CoverageCard, CoverageUnavailable } from '@/components/reports/coverage-card';
 import { withPreviewRetry } from '@/lib/report-preview';
+import { Skeleton } from '@/components/ui/skeleton';
 import type { ReportLiveCoverage } from '@/lib/types';
 
 /**
@@ -26,9 +27,8 @@ export function BoundaryCoverage({
   reportingYear: number;
   refreshKey: number;
 }) {
-  // Kept with the subsidiary it describes: a switch bumps `refreshKey` only once
-  // the new records load, so until then (or for good, if they fail) the old
-  // subsidiary's card must not stand under the new one's header (`qa-auditor` P2-2).
+  // Kept with the subsidiary it describes, so the old subsidiary's card never
+  // stands under the new one's header (`qa-auditor` P2-2).
   const [read, setRead] = useState<{ subsidiaryId: string; coverage: ReportLiveCoverage | 'unavailable' } | null>(null);
   const coverage = read?.subsidiaryId === subsidiaryId ? read.coverage : null;
 
@@ -44,12 +44,14 @@ export function BoundaryCoverage({
     return () => {
       cancelled = true;
     };
-    // `refreshKey` alone drives the refetch, as the invoice panel's (a
-    // subsidiary switch bumps it too).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reportingYear, refreshKey]);
+    // A subsidiary switch reads at once — not only when `refreshKey` follows
+    // it, which happens only once the new records load: a failed records read
+    // left the card absent for good (Codex B9 P2-1 on PR B). A save still
+    // refreshes through `refreshKey`.
+  }, [reportingYear, subsidiaryId, refreshKey]);
 
-  if (!subsidiaryId || coverage === null) return null;
+  if (!subsidiaryId) return null;
+  if (coverage === null) return <Skeleton className="h-20 w-full" data-testid="coverage-loading" />;
   if (coverage === 'unavailable') return <CoverageUnavailable />;
   return <CoverageCard coverage={coverage} year={reportingYear} />;
 }

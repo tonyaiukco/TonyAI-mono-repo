@@ -107,6 +107,14 @@ describe('matrixToSubsidiaries', () => {
     expect(matrixToSubsidiaries(matrix([r]))[0].totalEmissions).toBeCloseTo(12.4);
   });
 
+  it('calls a row with no Scope 1 or 2 cell not covered (null), never a measured 0', () => {
+    // A Scope 3 selection: the matrix keeps only its categories.
+    const r = row({ cells: [cell({ category: 'Business Travel', scope: 3, tCo2e: 40 })] });
+    expect(scope12Total(r)).toBeNull();
+    // A covered row whose cells have no figure yet is still a Scope 1 + 2 row.
+    expect(scope12Total(row({ cells: [cell({ tCo2e: null })] }))).toBe(0);
+  });
+
   it('falls back to an em dash rather than printing "null" as an owner', () => {
     const [view] = matrixToSubsidiaries(matrix([row({ designatedPerson: null })]));
     expect(view.categories[0].responsible).toBe('—');

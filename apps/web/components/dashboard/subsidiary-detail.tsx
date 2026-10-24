@@ -11,6 +11,7 @@ import type { Category, DataStatus, TrackingMatrixRow } from '@/lib/types';
 import { InvoiceCoverageGrid } from './invoice-coverage-grid';
 import { reviewBadge } from '@/lib/completeness-view';
 import { scope12Total } from '@/lib/dashboard-view';
+import { useTranslations } from 'use-intl';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -95,9 +96,12 @@ const statusConfig: Record<DataStatus, {
 };
 
 export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter = false, onSlotClick }: SubsidiaryDetailProps) {
+  const tDashboard = useTranslations('dashboard');
   if (!row) return null;
 
   const completionRate = Math.round((row.completeCount / row.categoryCount) * 100);
+  // Not covered (a Scope 3 selection) reads as a word, never 0 tCO₂e.
+  const total = scope12Total(row);
   const totalCalculated = row.cells.filter((c) => c.tCo2e !== null).length;
   const byLocation = row.trackingGranularity === 'location';
 
@@ -153,10 +157,16 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                   <Factory className="h-4 w-4" />
                   <span className="text-xs">Scope 1 + 2 total</span>
                 </div>
-                <p className="mt-1.5 text-lg font-semibold text-foreground font-mono">
-                  {scope12Total(row).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                  <span className="ml-1 text-xs font-normal text-muted-foreground font-sans">tCO₂e</span>
-                </p>
+                {total === null ? (
+                  <p className="mt-1.5 text-lg font-semibold text-muted-foreground" data-testid="drawer-not-covered">
+                    {tDashboard('notCovered')}
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-lg font-semibold text-foreground font-mono">
+                    {total.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                    <span className="ml-1 text-xs font-normal text-muted-foreground font-sans">tCO₂e</span>
+                  </p>
+                )}
               </div>
               <div className="rounded-xl border border-border bg-secondary/50 p-4">
                 <div className="flex items-center gap-2 text-muted-foreground">

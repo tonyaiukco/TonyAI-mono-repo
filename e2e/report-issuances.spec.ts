@@ -139,6 +139,11 @@ test('the dashboard reads "Not covered" for a Scope 3 selection, and its total i
   await login(page, ADMIN_EMAIL);
   await page.goto(`/?year=${YEAR}&subsidiaryId=all&scope=3&category=all`);
   await expect(page.getByTestId('kpi-not-covered')).toHaveCount(3);
+  // The chart and a subsidiary's drawer say so too — no bar or total of 0 (Codex B9 P2-2).
+  await expect(page.getByTestId('chart-not-covered')).toBeVisible();
+  await page.getByRole('button', { name: /TonyAI Energy/ }).first().click();
+  await expect(page.getByRole('dialog').getByTestId('drawer-not-covered')).toHaveText('Not covered');
+  await page.keyboard.press('Escape');
   await page.goto(`/?year=${YEAR}&subsidiaryId=all&scope=all&category=all`);
   await expect(page.getByText('Scope 1 + 2 total').first()).toBeVisible();
   await expect(page.getByTestId('kpi-not-covered')).toHaveCount(0);
