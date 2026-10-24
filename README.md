@@ -85,6 +85,7 @@ TonyAI is a **B2B SaaS platform** that lets large holding companies collect, val
 | Subsidiary control panel at `/subsidiaries/[id]` (WP16) — detail, reporting contact, locations managed in place, and a dependents card that explains a refused delete in the API's own words. The geography change is confirmed and states what does **not** move (committed records keep their factor snapshot) | ✅ |
 | TR/EN foundation and stable error codes (LP3-01) — `use-intl` catalogues, the user's language saved to the profile, locale-aware numeric input on Data Entry, a `code` on every API error — see [Localisation and error codes](#localisation-and-error-codes); the remaining screens are LP4-04 | ✅ foundation |
 | Onboarding and the user lifecycle (LP4-01) — the operator CLI provisions an organisation and its first administrator (`pnpm onboarding`, D18) and offboards one (K6); a `super_admin` invites, re-sends, changes roles and subsidiary access and disables/enables accounts at `/users`; invitation and password-reset emails in TR/EN sent by the API (mailpit locally); a disabled account is refused on its next request (D19). See [Account lifecycle](#account-lifecycle-lp4-01) | ✅ local; staging email waits on LP2-04 |
+| Inventory boundary editor (LP4-03 PR C) — `/inventory-boundary` declares a year's boundary version by version: each subsidiary's months, sites, attribution, decisions and named sources, refusals worded on their fields, gaps shown, confirmation and copies; super_admin writes, every other role reads | ✅ |
 | Dashboard matrix drill-in (WP7) — a cell opens Data Entry for that subsidiary **and** category, reopening the existing record when there is one; the grid is scoped to one reporting year | ✅ |
 
 **What's proven by tests today:** an `admin` sees all 5 seeded subsidiaries, a `data_entry` user sees only their 2, non‑admins are blocked from writes (HTTP 403), unauthenticated requests are rejected (HTTP 401), and every mutation writes an immutable `audit_log` row — verified at the API layer **and** the database (RLS) layer.
@@ -1485,7 +1486,7 @@ calculation and its releases' standing now, and recalculates nothing
 (`factor-lookup.single-source.spec.ts`) lists every other read of the library's
 rows — the catalogue, the loader's re-read, the seed's accepted second copy —
 and fails on a new one. Issuance with its storage recovery (PR D) and the
-editor's screen (LP4-03) are later PRs; the routes read through their own
+editor's screen (LP4-03 PR C, "The boundary editor") came later; the routes read through their own
 reader (below), which answers an empty version and a data_entry user's part —
 the capture's reader reads none.
 
@@ -1495,7 +1496,7 @@ contract — the request and response types
 to them (`apps/api/src/inventory-boundary/dto/`), five error codes and the audit
 taxonomy — and the routes and their service
 (`apps/api/src/inventory-boundary/inventory-boundaries.{controller,service}.ts`);
-the screen's `api.ts` functions land with it (LP4-03). The routes, under `/api/v1`:
+the screen's `api.ts` functions came with LP4-03 (the list in PR B, the rest in PR C). The routes, under `/api/v1`:
 
 | Method | Route | Does |
 | --- | --- | --- |
@@ -1944,7 +1945,46 @@ drives capture → check → issue → the three downloads through the UI on a y
 no other spec reads (2021): a frozen version, a dataset and an issuance are
 never deleted, so it declares a new version each run.
 
-Still LP4-03's (PR C): the boundary editor.
+**The boundary editor (LP4-03 PR C; Decisions 2026-10-24, D1–D10).**
+`/inventory-boundary?year=` (sidebar "Inventory Boundary"; the coverage card
+and the Issued tab link to it — "Declare or edit the boundary" for a
+super_admin, "View the boundary" for every other role) lists the year's
+versions with their state — open, confirmed, or frozen unconfirmed by a
+capture — and, for the selected one, each subsidiary (named as the version
+names it: the trading name, else the legal one — live while open, frozen
+once frozen): declared or not, its months, sites, sources and gaps. A super_admin starts a version (empty, a
+copy of the selected frozen one, or of the previous year's newest when the
+year has none), declares, edits or removes a subsidiary, confirms the open
+version (the dialog names the undeclared subsidiaries a confirmation leaves
+out and is disabled while the version is empty or has gaps) and deletes it;
+every other role reads, a data_entry user only its granted subsidiaries'
+part, and a frozen version is read-only for everyone. The declaration form
+(`components/inventory-boundary/declaration-editor.tsx`) holds every field
+the PUT takes — months; sites (each with its months); per category the
+attribution (company or sites, and a cadence that is never defaulted) and a
+decision per entity, with its reason; named sources (mapped to a category
+and activity type, or unsupported with its reason and scope; included with
+an evidence cadence, or not with a reason). `lib/inventory-boundary-form.ts`
+reads a subsidiary's declaration from the snapshot and writes the PUT body
+back losslessly (a body entered through the API is shown and resent as it
+is), and words on its field every refusal the API would answer
+`validation_failed` (the server stays the authority; what it stores as a gap
+it reports after the save). The API's last write wins, so a save first
+re-reads the version and refuses — "changed by someone else" — when that
+subsidiary's declaration moved since the form opened, and a confirmation
+first re-reads the whole version and refuses when any declaration, name or
+geography it would freeze differs from what the screen shows (checks, not
+atomic preconditions: "LP3-04 write-path contract follow-ups" (1)). A write
+that answers after the user has moved to another year or version is not
+shown over it. Copy in the
+`boundary` catalogue (TR/EN); the client calls are `getInventoryBoundary`,
+`createInventoryBoundary`, `putInventoryBoundarySubsidiary`,
+`deleteInventoryBoundarySubsidiary`, `confirmInventoryBoundary` and
+`deleteInventoryBoundary`. `e2e/inventory-boundary-editor.spec.ts` declares,
+is refused, resolves the gaps and confirms through the UI, copies, meets a
+concurrent change (to a save and to a confirmation) and deletes, and reads
+as a consultant and a data_entry
+user, on a year no other spec reads (2028; each run confirms one version).
 
 ## Localisation and error codes
 

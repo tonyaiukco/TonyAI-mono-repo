@@ -3,6 +3,7 @@
 import { useId } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
+import { BoundaryLink } from '@/components/inventory-boundary/boundary-link';
 import { formatNumber } from '@/lib/i18n/number';
 import { coverageLines, COVERAGE_GAP_KEY, type Line } from '@/lib/report-coverage-view';
 import type { Locale, ReportLiveCoverage } from '@/lib/types';
@@ -92,6 +93,7 @@ export function CoverageCard({
           ))}
         </ul>
       )}
+      <BoundaryLink year={year} />
     </section>
   );
 }

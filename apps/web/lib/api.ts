@@ -1,7 +1,10 @@
 import type {
   ActivityRecordDTO,
   CaptureReportDatasetRequest,
+  CreateInventoryBoundaryRequest,
+  InventoryBoundaryVersionDTO,
   InventoryBoundaryVersionSummary,
+  PutInventoryBoundarySubsidiaryRequest,
   IssueReportRequest,
   ReportDatasetList,
   ReportDatasetSummary,
@@ -361,12 +364,34 @@ async function downloadIssuance(issuanceId: string, format: IssuedFileFormat): P
 export type IssuedFileFormat = "pdf" | "xlsx" | "csv";
 
 export const api = {
-  // LP4-03 PR B: the issued side of Reports — boundary versions, datasets,
-  // the issuance preview and issue, the issuance list and its files. Every
-  // write and every dataset-sized read takes the EXPORT quota (5 a minute):
-  // call them on a user's action, never per row.
+  // LP4-03 PR C: the inventory boundary — a year's versions and one version's
+  // declarations. Reads take the READ quota, writes the WRITE one; every write
+  // is super_admin's and only an open version takes one (a frozen version
+  // answers `boundary_frozen`, so new facts mean a new version).
   listInventoryBoundaries: (reportingYear: number) =>
     apiFetch<InventoryBoundaryVersionSummary[]>(`/inventory-boundaries${boundedQuery({ reportingYear }, ["reportingYear"])}`),
+  getInventoryBoundary: (id: string) =>
+    apiFetch<InventoryBoundaryVersionDTO>(`/inventory-boundaries/${encodeURIComponent(id)}`),
+  createInventoryBoundary: (body: CreateInventoryBoundaryRequest) =>
+    apiFetch<InventoryBoundaryVersionDTO>("/inventory-boundaries", { method: "POST", body: JSON.stringify(body) }),
+  putInventoryBoundarySubsidiary: (id: string, subsidiaryId: string, body: PutInventoryBoundarySubsidiaryRequest) =>
+    apiFetch<InventoryBoundaryVersionDTO>(
+      `/inventory-boundaries/${encodeURIComponent(id)}/subsidiaries/${encodeURIComponent(subsidiaryId)}`,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  deleteInventoryBoundarySubsidiary: (id: string, subsidiaryId: string) =>
+    apiFetch<InventoryBoundaryVersionDTO>(
+      `/inventory-boundaries/${encodeURIComponent(id)}/subsidiaries/${encodeURIComponent(subsidiaryId)}`,
+      { method: "DELETE" },
+    ),
+  confirmInventoryBoundary: (id: string) =>
+    apiFetch<InventoryBoundaryVersionDTO>(`/inventory-boundaries/${encodeURIComponent(id)}/confirm`, { method: "POST" }),
+  deleteInventoryBoundary: (id: string) =>
+    apiFetch<void>(`/inventory-boundaries/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // LP4-03 PR B: the issued side of Reports — datasets, the issuance preview
+  // and issue, the issuance list and its files. Every write and every
+  // dataset-sized read takes the EXPORT quota (5 a minute): call them on a
+  // user's action, never per row.
   listReportDatasets: (year: number) =>
     apiFetch<ReportDatasetList>(`/report-datasets${boundedQuery({ year }, ["year"])}`),
   captureReportDataset: (body: CaptureReportDatasetRequest) =>

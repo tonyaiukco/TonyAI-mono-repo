@@ -1,0 +1,192 @@
+{
+  "title": "Inventory boundary",
+  "subtitle": "The subsidiaries, sites, categories and named sources a year's inventory covers",
+  "readOnly": "Only a super admin can declare, confirm or delete a boundary. You can view it.",
+  "grantedView": "You see only the subsidiaries you have access to; any other subsidiary this version declares is not shown.",
+  "openExists": "Version {version} is open. Edit it, or delete it, before you start another.",
+  "versions": {
+    "title": "Versions for {year}",
+    "label": "Version {version}",
+    "labelWithYear": "Version {version} · {year}",
+    "empty": "No boundary has been declared for {year}. Start a version to declare one.",
+    "emptyReader": "No boundary you can read has been declared for {year}.",
+    "failed": "The versions could not be loaded.",
+    "retry": "Retry",
+    "column": {
+      "version": "Version",
+      "state": "State",
+      "created": "Created",
+      "decided": "Confirmed"
+    }
+  },
+  "state": {
+    "open": "Open",
+    "confirmed": "Confirmed",
+    "frozenUnconfirmed": "Frozen, not confirmed"
+  },
+  "stateNote": {
+    "open": "Open: it can be edited, then confirmed or deleted. A report captured from it freezes it without confirming it.",
+    "confirmed": "Confirmed and frozen: it takes no change. New facts need a new version.",
+    "frozenUnconfirmed": "Frozen by a report capture without being confirmed: it takes no change and cannot be confirmed. Start a new version from it to confirm."
+  },
+  "actions": {
+    "copySelected": "New version from version {version}",
+    "copyPrevious": "Copy {year} version {version}",
+    "startEmpty": "Start an empty version",
+    "confirm": "Confirm version",
+    "delete": "Delete version",
+    "declare": "Declare",
+    "edit": "Edit",
+    "view": "View",
+    "remove": "Remove",
+    "declareFor": "Declare {name}",
+    "editFor": "Edit {name}",
+    "viewFor": "View {name}",
+    "removeFor": "Remove {name}"
+  },
+  "summary": {
+    "declared": "{declared} of {total} subsidiaries declared",
+    "gaps": "Gaps: {count}",
+    "noGaps": "No gaps"
+  },
+  "subsidiaries": {
+    "empty": "No subsidiaries to show.",
+    "notDeclared": "Not declared",
+    "monthRange": "{first} – {last}",
+    "column": {
+      "name": "Subsidiary",
+      "months": "Months",
+      "sites": "Sites",
+      "sources": "Sources",
+      "gaps": "Gaps",
+      "actions": "Actions"
+    },
+    "status": {
+      "inactive": "Inactive",
+      "pending": "Pending"
+    }
+  },
+  "toast": {
+    "created": "Version {version} started.",
+    "confirmed": "Version {version} confirmed.",
+    "deleted": "Version {version} deleted.",
+    "removed": "{name} removed from the version.",
+    "saved": "{name} saved.",
+    "savedWithGaps": "Gaps to resolve before the version can be confirmed: {count}",
+    "frozenElsewhere": "This version was frozen in the meantime; it takes no change.",
+    "changedElsewhere": "{name} was changed by someone else after you opened it. Open it again and make your change.",
+    "versionChanged": "Version {version} was changed by someone else while you looked at it. Review it again before you confirm.",
+    "fixIssues": "Problems to fix before saving: {count}"
+  },
+  "confirmDialog": {
+    "title": "Confirm version {version}?",
+    "body": "Confirming freezes the version for good: it can no longer be edited or deleted, and a final report can be issued from it.",
+    "undeclared": "Not declared, so outside the inventory: {names}",
+    "blockedEmpty": "Declare at least one subsidiary first.",
+    "blockedGaps": "Resolve the gaps first: {count}",
+    "cancel": "Cancel",
+    "confirm": "Confirm"
+  },
+  "deleteDialog": {
+    "title": "Delete version {version}?",
+    "body": "The open version and every declaration in it are deleted. This cannot be undone.",
+    "cancel": "Cancel",
+    "confirm": "Delete"
+  },
+  "removeDialog": {
+    "title": "Remove {name}?",
+    "body": "{name}'s declaration is removed from this version.",
+    "cancel": "Cancel",
+    "confirm": "Remove"
+  },
+  "gaps": {
+    "saved": "Gaps in the saved declaration",
+    "line": "{label} — {where}",
+    "lineWithSources": "{label} — {where}: {sources}"
+  },
+  "link": {
+    "edit": "Declare or edit the boundary",
+    "view": "View the boundary"
+  },
+  "editor": {
+    "title": "{name} — version {version}",
+    "description": "The months, sites, categories and named sources this subsidiary's inventory covers.",
+    "readOnly": "This declaration is read-only.",
+    "company": "Company",
+    "choose": "Choose…",
+    "months": "Months in the inventory",
+    "firstMonth": "First month",
+    "lastMonth": "Last month",
+    "sites": "Sites",
+    "sitesHint": "A declared site is an entity of the inventory. Removing one removes its decisions and sources.",
+    "noLocations": "This subsidiary has no locations.",
+    "noSitesDeclared": "No site is declared.",
+    "siteFirstMonth": "First month at {site}",
+    "siteLastMonth": "Last month at {site}",
+    "categories": "Categories",
+    "categoriesHint": "For each category, choose whether it is attributed to the company or to its sites and how often it is reported, then decide for each entity whether it is included.",
+    "level": "{category}: attributed to",
+    "levelNone": "Not decided",
+    "levels": {
+      "company": "The company",
+      "sites": "Its sites"
+    },
+    "cadence": "{category}: reported",
+    "notSelected": "not used by this attribution",
+    "decision": "{category} at {entity}",
+    "cellNone": "No decision",
+    "applicability": {
+      "included": "Included",
+      "excluded": "Excluded",
+      "undetermined": "Undetermined"
+    },
+    "reason": "Reason",
+    "reasonFor": "Reason for {category} at {entity}",
+    "sources": "Named sources",
+    "sourcesHint": "A meter, invoice or asset the inventory counts or names as excluded. An included source needs its category's attribution first.",
+    "addSource": "Add source",
+    "noSources": "No named sources.",
+    "sourceName": "Name",
+    "sourceNameFor": "Name of source {n}",
+    "sourceEntityFor": "Entity of source {n}",
+    "removeSourceFor": "Remove source {n}",
+    "mappingFor": "Mapping of source {n}",
+    "mappings": {
+      "mapped": "A category",
+      "unsupported": "Unsupported"
+    },
+    "categoryFor": "Category of source {n}",
+    "activityTypeFor": "Activity type of source {n}",
+    "unsupportedReason": "Why it maps to no category",
+    "unsupportedReasonFor": "Why source {n} maps to no category",
+    "scopeFor": "Scope of source {n}",
+    "scope1": "Scope 1",
+    "scope2": "Scope 2",
+    "sourceDecisionFor": "Decision for source {n}",
+    "sourceCadenceFor": "How often source {n} is reported",
+    "sourceReasonFor": "Reason for source {n}",
+    "evidenceFor": "Evidence for source {n}",
+    "evidenceNone": "No evidence",
+    "evidenceCadence": "Evidence: {cadence}",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "close": "Close",
+    "issues": {
+      "monthsOrder": "The last month comes before the first.",
+      "siteMonthsOrder": "The site's last month comes before its first.",
+      "siteOutsideMonths": "A site's months must lie within the subsidiary's.",
+      "siteNotDeclared": "This site is not declared.",
+      "textRequired": "Required.",
+      "textTooLong": "At most {max} characters.",
+      "textInvalid": "Contains a character that is not allowed.",
+      "categoryRequired": "Choose a category.",
+      "activityTypeRequired": "Choose an activity type.",
+      "scopeRequired": "Choose a scope.",
+      "cadenceRequired": "Choose how often it is reported.",
+      "evidenceRequired": "Choose whether it needs evidence, and how often.",
+      "policyRequired": "An included {category} source needs {category}'s attribution above.",
+      "duplicateIncluded": "Another included source has the same entity, category and activity type."
+    }
+  }
+}
