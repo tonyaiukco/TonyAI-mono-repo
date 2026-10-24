@@ -161,10 +161,19 @@ class NativeReadScope(unittest.TestCase):
 
 
 class ReceiverAndPacket(unittest.TestCase):
+    def prepare_packet(self, destination, supplied=None):
+        # The mutation runner copies sources without Git metadata. Mock only
+        # the exact draft HEAD query; source files and payload remain real.
+        with patch.object(packet.subprocess, 'check_output', return_value=b'a' * 40 + b'\n') as head:
+            result = packet.prepare(destination, supplied)
+            head.assert_called_once_with(['git', '-C', str(packet.ROOT), 'rev-parse', 'HEAD'])
+        self.assertEqual(result['source']['base_sha'], 'a' * 40)
+        return result
+
     def test_draft_is_unapproved_source_bound_and_legacy_not_rebound(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / 'packet'
-            p = packet.prepare(root)
+            p = self.prepare_packet(root)
             self.assertIsNone(p['source']['published_sha'])
             self.assertIsNone(p['target'])
             self.assertIsNone(p['custody'])
@@ -184,7 +193,7 @@ class ReceiverAndPacket(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             bundle = root / 'packet'
-            p = packet.prepare(bundle)
+            p = self.prepare_packet(bundle)
             p['source']['published_sha'] = 'a' * 40
             imds = {**IMDS, 'location': 'swedencentral'}
             p['target'] = {'imds': imds, 'connection': {'host': '192.0.2.1', 'user': 'ubuntu'},
@@ -205,7 +214,7 @@ class ReceiverAndPacket(unittest.TestCase):
                            'host_key_sha256': custody['known_hosts_sha256']}
             fresh.write_bytes(encoded(fresh_value))
             final = root / 'final'
-            packet.prepare(final, p)
+            self.prepare_packet(final, p)
             approval = {'action': 'ONE_POLICY_EVIDENCE_COLLECTION', 'attempts': 1,
                 'proposal_sha256': digest((final / 'proposal.json').read_bytes()), 'owner_authorization_reference': 'synthetic only',
                 'fresh_control_plane_readback': str(fresh), 'fresh_control_plane_readback_sha256': digest(fresh.read_bytes())}
