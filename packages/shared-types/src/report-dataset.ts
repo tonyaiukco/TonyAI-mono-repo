@@ -435,6 +435,13 @@ export interface ReportDatasetSummary {
   fingerprint: ReportDatasetFingerprint;
 }
 
+/** `GET /report-datasets?year=` (LP4-03): the year's newest readable
+ * datasets, at most 50, `truncated` when more are readable. */
+export interface ReportDatasetList {
+  items: ReportDatasetSummary[];
+  truncated: boolean;
+}
+
 /** `POST /api/v1/report-issuances` (LP3-04 PR D; Decisions 2026-10-21): issue
  * one retained dataset as a PDF. Its status and gaps derive from the retained
  * dataset alone — never sent; the issuer is the verified token's (E6). A final
