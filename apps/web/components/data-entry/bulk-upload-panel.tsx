@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type {
   BulkSubmitReportDTO,
+  BulkUploadIssueCode,
   BulkUploadReportDTO,
   BulkUploadRowIssue,
 } from "@/lib/types";
@@ -209,8 +210,9 @@ export function BulkUploadPanel({
   if (!canManage) return null;
 
   const summary = report ? summarise(report, tErrors) : null;
-  const errorGroups = report ? groupIssues(report.errors.filter((issue) => issue.code !== "not_processed_deadline"), tErrors("bulkIssues.not_processed_deadline")) : [];
-  const warningGroups = report ? groupIssues(report.warnings, tErrors("bulkIssues.not_processed_deadline")) : [];
+  const issueLabel = (code: BulkUploadIssueCode) => tErrors(`bulkUploadIssues.${code}`);
+  const errorGroups = report ? groupIssues(report.errors.filter((issue) => issue.code !== "not_processed_deadline"), issueLabel) : [];
+  const warningGroups = report ? groupIssues(report.warnings, issueLabel) : [];
   // Only after a real import: a dry run's rows carry no id, by contract.
   const eligible =
     report && !report.dryRun

@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ThrottlerException } from '@nestjs/throttler';
 import {
+  ACTIVITY_VALUE_MAX,
   API_ERROR_PARAMS,
   API_ERROR_STATUS,
   DOMAIN_ERROR_STATUS,
@@ -42,7 +43,17 @@ import {
 import { UploadExpiredError } from '../storage/storage-intents.service';
 import { ReportAlreadyIssuedError, ReportFinalForbiddenError } from '../report-issuances/report-issuances.service';
 import { errorBody, errorCodeOf, QueryTooBroadError, ResourceNotFoundError, toErrorBody } from './api-error';
-import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from './coded-validation.pipe';
+import { plainToInstance } from 'class-transformer';
+import { Max, Min, validateSync, type ValidationError } from 'class-validator';
+import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
+import { UpdateActivityRecordDto } from '../activity-records/dto/update-activity-record.dto';
+import { CalculationInputDto } from '../calculations/dto/calculation-input.dto';
+import {
+  CodedValidationPipe,
+  codedConstraint,
+  failureCode,
+  GLOBAL_VALIDATION_OPTIONS,
+} from './coded-validation.pipe';
 import { ParseUuidParamPipe } from './parse-uuid-param.pipe';
 import {
   AccessRoleMismatchError,
@@ -84,6 +95,12 @@ const PERIOD = { periodValue: 'March', reportingYear: 2025 };
  * answer with its code's status.
  */
 const THROWERS: Record<DomainErrorCode, () => HttpException> = {
+  // The pipe's own factory over the DTO's real failure: an update naming
+  // only an over-bound value (every update field is optional).
+  activity_value_too_large: () =>
+    new CodedValidationPipe(GLOBAL_VALIDATION_OPTIONS).createExceptionFactory()(
+      validateSync(plainToInstance(UpdateActivityRecordDto, { activityValue: ACTIVITY_VALUE_MAX * 2 })),
+    ) as HttpException,
   invalid_id: () => {
     try {
       new ParseUuidParamPipe().transform('nope');
@@ -361,5 +378,130 @@ describe('CodedValidationPipe', () => {
 
   it('accepts a supported locale', async () => {
     await expect(pipe.transform({ language: 'tr' }, meta)).resolves.toMatchObject({ language: 'tr' });
+  });
+});
+
+describe('CodedValidationPipe — a constraint with its own code (LP4-04)', () => {
+  const pipe = new CodedValidationPipe(GLOBAL_VALIDATION_OPTIONS);
+  const CREATE = {
+    subsidiaryId: '22222222-2222-2222-2222-222222220001',
+    reportingYear: 2026,
+    reportingPeriod: 'monthly',
+    periodValue: 'January',
+    category: 'Electricity',
+    activityValue: 1200,
+    activityUnit: 'kWh',
+  };
+  const PREVIEW = { category: 'Electricity', geographyCode: 'UK', reportingYear: 2026, value: 1200, unit: 'kWh' };
+
+  async function refusal(metatype: new () => object, value: unknown) {
+    try {
+      await pipe.transform(value, { type: 'body', metatype });
+    } catch (e) {
+      return send(e).body;
+    }
+    throw new Error('the pipe accepted it');
+  }
+
+  it.each([
+    ['CreateActivityRecordDto', CreateActivityRecordDto, { ...CREATE, activityValue: ACTIVITY_VALUE_MAX + 1 }],
+    ['UpdateActivityRecordDto', UpdateActivityRecordDto, { activityValue: ACTIVITY_VALUE_MAX + 1 }],
+    ['CalculationInputDto', CalculationInputDto, { ...PREVIEW, value: ACTIVITY_VALUE_MAX + 1 }],
+  ])('%s: a value above ACTIVITY_VALUE_MAX alone answers activity_value_too_large', async (_, Dto, body) => {
+    const refused = await refusal(Dto, body);
+    expect(refused.code).toBe('activity_value_too_large');
+    expect(refused.statusCode).toBe(400);
+    // The field's English sentence, as one string like every domain code's.
+    expect(refused.message).toMatch(/^(activityValue|value) must not be greater than 1000000000000$/);
+    expect(refused.params).toBeUndefined();
+  });
+
+  it('accepts the bound itself — only a value past it is refused', async () => {
+    await expect(
+      pipe.transform({ ...CREATE, activityValue: ACTIVITY_VALUE_MAX }, { type: 'body', metatype: CreateActivityRecordDto }),
+    ).resolves.toMatchObject({ activityValue: ACTIVITY_VALUE_MAX });
+    await expect(
+      pipe.transform({ ...PREVIEW, value: ACTIVITY_VALUE_MAX }, { type: 'body', metatype: CalculationInputDto }),
+    ).resolves.toMatchObject({ value: ACTIVITY_VALUE_MAX });
+  });
+
+  it('keeps validation_failed when another field is refused too — one code must not hide the other refusal', async () => {
+    const refused = await refusal(CreateActivityRecordDto, {
+      ...CREATE,
+      activityValue: ACTIVITY_VALUE_MAX + 1,
+      category: 'Nope',
+    });
+    expect(refused.code).toBe('validation_failed');
+  });
+
+  it.each([
+    // The coded field FIRST in declaration order, then after: the answer
+    // must not depend on which failure class-validator lists first.
+    ['the over-bound value before a bad unit', { ...CREATE, activityValue: ACTIVITY_VALUE_MAX + 1, activityUnit: 'furlongs' }],
+    ['a bad year before the over-bound value', { ...CREATE, reportingYear: 1066, activityValue: ACTIVITY_VALUE_MAX + 1 }],
+  ])('keeps validation_failed with %s', async (_, body) => {
+    expect((await refusal(CreateActivityRecordDto, body)).code).toBe('validation_failed');
+  });
+
+  it('keeps validation_failed for a value that fails an uncoded rule as well (a string fails isNumber, min and max)', async () => {
+    expect((await refusal(CreateActivityRecordDto, { ...CREATE, activityValue: '2e12' })).code).toBe('validation_failed');
+  });
+
+  it('keeps validation_failed for a negative value — only the bound is coded', async () => {
+    expect((await refusal(CreateActivityRecordDto, { ...CREATE, activityValue: -1 })).code).toBe('validation_failed');
+  });
+});
+
+describe('failureCode', () => {
+  class Probe {
+    @Min(0)
+    @Max(10, codedConstraint('activity_value_too_large'))
+    v!: unknown;
+  }
+  const failure = (v: unknown): ValidationError => validateSync(plainToInstance(Probe, { v }))[0];
+
+  it('names the code when every failed constraint declares it', () => {
+    expect(failureCode(failure(11))).toBe('activity_value_too_large');
+  });
+
+  it('is null when a failed constraint declares none', () => {
+    expect(failureCode(failure(-1))).toBeNull();
+    expect(failureCode(failure('x'))).toBeNull();
+  });
+
+  it('is null for a failure with nested children or no constraints, and for a context that is not a registry code', () => {
+    // Coded on its own constraints, but with nested failures beneath it.
+    expect(
+      failureCode({
+        property: 'p',
+        constraints: { max: 'too big' },
+        contexts: { max: { code: 'activity_value_too_large' } },
+        children: [failure(-1)],
+      } as ValidationError),
+    ).toBeNull();
+    expect(
+      failureCode({
+        property: 'p',
+        constraints: { max: 'too big' },
+        contexts: { max: { code: 'activity_value_too_large' } },
+        children: [],
+      } as ValidationError),
+    ).toBe('activity_value_too_large');
+    expect(failureCode({ property: 'p', children: [] } as ValidationError)).toBeNull();
+    expect(
+      failureCode({
+        property: 'p',
+        constraints: { max: 'too big' },
+        contexts: { max: { code: 'not_a_code' } },
+      } as ValidationError),
+    ).toBeNull();
+    // An Object.prototype key is not a code.
+    expect(
+      failureCode({
+        property: 'p',
+        constraints: { max: 'too big' },
+        contexts: { max: { code: 'toString' } },
+      } as ValidationError),
+    ).toBeNull();
   });
 });

@@ -49,6 +49,15 @@ attachment), use `supabase-storage` instead.
   REPORTED quantity that enters the inventory. Refuse `''`, `'1,200'`
   (ambiguous across locales), `'1e3'` and `'0x10'`. A strict numeric regex also
   kills `=SUM(A1)` as a type error, with no allow-list and no false positives.
+  A refusal the user can act on gets its own row code, not `invalid`: a comma
+  figure is `wrong_decimal_separator` (`isCommaFigure`), and a DTO constraint
+  declared with `codedConstraint` keeps its code on the row (`rowCodeOf` —
+  `activity_value_too_large`). Add a new code's TR/EN label under
+  `errors.bulkUploadIssues`.
+- **Show what was read (D15).** The preview's accepted row carries the number
+  and unit the write will store (`activityValue`, `storedUnit(activityUnit)`),
+  taken from the validated DTO, never the cell's text — a dot-decimal file's
+  `1.234` must be SEEN as 1.234 before anyone applies it.
   Do **not** fix this with `@Type(() => Number)`: that repairs the CSV case by
   breaking the live HTTP one.
 - **Formula handling is asymmetric.** On parse, flag the row in the report —
@@ -167,7 +176,7 @@ for (const parsed of rows) {
     if ('issue' in mapped) { error(row, mapped.issue); continue; }
     const dto = plainToInstance(CreateXxxDto, mapped.dto);
     const failures = validateSync(dto, { whitelist: true, forbidNonWhitelisted: true });
-    if (failures.length) { error(row, 'invalid', first(failures)); continue; }
+    if (failures.length) { error(row, failures.length === 1 ? rowCodeOf(failures[0]) : 'invalid', failures[0]); continue; }
 
     // Canonicalise BEFORE keying — the stored spelling is the slot's identity.
     // Skip the dedupe when the value names no period; the service's own 400
@@ -180,7 +189,7 @@ for (const parsed of rows) {
     if (storedKeys.has(key)) { error(row, 'duplicate_existing'); continue; }
 
     if (dryRun) { const p = await svc.previewCreate(user, dto); accept(row, null, p); }
-    else        { const r = await svc.create(user, dto);        accept(row, r.id, r); }
+    else        { const r = await svc.create(user, dto);        accept(row, r.id, r); }   // value + unit from r (as stored)
     warnings.push(...rowWarnings);                  // only now: the row exists, or would
   } catch (e) {
     if (e instanceof ForbiddenException) throw e;   // backstop: the role is refused in the audited pre-flight

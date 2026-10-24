@@ -506,3 +506,18 @@ export function strictNumber(raw: string): number | null {
   const value = Number(trimmed);
   return Number.isFinite(value) ? value : null;
 }
+
+/**
+ * A figure written with a comma — `1,5`, `1.234,5`, `1,200` — which
+ * `strictNumber` refuses (LP4-04, D15). Only digits, points and commas, an
+ * optional leading `-`, at least one comma and one digit: what a spreadsheet
+ * in a comma-decimal locale writes. Told apart from other refusals so the row
+ * can say which separator to use, never to read the cell some other way.
+ */
+export function isCommaFigure(raw: string): boolean {
+  const trimmed = raw.trim();
+  // Two linear tests, never `[\d.,]*\d[\d.,]*`: adjacent quantifiers over one
+  // class backtrack quadratically on a failing cell, and a 2 MiB cell would
+  // block the event loop for an hour (security-rls, LP4-04 review).
+  return trimmed.includes(',') && /^-?[\d.,]+$/.test(trimmed) && /\d/.test(trimmed);
+}

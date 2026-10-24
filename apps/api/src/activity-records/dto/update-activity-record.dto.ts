@@ -28,6 +28,7 @@ import {
 import type { Category, ReportingPeriod } from '@tonyai/shared-types';
 import { IsActivityUnit } from '../../calculations/is-activity-unit.decorator';
 import { blankToNull } from '../../common/blank-to-null';
+import { codedConstraint } from '../../common/coded-validation.pipe';
 import { storableUnit } from '../../calculations/storable-unit';
 import { ACTIVITY_TYPE_SHAPE, ACTIVITY_TYPE_SHAPE_MESSAGE } from '../../calculations/activity-type';
 
@@ -88,7 +89,7 @@ export class UpdateActivityRecordDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  @Max(ACTIVITY_VALUE_MAX)
+  @Max(ACTIVITY_VALUE_MAX, codedConstraint('activity_value_too_large'))
   activityValue?: number;
 
   // Whitespace-normalised before it is validated or bounded (`storableUnit`):

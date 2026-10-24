@@ -82,6 +82,8 @@
   "bulkPreview": {
     "title": "Accepted rows",
     "row": "File row",
+    "amount": "Amount read",
+    "readNote": "Numbers in a file are read with a point as the decimal separator: 1.234 means 1.234, not 1,234. Check each amount before you import.",
     "noActivityType": "Not specified"
   },
   "conversionNote": {

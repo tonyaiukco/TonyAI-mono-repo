@@ -12,6 +12,21 @@
     "calculation_stale": "Figure out of date",
     "unexpected": "Could not be submitted"
   },
+  "bulkUploadIssues": {
+    "invalid": "Invalid value",
+    "wrong_decimal_separator": "Comma in a number",
+    "activity_value_too_large": "Value too large",
+    "duplicate_in_file": "Duplicated in this file",
+    "duplicate_existing": "Already recorded",
+    "not_found": "Unknown reporting entity",
+    "no_factor": "No emission factor",
+    "period_locked": "Period closed",
+    "unexpected": "Could not be imported",
+    "not_processed_deadline": "Not processed before the time limit",
+    "formula_lead": "Reads as a formula",
+    "would_block_submit": "Cannot be submitted yet",
+    "evidence_required": "Needs an evidence file"
+  },
   "codes": {
     "bad_request": "The request could not be processed.",
     "validation_failed": "Some of the fields are not valid.",
@@ -23,6 +38,7 @@
     "rate_limited": "Too many requests — wait a minute and try again.",
     "internal_error": "Something went wrong on our side. Try again, and report it if it persists.",
     "invalid_id": "That link or id is not valid.",
+    "activity_value_too_large": "The activity value is too large: enter at most 1,000,000,000,000.",
     "evidence_required": "{category} requires at least one evidence file before submitting.",
     "variance_reason_required": "This value deviates significantly from the historical average — add a variance comment before submitting.",
     "record_create_forbidden": "Your role may not create activity records.",

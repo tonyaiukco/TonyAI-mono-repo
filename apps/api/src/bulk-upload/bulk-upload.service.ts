@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { plainToInstance } from 'class-transformer';
-import { validateSync } from 'class-validator';
+import { validateSync, type ValidationError } from 'class-validator';
 import { ActivityRecordStatus } from '@tonyai/db';
 import {
   BULK_UPLOAD_ALLOWED_EXTENSIONS,
@@ -23,6 +23,7 @@ import {
   type ActivityCalculationSnapshot,
   type BulkImportAuditDiff,
   type BulkUploadAcceptedRow,
+  type BulkUploadErrorCode,
   type BulkUploadColumn,
   type Category,
   type ReportingPeriod,
@@ -44,6 +45,7 @@ import {
   SLOT_HOLDS_UNTYPED_MESSAGE,
 } from '../activity-records/errors';
 import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
+import { storedUnit } from '../calculations/storable-unit';
 import { CreateActivityRecordDto } from '../activity-records/dto/create-activity-record.dto';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -58,8 +60,10 @@ import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
 import { InaccessibleEntityError } from './errors';
 import { QueryTooBroadError } from '../common/api-error';
+import { failureCode } from '../common/coded-validation.pipe';
 import {
   extensionOf,
+  isCommaFigure,
   parseRows,
   strictNumber,
   type ParsedRow,
@@ -76,6 +80,9 @@ import { buildTemplateWorkbook } from './template-workbook';
  * through. Untested on purpose; nothing can reach the branch.
  */
 const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true } as const;
+
+/** The coded DTO constraints a row reports under their own code (LP4-04). */
+const ROW_CODED_CONSTRAINTS = ['activity_value_too_large'] as const satisfies readonly BulkUploadErrorCode[];
 
 /**
  * NUL rather than a printable separator, so that no value can contain the
@@ -432,7 +439,9 @@ export class BulkUploadService {
       out.errors.push({
         row,
         column: this.asColumn(first.property),
-        code: 'invalid',
+        // Its own code only as the record API answers it: the row's one
+        // failure. With two, the code would follow class-validator's order.
+        code: failures.length === 1 ? this.rowCodeOf(first) : 'invalid',
         message:
           Object.values(first.constraints ?? {})[0] ??
           `${first.property} is not valid.`,
@@ -580,10 +589,29 @@ export class BulkUploadService {
       row,
       recordId: created.id,
       ...this.identityOf(dto, created.periodValue),
+      // What the record holds, not what the row sent: the write stores a
+      // double at 16 significant digits, so a formula cell's
+      // 0.30000000000000004 lands as 0.3.
+      activityValue: created.activityValue,
+      activityUnit: created.activityUnit,
       tCo2e: this.figureOf(created.calculation),
       anomalous: created.anomalyFlag,
     });
     out.warnings.push(...rowWarnings);
+  }
+
+  /**
+   * A DTO failure's row code: the code its constraint declares
+   * (`codedConstraint`) when it is one of `ROW_CODED_CONSTRAINTS` — the record
+   * API's `activity_value_too_large` — and `invalid` otherwise. An allow-list,
+   * not "any name the bulk vocabulary shares": `period_locked`, `not_found`
+   * and `no_factor` are in both, meaning different things.
+   */
+  private rowCodeOf(failure: ValidationError): BulkUploadErrorCode {
+    const code = failureCode(failure);
+    return code !== null && (ROW_CODED_CONSTRAINTS as readonly string[]).includes(code)
+      ? (code as BulkUploadErrorCode)
+      : 'invalid';
   }
 
   /**
@@ -1111,6 +1139,8 @@ export class BulkUploadService {
     periodValue: string;
     category: Category;
     activityType: string | null;
+    activityValue: number;
+    activityUnit: string;
   } {
     return {
       subsidiaryId: dto.subsidiaryId,
@@ -1120,6 +1150,11 @@ export class BulkUploadService {
       periodValue: canonicalPeriod,
       category: dto.category,
       activityType: dto.activityType ?? null,
+      // What the row will write (D15): a file's `1.234` reads as 1.234, and a
+      // Turkish user who meant a thousand sees it before applying. An apply
+      // reports the stored record's own value instead.
+      activityValue: dto.activityValue,
+      activityUnit: storedUnit(dto.activityUnit),
     };
   }
 
@@ -1198,6 +1233,17 @@ export class BulkUploadService {
       };
     }
     const activityValue = strictNumber(cells.activityValue);
+    if (activityValue === null && isCommaFigure(cells.activityValue)) {
+      // Refused, never reinterpreted (D15): `1.234,5` and `1,200` are each a
+      // real figure in one locale and a different one in another.
+      return {
+        issue: {
+          column: 'activityValue',
+          code: 'wrong_decimal_separator',
+          message: `"${quoteCallerText(cells.activityValue)}" uses a comma. Write the figure with a point for decimals and no thousands separator, such as 1234.5.`,
+        },
+      };
+    }
     if (activityValue === null) {
       return {
         issue: {

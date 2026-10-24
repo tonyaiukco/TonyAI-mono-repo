@@ -82,6 +82,8 @@
   "bulkPreview": {
     "title": "Kabul edilen satırlar",
     "row": "Dosya satırı",
+    "amount": "Okunan miktar",
+    "readNote": "Dosyadaki sayılarda ondalık ayırıcı noktadır: dosyadaki 1.234, 1,234 olarak okunur (bin iki yüz otuz dört değil). İçe aktarmadan önce her miktarı kontrol edin.",
     "noActivityType": "Belirtilmemiş"
   },
   "conversionNote": {
