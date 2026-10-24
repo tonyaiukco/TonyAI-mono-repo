@@ -1,5 +1,6 @@
 "use client";
 
+import { useLocale, useTranslations } from "use-intl";
 import { canApproveRecord } from "@/lib/record-lifecycle-view";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
@@ -7,12 +8,12 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   FileText,
-  LogOut,
   Paperclip,
   ShieldAlert,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
+import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -56,6 +57,7 @@ import {
 import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { entityLabel } from "@/lib/void-view";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
+import { useRecordWords } from "@/lib/i18n/hooks";
 import { waitingLabel } from "@/lib/review-view";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
@@ -88,6 +90,11 @@ function formatDate(iso: string): string {
 }
 
 export default function ReviewPage() {
+  const tRoles = useTranslations("users");
+  const tAnomaly = useTranslations("anomaly");
+  const tEvidence = useTranslations("evidence");
+  const recordWords = useRecordWords();
+  const locale = useLocale();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
@@ -369,13 +376,10 @@ export default function ReviewPage() {
               <h1 className="text-2xl font-semibold">Review Queue</h1>
               <p className="text-sm text-muted-foreground">
                 Records awaiting a decision
-                {user ? ` · ${user.fullName ?? user.email} (${user.role})` : ""}
+                {user ? ` · ${user.fullName ?? user.email} (${tRoles(`roles.${user.role}`)})` : ""}
               </p>
             </div>
-            <Button variant="outline" onClick={handleLogout} className="gap-2">
-              <LogOut className="h-4 w-4" />
-              Sign out
-            </Button>
+            <SignOutButton onClick={handleLogout} />
           </div>
 
           {!user ? (
@@ -713,13 +717,13 @@ export default function ReviewPage() {
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-1">
                   <p className="flex items-center gap-2 font-medium text-amber-800">
                     <AlertTriangle className="h-4 w-4" />
-                    {anomalyStatement(selected).headline}
+                    {anomalyStatement(selected, tAnomaly, locale).headline}
                   </p>
                   {/* What the verdict was taken against, so a reviewer deciding
                       on the figure is not asked to trust an average nobody
                       shows them. */}
                   <p className="text-xs text-amber-900/80">
-                    {anomalyStatement(selected).detail}
+                    {anomalyStatement(selected, tAnomaly, locale).detail}
                   </p>
                   <p className="text-xs text-amber-900/80">
                     {selected.varianceReason
@@ -733,13 +737,13 @@ export default function ReviewPage() {
                   ran. A reviewer approving on the strength of "nothing was
                   flagged" is the exact failure this states out loud. */}
               {!selected.anomalyFlag &&
-                anomalyStatement(selected).tone === "not_evaluated" && (
+                anomalyStatement(selected, tAnomaly, locale).tone === "not_evaluated" && (
                   <div className="rounded-lg border bg-muted/40 p-3 space-y-1">
                     <p className="font-medium">
-                      {anomalyStatement(selected).headline}
+                      {anomalyStatement(selected, tAnomaly, locale).headline}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {anomalyStatement(selected).detail}
+                      {anomalyStatement(selected, tAnomaly, locale).detail}
                     </p>
                   </div>
                 )}
@@ -783,7 +787,7 @@ export default function ReviewPage() {
                       // reviewer is the control on that: whether one
                       // invoice can honestly evidence every record it is
                       // attached to is theirs to judge, so it is said here.
-                      const shared = sharedWithNote(f, selected.id);
+                      const shared = sharedWithNote(f, selected.id, { t: tEvidence, locale, words: recordWords });
                       return (
                         <li key={f.id}>
                           <button

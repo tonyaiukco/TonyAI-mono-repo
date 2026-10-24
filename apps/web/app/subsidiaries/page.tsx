@@ -1,8 +1,10 @@
 "use client";
 
+import { useTranslations } from "use-intl";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
+import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -40,7 +42,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Building2, CheckCircle2, Clock, Globe, Lock, LogOut, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
+import { Building2, CheckCircle2, Clock, Globe, Lock, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
@@ -73,6 +75,7 @@ const emptyForm = {
 };
 
 export default function SubsidiariesPage() {
+  const tRoles = useTranslations("users");
   const router = useRouter();
   const { user, setUser } = useAuthStore();
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
@@ -244,7 +247,7 @@ export default function SubsidiariesPage() {
               <h1 className="text-2xl font-semibold text-foreground">Subsidiaries</h1>
               <p className="mt-1 text-muted-foreground">
                 Live data from the TonyAI API
-                {user ? ` · ${user.fullName} (${user.role})` : ""}
+                {user ? ` · ${user.fullName} (${tRoles(`roles.${user.role}`)})` : ""}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -254,10 +257,7 @@ export default function SubsidiariesPage() {
                   Add Subsidiary
                 </Button>
               )}
-              <Button variant="outline" onClick={handleLogout} className="gap-2">
-                <LogOut className="h-4 w-4" />
-                Sign out
-              </Button>
+              <SignOutButton onClick={handleLogout} />
             </div>
           </div>
 

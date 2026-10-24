@@ -1,10 +1,12 @@
 "use client";
 
+import { useTranslations } from "use-intl";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, LogOut, ShieldAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
+import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -141,6 +143,7 @@ function summarise(row: AuditLogDTO): string | null {
 }
 
 export default function AuditPage() {
+  const tRoles = useTranslations("users");
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
@@ -235,13 +238,10 @@ export default function AuditPage() {
                     can ever change — user management, when it lands, must be
                     audited too or this line becomes false. */}
                 Append-only record of audited changes
-                {user ? ` · ${user.fullName ?? user.email} (${user.role})` : ""}
+                {user ? ` · ${user.fullName ?? user.email} (${tRoles(`roles.${user.role}`)})` : ""}
               </p>
             </div>
-            <Button variant="outline" onClick={handleLogout} className="gap-2">
-              <LogOut className="h-4 w-4" />
-              Sign out
-            </Button>
+            <SignOutButton onClick={handleLogout} />
           </div>
 
           {forbidden ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "use-intl";
+import { useLocale, useTranslations } from "use-intl";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -59,7 +59,6 @@ import {
   EVIDENCE_MAX_SIZE_BYTES,
   isSubmittable,
   recordActivityTypesFor,
-  WHOLE_COMPANY_ENTITY_LABEL,
 } from "@/lib/types";
 import type {
   ActivityRecordDTO,
@@ -69,6 +68,10 @@ import type {
   BulkSubmitReportDTO,
 } from "@/lib/types";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { useDescribeError, useRecordWords, showErrorToast } from "@/lib/i18n/hooks";
+import { formatNumber } from "@/lib/i18n/number";
+import type { RecordWords } from "@/lib/vocabulary";
+import type { Messages } from "@/messages";
 
 /**
  * The record list beside the Data Entry form.
@@ -89,35 +92,29 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 
 const statusBadge: Record<
   ActivityRecordStatus,
-  { label: string; className: string; icon: typeof CheckCircle2 }
+  { className: string; icon: typeof CheckCircle2 }
 > = {
   draft: {
-    label: "Draft",
     className: "bg-muted text-muted-foreground border-border",
     icon: Clock,
   },
   submitted: {
-    label: "Submitted",
     className: "bg-blue-500/15 text-blue-600 border-blue-500/30",
     icon: Send,
   },
   under_review: {
-    label: "Under review",
     className: "bg-purple-500/15 text-purple-600 border-purple-500/30",
     icon: Clock,
   },
   approved: {
-    label: "Approved",
     className: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30",
     icon: CheckCircle2,
   },
   rejected: {
-    label: "Rejected",
     className: "bg-red-500/15 text-red-600 border-red-500/30",
     icon: XCircle,
   },
   locked: {
-    label: "Locked",
     className: "bg-slate-500/15 text-slate-600 border-slate-500/30",
     icon: CheckCircle2,
   },
@@ -126,17 +123,11 @@ const statusBadge: Record<
   // by an audited void. Red would read as "this went wrong"; `rejected` already owns
   // that colour and means something different.
   voided: {
-    label: "Voided",
     className: "bg-muted text-muted-foreground border-border line-through",
     icon: Ban,
   },
 };
 
-// Its own formatter, which is what `formatTCo2e` is built for — it takes the
-// caller's number style precisely so each screen keeps its own.
-const numberFmt = new Intl.NumberFormat("en-GB", {
-  maximumFractionDigits: 3,
-});
 
 export interface PreviousSubmissionsProps {
   /** The pages loaded so far (LP4-05 PR C), newest first. Each row carries
@@ -167,11 +158,16 @@ export interface PreviousSubmissionsProps {
  * without the type their rows — and their checkboxes' accessible names — would
  * be identical.
  */
-function categoryWithActivity(r: Pick<ActivityRecordDTO, "category" | "activityType">): string {
-  if (!r.activityType) return r.category;
-  const label =
-    recordActivityTypesFor(r.category).find((t) => t.value === r.activityType)?.label ?? r.activityType;
-  return `${r.category} (${label})`;
+function categoryWithActivity(
+  r: Pick<ActivityRecordDTO, "category" | "activityType">,
+  words: RecordWords,
+  activity: (key: `activityTypes.${keyof Messages["dataEntry"]["activityTypes"]}`) => string,
+): string {
+  const category = words.category(r.category);
+  if (!r.activityType) return category;
+  const known = recordActivityTypesFor(r.category).some((type) => type.value === r.activityType);
+  const label = known ? activity(`activityTypes.${r.activityType as keyof Messages["dataEntry"]["activityTypes"]}`) : r.activityType;
+  return `${category} (${label})`;
 }
 
 export function PreviousSubmissions({
@@ -188,6 +184,13 @@ export function PreviousSubmissions({
 }: PreviousSubmissionsProps) {
   const tErrors = useTranslations("errors");
   const t = useTranslations("dataEntry");
+  const tStatus = useTranslations("recordStatus");
+  const tCommon = useTranslations("common");
+  const locale = useLocale();
+  const words = useRecordWords();
+  const describe = useDescribeError();
+  const submitCopy = { t: useTranslations("bulkSubmit"), locale };
+  const evidenceCopy = { t: useTranslations("evidence"), locale, words };
   const [selected, setSelected] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -202,8 +205,9 @@ export function PreviousSubmissions({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { selectableIds, reasonById } = useMemo(
-    () => selectableDrafts(records, user),
-    [records, user],
+    () => selectableDrafts(records, user, submitCopy, words),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the copy follows `locale`/`words`
+    [records, user, locale, words],
   );
   // Selection is by id against a list that refetches under it. Anything no
   // longer selectable — submitted by this very call, or edited in another tab —
@@ -213,11 +217,12 @@ export function PreviousSubmissions({
   // `selectableIds` is already empty when there is no user, so this is the
   // whole condition.
   const showSelection = selectableIds.length > 0;
-  const summary = report ? summariseSubmit(report, tErrors) : null;
+  const summary = report ? summariseSubmit(report, tErrors, submitCopy) : null;
 
   const attach = useMemo(
-    () => attachableRecords(records, user),
-    [records, user],
+    () => attachableRecords(records, user, evidenceCopy),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the copy follows `locale`/`words`
+    [records, user, locale, words],
   );
   // Page-local selections: a refresh that drops a later page drops its ticks
   // too, rather than keeping them hidden to reappear checked when that page
@@ -251,7 +256,7 @@ export function PreviousSubmissions({
   function toggleAttachRow(id: string) {
     const next = toggleAttach(liveAttach, id);
     if (next.refusedByCap) {
-      toast.info(capRefusedNotice());
+      toast.info(capRefusedNotice(submitCopy));
       return;
     }
     setAttachSelected(next.selected);
@@ -262,11 +267,11 @@ export function PreviousSubmissions({
     if (!file) return;
     // The API's checks, mirrored so a wrong file is refused before it uploads.
     if (!(EVIDENCE_ALLOWED_MIME_TYPES as readonly string[]).includes(file.type)) {
-      toast.error(`${file.name}: unsupported type (PDF, JPG, PNG, XLSX, CSV only)`);
+      toast.error(evidenceCopy.t("unsupportedType", { fileName: file.name }));
       return;
     }
     if (file.size > EVIDENCE_MAX_SIZE_BYTES) {
-      toast.error(`${file.name}: exceeds the 10 MB limit`);
+      toast.error(t("submissions.tooLarge", { fileName: file.name }));
       return;
     }
     setPendingFile(file);
@@ -277,13 +282,13 @@ export function PreviousSubmissions({
     setAttaching(true);
     try {
       const file = await api.uploadEvidenceForRecords(pendingFile, liveAttach);
-      toast.success(attachSuccessMessage(file));
+      toast.success(attachSuccessMessage(file, evidenceCopy));
       stopAttach();
       onEvidenceAttached();
     } catch (e) {
       // All or nothing: nothing was attached, and the sentence names each
       // record that refused. The selection stays, so the user can untick them.
-      toast.error(attachErrorMessage(e));
+      showErrorToast(attachErrorMessage(e, evidenceCopy, describe));
       setPendingFile(null);
     } finally {
       setAttaching(false);
@@ -293,7 +298,7 @@ export function PreviousSubmissions({
   function toggle(id: string) {
     const next = toggleSelected(live, id);
     if (next.refusedByCap) {
-      toast.info(capRefusedNotice());
+      toast.info(capRefusedNotice(submitCopy));
       return;
     }
     setReport(null);
@@ -304,10 +309,7 @@ export function PreviousSubmissions({
     const { selected: next, overCap } = selectAllEligible(selectableIds);
     setReport(null);
     setSelected(next);
-    for (const notice of selectAllNotices(
-      next.length,
-      overCap,
-    )) {
+    for (const notice of selectAllNotices(next.length, overCap, submitCopy)) {
       toast.info(notice);
     }
   }
@@ -320,7 +322,7 @@ export function PreviousSubmissions({
       setReport(await api.bulkSubmitActivityRecords(live));
       setSelected([]);
     } catch (e) {
-      toast.error(submitErrorMessage(e));
+      showErrorToast(submitErrorMessage(e, submitCopy, describe));
     } finally {
       setSubmitting(false);
       // In `finally`, and for the panel's reason: there is no transaction, so a
@@ -335,7 +337,7 @@ export function PreviousSubmissions({
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Clock className="h-4 w-4 text-muted-foreground" />
-          Previous submissions
+          {t("submissions.title")}
         </CardTitle>
         {!attachMode && attach.attachableIds.length > 0 && (
           <Button
@@ -348,7 +350,7 @@ export function PreviousSubmissions({
             onClick={startAttach}
           >
             <Paperclip className="h-3.5 w-3.5" />
-            Attach one file to several records
+            {t("submissions.attachStart")}
           </Button>
         )}
         {!attachMode && selectableIds.length > 0 && (
@@ -378,12 +380,12 @@ export function PreviousSubmissions({
           >
             <span className="text-xs text-muted-foreground">
               {liveAttach.length === 0
-                ? "Tick the records this one document evidences."
-                : `${liveAttach.length.toLocaleString("en-GB")} selected`}
+                ? t("submissions.attachHint")
+                : t("submissions.selectedCount", { count: formatNumber(liveAttach.length, locale) })}
             </span>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="ghost" onClick={stopAttach}>
-                Cancel
+                {t("submissions.cancel")}
               </Button>
               <Button
                 size="sm"
@@ -397,7 +399,7 @@ export function PreviousSubmissions({
                 ) : (
                   <Paperclip className="mr-2 h-3.5 w-3.5" />
                 )}
-                {attachButtonLabel(liveAttach.length)}
+                {attachButtonLabel(liveAttach.length, evidenceCopy)}
               </Button>
               <input
                 ref={fileInputRef}
@@ -417,11 +419,11 @@ export function PreviousSubmissions({
             data-testid="drafts-submit-bar"
           >
             <span className="text-xs text-muted-foreground">
-              {live.length.toLocaleString("en-GB")} selected
+              {t("submissions.selectedCount", { count: formatNumber(live.length, locale) })}
             </span>
             <div className="flex gap-2">
               <Button size="sm" variant="ghost" onClick={() => setSelected([])}>
-                Clear
+                {t("submissions.clear")}
               </Button>
               <Button
                 size="sm"
@@ -432,7 +434,7 @@ export function PreviousSubmissions({
                 {submitting ? (
                   <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                 ) : null}
-                {draftsSubmitLabel(live.length)}
+                {draftsSubmitLabel(live.length, submitCopy)}
               </Button>
             </div>
           </div>
@@ -477,7 +479,7 @@ export function PreviousSubmissions({
                 </ul>
                 {failuresToShow(report.failed).remainder > 0 && (
                   <p className="mt-1.5 opacity-80">
-                    +{failuresToShow(report.failed).remainder} more not shown.
+                    {t("submissions.moreNotShown", { count: formatNumber(failuresToShow(report.failed).remainder, locale) })}
                   </p>
                 )}
               </div>
@@ -491,9 +493,7 @@ export function PreviousSubmissions({
             <Skeleton className="h-14 w-full" />
           </div>
         ) : records.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            No submissions yet for this subsidiary.
-          </p>
+          <p className="py-6 text-center text-sm text-muted-foreground">{t("submissions.empty")}</p>
         ) : (
           <div className="space-y-2">
             {records.map((r) => {
@@ -525,9 +525,11 @@ export function PreviousSubmissions({
                         // it their checkboxes carry byte-identical accessible
                         // names — indistinguishable to a screen reader, and a
                         // strict-mode collision for anything locating them.
-                        aria-label={`${attachMode ? "Attach the file to" : "Select"} ${r.periodValue} ${r.reportingYear} ${categoryWithActivity(r)}, ${
-                          r.locationId ? (r.locationName ?? "A site") : WHOLE_COMPANY_ENTITY_LABEL
-                        }`}
+                        aria-label={t(attachMode ? "submissions.checkboxAttach" : "submissions.checkboxSelect", {
+                          record: `${words.period(r.periodValue)} ${r.reportingYear} ${categoryWithActivity(r, words, t)}, ${
+                            r.locationId ? (r.locationName ?? t("submissions.aSite")) : t("wholeCompany")
+                          }`,
+                        })}
                       />
                     ) : (
                       // Keeps the rows aligned. A DISABLED checkbox was the
@@ -557,13 +559,13 @@ export function PreviousSubmissions({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-medium text-foreground">
-                          {r.periodValue} {r.reportingYear}
+                          {words.period(r.periodValue)} {r.reportingYear}
                         </span>
                         <Badge
                           variant="outline"
                           className={`px-1.5 py-0 text-[10px] ${badge.className}`}
                         >
-                          {badge.label}
+                          {tStatus(`label.${r.status}`)}
                         </Badge>
                       </div>
                       {/* The reporting entity, which this list did not
@@ -585,7 +587,7 @@ export function PreviousSubmissions({
                         )}
                       >
                         {[
-                          categoryWithActivity(r),
+                          categoryWithActivity(r, words, t),
                           // `locationName` is optional on the contract,
                           // so a bare `??` would label a site row as the
                           // whole company if the include were ever
@@ -595,11 +597,12 @@ export function PreviousSubmissions({
                           // while the import template and every report say
                           // "Whole company" about the same records.
                           r.locationId
-                            ? (r.locationName ?? "A site")
-                            : WHOLE_COMPANY_ENTITY_LABEL,
+                            ? (r.locationName ?? t("submissions.aSite"))
+                            : t("wholeCompany"),
                           formatTCo2e(
                             r.calculation,
-                            (v) => `${numberFmt.format(v)} tCO₂e`,
+                            (v) => t("submissions.tonnes", { value: formatNumber(v, locale, { maximumFractionDigits: 3 }) }),
+                            tCommon("notCalculated"),
                           ),
                         ].join(" · ")}
                       </div>
@@ -645,13 +648,14 @@ export function PreviousSubmissions({
         <Dialog open onOpenChange={(open) => !open && setPendingFile(null)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Attach this file?</DialogTitle>
+              <DialogTitle>{t("submissions.attachTitle")}</DialogTitle>
               <DialogDescription asChild>
                 <div className="space-y-2 text-sm text-muted-foreground">
                   {(() => {
                     const { lead, records: named } = attachConfirmation(
                       pendingFile.name,
                       attachRows,
+                      evidenceCopy,
                     );
                     return (
                       <>
@@ -672,7 +676,7 @@ export function PreviousSubmissions({
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setPendingFile(null)}>
-                Cancel
+                {t("submissions.cancel")}
               </Button>
               <Button
                 data-testid="evidence-attach-confirm"
@@ -680,7 +684,7 @@ export function PreviousSubmissions({
                 disabled={attaching}
               >
                 {attaching && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-                Attach
+                {t("submissions.attach")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -691,21 +695,21 @@ export function PreviousSubmissions({
         <Dialog open onOpenChange={setConfirming}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Send these for review?</DialogTitle>
+              <DialogTitle>{t("submissions.submitTitle")}</DialogTitle>
               <DialogDescription>
-                {submitConfirmation(live.length)}
+                {submitConfirmation(live.length, submitCopy)}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setConfirming(false)}>
-                Cancel
+                {t("submissions.cancel")}
               </Button>
               <Button
                 data-testid="drafts-submit-confirm"
                 onClick={() => void submitSelected()}
                 disabled={submitting}
               >
-                Send for review
+                {t("submissions.sendForReview")}
               </Button>
             </DialogFooter>
           </DialogContent>

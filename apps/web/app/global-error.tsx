@@ -1,7 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import { createTranslator } from "use-intl/core";
+import { LOCALE_COOKIE, resolveLocale } from "@/lib/i18n/locale";
+import type { Locale } from "@/lib/types";
 import { reportError } from "@/lib/report-error";
+import enCommon from "@/messages/en/common.json";
+import trCommon from "@/messages/tr/common.json";
 
 /**
  * Last-resort boundary: catches errors thrown by the root layout itself, so it
@@ -16,9 +21,13 @@ export default function GlobalError({
   useEffect(() => {
     reportError(error);
   }, [error]);
+  // English on the server and in the first client render (so hydration
+  // matches), then the cookie's language.
+  const locale = useSyncExternalStore(noSubscription, clientLocale, () => "en" as const);
+  const t = globalErrorCopy(locale);
 
   return (
-    <html lang="en">
+    <html lang={locale}>
       <body
         style={{
           margin: 0,
@@ -42,11 +51,10 @@ export default function GlobalError({
           }}
         >
           <h1 style={{ margin: "0 0 8px", fontSize: 20, color: "#059669" }}>
-            TonyAI is temporarily unavailable
+            {t("title")}
           </h1>
           <p style={{ margin: "0 0 20px", fontSize: 14, lineHeight: 1.55, color: "#5f6b66" }}>
-            The application failed to start. Your data has not been changed —
-            reload the page, and if this keeps happening quote the reference below.
+            {t("description")}
           </p>
           {error.digest && (
             <p
@@ -60,7 +68,7 @@ export default function GlobalError({
                 color: "#5f6b66",
               }}
             >
-              Reference: {error.digest}
+              {t("reference", { digest: error.digest })}
             </p>
           )}
           <button
@@ -77,10 +85,32 @@ export default function GlobalError({
               cursor: "pointer",
             }}
           >
-            Reload
+            {t("reload")}
           </button>
         </div>
       </body>
     </html>
   );
+}
+
+/**
+ * The layout's provider is gone, so the language is resolved here as the
+ * layout would: the locale cookie, else the browser's languages, else English.
+ * Only `common` is imported, not the whole catalogue.
+ */
+function clientLocale(): Locale {
+  const cookie = document.cookie
+    .split("; ")
+    .find((part) => part.startsWith(`${LOCALE_COOKIE}=`))
+    ?.slice(LOCALE_COOKIE.length + 1);
+  return resolveLocale(cookie, navigator.languages?.join(","));
+}
+
+function noSubscription(): () => void {
+  return () => {};
+}
+
+function globalErrorCopy(locale: Locale) {
+  const messages = { common: locale === "tr" ? trCommon : enCommon };
+  return createTranslator({ locale, messages, namespace: "common.globalError" });
 }

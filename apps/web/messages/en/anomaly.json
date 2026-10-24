@@ -1,0 +1,24 @@
+{
+  "tonnes": "{value} tCO₂e",
+  "flagged": {
+    "headline": "Flagged as anomalous",
+    "detail": "This value deviates significantly from the historical average for this reporting entity — {baseline} over the previous {periods} comparable periods, a deviation of more than {percent}%.",
+    "detailNoBaseline": "This value deviates significantly from the historical average for this reporting entity."
+  },
+  "clean": {
+    "headline": "Within the expected range",
+    "detail": "Compared against {baseline}, the average of the previous {periods} comparable periods, and within {percent}%."
+  },
+  "notEvaluated": {
+    "headline": "Not checked for anomalies",
+    "noFigure": "This category produces no calculated figure, so there is nothing to compare against its history.",
+    "zeroAverage": "The previous {periods} comparable periods average zero, so no deviation can be computed from them.",
+    "noHistory": "No earlier committed period exists for this reporting entity, so there is no history to compare against. The check needs {periods}.",
+    "oneEarlier": "Only 1 earlier committed period exists for this reporting entity; the check needs {periods}.",
+    "someEarlier": "Only {count} earlier committed periods exist for this reporting entity; the check needs {periods}."
+  },
+  "note": {
+    "one": "1 entry was not checked for anomalies — too few comparable periods.",
+    "other": "{count} entries were not checked for anomalies — too few comparable periods."
+  }
+}

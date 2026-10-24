@@ -1,0 +1,43 @@
+{
+  "title": "Evidence",
+  "required": "Required",
+  "filesCount": "{count} file(s)",
+  "requiredNote": "This category requires at least one supporting file (invoice, meter record, …) before it can be submitted.",
+  "uploading": "Uploading…",
+  "chooseFiles": "Choose files",
+  "accepted": "PDF, JPG, PNG, XLSX, CSV · max 10 MB",
+  "loading": "Loading…",
+  "none": "No evidence attached.",
+  "download": "Download",
+  "loadMore": "Load more files",
+  "unsupportedType": "{fileName}: unsupported type (PDF, JPG, PNG, XLSX, CSV only)",
+  "uploaded": "Evidence uploaded",
+  "size": {
+    "mb": "{value} MB",
+    "kb": "{value} KB",
+    "bytes": "{value} B"
+  },
+  "removeAria": "{label}: {fileName}",
+  "block": {
+    "role": "Your role cannot attach evidence.",
+    "notAuthor": "Entered by someone else.",
+    "already": "Already {status}.",
+    "locked": "{period} {year} is locked."
+  },
+  "attachNone": "Attach one file",
+  "attachOne": "Attach one file to {count} record",
+  "attachMany": "Attach one file to {count} records",
+  "confirmOne": "“{fileName}” will be attached to this record:",
+  "confirmMany": "“{fileName}” will be attached, as one file, to these {count} records. Reviewers see every record it backs.",
+  "successOne": "{fileName} now backs {count} record.",
+  "successMany": "{fileName} now backs {count} records.",
+  "attachFailed": "The file could not be attached.",
+  "sharedOne": "Also backs {count} other record: {named}",
+  "sharedMany": "Also backs {count} other records: {named}",
+  "sharedMore": "; +{count} more",
+  "remove": "Remove",
+  "removeFromThis": "Remove from this record",
+  "detached": "Evidence removed",
+  "detachedStillOne": "Removed from this record — {fileName} still backs {count} other record.",
+  "detachedStillMany": "Removed from this record — {fileName} still backs {count} other records."
+}

@@ -1,3 +1,26 @@
 {
-  "signOut": "Çıkış yap"
+  "signOut": "Çıkış yap",
+  "metadata": {
+    "title": "TonyAI - Kurumsal Sürdürülebilirlik Veri Platformu",
+    "description": "Karbon muhasebesi ve ESG raporlaması için profesyonel veri yönetim platformu"
+  },
+  "routeError": {
+    "title": "Bir sorun oluştu",
+    "description": "Bu sayfa görüntülenemedi. Verileriniz değiştirilmedi.",
+    "reference": "Referans: {digest}",
+    "retry": "Tekrar dene"
+  },
+  "globalError": {
+    "title": "TonyAI geçici olarak kullanılamıyor",
+    "description": "Uygulama başlatılamadı. Verileriniz değiştirilmedi — sayfayı yeniden yükleyin; sorun sürerse aşağıdaki referansı iletin.",
+    "reference": "Referans: {digest}",
+    "reload": "Yeniden yükle"
+  },
+  "notFound": {
+    "title": "Sayfa bulunamadı",
+    "description": "Bu sayfa yok ya da artık erişiminiz yok.",
+    "back": "Gösterge Paneline dön"
+  },
+  "notCalculated": "Hesaplanmadı",
+  "noFactor": "Faktör yok"
 }

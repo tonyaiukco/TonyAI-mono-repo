@@ -1,9 +1,10 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useTranslations } from 'use-intl';
+import { useLocale, useTranslations } from 'use-intl';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/dashboard/sidebar';
+import { SignOutButton } from '@/components/dashboard/sign-out-button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -37,7 +38,6 @@ import {
   History,
   PieChart,
   Target,
-  LogOut,
   RefreshCw,
   Info,
   Lock,
@@ -171,6 +171,9 @@ export default function EmissionsAnalysisPage() {
 }
 
 function EmissionsAnalysisPageInner() {
+  const tRoles = useTranslations('users');
+  const tAnomaly = useTranslations('anomaly');
+  const locale = useLocale();
   const router = useRouter();
   const { user, setUser } = useAuthStore();
   const tContext = useTranslations('reportingContext');
@@ -620,7 +623,7 @@ function EmissionsAnalysisPageInner() {
               <h1 className="text-2xl font-bold text-foreground">Emissions Analytics</h1>
               <p className="text-sm text-muted-foreground">
                 Analyse emissions across scopes, categories and time periods
-                {user ? ` · ${user.fullName} (${user.role})` : ''}
+                {user ? ` · ${user.fullName} (${tRoles(`roles.${user.role}`)})` : ''}
               </p>
             </div>
 
@@ -673,10 +676,7 @@ function EmissionsAnalysisPageInner() {
                 <Download className="h-4 w-4" />
                 Export
               </Button>
-              <Button variant="outline" onClick={handleLogout} className="gap-2">
-                <LogOut className="h-4 w-4" />
-                Sign out
-              </Button>
+              <SignOutButton onClick={handleLogout} />
             </div>
           </div>
 
@@ -1329,7 +1329,7 @@ function EmissionsAnalysisPageInner() {
                     verdict: a drawer that shows a badge or nothing lets "never
                     checked" render exactly like "checked and clean". */}
                 <p className="text-xs text-muted-foreground">
-                  {anomalyStatement(selectedRecord).detail}
+                  {anomalyStatement(selectedRecord, tAnomaly, locale).detail}
                 </p>
 
                 <div className="grid grid-cols-2 gap-4">

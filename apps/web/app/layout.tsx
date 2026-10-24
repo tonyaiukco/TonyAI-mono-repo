@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { createTranslator } from 'use-intl/core'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { cookies, headers } from 'next/headers'
@@ -11,9 +12,14 @@ import './globals.css'
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
 
-export const metadata: Metadata = {
-  title: 'TonyAI - Enterprise Sustainability Data Platform',
-  description: 'Professional data management platform for carbon accounting and ESG reporting',
+/** The tab title and description in the language the page renders in. */
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await requestLocale()
+  const t = createTranslator({ locale, messages: MESSAGES[locale], namespace: 'common.metadata' })
+  return { ...STATIC_METADATA, title: t('title'), description: t('description') }
+}
+
+const STATIC_METADATA: Metadata = {
   generator: 'v0.app',
   icons: {
     icon: [
@@ -34,15 +40,19 @@ export const metadata: Metadata = {
   },
 }
 
+// LP3-01: the cookie (the profile's mirror), else the browser's languages,
+// else English. Only the chosen locale's catalogue reaches the client.
+async function requestLocale() {
+  const [cookieStore, headerList] = await Promise.all([cookies(), headers()])
+  return resolveLocale(cookieStore.get(LOCALE_COOKIE)?.value, headerList.get('accept-language'))
+}
+
 export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  // LP3-01: the cookie (the profile's mirror), else the browser's languages,
-  // else English. Only the chosen locale's catalogue reaches the client.
-  const [cookieStore, headerList] = await Promise.all([cookies(), headers()])
-  const locale = resolveLocale(cookieStore.get(LOCALE_COOKIE)?.value, headerList.get('accept-language'))
+  const locale = await requestLocale()
   return (
     <html lang={locale}>
       <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}>

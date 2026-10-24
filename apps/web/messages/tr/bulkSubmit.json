@@ -1,0 +1,30 @@
+{
+  "blockedOne": "İçe aktarılan kaydın gönderilebilmesi için bir kanıt dosyası gerekiyor ve içe aktarma dosya ekleyemez. Faturasını eklemek için aşağıda kaydı açın.",
+  "blockedMany": "İçe aktarılan {count} kaydın tümü için gönderimden önce bir kanıt dosyası gerekiyor ve içe aktarma dosya ekleyemez. Önceki gönderimler altında her faturayı kanıtladığı kayıtlara ekleyin — bir dosya birden fazla kaydı kapsayabilir.",
+  "confirmOne": "1 kaydı incelemeye gönder. Yalnızca bir inceleyici geri gönderebilir — gönderimi kendiniz geri alamazsınız.",
+  "confirmMany": "{count} kaydı incelemeye gönder. Yalnızca bir inceleyici geri gönderebilir — gönderimi kendiniz geri alamazsınız.",
+  "refusedHeadline": "Hiçbir kayıt gönderilmedi.",
+  "refusedOne": "Önce ilgilenilmesi gerekiyor — aşağıya bakın.",
+  "refusedMany": "{count} kaydın tümüyle önce ilgilenilmesi gerekiyor — aşağıya bakın.",
+  "refusedNone": "Gönderilecek bir şey yoktu.",
+  "cleanOne": "{count} kayıt artık inceleme kuyruğunda.",
+  "cleanMany": "{count} kayıt artık inceleme kuyruğunda.",
+  "partialHeadline": "{requested} kayıttan {moved} tanesi gönderildi.",
+  "partialOne": "{count} kayıt gönderilmedi — aşağıya bakın.",
+  "partialMany": "{count} kayıt gönderilmedi — aşağıya bakın.",
+  "rateLimited": "Kısa sürede çok fazla gönderim yapıldı. Bir dakika bekleyip tekrar deneyin.",
+  "roleForbidden": "Rolünüz faaliyet kaydı gönderemez.",
+  "failed": "Gönderim başarısız oldu.",
+  "block": {
+    "role": "Rolünüz kayıt gönderemez.",
+    "rejected": "Bir inceleyici tarafından geri gönderildi — notun okunması için kaydı tek başına açın.",
+    "already": "Zaten {status}.",
+    "notAuthor": "Başka biri tarafından girildi.",
+    "locked": "{period} {year} kilitli.",
+    "evidence": "Kanıt dosyası gerekiyor."
+  },
+  "capRefused": "Tek bir gönderim en fazla {max} kayıt taşıyabilir.",
+  "selectedFirst": "İlk {taken} kayıt seçildi. Kalan {more} kayıt ikinci bir gönderimle gönderilebilir.",
+  "sendOne": "{count} kaydı incelemeye gönder",
+  "sendMany": "{count} kaydı incelemeye gönder"
+}

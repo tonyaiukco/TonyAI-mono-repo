@@ -1,0 +1,20 @@
+{
+  "label": {
+    "kWh": "kWh (electricity / gas)",
+    "MWh": "MWh (electricity)",
+    "cubic_metres": "Cubic metres — m³",
+    "standard_cubic_metres": "Standard cubic metres — Sm³ (natural gas)",
+    "therms": "Therms (natural gas)",
+    "gj": "GJ (natural gas)",
+    "litres": "Litres (liquid fuel)",
+    "uk_gallons": "UK gallons (liquid fuel)",
+    "us_gallons": "US gallons (liquid fuel)",
+    "kilometres": "Kilometres",
+    "passenger_kilometres": "Passenger-km",
+    "tonnes": "Tonnes",
+    "kg": "Kilograms — kg"
+  },
+  "blocked": {
+    "standard_cubic_metres": "Standard cubic metres need a sourced calorific value to become kWh, and this prototype does not have one yet — it arrives with the Phase-4 factor library. Enter the volume in m³, or the energy in kWh."
+  }
+}

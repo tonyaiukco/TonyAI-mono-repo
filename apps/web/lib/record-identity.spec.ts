@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { describeMove, hasMovedOffRecord, type RecordIdentity } from './record-identity';
+import { describeMove as describeMoveIn, hasMovedOffRecord, type RecordIdentity } from './record-identity';
+import { copyFor } from '@/lib/i18n/testing';
+
+// English: the notice the form showed before LP4-04.
+const describeMove = (...args: Parameters<typeof describeMoveIn> extends [...infer A, unknown] ? A : never) =>
+  describeMoveIn(...args, copyFor('dataEntry'));
 import { NOT_CALCULATED_LABEL } from './calculation-display';
 
 /**

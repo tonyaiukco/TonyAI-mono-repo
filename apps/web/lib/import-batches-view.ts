@@ -1,8 +1,11 @@
 import enErrors from '@/messages/en/errors.json';
-import type { BulkSubmitReportDTO, ImportBatchDTO } from '@/lib/types';
+import type { BulkSubmitReportDTO, ImportBatchDTO, Locale } from '@/lib/types';
 import { deadlineSummary, type DeadlineTranslator, SUBMIT_ISSUE_LABEL, submitIssueLabel, type SubmitIssueTranslator } from '@/lib/bulk-submit-view';
-import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
-import { formatNumber } from '@/lib/utils';
+import { ApiError } from '@/lib/api';
+import { formatNumber as formatGrouped } from '@/lib/utils';
+import { formatNumber } from '@/lib/i18n/number';
+import type { ViewCopy } from '@/lib/i18n/view-translator';
+import type { DescribeError, ErrorWords } from '@/lib/bulk-submit-view';
 
 /**
  * A batch still `processing` this long after it started is not processing: the
@@ -21,17 +24,26 @@ export function batchState(batch: Pick<ImportBatchDTO, 'status' | 'createdAt'>, 
     : 'processing';
 }
 
-export const BATCH_STATE_LABEL: Record<BatchState, string> = {
-  completed: 'Imported',
-  failed: 'Stopped',
-  processing: 'Importing…',
-  interrupted: 'Interrupted',
-};
+/** The `imports` catalogue keys this module words its sentences with. */
+export type ImportsKey =
+  | `state.${BatchState}`
+  | 'sendOne'
+  | 'sendMany'
+  | 'notAvailable'
+  | 'waitingOne'
+  | 'waitingMany';
+
+export type ImportsCopy = ViewCopy<ImportsKey>;
+
+/** What the screen calls a batch's state. */
+export function batchStateLabel(state: BatchState, { t }: ImportsCopy): string {
+  return t(`state.${state}`);
+}
 
 /** `2 imported · 1 refused`, or what an interrupted batch can still say. */
 export function batchOutcome(batch: Pick<ImportBatchDTO, 'acceptedCount' | 'rejectedCount' | 'totalRows'>,
   translate: (key: `bulkOutcomes.${keyof typeof enErrors.bulkOutcomes}`, values: { count: number }) => string
-    = (key, { count }) => enErrors.bulkOutcomes[key.replace('bulkOutcomes.', '') as keyof typeof enErrors.bulkOutcomes].replace('{count}', formatNumber(count)),
+    = (key, { count }) => enErrors.bulkOutcomes[key.replace('bulkOutcomes.', '') as keyof typeof enErrors.bulkOutcomes].replace('{count}', formatGrouped(count)),
 ): string {
   if (batch.acceptedCount === null || batch.rejectedCount === null) {
     return translate('bulkOutcomes.unknown', { count: batch.totalRows });
@@ -44,19 +56,16 @@ export function batchOutcome(batch: Pick<ImportBatchDTO, 'acceptedCount' | 'reje
 }
 
 /** The button that sends a batch's drafts: absent when there is nothing to send. */
-export function batchSubmitLabel(count: number): string | null {
+export function batchSubmitLabel(count: number, { t, locale }: ImportsCopy): string | null {
   if (count <= 0) return null;
-  return `Send ${formatNumber(count)} ${count === 1 ? 'draft' : 'drafts'} for review`;
+  const n = formatNumber(count, locale);
+  return count === 1 ? t('sendOne', { count: n }) : t('sendMany', { count: n });
 }
 
 /** A failed read of the list or a download. */
-export function importBatchesErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 401) return SESSION_EXPIRED_MESSAGE;
-    if (error.status === 404) return 'That import is no longer available to you.';
-    return error.message;
-  }
-  return error instanceof Error ? error.message : 'Recent imports could not be loaded.';
+export function importBatchesErrorMessage(error: unknown, { t }: ImportsCopy, describe: DescribeError): ErrorWords {
+  if (error instanceof ApiError && error.status === 404) return { title: t('notAvailable') };
+  return describe(error);
 }
 
 /**
@@ -66,16 +75,15 @@ export function importBatchesErrorMessage(error: unknown): string {
  */
 export function awaitingEvidenceNote(
   batch: Pick<ImportBatchDTO, 'draftCount' | 'submittableDraftCount'>,
+  { t, locale }: ImportsCopy,
 ): string | null {
   const waiting = batch.draftCount - batch.submittableDraftCount;
   if (waiting <= 0) return null;
-  return waiting === 1
-    ? '1 draft needs an evidence file first — open it under Previous submissions to attach one.'
-    : `${formatNumber(waiting)} drafts need an evidence file first — under Previous submissions, attach each invoice to the drafts it evidences; one file can cover several.`;
+  return waiting === 1 ? t('waitingOne') : t('waitingMany', { count: formatNumber(waiting, locale) });
 }
 
 /** Why records a batch submit sent were not moved: `Needs an evidence file · 2`, one line per reason. */
-export function submitFailureDetail(report: BulkSubmitReportDTO, deadlineLabel = enErrors.bulkIssues.not_processed_deadline, translate?: DeadlineTranslator, translateIssue?: SubmitIssueTranslator): string | null {
+export function submitFailureDetail(report: BulkSubmitReportDTO, deadlineLabel = enErrors.bulkIssues.not_processed_deadline, translate?: DeadlineTranslator, translateIssue?: SubmitIssueTranslator, locale: Locale = 'en'): string | null {
   const deadline = deadlineSummary(report.submitted.length, report.failed, translate);
   if (deadline) return deadline.detail;
   if (report.failed.length === 0) return null;
@@ -85,13 +93,5 @@ export function submitFailureDetail(report: BulkSubmitReportDTO, deadlineLabel =
       : issue.code === 'not_processed_deadline' ? deadlineLabel : SUBMIT_ISSUE_LABEL[issue.code];
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
-  return [...counts].map(([label, n]) => `${label} · ${formatNumber(n)}`).join('\n');
+  return [...counts].map(([label, n]) => `${label} · ${formatNumber(n, locale)}`).join('\n');
 }
-
-/**
- * Said whenever the original file is opened: it is kept byte for byte, refused
- * rows included, and a spreadsheet cell can carry a formula (`=HYPERLINK(…)`)
- * a colleague typed — CSV injection reaches whoever opens it in Excel.
- */
-export const SOURCE_FILE_CAUTION =
-  'Original file, exactly as uploaded. Spreadsheet cells can contain formulas — open it only if you trust its contents.';

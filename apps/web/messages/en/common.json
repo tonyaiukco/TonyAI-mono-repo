@@ -1,3 +1,26 @@
 {
-  "signOut": "Sign out"
+  "signOut": "Sign out",
+  "metadata": {
+    "title": "TonyAI - Enterprise Sustainability Data Platform",
+    "description": "Professional data management platform for carbon accounting and ESG reporting"
+  },
+  "routeError": {
+    "title": "Something went wrong",
+    "description": "This page could not be displayed. Your data has not been changed.",
+    "reference": "Reference: {digest}",
+    "retry": "Try again"
+  },
+  "globalError": {
+    "title": "TonyAI is temporarily unavailable",
+    "description": "The application failed to start. Your data has not been changed — reload the page, and if this keeps happening quote the reference below.",
+    "reference": "Reference: {digest}",
+    "reload": "Reload"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "This page does not exist, or you no longer have access to it.",
+    "back": "Back to dashboard"
+  },
+  "notCalculated": "Not calculated",
+  "noFactor": "No factor available"
 }

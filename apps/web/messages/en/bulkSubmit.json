@@ -1,0 +1,30 @@
+{
+  "blockedOne": "The imported record needs an evidence file before it can be submitted, and an import cannot attach one. Open it below to add its invoice.",
+  "blockedMany": "All {count} imported records need an evidence file before they can be submitted, and an import cannot attach one. Under Previous submissions, attach each invoice to the records it evidences — one file can cover several.",
+  "confirmOne": "Send 1 record for review. Only a reviewer can send it back — there is no way to un-submit it yourself.",
+  "confirmMany": "Send {count} records for review. Only a reviewer can send them back — there is no way to un-submit them yourself.",
+  "refusedHeadline": "No records were submitted.",
+  "refusedOne": "It needs attention first — see below.",
+  "refusedMany": "All {count} need attention first — see below.",
+  "refusedNone": "There was nothing to submit.",
+  "cleanOne": "{count} record is now in the review queue.",
+  "cleanMany": "{count} records are now in the review queue.",
+  "partialHeadline": "{moved} of {requested} submitted.",
+  "partialOne": "{count} record was not — see below.",
+  "partialMany": "{count} records were not — see below.",
+  "rateLimited": "Too many submissions in a short time. Wait a minute and try again.",
+  "roleForbidden": "Your role cannot submit activity records.",
+  "failed": "The submission failed.",
+  "block": {
+    "role": "Your role cannot submit records.",
+    "rejected": "Sent back by a reviewer — open it on its own, so the note gets read.",
+    "already": "Already {status}.",
+    "notAuthor": "Entered by someone else.",
+    "locked": "{period} {year} is locked.",
+    "evidence": "Needs an evidence file."
+  },
+  "capRefused": "{max} records is the most one submission can carry.",
+  "selectedFirst": "Selected the first {taken}. {more} more can go in a second submission.",
+  "sendOne": "Send {count} record for review",
+  "sendMany": "Send {count} records for review"
+}

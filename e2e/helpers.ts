@@ -61,7 +61,8 @@ export const E2E_PERIOD = 'quarterly';
  * the dashboard, so `login()` alone would silently keep the previous user.
  */
 export async function switchUser(page: Page, email: string): Promise<void> {
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  // A test id, not the English label: the user may be signed in to the Turkish UI.
+  await page.getByTestId('sign-out').click();
   await page.waitForURL('**/login');
   await login(page, email);
 }
@@ -71,8 +72,20 @@ export async function login(page: Page, email: string, password = PASSWORD): Pro
   await page.locator('#email').fill(email);
   await page.locator('#password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  // After sign-in the app routes to "/" (Carbon Dashboard).
-  await expect(page.getByRole('heading', { name: 'Carbon Dashboard' })).toBeVisible();
+  // After sign-in the app routes to "/" (the dashboard). Its title is found by
+  // test id, so a user whose profile language is Turkish signs in the same way
+  // once the dashboard is translated (LP4-04 slice 2 PR B).
+  await page.waitForURL((url) => url.pathname === '/');
+  await expect(page.getByTestId('dashboard-title')).toBeVisible();
+}
+
+/** Every seed user back to English (globalSetup), through the API as the user would. */
+export async function resetSeedLanguages(request: APIRequestContext): Promise<void> {
+  for (const email of [ADMIN_EMAIL, APPROVER_EMAIL, ENTRY_EMAIL, CONSULTANT_EMAIL]) {
+    const token = await getAccessToken(request, email);
+    const res = await request.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language: 'en' } });
+    if (res.status() !== 200) throw new Error(`reset language of ${email}: ${res.status()}`);
+  }
 }
 
 /** Rows in the live "Subsidiary register" table on /subsidiaries (excludes header). */

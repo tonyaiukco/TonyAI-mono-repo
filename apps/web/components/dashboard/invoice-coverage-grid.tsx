@@ -5,6 +5,7 @@ import { api, ApiError } from '@/lib/api';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { useCompletenessCopy } from '@/lib/i18n/hooks';
 import {
   duplicateNote,
   duplicatedMonths,
@@ -12,7 +13,7 @@ import {
   shortfallReasons,
   slotState,
   SHORT_MONTH,
-  SLOT_DESCRIPTION,
+  slotDescription,
   SLOT_GLYPH,
   type SlotState,
 } from '@/lib/completeness-view';
@@ -52,6 +53,7 @@ export function InvoiceCoverageGrid({
   canEnter,
   onSlotClick,
 }: InvoiceCoverageGridProps) {
+  const copy = useCompletenessCopy();
   const [data, setData] = useState<SubsidiaryCompletenessDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Category | null>(null);
@@ -125,21 +127,21 @@ export function InvoiceCoverageGrid({
   const hasAwaiting = states.includes('awaiting');
   // Both surfaces build these sentences from one module, so the drill-down and
   // the Data Entry panel cannot describe the same rule differently.
-  const reasons = category ? shortfallReasons(category, data.reportingYear) : [];
+  const reasons = category ? shortfallReasons(category, data.reportingYear, copy) : [];
   // Why a category can read 24 of 24 and still not be finished. Without it the
   // grid explains every kind of shortfall except the one the review gate
   // introduced, and that cell's amber has no account anywhere on screen.
   // Slots when months are waiting, records otherwise. The second arm is the one
   // a slot count cannot reach: every month closed and accepted, with a
   // whole-company record behind them still unreviewed.
-  const note = category ? reviewSentence(category) : null;
+  const note = category ? reviewSentence(category, copy) : null;
   if (note) reasons.push(note);
   // A month held BOTH at a site and company-wide renders as a plain ✓ — the
   // slot is closed — so `hasCompanyLevel` goes false and the "would count this
   // month twice" line below disappears. That is precisely backwards: the
   // warning vanished at the moment the double count actually happened. This
   // says so in the present tense instead.
-  const dupes = category ? duplicateNote(duplicatedMonths(category)) : null;
+  const dupes = category ? duplicateNote(duplicatedMonths(category), copy) : null;
   if (dupes) reasons.push(dupes);
 
   return (
@@ -207,7 +209,7 @@ export function InvoiceCoverageGrid({
                     // invoice sitting in a review queue is in, but not accepted,
                     // and must not render identically to one that is.
                     const state = slotState(m, category.companyLevelMonths);
-                    const description = SLOT_DESCRIPTION[state];
+                    const description = slotDescription(state, copy);
                     return (
                       <button
                         key={m.month}

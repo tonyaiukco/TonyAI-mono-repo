@@ -5,7 +5,8 @@ import {
   unitSymbol,
   type Locale,
 } from '@/lib/types';
-import { formatReadAmount } from '@/lib/i18n/number';
+import { formatNumber, formatReadAmount } from '@/lib/i18n/number';
+import type { ViewCopy } from '@/lib/i18n/view-translator';
 import type {
   BulkUploadAcceptedRow,
   BulkUploadColumn,
@@ -13,8 +14,8 @@ import type {
   BulkUploadReportDTO,
   BulkUploadRowIssue,
 } from '@/lib/types';
-import { ApiError, SESSION_EXPIRED_MESSAGE } from '@/lib/api';
-import { formatNumber } from '@/lib/utils';
+import { ApiError } from '@/lib/api';
+import type { DescribeError, ErrorWords } from './bulk-submit-view';
 import enErrors from '@/messages/en/errors.json';
 import enEntry from '@/messages/en/dataEntry.json';
 
@@ -43,19 +44,69 @@ export {
  */
 export const MAX_ISSUE_ROWS_PER_GROUP = 50;
 
+/** The `bulkUpload` catalogue keys this module words its sentences with. */
+export type BulkUploadKey =
+  | 'sizeCap'
+  | 'rowsOne'
+  | 'rowsMany'
+  | 'or'
+  | 'preflight.extension'
+  | 'preflight.tooLarge'
+  | 'preflight.empty'
+  | 'summary.refusedPreview'
+  | 'summary.refusedApplied'
+  | 'summary.refusedOne'
+  | 'summary.refusedMany'
+  | 'summary.refusedNone'
+  | 'summary.cleanOnePreview'
+  | 'summary.cleanOneApplied'
+  | 'summary.cleanManyPreview'
+  | 'summary.cleanManyApplied'
+  | 'summary.partialPreview'
+  | 'summary.partialAppliedOne'
+  | 'summary.partialAppliedMany'
+  | 'summary.notOne'
+  | 'summary.notMany'
+  | 'summary.retryPreviewOne'
+  | 'summary.retryPreviewMany'
+  | 'summary.retryAppliedOne'
+  | 'summary.retryAppliedMany'
+  | 'summary.warnedOne'
+  | 'summary.warnedMany'
+  | 'summary.draftOne'
+  | 'summary.draftMany'
+  | 'tonnes.none'
+  | 'tonnes.figure'
+  | 'tonnes.partialOne'
+  | 'tonnes.partialMany'
+  | 'applyConfirmOne'
+  | 'applyConfirmMany'
+  | 'appliedOne'
+  | 'appliedMany'
+  | 'appliedNone'
+  | 'error.rateLimited'
+  | 'error.tooLarge'
+  | 'error.roleForbidden'
+  | 'error.failed'
+  | 'template.rateLimited'
+  | 'template.failed';
+
+export type BulkUploadCopy = ViewCopy<BulkUploadKey>;
+
 /** What the file picker offers. Derived, so it cannot drift from the server. */
 export function fileAcceptAttribute(): string {
   return BULK_UPLOAD_ALLOWED_EXTENSIONS.join(',');
 }
 
 /** The size cap as the screen says it. Derived for the same reason. */
-export function sizeCapLabel(): string {
-  return `${formatNumber(BULK_UPLOAD_MAX_SIZE_BYTES / 1024 / 1024)} MB`;
+export function sizeCapLabel({ t, locale }: BulkUploadCopy): string {
+  return t('sizeCap', { value: formatNumber(BULK_UPLOAD_MAX_SIZE_BYTES / 1024 / 1024, locale) });
 }
 
 /** `1 row` / `2 rows`, in one place rather than five. */
-export function rowCount(n: number): string {
-  return `${formatNumber(n)} ${n === 1 ? 'row' : 'rows'}`;
+export function rowCount(n: number, { t, locale }: BulkUploadCopy): string {
+  const count = formatNumber(n, locale);
+  return n === 1 ? t('rowsOne', { count }) : t('rowsMany', { count });
 }
 
 /**
@@ -67,22 +118,23 @@ export function rowCount(n: number): string {
  *
  * Structural parameter rather than `File` so a spec need not fake one.
  */
-export function preflightFile(file: {
-  name: string;
-  size: number;
-}): string | null {
+export function preflightFile(
+  file: {
+    name: string;
+    size: number;
+  },
+  copy: BulkUploadCopy,
+): string | null {
+  const { t } = copy;
   const dot = file.name.lastIndexOf('.');
   const extension = dot < 0 ? '' : file.name.slice(dot).toLowerCase();
   if (!(BULK_UPLOAD_ALLOWED_EXTENSIONS as readonly string[]).includes(extension)) {
-    return `Upload a ${BULK_UPLOAD_ALLOWED_EXTENSIONS.join(' or ')} file.`;
+    return t('preflight.extension', { extensions: BULK_UPLOAD_ALLOWED_EXTENSIONS.join(` ${t('or')} `) });
   }
   if (file.size > BULK_UPLOAD_MAX_SIZE_BYTES) {
-    // The measured size is deliberately NOT quoted: at 2.04 MB, one decimal
-    // place read "That file is 2.0 MB. The limit is 2 MB." — a sentence that
-    // argues with itself.
-    return `That file is over the ${sizeCapLabel()} limit — split it and upload the parts.`;
+    return t('preflight.tooLarge', { cap: sizeCapLabel(copy) });
   }
-  if (file.size === 0) return 'That file is empty.';
+  if (file.size === 0) return t('preflight.empty');
   return null;
 }
 
@@ -191,15 +243,10 @@ export interface BulkUploadSummary {
 }
 
 /** The one-glance verdict above the report. */
-export function summarise(report: BulkUploadReportDTO, translate?: DeadlineTranslator): BulkUploadSummary {
+export function summarise(report: BulkUploadReportDTO, translate: DeadlineTranslator | undefined, copy: BulkUploadCopy): BulkUploadSummary {
+  const { t, locale } = copy;
   const acceptedCount = report.accepted.length;
-  // A refused row carries exactly one error today (the API's own rule), but a
-  // row can carry several warnings — and `errors.length` is only "rows that
-  // failed" while that rule holds, so both are counted from the ROWS. Telling
-  // a user 1,400 rows failed out of 1,000 is the kind of arithmetic that costs
-  // trust in every other number on the screen.
   const affectedRows = new Set(report.errors.map((e) => e.row)).size;
-  // The same arithmetic for the warnings, which did not get it.
   const warnedRows = new Set(report.warnings.map((w) => w.row)).size;
 
   const counts = {
@@ -217,51 +264,39 @@ export function summarise(report: BulkUploadReportDTO, translate?: DeadlineTrans
     return {
       ...counts,
       tone: 'refused',
-      headline: `No rows ${report.dryRun ? 'can be imported' : 'were imported'}.`,
+      headline: report.dryRun ? t('summary.refusedPreview') : t('summary.refusedApplied'),
       detail:
         affectedRows === 1
-          ? 'The one row in the file has a problem to fix.'
+          ? t('summary.refusedOne')
           : affectedRows > 1
-            ? `All ${rowCount(affectedRows)} in the file have a problem to fix.`
-            : 'The file has no rows to import.',
+            ? t('summary.refusedMany', { rows: rowCount(affectedRows, copy) })
+            : t('summary.refusedNone'),
     };
   }
   if (affectedRows === 0) {
     return {
       ...counts,
       tone: 'clean',
-      // Never "All 1 row were imported." — measured, and the one-row file is
-      // the first thing anyone tries.
       headline:
         acceptedCount === 1
-          ? `1 row ${report.dryRun ? 'would be imported' : 'was imported'}.`
-          : `All ${rowCount(acceptedCount)} ${
-              report.dryRun ? 'would be imported' : 'were imported'
-            }.`,
-      // Never null any more. A clean verdict used to say nothing else, which
-      // is how a file whose every row warns `evidence_required` rendered as
-      // an unqualified success — and, after an apply, how the persistent
-      // surface stayed silent about the drafts while the completeness panel
-      // one column away showed identical numbers.
-      detail: afterword(report, warnedRows),
+          ? t(report.dryRun ? 'summary.cleanOnePreview' : 'summary.cleanOneApplied')
+          : t(report.dryRun ? 'summary.cleanManyPreview' : 'summary.cleanManyApplied', { rows: rowCount(acceptedCount, copy) }),
+      detail: afterword(report, warnedRows, copy),
     };
   }
+  const values = { accepted: formatNumber(acceptedCount, locale), total: formatNumber(report.totalRows, locale) };
   return {
     ...counts,
     tone: 'partial',
-    headline: `${formatNumber(acceptedCount)} of ${formatNumber(report.totalRows)} rows ${
-      report.dryRun
-        ? 'would be imported'
-        : acceptedCount === 1
-          ? 'was imported'
-          : 'were imported'
-    }.`,
-    // Joined with a space. Concatenated, the screen read "…upload it again.5
-    // rows need attention before they can be submitted" (measured).
+    headline: report.dryRun
+      ? t('summary.partialPreview', values)
+      : acceptedCount === 1
+        ? t('summary.partialAppliedOne', values)
+        : t('summary.partialAppliedMany', values),
     detail: [
-      `${affectedRows === 1 ? '1 row was' : `${formatNumber(affectedRows)} rows were`} not.`,
-      retryAdvice(report, affectedRows),
-      afterword(report, warnedRows),
+      affectedRows === 1 ? t('summary.notOne') : t('summary.notMany', { count: formatNumber(affectedRows, locale) }),
+      retryAdvice(report, affectedRows, copy),
+      afterword(report, warnedRows, copy),
     ]
       .filter((part): part is string => part !== null)
       .join(' '),
@@ -275,13 +310,11 @@ export function summarise(report: BulkUploadReportDTO, translate?: DeadlineTrans
  * user to fix their file and upload it AGAIN means re-sending the rows that
  * already succeeded, which comes back as a wall of `duplicate_existing`.
  */
-function retryAdvice(report: BulkUploadReportDTO, failedRows: number): string {
+function retryAdvice(report: BulkUploadReportDTO, failedRows: number, { t }: BulkUploadCopy): string {
   const one = failedRows === 1;
   return report.dryRun
-    ? `Fix ${one ? 'it' : 'them'} in your file and upload the file again.`
-    : `Fix ${one ? 'it' : 'them'} and upload a file containing only ${
-        one ? 'that row' : 'those rows'
-      } — re-sending the whole file would report the imported ones as duplicates.`;
+    ? t(one ? 'summary.retryPreviewOne' : 'summary.retryPreviewMany')
+    : t(one ? 'summary.retryAppliedOne' : 'summary.retryAppliedMany');
 }
 
 /**
@@ -298,23 +331,15 @@ function retryAdvice(report: BulkUploadReportDTO, failedRows: number): string {
 function afterword(
   report: BulkUploadReportDTO,
   warnedRows: number,
+  { t, locale }: BulkUploadCopy,
 ): string | null {
   const parts: string[] = [];
   if (warnedRows > 0) {
-    parts.push(
-      `${formatNumber(warnedRows)} ${
-        warnedRows === 1 ? 'row needs' : 'rows need'
-      } attention before ${
-        warnedRows === 1 ? 'it' : 'they'
-      } can be submitted — see below.`,
-    );
+    const count = formatNumber(warnedRows, locale);
+    parts.push(warnedRows === 1 ? t('summary.warnedOne', { count }) : t('summary.warnedMany', { count }));
   }
   if (!report.dryRun) {
-    parts.push(
-      report.accepted.length === 1
-        ? 'The imported row is a draft: it counts towards no total and does not appear in the review queue until it is submitted below.'
-        : 'Imported rows are drafts: they count towards no total and do not appear in the review queue until they are submitted below.',
-    );
+    parts.push(report.accepted.length === 1 ? t('summary.draftOne') : t('summary.draftMany'));
   }
   return parts.length > 0 ? parts.join(' ') : null;
 }
@@ -330,16 +355,23 @@ function afterword(
  * report. Avoiding `?? 0` at the row level and then re-creating it at the
  * aggregate would be the same defect one layer up.
  */
-export function tonnesLabel(rows: BulkUploadAcceptedRow[]): string {
+export function tonnesLabel(rows: BulkUploadAcceptedRow[], copy: BulkUploadCopy): string {
+  const { t, locale } = copy;
   const total = totalTonnes(rows);
-  if (total === null) return 'No calculated figure';
+  if (total === null) return t('tonnes.none');
   const counted = rows.filter((r) => r.tCo2e !== null).length;
-  const figure = `${formatNumber(total, 3)} tCO₂e`;
+  const figure = t('tonnes.figure', {
+    value: formatNumber(total, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 }),
+  });
   if (counted === rows.length) return figure;
   const missing = rows.length - counted;
-  return `${figure} across ${counted} of ${rowCount(rows.length)}; ${missing} ${
-    missing === 1 ? 'has' : 'have'
-  } no calculated figure`;
+  const values = {
+    figure,
+    counted: formatNumber(counted, locale),
+    rows: rowCount(rows.length, copy),
+    missing: formatNumber(missing, locale),
+  };
+  return missing === 1 ? t('tonnes.partialOne', values) : t('tonnes.partialMany', values);
 }
 
 /**
@@ -356,24 +388,12 @@ export function canApplyPreview(report: BulkUploadReportDTO): boolean {
     && !report.errors.some((issue) => issue.code === 'not_processed_deadline');
 }
 
-export function applyConfirmation(report: BulkUploadReportDTO): string {
+export function applyConfirmation(report: BulkUploadReportDTO, copy: BulkUploadCopy): string {
   const count = report.accepted.length;
-  const tonnes = tonnesLabel(report.accepted);
-  if (count === 1) {
-    // "Each becomes its own record … cannot be undone in bulk" is a sentence
-    // about many rows; said about one it reads as a warning that does not apply.
-    return (
-      `Import 1 row (${tonnes}). ` +
-      `It arrives as a draft: it is not counted towards any total and does not ` +
-      `appear in the review queue until it is submitted.`
-    );
-  }
-  return (
-    `Import ${formatNumber(count)} rows (${tonnes}). ` +
-    `Each becomes its own record, and this cannot be undone in bulk. ` +
-    `They arrive as drafts: they are not counted towards any total and do not ` +
-    `appear in the review queue until they are submitted.`
-  );
+  const tonnes = tonnesLabel(report.accepted, copy);
+  return count === 1
+    ? copy.t('applyConfirmOne', { tonnes })
+    : copy.t('applyConfirmMany', { count: formatNumber(count, copy.locale), tonnes });
 }
 
 /**
@@ -384,11 +404,9 @@ export function applyConfirmation(report: BulkUploadReportDTO): string {
  * every draft in the form below. The panel now offers the remedy directly, so
  * the sentence points at it.
  */
-export function applySuccessMessage(report: BulkUploadReportDTO): string {
+export function applySuccessMessage(report: BulkUploadReportDTO, { t, locale }: BulkUploadCopy): string {
   const count = report.accepted.length;
-  return count === 1
-    ? '1 record imported as a draft. Send it for review below to count it towards your inventory.'
-    : `${formatNumber(count)} records imported as drafts. Send them for review below to count them towards your inventory.`;
+  return count === 1 ? t('appliedOne') : t('appliedMany', { count: formatNumber(count, locale) });
 }
 
 /**
@@ -399,7 +417,7 @@ export function applySuccessMessage(report: BulkUploadReportDTO): string {
  * period locked between the dry run and the apply, say), and the success toast
  * used to fire for it anyway: "0 records imported as drafts".
  */
-export function applyToast(report: BulkUploadReportDTO, translate?: DeadlineTranslator): {
+export function applyToast(report: BulkUploadReportDTO, translate: DeadlineTranslator | undefined, copy: BulkUploadCopy): {
   kind: 'success' | 'warning';
   message: string;
   description?: string;
@@ -407,8 +425,8 @@ export function applyToast(report: BulkUploadReportDTO, translate?: DeadlineTran
   const deadline = deadlineSummary(report.accepted.length, report.errors, translate);
   if (deadline) return { kind: 'warning', message: deadline.headline, description: deadline.detail };
   return report.accepted.length > 0
-    ? { kind: 'success', message: applySuccessMessage(report) }
-    : { kind: 'warning', message: 'No rows were imported — the report below says why.' };
+    ? { kind: 'success', message: applySuccessMessage(report, copy) }
+    : { kind: 'warning', message: copy.t('appliedNone') };
 }
 
 /**
@@ -420,24 +438,23 @@ export function applyToast(report: BulkUploadReportDTO, translate?: DeadlineTran
  * Everything else already carries the server's own sentence, which is written
  * for the person reading it.
  */
-export function uploadErrorMessage(error: unknown, translate?: (key: 'bulkQueryTooBroad') => string): string {
+export function uploadErrorMessage(
+  error: unknown,
+  translate: (key: 'bulkQueryTooBroad') => string,
+  copy: BulkUploadCopy,
+  describe: DescribeError,
+): ErrorWords {
+  const { t, locale } = copy;
   if (error instanceof ApiError) {
-    if (error.code === 'query_too_broad') return translate ? translate('bulkQueryTooBroad') : enErrors.bulkQueryTooBroad;
-    if (error.status === 401) return SESSION_EXPIRED_MESSAGE;
-    if (error.status === 429) {
-      return 'Too many import attempts. Wait a minute and try again — a dry run and an import each count towards the limit.';
-    }
+    if (error.code === 'query_too_broad') return { title: translate('bulkQueryTooBroad') };
+    if (error.status === 429) return { title: t('error.rateLimited') };
     if (error.status === 413) {
-      return `That file is over the ${formatNumber(
-        BULK_UPLOAD_MAX_SIZE_BYTES / 1024 / 1024,
-      )} MB limit. Split it and upload the parts.`;
+      return { title: t('error.tooLarge', { cap: t('sizeCap', { value: formatNumber(BULK_UPLOAD_MAX_SIZE_BYTES / 1024 / 1024, locale) }) }) };
     }
-    if (error.status === 403) {
-      return 'Your role cannot import activity records.';
-    }
-    return error.message;
+    if (error.status === 403) return { title: t('error.roleForbidden') };
   }
-  return error instanceof Error ? error.message : 'The import failed.';
+  if (!(error instanceof Error)) return { title: t('error.failed') };
+  return describe(error);
 }
 
 /**
@@ -447,13 +464,8 @@ export function uploadErrorMessage(error: unknown, translate?: (key: 'bulkQueryT
  * and dry runs — neither of which a download spends: throttler keys include
  * the handler, so the template route has a budget of its own.
  */
-export function templateErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 401) return SESSION_EXPIRED_MESSAGE;
-    if (error.status === 429) {
-      return 'Too many template downloads. Wait a minute and try again.';
-    }
-    return error.message;
-  }
-  return error instanceof Error ? error.message : 'The template could not be downloaded.';
+export function templateErrorMessage(error: unknown, { t }: BulkUploadCopy, describe: DescribeError): ErrorWords {
+  if (error instanceof ApiError && error.status === 429) return { title: t('template.rateLimited') };
+  if (!(error instanceof Error)) return { title: t('template.failed') };
+  return describe(error);
 }

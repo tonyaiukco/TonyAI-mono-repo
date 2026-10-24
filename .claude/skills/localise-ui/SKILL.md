@@ -64,7 +64,26 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
    `t("key", { name })`. Keys are type-checked against the English catalogue.
 4. Canonical values shown to a user (category, period) are labelled with
    `useTranslations("categories")(value)` / `("periods")(\`values.${v}\`)` —
-   the value itself stays what is stored and sent.
+   the value itself stays what is stored and sent. A record's status, period
+   and category inside a view module's sentence come from `useRecordWords()`;
+   units from `units.label.*`, geographies from `geographyName`/`geographyLabel`
+   (`lib/vocabulary.ts`), roles from `users.roles.*`.
+4a. **A view module (`lib/*-view.ts`) never holds English.** It takes the copy
+   its screen passes — `{ t, locale }` (`ViewCopy<Key>`,
+   `lib/i18n/view-translator.ts`; add `words` when it names a record's values) —
+   and declares the catalogue keys it uses as a union, so a typo fails the
+   build. Counts go through `formatNumber(n, locale)` before they are passed: a
+   simple `{count}` prints a number as written, never grouped. Its spec builds
+   the copy with `copyFor(namespace, locale)` / `recordWordsFor(locale)` /
+   `describeFor(locale)` (`lib/i18n/testing.ts`) — a thin wrapper per function
+   keeps the spec's English assertions, which now assert the catalogue — and
+   adds a Turkish case (`lib/i18n/turkish-views.spec.ts`).
+4b. **Errors.** `useErrorToast()` for a toast; inside a `useCallback` an effect
+   depends on, `useStableErrorToast()` (its identity does not follow the
+   language, so a switch does not re-run the load). A view module's error
+   sentence takes `describe` (`useDescribeError()`) and keeps its own words only
+   for the statuses it explains (a 429, a 403, a 404); anything else is
+   `describe(error).title`, a non-Error value the module's own "failed" sentence.
 5. Numbers: `formatNumber(value, locale, options)`; dates:
    `Intl.DateTimeFormat(LOCALE_FORMAT_TAGS[locale], …)` in the viewer's time
    zone. Never `"en-GB"` hard-coded on a localised screen.
@@ -128,8 +147,11 @@ second source of truth that goes stale after `PATCH /me/preferences`).
 
 ## Not yet localised (LP4-04 owns them)
 
-Every screen but Data Entry's entry form, the app shell and Reports (LP4-03 PR B: `reports`, and the dashboard's KPI words in `dashboard`); Data Entry's
-sub-panels (bulk upload — its issue labels and accepted-row table are done,
-LP4-04; its other chrome and the server's per-row sentences are not — recent imports, coverage, previous submissions,
-evidence, additional context, anomaly notes); activity-type and unit labels,
-geography names; about 60 API refusals that still carry only a generic code.
+Done: Data Entry and every panel on it (LP4-04 slice 2 PR A), the app shell
+(sidebar, every header's Sign out — `SignOutButton`, test id `sign-out` — and
+role), the error and 404 pages, the tab title, Reports, Users, the boundary
+editor. Left: the dashboard and its components, Emissions, targets and
+intensity (PR B — `lib/void-view.ts`, `calculation-display`'s constants, the
+remaining `en-GB` and `lib/utils.formatNumber`); Subsidiaries (list, detail,
+locations, period locks), Review and Audit (PR C); the server's per-row bulk
+sentences; about 60 API refusals that still carry only a generic code (PR C).
