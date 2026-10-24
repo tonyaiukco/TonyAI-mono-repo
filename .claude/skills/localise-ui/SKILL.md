@@ -42,7 +42,11 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
 - **Quantities never change with the language.** Input is read by
   `parseLocaleDecimal` / `checkActivityValue` and sent as a JSON number; a
   field's text is re-rendered with `reformatDecimalInput` on a language change;
-  CSV stays dot-only and XLSX numbers stay numbers.
+  CSV stays dot-only and XLSX numbers stay numbers. A number the server read
+  is shown with `formatReadAmount` (every digit; Intl rounds to three places
+  by default). A field the API bounds passes the bound to `checkDecimal`
+  (`checkActivityParse` for an activity value) so the refusal is worded on the
+  field (`too_large`) before any request.
 - **Look for invisible characters before committing.** Writing a zero-width
   space or a no-break space as a backslash-u escape through an edit tool can
   put the character itself in the file. Build such characters with
@@ -84,7 +88,13 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
    params?))` (`apps/api/src/common/api-error.ts`) — or give an existing error
    class that body in its constructor so `instanceof` readers keep working. A
    404 is `new ResourceNotFoundError('thing_not_found')` (add its sentence to
-   `NOT_FOUND_MESSAGES`).
+   `NOT_FOUND_MESSAGES`). A refusal that is ONE DTO constraint gets its code
+   with `@Max(…, codedConstraint('the_code'))`
+   (`apps/api/src/common/coded-validation.pipe.ts`): the global pipe answers
+   it when it is the body's only failure, and a bulk importer reads the same
+   marker with `failureCode`. A sentence with no params that names a bound
+   spells it out, with a `messages.spec.ts` case pinning it to the constant
+   (`activity_value_too_large`).
 3. **Catalogues:** `errors.codes.the_code` in `en/errors.json` and
    `tr/errors.json`, naming exactly the declared params.
 4. **Tests:** add the thrower to `THROWERS` in
@@ -119,6 +129,7 @@ second source of truth that goes stale after `PATCH /me/preferences`).
 ## Not yet localised (LP4-04 owns them)
 
 Every screen but Data Entry's entry form and the app shell; Data Entry's
-sub-panels (bulk upload, recent imports, coverage, previous submissions,
+sub-panels (bulk upload — its issue labels and accepted-row table are done,
+LP4-04; its other chrome and the server's per-row sentences are not — recent imports, coverage, previous submissions,
 evidence, additional context, anomaly notes); activity-type and unit labels,
 geography names; about 60 API refusals that still carry only a generic code.

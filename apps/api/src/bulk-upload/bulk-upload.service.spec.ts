@@ -200,6 +200,8 @@ function build() {
         anomalyFlag: false,
         periodValue: dto.periodValue,
         varianceReason: dto.varianceReason ?? null,
+        activityValue: dto.activityValue,
+        activityUnit: dto.activityUnit,
       });
     }),
   };
@@ -948,6 +950,17 @@ describe('BulkUploadService — row validation reaches the real DTO rules', () =
     // The bound itself is a figure, not a refusal.
     expect(report.accepted.map((a) => [a.row, a.activityValue])).toEqual([[3, 1e12]]);
     expect(records.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the over-bound value listed first', { activityValue: '1000000000001', activityUnit: 'furlongs' }],
+    ['another field listed first', { reportingYear: '1066', activityValue: '1000000000001' }],
+  ])('keeps invalid when another field is refused too — %s, as the record API answers it', async (_, over) => {
+    const { service } = build();
+
+    const report = await service.import(dataEntry(), csvFile([row(over)]), DRY);
+
+    expect(report.errors[0]).toMatchObject({ code: 'invalid' });
   });
 
   it('keeps invalid for a row whose first refusal is another field, even with an over-bound value', async () => {
@@ -3036,6 +3049,21 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
     const report = await service.import(dataEntry(), csvWith('1.234'), NOTHING);
 
     expect(report.accepted[0]).toMatchObject({ activityValue: 1.234, activityUnit: 'kWh' });
+  });
+
+  it('reports what the created record holds on an apply, not what the row sent', async () => {
+    // The write keeps 16 significant digits: 0.30000000000000004 lands as 0.3.
+    const { records, service } = build();
+    records.create.mockImplementationOnce((_user: unknown, dto: { periodValue: string }) =>
+      Promise.resolve({
+        id: 'rec-x', calculation: null, anomalyFlag: false, periodValue: dto.periodValue,
+        varianceReason: null, activityValue: 0.3, activityUnit: 'kWh',
+      }),
+    );
+
+    const report = await service.import(dataEntry(), csvWith('0.30000000000000004', 'KWH'), NOTHING);
+
+    expect(report.accepted[0]).toMatchObject({ recordId: 'rec-x', activityValue: 0.3, activityUnit: 'kWh' });
   });
 
   it.each([

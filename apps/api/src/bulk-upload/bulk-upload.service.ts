@@ -12,7 +12,6 @@ import { validateSync, type ValidationError } from 'class-validator';
 import { ActivityRecordStatus } from '@tonyai/db';
 import {
   BULK_UPLOAD_ALLOWED_EXTENSIONS,
-  BULK_UPLOAD_ERROR_CODES,
   BULK_UPLOAD_COLUMNS,
   BULK_UPLOAD_MAX_ROWS,
   BULK_UPLOAD_MAX_SIZE_BYTES,
@@ -81,6 +80,9 @@ import { buildTemplateWorkbook } from './template-workbook';
  * through. Untested on purpose; nothing can reach the branch.
  */
 const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true } as const;
+
+/** The coded DTO constraints a row reports under their own code (LP4-04). */
+const ROW_CODED_CONSTRAINTS = ['activity_value_too_large'] as const satisfies readonly BulkUploadErrorCode[];
 
 /**
  * NUL rather than a printable separator, so that no value can contain the
@@ -437,7 +439,9 @@ export class BulkUploadService {
       out.errors.push({
         row,
         column: this.asColumn(first.property),
-        code: this.rowCodeOf(first),
+        // Its own code only as the record API answers it: the row's one
+        // failure. With two, the code would follow class-validator's order.
+        code: failures.length === 1 ? this.rowCodeOf(first) : 'invalid',
         message:
           Object.values(first.constraints ?? {})[0] ??
           `${first.property} is not valid.`,
@@ -585,6 +589,11 @@ export class BulkUploadService {
       row,
       recordId: created.id,
       ...this.identityOf(dto, created.periodValue),
+      // What the record holds, not what the row sent: the write stores a
+      // double at 16 significant digits, so a formula cell's
+      // 0.30000000000000004 lands as 0.3.
+      activityValue: created.activityValue,
+      activityUnit: created.activityUnit,
       tCo2e: this.figureOf(created.calculation),
       anomalous: created.anomalyFlag,
     });
@@ -593,12 +602,14 @@ export class BulkUploadService {
 
   /**
    * A DTO failure's row code: the code its constraint declares
-   * (`codedConstraint`) when the bulk vocabulary has it — the record API's
-   * `activity_value_too_large` — and `invalid` otherwise.
+   * (`codedConstraint`) when it is one of `ROW_CODED_CONSTRAINTS` — the record
+   * API's `activity_value_too_large` — and `invalid` otherwise. An allow-list,
+   * not "any name the bulk vocabulary shares": `period_locked`, `not_found`
+   * and `no_factor` are in both, meaning different things.
    */
   private rowCodeOf(failure: ValidationError): BulkUploadErrorCode {
     const code = failureCode(failure);
-    return code !== null && (BULK_UPLOAD_ERROR_CODES as readonly string[]).includes(code)
+    return code !== null && (ROW_CODED_CONSTRAINTS as readonly string[]).includes(code)
       ? (code as BulkUploadErrorCode)
       : 'invalid';
   }
@@ -1139,9 +1150,9 @@ export class BulkUploadService {
       periodValue: canonicalPeriod,
       category: dto.category,
       activityType: dto.activityType ?? null,
-      // What the record stores, so the preview shows the number and unit
-      // that land (D15): a file's `1.234` reads as 1.234, and a Turkish user
-      // who meant a thousand sees it before applying.
+      // What the row will write (D15): a file's `1.234` reads as 1.234, and a
+      // Turkish user who meant a thousand sees it before applying. An apply
+      // reports the stored record's own value instead.
       activityValue: dto.activityValue,
       activityUnit: storedUnit(dto.activityUnit),
     };

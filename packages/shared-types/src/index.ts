@@ -2487,7 +2487,8 @@ export type ApiErrorParams = Readonly<Record<string, string | number>>;
 export interface ApiErrorBody {
   statusCode: number;
   code: ApiErrorCode;
-  /** English. A DTO refusal lists one sentence per field. */
+  /** English. `validation_failed` lists one sentence per field; every other
+   *  code — a coded DTO constraint's included — is one string. */
   message: string | string[];
   error?: string;
   params?: ApiErrorParams;
@@ -4971,9 +4972,10 @@ export interface BulkUploadAcceptedRow {
    * for a category that names none (LP4-02).
    */
   activityType: string | null;
-  /** The quantity the server read from the cell, as it stores it — a number,
-   *  never the cell's text; a client formats it by the user's locale and must
-   *  not round it away. */
+  /** The quantity the server read from the cell — a number, never the
+   *  cell's text; on an apply, the created record's own value (the write keeps
+   *  16 significant digits, so a dry run's 0.30000000000000004 is stored as
+   *  0.3). A client formats it by the user's locale and must not round it. */
   activityValue: number;
   /** The unit as the server stores it (its canonical spelling, `kWh` for a
    *  file's `KWH`). */
