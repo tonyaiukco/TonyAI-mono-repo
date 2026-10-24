@@ -10,7 +10,9 @@ import {
   computeInvoiceCoverage,
   deriveCellStatus,
   EmissionsService,
+  SUMMARY_RECORD_SELECT,
 } from './emissions.service';
+import { LIMIT_DEFAULTS } from '../common/runtime-config';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RequestUser } from '../auth/auth.types';
 
@@ -148,6 +150,23 @@ describe('EmissionsService.completeness (drill-down)', () => {
       _count: { evidenceLinks: 1 },
       ...over,
     } as Partial<ActivityRecord>);
+
+  it('reads within the reports\' budget and refuses past it as query_too_broad (LP4-03 K11)', async () => {
+    vi.stubEnv('REPORT_RECORD_LIMIT', '2');
+    try {
+      const bounded = new EmissionsService(prisma as unknown as PrismaService);
+      const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
+      prisma.activityRecord.findMany.mockResolvedValue([invoice('loc-1', 'January'), invoice('loc-1', 'February')]);
+      await expect(bounded.completeness(user, { subsidiaryId: 'sub-1', year: 2024 })).resolves.toBeDefined();
+      expect(prisma.activityRecord.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 3 }));
+      prisma.activityRecord.findMany.mockResolvedValue([invoice('loc-1', 'January'), invoice('loc-1', 'February'), invoice('loc-1', 'March')]);
+      await expect(bounded.completeness(user, { subsidiaryId: 'sub-1', year: 2024 })).rejects.toMatchObject({ status: 422 });
+      // The matrix too — the dashboard's "% Complete" read.
+      prisma.subsidiary.findMany.mockResolvedValue([]);
+      await expect(bounded.trackingMatrix(user, { year: 2024 })).rejects.toMatchObject({ status: 422 });
+      expect(prisma.activityRecord.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 3 }));
+    } finally { vi.unstubAllEnvs(); }
+  });
 
   it('is not found for a subsidiary outside the access set, and never queries', async () => {
     const user = superAdmin({ accessibleSubsidiaryIds: ['sub-1'] });
@@ -1830,15 +1849,21 @@ describe('the shared completeness primitives', () => {
   });
 });
 
-it('bounds the report summary and omits unused input while preserving the standalone query', async () => {
+it('bounds every summary read — the caller\'s limit, else the reports\' budget — and selects only what it sums', async () => {
   const prisma = createPrismaMock();
   prisma.subsidiary.findMany.mockResolvedValue([]);
   prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), makeRecord()]);
   const service = new EmissionsService(prisma as never);
   await expect(service.summary(superAdmin(), { year: 2024 }, 2)).resolves.toMatchObject({ recordCount: 2 });
-  expect(prisma.activityRecord.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 3, omit: { input: true } }));
+  expect(prisma.activityRecord.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 3, select: SUMMARY_RECORD_SELECT }));
+  expect(prisma.activityRecord.findMany.mock.lastCall?.[0].select).not.toHaveProperty('input');
   prisma.activityRecord.findMany.mockResolvedValue([makeRecord(), makeRecord(), makeRecord()]);
   await expect(service.summary(superAdmin(), { year: 2024 }, 2)).rejects.toMatchObject({ status: 422 });
+  // No caller limit: the analytics route (LP4-05 follow-up (17)) is bounded too.
+  prisma.activityRecord.findMany.mockResolvedValue([makeRecord()]);
   await service.summary(superAdmin(), { year: 2024 });
-  expect(prisma.activityRecord.findMany.mock.lastCall?.[0]).not.toHaveProperty('take');
+  expect(prisma.activityRecord.findMany.mock.lastCall?.[0]).toHaveProperty('take', LIMIT_DEFAULTS.REPORT_RECORD_LIMIT + 1);
+  // A year-less read — the history's trend, every year — has the metadata reads' budget (architect P2-5).
+  await service.summary(superAdmin(), {});
+  expect(prisma.activityRecord.findMany.mock.lastCall?.[0]).toHaveProperty('take', LIMIT_DEFAULTS.ACTIVITY_RECORD_METADATA_MAX_ROWS + 1);
 });

@@ -26,13 +26,31 @@ const REPORT_DATASET_ROUTE = /^\/api\/v1\/report-datasets\/[^/]+$/;
  * a download re-hashes up to `REPORT_MAX_BYTES` — both take the exports'
  * quota and lease. The list and one issuance's metadata are ordinary reads. */
 const REPORT_ISSUANCES_ROUTE = '/api/v1/report-issuances';
-const REPORT_ISSUANCE_PDF_ROUTE = /^\/api\/v1\/report-issuances\/[^/]+\/pdf$/;
+const REPORT_ISSUANCE_PDF_ROUTE = /^\/api\/v1\/report-issuances\/[^/]+\/(?:pdf|xlsx|csv)$/;
+/** LP4-03: the issued workbook and CSV re-read and re-verify the retained
+ * dataset (up to `REPORT_MAX_BYTES`) and write it out, as the PDF download
+ * re-hashes its bytes — the exports' quota and lease (above); the issuance
+ * preview re-reads and verifies the dataset as an issue does. */
+const REPORT_ISSUANCE_PREVIEW_ROUTE = /^\/api\/v1\/report-datasets\/[^/]+\/issuance-preview$/;
 /** A POST that only reads: Data Entry's debounced live preview looks up a
  * factor and stores nothing, so it is admitted as a read — the READ quota and
  * no mutation permit. With one, it held the user's single permit
  * (`MUTATION_USER_CONCURRENCY`), and a Save or Submit pressed while it ran was
  * refused 429; it also held one of the API-wide permits every write needs. */
 const READ_ONLY_POSTS = new Set(['/api/v1/calculations/preview']);
+
+/** LP4-03: a live report's preview (`GET /reports/meta`, `/reports/context/meta`)
+ * reads its counts, Scope 1/2 rows, Scope 3 disclosure and the boundary's
+ * coverage in one interactive snapshot — a READ (the preview fires on every
+ * selection change) that holds a pool connection for the whole read, so it
+ * takes a permit of its own (`runtime-request.ts`): one per user, apart from
+ * the exports' lease. */
+const REPORT_PREVIEW_PATHS = new Set([
+  '/api/v1/reports/meta',
+  `/api/v1${REPORTING_CONTEXT_API_PATHS.meta}`,
+]);
+export const isReportPreview = (method: string, path: string): boolean =>
+  ['GET', 'HEAD'].includes(method) && REPORT_PREVIEW_PATHS.has(path.split('?')[0].toLowerCase().replace(/\/+$/, ''));
 
 export type RouteGroup = 'READ' | 'WRITE' | 'IMPORT' | 'EXPORT' | 'SUBMIT';
 export const routeGroup = (method: string, path: string): RouteGroup => {
@@ -45,6 +63,7 @@ export const routeGroup = (method: string, path: string): RouteGroup => {
   if (['GET', 'HEAD'].includes(method) && REPORT_DATASET_ROUTE.test(route)) return 'EXPORT';
   if (method === 'POST' && route === REPORT_ISSUANCES_ROUTE) return 'EXPORT';
   if (['GET', 'HEAD'].includes(method) && REPORT_ISSUANCE_PDF_ROUTE.test(route)) return 'EXPORT';
+  if (['GET', 'HEAD'].includes(method) && REPORT_ISSUANCE_PREVIEW_ROUTE.test(route)) return 'EXPORT';
   if (method === 'POST' && READ_ONLY_POSTS.has(route)) return 'READ';
   return ['GET', 'HEAD', 'OPTIONS'].includes(method) ? 'READ' : 'WRITE';
 };

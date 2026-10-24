@@ -352,17 +352,48 @@ const issuanceRow = (over: Partial<IssuanceRow> = {}): IssuanceRow => ({
 });
 
 describe('reads', () => {
-  it('lists a year under the read rule and maps each row to the contract, without its object key', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([issuanceRow()]);
-    const [listed] = await service.list(admin, 2026);
-    expect(listed).toMatchObject({ issuanceId: issuanceRow().id, status: 'final', gaps: [], pdf: { artifactId: 'art', sizeBytes: PDF.length } });
-    expect(JSON.stringify(listed)).not.toContain('art.pdf');
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+  const summaryRow = (over: Record<string, unknown> = {}) => {
+    const { gaps: _gaps, artifact_id: _artifact, storage_path: _path, organisation_id: _org, ...row } = issuanceRow();
+    void _gaps; void _artifact; void _path; void _org;
+    return {
+      ...row, gap_count: 0, gap_counts: {}, captured_at: '2026-10-21T11:00:00.000Z', context: { year: 2026 },
+      selection: 'inventory', boundary_id: 'b', version: 1, decision: 'confirmed', ...over,
+    };
+  };
+
+  it('lists a year as summaries — gaps counted, never listed, and no object key (K7)', async () => {
+    prisma.$queryRaw
+      .mockResolvedValueOnce([summaryRow({ status: 'partial', gap_count: 3, gap_counts: { coverage_gap: 2, unlocked_period: 1 } })])
+      .mockResolvedValueOnce([{ id: 'current-final' }]);
+    const list = await service.list(admin, 2026);
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0]).toMatchObject({
+      issuanceId: issuanceRow().id, status: 'partial', gapCount: 3, gapCounts: { coverage_gap: 2, unlocked_period: 1 },
+      pdf: { sizeBytes: PDF.length }, dataset: { capturedAt: '2026-10-21T11:00:00.000Z', boundary: { id: 'b', version: 1, decision: 'confirmed' } },
+    });
+    expect(list.items[0]).not.toHaveProperty('gaps');
+    expect(JSON.stringify(list)).not.toContain('art.pdf');
+    expect(JSON.stringify(list)).not.toContain('artifactId');
+    // The year's newest final is named whether or not it is on the page.
+    expect(list.currentFinalIssuanceId).toBe('current-final');
+    expect(list.truncated).toBe(false);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('says a list is truncated when more than the limit are readable, and shows the limit', async () => {
+    prisma.$queryRaw
+      .mockResolvedValueOnce(Array.from({ length: 51 }, (_, i) => summaryRow({ id: `i-${i}` })))
+      .mockResolvedValueOnce([]);
+    const list = await service.list(admin, 2026, 'final');
+    expect(list.items).toHaveLength(50);
+    expect(list.truncated).toBe(true);
+    expect(list.currentFinalIssuanceId).toBeNull();
   });
 
   it('reads nothing for a caller with no access or no organisation', async () => {
-    expect(await service.list(user('super_admin', { accessibleSubsidiaryIds: [] }), 2026)).toEqual([]);
-    expect(await service.list(user('super_admin', { organisationId: null }), 2026)).toEqual([]);
+    const none = { items: [], truncated: false, currentFinalIssuanceId: null };
+    expect(await service.list(user('super_admin', { accessibleSubsidiaryIds: [] }), 2026)).toEqual(none);
+    expect(await service.list(user('super_admin', { organisationId: null }), 2026)).toEqual(none);
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
@@ -383,7 +414,8 @@ describe('the PDF download — the retained bytes, verified, never rendered agai
     prisma.$queryRaw.mockResolvedValueOnce([issuanceRow()]);
     const served = await service.pdfOf(user('executive_viewer'), 'id');
     expect(served.bytes.equals(PDF)).toBe(true);
-    expect(served.filename).toBe('tonyai-report-2026-executive_summary-en-final.pdf');
+    // Every final of a year has its own name: the issue date and a short id (PR D follow-up (11)).
+    expect(served.filename).toBe('tonyai-report-2026-executive_summary-en-final-2026-10-21-1550a000.pdf');
     expect(storage.download).toHaveBeenCalledWith(REPORT_ARTIFACTS_BUCKET, `${ORG}/art.pdf`);
     expect(pdf.render).not.toHaveBeenCalled();
   });
@@ -403,5 +435,70 @@ describe('the PDF download — the retained bytes, verified, never rendered agai
     const e = await refusal(service.pdfOf(admin, 'id'));
     expect(errorCodeOf(e)).toBe('report_artifact_missing');
     expect((e as { getStatus(): number }).getStatus()).toBe(404);
+  });
+});
+
+describe('the issuance preview (LP4-03 K7) — the gate, nothing written', () => {
+  it('derives what an issue would, and says whether this caller may issue that final', async () => {
+    expect(await service.preview(admin, dataset.datasetId)).toEqual({
+      datasetId: dataset.datasetId, status: 'final', gaps: [], finalAllowed: true,
+    });
+    expect(await service.preview(consultant, dataset.datasetId)).toMatchObject({ status: 'final', finalAllowed: false });
+    expect(pdf.render).not.toHaveBeenCalled();
+    expect(storage.upload).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(tx.reportIssuance.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction.mock.calls[0][1]).toMatchObject({ isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  });
+
+  it('names a partial\'s gaps, as the issuance would carry them', async () => {
+    arrange(datasetOf({ boundary: frozenBoundary(complete(), 'unconfirmed'), locks: allLocks() }));
+    const preview = await service.preview(consultant, dataset.datasetId);
+    expect(preview.status).toBe('partial');
+    expect(preview.gaps.map((g) => g.coverageCode ?? g.code)).toContain('boundary_unconfirmed');
+    expect(preview.finalAllowed).toBe(false);
+  });
+
+  it.each(['executive_viewer', 'data_entry'] as const)('refuses %s, who issues nothing', async (role) => {
+    expect(((await refusal(service.preview(user(role), dataset.datasetId))) as { getStatus(): number }).getStatus()).toBe(403);
+  });
+
+  it('answers an unreadable dataset as report_dataset_not_found — no bypass for the issuer', async () => {
+    const e = await refusal(service.preview(user('super_admin', { accessibleSubsidiaryIds: ['sub-a'] }), dataset.datasetId));
+    expect(errorCodeOf(e)).toBe('report_dataset_not_found');
+  });
+
+  it('refuses a dataset whose text no longer verifies — never previews a tampered row', async () => {
+    datasetRow = { ...rowOf(dataset), fingerprintHex: 'b'.repeat(64) };
+    const e = await refusal(service.preview(admin, dataset.datasetId));
+    expect(errorCodeOf(e)).toBeUndefined();
+    expect((e as Error).message).toMatch(/could not be issued/);
+  });
+});
+
+describe('the issued Excel and CSV (LP4-03 K5) — the retained dataset, re-verified', () => {
+  const issuedRow = () => issuanceRow({ dataset_id: dataset.datasetId, dataset_fingerprint_hex: dataset.fingerprint.hex });
+
+  it.each(['xlsx', 'csv'] as const)('projects the issuance\'s own dataset as %s, under one name with its PDF', async (format) => {
+    prisma.$queryRaw.mockResolvedValueOnce([issuedRow()]);
+    const { body, filename } = await service.tablesOf(user('executive_viewer'), 'id', format);
+    expect(filename).toBe(`tonyai-report-2026-executive_summary-en-final-2026-10-21-1550a000.${format}`);
+    if (format === 'csv') expect(String(body)).toContain(`,sha256:${dataset.fingerprint.hex},`);
+    else expect((body as Buffer).subarray(0, 2).toString()).toBe('PK');
+    expect(tx.reportDataset.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: dataset.datasetId, organisationId: ORG } }));
+    expect(pdf.render).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('refuses to project a dataset that is not the one the issuance was made from', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([issuanceRow({ dataset_id: dataset.datasetId, dataset_fingerprint_hex: 'c'.repeat(64) })]);
+    const e = await refusal(service.tablesOf(admin, 'id', 'csv'));
+    expect((e as Error).message).toMatch(/fingerprint is not the issuance's/);
+  });
+
+  it('answers an unreadable issuance as report_issuance_not_found, and data_entry 403', async () => {
+    expect(errorCodeOf(await refusal(service.tablesOf(admin, 'id', 'xlsx')))).toBe('report_issuance_not_found');
+    expect(((await refusal(service.tablesOf(user('data_entry'), 'id', 'csv'))) as { getStatus(): number }).getStatus()).toBe(403);
+    expect(tx.reportDataset.findFirst).not.toHaveBeenCalled();
   });
 });

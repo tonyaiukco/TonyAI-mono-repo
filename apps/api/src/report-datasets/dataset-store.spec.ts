@@ -75,7 +75,7 @@ describe('readDatasetContent', () => {
 describe('listDatasetSummaries', () => {
   it('reads nothing for a caller with no access', async () => {
     const d = { reportDataset: {}, $queryRaw: vi.fn() };
-    expect(await listDatasetSummaries(d as never, 'org-1', 2026, [])).toEqual([]);
+    expect(await listDatasetSummaries(d as never, 'org-1', 2026, [])).toEqual({ items: [], truncated: false });
     expect(d.$queryRaw).not.toHaveBeenCalled();
   });
 
@@ -87,7 +87,7 @@ describe('listDatasetSummaries', () => {
         boundary_id: 'b-1', version: 2, decision: 'unconfirmed', canonicalization: 'tonyai-report-dataset-v1', fingerprint_hex: 'e'.repeat(64),
       }]),
     };
-    expect(await listDatasetSummaries(d as never, 'org-1', 2026, ['s-1', 's-2'])).toEqual([{
+    expect((await listDatasetSummaries(d as never, 'org-1', 2026, ['s-1', 's-2'])).items).toEqual([{
       datasetId: 'd-1', capturedAt: '2026-10-15T12:00:00.123Z', capturedBy: 'u-1', context: { year: 2026 }, selection: 'inventory',
       boundary: { id: 'b-1', version: 2, decision: 'unconfirmed' },
       fingerprint: { algorithm: 'sha256', canonicalization: 'tonyai-report-dataset-v1', hex: 'e'.repeat(64) },
@@ -98,7 +98,7 @@ describe('listDatasetSummaries', () => {
     expect(sql).toMatch(/d\."organisation_id" = \?::uuid\s+AND d\."reporting_year" = \?/);
     expect(sql).toMatch(/cardinality\(d\."referenced_subsidiary_ids"\) > 0/);
     expect(sql.indexOf('<@')).toBeLessThan(sql.indexOf('LIMIT'));
-    expect(values).toEqual(['org-1', 2026, ['s-1', 's-2'], DATASET_LIST_LIMIT]);
+    expect(values).toEqual(['org-1', 2026, ['s-1', 's-2'], DATASET_LIST_LIMIT + 1]);
     // The tag is the row's own, never assumed.
     expect(sql).toMatch(/d\."canonicalization" AS canonicalization/);
   });

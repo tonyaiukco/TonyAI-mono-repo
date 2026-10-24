@@ -644,6 +644,10 @@ export type ReportingMetaResponse = ReportingContextResponse<ReportMetaDTO>;
  * until callers move to the additive context routes. */
 export interface ReportingExportParams extends ReportingContext {
   template: ReportTemplate;
+  /** D16 / LP4-03 K6: the PDF's and the workbook's language, defaulting to the
+   * caller's `profiles.language`; recorded on the export's audit row. The CSV
+   * keeps its English machine headers and dot-decimal figures. */
+  language?: Locale;
   includeMethodologyNotes?: boolean;
   includeEvidenceSummary?: boolean;
 }
@@ -1008,6 +1012,10 @@ export const INTENSITY_METRICS: IntensityMetric[] = [
 // Phase 1 ships two templates; Subsidiary Comparison and Supplier ESG Scorecard
 // are Phase 3 (no suppliers module; comparison is a thin summary variant).
 export type ReportTemplate = 'executive_summary' | 'ghg_protocol_detail';
+/** A live report's REVIEW status (LP4-03 K3): `approved` is every committed
+ * Scope 1/2 record of the selection approved, with none draft, rejected or
+ * pending — never "the inventory is complete" (`ReportMetaDTO.coverage` says
+ * what is covered, and only a `final` issuance certifies). Labelled so. */
 export type ReportStatus = 'approved' | 'draft' | 'contains_incomplete_data';
 export type ReportExportType = 'pdf' | 'excel' | 'csv';
 
@@ -1027,11 +1035,12 @@ export const REPORT_TEMPLATES: { id: ReportTemplate; name: string; description: 
 
 /** Completeness/status meta for the report preview badge (GET /reports/meta). */
 export interface ReportMetaDTO {
-  /** PR B publishes the configured positive safe-integer export row budget.
-   * Compare committedCount + voidedCount against this limit, not totalCount:
-   * exports count committed and withdrawn rows together. Absent on pre-PR-B servers;
-   * absence is unknown, never unlimited. The export rechecks current limits and
-   * authorized data; this preview does not reserve capacity or promise success. */
+  /** The configured row budget (LP4-05 PR B). An export refuses when the
+   * selection's committed + withdrawn Scope 1/2 records exceed it; since LP4-03
+   * this preview itself reads the committed Scope 1/2 rows and the Scope 3 rows
+   * (each within the budget) and answers `query_too_broad` past it. Absent on
+   * pre-PR-B servers; absence is unknown, never unlimited. The export rechecks
+   * current limits and authorized data. */
   recordLimit?: number;
   status: ReportStatus;
   organisationName: string;
@@ -1050,6 +1059,19 @@ export interface ReportMetaDTO {
    * the reader cannot see is not a restatement.
    */
   voidedCount: number;
+  /**
+   * LP4-03 (K2–K4): the report's own summary, read in the SAME snapshot as
+   * every count above — so a preview's badge, tiles and tables cannot disagree
+   * with each other or with an export of the same selection made at the same
+   * moment. Scope 1 and 2 only: `totals.scope3` is the literal 0 and
+   * `totals.total` is Scope 1 + Scope 2; Scope 3 is disclosed in `scope3`.
+   * Every count above is of Scope 1/2 records too.
+   */
+  summary: import('./report-consistency').ReportInventorySummary;
+  scope3: import('./report-consistency').ReportScope3Disclosure;
+  /** What the year's inventory boundary says about the selection (K3). The
+   * `status` above is review status only — it never certifies completeness. */
+  coverage: import('./report-consistency').ReportLiveCoverage;
 }
 
 // Target Types
@@ -5327,3 +5349,5 @@ export * from './bounded-access';
 export * from './report-dataset';
 
 export * from './inventory-boundary';
+
+export * from './report-consistency';

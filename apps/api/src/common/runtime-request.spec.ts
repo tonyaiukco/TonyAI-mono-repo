@@ -51,6 +51,33 @@ describe('verified-user runtime admission', () => {
     await expect(guard.canActivate(third.context)).rejects.toBeInstanceOf(CapacityError);
     expect(third.res.setHeader).toHaveBeenCalledWith('Retry-After', 60);
   });
+  it('admits one live report preview per user, another user\'s beside it, apart from the exports (LP4-03)', async () => {
+    vi.stubEnv('REPORT_CONCURRENCY', '1');
+    const guard = new RuntimeAuthGuard(auth as never, policy());
+    const first = request('/api/v1/reports/context/meta', 'GET', 'a');
+    expect(await guard.canActivate(first.context)).toBe(true);
+    // The same user's second preview, context or legacy, waits for the first.
+    const again = request('/api/v1/reports/meta', 'GET', 'a');
+    await expect(guard.canActivate(again.context)).rejects.toBeInstanceOf(CapacityError);
+    expect(again.res.setHeader).toHaveBeenCalledWith('Retry-After', 1);
+    // Another user's preview is not refused by the first user's.
+    const other = request('/api/v1/reports/context/meta/', 'GET', 'b');
+    expect(await guard.canActivate(other.context)).toBe(true);
+    other.req.runtimeLease.release();
+    // The exports' lease is not the previews': an export runs beside a preview.
+    const exporting = request('/api/v1/reports/context/csv', 'GET', 'b');
+    expect(await guard.canActivate(exporting.context)).toBe(true);
+    exporting.req.runtimeLease.release();
+    // An ordinary read takes no preview permit.
+    const read = request('/api/v1/emissions/context/summary', 'GET', 'a');
+    expect(await guard.canActivate(read.context)).toBe(true);
+    read.req.runtimeLease.release();
+    first.req.runtimeLease.release();
+    const after = request('/api/v1/reports/meta', 'GET', 'a');
+    expect(await guard.canActivate(after.context)).toBe(true);
+    after.req.runtimeLease.release();
+  });
+
   it('shares the reports concurrency lease across legacy and context exports', async () => {
     vi.stubEnv('REPORT_CONCURRENCY', '1');
     const guard = new RuntimeAuthGuard(auth as never, policy());

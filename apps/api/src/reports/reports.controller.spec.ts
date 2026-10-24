@@ -67,7 +67,9 @@ describe('compiled report controller routing', () => {
     }
     expect(response.set).toHaveBeenCalledWith(expect.objectContaining({
       'Content-Type': type,
-      'Content-Disposition': `attachment; filename="tonyai-ghg_protocol_detail-2027-22222222-scope1-fuel.${ext}"`,
+      'Content-Disposition': `attachment; filename="tonyai-live-ghg_protocol_detail-2027-22222222-scope1-fuel.${ext}"`,
+      // A live report is never kept in a cache on the way (LP4-03; security-rls P3-1).
+      'Cache-Control': 'no-store',
     }));
     expect(response.send).toHaveBeenCalledWith(ext === 'csv' ? 'test-csv' : bytes);
   });

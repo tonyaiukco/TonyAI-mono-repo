@@ -8,6 +8,8 @@ import {
   type Locale,
   type ReportIssuance,
   type ReportIssuanceGapCode,
+  type ReportIssuanceList,
+  type ReportIssuancePreview,
   type UserRole,
 } from '@tonyai/shared-types';
 import { LIFECYCLE_TX } from '../activity-records/lifecycle-lock';
@@ -27,7 +29,8 @@ import { StorageObjectMissingError, StorageService } from '../storage/storage.se
 import type { IssueReportDto } from './dto/issue-report.dto';
 import { boundaryMatchesVersion, deriveIssuance, readRetainedDataset, RetainedDatasetError } from './issuance-gate';
 import { buildIssuanceHtml, ISSUANCE_RENDERER } from './issuance-html';
-import { readIssuanceRows, toIssuance, type IssuanceRow } from './issuance-store';
+import { readIssuanceList, readIssuanceRows, toIssuance, type IssuanceRow } from './issuance-store';
+import { issuedCsv, issuedWorkbook } from './issuance-tables';
 
 /**
  * LP3-04 PR D — the issuance (README "The issuance"; Decisions 2026-10-21):
@@ -145,45 +148,18 @@ export class ReportIssuancesService {
 
     // 1. Read, in one snapshot.
     const read = await this.prisma.$transaction(async (tx): Promise<IssuanceRead> => {
-      const row = await tx.reportDataset.findFirst({
-        where: { id: dto.datasetId, organisationId },
-        select: {
-          id: true, organisationId: true, boundaryId: true, reportingYear: true, schemaVersion: true,
-          canonicalization: true, fingerprintHex: true, referencedSubsidiaryIds: true, content: true,
-        },
-      });
-      if (row === null || !readableBy(row.referencedSubsidiaryIds, user.accessibleSubsidiaryIds)) {
-        throw new ResourceNotFoundError('report_dataset_not_found');
-      }
+      const retained = await this.readRetained(tx, user, organisationId, dto.datasetId);
       const language = dto.language ?? await this.languageOf(tx, user.id);
       const repeat = await tx.reportIssuance.findFirst({
-        where: { datasetId: row.id, organisationId, language, template: dto.template, ...options },
+        where: { datasetId: retained.row.id, organisationId, language, template: dto.template, ...options },
         select: { id: true },
       });
       if (repeat !== null) throw new ReportAlreadyIssuedError();
-      const snapshot = await CaptureSnapshot.open(tx);
-      const header = await tx.inventoryBoundary.findFirst({
-        where: { id: row.boundaryId, organisationId },
-        select: { frozenAt: true },
-      });
-      const rebuilt = await readInventoryBoundary(snapshot, {
-        boundaryId: row.boundaryId, organisationId, accessibleSubsidiaryIds: user.accessibleSubsidiaryIds,
-      });
-      return { row, language, frozen: header?.frozenAt != null, rebuilt };
+      return { ...retained, language };
     }, SNAPSHOT_TX);
 
     // 2. Verify and derive, from the retained dataset alone.
-    let dataset: ReturnType<typeof readRetainedDataset>;
-    try {
-      dataset = readRetainedDataset(read.row);
-      if (!read.frozen || !boundaryMatchesVersion(dataset.schemaVersion, dataset.boundary, read.rebuilt)) {
-        throw new RetainedDatasetError(read.row.id, 'its boundary is not its frozen version as stored');
-      }
-    } catch (e) {
-      if (!(e instanceof RetainedDatasetError)) throw e;
-      this.logger.error(e.message);
-      throw new Error('The report dataset could not be issued.', { cause: e });
-    }
+    const dataset = this.verified(read);
     const derived = deriveIssuance(dataset);
     if (derived.status === 'final' && !FINAL_ROLES.has(user.role)) throw new ReportFinalForbiddenError();
 
@@ -307,12 +283,108 @@ export class ReportIssuancesService {
     return toIssuance(base);
   }
 
-  /** A year's issuances the caller may read, newest first. */
-  async list(user: RequestUser, year: number): Promise<ReportIssuance[]> {
+  /**
+   * The retained dataset under the read rule (organisation, then every
+   * subsidiary it references in the caller's CURRENT access, else not found)
+   * and its frozen version rebuilt from the stored rows — in the caller's
+   * REPEATABLE READ transaction.
+   */
+  private async readRetained(
+    tx: Prisma.TransactionClient,
+    user: RequestUser,
+    organisationId: string,
+    datasetId: string,
+  ): Promise<Omit<IssuanceRead, 'language'>> {
+    const row = await tx.reportDataset.findFirst({
+      where: { id: datasetId, organisationId },
+      select: {
+        id: true, organisationId: true, boundaryId: true, reportingYear: true, schemaVersion: true,
+        canonicalization: true, fingerprintHex: true, referencedSubsidiaryIds: true, content: true,
+      },
+    });
+    if (row === null || !readableBy(row.referencedSubsidiaryIds, user.accessibleSubsidiaryIds)) {
+      throw new ResourceNotFoundError('report_dataset_not_found');
+    }
+    const snapshot = await CaptureSnapshot.open(tx);
+    const header = await tx.inventoryBoundary.findFirst({
+      where: { id: row.boundaryId, organisationId },
+      select: { frozenAt: true },
+    });
+    const rebuilt = await readInventoryBoundary(snapshot, {
+      boundaryId: row.boundaryId, organisationId, accessibleSubsidiaryIds: user.accessibleSubsidiaryIds,
+    });
+    return { row, frozen: header?.frozenAt != null, rebuilt };
+  }
+
+  /** The retained text held to its row, fingerprint, assessments and frozen version (K2) — a mismatch is a defect. */
+  private verified(read: Omit<IssuanceRead, 'language'>): ReturnType<typeof readRetainedDataset> {
+    try {
+      const dataset = readRetainedDataset(read.row);
+      if (!read.frozen || !boundaryMatchesVersion(dataset.schemaVersion, dataset.boundary, read.rebuilt)) {
+        throw new RetainedDatasetError(read.row.id, 'its boundary is not its frozen version as stored');
+      }
+      return dataset;
+    } catch (e) {
+      if (!(e instanceof RetainedDatasetError)) throw e;
+      this.logger.error(e.message);
+      throw new Error('The report dataset could not be issued.', { cause: e });
+    }
+  }
+
+  /**
+   * What issuing this dataset would derive (LP4-03 K7; PR D follow-up (9)):
+   * the same read, verification and gate as `issue`, nothing rendered or
+   * written. Issuers only — a reader who cannot issue has nothing to preview.
+   */
+  async preview(user: RequestUser, datasetId: string): Promise<ReportIssuancePreview> {
+    if (!ISSUE_ROLES.has(user.role)) throw new ForbiddenException('Only super_admin or consultant may issue a report');
+    const organisationId = user.organisationId;
+    if (!organisationId) throw new ResourceNotFoundError('report_dataset_not_found');
+    const read = await this.prisma.$transaction((tx) => this.readRetained(tx, user, organisationId, datasetId), SNAPSHOT_TX);
+    const derived = deriveIssuance(this.verified(read));
+    return {
+      datasetId: read.row.id,
+      status: derived.status,
+      gaps: derived.gaps,
+      finalAllowed: derived.status === 'final' && FINAL_ROLES.has(user.role),
+    };
+  }
+
+  /** A year's issuances the caller may read, newest first, as summaries (K7). */
+  async list(user: RequestUser, year: number, status?: 'final' | 'partial'): Promise<ReportIssuanceList> {
     if (!ISSUANCE_READ_ROLES.has(user.role)) throw new ForbiddenException('data_entry users do not read report issuances');
-    if (!user.organisationId) return [];
-    const rows = await readIssuanceRows(this.prisma, user.organisationId, user.accessibleSubsidiaryIds, { year });
-    return rows.map(toIssuance);
+    if (!user.organisationId) return { items: [], truncated: false, currentFinalIssuanceId: null };
+    return readIssuanceList(this.prisma, user.organisationId, user.accessibleSubsidiaryIds, year, status);
+  }
+
+  /**
+   * The issuance's Excel or CSV (K5): its RETAINED dataset — re-verified as an
+   * issue verifies it, and bound to the issuance by its fingerprint — projected
+   * by `issuance-tables.ts`, which reads nothing else. Written on request and
+   * never stored: the same issuance yields the same rows and figures, and they
+   * are exactly its PDF's.
+   */
+  async tablesOf(user: RequestUser, id: string, format: 'xlsx' | 'csv'): Promise<{ body: Buffer | string; filename: string }> {
+    const row = await this.readable(user, id);
+    const organisationId = user.organisationId!;
+    const read = await this.prisma.$transaction(
+      (tx) => this.readRetained(tx, user, organisationId, row.dataset_id),
+      SNAPSHOT_TX,
+    );
+    const dataset = this.verified(read);
+    if (dataset.fingerprint.hex !== row.dataset_fingerprint_hex || dataset.fingerprint.canonicalization !== row.canonicalization) {
+      throw new Error(`Report issuance ${row.id}: its dataset's fingerprint is not the issuance's.`);
+    }
+    const issuance = toIssuance(row);
+    const doc = {
+      issuanceId: row.id, issuedAt: row.issued_at, dataset,
+      status: issuance.status, gaps: issuance.gaps, language: row.language, template: row.template,
+    };
+    const body = format === 'csv' ? issuedCsv(doc) : await issuedWorkbook(doc);
+    if ((typeof body === 'string' ? Buffer.byteLength(body, 'utf8') : body.length) > this.limits.REPORT_MAX_BYTES) {
+      throw new QueryTooBroadError();
+    }
+    return { body, filename: `${issuedBaseName(row)}.${format}` };
   }
 
   /** One issuance's metadata. */
@@ -344,7 +416,7 @@ export class ReportIssuancesService {
     if (bytes.length !== row.size_bytes || sha256Of(bytes) !== row.sha256) {
       throw new Error(`Report issuance ${row.id}: the stored PDF does not hash to the issuance's SHA-256.`);
     }
-    return { bytes, filename: `tonyai-report-${row.reporting_year}-${row.template}-${row.language}-${row.status}.pdf` };
+    return { bytes, filename: `${issuedBaseName(row)}.pdf` };
   }
 
   private async readable(user: RequestUser, id: string): Promise<IssuanceRow> {
@@ -361,6 +433,15 @@ export class ReportIssuancesService {
     const language = profile?.language;
     return (SUPPORTED_LOCALES as readonly string[]).includes(language ?? '') ? (language as Locale) : DEFAULT_LOCALE;
   }
+}
+
+/**
+ * An issued file's name — every final of a year used to share one (PR D
+ * follow-up (11)); the issue date and a short id now tell them apart, and the
+ * PDF, workbook and CSV of one issuance share it.
+ */
+export function issuedBaseName(row: Pick<IssuanceRow, 'id' | 'reporting_year' | 'template' | 'language' | 'status' | 'issued_at'>): string {
+  return `tonyai-report-${row.reporting_year}-${row.template}-${row.language}-${row.status}-${row.issued_at.slice(0, 10)}-${row.id.slice(0, 8)}`;
 }
 
 /** The audit row's summary of the gaps: how many of each code. */

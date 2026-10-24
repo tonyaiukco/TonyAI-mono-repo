@@ -2,12 +2,14 @@ import { CATEGORY_ACTIVITY_TYPES, entityLabel, UNSPECIFIED_ACTIVITY_TYPE, type C
 import { ANOMALY_BASELINE_PERIODS } from '@tonyai/shared-types';
 import { csvField, type CellValue } from '../common/csv-cell';
 import { escapeHtmlText } from '../common/html-escape';
+import { NOT_CALCULATED, WITHDRAWN } from '../common/report-markers';
 import type {
   ReportLedgerRow,
   ReportRowBase,
   ReportWithdrawnRow,
   ReportWithdrawnTotals,
 } from './report-data';
+import { EN_VOCABULARY, type ReportVocabulary } from './report-vocabulary';
 
 /**
  * The report exports' column vocabulary, declared once.
@@ -35,7 +37,7 @@ import type {
  * category has no emission factor. One constant so the PDF, the Excel sheet and
  * the CSV cannot say three different things about the same row.
  */
-export const NOT_CALCULATED = 'Not calculated';
+export { NOT_CALCULATED };
 
 /**
  * What the anomaly column says for a record the VAR §4 rule never ran on.
@@ -84,7 +86,7 @@ export function anomalyCell(r: {
  * Whoever writes the `excel` or `pdf` slot in F2/F3 should read that twice:
  * inheriting this rule into either would destroy that format's disclosure.
  */
-export const WITHDRAWN = 'Withdrawn';
+export { WITHDRAWN };
 
 /**
  * What a flat-export cell may hold before quoting.
@@ -157,7 +159,8 @@ interface PdfSlot<R> {
    * both the `<th>` and the `<td>`, so it is sourced from one descriptor.
    */
   readonly brk?: boolean;
-  readonly cell: (r: R) => PdfCell;
+  /** `v` is the report's language (K6); a cell that prints no word ignores it. */
+  readonly cell: (r: R, v: ReportVocabulary) => PdfCell;
 }
 
 interface ExcelSlot<R> {
@@ -169,7 +172,7 @@ interface ExcelSlot<R> {
    * `format()` helper across the three formats would do exactly that, which is
    * why each format declares its own renderer rather than sharing one.
    */
-  readonly cell: (r: R) => CellValue;
+  readonly cell: (r: R, v: ReportVocabulary) => CellValue;
   /**
    * This column's cell in the *Withdrawn Records* total row — not "this
    * column's total". On `subsidiary` it is a row LABEL, not an aggregate, and
@@ -183,7 +186,7 @@ interface ExcelSlot<R> {
    * empty strings counted by hand, so its alignment with the header was a
    * property of nobody re-counting.
    */
-  readonly withdrawnTotal?: (t: ReportWithdrawnTotals) => CellValue;
+  readonly withdrawnTotal?: (t: ReportWithdrawnTotals, v: ReportVocabulary) => CellValue;
 }
 
 interface CsvSlot<R> {
@@ -244,30 +247,32 @@ export const BODY_COLUMNS = [
   { key: 'subsidiary', aggregatable: false,
     csv: { label: 'subsidiary', cell: (r) => r.subsidiaryName },
     excel: { label: 'Subsidiary', cell: (r) => r.subsidiaryName,
-             withdrawnTotal: () => 'Total withdrawn' },
+             withdrawnTotal: (_t, v) => v.text('totalWithdrawn') },
     pdf: { label: 'Subsidiary', cell: (r) => r.subsidiaryName } },
   { key: 'reporting_entity', aggregatable: false,
     // `entityLabel` and not an inlined `?? 'Whole company'`: one phrase across
     // all three formats AND the web, which is the door WP20 closed.
     csv: { label: 'reporting_entity', cell: (r) => entityLabel(r) },
-    excel: { label: 'Reporting entity', cell: (r) => entityLabel(r) },
-    pdf: { label: 'Reporting entity', cell: (r) => entityLabel(r) } },
+    // The PDF and the workbook say it in the report's language (`v.entity`,
+    // the same rule as `entityLabel`); the CSV keeps the shared English phrase.
+    excel: { label: 'Reporting entity', cell: (r, v) => v.entity(r) },
+    pdf: { label: 'Reporting entity', cell: (r, v) => v.entity(r) } },
   { key: 'category', aggregatable: false,
     csv: { label: 'category', cell: (r) => r.category },
-    excel: { label: 'Category', cell: (r) => r.category },
+    excel: { label: 'Category', cell: (r, v) => v.category(r.category) },
     // The PDF carries the activity type here, not in a column of its own (A4
     // width): "Fuel (Diesel)".
-    pdf: { label: 'Category', cell: (r) => categoryWithActivity(r) } },
+    pdf: { label: 'Category', cell: (r, v) => categoryWithActivity(r, v) } },
   { key: 'reporting_period', aggregatable: false,
     csv: { label: 'reporting_period', cell: (r) => r.reportingPeriod },
-    excel: { label: 'Reporting period', cell: (r) => r.reportingPeriod },
+    excel: { label: 'Reporting period', cell: (r, v) => v.reportingPeriod(r.reportingPeriod) },
     // Dropped from the PDF: it is a printed A4 page, and the period VALUE
     // already reads unambiguously.
     pdf: null },
   { key: 'period_value', aggregatable: false,
     csv: { label: 'period_value', cell: (r) => r.periodValue },
-    excel: { label: 'Period', cell: (r) => r.periodValue },
-    pdf: { label: 'Period', cell: (r) => r.periodValue } },
+    excel: { label: 'Period', cell: (r, v) => v.period(r.periodValue) },
+    pdf: { label: 'Period', cell: (r, v) => v.period(r.periodValue) } },
   { key: 'activity_value', aggregatable: true,
     csv: { label: 'activity_value', cell: (r) => r.activityValue },
     excel: { label: 'Activity value', cell: (r) => r.activityValue },
@@ -279,7 +284,7 @@ export const BODY_COLUMNS = [
     // inside the template — which nothing tested, and whose deletion left the
     // suite green — is gone by construction.
     pdf: { label: 'Activity', num: true,
-           cell: (r) => `${pdfNumber.format(r.activityValue)} ${r.activityUnit}` } },
+           cell: (r, v) => `${v.number.format(r.activityValue)} ${r.activityUnit}` } },
   // A unit is a word, and words are not summable — but this one sits next to a
   // marked value on a withdrawn row, which is what proves "aggregatable" and
   // not "on a withdrawn row" is the right discriminator.
@@ -298,7 +303,7 @@ export const BODY_COLUMNS = [
    */
   { key: 'normalised', aggregatable: false, csv: null, excel: null,
     pdf: { label: 'Normalised', num: true,
-           cell: (r) =>
+           cell: (r, v) =>
              r.conversionFactor &&
              Number.isFinite(r.conversionFactor) &&
              r.normalizedValue !== undefined
@@ -308,7 +313,7 @@ export const BODY_COLUMNS = [
                  // same way where the snapshot is read; `conversionFactor` came
                  // off the same unchecked `as` cast and was not.
                  rawHtml(
-                   `${pdfNumber.format(r.normalizedValue)} ${esc(r.normalizedUnit ?? '')} <span class="note">(&times;${r.conversionFactor})</span>`,
+                   `${v.number.format(r.normalizedValue)} ${esc(r.normalizedUnit ?? '')} <span class="note">(&times;${r.conversionFactor})</span>`,
                  )
                // An em dash, not a zero: nothing was converted, and a 0 there
                // is a measured quantity of zero.
@@ -320,19 +325,19 @@ export const BODY_COLUMNS = [
     // A text cell, not an empty numeric one: a blank in a tCO₂e column sums as
     // zero the moment someone drags a SUM over it — the same misstatement as
     // writing 0, only harder to notice.
-    excel: { label: 'tCO₂e', cell: (r) => r.tCo2e ?? NOT_CALCULATED,
+    excel: { label: 'tCO₂e', cell: (r, v) => r.tCo2e ?? v.notCalculated,
              withdrawnTotal: (t) => t.tCo2e },
     pdf: { label: 'tCO₂e', num: true,
-           cell: (r) =>
+           cell: (r, v) =>
              r.tCo2e === null
-               ? rawHtml(`<span class="note">${NOT_CALCULATED}</span>`)
-               : pdfNumber.format(r.tCo2e) } },
+               ? rawHtml(`<span class="note">${esc(v.notCalculated)}</span>`)
+               : v.number.format(r.tCo2e) } },
   // The authoritative discriminator between the two row kinds. Never marked —
   // a withdrawn row must keep saying `voided`.
   { key: 'status', aggregatable: false,
     csv: { label: 'status', cell: (r) => r.status },
-    excel: { label: 'Status', cell: (r) => r.status },
-    pdf: { label: 'Status', cell: (r) => r.status } },
+    excel: { label: 'Status', cell: (r, v) => v.recordStatus(r.status) },
+    pdf: { label: 'Status', cell: (r, v) => v.recordStatus(r.status) } },
   { key: 'evidence_files', aggregatable: true,
     csv: { label: 'evidence_files', cell: (r) => r.evidenceCount },
     excel: { label: 'Evidence files', cell: (r) => r.evidenceCount },
@@ -340,7 +345,7 @@ export const BODY_COLUMNS = [
            cell: (r) => String(r.evidenceCount) } },
   { key: 'anomaly_flag', aggregatable: true,
     csv: { label: 'anomaly_flag', cell: (r) => anomalyCell(r) },
-    excel: { label: 'Anomaly flag', cell: (r) => anomalyCell(r) },
+    excel: { label: 'Anomaly flag', cell: (r, v) => v.anomaly(r) },
     // Dropped from the PDF, like the reporting period: A4 width.
     pdf: null },
   // `as const satisfies`, not a plain annotation: the annotation widens every
@@ -499,9 +504,9 @@ export function activityTypeLabel(r: Pick<ReportRowBase, 'category' | 'activityT
   );
 }
 
-function categoryWithActivity(r: Pick<ReportRowBase, 'category' | 'activityType'>): string {
-  const activity = activityTypeLabel(r);
-  return activity ? `${r.category} (${activity})` : r.category;
+function categoryWithActivity(r: Pick<ReportRowBase, 'category' | 'activityType'>, v: ReportVocabulary): string {
+  const activity = v.activityType(r);
+  return activity ? `${v.category(r.category)} (${activity})` : v.category(r.category);
 }
 
 /**
@@ -519,7 +524,7 @@ export const TRAILING_COLUMNS = [
     key: 'activity_type',
     // The token, machine-readable (`diesel`); the label in Excel.
     csv: { label: 'activity_type', cell: (r: ReportRowBase) => r.activityType ?? '' },
-    excel: { label: 'Activity type', cell: (r: ReportRowBase) => activityTypeLabel(r) },
+    excel: { label: 'Activity type', cell: (r: ReportRowBase, v: ReportVocabulary) => v.activityType(r) },
   },
   {
     // Whether a reader may rely on the figure — the whole path's standing
@@ -536,7 +541,7 @@ export const TRAILING_COLUMNS = [
 ] as const satisfies readonly {
   key: string;
   csv: { label: string; cell: (r: ReportRowBase) => string };
-  excel: { label: string; cell: (r: ReportRowBase) => string };
+  excel: { label: string; cell: (r: ReportRowBase, v: ReportVocabulary) => string };
 }[];
 
 /**
@@ -667,17 +672,17 @@ function disclosure<K extends (typeof DISCLOSURE_COLUMNS)[number]['key']>(
  * read one ordered list, so reordering `BODY_COLUMNS` to please Excel silently
  * reorders a filed CSV. That, and only that, would force an explicit list.
  */
-export function excelLedgerHeader(): string[] {
+export function excelLedgerHeader(v: ReportVocabulary = EN_VOCABULARY): string[] {
   return [
-    ...BODY_COLUMNS.filter((c) => c.excel).map((c) => c.excel!.label),
-    ...TRAILING_COLUMNS.map((c) => c.excel.label),
+    ...BODY_COLUMNS.filter((c) => c.excel).map((c) => v.label(c.excel!.label)),
+    ...TRAILING_COLUMNS.map((c) => v.label(c.excel.label)),
   ];
 }
 
-export function excelLedgerRow(r: ReportLedgerRow): CellValue[] {
+export function excelLedgerRow(r: ReportLedgerRow, v: ReportVocabulary = EN_VOCABULARY): CellValue[] {
   return [
-    ...BODY_COLUMNS.filter((c) => c.excel).map((c) => c.excel!.cell(r)),
-    ...TRAILING_COLUMNS.map((c) => c.excel.cell(r)),
+    ...BODY_COLUMNS.filter((c) => c.excel).map((c) => c.excel!.cell(r, v)),
+    ...TRAILING_COLUMNS.map((c) => c.excel.cell(r, v)),
   ];
 }
 
@@ -708,9 +713,9 @@ const WITHDRAWN_SHEET: readonly ExcelSlot<ReportWithdrawnRow>[] = [
   {
     ...disclosure('void_reason').excel!,
     cell: disclosure('void_reason').cell,
-    withdrawnTotal: (t) =>
+    withdrawnTotal: (t, v) =>
       t.uncalculatedCount > 0
-        ? `${t.uncalculatedCount} of these carry no emissions figure`
+        ? v.text('withdrawnUncalculatedTotal', { count: t.uncalculatedCount })
         : '',
   },
   // Eleventh, after Reason. No `withdrawnTotal`: an actor does not aggregate,
@@ -734,12 +739,12 @@ const _withdrawnTonnageTotal: (t: ReportWithdrawnTotals) => CellValue =
   body('tco2e').excel.withdrawnTotal;
 void _withdrawnTonnageTotal;
 
-export function excelWithdrawnHeader(): string[] {
-  return WITHDRAWN_SHEET.map((c) => c.label);
+export function excelWithdrawnHeader(v: ReportVocabulary = EN_VOCABULARY): string[] {
+  return WITHDRAWN_SHEET.map((c) => v.label(c.label));
 }
 
-export function excelWithdrawnRow(r: ReportWithdrawnRow): CellValue[] {
-  return WITHDRAWN_SHEET.map((c) => c.cell(r));
+export function excelWithdrawnRow(r: ReportWithdrawnRow, v: ReportVocabulary = EN_VOCABULARY): CellValue[] {
+  return WITHDRAWN_SHEET.map((c) => c.cell(r, v));
 }
 
 /**
@@ -762,8 +767,8 @@ export function excelWithdrawnRow(r: ReportWithdrawnRow): CellValue[] {
  * that slot exists on this list alone — with the totals built by the test
  * rather than by a fixture that happens to contain an uncalculated record.
  */
-export function excelWithdrawnTotalRow(t: ReportWithdrawnTotals): CellValue[] {
-  return WITHDRAWN_SHEET.map((c) => c.withdrawnTotal?.(t) ?? '');
+export function excelWithdrawnTotalRow(t: ReportWithdrawnTotals, v: ReportVocabulary = EN_VOCABULARY): CellValue[] {
+  return WITHDRAWN_SHEET.map((c) => c.withdrawnTotal?.(t, v) ?? '');
 }
 
 // --- PDF ---------------------------------------------------------------------
@@ -786,15 +791,14 @@ export function pdfClass<R>(c: PdfSlot<R>): string {
   return names.length > 0 ? ` class="${names.join(' ')}"` : '';
 }
 
-function pdfCells<R>(slots: readonly PdfSlot<R>[], r: R): string {
-  return slots.map((c) => `<td${pdfClass(c)}>${pdfInner(c.cell(r))}</td>`).join('');
+function pdfCells<R>(slots: readonly PdfSlot<R>[], r: R, v: ReportVocabulary): string {
+  return slots.map((c) => `<td${pdfClass(c)}>${pdfInner(c.cell(r, v))}</td>`).join('');
 }
 
-function pdfHead<R>(slots: readonly PdfSlot<R>[]): string {
+function pdfHead<R>(slots: readonly PdfSlot<R>[], v: ReportVocabulary): string {
   return slots
-    // Escaped even though every label is a module literal today: `label` is
-    // typed `string`, and a per-report dynamic one would otherwise be raw.
-    .map((c) => `<th${pdfClass(c)}>${esc(c.label)}</th>`)
+    // Escaped: a label is a module literal, its translation a catalogue's.
+    .map((c) => `<th${pdfClass(c)}>${esc(v.label(c.label))}</th>`)
     .join('');
 }
 
@@ -803,12 +807,12 @@ const PDF_LEDGER: readonly PdfSlot<ReportRowBase>[] = BODY_COLUMNS.filter(
   (c) => c.pdf,
 ).map((c) => c.pdf!);
 
-export function pdfLedgerHeadRow(): string {
-  return `<tr>${pdfHead(PDF_LEDGER)}</tr>`;
+export function pdfLedgerHeadRow(v: ReportVocabulary = EN_VOCABULARY): string {
+  return `<tr>${pdfHead(PDF_LEDGER, v)}</tr>`;
 }
 
-export function pdfLedgerRow(r: ReportLedgerRow): string {
-  return `<tr>${pdfCells(PDF_LEDGER, r)}</tr>`;
+export function pdfLedgerRow(r: ReportLedgerRow, v: ReportVocabulary = EN_VOCABULARY): string {
+  return `<tr>${pdfCells(PDF_LEDGER, r, v)}</tr>`;
 }
 
 /**
@@ -845,12 +849,12 @@ const PDF_WITHDRAWN: readonly PdfSlot<ReportWithdrawnRow>[] = [
   { label: 'Withdrawn by', brk: true, cell: (r) => r.voidedBy ?? '—' },
 ];
 
-export function pdfWithdrawnHeadRow(): string {
-  return `<tr>${pdfHead(PDF_WITHDRAWN)}</tr>`;
+export function pdfWithdrawnHeadRow(v: ReportVocabulary = EN_VOCABULARY): string {
+  return `<tr>${pdfHead(PDF_WITHDRAWN, v)}</tr>`;
 }
 
-export function pdfWithdrawnRow(r: ReportWithdrawnRow): string {
-  return `<tr>${pdfCells(PDF_WITHDRAWN, r)}</tr>`;
+export function pdfWithdrawnRow(r: ReportWithdrawnRow, v: ReportVocabulary = EN_VOCABULARY): string {
+  return `<tr>${pdfCells(PDF_WITHDRAWN, r, v)}</tr>`;
 }
 
 /**
@@ -874,10 +878,10 @@ export function pdfWithdrawnRow(r: ReportWithdrawnRow): string {
  * itself: printing `t.count` here made the footer contradict the banner three
  * lines above it, with the whole suite green. Both are asserted now.
  */
-export function pdfWithdrawnTotalRow(t: ReportWithdrawnTotals): string {
+export function pdfWithdrawnTotalRow(t: ReportWithdrawnTotals, v: ReportVocabulary = EN_VOCABULARY): string {
   const cells: readonly { html: string; span: number; num?: boolean }[] = [
-    { html: '<strong>Total withdrawn</strong>', span: 4 },
-    { html: `<strong>${pdfNumber.format(t.tCo2e)}</strong>`, span: 1, num: true },
+    { html: `<strong>${esc(v.text('totalWithdrawn'))}</strong>`, span: 4 },
+    { html: `<strong>${v.number.format(t.tCo2e)}</strong>`, span: 1, num: true },
     // Derived, so a new withdrawn column self-aligns instead of relying on the
     // spec to notice. The FOUR above stays a literal — deriving it by
     // run-length-encoding "columns without a total" would split the label into

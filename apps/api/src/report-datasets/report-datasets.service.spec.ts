@@ -342,7 +342,7 @@ describe('ReportDatasetsService reads', () => {
   });
 
   it('lists nothing for a caller with no organisation', async () => {
-    expect(await service.list(makeSuperAdmin({ organisationId: null }), 2026)).toEqual([]);
+    expect(await service.list(makeSuperAdmin({ organisationId: null }), 2026)).toEqual({ items: [], truncated: false });
   });
 });
 

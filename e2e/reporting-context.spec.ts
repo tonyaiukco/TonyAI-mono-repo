@@ -77,7 +77,7 @@ test('the selection lives in the URL: reload, navigation and the export keep it'
     year: '2027', subsidiaryId: SUB.energy, template: 'executive_summary',
     includeMethodologyNotes: 'true', includeEvidenceSummary: 'false',
   });
-  expect((await download).suggestedFilename()).toBe(`tonyai-executive_summary-2027-${SUB.energy.slice(0, 8)}.csv`);
+  expect((await download).suggestedFilename()).toBe(`tonyai-live-executive_summary-2027-${SUB.energy.slice(0, 8)}.csv`);
 
   // A scope narrows the report to an extract, and says so.
   await pick(page, 'context-scope', 'Scope 2');

@@ -51,6 +51,31 @@ export class CaptureSnapshot {
     return snapshot.#tx;
   }
 
+  /**
+   * The snapshot's start, UTC, to the minute (`YYYY-MM-DD HH:MI`) — the moment
+   * a live report states its every figure is as of (LP4-03 K2): the
+   * transaction's own clock, not the replica's.
+   */
+  static async minute(snapshot: CaptureSnapshot): Promise<string> {
+    const [clock] = await CaptureSnapshot.txOf(snapshot).$queryRaw<Array<{ at: string }>>`
+      SELECT pg_catalog.to_char(pg_catalog.transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') AS at`;
+    if (clock === undefined) throw new CaptureSnapshotError('The snapshot answered no clock.');
+    return clock.at;
+  }
+
+  /**
+   * A snapshot that cannot write (LP4-03, a live report): `SET TRANSACTION
+   * READ ONLY` before its first read, so a write slipped into a report's read
+   * path fails in the database rather than committing.
+   */
+  static async openReadOnly(tx: Prisma.TransactionClient): Promise<CaptureSnapshot> {
+    if ('$transaction' in tx) {
+      throw new CaptureSnapshotError('A capture reads in a caller snapshot only inside an interactive transaction.');
+    }
+    await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+    return CaptureSnapshot.open(tx);
+  }
+
   static async open(tx: Prisma.TransactionClient): Promise<CaptureSnapshot> {
     // The root client has `$transaction`; an interactive transaction's does
     // not. A root client's statements are each a transaction of their own.

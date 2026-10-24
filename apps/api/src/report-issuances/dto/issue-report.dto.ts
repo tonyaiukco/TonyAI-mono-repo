@@ -34,5 +34,9 @@ export class IssueReportDto implements IssueReportRequest {
   includeEvidenceSummary?: boolean;
 }
 
-/** GET /report-issuances?year= — one reporting year's issuances (as the datasets' list). */
-export class ListReportIssuancesQueryDto extends ListReportDatasetsQueryDto {}
+/** GET /report-issuances?year=&status= — one reporting year's issuances (as the datasets' list), optionally finals or partials only (K7). */
+export class ListReportIssuancesQueryDto extends ListReportDatasetsQueryDto {
+  @ValidateIf((o: ListReportIssuancesQueryDto) => o.status !== undefined)
+  @IsIn(['final', 'partial'])
+  status?: 'final' | 'partial';
+}

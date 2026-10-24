@@ -13,7 +13,7 @@ import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
 import * as dto from './dto/issue-report.dto';
 import * as roleGuard from './issuance-role.guard';
 import { IssuanceReaderGuard, IssuerGuard } from './issuance-role.guard';
-import { ReportIssuancesController } from './report-issuances.controller';
+import { IssuancePreviewController, ReportIssuancesController } from './report-issuances.controller';
 import type { ReportIssuancesService } from './report-issuances.service';
 
 /** The issuance routes (LP3-04 PR D): method, path, roles before the body,
@@ -50,8 +50,37 @@ describe('ReportIssuancesController', () => {
       'Content-Type': 'application/pdf',
       'Content-Disposition': 'attachment; filename="tonyai-report-2026-executive_summary-en-final.pdf"',
       'Content-Length': bytes.length,
+      'Cache-Control': 'no-store',
     });
     expect(res.send).toHaveBeenCalledWith(bytes);
+  });
+
+  it.each([
+    ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ['csv', 'text/csv; charset=utf-8'],
+  ] as const)('streams the issued %s, never cached, under the issuance\'s file name', async (format, type) => {
+    const body = format === 'csv' ? 'issuance_id\n' : Buffer.from('PK');
+    const tablesOf = vi.fn().mockResolvedValue({ body, filename: `tonyai-report-x.${format}` });
+    const res = { set: vi.fn().mockReturnThis(), send: vi.fn() };
+    await new ReportIssuancesController({ tablesOf } as unknown as ReportIssuancesService)[format]({} as never, 'id', res as never);
+    expect(tablesOf).toHaveBeenCalledWith({}, 'id', format);
+    expect(res.set).toHaveBeenCalledWith(expect.objectContaining({
+      'Content-Type': type, 'Content-Disposition': `attachment; filename="tonyai-report-x.${format}"`, 'Cache-Control': 'no-store',
+    }));
+    expect(res.send).toHaveBeenCalledWith(body);
+  });
+
+  it.each(['xlsx', 'csv'] as const)('reads the %s route\'s id through the UUID pipe', (name) => {
+    const args = Object.values(Reflect.getMetadata(ROUTE_ARGS_METADATA, ReportIssuancesController, name) as Record<string, { data?: unknown; pipes: unknown[] }>);
+    expect(args.find((a) => a.data === 'id')?.pipes).toContain(ParseUuidParamPipe);
+  });
+
+  it('serves the issuance preview to issuers alone, its id through the UUID pipe', async () => {
+    const preview = vi.fn().mockResolvedValue({ datasetId: 'd', status: 'partial', gaps: [], finalAllowed: false });
+    expect(await new IssuancePreviewController({ preview } as unknown as ReportIssuancesService).preview({} as never, 'd')).toMatchObject({ datasetId: 'd' });
+    expect(Reflect.getMetadata(GUARDS_METADATA, IssuancePreviewController.prototype.preview)).toEqual([IssuerGuard]);
+    const args = Object.values(Reflect.getMetadata(ROUTE_ARGS_METADATA, IssuancePreviewController, 'preview') as Record<string, { data?: unknown; pipes: unknown[] }>);
+    expect(args.find((a) => a.data === 'id')?.pipes).toContain(ParseUuidParamPipe);
   });
 });
 

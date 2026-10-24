@@ -20,7 +20,7 @@ import type { INestApplication } from '@nestjs/common';
 import { Prisma } from '@tonyai/db';
 import {
   directCalorificBasisFor, scope2MethodFor,
-  type PutInventoryBoundarySubsidiaryRequest, type ReportDataset, type ReportDatasetSummary,
+  type PutInventoryBoundarySubsidiaryRequest, type ReportDataset, type ReportDatasetList, type ReportDatasetSummary,
 } from '@tonyai/shared-types';
 import { SignJWT } from 'jose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -309,7 +309,7 @@ describe('a capture over HTTP', () => {
     expect(read.contentType).toMatch(/^application\/json/);
     expect(read.text).toBe(row.content);
     const list = await call(t.users.consultant, 'GET', `/report-datasets?year=${YEAR}`);
-    expect(JSON.parse(list.text)).toEqual([summary]);
+    expect(JSON.parse(list.text)).toEqual({ items: [summary], truncated: false });
   });
 
   it('retries on the frozen version: no second freeze, the same facts the same fingerprint', async () => {
@@ -353,9 +353,9 @@ describe('a capture over HTTP', () => {
     expect(dataset.coverage.gaps).toEqual([]);
     expect(dataset.scopes[1].coverage).toBe('covered');
     expect((await audits('inventory_boundary')).map((r) => r.action)).not.toContain('freeze');
-    const list = JSON.parse((await call(admin(), 'GET', `/report-datasets?year=${YEAR}`)).text) as ReportDatasetSummary[];
+    const list = (JSON.parse((await call(admin(), 'GET', `/report-datasets?year=${YEAR}`)).text) as ReportDatasetList).items;
     expect(list.map((d) => d.boundary.decision)).toEqual(['confirmed']);
-    expect(JSON.parse((await call(admin(), 'GET', `/report-datasets?year=${YEAR + 5}`)).text)).toEqual([]);
+    expect(JSON.parse((await call(admin(), 'GET', `/report-datasets?year=${YEAR + 5}`)).text)).toEqual({ items: [], truncated: false });
   });
 
   it("reads exactly the selection's Scope 1/2 records of the year, their evidence and the year's locks, by the organisation's reported name", async () => {
@@ -428,7 +428,7 @@ describe('a capture over HTTP', () => {
     const scope3 = JSON.parse((await stored(summaryOf(await capture(admin(), { boundaryId, scope: 3 })).datasetId)).content) as ReportDataset;
     expect(scope3.records).toEqual([]);
     expect(scope3.scopes.map((s) => s.coverage)).toEqual(['partial', 'partial', 'not_covered']);
-    const list = JSON.parse((await call(admin(), 'GET', `/report-datasets?year=${YEAR}`)).text) as ReportDatasetSummary[];
+    const list = (JSON.parse((await call(admin(), 'GET', `/report-datasets?year=${YEAR}`)).text) as ReportDatasetList).items;
     expect(list.map((d) => d.context)).toEqual([{ year: YEAR, scope: 3 }, { year: YEAR, scope: 2 }]);
   });
 
@@ -672,7 +672,7 @@ describe('who reads a retained dataset', () => {
       const unknownRead = await call(theirs, 'GET', `/report-datasets/${randomUUID()}`);
       expect([foreignRead.status, foreignRead.code]).toEqual([404, 'report_dataset_not_found']);
       expect(foreignRead.text).toBe(unknownRead.text);
-      expect(JSON.parse((await call(theirs, 'GET', `/report-datasets?year=${YEAR}`)).text)).toEqual([]);
+      expect(JSON.parse((await call(theirs, 'GET', `/report-datasets?year=${YEAR}`)).text)).toEqual({ items: [], truncated: false });
     } finally {
       await other.cleanup();
     }
@@ -691,8 +691,11 @@ describe('who reads a retained dataset', () => {
     const older = await service.capture(user, { boundaryId: await openVersion() });
     const both = await twoSubsidiaryVersion();
     for (let i = 0; i < 51; i += 1) await service.capture(user, { boundaryId: both });
-    expect(await listDatasetSummaries(runtime, t.organisationId, YEAR, [S, S2])).toHaveLength(50);
-    expect((await listDatasetSummaries(runtime, t.organisationId, YEAR, [S])).map((d) => d.datasetId)).toEqual([older.datasetId]);
+    const full = await listDatasetSummaries(runtime, t.organisationId, YEAR, [S, S2]);
+    expect(full.items).toHaveLength(50);
+    // 52 readable: the list says it stopped (LP4-03).
+    expect(full.truncated).toBe(true);
+    expect(await listDatasetSummaries(runtime, t.organisationId, YEAR, [S])).toEqual({ items: [expect.objectContaining({ datasetId: older.datasetId })], truncated: false });
   });
 
   it("is read only by a caller holding every subsidiary it references — the rule in SQL", async () => {
@@ -712,9 +715,9 @@ describe('who reads a retained dataset', () => {
     expect(await readDatasetContent(runtime, datasetId, t.organisationId, [S, S2])).toBe((await stored(datasetId)).content);
     expect(await readDatasetContent(runtime, datasetId, t.organisationId, [S])).toBeNull();
     expect(await readDatasetContent(runtime, datasetId, randomUUID(), [S, S2])).toBeNull();
-    expect((await listDatasetSummaries(runtime, t.organisationId, YEAR, [S, S2])).map((d) => d.datasetId)).toEqual([datasetId]);
-    expect(await listDatasetSummaries(runtime, t.organisationId, YEAR, [S])).toEqual([]);
-    expect(await listDatasetSummaries(runtime, t.organisationId, YEAR, [S2, S, randomUUID()])).toHaveLength(1);
+    expect((await listDatasetSummaries(runtime, t.organisationId, YEAR, [S, S2])).items.map((d) => d.datasetId)).toEqual([datasetId]);
+    expect(await listDatasetSummaries(runtime, t.organisationId, YEAR, [S])).toEqual({ items: [], truncated: false });
+    expect((await listDatasetSummaries(runtime, t.organisationId, YEAR, [S2, S, randomUUID()])).items).toHaveLength(1);
   });
 });
 

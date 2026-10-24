@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { describe, expect, it, vi } from 'vitest';
+import { IntlMessageFormat } from 'intl-messageformat';
 import { CodedValidationPipe, GLOBAL_VALIDATION_OPTIONS } from '../common/coded-validation.pipe';
 import { ReportingExportQueryDto } from './dto/report-query.dto';
 import { contextLabels } from './context-labels';
@@ -39,14 +40,27 @@ describe('report context boundary', () => {
     expect(meta).toHaveBeenCalledWith(user, 2027, 'foreign', context);
   });
   it('discloses filters in sanitized filenames, including empty CSV exports', () => {
-    expect(filename(query, 'csv')).toBe('tonyai-ghg_protocol_detail-2027-scope1-fuel.csv');
-    expect(filename({ ...query, subsidiaryId: '\r\n"/sub-1' }, 'pdf')).toBe('tonyai-ghg_protocol_detail-2027-sub-1-scope1-fuel.pdf');
+    expect(filename(query, 'csv')).toBe('tonyai-live-ghg_protocol_detail-2027-scope1-fuel.csv');
+    expect(filename({ ...query, subsidiaryId: '\r\n"/sub-1' }, 'pdf')).toBe('tonyai-live-ghg_protocol_detail-2027-sub-1-scope1-fuel.pdf');
   });
   it('keeps EN/TR context catalogue parity and formats ICU values', () => {
     expect(Object.keys(tr).sort()).toEqual(Object.keys(en).sort());
+    // The same in both only where the word is the same in both: a unit, a
+    // fuel's own name, a format with no words (LP4-03's catalogue).
+    const SAME_IN_BOTH = new Set(['label tCO₂e', 'activity LPG', 'activity Fuel oil', 'coverageGap']);
+    type Element = { value?: unknown; options?: Record<string, { value: Element[] }> };
+    const names = (elements: Element[], into: Set<string>): Set<string> => {
+      for (const e of elements) {
+        if (typeof e.value === 'string' && 'type' in e && (e as { type: number }).type !== 0) into.add(e.value);
+        for (const option of Object.values(e.options ?? {})) names(option.value, into);
+      }
+      return into;
+    };
+    const args = (s: string) => [...names(new IntlMessageFormat(s, 'en').getAst() as Element[], new Set())].sort();
     for (const key of Object.keys(en) as (keyof typeof en)[]) {
-      expect(tr[key]).not.toBe(en[key]);
-      expect(tr[key].match(/\{\w+\}/g)).toEqual(en[key].match(/\{\w+\}/g));
+      if (SAME_IN_BOTH.has(key)) expect(tr[key]).toBe(en[key]);
+      else expect(tr[key], key).not.toBe(en[key]);
+      expect(args(tr[key]), key).toEqual(args(en[key]));
     }
     expect(contextLabels({ year: 2027 }, null)[0][1]).toBe('All accessible subsidiaries');
     expect(contextLabels({ year: 2027, subsidiaryId: 'foreign', scope: 1 }, null, 'tr'))

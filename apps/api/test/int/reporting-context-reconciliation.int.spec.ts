@@ -66,13 +66,15 @@ const FIXTURE: Row[] = [
   { sub: 'S1', year: 2026, category: 'Natural Gas', periodValue: 'January', status: ActivityRecordStatus.submitted, tCo2e: 888 },
   { sub: 'S2', year: 2026, category: 'Electricity', periodValue: 'March', status: ActivityRecordStatus.under_review, tCo2e: 13 },
   { sub: 'S1', year: 2025, category: 'Natural Gas', periodValue: 'April', status: ActivityRecordStatus.rejected, tCo2e: 777 },
+  // Scope 3 (LP4-03 K4): the dashboard and intensity count it; a report discloses it and never sums it.
+  { sub: 'S2', year: 2025, category: 'Water', periodValue: 'January', status: ActivityRecordStatus.approved, tCo2e: 3 },
 ];
 /** Revenue (EUR) per year and subsidiary; S2 has none for 2026 — missing, not zero (D14). */
 const REVENUE: Record<number, Partial<Record<'S1' | 'S2', number>>> = { 2025: { S1: 1000, S2: 100 }, 2026: { S1: 2000 } };
 
 const YEARS = [2025, 2026, 2027] as const;
 const SELECTIONS = ['all', 'S1', 'S2'] as const;
-const FILTERS: Pick<ReportingContext, 'scope' | 'category'>[] = [{}, { scope: 2 }, { category: 'Natural Gas' }];
+const FILTERS: Pick<ReportingContext, 'scope' | 'category'>[] = [{}, { scope: 2 }, { category: 'Natural Gas' }, { scope: 3 }, { category: 'Water' }];
 
 const idOf = (sub: 'S1' | 'S2') => (sub === 'S1' ? S1 : S2);
 const contextFor = (year: number, selection: (typeof SELECTIONS)[number], filter: Pick<ReportingContext, 'scope' | 'category'>): ReportingContext => ({
@@ -238,29 +240,42 @@ describe('one reporting context, every surface: two years × two subsidiaries (L
       expect(metric.intensity, label).toBeCloseTo(numerator / denominator, 12);
     }
 
-    // The report: its metadata, its CSV ledger and its generation audit row.
+    // The report: its metadata, its CSV ledger and its generation audit row —
+    // Scope 1/2 only (LP4-03 K4): the same Scope 1/2 figures as the summary,
+    // Scope 3 disclosed beside them, never in them.
+    const inventory = rows.filter((r) => CATEGORY_SCOPE_MAP[r.category] !== 3);
+    const scope3 = committed.filter((r) => CATEGORY_SCOPE_MAP[r.category] === 3);
     const meta = await json<ReportingMetaResponse>(viewer, `/reports/context/meta${query(context)}`);
     expect(meta.data, label).toMatchObject({
-      committedCount: committed.length,
-      pendingCount: rows.filter((r) => r.status === ActivityRecordStatus.submitted || r.status === ActivityRecordStatus.under_review).length,
-      incompleteCount: rows.filter((r) => r.status === ActivityRecordStatus.draft || r.status === ActivityRecordStatus.rejected).length,
-      voidedCount: voided.length,
+      committedCount: inventory.filter((row) => COMMITTED.has(row.status)).length,
+      pendingCount: inventory.filter((r) => r.status === ActivityRecordStatus.submitted || r.status === ActivityRecordStatus.under_review).length,
+      incompleteCount: inventory.filter((r) => r.status === ActivityRecordStatus.draft || r.status === ActivityRecordStatus.rejected).length,
+      voidedCount: inventory.filter((r) => r.status === ActivityRecordStatus.voided).length,
+      scope3: { recordCount: scope3.length, calculatedTCo2e: sum(scope3) },
     });
+    expect(meta.data.summary.totals, label).toEqual({
+      scope1: summary.data.totals.scope1, scope2: summary.data.totals.scope2, scope3: 0,
+      total: summary.data.totals.scope1 + summary.data.totals.scope2,
+    });
+    expect(summary.data.totals.scope3, label).toBe(sum(scope3));
 
     const before = new Set((await owner.auditLog.findMany({ where: { organisationId: t.organisationId, entity: 'report' }, select: { id: true } })).map((r) => r.id));
     const csv = await get(viewer, `/reports/context/csv${query(context, { template: 'executive_summary' })}`);
     expect(csv.status, label).toBe(200);
     const ledger = parseCsv(await csv.text());
+    const inventoryCommitted = committed.filter((r) => CATEGORY_SCOPE_MAP[r.category] !== 3);
     const committedRows = ledger.filter((r) => COMMITTED.has(r.status));
-    expect(committedRows.length, label).toBe(committed.length);
-    expect(committedRows.reduce((s, r) => s + Number(r.tco2e), 0), label).toBe(total);
+    expect(committedRows.length, label).toBe(inventoryCommitted.length);
+    expect(committedRows.reduce((s, r) => s + Number(r.tco2e), 0), label).toBe(sum(inventoryCommitted));
+    expect(committedRows.reduce((s, r) => s + Number(r.tco2e), 0), label).toBe(meta.data.summary.totals.total);
     const voidedRows = ledger.filter((r) => r.status === ActivityRecordStatus.voided);
     expect(voidedRows.length, label).toBe(voided.length);
     expect(voidedRows.reduce((s, r) => s + Number(r.voided_tco2e), 0), label).toBe(sum(voided));
-    expect(ledger.length, label).toBe(committed.length + voided.length);
+    expect(ledger.length, label).toBe(inventoryCommitted.length + voided.length);
+    expect(ledger.some((r) => r.category === 'Water'), label).toBe(false);
     const audit = (await owner.auditLog.findMany({ where: { organisationId: t.organisationId, entity: 'report' } })).filter((r) => !before.has(r.id));
     expect(audit.map((r) => r.diff), label).toEqual([
-      expect.objectContaining({ year, recordCount: committed.length, voidedCount: voided.length, ...(context.subsidiaryId ? { subsidiaryId: context.subsidiaryId } : {}), ...filter }),
+      expect.objectContaining({ year, recordCount: inventoryCommitted.length, voidedCount: voided.length, ...(context.subsidiaryId ? { subsidiaryId: context.subsidiaryId } : {}), ...filter }),
     ]);
   });
 });

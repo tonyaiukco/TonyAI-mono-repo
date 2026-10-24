@@ -41,7 +41,7 @@ import {
   Tooltip as RechartsTooltip,
 } from 'recharts';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
@@ -49,7 +49,7 @@ import { reportingContextKey } from '@/lib/reporting-context-url';
 import { ReportingContextBar, ReportingContextInvalid, selectionAvailable } from '@/components/reporting-context/reporting-context-bar';
 import { REPORT_TEMPLATES } from '@/lib/types';
 import type {
-  EmissionsSummary,
+  ReportInventorySummary,
   ReportExportType,
   ReportingContext,
   ReportMetaDTO,
@@ -102,7 +102,9 @@ function ReportsPageInner() {
   // Live data
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
   const [subsidiariesLoaded, setSubsidiariesLoaded] = useState(false);
-  const [summary, setSummary] = useState<EmissionsSummary | null>(null);
+  // The report's own figures, read in the same snapshot as `meta` (LP4-03 K2):
+  // Scope 1 + 2, as every export of this selection prints them (K4).
+  const [summary, setSummary] = useState<ReportInventorySummary | null>(null);
   const [meta, setMeta] = useState<ReportMetaDTO | null>(null);
   // The context the preview on screen was computed for. Exports send exactly
   // this, so a file can never describe a selection the preview did not show.
@@ -127,9 +129,16 @@ function ReportsPageInner() {
     }
     setLoading(true);
     try {
-      const [s, m] = await Promise.all([api.reportingSummary(context), api.reportingMeta(context)]);
+      // The preview holds one snapshot connection per user (LP4-03): a second
+      // one while the first still runs answers 429 with Retry-After — try once more.
+      const m = await api.reportingMeta(context).catch(async (e: unknown) => {
+        if (!(e instanceof ApiError) || e.status !== 429 || mine !== loadSeq.current) throw e;
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        if (mine !== loadSeq.current) throw e;
+        return api.reportingMeta(context);
+      });
       if (mine !== loadSeq.current) return;
-      setSummary(s.data);
+      setSummary(m.data.summary);
       setMeta(m.data);
       setShown(context);
     } catch (e) {
@@ -373,7 +382,7 @@ function ReportsPageInner() {
                     <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
                       <Tile label="Scope 1" value={`${fmt.format(totals.scope1)} tCO₂e`} />
                       <Tile label="Scope 2" value={`${fmt.format(totals.scope2)} tCO₂e`} />
-                      <Tile label="Total" value={`${fmt.format(totals.total)} tCO₂e`} />
+                      <Tile label="Scope 1 + 2 total" value={`${fmt.format(totals.total)} tCO₂e`} />
                       <Tile label="Committed records" value={String(summary?.recordCount ?? 0)} />
                     </div>
 

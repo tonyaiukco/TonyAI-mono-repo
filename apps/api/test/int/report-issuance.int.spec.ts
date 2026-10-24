@@ -19,12 +19,13 @@ import { Logger } from '@nestjs/common';
 import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import {
   directCalorificBasisFor, scope2MethodFor,
-  type PutInventoryBoundarySubsidiaryRequest, type ReportIssuance,
+  type PutInventoryBoundarySubsidiaryRequest, type ReportDataset, type ReportIssuance, type ReportIssuanceList,
 } from '@tonyai/shared-types';
 import { SignJWT } from 'jose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuditService } from '../../src/audit/audit.service';
 import type { RequestUser } from '../../src/auth/auth.types';
+import { errorCodeOf } from '../../src/common/api-error';
 import { InventoryBoundariesService } from '../../src/inventory-boundary/inventory-boundaries.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { ReportIssuancesService } from '../../src/report-issuances/report-issuances.service';
@@ -229,9 +230,15 @@ async function call(user: RequestUser, method: string, path: string, body?: unkn
   return { status: res.status, text, code };
 }
 
-async function download(user: RequestUser, id: string): Promise<{ status: number; bytes: Buffer; headers: Headers }> {
-  const res = await fetch(`${base}/report-issuances/${id}/pdf`, { headers: { authorization: `Bearer ${await tokenFor(user.id)}` } });
+async function download(user: RequestUser, id: string, format: 'pdf' | 'xlsx' | 'csv' = 'pdf'): Promise<{ status: number; bytes: Buffer; headers: Headers }> {
+  const res = await fetch(`${base}/report-issuances/${id}/${format}`, { headers: { authorization: `Bearer ${await tokenFor(user.id)}` } });
   return { status: res.status, bytes: Buffer.from(await res.arrayBuffer()), headers: res.headers };
+}
+
+/** The issued CSV's rows, by header (no quoted commas in this fixture's cells). */
+function csvRows(bytes: Buffer): Array<Record<string, string>> {
+  const [header, ...rows] = bytes.toString('utf8').replace(String.fromCharCode(0xfeff), '').trimEnd().split('\n').map((l) => l.split(','));
+  return rows.map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]])));
 }
 
 const issue = (user: RequestUser, body: Record<string, unknown>) => call(user, 'POST', '/report-issuances', body);
@@ -310,12 +317,48 @@ describe('an issuance over HTTP', () => {
 
     // Read back by every reader, as issued.
     expect(JSON.parse((await call(t.users.executiveViewer, 'GET', `/report-issuances/${issued.issuanceId}`)).text)).toEqual(issued);
-    expect(JSON.parse((await call(t.users.consultant, 'GET', `/report-issuances?year=${YEAR}`)).text)).toEqual([issued]);
+    // The list names it by summary (LP4-03 K7): gaps counted, the current final named.
+    const list = JSON.parse((await call(t.users.consultant, 'GET', `/report-issuances?year=${YEAR}`)).text) as ReportIssuanceList;
+    expect(list).toMatchObject({ truncated: false, currentFinalIssuanceId: issued.issuanceId });
+    expect(list.items).toEqual([expect.objectContaining({
+      issuanceId: issued.issuanceId, datasetId, status: 'final', gapCount: 0, gapCounts: {}, reportingYear: YEAR,
+      datasetFingerprint: issued.datasetFingerprint, pdf: { sizeBytes: row.sizeBytes, fingerprint: issued.pdf.fingerprint },
+      dataset: expect.objectContaining({ selection: 'inventory', boundary: expect.objectContaining({ decision: 'confirmed' }) }),
+    })]);
+    expect(JSON.parse((await call(t.users.consultant, 'GET', `/report-issuances?year=${YEAR}&status=partial`)).text))
+      .toEqual({ items: [], truncated: false, currentFinalIssuanceId: issued.issuanceId });
     const served = await download(t.users.executiveViewer, issued.issuanceId);
     expect(served.status).toBe(200);
     expect(served.headers.get('content-type')).toBe('application/pdf');
-    expect(served.headers.get('content-disposition')).toBe(`attachment; filename="tonyai-report-${YEAR}-executive_summary-en-final.pdf"`);
+    const name = `tonyai-report-${YEAR}-executive_summary-en-final-${issued.issuedAt.slice(0, 10)}-${issued.issuanceId.slice(0, 8)}`;
+    expect(served.headers.get('content-disposition')).toBe(`attachment; filename="${name}.pdf"`);
     expect(served.bytes.equals(stored)).toBe(true);
+
+    // Its Excel and CSV (K5): the retained dataset, the PDF's figures, one name.
+    const retained = JSON.parse(dataset.content) as ReportDataset;
+    const csv = await download(t.users.executiveViewer, issued.issuanceId, 'csv');
+    expect(csv.status).toBe(200);
+    expect(csv.headers.get('content-disposition')).toBe(`attachment; filename="${name}.csv"`);
+    expect(csv.headers.get('cache-control')).toBe('no-store');
+    const rows = csvRows(csv.bytes);
+    expect(rows.every((r) => r.issuance_id === issued.issuanceId && r.dataset_fingerprint === `sha256:${retained.fingerprint.hex}`)).toBe(true);
+    // An all-excluded final has no ledger row, and its CSV still names it (Codex B9 P2-2).
+    expect(rows).toEqual([expect.objectContaining({ row_kind: 'issuance', issuance_status: 'final', dataset_id: datasetId, tco2e: '' })]);
+    for (const scope of [1, 2] as const) {
+      const counted = rows.filter((r) => r.row_kind === 'counted' && r.scope === String(scope) && r.tco2e !== 'Not calculated');
+      expect(counted.reduce((s, r) => s + Number(r.tco2e), 0)).toBeCloseTo(retained.scopes[scope - 1].tCo2e ?? 0, 9);
+    }
+    const xlsx = await download(t.users.executiveViewer, issued.issuanceId, 'xlsx');
+    expect(xlsx.status).toBe(200);
+    expect(xlsx.headers.get('content-disposition')).toBe(`attachment; filename="${name}.xlsx"`);
+    expect(xlsx.bytes.subarray(0, 2).toString()).toBe('PK');
+    // Written on request, never stored: the bucket holds the PDF alone.
+    expect(await artifacts()).toHaveLength(1);
+    // And the preview of that dataset derives what was issued.
+    expect(JSON.parse((await call(admin(), 'GET', `/report-datasets/${datasetId}/issuance-preview`)).text))
+      .toEqual({ datasetId, status: 'final', gaps: [], finalAllowed: true });
+    expect(JSON.parse((await call(t.users.consultant, 'GET', `/report-datasets/${datasetId}/issuance-preview`)).text))
+      .toMatchObject({ status: 'final', finalAllowed: false });
 
     // data_entry reads and issues nothing (W3, W4).
     for (const [method, path, body] of [
@@ -323,9 +366,14 @@ describe('an issuance over HTTP', () => {
       ['GET', `/report-issuances?year=${YEAR}`, undefined],
       ['GET', `/report-issuances/${issued.issuanceId}`, undefined],
       ['GET', `/report-issuances/${issued.issuanceId}/pdf`, undefined],
+      ['GET', `/report-issuances/${issued.issuanceId}/xlsx`, undefined],
+      ['GET', `/report-issuances/${issued.issuanceId}/csv`, undefined],
+      ['GET', `/report-datasets/${datasetId}/issuance-preview`, undefined],
     ] as const) {
       expect((await call(t.users.dataEntry, method, path, body)).status).toBe(403);
     }
+    // An executive viewer reads issued reports and issues nothing — no preview either.
+    expect((await call(t.users.executiveViewer, 'GET', `/report-datasets/${datasetId}/issuance-preview`)).status).toBe(403);
   }, 60_000);
 
   it('refuses a consultant a final — nothing rendered, stored or written', async () => {
@@ -371,17 +419,48 @@ describe('an issuance over HTTP', () => {
       expect(foreign.status).toBe(404);
       expect(foreign.code).toBe('report_dataset_not_found');
       expect(foreign.text).toBe(missing.text);
-      for (const suffix of ['', '/pdf']) {
+      for (const suffix of ['', '/pdf', '/xlsx', '/csv']) {
         const theirs = await call(other.users.superAdmin, 'GET', `/report-issuances/${issued.issuanceId}${suffix}`);
         const none = await call(other.users.superAdmin, 'GET', `/report-issuances/${randomUUID()}${suffix}`);
         expect(theirs.status).toBe(404);
         expect(theirs.code).toBe('report_issuance_not_found');
         expect(theirs.text).toBe(none.text);
       }
-      expect(JSON.parse((await call(other.users.superAdmin, 'GET', `/report-issuances?year=${YEAR}`)).text)).toEqual([]);
+      expect(JSON.parse((await call(other.users.superAdmin, 'GET', `/report-issuances?year=${YEAR}`)).text))
+        .toEqual({ items: [], truncated: false, currentFinalIssuanceId: null });
+      const theirPreview = await call(other.users.superAdmin, 'GET', `/report-datasets/${datasetId}/issuance-preview`);
+      const noPreview = await call(other.users.superAdmin, 'GET', `/report-datasets/${randomUUID()}/issuance-preview`);
+      expect(theirPreview.status).toBe(404);
+      expect(theirPreview.code).toBe('report_dataset_not_found');
+      expect(theirPreview.text).toBe(noPreview.text);
     } finally {
       await other.cleanup();
     }
+  }, 60_000);
+});
+
+describe('one organisation, a reader short of one referenced subsidiary (LP4-03, the read rule in SQL)', () => {
+  it('lists, reads, downloads and previews nothing of an issuance whose dataset references a subsidiary it lacks', async () => {
+    const datasetId = await finalDataset();
+    const issued = issuanceOf(await issue(admin(), { datasetId, template: 'executive_summary' }));
+    const service = issuer();
+    // Past the role guards, as no HTTP caller can be today (only data_entry is
+    // ever partially granted, and it reads no issuance): the SQL's own rule.
+    const short = { ...admin(), accessibleSubsidiaryIds: [S] };
+    expect(await service.list(short, YEAR)).toEqual({ items: [], truncated: false, currentFinalIssuanceId: null });
+    for (const read of [
+      () => service.get(short, issued.issuanceId),
+      () => service.pdfOf(short, issued.issuanceId),
+      () => service.tablesOf(short, issued.issuanceId, 'xlsx'),
+      () => service.tablesOf(short, issued.issuanceId, 'csv'),
+    ]) {
+      expect(errorCodeOf(await failure(read()))).toBe('report_issuance_not_found');
+    }
+    expect(errorCodeOf(await failure(service.preview(short, datasetId)))).toBe('report_dataset_not_found');
+    // Control: the whole organisation's reader sees it, and it is the current final.
+    const whole = await withAccess(admin());
+    expect(await service.list(whole, YEAR)).toMatchObject({ currentFinalIssuanceId: issued.issuanceId, items: [expect.objectContaining({ issuanceId: issued.issuanceId })] });
+    expect((await service.tablesOf(whole, issued.issuanceId, 'csv')).filename).toMatch(/\.csv$/);
   }, 60_000);
 });
 

@@ -1,8 +1,11 @@
 import type {
   ReportingContext,
   ActivityRecordStatus,
-  EmissionsSummary,
   FactorStatus,
+  Locale,
+  ReportInventorySummary,
+  ReportLiveCoverage,
+  ReportScope3Disclosure,
   ReportStatus,
   ReportTemplate,
 } from '@tonyai/shared-types';
@@ -197,6 +200,8 @@ export interface ReportData {
   context: ReportingContext;
   template: ReportTemplate;
   templateName: string;
+  /** D16 / K6: the PDF's and the workbook's language. */
+  language: Locale;
   organisationName: string;
   subsidiaryName: string | null;
   year: number;
@@ -204,9 +209,13 @@ export interface ReportData {
   generatedBy: string;
   status: ReportStatus;
   incompleteRatio: number;
+  /** K4: Scope 3 records of the selection — disclosed, never summed. */
+  scope3: ReportScope3Disclosure;
+  /** K3: what the year's boundary says about the selection, as of the snapshot. */
+  coverage: ReportLiveCoverage;
   includeMethodologyNotes: boolean;
   includeEvidenceSummary: boolean;
-  summary: EmissionsSummary;
+  summary: ReportInventorySummary;
   records: ReportLedgerRow[];
   /** Records withdrawn from this year — disclosed by every format, counted by
    *  none of them. Empty is the normal case and every writer says nothing then.

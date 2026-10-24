@@ -1,5 +1,5 @@
 import { Prisma } from '@tonyai/db';
-import type { InventoryBoundarySnapshot, ReportDataset, ReportDatasetFingerprint, ReportDatasetSummary, ReportingContext } from '@tonyai/shared-types';
+import type { InventoryBoundarySnapshot, ReportDataset, ReportDatasetFingerprint, ReportDatasetList, ReportDatasetSummary, ReportingContext } from '@tonyai/shared-types';
 
 /**
  * The retained datasets (`report_datasets`; LP3-04 PR C, V5, V7). A row holds
@@ -89,8 +89,8 @@ export async function listDatasetSummaries(
   organisationId: string,
   reportingYear: number,
   access: readonly string[],
-): Promise<ReportDatasetSummary[]> {
-  if (access.length === 0) return [];
+): Promise<ReportDatasetList> {
+  if (access.length === 0) return { items: [], truncated: false };
   const rows = await db.$queryRaw<SummaryRow[]>`
     SELECT d."id"::text AS id,
            pg_catalog.to_char(d."captured_at" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS captured_at,
@@ -109,8 +109,9 @@ export async function listDatasetSummaries(
       AND pg_catalog.cardinality(d."referenced_subsidiary_ids") > 0
       AND d."referenced_subsidiary_ids" <@ ${[...access]}::uuid[]
     ORDER BY d."captured_at" DESC, d."id" DESC
-    LIMIT ${DATASET_LIST_LIMIT}`;
-  return rows.map((r) => ({
+    LIMIT ${DATASET_LIST_LIMIT + 1}`;
+  // One past the limit, read to say so (LP4-03): the list no longer stops silently.
+  const items = rows.slice(0, DATASET_LIST_LIMIT).map((r): ReportDatasetSummary => ({
     datasetId: r.id,
     capturedAt: r.captured_at,
     capturedBy: r.captured_by,
@@ -120,4 +121,5 @@ export async function listDatasetSummaries(
     // The row's own tag: fingerprints are compared only when tags match.
     fingerprint: { algorithm: 'sha256', canonicalization: r.canonicalization, hex: r.fingerprint_hex },
   }));
+  return { items, truncated: rows.length > DATASET_LIST_LIMIT };
 }

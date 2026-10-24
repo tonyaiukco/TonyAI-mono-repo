@@ -107,5 +107,22 @@
   "period Q2": "2. çeyrek",
   "period Q3": "3. çeyrek",
   "period Q4": "4. çeyrek",
-  "period Annual": "Yıllık"
+  "period Annual": "Yıllık",
+  "tablesNote": "Bu tablolar, kesinleştirmenin saklanan veri setini tam olarak PDF'i gibi yansıtır — aynı sayılan kayıtlar, rakamlar ve eksikler — istendiğinde o veri setinden yazılır ve hiçbir zaman canlı veriden okunmaz.",
+  "sheetSummary": "Özet",
+  "sheetGaps": "Eksikler",
+  "sheetLedger": "Sayılan kayıtlar",
+  "sheetWithdrawn": "Geri çekilen kayıtlar",
+  "sheetExclusions": "Hariç tutulanlar",
+  "rowStatus": "Durum",
+  "rowSelection": "Seçim",
+  "rowBoundary": "Envanter sınırı",
+  "rowScope3": "Kapsam 3",
+  "rowTemplate": "Şablon",
+  "colScope": "Kapsam",
+  "colActivityValue": "Faaliyet değeri",
+  "colUnit": "Birim",
+  "colRecordId": "Kayıt kimliği",
+  "identityIssued": "Kesinleştirilme",
+  "identityTables": "Tablo oluşturucu"
 }
