@@ -61,6 +61,7 @@ import { useAuthStore } from "@/lib/store";
 import { parseReportingYearParam } from "@/lib/reporting-context-url";
 import { EvidenceVault } from "@/components/data-entry/evidence-vault";
 import { CoveragePanel } from "@/components/data-entry/coverage-panel";
+import { BoundaryCoverage } from "@/components/data-entry/boundary-coverage";
 import { BulkUploadPanel } from "@/components/data-entry/bulk-upload-panel";
 import { RecentImports } from "@/components/data-entry/recent-imports";
 import { PreviousSubmissions } from "@/components/data-entry/previous-submissions";
@@ -1504,6 +1505,9 @@ function DataEntryPageInner() {
                 movingFrom={movingTo ? (editingTuple?.locationId ?? null) : null}
                 refreshKey={coverageKey}
               />
+
+              {/* What the boundary still expects, beside what is keyed in (LP4-03 K9). */}
+              <BoundaryCoverage subsidiaryId={subsidiaryId} reportingYear={reportingYear} refreshKey={coverageKey} />
 
               <PreviousSubmissions
                 // Remounted per subsidiary, so a selection cannot survive a

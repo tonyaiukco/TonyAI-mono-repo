@@ -128,7 +128,7 @@ second source of truth that goes stale after `PATCH /me/preferences`).
 
 ## Not yet localised (LP4-04 owns them)
 
-Every screen but Data Entry's entry form and the app shell; Data Entry's
+Every screen but Data Entry's entry form, the app shell and Reports (LP4-03 PR B: `reports`, and the dashboard's KPI words in `dashboard`); Data Entry's
 sub-panels (bulk upload — its issue labels and accepted-row table are done,
 LP4-04; its other chrome and the server's per-row sentences are not — recent imports, coverage, previous submissions,
 evidence, additional context, anomaly notes); activity-type and unit labels,

@@ -9,6 +9,9 @@ import { TrackingMatrix } from '@/components/dashboard/tracking-matrix';
 import { AlertsPanel } from '@/components/dashboard/alerts-panel';
 import { EmissionsCharts } from '@/components/dashboard/emissions-charts';
 import { SubsidiaryDetail } from '@/components/dashboard/subsidiary-detail';
+import { CoverageCard, CoverageUnavailable } from '@/components/reports/coverage-card';
+import { withPreviewRetry } from '@/lib/report-preview';
+import { selectsScope3Only } from '@/lib/report-coverage-view';
 import { ReportingContextBar, ReportingContextInvalid } from '@/components/reporting-context/reporting-context-bar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,9 +43,11 @@ import {
   matrixToAlerts,
   matrixToSubsidiaries,
 } from '@/lib/dashboard-view';
-import { mayAuthorRecords } from '@/lib/types';
+import { CATEGORY_SCOPE_MAP, mayAuthorRecords } from '@/lib/types';
 import type {
+  Category,
   DashboardKpi,
+  ReportLiveCoverage,
   EmissionsSummary,
   TrackingMatrixRow,
   SubsidiaryDTO,
@@ -69,6 +74,7 @@ function CarbonDashboardInner() {
   const { user, setUser } = useAuthStore();
   // LP3-02 N1: the one reporting selection, carried in the URL.
   const tContext = useTranslations('reportingContext');
+  const tDashboard = useTranslations('dashboard');
   const tCategory = useTranslations('categories');
   const contextView = useReportingContext();
   const contextKey = contextView.status === 'ready' ? contextView.key : null;
@@ -86,6 +92,7 @@ function CarbonDashboardInner() {
   const [subsidiariesKnown, setSubsidiariesKnown] = useState(false);
   const [summary, setSummary] = useState<EmissionsSummary | null>(null);
   const [matrix, setMatrix] = useState<TrackingMatrixDTO | null>(null);
+  const [coverage, setCoverage] = useState<ReportLiveCoverage | 'unavailable' | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -128,7 +135,7 @@ function CarbonDashboardInner() {
     inFlight.current = true;
     if (!silent) setLoading(true);
     try {
-      const [kpiData, list, summaryData, matrixData] = await Promise.all([
+      const [kpiData, list, summaryData, matrixData, metaData] = await Promise.all([
         api.kpi(),
         api.listSubsidiaries(),
         // ONE context for both: they feed one set of KPI cards (`buildKpiData`),
@@ -140,6 +147,13 @@ function CarbonDashboardInner() {
         // into a single cell, so a subsidiary complete for 2023 and empty for
         // 2024 read as complete.
         context ? api.reportingMatrix(context) : Promise.resolve(null),
+        // The boundary's live coverage beside the entry progress (LP4-03 K9).
+        // Its own snapshot read: a failure (a second preview of this user's
+        // running, a selection too broad) leaves the card out, never the dashboard.
+        // Retried once after a capacity refusal; a failure stands as "unavailable", never as no card.
+        context
+          ? withPreviewRetry(() => api.reportingMeta(context)).catch(() => 'unavailable' as const)
+          : Promise.resolve(null),
       ]);
       // A response from a superseded request must not overwrite a newer one.
       if (mine !== loadSeq.current) return;
@@ -148,6 +162,7 @@ function CarbonDashboardInner() {
       setSubsidiariesKnown(true);
       setSummary(summaryData?.data ?? null);
       setMatrix(matrixData?.data ?? null);
+      setCoverage(metaData === 'unavailable' ? 'unavailable' : (metaData?.data.coverage ?? null));
       setRefreshFailures(0);
     } catch (e) {
       // An expired session is the MOST likely failure on the focus path — it is
@@ -165,6 +180,7 @@ function CarbonDashboardInner() {
         // leave the previous selection's figures under the new bar (`qa-auditor` P2-1).
         setSummary(null);
         setMatrix(null);
+        setCoverage(null);
         toast.error((e as Error).message);
       } else {
         // Swallowing one transient failure is right; swallowing them forever is
@@ -473,10 +489,7 @@ function CarbonDashboardInner() {
                 </Badge>
               )}
             </div>
-            <p className="-mt-2 text-sm text-muted-foreground">
-              Committed Scope 1 &amp; 2 activity records. Year-over-year trends
-              arrive once prior-year data exists.
-            </p>
+            <p className="-mt-2 text-sm text-muted-foreground">{tDashboard('overviewNote')}</p>
             {contextView.status === 'ready' ? (
               <ReportingContextBar
                 context={contextView.context}
@@ -504,12 +517,19 @@ function CarbonDashboardInner() {
                 <KPICards
                   data={emissionsKpiData}
                   reportingYear={matrix?.reportingYear ?? null}
+                  scope3Only={!!context && selectsScope3Only(context, (c) => CATEGORY_SCOPE_MAP[c as Category])}
                   byLocationCount={
                     matrix?.rows.filter(
                       (r) => r.trackingGranularity === 'location',
                     ).length ?? 0
                   }
                 />
+
+                {coverage === 'unavailable' ? (
+                  <CoverageUnavailable />
+                ) : coverage && matrix?.reportingYear != null ? (
+                  <CoverageCard coverage={coverage} year={matrix.reportingYear} />
+                ) : null}
 
                 <TrackingMatrix
                   rows={matrix?.rows ?? []}

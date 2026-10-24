@@ -1,0 +1,11 @@
+{
+  "entryProgress": "%{rate} veri girişi ilerlemesi",
+  "entryNote": "Veri girişi ilerlemesi, verileri bir incelemeci tarafından onaylanmış kategorileri sayar; incelemeyi bekleyen her şey kısmi sayılır. Envanter kapsamı değildir — sınırın kapsamı aşağıda gösterilir.",
+  "scope3Description": "Kapsanmıyor — toplama dahil değil",
+  "totalLabel": "Kapsam 1 + 2 toplamı",
+  "totalDescription": "Envanterin toplamı",
+  "overviewNote": "Sayılan faaliyet kayıtları. Toplam Kapsam 1 + 2'dir; Kapsam 3 kaydedilir ancak envanter tarafından kapsanmaz. Yıldan yıla eğilimler, önceki yılın verileri oluştuğunda gelir.",
+  "notCovered": "Kapsanmıyor",
+  "outsideSelection": "Bu Kapsam 3 seçiminin dışında",
+  "totalScope3Only": "Kapsam 3 kapsanmadığı için bu seçimin envanter toplamı yok"
+}
