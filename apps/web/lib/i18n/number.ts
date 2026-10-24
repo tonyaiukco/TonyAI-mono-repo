@@ -1,4 +1,4 @@
-import { LOCALE_FORMAT_TAGS, SUPPORTED_LOCALES, type Locale } from "@/lib/types";
+import { ACTIVITY_VALUE_MAX, LOCALE_FORMAT_TAGS, SUPPORTED_LOCALES, type Locale } from "@/lib/types";
 
 /**
  * Numbers typed into the UI and numbers shown by it (LP3-01, decision D15).
@@ -163,26 +163,53 @@ export function formatNumber(value: number, locale: Locale, options: Intl.Number
   return formatter.format(value);
 }
 
+/**
+ * A quantity as the server read it (a bulk preview's amount, D15): grouped in
+ * `locale`, with exactly the digits of the number's shortest round-trip form —
+ * `String(value)`, the exponent moved into place. Not Intl: it rounds to three
+ * places by default (a file's `1.2345` would show as 1.235), any fraction-digit
+ * cap still rounds a small value (20 places show 1.5e-20 as 0.00…02, a third
+ * off), and above 20 browsers before Intl.NumberFormat v3 (Firefox ESR 115)
+ * throw a RangeError. The separators are the ones `formatNumber` writes.
+ */
+export function formatReadAmount(value: number, locale: Locale): string {
+  if (!Number.isFinite(value)) return String(value);
+  const { decimal, group } = NUMBER_SEPARATORS[locale];
+  const plain = withoutExponent(String(Math.abs(value)));
+  const [int, frac] = plain.split(".");
+  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, group);
+  return `${value < 0 ? "-" : ""}${grouped}${frac === undefined ? "" : decimal + frac}`;
+}
+
 /** The range a field accepts, on top of the grammar. */
 export type DecimalRule = "positive" | "non_negative";
 
 export type DecimalCheck =
   | { ok: true; value: number; grouped: boolean }
-  | { ok: false; reason: "empty" | "invalid" | "wrong_decimal_separator" | "not_positive" | "negative" };
+  | { ok: false; reason: "empty" | "invalid" | "wrong_decimal_separator" | "not_positive" | "negative" }
+  | { ok: false; reason: "too_large"; max: number };
 
-/** A parsed field against its range: above zero, or zero and above. */
-export function checkDecimal(parsed: DecimalParse, rule: DecimalRule): DecimalCheck {
+/** A parsed field against its range: above zero, or zero and above — and at
+ *  most `max` when the API bounds the field (`ACTIVITY_VALUE_MAX`). */
+export function checkDecimal(parsed: DecimalParse, rule: DecimalRule, max?: number): DecimalCheck {
   if (!parsed.ok) return parsed;
   if (rule === "positive" && parsed.value <= 0) return { ok: false, reason: "not_positive" };
   if (rule === "non_negative" && parsed.value < 0) return { ok: false, reason: "negative" };
+  if (max !== undefined && parsed.value > max) return { ok: false, reason: "too_large", max };
   return parsed;
 }
 
 export type ActivityValueCheck = DecimalCheck;
 
-/** Data Entry's rule for an activity value: a number in the user's locale, above zero. */
+/** Data Entry's rule for an activity value: a number in the user's locale,
+ *  above zero and at most the API's `ACTIVITY_VALUE_MAX` (LP4-04). */
 export function checkActivityValue(input: string, locale: Locale): ActivityValueCheck {
-  return checkDecimal(parseLocaleDecimal(input, locale), "positive");
+  return checkActivityParse(parseLocaleDecimal(input, locale));
+}
+
+/** `checkActivityValue` for a field already parsed (`useDecimalInput`). */
+export function checkActivityParse(parsed: DecimalParse): ActivityValueCheck {
+  return checkDecimal(parsed, "positive", ACTIVITY_VALUE_MAX);
 }
 
 /** A four-digit year as typed: digits only, in every locale — a separator in a

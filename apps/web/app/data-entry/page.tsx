@@ -36,7 +36,7 @@ import { useLocale, useTranslations } from "use-intl";
 import { api, ApiError } from "@/lib/api";
 import { useDescribeError } from "@/lib/i18n/hooks";
 import type { ErrorDescription } from "@/lib/i18n/errors";
-import { checkDecimal, formatNumber } from "@/lib/i18n/number";
+import { checkActivityParse, formatNumber } from "@/lib/i18n/number";
 import { useDecimalInput } from "@/lib/i18n/use-decimal-input";
 import { DecimalNote } from "@/components/i18n/decimal-note";
 import {
@@ -292,8 +292,10 @@ function DataEntryPageInner() {
   }, [editingId, editingTuple, locationId, availableLocations, records]);
 
   // Sent as a JSON number (D15). Zero and below are not activity: the form has
-  // always asked for a value above zero.
-  const valueCheck = checkDecimal(activity.parsed, "positive");
+  // always asked for a value above zero. Above ACTIVITY_VALUE_MAX it is refused
+  // here, in the user's language, before the preview or the save would answer
+  // `activity_value_too_large` (LP4-04).
+  const valueCheck = checkActivityParse(activity.parsed);
   const numericValue = valueCheck.ok ? valueCheck.value : NaN;
   // Mirrors the API's `activity_type_required`: a typed category's record
   // names its activity type — unless it is a record written before LP3-03,

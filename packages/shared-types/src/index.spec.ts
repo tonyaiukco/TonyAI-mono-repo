@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  API_ERROR_PARAMS,
+  API_ERROR_STATUS,
   mayAuthorRecords,
   acceptsBulkSubmit,
   BULK_SUBMITTABLE_STATUSES,
@@ -640,6 +642,15 @@ describe('bulk upload — the column contract', () => {
       (BULK_UPLOAD_WARNING_CODES as readonly string[]).includes(c),
     );
     expect(overlap).toEqual([]);
+  });
+
+  it('refuses a comma and an over-bound value with their own codes (LP4-04)', () => {
+    // A row and a single record over the bound say the same thing, so they
+    // share one name; a comma has no record-API twin (the web refuses it first).
+    expect(BULK_UPLOAD_ERROR_CODES).toContain('wrong_decimal_separator');
+    expect(BULK_UPLOAD_ERROR_CODES).toContain('activity_value_too_large');
+    expect(API_ERROR_STATUS.activity_value_too_large).toBe(400);
+    expect(API_ERROR_PARAMS.activity_value_too_large).toBeUndefined();
   });
 });
 

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { MESSAGES } from "@/messages";
 import {
+  ACTIVITY_VALUE_MAX,
   API_ERROR_CODES,
   API_ERROR_PARAMS,
+  BULK_UPLOAD_ISSUE_CODES,
   CATEGORIES,
   CATEGORY_ACTIVITY_TYPES,
   BULK_SUBMIT_ISSUE_CODES,
@@ -12,6 +14,7 @@ import {
   PERIOD_VALUES,
   REPORTING_PERIODS,
   SUPPORTED_LOCALES,
+  LOCALE_FORMAT_TAGS,
 } from "@/lib/types";
 
 /** Every leaf of a catalogue, as `dotted.key → message`. */
@@ -158,5 +161,23 @@ describe('factor web consumer vocabularies', () => {
     expect(Object.keys(messages.errors.bulkIssues).sort()).toEqual([...BULK_SUBMIT_ISSUE_CODES].sort());
     expect(Object.keys(messages.dataEntry.conversionNote.status).sort()).toEqual([...FACTOR_STATUSES].sort());
     expect(Object.keys(messages.dataEntry.conversionNote.basis).sort()).toEqual([...CALORIFIC_BASES].sort());
+  });
+});
+
+describe("the value bound (LP4-04)", () => {
+  it.each(SUPPORTED_LOCALES)("%s: activity_value_too_large states ACTIVITY_VALUE_MAX as that language writes it", (locale) => {
+    // The sentence carries no param, so it spells the bound out: this keeps it
+    // from going stale if the constant moves.
+    const written = new Intl.NumberFormat(LOCALE_FORMAT_TAGS[locale]).format(ACTIVITY_VALUE_MAX);
+    expect(MESSAGES[locale].errors.codes.activity_value_too_large).toContain(written);
+  });
+});
+
+describe("the bulk import's issue labels (LP4-04)", () => {
+  it.each(SUPPORTED_LOCALES)("%s: one non-empty, distinct label per BULK_UPLOAD_ISSUE_CODES entry, and no stray", (locale) => {
+    const labels = MESSAGES[locale].errors.bulkUploadIssues as Record<string, string>;
+    expect(Object.keys(labels).sort()).toEqual([...BULK_UPLOAD_ISSUE_CODES].sort());
+    expect(Object.values(labels).every((v) => v.trim() !== "")).toBe(true);
+    expect(new Set(Object.values(labels)).size).toBe(BULK_UPLOAD_ISSUE_CODES.length);
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "use-intl";
-import { formatDecimalInput, NUMBER_SEPARATORS, type DecimalCheck } from "@/lib/i18n/number";
+import { formatDecimalInput, formatNumber, NUMBER_SEPARATORS, type DecimalCheck } from "@/lib/i18n/number";
 import type { Locale } from "@/lib/types";
 
 /**
@@ -39,7 +39,9 @@ export function DecimalNote({
   } else if (check.reason !== "empty") {
     note = {
       text:
-        check.reason === "not_positive"
+        check.reason === "too_large"
+          ? t("tooLarge", { max: formatNumber(check.max, locale) })
+          : check.reason === "not_positive"
           ? t("notPositive")
           : check.reason === "negative"
             ? t("notNegative")
