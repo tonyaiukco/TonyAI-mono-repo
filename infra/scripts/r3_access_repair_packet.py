@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MODULES = (*COLLECTION_MODULES, 'r3_access_repair', 'r3_access_repair_guest', 'r3_access_repair_export', 'r3_access_identity_diagnostic')
 HELPERS = tuple(dict.fromkeys(('r3_access_repair_packet', 'r3_policy_packet',
     'r3_access_repair_contract', 'r3_access_repair_control', 'r3_access_repair_transport',
-    'r3_access_repair_custody', 'r3_access_repair_receive',
+    'r3_access_repair_custody', 'r3_access_repair_receive', 'r3_access_repair_amendment', 'r3_access_repair_history',
     *(name.removesuffix('.py') for name in PACKET_HELPERS))))
 
 
@@ -34,8 +34,8 @@ def source_map():
             for name in (*MODULES, *HELPERS)}
 
 
-def payload(proposal):
-    modules = {name: base64.b64encode(read(ROOT / 'infra/scripts' / (name + '.py'))).decode()
+def payload(proposal, *, modules=None):
+    modules = modules if modules is not None else {name: base64.b64encode(read(ROOT / 'infra/scripts' / (name + '.py'))).decode()
                for name in MODULES}
     # Same source-only importer pattern as collection, with a distinct entry
     # module. Importing identity helpers never calls a collector entry point.
@@ -70,8 +70,8 @@ raise SystemExit(0 if result['status'] == 'KEY_APPENDED_REVIEW_REQUIRED' else 2)
 ''' % (encoded(modules).decode(), encoded(proposal).decode())).encode()
 
 
-def export_payload(proposal):
-    prefix = payload(proposal).split(b'from r3_access_repair_guest import main\n', 1)[0]
+def export_payload(proposal, *, modules=None):
+    prefix = payload(proposal, modules=modules).split(b'from r3_access_repair_guest import main\n', 1)[0]
     return prefix + b'''from r3_access_repair_export import export
 result = export(proposal)
 data = json.dumps(result, sort_keys=True).encode()
@@ -82,8 +82,8 @@ raise SystemExit(0 if result['status'] == 'EXPORTED_REVIEW_REQUIRED' else 2)
 '''
 
 
-def diagnostic_payload(proposal):
-    prefix = payload(proposal).split(b'from r3_access_repair_guest import main\n', 1)[0]
+def diagnostic_payload(proposal, *, modules=None):
+    prefix = payload(proposal, modules=modules).split(b'from r3_access_repair_guest import main\n', 1)[0]
     return prefix + b'''from r3_access_identity_diagnostic import main
 result = main(proposal)
 data = json.dumps(result, sort_keys=True).encode()
@@ -93,7 +93,7 @@ sys.stdout.buffer.write(data + b'\\n')
 '''
 
 
-def prepare(destination, target_proposal, public_key, public_key_sha256, bindings=None, *, identity_diagnostic=False):
+def prepare(destination, target_proposal, public_key, public_key_sha256, bindings=None, *, identity_diagnostic=False, recovery_amendment=False):
     from r3_access_repair_contract import PURPOSE, requests
     raw = read(public_key)
     public_line(raw, public_key_sha256)
@@ -108,6 +108,13 @@ def prepare(destination, target_proposal, public_key, public_key_sha256, binding
     except (ValueError, subprocess.CalledProcessError):
         candidate = None
     bindings = {} if bindings is None else bindings
+    require(not (identity_diagnostic and recovery_amendment), 'DISTINCT_PREPARATION_PURPOSE')
+    if recovery_amendment:
+        from r3_access_repair_amendment import historical, corrected_target
+        prior, _, _, _ = historical(bindings['amendment'])
+        require(retained['target'] == prior['target'] and retained.get('custody') == prior['custody'], 'AMENDMENT_RETAINED_TARGET')
+        retained = dict(retained, target=corrected_target(bindings['amendment']))
+        imds = retained['target']['imds']
     published = bindings.get('published_sha')
     require(published is None or candidate is not None and published == candidate, 'PUBLICATION_BINDING')
     proposal = {'format': 1, 'purpose': 'R3_SSH_KEY_APPEND_ONLY', 'packet_id': uuid.uuid4().hex,
@@ -129,6 +136,8 @@ def prepare(destination, target_proposal, public_key, public_key_sha256, binding
             'requests': requests(proposal, read(destination / 'guest.py'))}
     if identity_diagnostic:
         plan['prior_command'] = bindings.get('prior_command')
+    if recovery_amendment:
+        plan['amendment'] = bindings['amendment']
     write(destination / 'delivery.json', encoded(plan))
     write(destination / 'packet.json', encoded({
         'state': 'DRAFT_NOT_EXECUTION_READY_UNAPPROVED_UNEXECUTED',
@@ -156,7 +165,8 @@ if __name__ == '__main__':
     parser.add_argument('--public-key-sha256', required=True)
     parser.add_argument('--bindings', type=Path, help='Optional publication/client/design bindings; never execution authority')
     parser.add_argument('--identity-diagnostic', action='store_true', help='Distinct metadata-only purpose; never repair replay')
+    parser.add_argument('--recovery-amendment', action='store_true', help='Exact retained identity diagnostic amendment; never replay')
     args = parser.parse_args()
     from r3_access_repair_contract import load as strict_load
     prepare(args.destination, args.target_proposal, args.public_key, args.public_key_sha256,
-            strict_load(read(args.bindings)) if args.bindings else None, identity_diagnostic=args.identity_diagnostic)
+            strict_load(read(args.bindings)) if args.bindings else None, identity_diagnostic=args.identity_diagnostic, recovery_amendment=args.recovery_amendment)

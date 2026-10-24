@@ -562,6 +562,12 @@ accounts, sudo, SSH configuration and services; delivery-side handler installati
 state and logs are separate effects. No automatic retry, rollback or handler
 cleanup occurs. Advisory locking cannot exclude uncooperative writers or parent
 renames, and Managed Run Command PUT is not an atomic absent-only create.
+A separately reviewed `--recovery-amendment` draft can bind a proven location-only
+IMDS mismatch to a new append attempt. It accepts only the two anchored historical
+source closures, rechecks both exact terminal predecessor commands, and preserves
+strict guest identity equality. The corrected expected IMDS value is `SwedenCentral`;
+ARM VM location remains `swedencentral`. Preparation grants no execution authority,
+and private evidence fetch still needs a separate exact approval.
 See [the recovery contract](infra/runbooks/10-qa-clean-replacement.md#narrow-ssh-access-recovery-draft-separate-from-collection)
 for phase budgets, custody and remaining live qualification requirements.
 The r02 runtime source contract

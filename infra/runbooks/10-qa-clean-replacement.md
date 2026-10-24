@@ -1809,3 +1809,64 @@ require all eight nonempty string fields, a valid boot ID and consistent exact
 comparison. Review the observation before proposing any repair correction,
 fresh collection or further execution. Historical partial records and all
 R3/CL-P2-3/bootstrap gates remain unchanged.
+
+
+#### Exact diagnostic-bound location amendment
+
+`r3_access_repair_packet.py --recovery-amendment` is an offline preparation path
+for the reviewed `swedencentral` / `SwedenCentral` mismatch. It requires a new
+packet ID and an `amendment` binding with purpose
+`R3_EXACT_LOCATION_RECOVERY_AMENDMENT`. This path is deliberately limited to the
+historical repair source `cc74bd7a940c985e10d2333bd43152f895663aeb` and diagnostic
+source `ff3e37ada40ea86cbfaf0f1b3bfe2a17a010f852`. Their complete source-map digests
+are immutable code anchors in `r3_access_repair_history.py`; changed source needs
+its own reviewed contract, not a rewritten historical packet.
+
+The binding embeds the diagnostic delivery/proposal, bounded diagnostic report,
+and failed repair summary, with their canonical SHA256 values and a
+`decision_sha256` reference. That decision digest is a review reference, not
+execution authority; the independent owner approval must bind the entire new
+delivery and fresh observation. Historical validation checks both complete
+request envelopes, exact shell/Python wrappers, embedded proposals, decoded
+module hashes/closures and export payload hashes without executing historical
+code. The report must show an error-free comparison, exactly seven matching
+identity fields and only location differing as `SwedenCentral`, with the exact
+case-only classification. The failed predecessor must have refused at
+`identity-before` without append or an evidence path. Custody, public key and
+all other target values stay bound to the predecessor chain.
+
+The new guest proposal uses that exact observed IMDS value. Existing guest
+before/after equality, account, key and directory guards are unchanged; this is
+not a case-insensitive guest comparison. A validated historical controller view
+keeps the ARM VM expectation `swedencentral`. The new Run Command request body's
+location follows the exact IMDS spelling `SwedenCentral`; the existing bounded
+ASCII case-only ARM response check remains in effect.
+
+A separately approved fresh observation must bind the full VM/ETag, empty
+extension-resource list, exact two predecessor command IDs and full list hashes,
+and `predecessor_model_sha256` for both expanded command bodies. List order is
+observed, not prescribed; duplicate, missing or extra IDs refuse. Both predecessor
+models must match their full fresh hashes, exact scripts/options and outputs.
+The old repair must have provider/execution state `Failed`, integer exit 2 and
+the bound early-refusal summary. The diagnostic must have provider/execution
+state `Succeeded`, integer exit 0 and the exact bound report. A guest exit 0 with
+provider state `Creating` does not satisfy this precondition.
+
+`ONE_MANAGED_KEY_APPEND` still authorizes only one new PUT. The controller
+performs at most six precondition GETs, one PUT and five status GETs (12 requests
+in total), with the existing 180-second request-start budget and per-request
+deadlines. It checks the 900-second freshness at approval and immediately before
+mutation; status polling can continue within the overall budget. The exclusive
+operator window remains required because the absent-name check and PUT are not
+atomic. No predecessor is updated/deleted, and no retry or rollback occurs.
+The Microsoft-managed root handler's installation, log, cache and state effects
+remain part of the separately reviewed live scope.
+
+The later `ONE_REPAIR_EVIDENCE_FETCH` needs a separate fresh observation and
+approval. Its command scope contains exactly the two predecessors plus the new
+repair command, with the existing SSH agent, host-pin, source and private custody
+checks. Export approval alone does not perform ARM readback: predecessor hashes
+must come from that separately reviewed observation. The original strict guest
+export and before/after identity evidence remain mandatory. An append response
+is only `KEY_APPENDED_CUSTODY_REQUIRED`; it does not prove access, qualification,
+installation or R3 completion. All historical consumption records are preserved.
