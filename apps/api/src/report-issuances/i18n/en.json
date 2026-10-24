@@ -107,5 +107,22 @@
   "period Q2": "Q2",
   "period Q3": "Q3",
   "period Q4": "Q4",
-  "period Annual": "Annual"
+  "period Annual": "Annual",
+  "tablesNote": "These tables project the issuance's retained dataset exactly as its PDF does — the same counted records, figures and gaps — written from that dataset on request and never from live data.",
+  "sheetSummary": "Summary",
+  "sheetGaps": "Gaps",
+  "sheetLedger": "Counted records",
+  "sheetWithdrawn": "Withdrawn records",
+  "sheetExclusions": "Exclusions",
+  "rowStatus": "Status",
+  "rowSelection": "Selection",
+  "rowBoundary": "Inventory boundary",
+  "rowScope3": "Scope 3",
+  "rowTemplate": "Template",
+  "colScope": "Scope",
+  "colActivityValue": "Activity value",
+  "colUnit": "Unit",
+  "colRecordId": "Record id",
+  "identityIssued": "Issued",
+  "identityTables": "Tables renderer"
 }

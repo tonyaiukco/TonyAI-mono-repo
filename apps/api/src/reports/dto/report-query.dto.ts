@@ -2,7 +2,7 @@ import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { ReportingContextQueryDto } from '../../common/reporting-context-query.dto';
 import { UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
-import type { ReportTemplate } from '@tonyai/shared-types';
+import { SUPPORTED_LOCALES, type Locale, type ReportTemplate } from '@tonyai/shared-types';
 
 const SUBSIDIARY_ID_MAX_LENGTH = 36;
 /** (19) A legacy selector is blank (whitespace included — its meaning is open
@@ -41,6 +41,11 @@ export class ReportQueryDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   includeEvidenceSummary?: boolean;
+
+  /** D16 / LP4-03 K6: the PDF's and the workbook's language; the caller's own by default. */
+  @IsOptional()
+  @IsIn(SUPPORTED_LOCALES)
+  language?: Locale;
 }
 
 /** Query of GET /reports/meta — status/completeness for the preview badge. */
@@ -75,4 +80,9 @@ export class ReportingExportQueryDto extends ReportingContextQueryDto {
   @Transform(({ value }) => value === 'true' ? true : value === 'false' ? false : value)
   @IsBoolean()
   includeEvidenceSummary?: boolean;
+
+  /** D16 / LP4-03 K6: the PDF's and the workbook's language; the caller's own by default. */
+  @IsOptional()
+  @IsIn(SUPPORTED_LOCALES)
+  language?: Locale;
 }

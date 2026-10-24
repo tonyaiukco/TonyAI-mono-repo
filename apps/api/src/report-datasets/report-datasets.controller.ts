@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Header, Param, Post, Query, UseGuards } from '@nestjs/common';
-import type { ReportDatasetSummary } from '@tonyai/shared-types';
+import type { ReportDatasetList, ReportDatasetSummary } from '@tonyai/shared-types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import { ParseUuidParamPipe } from '../common/parse-uuid-param.pipe';
@@ -20,7 +20,7 @@ export class ReportDatasetsController {
 
   @Get()
   @UseGuards(DatasetReaderGuard)
-  list(@CurrentUser() user: RequestUser, @Query() query: ListReportDatasetsQueryDto): Promise<ReportDatasetSummary[]> {
+  list(@CurrentUser() user: RequestUser, @Query() query: ListReportDatasetsQueryDto): Promise<ReportDatasetList> {
     return this.service.list(user, query.year);
   }
 

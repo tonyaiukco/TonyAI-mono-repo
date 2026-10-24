@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import type { CanActivate, ExecutionContext, CallHandler, NestInterceptor } from '@nestjs/common';
 import { defer, finalize } from 'rxjs';
 import type { SupabaseAuthGuard } from '../auth/auth.guard';
-import { CapacityError, routeGroup, RuntimeLimits } from './runtime-limits';
+import { CapacityError, isReportPreview, routeGroup, RuntimeLimits } from './runtime-limits';
 
 export type LimitedRequest = Request & { runtimeMultipart?: boolean; runtimeAdmitWork?: () => void; runtimeLease?: {
   executing: boolean; releases: Array<() => void>; release: () => void;
@@ -37,6 +37,13 @@ export class RuntimeAuthGuard implements CanActivate {
         lease?.releases.push(this.limits.acquire('http', c.HTTP_MAX_INFLIGHT));
         if (group === 'IMPORT') lease?.releases.push(this.limits.acquire('imports', c.IMPORT_CONCURRENCY));
         if (group === 'EXPORT') lease?.releases.push(this.limits.acquire('reports', c.REPORT_CONCURRENCY));
+        // A live report preview holds one snapshot connection for its whole
+        // read (LP4-03): one at a time per user, so no one user fans out over
+        // the pool. No replica-wide cap: at the PDF's size it refused a second
+        // user's preview outright (qa-auditor re-review P1-1) — capacity is LP5-03's.
+        if (isReportPreview(req.method, req.path)) {
+          lease?.releases.push(this.limits.acquire(`report-preview:${user.id}`, 1));
+        }
         // A read-only POST (`routeGroup`'s READ) takes no mutation permit.
         if (group !== 'READ' && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
           lease?.releases.push(this.limits.acquire('mutations', c.MUTATION_CONCURRENCY));

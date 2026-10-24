@@ -682,9 +682,11 @@ Base URL: `http://localhost:3001/api/v1` · all routes (except `/health` and `/h
 | `POST` | `/inventory-boundaries/:id/confirm` | Confirm and freeze a version (`boundary_frozen`, `boundary_confirm_requires_copy`, `boundary_incomplete`) | `super_admin` |
 | `DELETE` | `/inventory-boundaries/:id` | Delete an open version (204) | `super_admin` |
 | `POST` | `/report-datasets` | Capture a report dataset of a version (`boundaryId`; an extract by `subsidiaryId`/`scope`/`category`); an open version freezes first, unconfirmed — "The capture" | `super_admin`; consultant (a frozen version) |
-| `GET` | `/report-datasets?year=` · `/report-datasets/:id` | A year's datasets the caller may read; one, as retained (`report_dataset_not_found` unless every subsidiary it references is the caller's) | not data_entry |
+| `GET` | `/report-datasets?year=` · `/report-datasets/:id` | A year's datasets the caller may read (a `ReportDatasetList`: at most 50, `truncated` past them — LP4-03); one, as retained (`report_dataset_not_found` unless every subsidiary it references is the caller's) | not data_entry |
 | `POST` | `/report-issuances` | Issue a retained dataset as a retained PDF (`datasetId`, `template`; `language` — else the issuer's —, `includeMethodologyNotes`, `includeEvidenceSummary`); status and gaps derived from the dataset alone — "The issuance" | `super_admin`; consultant a partial only (`report_final_forbidden`) |
-| `GET` | `/report-issuances?year=` · `/report-issuances/:id` · `/report-issuances/:id/pdf` | A year's issuances the caller may read; one's `ReportIssuance`; its retained PDF, re-hashed before it is served (`report_issuance_not_found` unless every subsidiary its dataset references is the caller's) | not data_entry |
+| `GET` | `/report-issuances?year=&status=` · `/report-issuances/:id` · `/report-issuances/:id/pdf` | A year's issuances the caller may read, as a `ReportIssuanceList` of summaries (LP4-03 K7); one's `ReportIssuance`; its retained PDF, re-hashed before it is served (`report_issuance_not_found` unless every subsidiary its dataset references is the caller's) | not data_entry |
+| `GET` | `/report-issuances/:id/xlsx` · `/report-issuances/:id/csv` | The issuance's retained dataset as a workbook (its language) or CSV (English machine keys, identity on every row) — written on request, the PDF's figures exactly — "Live reports and issued reports" | not data_entry |
+| `GET` | `/report-datasets/:id/issuance-preview` | What issuing a retained dataset would derive — status, gaps, `finalAllowed` — nothing written | `super_admin`, consultant |
 | `GET` | `/bulk-upload/template` | Download the import template (XLSX): sheet 1 is exactly the importer's ten columns, sheet 2 (invisible to the importer) names the caller's own reporting entities and the vocabularies | any |
 | `POST` | `/bulk-upload/activity-records` | Import activity records from a CSV/XLSX (multipart `file`, `dryRun` required — exactly `true` or `false`; an empty or missing value is a 400, never a default). Row-level report; 1,000 populated rows / 2 MB (and an XLSX may unpack to at most 16 MB); 5 imports per minute per user. A role that may not author records is refused before the file is parsed, and that refusal is audited (a 413 from the 2 MB limit and a 400 for a malformed `dryRun` happen before the service runs, so those two are not) | `data_entry`, `super_admin` |
 
@@ -851,9 +853,10 @@ selected subsidiary, scope and category; context filenames include scope/categor
 alongside year/subsidiary. CSV retains its rectangular English machine-key ledger,
 with no metadata preamble: its filename and generation audit carry the selection,
 including an empty export. Tests inspect artifacts and filter predicates; `tenant-isolation.int.spec.ts` proves every context route's tenant isolation on the real database, auth and runtime role (the PDF with Puppeteer replaced by the HTML it is handed; e2e renders it) — another organisation's subsidiary, an ungranted one and an unknown one answer alike, and context and legacy exports share the report lease and the EXPORT quota.
-New selection labels have EN/TR server catalogues; current writers use English
-consistently with the existing whole report. LP4-03 still owns whole-report
-language selection, category labels and language audit attribution.
+New selection labels have EN/TR server catalogues. Since LP4-03 (K6, D16) the
+whole PDF and workbook follow the report's language — `language`, else the
+caller's `profiles.language` — category, period and status labels included,
+recorded on the generation audit row; the CSV keeps its English machine keys.
 This also changes legacy artifact layout: Excel Summary now has subsidiary,
 scope and category filter rows 4–6 (Status moves from row 5 to row 7); the old
 "Scope filter" row named a subsidiary, while the new one names the actual scope.
@@ -1209,19 +1212,21 @@ own live checks and LP5-03.
 ## Inventory coverage and report datasets (LP3-04 contract)
 
 `ReportDataset`, `InventoryBoundarySnapshot` and `ReportIssuance` are additive
-contracts exported by `@tonyai/shared-types`. Existing `ReportStatus`,
-`ReportMetaDTO`, context routes and report assembly are unchanged. The boundary's
+contracts exported by `@tonyai/shared-types`. LP4-03 changed the live side
+("Live reports and issued reports", below): `ReportMetaDTO` carries the
+report's own summary, its Scope 3 disclosure and the boundary's coverage, and
+live assembly reads in one snapshot. The boundary's
 storage and its reader are shipped (LP3-04 PR B, below), its routes write and
 serve it ("The write path", below), a dataset is captured, retained and
 served ("The capture", below), and a retained dataset is issued as a retained
-PDF through the final gate ("The issuance", below). Today's count-based
-"approved" badge still certifies nothing: only an issuance's `final` does.
+PDF through the final gate ("The issuance", below). The live "approved" badge
+is review status and says so; it certifies nothing: only an issuance's `final` does.
 
 The dataset records one bounded, consistent capture of the declared boundary,
 records and their unchanged calculation snapshots, evidence references, period
-locks and factor/conversion release standing. Future assembly must read these in
-one consistent database snapshot, retain the result, and derive every total and
-format from it. Renderers must not query current metadata separately. Capture
+locks and factor/conversion release standing, read in one consistent database
+snapshot and retained; every total and format of an issuance derives from it.
+Renderers never query current metadata separately. Capture
 and persistence happen before rendering; an issuance exists only after the
 immutable dataset and exact PDF bytes are retained. Storage failures require a
 recoverable implementation, not a successful issuance with a missing artifact.
@@ -1313,7 +1318,7 @@ is not all-owned: an inventory selection covers the entire declared boundary.
 
 `datasetId` identifies retained facts; `issuanceId` identifies a particular
 language/template/renderer output. PDF, CSV and Excel projections of the same
-dataset must carry its identity and fingerprint and reconcile. Re-downloading an
+dataset carry its identity and fingerprint and reconcile (LP4-03 K5). Re-downloading an
 issuance retrieves the retained PDF bytes, not a regeneration. Later withdrawal
 of a factor release changes neither those bytes nor the retained dataset; a new
 capture discloses its current standing without recalculating historic records.
@@ -1659,7 +1664,7 @@ SHA-256 and the status the final gate derived are the issuance
 | Method | Path | What | Who |
 |---|---|---|---|
 | `POST` | `/report-issuances` | Issue a retained dataset (`datasetId`, `template`; `language` — D16: else the issuer's `profiles.language` —, `includeMethodologyNotes`, `includeEvidenceSummary`, both default false); 201 with its `ReportIssuance` | `super_admin`; a consultant a partial only |
-| `GET` | `/report-issuances?year=` | A year's issuances the caller may read, newest first (at most 50) | every role but data_entry |
+| `GET` | `/report-issuances?year=&status=` | A year's issuances the caller may read, newest first: at most 50 summaries, `truncated` past them, and the year's current final (LP4-03 K7) | every role but data_entry |
 | `GET` | `/report-issuances/:id` | One issuance's `ReportIssuance` | every role but data_entry |
 | `GET` | `/report-issuances/:id/pdf` | Its retained PDF, byte for byte, as an attachment — re-hashed first, never rendered again | every role but data_entry |
 
@@ -1760,7 +1765,125 @@ bytes that are gone answer `report_artifact_missing` (404, reported to
 operators by id, never by key). `storage:reconcile --verify` hashes every
 issuance's object too. The issue and the download take the report exports'
 quota and lease (EXPORT); the list and one issuance's metadata are reads. The
-screen and the web client (`api.ts`) are LP4-03's (E9).
+screen and the web client (`api.ts`) are LP4-03 PR B's (E9).
+
+### Live reports and issued reports (LP4-03)
+
+Decisions 2026-10-24, K1–K13. A live report (the Reports preview, `GET
+/reports/{context/,}{meta,pdf,excel,csv}`) is **live and says so**; an issued
+report is retained and retrieved, never regenerated.
+
+**One snapshot (K2).** Every read of one live request — the organisation, the
+status counts, the committed and withdrawn ledgers, their evidence links, the
+releases' standing, the Scope 3 disclosure and the boundary's coverage — runs
+in ONE REPEATABLE READ transaction set `READ ONLY` (`CaptureSnapshot.openReadOnly`,
+the capture's own guard), and the PDF, workbook or CSV is written after it
+closes. A preview holds that connection for its whole read, so it takes a
+permit of its own — one at a time per user, apart from the exports' lease
+(`runtime-request.ts`); the Reports page retries a refused preview once after
+`Retry-After`. A read whose snapshot
+cannot start in time (P2028), like one whose pool is exhausted (P2024), is a
+429 with `Retry-After`. The Reports preview reads its tiles and tables from
+this one answer (`meta.summary`), never from the emissions summary. The totals
+and tables are the report's own sum of the ledger rows it read
+(`summariseCounted`, `emissions.service.ts`), never a second read, so an
+approval, a withdrawal, a new record or a rename committed mid-report cannot make
+its badge, counts, totals and ledger disagree (`live-report-consistency.int.spec.ts`
+holds the read mid-way and commits all four). Every figure is stated as of the
+snapshot's own clock (`generatedAt`, UTC). `GET /reports/context/meta` is the
+preview's one read: its counts, `summary`, `scope3` and `coverage` are one moment's.
+
+**Scope 1 and 2 only (K4).** A live report counts, lists and totals every
+committed Scope 1/2 record of its selection (a dataset holds Scope 1/2 too, but
+sums only the records attached to its boundary's obligations — an issuance is
+the authoritative figure): `Total` is Scope 1 + Scope 2, and Scope 3 is "not
+covered" — its committed records counted and their calculated tonnes named in
+`scope3` (`ReportScope3Disclosure`), never summed into a tile, a total or a
+percentage; a Scope 3 selection — `scope=3`, or a Scope 3 category with no
+scope — reads "Not covered" everywhere. `summary` is a `ReportInventorySummary` — Scope 3 the literal 0 —
+not the emissions summary, whose totals include Scope 3. A `scope=3` selection reads no Scope 1/2 record; its tiles and
+the workbook's cells read "Not covered", never 0. The PDF prints one decimal of
+the full-precision total; the workbook and CSV print full precision.
+
+**Review status is not coverage (K3).** `ReportStatus` keeps its values and is
+labelled for what it is — "All records approved — not an inventory
+certification". `ReportMetaDTO.coverage` (`ReportLiveCoverage`) is the year's
+NEWEST boundary version (open, frozen or confirmed) assessed by the capture's
+rule (`assessDataset`) over every Scope 1/2 record of the REPORT's selection,
+any status, as it stands in the same snapshot (`reports/live-coverage.ts`) —
+a subsidiary the boundary leaves out included, its records `unmapped_record`
+gaps, because the live total counts them (unlike a capture, which reads the
+version's declared subsidiaries alone). States: `no_boundary` (coverage
+unknown), `not_readable` (the version declares a subsidiary outside the
+caller's access — nothing of it is disclosed; a partially granted data_entry
+user's usual answer), `not_covered` (a Scope 3 selection — no boundary is
+read), `too_broad` (more records or evidence links than one report reads — the
+figures stand, coverage unknown), or `assessed` — the version, its decision,
+the selection's included obligations and how many are satisfied, excluded
+sources, gaps by code, and a `reading`: `complete` (no gap, at least one
+included obligation), `gaps`, `nothing_included` (every category excluded) or
+`outside_boundary` (an extract of a subsidiary the version does not declare).
+An unconfirmed version is never complete, and a one-record year is not either —
+its missing months are `missing_record` gaps. Still not a certification:
+approval, locks, factor standing and uncalculated figures are a final
+issuance's gate, so a scope can read `complete` live and `partial` issued.
+
+**Live, in words, in the report's language (K6, K8).** The PDF opens with a
+banner ("Live report — not an issued report…, read at <time> UTC"), the
+workbook's Summary sheet with the same row, and every live file is named
+`tonyai-live-…` and sent `Cache-Control: no-store`; the CSV keeps its one header row. The PDF and workbook print
+every heading, note, label and categorical cell through the module's TR/EN
+catalogue (`reports/i18n/`, `report-vocabulary.ts`; English prints exactly what
+it printed before), with the language's number separators on the PDF; a
+full-precision figure inside a workbook note (the withdrawn tonnes, Scope 3's
+calculated tonnes) keeps every digit of the stored number, its exponent
+expanded, with the language's decimal mark (`fullFigure`); the CSV
+keeps English machine keys, raw statuses and dot-decimal figures. The
+generation audit row (`report` / `generate`) adds the snapshot time
+(`readAt`), the badge it printed (`status`), what the boundary said
+(`coverage`) and — PDF and workbook — the `language`.
+
+**Issued Excel and CSV (K5).** `GET /report-issuances/:id/xlsx` and `/csv`
+project the issuance's RETAINED dataset — re-read, re-verified as an issue
+verifies it (fingerprint, assessments, frozen version), and bound to the
+issuance by its fingerprint — exactly as its PDF does: the scopes' counted
+records, the same figures, gaps, exclusions and withdrawals
+(`report-issuances/issuance-tables.ts`, renderer `tonyai-issuance-tables-v1`).
+Written on request and never stored (no migration, no new bucket); the same
+issuance always yields the same rows and figures. The workbook follows the
+issuance's language with numeric figures and names the issuance, dataset,
+fingerprint, capture and issue times on its Summary (its file clock is the
+issue time; its labels are the catalogue's current words); the CSV opens with
+one `row_kind: issuance` row — the identity and status, every other cell empty
+— so an issuance with no ledger row (an all-excluded final, an empty extract)
+still names itself, then carries the issuance, dataset, fingerprint and status
+on every row, the entity's `subsidiary_id` and `location_id` last, and a withdrawn row's
+aggregatable cells read `Withdrawn` (values in `voided_*`), so a SUM over
+`tco2e` is the issuance's counted total. Neither writes an audit row: each is a
+read of retained data, as the PDF download is. The PDF, workbook and CSV of one
+issuance share one file name — year, template, language, status, issue date
+and a short id, so two finals of a year no longer share a name.
+
+**The list and the preview (K7).** `GET /report-issuances?year=&status=`
+answers a `ReportIssuanceList`: at most 50 `ReportIssuanceSummary` items
+(gaps counted in SQL, never listed; the issued dataset's selection, context,
+boundary and capture time), `truncated` when more are readable, and
+`currentFinalIssuanceId` — the year's newest readable final, whether or not it is
+on the page. `GET /report-datasets/:id/issuance-preview` runs the issue's own
+read, verification and gate (`deriveIssuance`) and answers status, gaps and
+`finalAllowed` (super_admin only), writing nothing; issuers only. The tables
+and the preview take the EXPORT quota and lease, as the PDF download does.
+
+**Analytics budgets (K11).** `GET /emissions/summary`, the context summary
+and trends, the tracking matrix and the completeness drill-down read one
+year within `REPORT_RECORD_LIMIT`, as the reports do, and a year-less read
+(the Emissions history's trend) within `ACTIVITY_RECORD_METADATA_MAX_ROWS`;
+one row past either is `query_too_broad`, 422 — LP4-05 PR C follow-up (17).
+`GET /report-datasets?year=` answers `{ items, truncated }` too.
+
+Still LP4-03's (PRs B and C): the Reports screen's two tabs (live preview,
+issued reports) and its TR/EN copy, the dashboard's and Data Entry's coverage,
+and the boundary editor, with their `api.ts` functions.
 
 ## Localisation and error codes
 

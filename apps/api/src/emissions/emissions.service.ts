@@ -1,4 +1,5 @@
 import { QueryTooBroadError } from '../common/api-error';
+import { readRuntimeConfig } from '../common/runtime-config';
 import { Injectable } from '@nestjs/common';
 import { ResourceNotFoundError } from '../common/api-error';
 import { ActivityRecordStatus, Prisma, type ActivityRecord } from '@tonyai/db';
@@ -296,69 +297,247 @@ interface TrendBucket {
   sortKey: number;
 }
 
-@Injectable()
-export class EmissionsService {
-  constructor(private readonly prisma: PrismaService) {}
+/** Add a record's tCO₂e into the right scope field of a scope-split target. */
+function addScope(
+  target: { scope1: number; scope2: number; scope3: number; total: number },
+  scope: number,
+  tCo2e: number,
+): void {
+  if (scope === 1) target.scope1 += tCo2e;
+  else if (scope === 2) target.scope2 += tCo2e;
+  else if (scope === 3) target.scope3 += tCo2e;
+  target.total += tCo2e;
+}
 
-  /** Add a record's tCO₂e into the right scope field of a scope-split target. */
-  private addScope(
-    target: { scope1: number; scope2: number; scope3: number; total: number },
+/** Resolve the calendar quarter (1–4) a record belongs to, or null if it
+ * cannot be attributed to one (e.g. an annual record). */
+function quarterOf(record: Pick<ActivityRecord, 'reportingPeriod' | 'periodValue'>): number | null {
+  if (record.reportingPeriod === 'quarterly') {
+    const m = /^q([1-4])$/i.exec(record.periodValue.trim());
+    return m ? Number(m[1]) : null;
+  }
+  if (record.reportingPeriod === 'monthly') {
+    const idx = MONTH_INDEX[record.periodValue.trim().toLowerCase()];
+    return idx === undefined ? null : Math.floor(idx / 3) + 1;
+  }
+  return null;
+}
+
+export function emptySummary(): EmissionsSummary {
+  return {
+    totals: { scope1: 0, scope2: 0, scope3: 0, total: 0 },
+    byCategory: [],
+    bySubsidiary: [],
+    trend: { monthly: [], quarterly: [], yearly: [] },
+    recordCount: 0,
+    calculatedRecordCount: 0,
+    uncalculatedRecordCount: 0,
+    statusesIncluded: COUNTED_STATUSES,
+  };
+}
+
+/** What `summariseCounted` reads of a record — and all the summary route selects. */
+export const SUMMARY_RECORD_SELECT = {
+  subsidiaryId: true, category: true, scope: true, reportingYear: true, reportingPeriod: true, periodValue: true, calculation: true,
+} as const satisfies Prisma.ActivityRecordSelect;
+export type SummaryRecord = Pick<ActivityRecord, keyof typeof SUMMARY_RECORD_SELECT>;
+
+/**
+ * The summary of COUNTED records already read — totals, breakdowns and trend.
+ * Pure, so a caller that read its rows in a snapshot of its own (a live report,
+ * LP4-03 K2) sums exactly those rows, not a second read of the same selection.
+ */
+export function summariseCounted(rows: readonly SummaryRecord[], nameById: ReadonlyMap<string, string>): EmissionsSummary {
+  const totals = { scope1: 0, scope2: 0, scope3: 0, total: 0 };
+  const byCategory = new Map<
+    string,
+    { scope: number; tCo2e: number; recordCount: number }
+  >();
+  const bySubsidiary = new Map<
+    string,
+    { tCo2e: number; recordCount: number }
+  >();
+  const monthly = new Map<string, TrendBucket>();
+  const quarterly = new Map<string, TrendBucket>();
+  const yearly = new Map<string, TrendBucket>();
+
+  const bump = (
+    map: Map<string, TrendBucket>,
+    label: string,
+    sortKey: number,
     scope: number,
     tCo2e: number,
-  ): void {
-    if (scope === 1) target.scope1 += tCo2e;
-    else if (scope === 2) target.scope2 += tCo2e;
-    else if (scope === 3) target.scope3 += tCo2e;
-    target.total += tCo2e;
-  }
-
-  /** Resolve the calendar quarter (1–4) a record belongs to, or null if it
-   * cannot be attributed to one (e.g. an annual record). */
-  private quarterOf(record: ActivityRecord): number | null {
-    if (record.reportingPeriod === 'quarterly') {
-      const m = /^q([1-4])$/i.exec(record.periodValue.trim());
-      return m ? Number(m[1]) : null;
+  ): void => {
+    let bucket = map.get(label);
+    if (!bucket) {
+      bucket = {
+        point: { period: label, scope1: 0, scope2: 0, scope3: 0, total: 0 },
+        sortKey,
+      };
+      map.set(label, bucket);
     }
-    if (record.reportingPeriod === 'monthly') {
-      const idx = MONTH_INDEX[record.periodValue.trim().toLowerCase()];
-      return idx === undefined ? null : Math.floor(idx / 3) + 1;
-    }
-    return null;
-  }
+    addScope(bucket.point, scope, tCo2e);
+  };
 
-  private emptySummary(): EmissionsSummary {
-    return {
-      totals: { scope1: 0, scope2: 0, scope3: 0, total: 0 },
-      byCategory: [],
-      bySubsidiary: [],
-      trend: { monthly: [], quarterly: [], yearly: [] },
+  let uncalculatedRecordCount = 0;
+
+  for (const r of rows) {
+    const calc = r.calculation as unknown as ActivityCalculationSnapshot | null;
+    // A record with no factor produced no figure, so it is not part of the
+    // inventory and must not enter the aggregation at all — not even as a
+    // zero. Counting it would put a "Water — 0 tCO₂e, 1 record" row in the
+    // category breakdown, which reads as "we measured water and it was zero"
+    // rather than "water is not calculable yet". It is surfaced instead as
+    // `uncalculatedRecordCount`, so the entries are declared, not hidden.
+    if (!isCalculated(calc)) {
+      uncalculatedRecordCount += 1;
+      continue;
+    }
+    const tCo2e = calc.tCo2e;
+    const scope = r.scope;
+
+    addScope(totals, scope, tCo2e);
+
+    const cat = byCategory.get(r.category) ?? {
+      scope,
+      tCo2e: 0,
       recordCount: 0,
-      calculatedRecordCount: 0,
-      uncalculatedRecordCount: 0,
-      statusesIncluded: COUNTED_STATUSES,
     };
+    cat.tCo2e += tCo2e;
+    cat.recordCount += 1;
+    byCategory.set(r.category, cat);
+
+    const sub = bySubsidiary.get(r.subsidiaryId) ?? {
+      tCo2e: 0,
+      recordCount: 0,
+    };
+    sub.tCo2e += tCo2e;
+    sub.recordCount += 1;
+    bySubsidiary.set(r.subsidiaryId, sub);
+
+    // Yearly — every counted record can be attributed to a year.
+    bump(yearly, String(r.reportingYear), r.reportingYear, scope, tCo2e);
+
+    // Quarterly — monthly/quarterly records only.
+    const q = quarterOf(r);
+    if (q !== null) {
+      bump(
+        quarterly,
+        `${r.reportingYear}-Q${q}`,
+        r.reportingYear * 10 + q,
+        scope,
+        tCo2e,
+      );
+    }
+
+    // Monthly — monthly records only.
+    if (r.reportingPeriod === 'monthly') {
+      const idx = MONTH_INDEX[r.periodValue.trim().toLowerCase()];
+      if (idx !== undefined) {
+        bump(
+          monthly,
+          `${MONTH_NAMES[idx]} ${r.reportingYear}`,
+          r.reportingYear * 100 + idx,
+          scope,
+          tCo2e,
+        );
+      }
+    }
+  }
+
+  const grandTotal = totals.total;
+  const pct = (v: number) => (grandTotal > 0 ? (v / grandTotal) * 100 : 0);
+
+  const categoryList: EmissionsByCategory[] = Array.from(byCategory.entries())
+    .map(([category, v]) => ({
+      category: category as Category,
+      scope: v.scope,
+      tCo2e: v.tCo2e,
+      recordCount: v.recordCount,
+      percentOfTotal: pct(v.tCo2e),
+    }))
+    .sort((a, b) => b.tCo2e - a.tCo2e);
+
+  const subsidiaryList: EmissionsBySubsidiary[] = Array.from(
+    bySubsidiary.entries(),
+  )
+    .map(([subsidiaryId, v]) => ({
+      subsidiaryId,
+      subsidiaryName: nameById.get(subsidiaryId) ?? subsidiaryId,
+      tCo2e: v.tCo2e,
+      recordCount: v.recordCount,
+      percentOfTotal: pct(v.tCo2e),
+    }))
+    .sort((a, b) => b.tCo2e - a.tCo2e);
+
+  const toSortedPoints = (map: Map<string, TrendBucket>) =>
+    Array.from(map.values())
+      .sort((a, b) => a.sortKey - b.sortKey)
+      .map((b) => b.point);
+
+  return {
+    totals,
+    byCategory: categoryList,
+    bySubsidiary: subsidiaryList,
+    trend: {
+      monthly: toSortedPoints(monthly),
+      quarterly: toSortedPoints(quarterly),
+      yearly: toSortedPoints(yearly),
+    },
+    // `recordCount` keeps its original meaning — every committed record in
+    // scope — because it is what the report's "Committed records" tile shows
+    // and what the generation audit row logs. Narrowing it silently to "the
+    // ones that produced a figure" made that tile disagree with the ledger
+    // printed directly beneath it, and made the PDF and CSV exports of the
+    // same selection write two different counts into the append-only log.
+    // The split is expressed by the two fields below, which always sum to it.
+    recordCount: rows.length,
+    calculatedRecordCount: rows.length - uncalculatedRecordCount,
+    uncalculatedRecordCount,
+    statusesIncluded: COUNTED_STATUSES,
+  };
+}
+
+@Injectable()
+export class EmissionsService {
+  private readonly limits = readRuntimeConfig();
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * An analytics read's budget (LP4-03 K11): one year's, the reports'
+   * `REPORT_RECORD_LIMIT`; a year-less one — the Emissions history's trend,
+   * every year at once — the metadata reads' `ACTIVITY_RECORD_METADATA_MAX_ROWS`,
+   * which a tenant's whole history fits long before one year's export would
+   * not (`architect` P2-5). Past it, `query_too_broad`, never a silent cut.
+   */
+  private analyticsBudget(year: number | undefined): number {
+    return year === undefined ? this.limits.ACTIVITY_RECORD_METADATA_MAX_ROWS : this.limits.REPORT_RECORD_LIMIT;
   }
 
   async summary(
     user: RequestUser,
     query: EmissionsSummaryQueryDto,
-    recordLimit?: number,
+    recordLimit: number = this.analyticsBudget(query.year),
   ): Promise<EmissionsSummary> {
     // Tenant scope: intersect any requested subsidiaryId with the accessible set.
     let subsidiaryFilter: Prisma.StringFilter | string;
     if (query.subsidiaryId) {
       if (!user.accessibleSubsidiaryIds.includes(query.subsidiaryId)) {
-        return this.emptySummary(); // requested a subsidiary the caller cannot see
+        return emptySummary(); // requested a subsidiary the caller cannot see
       }
       subsidiaryFilter = query.subsidiaryId;
     } else {
-      if (user.accessibleSubsidiaryIds.length === 0) return this.emptySummary();
+      if (user.accessibleSubsidiaryIds.length === 0) return emptySummary();
       subsidiaryFilter = { in: user.accessibleSubsidiaryIds };
     }
 
     const [rows, subs] = await Promise.all([
       this.prisma.activityRecord.findMany({
-        ...(recordLimit === undefined ? {} : { take: recordLimit + 1, omit: { input: true } }),
+        // Every caller's read is bounded (LP4-05 follow-up (17), LP4-03 K11):
+        // the reports' budget, and `query_too_broad` past it, never a silent cut.
+        take: recordLimit + 1,
+        select: SUMMARY_RECORD_SELECT,
         where: {
           subsidiaryId: subsidiaryFilter,
           reportingYear: query.year,
@@ -373,160 +552,12 @@ export class EmissionsService {
       }),
     ]);
 
-    if (recordLimit !== undefined && rows.length > recordLimit) throw new QueryTooBroadError();
+    if (rows.length > recordLimit) throw new QueryTooBroadError();
 
     const nameById = new Map(
       subs.map((s) => [s.id, s.tradingName || s.legalName]),
     );
-
-    const totals = { scope1: 0, scope2: 0, scope3: 0, total: 0 };
-    const byCategory = new Map<
-      string,
-      { scope: number; tCo2e: number; recordCount: number }
-    >();
-    const bySubsidiary = new Map<
-      string,
-      { tCo2e: number; recordCount: number }
-    >();
-    const monthly = new Map<string, TrendBucket>();
-    const quarterly = new Map<string, TrendBucket>();
-    const yearly = new Map<string, TrendBucket>();
-
-    const bump = (
-      map: Map<string, TrendBucket>,
-      label: string,
-      sortKey: number,
-      scope: number,
-      tCo2e: number,
-    ): void => {
-      let bucket = map.get(label);
-      if (!bucket) {
-        bucket = {
-          point: { period: label, scope1: 0, scope2: 0, scope3: 0, total: 0 },
-          sortKey,
-        };
-        map.set(label, bucket);
-      }
-      this.addScope(bucket.point, scope, tCo2e);
-    };
-
-    let uncalculatedRecordCount = 0;
-
-    for (const r of rows) {
-      const calc = r.calculation as unknown as ActivityCalculationSnapshot | null;
-      // A record with no factor produced no figure, so it is not part of the
-      // inventory and must not enter the aggregation at all — not even as a
-      // zero. Counting it would put a "Water — 0 tCO₂e, 1 record" row in the
-      // category breakdown, which reads as "we measured water and it was zero"
-      // rather than "water is not calculable yet". It is surfaced instead as
-      // `uncalculatedRecordCount`, so the entries are declared, not hidden.
-      if (!isCalculated(calc)) {
-        uncalculatedRecordCount += 1;
-        continue;
-      }
-      const tCo2e = calc.tCo2e;
-      const scope = r.scope;
-
-      this.addScope(totals, scope, tCo2e);
-
-      const cat = byCategory.get(r.category) ?? {
-        scope,
-        tCo2e: 0,
-        recordCount: 0,
-      };
-      cat.tCo2e += tCo2e;
-      cat.recordCount += 1;
-      byCategory.set(r.category, cat);
-
-      const sub = bySubsidiary.get(r.subsidiaryId) ?? {
-        tCo2e: 0,
-        recordCount: 0,
-      };
-      sub.tCo2e += tCo2e;
-      sub.recordCount += 1;
-      bySubsidiary.set(r.subsidiaryId, sub);
-
-      // Yearly — every counted record can be attributed to a year.
-      bump(yearly, String(r.reportingYear), r.reportingYear, scope, tCo2e);
-
-      // Quarterly — monthly/quarterly records only.
-      const q = this.quarterOf(r);
-      if (q !== null) {
-        bump(
-          quarterly,
-          `${r.reportingYear}-Q${q}`,
-          r.reportingYear * 10 + q,
-          scope,
-          tCo2e,
-        );
-      }
-
-      // Monthly — monthly records only.
-      if (r.reportingPeriod === 'monthly') {
-        const idx = MONTH_INDEX[r.periodValue.trim().toLowerCase()];
-        if (idx !== undefined) {
-          bump(
-            monthly,
-            `${MONTH_NAMES[idx]} ${r.reportingYear}`,
-            r.reportingYear * 100 + idx,
-            scope,
-            tCo2e,
-          );
-        }
-      }
-    }
-
-    const grandTotal = totals.total;
-    const pct = (v: number) => (grandTotal > 0 ? (v / grandTotal) * 100 : 0);
-
-    const categoryList: EmissionsByCategory[] = Array.from(byCategory.entries())
-      .map(([category, v]) => ({
-        category: category as Category,
-        scope: v.scope,
-        tCo2e: v.tCo2e,
-        recordCount: v.recordCount,
-        percentOfTotal: pct(v.tCo2e),
-      }))
-      .sort((a, b) => b.tCo2e - a.tCo2e);
-
-    const subsidiaryList: EmissionsBySubsidiary[] = Array.from(
-      bySubsidiary.entries(),
-    )
-      .map(([subsidiaryId, v]) => ({
-        subsidiaryId,
-        subsidiaryName: nameById.get(subsidiaryId) ?? subsidiaryId,
-        tCo2e: v.tCo2e,
-        recordCount: v.recordCount,
-        percentOfTotal: pct(v.tCo2e),
-      }))
-      .sort((a, b) => b.tCo2e - a.tCo2e);
-
-    const toSortedPoints = (map: Map<string, TrendBucket>) =>
-      Array.from(map.values())
-        .sort((a, b) => a.sortKey - b.sortKey)
-        .map((b) => b.point);
-
-    return {
-      totals,
-      byCategory: categoryList,
-      bySubsidiary: subsidiaryList,
-      trend: {
-        monthly: toSortedPoints(monthly),
-        quarterly: toSortedPoints(quarterly),
-        yearly: toSortedPoints(yearly),
-      },
-      // `recordCount` keeps its original meaning — every committed record in
-      // scope — because it is what the report's "Committed records" tile shows
-      // and what the generation audit row logs. Narrowing it silently to "the
-      // ones that produced a figure" made that tile disagree with the ledger
-      // printed directly beneath it, and made the PDF and CSV exports of the
-      // same selection write two different counts into the append-only log.
-      // The split is expressed by the two fields below, which always sum to it.
-      recordCount: rows.length,
-      calculatedRecordCount: rows.length - uncalculatedRecordCount,
-      uncalculatedRecordCount,
-      statusesIncluded: COUNTED_STATUSES,
-    };
+    return summariseCounted(rows, nameById);
   }
 
   /**
@@ -583,6 +614,8 @@ export class EmissionsService {
           category: query.category,
         },
         include: { _count: { select: { evidenceLinks: true } } },
+        // Bounded as the summary is (LP4-03 K11): past it, `query_too_broad`.
+        take: this.analyticsBudget(query.year) + 1,
       }),
       this.prisma.subsidiary.findMany({
         where: { id: subsidiaryFilter },
@@ -615,6 +648,7 @@ export class EmissionsService {
         orderBy: { legalName: 'asc' },
       }),
     ]);
+    if (records.length > this.analyticsBudget(query.year)) throw new QueryTooBroadError();
 
     // Group records by subsidiary + category.
     type RecordWithEvidence = ActivityRecord & { _count: { evidenceLinks: number } };
@@ -845,10 +879,12 @@ export class EmissionsService {
           // records rather than from two different queries.
         },
         include: { _count: { select: { evidenceLinks: true } } },
+        take: this.limits.REPORT_RECORD_LIMIT + 1,
       }),
     ]);
 
     if (!subsidiary) throw new ResourceNotFoundError('subsidiary_not_found');
+    if (records.length > this.limits.REPORT_RECORD_LIMIT) throw new QueryTooBroadError();
 
     const empty: SubsidiaryCompletenessDTO = {
       subsidiaryId: query.subsidiaryId,

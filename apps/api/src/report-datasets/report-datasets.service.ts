@@ -5,7 +5,8 @@ import {
   REPORT_DATASET_SCHEMA_VERSION,
   type CaptureReportDatasetRequest,
   type ReportDataset,
-  type ReportDatasetSummary,
+  type ReportDatasetList,
+  ReportDatasetSummary,
   type ReportingContext,
   type UserRole,
 } from '@tonyai/shared-types';
@@ -288,9 +289,9 @@ export class ReportDatasetsService {
   }
 
   /** A year's datasets the caller may read, newest first. */
-  async list(user: RequestUser, year: number): Promise<ReportDatasetSummary[]> {
+  async list(user: RequestUser, year: number): Promise<ReportDatasetList> {
     if (!DATASET_READ_ROLES.has(user.role)) throw new ForbiddenException('data_entry users do not read report datasets');
-    if (!user.organisationId) return [];
+    if (!user.organisationId) return { items: [], truncated: false };
     return listDatasetSummaries(this.prisma, user.organisationId, year, user.accessibleSubsidiaryIds);
   }
 }

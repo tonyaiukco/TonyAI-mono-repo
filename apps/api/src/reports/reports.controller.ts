@@ -16,7 +16,8 @@ export function filename(q: ReportQueryDto & Pick<ReportingContext, 'scope' | 'c
     : '';
   const scope = q.scope !== undefined ? `-scope${q.scope}` : '';
   const category = q.category ? `-${q.category.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '';
-  return `tonyai-${q.template}-${q.year}${sub}${scope}${category}.${ext}`;
+  // `live` in the name (LP4-03 K8): a saved file says it is not an issued report.
+  return `tonyai-live-${q.template}-${q.year}${sub}${scope}${category}.${ext}`;
 }
 
 @Controller('reports')
@@ -67,6 +68,7 @@ export class ReportsController {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${filename(q, 'pdf')}"`,
         'Content-Length': buffer.length,
+        'Cache-Control': 'no-store',
       })
       .send(buffer);
   }
@@ -86,6 +88,7 @@ export class ReportsController {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'Content-Disposition': `attachment; filename="${filename(q, 'xlsx')}"`,
         'Content-Length': buffer.length,
+        'Cache-Control': 'no-store',
       })
       .send(buffer);
   }
@@ -103,6 +106,7 @@ export class ReportsController {
       .set({
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="${filename(q, 'csv')}"`,
+        'Cache-Control': 'no-store',
       })
       .send(csv);
   }

@@ -96,6 +96,13 @@ describe('bounded admission', () => {
     ['GET', '/api/v1/report-issuances/0b1d0000-0000-4000-8000-000000000001', 'READ'],
     ['GET', '/api/v1/report-issuances?year=2026', 'READ'],
     ['POST', '/api/v1/report-issuances/id/pdf', 'WRITE'],
+    // LP4-03 K5/K7: the issued workbook and CSV, and the issuance preview, re-read and verify a whole dataset.
+    ['GET', '/api/v1/report-issuances/0b1d0000-0000-4000-8000-000000000001/xlsx', 'EXPORT'],
+    ['GET', '/api/v1/report-issuances/ID/CSV/', 'EXPORT'],
+    ['GET', '/api/v1/report-issuances/id/xls', 'READ'],
+    ['GET', '/api/v1/report-datasets/0d5e0000-0000-4000-8000-000000000001/issuance-preview', 'EXPORT'],
+    ['POST', '/api/v1/report-datasets/id/issuance-preview', 'WRITE'],
+    ['GET', '/api/v1/reports/context/meta?year=2026', 'READ'],
     // Data Entry's live preview only reads; nothing else on its path does.
     ['POST', '/api/v1/calculations/preview', 'READ'], ['POST', '/api/v1/Calculations/PREVIEW/?year=2026', 'READ'],
     ['PUT', '/api/v1/calculations/preview', 'WRITE'], ['PATCH', '/api/v1/calculations/preview', 'WRITE'],

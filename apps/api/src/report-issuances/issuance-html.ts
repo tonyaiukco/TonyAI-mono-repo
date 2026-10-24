@@ -65,6 +65,11 @@ const COVERAGE_LABEL: Record<ReportCoverageGapCode, IssuanceMessageKey> = {
   unmapped_record: 'covUnmappedRecord',
 };
 
+/** A coverage gap code's words, unescaped — shared with the live report (LP4-03 K3). */
+export function coverageGapLabel(code: ReportCoverageGapCode, locale: Locale): string {
+  return ISSUANCE_CATALOGUES[locale][COVERAGE_LABEL[code]];
+}
+
 const STANDING_LABEL: Record<string, IssuanceMessageKey> = {
   authoritative: 'standingAuthoritative',
   non_authoritative: 'standingNonAuthoritative',
@@ -114,17 +119,10 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
     const key = `${prefix} ${value}` as IssuanceMessageKey;
     return key in ISSUANCE_CATALOGUES[language] ? t(key) : esc(value);
   };
-  const entityName = new Map<string, InventoryEntitySnapshot>(
-    dataset.boundary.entities.map((e) => [JSON.stringify([e.subsidiaryId, e.locationId]), e]),
-  );
-  const entityLabel = (subsidiaryId: string, locationId: string | null, fallback?: { subsidiaryName: string; locationName: string | null }): string => {
-    const e = entityName.get(JSON.stringify([subsidiaryId, locationId]));
-    const subsidiary = e?.subsidiaryName ?? fallback?.subsidiaryName ?? subsidiaryId;
-    const location = locationId === null ? null : (e?.locationName ?? fallback?.locationName ?? locationId);
-    return esc(location === null ? subsidiary : `${subsidiary} · ${location}`);
-  };
-  const companyName = (subsidiaryId: string): string =>
-    esc(entityName.get(JSON.stringify([subsidiaryId, null]))?.subsidiaryName ?? subsidiaryId);
+  const names = datasetNames(dataset);
+  const entityLabel = (subsidiaryId: string, locationId: string | null, fallback?: { subsidiaryName: string; locationName: string | null }): string =>
+    esc(names.entity(subsidiaryId, locationId, fallback));
+  const companyName = (subsidiaryId: string): string => esc(names.company(subsidiaryId));
   const tonnes = (value: number | null): string => (value === null ? t('notCalculated') : number.format(value));
 
   // --- Header and status
@@ -153,15 +151,13 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
   // has nothing to calculate and reads so, never "Not calculated" (`qa-auditor`
   // P2-1 and its re-review's P2).
   const [scope1, scope2] = dataset.scopes;
-  const { scope: onlyScope, category: onlyCategory } = dataset.context;
-  const selectedScope = (scope: 1 | 2): boolean =>
-    (onlyScope === undefined || onlyScope === scope) && (onlyCategory === undefined || CATEGORY_SCOPE_MAP[onlyCategory] === scope);
-  const sourceScope = new Map(dataset.boundary.sources.flatMap((s) => (s.applicability === 'included' ? s.obligations.map((o) => [o.id, s.scope] as const) : [])));
-  const scopesWithSources = new Set(dataset.coverage.obligations.map((o) => sourceScope.get(o.obligationId)));
+  const reading = (s: typeof scope1 | typeof scope2): string => {
+    const r = scopeReading(dataset, s);
+    return r.kind === 'not_in_extract' ? t('scopeNotInExtract') : r.kind === 'no_source' ? t('scopeNoSource') : tonnes(r.tCo2e);
+  };
   const tile = (s: typeof scope1 | typeof scope2): string => `<div class="tile">
     <div class="l">${t('scope', { scope: s.scope })}</div>
-    <div class="v">${!selectedScope(s.scope) ? t('scopeNotInExtract')
-      : s.tCo2e === null && !scopesWithSources.has(s.scope) ? t('scopeNoSource') : tonnes(s.tCo2e)}${s.tCo2e === null ? '' : ' <span class="u">tCO2e</span>'}</div>
+    <div class="v">${reading(s)}${s.tCo2e === null ? '' : ' <span class="u">tCO2e</span>'}</div>
     <div class="n">${s.coverage === 'covered' ? t('coverageCovered') : t('coveragePartial')} · ${t('countedRecords', { count: s.countedRecordIds.length })}</div>
   </div>`;
 
@@ -172,8 +168,7 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
     <td class="num">${g.sourceIds.length}</td><td class="num">${g.obligationIds.length}</td><td class="num">${g.recordIds.length}</td></tr>`).join('');
 
   const standing = new Map(dataset.provenance.records.map((p) => [p.recordId, p.standing]));
-  const counted = new Set(dataset.scopes.flatMap((s) => (s.scope === 3 ? [] : s.countedRecordIds)));
-  const ledger = sortRecords(dataset.records.filter((r) => counted.has(r.id)));
+  const ledger = countedRecords(dataset);
   const ledgerRows = ledger.map((r) => `<tr><td>${entityLabel(r.subsidiaryId, r.locationId, r)}</td>
     <td>${label('category', r.category)}</td><td>${label('period', r.periodValue)}</td>
     <td>${RECORD_STATUS_LABEL[r.status] === undefined ? esc(r.status) : t(RECORD_STATUS_LABEL[r.status])}</td>
@@ -181,27 +176,17 @@ export function buildIssuanceHtml(doc: IssuanceDocument): string {
     <td class="num">${isCalculated(r.calculation) ? number.format(r.calculation.tCo2e) : t('notCalculated')}</td>
     <td>${t(STANDING_LABEL[standing.get(r.id) ?? 'uncalculated'])}</td></tr>`).join('');
 
-  const excludedSources = new Set(dataset.coverage.excludedSourceIds);
-  const resolved = new Set(dataset.resolvedSubsidiaryIds);
-  const exclusionRows = [
-    ...dataset.boundary.sources
-      .filter((s) => excludedSources.has(s.id) && s.applicability === 'excluded')
-      .map((s) => ({
-        entity: entityLabel(s.entity.subsidiaryId, s.entity.locationId),
-        what: `${esc(s.name)}${s.mapping.kind === 'mapped' ? ` (${label('category', s.mapping.category)})` : ''}`,
-        reason: s.applicability === 'excluded' ? esc(s.reason) : '',
-      })),
-    ...dataset.boundary.applicability
-      .filter((c) => c.applicability === 'excluded' && resolved.has(c.subsidiaryId)
-        && (dataset.context.category === undefined || c.category === dataset.context.category))
-      .map((c) => ({
-        entity: entityLabel(c.subsidiaryId, c.locationId),
-        what: label('category', c.category),
-        reason: c.applicability === 'excluded' ? esc(c.reason) : '',
-      })),
-  ].map((x) => `<tr><td>${x.entity}</td><td>${x.what}</td><td>${x.reason}</td></tr>`).join('');
+  const exclusionRows = namedExclusions(dataset)
+    .map((x) => ({
+      entity: entityLabel(x.subsidiaryId, x.locationId),
+      what: x.sourceName === null
+        ? label('category', x.category!)
+        : `${esc(x.sourceName)}${x.category === null ? '' : ` (${label('category', x.category)})`}`,
+      reason: esc(x.reason),
+    }))
+    .map((x) => `<tr><td>${x.entity}</td><td>${x.what}</td><td>${x.reason}</td></tr>`).join('');
 
-  const withdrawn = sortRecords(dataset.records.filter((r) => r.status === 'voided'));
+  const withdrawn = withdrawnRecords(dataset);
   const withdrawnRows = withdrawn.map((r) => `<tr><td>${entityLabel(r.subsidiaryId, r.locationId, r)}</td>
     <td>${label('category', r.category)}</td><td>${label('period', r.periodValue)}</td>
     <td class="num">${isCalculated(r.calculation) ? number.format(r.calculation.tCo2e) : t('notCalculated')}</td>
@@ -276,6 +261,83 @@ ${doc.options.includeEvidenceSummary ? `<h2>${t('evidenceHeading')}</h2>${table(
 /** The plain (unescaped) name of a company entity, for a message argument. */
 function companyNameText(dataset: ReportDataset, subsidiaryId: string): string {
   return dataset.boundary.entities.find((e) => e.subsidiaryId === subsidiaryId && e.locationId === null)?.subsidiaryName ?? subsidiaryId;
+}
+
+/**
+ * The retained dataset's names, unescaped — a boundary entity's as the
+ * version stored it, else the record's own (an `unmapped_record` outside the
+ * boundary), else the id. Shared by the issued PDF and its tables (LP4-03 K5).
+ */
+export function datasetNames(dataset: ReportDataset) {
+  const byEntity = new Map<string, InventoryEntitySnapshot>(
+    dataset.boundary.entities.map((e) => [JSON.stringify([e.subsidiaryId, e.locationId]), e]),
+  );
+  return {
+    entity(subsidiaryId: string, locationId: string | null, fallback?: { subsidiaryName: string; locationName: string | null }): string {
+      const e = byEntity.get(JSON.stringify([subsidiaryId, locationId]));
+      const subsidiary = e?.subsidiaryName ?? fallback?.subsidiaryName ?? subsidiaryId;
+      const location = locationId === null ? null : (e?.locationName ?? fallback?.locationName ?? locationId);
+      return location === null ? subsidiary : `${subsidiary} · ${location}`;
+    },
+    company(subsidiaryId: string): string {
+      return byEntity.get(JSON.stringify([subsidiaryId, null]))?.subsidiaryName ?? subsidiaryId;
+    },
+  };
+}
+
+/** How one retained scope reads: outside an extract's filters, with no included source, or its figure (null: none calculated). */
+export type ScopeReading = { kind: 'not_in_extract' } | { kind: 'no_source' } | { kind: 'figure'; tCo2e: number | null };
+
+/** A scope an extract's filter leaves out reads so; a selected scope with no included obligation has nothing to calculate. */
+export function scopeReading(dataset: ReportDataset, s: ReportDataset['scopes'][0] | ReportDataset['scopes'][1]): ScopeReading {
+  const { scope: onlyScope, category: onlyCategory } = dataset.context;
+  const selected = (onlyScope === undefined || onlyScope === s.scope)
+    && (onlyCategory === undefined || CATEGORY_SCOPE_MAP[onlyCategory] === s.scope);
+  if (!selected) return { kind: 'not_in_extract' };
+  const sourceScope = new Map(dataset.boundary.sources.flatMap((src) => (src.applicability === 'included' ? src.obligations.map((o) => [o.id, src.scope] as const) : [])));
+  const withSources = new Set(dataset.coverage.obligations.map((o) => sourceScope.get(o.obligationId)));
+  if (s.tCo2e === null && !withSources.has(s.scope)) return { kind: 'no_source' };
+  return { kind: 'figure', tCo2e: s.tCo2e };
+}
+
+/** The dataset's named exclusions — an excluded source, or an excluded category cell of a resolved subsidiary in the selection. */
+export function namedExclusions(dataset: ReportDataset): Array<{
+  subsidiaryId: string; locationId: string | null; sourceName: string | null; category: Category | null; reason: string;
+}> {
+  const excludedSources = new Set(dataset.coverage.excludedSourceIds);
+  const resolved = new Set(dataset.resolvedSubsidiaryIds);
+  return [
+    ...dataset.boundary.sources
+      .filter((s) => excludedSources.has(s.id) && s.applicability === 'excluded')
+      .map((s) => ({
+        subsidiaryId: s.entity.subsidiaryId,
+        locationId: s.entity.locationId,
+        sourceName: s.name,
+        category: s.mapping.kind === 'mapped' ? s.mapping.category : null,
+        reason: s.applicability === 'excluded' ? s.reason : '',
+      })),
+    ...dataset.boundary.applicability
+      .filter((c) => c.applicability === 'excluded' && resolved.has(c.subsidiaryId)
+        && (dataset.context.category === undefined || c.category === dataset.context.category))
+      .map((c) => ({
+        subsidiaryId: c.subsidiaryId,
+        locationId: c.locationId,
+        sourceName: null,
+        category: c.category,
+        reason: c.applicability === 'excluded' ? c.reason : '',
+      })),
+  ];
+}
+
+/** The records an issuance counts — exactly the PDF's ledger: the scopes' counted ids, in reading order. */
+export function countedRecords(dataset: ReportDataset): ReportDatasetRecord[] {
+  const counted = new Set(dataset.scopes.flatMap((s) => (s.scope === 3 ? [] : s.countedRecordIds)));
+  return sortRecords(dataset.records.filter((r) => counted.has(r.id)));
+}
+
+/** The dataset's withdrawn records, in reading order. */
+export function withdrawnRecords(dataset: ReportDataset): ReportDatasetRecord[] {
+  return sortRecords(dataset.records.filter((r) => r.status === 'voided'));
 }
 
 /** By entity, category and period — the order a reader scans a ledger in. */

@@ -20,6 +20,8 @@ class HttpProbe {
   @Get('read') read() { return { ok: true }; }
   @Get('pool') pool() { throw Object.assign(new Error('pool full'), { code: 'P2024' }); }
   @Post('pool') mutationPool() { throw Object.assign(new Error('uncertain outcome'), { code: 'P2024' }); }
+  @Get('snapshot') snapshot() { throw Object.assign(new Error('Unable to start a transaction in the given time.'), { code: 'P2028' }); }
+  @Post('snapshot') mutationSnapshot() { throw Object.assign(new Error('Transaction already closed'), { code: 'P2028' }); }
   @Get('reports/pdf') pdf() { return { ok: true }; }
   @Post('bulk-upload/activity-records')
   @UseInterceptors(FileInterceptor('file', { limits: IMPORT_MULTIPART_LIMITS }), RuntimeUploadWorkInterceptor)
@@ -216,6 +218,10 @@ describe('transport and parser boundaries', () => {
     expect(read.status).toBe(429); expect(read.headers.get('retry-after')).toBe('1');
     expect(await read.json()).toMatchObject({ code: 'rate_limited' });
     expect((await fetch(`${url}/api/v1/pool`, { method: 'POST' })).status).toBe(500);
+    // A read's snapshot that cannot start (LP4-03's live report) is the same refusal; a write's stays uncertain.
+    const snapshot = await fetch(`${url}/api/v1/snapshot`);
+    expect(snapshot.status).toBe(429); expect(snapshot.headers.get('retry-after')).toBe('1');
+    expect((await fetch(`${url}/api/v1/snapshot`, { method: 'POST' })).status).toBe(500);
   });
   it('refuses excess work before parsing and releases the HTTP permit after a response', async () => {
     const { url, limits } = await boot({ HTTP_MAX_INFLIGHT: '1' });

@@ -25,10 +25,9 @@ import {
 } from './report-columns';
 import type { ReportLedgerRow, ReportWithdrawnRow } from './report-data';
 import { PrismaService } from '../prisma/prisma.service';
-import { EmissionsService } from '../emissions/emissions.service';
 import type { RequestUser } from '../auth/auth.types';
 import type { ReportQueryDto } from './dto/report-query.dto';
-import type { ActivityRecordStatus, EmissionsSummary, ReportingContext } from '@tonyai/shared-types';
+import type { ActivityRecordStatus, ReportingContext } from '@tonyai/shared-types';
 
 import { AuditService } from '../audit/audit.service';
 
@@ -69,21 +68,6 @@ const auditMock = () => audit as unknown as AuditService;
 
 const now = new Date('2026-01-01T00:00:00.000Z');
 
-const SUMMARY = {
-  totals: { scope1: 100, scope2: 200, scope3: 0, total: 300 },
-  byCategory: [
-    { category: 'Electricity', scope: 2, tCo2e: 200, recordCount: 2, percentOfTotal: 66.7 },
-    { category: 'Natural Gas', scope: 1, tCo2e: 100, recordCount: 1, percentOfTotal: 33.3 },
-  ],
-  bySubsidiary: [
-    { subsidiaryId: 'sub-1', subsidiaryName: 'Energy', tCo2e: 300, recordCount: 3, percentOfTotal: 100 },
-  ],
-  trend: { monthly: [], quarterly: [], yearly: [] },
-  recordCount: 3,
-  calculatedRecordCount: 3,
-  uncalculatedRecordCount: 0,
-  statusesIncluded: ['submitted', 'under_review', 'approved', 'locked'] as ActivityRecordStatus[],
-} satisfies EmissionsSummary;
 
 /** The `<th>` labels of the table under a given `<h2>`, in document order.
  *  Module scope because two blocks read it: the column-order goldens, and the
@@ -142,8 +126,30 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * A report reads in ONE REPEATABLE READ snapshot (LP4-03 K2): `$transaction`
+ * hands the callback a client without `$transaction` (an interactive
+ * transaction's), whose `$queryRaw` answers the isolation check and the clock.
+ * Every model mock is the SAME object on both, so a test that stubs
+ * `prisma.activityRecord.findMany` stubs what the snapshot reads.
+ */
 function createPrismaMock() {
+  const tx = createTxMock();
+  return Object.assign(Object.create(null) as Record<string, never>, tx, {
+    $transaction: vi.fn(async (read: (client: typeof tx) => Promise<unknown>, options?: unknown) => {
+      void options;
+      return read(tx);
+    }),
+  }) as typeof tx & { $transaction: ReturnType<typeof vi.fn> };
+}
+
+function createTxMock() {
   return {
+    $executeRaw: vi.fn(async () => 0),
+    $queryRaw: vi.fn(async (strings: TemplateStringsArray) =>
+      strings.join('').includes('transaction_isolation') ? [{ isolation: 'repeatable read' }] : [{ at: '2026-10-24 12:00' }]),
+    profile: { findUnique: vi.fn().mockResolvedValue({ language: 'en' }) },
+    inventoryBoundary: { findFirst: vi.fn().mockResolvedValue(null) },
     activityRecord: {
       groupBy: vi.fn().mockResolvedValue([]),
       findMany: vi.fn().mockResolvedValue([]),
@@ -182,7 +188,7 @@ function stubRecords(prisma: PrismaMock, records: Record<string, unknown>[]): vo
         .map((link) => ({ activityRecordId: r.id, evidence: link.evidence }))));
   prisma.activityRecord.findMany.mockImplementation((args: unknown) => {
     const q = args as {
-      where?: { status?: { in?: string[] }; subsidiaryId?: string | { in: string[] }; reportingYear?: number; scope?: number; category?: string };
+      where?: { status?: { in?: string[] }; subsidiaryId?: string | { in: string[] }; reportingYear?: number; scope?: number | { in: number[] }; category?: string };
       include?: { evidenceLinks?: unknown; location?: unknown };
     };
     const wanted = q?.where?.status?.in ?? [];
@@ -195,7 +201,7 @@ function stubRecords(prisma: PrismaMock, records: Record<string, unknown>[]): vo
           const ids = typeof where.subsidiaryId === 'string' ? [where.subsidiaryId] : where.subsidiaryId?.in;
           return (!ids || ids.includes(r.subsidiaryId as string)) &&
             (where.reportingYear === undefined || r.reportingYear === where.reportingYear) &&
-            (where.scope === undefined || r.scope === where.scope) &&
+            (where.scope === undefined || (typeof where.scope === 'number' ? r.scope === where.scope : where.scope.in.includes(r.scope as number))) &&
             (where.category === undefined || r.category === where.category);
         })
         .map((r) => ({
@@ -229,17 +235,14 @@ const q: ReportQueryDto = {
 
 describe('ReportsService', () => {
   let prisma: PrismaMock;
-  let emissions: { summary: ReturnType<typeof vi.fn> };
   let service: ReportsService;
 
   beforeEach(() => {
 
     audit.record.mockClear();
     prisma = createPrismaMock();
-    emissions = { summary: vi.fn().mockResolvedValue(SUMMARY) };
     service = new ReportsService(
       prisma as unknown as PrismaService,
-      emissions as unknown as EmissionsService,
       auditMock(),
       new PdfRenderer(),
     );
@@ -264,8 +267,6 @@ describe('ReportsService', () => {
     prisma.activityRecord.groupBy.mockResolvedValue([
       { status: 'approved', _count: { _all: 1 } }, { status: 'voided', _count: { _all: 1 } },
     ]);
-    const realEmissions = new EmissionsService(prisma as unknown as PrismaService);
-    emissions.summary.mockImplementation((user, query, cap) => realEmissions.summary(user, query, cap));
     const data = await service.assemble(admin, selected);
     expect(data.context).toEqual(context);
     expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
@@ -314,7 +315,8 @@ describe('ReportsService', () => {
     const bytes = await service.generateExcel(admin, query);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes as unknown as Parameters<typeof workbook.xlsx.load>[0]);
-    expect(workbook.getWorksheet('Summary')!.getRow(4).getCell(2).value).toBe('All accessible subsidiaries');
+    // Row 5: the first row is the live notice (LP4-03 K8).
+    expect(workbook.getWorksheet('Summary')!.getRow(5).getCell(2).value).toBe('All accessible subsidiaries');
     expect(audit.record).toHaveBeenCalledWith(admin, expect.objectContaining({ diff: expect.objectContaining({ subsidiaryId: null }) }));
   });
 
@@ -323,9 +325,8 @@ describe('ReportsService', () => {
     const data = await service.assemble(admin, { ...q, subsidiaryId: 'foreign', category: 'Fuel' });
     expect(data.context).toEqual({ year: 2024, subsidiaryId: 'foreign', category: 'Fuel' });
     expect(buildReportHtml(data)).toContain('Selected subsidiary (foreign)');
-    expect(prisma.subsidiary.findMany).toHaveBeenCalledWith({
-      where: { id: { in: [] } }, select: { id: true, legalName: true, tradingName: true },
-    });
+    // Nothing is read for a selection the caller cannot see — not even names.
+    expect(prisma.subsidiary.findMany).not.toHaveBeenCalled();
     expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
     expect(prisma.activityRecord.groupBy).not.toHaveBeenCalled();
   });
@@ -341,7 +342,7 @@ describe('ReportsService', () => {
     const bytes = await service.generateExcel(admin, selected);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes as unknown as Parameters<typeof workbook.xlsx.load>[0]);
-    const cell = workbook.getWorksheet('Summary')!.getRow(4).getCell(2);
+    const cell = workbook.getWorksheet('Summary')!.getRow(5).getCell(2);
     expect(cell.type).toBe(ExcelJS.ValueType.String);
     // XLSX XML normalizes CRLF to LF on readback; it must remain string data.
     expect(cell.value).toBe(hostile.replace('\r\n', '\n'));
@@ -622,7 +623,8 @@ describe('ReportsService', () => {
     expect(html).toContain('TonyAI Holding');
     expect(html).toContain('Contains incomplete data');
     expect(html).toContain('Data warning');
-    expect(html).toContain('300'); // total tCO₂e
+    // The report's own sum of its ledger (LP4-03 K2), labelled for what it is (K4).
+    expect(html).toContain('<div class="l">Scope 1 + 2 total</div><div class="v">0.4 tCO₂e</div>');
     expect(html).toContain('Activity records ledger'); // detail template section
     expect(html).toContain('location-based'); // factor appendix
   });
@@ -671,37 +673,29 @@ describe('ReportsService', () => {
     ]);
   });
 
-  describe('a record with no emission factor (WP17 — Water)', () => {
-    // These specs mock TWO records, so the summary the assembler receives has
-    // to describe two as well — otherwise the tile-vs-ledger reconciliation
-    // below would be asserted against a fixture that cannot occur.
-    beforeEach(() => {
-      emissions.summary.mockResolvedValue({
-        ...SUMMARY,
-        recordCount: 2,
-        calculatedRecordCount: 1,
-        uncalculatedRecordCount: 1,
-      });
-    });
-
-    // The snapshot a factor-less category stores: no tCo2e, no factorId.
+  describe('a record with no emission factor (WP17)', () => {
+    // The snapshot a factor-less record stores: no tCo2e, no factorId. A Scope 1
+    // record since LP4-03 (K4): Water is Scope 3, which a live report discloses
+    // and never lists (the "Scope 3 is not covered" specs below). The summary
+    // is the report's own sum of these rows (K2), so the tile reconciles by
+    // construction rather than by a fixture.
     const waterRecord = () =>
       makeRecord({
-        id: 'rec-water',
-        category: 'Water',
-        scope: 3,
+        id: 'rec-uncalculated',
+        category: 'Fuel',
+        scope: 1,
         activityValue: 250,
-        activityUnit: 'cubic_metres',
-        evidenceLinks: [{ evidence: { id: 'ev-water', fileName: 'water-jan.pdf', _count: { links: 1 } } }],
+        activityUnit: 'litres',
+        evidenceLinks: [{ evidence: { id: 'ev-fuel', fileName: 'fuel-jan.pdf', _count: { links: 1 } } }],
         calculation: {
-          category: 'Water',
+          category: 'Fuel',
           geographyCode: 'TR',
           reportingYear: 2024,
-          scope: 3,
+          scope: 1,
           inputValue: 250,
-          inputUnit: 'cubic_metres',
+          inputUnit: 'litres',
           reasonCode: 'no_emission_factor',
-          reason: 'No emission factor is available for "Water"',
+          reason: 'No emission factor is available for "Fuel"',
         },
       });
 
@@ -709,7 +703,7 @@ describe('ReportsService', () => {
       stubRecords(prisma, [waterRecord()]);
 
       const meta = await service.assemble(admin, q);
-      const row = meta.records.find((r) => r.category === 'Water');
+      const row = meta.records.find((r) => r.category === 'Fuel');
 
       expect(row).toBeDefined();
       expect(row!.tCo2e).toBeNull();
@@ -727,7 +721,7 @@ describe('ReportsService', () => {
       const csv = await service.generateCsv(admin, q);
       const lines = csv.trim().split('\n');
       const electricity = lines.find((l) => l.includes('Electricity'))!;
-      const water = lines.find((l) => l.includes('Water'))!;
+      const water = lines.find((l) => l.includes('Fuel'))!;
 
       expect(water).toContain('Not calculated');
       expect(electricity).not.toContain('Not calculated');
@@ -758,7 +752,7 @@ describe('ReportsService', () => {
         cellsByCategory.set(String(row.getCell(3).value), row.getCell(8).value);
       });
 
-      expect(cellsByCategory.get('Water')).toBe('Not calculated');
+      expect(cellsByCategory.get('Fuel')).toBe('Not calculated');
       // The one that was silently broken: `?? 0` here writes a literal 0 into
       // an audit spreadsheet, and `?? ''` leaves a blank that SUMs as zero.
       expect(cellsByCategory.get('Electricity')).toBe(0.44);
@@ -1305,12 +1299,19 @@ describe('ReportsService', () => {
             diff: expect.objectContaining({
               exportType,
               voidedCount: 1,
-              // The SUMMARY's count, not `records.length` — one expression for
-              // all three formats, so two exports of one selection cannot write
-              // different counts into an append-only compliance log.
-              recordCount: SUMMARY.recordCount,
+              // The summary's count — the report's own sum of its ledger
+              // (LP4-03 K2) — one expression for all three formats, so two
+              // exports of one selection cannot write different counts into an
+              // append-only compliance log.
+              recordCount: 1,
               subsidiaryId: 'sub-1',
               year: 2024,
+              // LP4-03: the snapshot's clock, the badge and the coverage it
+              // printed; the language for the two formats that have one.
+              readAt: '2026-10-24 12:00',
+              status: expect.any(String),
+              coverage: { state: 'no_boundary' },
+              ...(exportType === 'csv' ? {} : { language: 'en' }),
             }),
           }),
         );
@@ -2139,7 +2140,6 @@ describe('ReportsService — activity types and factor standing (LP3-03)', () =>
     prisma = createPrismaMock();
     service = new ReportsService(
       prisma as unknown as PrismaService,
-      { summary: vi.fn().mockResolvedValue(SUMMARY) } as unknown as EmissionsService,
       auditMock(),
       new PdfRenderer(),
     );
@@ -2322,11 +2322,12 @@ describe('server-configured report budgets', () => {
     try {
       const prisma = createPrismaMock();
       prisma.activityRecord.groupBy.mockResolvedValue([{ status: 'approved', _count: { _all: 2 } }, { status: 'voided', _count: { _all: 1 } }]);
-      const emissions = { summary: vi.fn() };
-      const service = new ReportsService(prisma as never, emissions as never, auditMock(), new PdfRenderer());
+      const service = new ReportsService(prisma as never, auditMock(), new PdfRenderer());
       expect((await service.meta(admin, 2024)).recordLimit).toBe(2);
+      // The preview reads its own figures (LP4-03 K2); the export below must
+      // refuse on the counts alone, before any record is loaded.
+      prisma.activityRecord.findMany.mockClear();
       await expect(service.assemble(admin, q)).rejects.toMatchObject({ status: 422 });
-      expect(emissions.summary).not.toHaveBeenCalled();
       expect(prisma.activityRecord.findMany).not.toHaveBeenCalled();
     } finally { vi.unstubAllEnvs(); }
   });
@@ -2334,10 +2335,14 @@ describe('server-configured report budgets', () => {
     vi.stubEnv('REPORT_RECORD_LIMIT', '2');
     try {
       const prisma = createPrismaMock();
-      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
+      const service = new ReportsService(prisma as never, auditMock(), new PdfRenderer());
       stubRecords(prisma, [makeRecord({ id: 'a' }), makeRecord({ id: 'b' })]);
       expect((await service.assemble(admin, q)).records).toHaveLength(2);
-      for (const [args] of prisma.activityRecord.findMany.mock.calls) expect(args.omit).toEqual({ input: true });
+      // The two ledger reads omit the unused input; the Scope 3 disclosure
+      // selects its one column (K4). Every read is bounded.
+      const ledgerReads = prisma.activityRecord.findMany.mock.calls.filter(([args]) => args.include !== undefined);
+      expect(ledgerReads).toHaveLength(2);
+      for (const [args] of ledgerReads) expect(args.omit).toEqual({ input: true });
       expect(prisma.activityRecord.findMany.mock.calls.every(([args]) => args.take === 3)).toBe(true);
       stubRecords(prisma, [makeRecord({ id: 'a' }), makeRecord({ id: 'b' }), makeRecord({ id: 'c' })]);
       await expect(service.assemble(admin, q)).rejects.toMatchObject({ status: 422 });
@@ -2347,7 +2352,7 @@ describe('server-configured report budgets', () => {
     vi.stubEnv('REPORT_EVIDENCE_LINK_LIMIT', '1');
     try {
       const prisma = createPrismaMock();
-      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
+      const service = new ReportsService(prisma as never, auditMock(), new PdfRenderer());
       stubRecords(prisma, [makeRecord({ evidenceLinks: [{ evidence: { id: 'e1', fileName: 'invoice.pdf', _count: { links: 1 } } }] })]);
       expect((await service.assemble(admin, q)).records[0].evidenceCount).toBe(1);
       await expect(service.assemble(admin, q)).resolves.toBeDefined();
@@ -2362,7 +2367,7 @@ describe('PDF renderer ownership and output limits', () => {
   it('accepts exactly the output ceiling and cancels an oversized stream before audit', async () => {
     vi.stubEnv('REPORT_MAX_BYTES', '100000');
     const cancel = vi.fn();
-    const service = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
+    const service = new ReportsService(createPrismaMock() as never, auditMock(), new PdfRenderer());
     try {
       pdfPage.createPDFStream.mockImplementationOnce(async () => new ReadableStream({
         start(controller) { controller.enqueue(new Uint8Array(100000)); controller.close(); },
@@ -2385,7 +2390,7 @@ describe('PDF renderer ownership and output limits', () => {
       connected: true, version: async () => 'HeadlessChrome/stub', newPage: async () => pdfPage, process: () => ({ kill }), close: async () => undefined,
     } as never);
     pdfPage.createPDFStream.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRender = reject; }));
-    const service = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
+    const service = new ReportsService(createPrismaMock() as never, auditMock(), new PdfRenderer());
     audit.record.mockClear();
     try {
       const first = service.generatePdf(admin, q);
@@ -2405,17 +2410,19 @@ describe('review regression reports', () => {
     try {
       const prisma = createPrismaMock();
       prisma.activityRecord.groupBy.mockResolvedValue([{ status: 'approved', _count: { _all: 2 } }]);
-      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
+      const service = new ReportsService(prisma as never, auditMock(), new PdfRenderer());
       stubRecords(prisma, [makeRecord({ id: 'a' }), makeRecord({ id: 'b' })]);
       expect((await service.assemble(admin, q)).records).toHaveLength(2);
-      for (const [args] of prisma.activityRecord.findMany.mock.calls) expect(args.omit).toEqual({ input: true });
+      for (const [args] of prisma.activityRecord.findMany.mock.calls.filter(([a]) => a.include !== undefined)) {
+        expect(args.omit).toEqual({ input: true });
+      }
     } finally { vi.unstubAllEnvs(); }
   });
   it('M14: refuses source rows over the byte budget', async () => {
     vi.stubEnv('REPORT_MAX_BYTES', '100');
     try {
       const prisma = createPrismaMock();
-      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
+      const service = new ReportsService(prisma as never, auditMock(), new PdfRenderer());
       stubRecords(prisma, [makeRecord({ id: 'a' })]);
       await expect(service.assemble(admin, q)).rejects.toMatchObject({ status: 422 });
     } finally { vi.unstubAllEnvs(); }
@@ -2424,14 +2431,14 @@ describe('review regression reports', () => {
 
 describe('export byte boundaries independently of source budgets', () => {
   it('accepts exact CSV bytes and refuses one byte above before audit', async () => {
-    const initial = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
+    const initial = new ReportsService(createPrismaMock() as never, auditMock(), new PdfRenderer());
     const data = await initial.assemble(admin, q);
     vi.spyOn(initial, 'assemble').mockResolvedValue(data);
     const bytes = Buffer.byteLength(await initial.generateCsv(admin, q));
     try {
       for (const limit of [bytes, bytes - 1]) {
         vi.stubEnv('REPORT_MAX_BYTES', String(limit));
-        const service = new ReportsService(createPrismaMock() as never, {} as never, auditMock(), new PdfRenderer());
+        const service = new ReportsService(createPrismaMock() as never, auditMock(), new PdfRenderer());
         vi.spyOn(service, 'assemble').mockResolvedValue(data); audit.record.mockClear();
         if (limit === bytes) expect(Buffer.byteLength(await service.generateCsv(admin, q))).toBe(bytes);
         else { await expect(service.generateCsv(admin, q)).rejects.toMatchObject({ status: 422 }); expect(audit.record).not.toHaveBeenCalled(); }
@@ -2439,13 +2446,13 @@ describe('export byte boundaries independently of source budgets', () => {
     } finally { vi.unstubAllEnvs(); }
   });
   it('accepts exact XLSX bytes and refuses one byte above before audit', async () => {
-    const initial = new ReportsService(createPrismaMock() as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
+    const initial = new ReportsService(createPrismaMock() as never, auditMock(), new PdfRenderer());
     const data = await initial.assemble(admin, q);
     vi.stubEnv('REPORT_MAX_BYTES', '100');
     const writeBuffer = vi.fn().mockResolvedValueOnce(Buffer.alloc(100)).mockResolvedValueOnce(Buffer.alloc(101));
     const xlsx = vi.spyOn(ExcelJS.Workbook.prototype, 'xlsx', 'get').mockReturnValue({ writeBuffer } as never);
     try {
-      const service = new ReportsService(createPrismaMock() as never, {} as never, auditMock(), new PdfRenderer());
+      const service = new ReportsService(createPrismaMock() as never, auditMock(), new PdfRenderer());
       vi.spyOn(service, 'assemble').mockResolvedValue(data);
       expect((await service.generateExcel(admin, q)).length).toBe(100); audit.record.mockClear();
       await expect(service.generateExcel(admin, q)).rejects.toMatchObject({ status: 422 });
@@ -2461,7 +2468,7 @@ it('accepts the exact serialized source budget and rejects one byte less', async
     for (const maximum of [bytes, bytes - 1]) {
       vi.stubEnv('REPORT_MAX_BYTES', String(maximum));
       const prisma = createPrismaMock(); stubRecords(prisma, [record]);
-      const service = new ReportsService(prisma as never, { summary: vi.fn().mockResolvedValue(SUMMARY) } as never, auditMock(), new PdfRenderer());
+      const service = new ReportsService(prisma as never, auditMock(), new PdfRenderer());
       if (maximum === bytes) await expect(service.assemble(admin, q)).resolves.toMatchObject({ records: expect.any(Array) });
       else await expect(service.assemble(admin, q)).rejects.toMatchObject({ status: 422 });
     }

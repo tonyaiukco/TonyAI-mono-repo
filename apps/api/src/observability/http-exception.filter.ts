@@ -36,8 +36,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     // A read can fail to acquire a connection after authentication succeeds.
     // Do not disguise an uncertain mutation outcome as a retryable refusal.
+    // A read's interactive transaction (a live report's snapshot, LP4-03) that
+    // cannot start in time is P2028 — the same exhausted pool, met earlier.
     if (['GET', 'HEAD'].includes(request?.method)
-      && (exception as { code?: string })?.code === 'P2024') exception = new CapacityError();
+      && ['P2024', 'P2028'].includes((exception as { code?: string })?.code ?? '')) exception = new CapacityError();
     const httpError = exception instanceof HttpException ? exception : undefined;
     const parserType = typeof exception === 'object' && exception !== null
       ? (exception as { type?: string }).type : undefined;

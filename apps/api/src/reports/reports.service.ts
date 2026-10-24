@@ -5,12 +5,19 @@ import { ActivityRecordStatus, Prisma } from '@tonyai/db';
 import type {
   ReportingContext,
   ActivityCalculationSnapshot,
+  ReportInventorySummary,
   FactorStatus,
+  Locale,
   ReportExportType,
+  ReportLiveCoverage,
   ReportMetaDTO,
+  ReportScope3Disclosure,
   ReportStatus,
 } from '@tonyai/shared-types';
 import {
+  CATEGORY_SCOPE_MAP,
+  DEFAULT_LOCALE,
+  isLocale,
   FACTOR_STATUS_RANK,
   isAnomalyEvaluated,
   isAuthoritativeSnapshot,
@@ -22,7 +29,6 @@ import {
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  activityTypeLabel,
   excelLedgerHeader,
   excelLedgerRow,
   excelWithdrawnHeader,
@@ -43,17 +49,50 @@ import type {
 } from './report-data';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
-import { COUNTED_STATUSES, EmissionsService } from '../emissions/emissions.service';
+import { COUNTED_STATUSES, SUMMARY_RECORD_SELECT, summariseCounted, type SummaryRecord } from '../emissions/emissions.service';
+import { CaptureSnapshot } from '../common/capture-snapshot';
+import { readLiveCoverage } from './live-coverage';
 import { ReportQueryDto } from './dto/report-query.dto';
 import { reportingContext } from '../common/reporting-context-query.dto';
 import { contextLabels } from './context-labels';
-import { buildReportHtml } from './report-html';
+import { buildReportHtml, coverageSentences, selectsScope3Only, statusLabel } from './report-html';
+import { reportVocabulary, type ReportVocabulary } from './report-vocabulary';
 import { PdfRenderer } from '../common/pdf-renderer';
 
 // Single source of truth for "committed": imported from the emissions service so
 // a report's summary tables and its own ledger can never silently diverge.
 const COMMITTED_STATUSES = COUNTED_STATUSES;
 type SelectedReportQuery = ReportQueryDto & Pick<ReportingContext, 'scope' | 'category'>;
+/** A live report's selection: the year and the optional filters. */
+type LiveSelection = Pick<ReportingContext, 'year' | 'subsidiaryId' | 'scope' | 'category'>;
+
+/** Read-only and one snapshot (K2); the 30 s a capture's snapshot is given. */
+const LIVE_SNAPSHOT_TX = { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 30_000 };
+
+/** The Scope 1/2 records a selection counts: both, its one, or none for a Scope 3 selection (K4). */
+function inventoryScopeFilter(scope: number | undefined): number | { in: number[] } | null {
+  if (scope === undefined) return { in: [1, 2] };
+  return scope === 3 ? null : scope;
+}
+
+/**
+ * A live report's own summary (K4): the Scope 1/2 rows it lists, summed. A
+ * Scope 3 row never reaches it (`inventoryScopeFilter`), so its Scope 3 is the
+ * literal 0 the contract's type holds — refused, not silently zeroed, if a
+ * read ever let one through.
+ */
+function inventorySummary(rows: readonly SummaryRecord[], nameById: ReadonlyMap<string, string>): ReportInventorySummary {
+  if (rows.some((r) => r.scope !== 1 && r.scope !== 2)) throw new Error('A live report sums Scope 1/2 records only.');
+  const summary = summariseCounted(rows, nameById);
+  const point = (p: (typeof summary.trend.monthly)[number]) => ({ ...p, scope3: 0 as const });
+  return {
+    ...summary,
+    totals: { ...summary.totals, scope3: 0 },
+    trend: { monthly: summary.trend.monthly.map(point), quarterly: summary.trend.quarterly.map(point), yearly: summary.trend.yearly.map(point) },
+  };
+}
+
+const NO_SCOPE3: ReportScope3Disclosure = { coverage: 'not_covered', recordCount: 0, calculatedTCo2e: 0, uncalculatedRecordCount: 0 };
 
 // Re-exported so every existing importer keeps working; the definitions moved
 // to `report-data.ts` to break the value-import cycle the descriptors create.
@@ -104,32 +143,43 @@ function authoritativeNow(snapshot: ActivityCalculationSnapshot, withdrawals: Ma
 function factorStanding(
   snapshot: ActivityCalculationSnapshot,
   withdrawals: Map<string, ReleaseWithdrawal>,
+  v: ReportVocabulary,
 ): { code: FactorStandingCode; text: string } {
   if (!isProvenanceSnapshot(snapshot)) {
-    return { code: 'pre_release', text: 'Not authoritative (written before factor releases)' };
+    return { code: 'pre_release', text: v.text('standingPreRelease') };
   }
   const links = [
-    { link: 'Factor', release: snapshot.factorRelease },
-    ...(snapshot.conversion ? [{ link: 'Conversion', release: snapshot.conversion.release }] : []),
+    { link: 'factor', release: snapshot.factorRelease },
+    ...(snapshot.conversion ? [{ link: 'conversion', release: snapshot.conversion.release }] : []),
   ];
   for (const { link, release } of links) {
     const withdrawn = withdrawals.get(release.id);
     if (!withdrawn) continue;
     // "Release withdrawn", never bare "Withdrawn": the ledger already uses
     // that word for a record taken out of the inventory.
-    const on = withdrawn.at ? ` on ${withdrawn.at.toISOString().slice(0, 10)}` : '';
     return {
       code: 'withdrawn',
-      text: `${link} release ${release.publisher} ${release.edition} withdrawn${on} — not authoritative${withdrawn.reason ? `: ${withdrawn.reason}` : ''}`,
+      text: v.text('standingWithdrawn', {
+        link,
+        publisher: release.publisher,
+        edition: release.edition,
+        hasOn: withdrawn.at ? 'true' : 'false',
+        on: withdrawn.at ? withdrawn.at.toISOString().slice(0, 10) : '',
+        hasReason: withdrawn.reason ? 'true' : 'false',
+        reason: withdrawn.reason ?? '',
+      }),
     };
   }
-  if (isAuthoritativeSnapshot(snapshot)) return { code: 'authoritative', text: 'Authoritative' };
+  if (isAuthoritativeSnapshot(snapshot)) return { code: 'authoritative', text: v.text('standingAuthoritative') };
   const weakest = [snapshot.factorRelease.status, snapshot.conversion?.release.status]
     .filter((s): s is FactorStatus => s !== undefined)
     .sort((a, b) => FACTOR_STATUS_RANK[a] - FACTOR_STATUS_RANK[b])[0];
   return {
     code: weakest === 'fixture' ? 'fixture' : weakest === 'withdrawn' ? 'withdrawn' : 'placeholder',
-    text: `Not authoritative (${weakest}${snapshot.factorRelease.status === weakest ? '' : ' conversion'})`,
+    text: v.text('standingWeakest', {
+      status: weakest ?? '',
+      conversion: snapshot.factorRelease.status === weakest ? 'false' : 'true',
+    }),
   };
 }
 
@@ -139,7 +189,6 @@ export class ReportsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly emissions: EmissionsService,
     private readonly auditLog: AuditService,
     // The replica's one Chromium, shared with the issuances (LP3-04 PR D).
     private readonly pdf: PdfRenderer,
@@ -166,7 +215,18 @@ export class ReportsService {
     return user.accessibleSubsidiaryIds;
   }
 
-  /** Completeness/status for a year — drives the preview badge + PDF banner. */
+  /**
+   * Every live read of one request in ONE REPEATABLE READ snapshot (LP4-03 K2):
+   * the counts, the badge, the ledger, the totals, the evidence, the releases'
+   * standing and the coverage are one moment's, so an approval, a withdrawal
+   * or a new record committed while a report is built cannot make any two of
+   * them disagree. Read-only; rendering happens after it closes.
+   */
+  private inSnapshot<T>(read: (snapshot: CaptureSnapshot) => Promise<T>): Promise<T> {
+    return this.prisma.$transaction(async (tx) => read(await CaptureSnapshot.openReadOnly(tx)), LIVE_SNAPSHOT_TX);
+  }
+
+  /** Review status and the report's own figures for a selection — the preview's one read. */
   async meta(
     user: RequestUser,
     year: number,
@@ -174,8 +234,30 @@ export class ReportsService {
     filters: Pick<ReportingContext, 'scope' | 'category'> = {},
   ): Promise<ReportMeta> {
     const ids = this.scopeIds(user, subsidiaryId);
+    const selection: LiveSelection = { year, subsidiaryId: subsidiaryId || undefined, scope: filters.scope, category: filters.category };
+    return this.inSnapshot(async (snapshot) => {
+      const db = CaptureSnapshot.txOf(snapshot);
+      const head = await this.readHead(snapshot, user, ids, selection);
+      if (head.counts === null) return head.meta;
+      const scopes = inventoryScopeFilter(selection.scope);
+      const committed = scopes === null ? [] : await db.activityRecord.findMany({
+        where: { ...this.recordWhere(ids, selection), scope: scopes, status: { in: COMMITTED_STATUSES } },
+        select: SUMMARY_RECORD_SELECT,
+        orderBy: { id: 'asc' },
+        take: this.limits.REPORT_RECORD_LIMIT + 1,
+      });
+      if (committed.length > this.limits.REPORT_RECORD_LIMIT) throw new QueryTooBroadError();
+      const nameById = await this.namesOf(db, ids);
+      return this.metaOf(head, inventorySummary(committed, nameById), await this.readTail(snapshot, user, ids, selection));
+    });
+  }
+
+  /** The organisation, the snapshot's clock and the selection's status counts — Scope 1/2 only (K4). */
+  private async readHead(snapshot: CaptureSnapshot, user: RequestUser, ids: string[], selection: LiveSelection) {
+    const db = CaptureSnapshot.txOf(snapshot);
+    const readAt = await CaptureSnapshot.minute(snapshot);
     const org = user.organisationId
-      ? await this.prisma.organisation.findUnique({
+      ? await db.organisation.findUnique({
           where: { id: user.organisationId },
           select: { legalName: true, tradingName: true },
         })
@@ -191,12 +273,17 @@ export class ReportsService {
       pendingCount: 0,
       incompleteRatio: 0,
       voidedCount: 0,
+      summary: inventorySummary([], new Map()),
+      scope3: NO_SCOPE3,
+      // Nothing of the boundary is read for a selection the caller cannot see.
+      coverage: { state: 'not_readable' },
     };
-    if (ids.length === 0) return empty;
+    if (ids.length === 0) return { meta: empty, counts: null, readAt };
 
-    const grouped = await this.prisma.activityRecord.groupBy({
+    const scopes = inventoryScopeFilter(selection.scope);
+    const grouped = scopes === null ? [] : await db.activityRecord.groupBy({
       by: ['status'],
-      where: { subsidiaryId: { in: ids }, reportingYear: year, scope: filters.scope, category: filters.category },
+      where: { ...this.recordWhere(ids, selection), scope: scopes },
       _count: { _all: true },
     });
     const count = (statuses: ActivityRecordStatus[]) =>
@@ -219,54 +306,127 @@ export class ReportsService {
       ActivityRecordStatus.draft,
       ActivityRecordStatus.rejected,
     ]);
-    // Derived, not restated: this count is what stamps a generated report
-    // `approved`, so a status added to the shared pending list and forgotten
-    // here would mean an audit-ready PDF marked approved while undecided
-    // records still sit in the reviewer's queue.
+    // Derived, not restated: a status added to the shared pending list and
+    // forgotten here would read "all approved" while undecided records still
+    // sit in the reviewer's queue.
     const pendingCount = count([...PENDING_REVIEW_STATUSES]);
     const incompleteRatio = totalCount > 0 ? incompleteCount / totalCount : 0;
 
-    // "Approved" must mean reviewed data EXISTS — a zero-record year is never
-    // approved (compliance honesty; matches the out-of-scope empty case).
+    // Review status only (K3): "approved" means every committed record of the
+    // selection is approved and none is undecided — and that reviewed data
+    // EXISTS (a zero-record year is never approved). It never says the
+    // inventory is complete; `coverage` does, and only a final issuance certifies.
     const status: ReportStatus =
       committedCount === 0 || incompleteCount > 0
         ? 'contains_incomplete_data'
         : pendingCount > 0
           ? 'draft'
           : 'approved';
-
     return {
-      status,
-      recordLimit: this.limits.REPORT_RECORD_LIMIT,
-      organisationName,
-      totalCount,
-      committedCount,
-      incompleteCount,
-      pendingCount,
-      incompleteRatio,
-      // Reported, never deducted from anything above: the ratio keeps its
-      // meaning and the reader still learns that figures left this year.
-      voidedCount,
+      meta: empty,
+      readAt,
+      counts: {
+        status,
+        organisationName,
+        totalCount,
+        committedCount,
+        incompleteCount,
+        pendingCount,
+        incompleteRatio,
+        // Reported, never deducted from anything above: the ratio keeps its
+        // meaning and the reader still learns that figures left this year.
+        voidedCount,
+      },
     };
   }
 
-  /** Assemble everything a report needs — shared by PDF/Excel/CSV. */
-  async assemble(user: RequestUser, q: SelectedReportQuery): Promise<ReportData> {
+  /** The Scope 3 disclosure and the boundary coverage, in the same snapshot. */
+  private async readTail(snapshot: CaptureSnapshot, user: RequestUser, ids: string[], selection: LiveSelection) {
+    const db = CaptureSnapshot.txOf(snapshot);
+    const readsScope3 = (selection.scope === undefined || selection.scope === 3)
+      && (selection.category === undefined || CATEGORY_SCOPE_MAP[selection.category] === 3);
+    const scope3Rows = !readsScope3 ? [] : await db.activityRecord.findMany({
+      where: { ...this.recordWhere(ids, selection), scope: 3, status: { in: COMMITTED_STATUSES } },
+      select: { calculation: true },
+      orderBy: { id: 'asc' },
+      take: this.limits.REPORT_RECORD_LIMIT + 1,
+    });
+    if (scope3Rows.length > this.limits.REPORT_RECORD_LIMIT) throw new QueryTooBroadError();
+    let calculatedTCo2e = 0;
+    let uncalculatedRecordCount = 0;
+    for (const r of scope3Rows) {
+      const calc = r.calculation as unknown as ActivityCalculationSnapshot | null;
+      if (isCalculated(calc)) calculatedTCo2e += calc.tCo2e;
+      else uncalculatedRecordCount += 1;
+    }
+    const scope3: ReportScope3Disclosure = {
+      coverage: 'not_covered', recordCount: scope3Rows.length, calculatedTCo2e, uncalculatedRecordCount,
+    };
+    // A requested subsidiary outside the caller's access never reaches here
+    // (`ids` is empty and `readHead` answered); the boundary's own read rule
+    // holds every subsidiary it declares to the caller's current access.
+    const coverage: ReportLiveCoverage = !user.organisationId ? { state: 'no_boundary' } : await readLiveCoverage(
+      snapshot,
+      {
+        organisationId: user.organisationId,
+        accessibleSubsidiaryIds: user.accessibleSubsidiaryIds,
+        reportSubsidiaryIds: ids,
+        reportingYear: selection.year,
+        selection: {
+          ...(selection.subsidiaryId !== undefined ? { subsidiaryId: selection.subsidiaryId } : {}),
+          ...(selection.scope !== undefined ? { scope: selection.scope } : {}),
+          ...(selection.category !== undefined ? { category: selection.category } : {}),
+        },
+      },
+      { records: this.limits.REPORT_RECORD_LIMIT, evidenceLinks: this.limits.REPORT_EVIDENCE_LINK_LIMIT },
+    );
+    return { scope3, coverage };
+  }
+
+  private metaOf(
+    head: Awaited<ReturnType<ReportsService['readHead']>>,
+    summary: ReportInventorySummary,
+    tail: { scope3: ReportScope3Disclosure; coverage: ReportLiveCoverage },
+  ): ReportMeta {
+    return { ...head.meta, ...head.counts, summary, ...tail };
+  }
+
+  private recordWhere(ids: string[], selection: LiveSelection) {
+    return { subsidiaryId: { in: ids }, reportingYear: selection.year, category: selection.category };
+  }
+
+  private async namesOf(db: Prisma.TransactionClient, ids: string[]): Promise<Map<string, string>> {
+    const subs = ids.length === 0 ? [] : await db.subsidiary.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, legalName: true, tradingName: true },
+    });
+    return new Map(subs.map((s) => [s.id, s.tradingName || s.legalName]));
+  }
+
+  /** Assemble everything a report needs — shared by PDF/Excel/CSV, in one snapshot. */
+  assemble(user: RequestUser, q: SelectedReportQuery): Promise<ReportData> {
+    return this.inSnapshot((snapshot) => this.assembleIn(snapshot, user, q));
+  }
+
+  private async assembleIn(snapshot: CaptureSnapshot, user: RequestUser, q: SelectedReportQuery): Promise<ReportData> {
+    const db = CaptureSnapshot.txOf(snapshot);
     const ids = this.scopeIds(user, q.subsidiaryId);
     // Legacy routes accept an empty selector as all accessible subsidiaries.
     const context = reportingContext({ ...q, subsidiaryId: q.subsidiaryId || undefined });
+    const selection: LiveSelection = { year: q.year, subsidiaryId: q.subsidiaryId || undefined, scope: q.scope, category: q.category };
 
-    const meta = await this.meta(user, q.year, q.subsidiaryId, q);
-    if (meta.committedCount + meta.voidedCount > this.limits.REPORT_RECORD_LIMIT) throw new QueryTooBroadError();
-    const [summary, subs] = await Promise.all([
-      this.emissions.summary(user, context, this.limits.REPORT_RECORD_LIMIT),
-      this.prisma.subsidiary.findMany({
-        where: { id: { in: ids } },
-        select: { id: true, legalName: true, tradingName: true },
-      }),
-    ]);
-
-    const nameById = new Map(subs.map((s) => [s.id, s.tradingName || s.legalName]));
+    const head = await this.readHead(snapshot, user, ids, selection);
+    // D16: the caller's language unless the request names one (K6).
+    const language = q.language ?? (await this.languageOf(db, user.id));
+    const v = reportVocabulary(language);
+    const counts = head.counts;
+    if (counts !== null && counts.committedCount + counts.voidedCount > this.limits.REPORT_RECORD_LIMIT) {
+      throw new QueryTooBroadError();
+    }
+    const nameById = await this.namesOf(db, ids);
+    // Scope 1 and 2 only (K4): Scope 3 is not covered, so its records are
+    // disclosed (`readTail`) and never in the ledger, a total or a percentage.
+    const scopes = inventoryScopeFilter(q.scope);
 
     // Evidence file names are always loaded: the ledger's evidence count must be
     // truthful whether or not the appendix is requested. The location join is
@@ -281,11 +441,11 @@ export class ReportsService {
       { createdAt: 'asc' },
     ];
     const load = (statuses: ActivityRecordStatus[]) =>
-      this.prisma.activityRecord.findMany({
+      db.activityRecord.findMany({
         where: {
           subsidiaryId: { in: ids },
           reportingYear: q.year,
-          scope: q.scope,
+          scope: scopes ?? undefined,
           category: q.category,
           status: { in: statuses },
         },
@@ -305,7 +465,7 @@ export class ReportsService {
     // be asserted, instead of a property of a filter a later edit could get
     // wrong — and `voided` is by construction the set no figure here counts.
     const [records, voided] =
-      ids.length === 0
+      ids.length === 0 || scopes === null
         ? [noRecords, noWithdrawals]
         : await Promise.all([
             load(COMMITTED_STATUSES),
@@ -314,7 +474,7 @@ export class ReportsService {
 
     if (records.length + voided.length > this.limits.REPORT_RECORD_LIMIT) throw new QueryTooBroadError();
     const allRecords = [...records, ...voided];
-    const links = allRecords.length ? await this.prisma.activityRecordEvidence.findMany({
+    const links = allRecords.length ? await db.activityRecordEvidence.findMany({
       where: { activityRecordId: { in: allRecords.map((r) => r.id) }, subsidiaryId: { in: ids } },
       select: { activityRecordId: true, evidence: {
         select: { id: true, fileName: true, _count: { select: { links: true } } },
@@ -367,7 +527,7 @@ export class ReportsService {
       releaseIds.size === 0
         ? []
         : (
-            await this.prisma.factorRelease.findMany({
+            await db.factorRelease.findMany({
               where: { id: { in: [...releaseIds] }, status: 'withdrawn' },
               select: { id: true, withdrawnAt: true, withdrawalReason: true },
             })
@@ -390,7 +550,7 @@ export class ReportsService {
         category: r.category,
         activityType: r.activityType ?? null,
         factorStanding: isCalculated(r.calculation as unknown as ActivityCalculationSnapshot)
-          ? factorStanding(r.calculation as unknown as ActivityCalculationSnapshot, withdrawals)
+          ? factorStanding(r.calculation as unknown as ActivityCalculationSnapshot, withdrawals, v)
           : null,
         periodValue: r.periodValue,
         reportingPeriod: r.reportingPeriod,
@@ -467,8 +627,8 @@ export class ReportsService {
           activityType: provenance?.activityType ?? null,
           release: provenance
             ? `${provenance.factorRelease.publisher} ${provenance.factorRelease.edition}`
-            : 'Pre-release prototype library',
-          standing: factorStanding(snapshot, withdrawals).text,
+            : v.text('preReleaseLibrary'),
+          standing: factorStanding(snapshot, withdrawals, v).text,
           geographyCode: calc.geographyCode ?? '',
           factorValue: Number(calc.factorValue ?? 0),
           factorUnit: calc.factorUnit ?? '',
@@ -514,18 +674,28 @@ export class ReportsService {
           .filter((e) => e.fileCount > 0)
       : [];
 
+    // The totals, the tables and the badge from the ledger's own rows — never
+    // a second read of the same selection (K2).
+    const summary = inventorySummary(records, nameById);
+    // Nothing more is read for a selection the caller cannot see (`readHead`).
+    const meta = counts === null ? head.meta : this.metaOf(head, summary, await this.readTail(snapshot, user, ids, selection));
+
     return {
       context,
       template: q.template,
       templateName:
         REPORT_TEMPLATES.find((t) => t.id === q.template)?.name ?? q.template,
+      language,
       organisationName: meta.organisationName,
       subsidiaryName: q.subsidiaryId ? (nameById.get(q.subsidiaryId) ?? null) : null,
       year: q.year,
-      generatedAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+      // The snapshot's own clock: every figure below is as of this moment.
+      generatedAt: head.readAt,
       generatedBy: user.email,
       status: meta.status,
       incompleteRatio: meta.incompleteRatio,
+      scope3: meta.scope3,
+      coverage: meta.coverage,
       includeMethodologyNotes: q.includeMethodologyNotes ?? true,
       includeEvidenceSummary: q.includeEvidenceSummary ?? false,
       summary,
@@ -546,82 +716,92 @@ export class ReportsService {
     const html = buildReportHtml(data);
     this.assertOutputSize(html);
     const { bytes } = await this.pdf.render(html);
-    await this.audit(user, q, 'pdf', data.summary.recordCount, data.withdrawnTotals.count);
+    await this.audit(user, q, 'pdf', data);
     return bytes;
   }
 
   async generateExcel(user: RequestUser, q: SelectedReportQuery): Promise<Buffer> {
     this.assertCanGenerate(user);
     const data = await this.assemble(user, q);
+    const v = reportVocabulary(data.language);
     const wb = new ExcelJS.Workbook();
     wb.creator = 'TonyAI';
+    const scope3Only = selectsScope3Only(data.context);
+    const s3 = data.scope3;
 
-    // Sheet 1 — Summary
-    const s1 = wb.addWorksheet('Summary');
+    // Sheet 1 — Summary. Live, and its first row says so (K8); review status
+    // in words, never the bare enum (K3); Scope 1 + 2 the only total (K4).
+    const s1 = wb.addWorksheet(v.text('sheetSummary'));
     s1.addRows([
-      ['TonyAI emissions report', data.templateName],
-      ['Organisation', data.organisationName],
-      ['Reporting year', data.year],
-      ...contextLabels(data.context, data.subsidiaryName),
-      ['Status', data.status],
+      [v.text('excelLive', { readAt: data.generatedAt })],
+      [v.text('excelTitle'), data.templateName],
+      [v.text('excelOrganisation'), data.organisationName],
+      [v.text('excelReportingYear'), data.year],
+      ...contextLabels(data.context, data.subsidiaryName, data.language),
+      [v.text('excelStatus'), statusLabel(data.status, v)],
+      [v.text('excelCoverage'), ...coverageSentences(data, v)],
       // Stated here and not only on the Withdrawn Records sheet: a reader who
       // opens Summary and nothing else must still learn that figures left, and
       // in tonnes — materiality is not measured in rows.
       [
-        'Withdrawn records (excluded from every figure below)',
+        v.text('excelWithdrawn'),
         data.withdrawnTotals.count,
-        `${data.withdrawnTotals.tCo2e} tCO₂e removed`,
+        v.text('excelWithdrawnTonnes', { tonnes: v.fullFigure(data.withdrawnTotals.tCo2e) }),
       ],
-      ['Generated', data.generatedAt, data.generatedBy],
+      [v.text('excelGenerated'), data.generatedAt, data.generatedBy],
       [],
-      ['Scope 1 (tCO₂e)', data.summary.totals.scope1],
-      ['Scope 2 (tCO₂e)', data.summary.totals.scope2],
-      ['Total (tCO₂e)', data.summary.totals.total],
+      [v.text('excelScope1'), scope3Only ? v.text('notCovered') : data.summary.totals.scope1],
+      [v.text('excelScope2'), scope3Only ? v.text('notCovered') : data.summary.totals.scope2],
+      [v.text('excelTotal'), scope3Only ? v.text('notCovered') : data.summary.totals.total],
+      // A word, never a number: a Scope 3 figure in this column would be summed
+      // with the inventory's (K4). Its records are counted beside it.
+      [v.text('excelScope3'), v.text('notCovered'), v.text('scope3NotCovered'),
+        ...(s3.recordCount > 0 ? [v.text('scope3Recorded', { count: s3.recordCount, tonnes: v.fullFigure(s3.calculatedTCo2e) })] : [])],
       [],
-      ['Category', 'Scope', 'tCO₂e', '% of total', 'Records'],
+      [v.label('Category'), v.label('Scope'), v.label('tCO₂e'), v.label('% of total'), v.label('Records')],
       ...data.summary.byCategory.map((c) => [
-        c.category, c.scope, c.tCo2e, c.percentOfTotal, c.recordCount,
+        v.category(c.category), c.scope, c.tCo2e, c.percentOfTotal, c.recordCount,
       ]),
       [],
-      ['Subsidiary', 'tCO₂e', '% of total', 'Records'],
+      [v.label('Subsidiary'), v.label('tCO₂e'), v.label('% of total'), v.label('Records')],
       ...data.summary.bySubsidiary.map((r) => [
         r.subsidiaryName, r.tCo2e, r.percentOfTotal, r.recordCount,
       ]),
     ]);
 
     // Sheet 2 — Raw Activity Data (the committed ledger)
-    const s2 = wb.addWorksheet('Raw Activity Data');
-    s2.addRow(excelLedgerHeader());
-    for (const r of data.records) s2.addRow(excelLedgerRow(r));
+    const s2 = wb.addWorksheet(v.text('sheetLedger'));
+    s2.addRow(excelLedgerHeader(v));
+    for (const r of data.records) s2.addRow(excelLedgerRow(r, v));
 
     // Sheet 3 — Withdrawn Records (the restatement disclosure), directly after
     // the ledger it was taken out of.
     // Always present, even when empty: a workbook whose sheet list depends on
     // the data cannot be read by anything automated, and an empty sheet with a
     // header states "nothing was withdrawn" where a missing one states nothing.
-    const s3 = wb.addWorksheet('Withdrawn Records');
-    s3.addRow(excelWithdrawnHeader());
-    for (const r of data.withdrawn) s3.addRow(excelWithdrawnRow(r));
+    const sw = wb.addWorksheet(v.text('sheetWithdrawn'));
+    sw.addRow(excelWithdrawnHeader(v));
+    for (const r of data.withdrawn) sw.addRow(excelWithdrawnRow(r, v));
     if (data.withdrawn.length > 0) {
-      s3.addRow(excelWithdrawnTotalRow(data.withdrawnTotals));
+      sw.addRow(excelWithdrawnTotalRow(data.withdrawnTotals, v));
     }
 
     // Sheet 4 — Factors Used (immutable snapshots, audit traceability)
-    const s4 = wb.addWorksheet('Factors Used');
+    const s4 = wb.addWorksheet(v.text('sheetFactors'));
     // The three LP3-03 columns are appended, never inserted (this file's rule
     // for every artifact a reader may parse by position).
-    s4.addRow(['Category', 'Geography', 'Factor value', 'Factor unit', 'Methodology', 'Source', 'Version', 'Activity type', 'Release', 'Standing']);
+    s4.addRow(['Category', 'Geography', 'Factor value', 'Factor unit', 'Methodology', 'Source', 'Version', 'Activity type', 'Release', 'Standing'].map((l) => v.label(l)));
     for (const f of data.factors) {
       s4.addRow([
-        f.category, f.geographyCode, f.factorValue, f.factorUnit, f.methodology, f.source, f.version,
-        f.activityType ? activityTypeLabel({ category: f.category, activityType: f.activityType }) : '',
+        v.category(f.category), f.geographyCode, f.factorValue, f.factorUnit, f.methodology, f.source, f.version,
+        f.activityType ? v.activityType({ category: f.category, activityType: f.activityType }) : '',
         f.release, f.standing,
       ]);
     }
 
     const buffer = await wb.xlsx.writeBuffer();
     this.assertOutputSize(buffer);
-    await this.audit(user, q, 'excel', data.summary.recordCount, data.withdrawnTotals.count);
+    await this.audit(user, q, 'excel', data);
     return Buffer.from(buffer);
   }
 
@@ -656,8 +836,14 @@ export class ReportsService {
     // manufacture a formula lead nor break the RFC-4180 framing. Pure fidelity.
     const output = '\uFEFF' + lines.join('\n') + '\n';
     this.assertOutputSize(output);
-    await this.audit(user, q, 'csv', data.summary.recordCount, data.withdrawnTotals.count);
+    await this.audit(user, q, 'csv', data);
     return output;
+  }
+
+  /** D16: the caller's own language, else the product's default (as an issuance's). */
+  private async languageOf(db: Prisma.TransactionClient, userId: string): Promise<Locale> {
+    const profile = await db.profile.findUnique({ where: { id: userId }, select: { language: true } });
+    return isLocale(profile?.language) ? profile.language : DEFAULT_LOCALE;
   }
 
   /** Generation log (report_page.md §10): one audit row per generated artifact.
@@ -676,9 +862,10 @@ export class ReportsService {
     user: RequestUser,
     q: SelectedReportQuery,
     exportType: ReportExportType,
-    recordCount: number,
-    voidedCount: number,
+    data: ReportData,
   ): Promise<void> {
+    const recordCount = data.summary.recordCount;
+    const voidedCount = data.withdrawnTotals.count;
     await this.auditLog.record(user, {
       action: 'generate',
       entity: 'report',
@@ -691,6 +878,15 @@ export class ReportsService {
         ...(q.scope !== undefined ? { scope: q.scope } : {}),
         ...(q.category !== undefined ? { category: q.category } : {}),
         exportType,
+        // LP4-03: the snapshot every figure was read in, the badge it printed,
+        // what the boundary said, and — for the PDF and the workbook — the
+        // language (D16; the CSV has none: English machine headers).
+        readAt: data.generatedAt,
+        status: data.status,
+        coverage: data.coverage.state === 'assessed'
+          ? { state: 'assessed', boundaryId: data.coverage.boundary.id, version: data.coverage.boundary.version, reading: data.coverage.reading }
+          : { state: data.coverage.state },
+        ...(exportType === 'csv' ? {} : { language: data.language }),
         recordCount,
         // What the artifact disclosed, recorded with it. The record set moves
         // afterwards — a figure withdrawn next month is not in last month's
