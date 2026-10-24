@@ -19,6 +19,7 @@ import {
   type ReplaceUserAccessRequest,
   type UpdateUserRoleRequest,
   type UserRole,
+  USER_ROLES,
 } from '@tonyai/shared-types';
 import { CursorPageQueryDto } from '../../common/cursor-page-query.dto';
 import { canonicalUuid, UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
@@ -27,8 +28,9 @@ import { canonicalUuid, UUID_SHAPE } from '../../common/parse-uuid-param.pipe';
 const lowercaseIds = ({ value }: { value: unknown }) =>
   Array.isArray(value) ? value.map((v) => canonicalUuid(v) ?? v) : value;
 
-/** The canonical `user_role` (CLAUDE.md) — Prisma's enum holds the same four. */
-export const USER_ROLES: readonly UserRole[] = ['super_admin', 'consultant', 'data_entry', 'executive_viewer'];
+/** The canonical `user_role` (CLAUDE.md) — Prisma's enum holds the same four;
+ *  one list, in shared-types (LP4-04 slice 2 PR C). */
+export { USER_ROLES };
 
 /** RFC 5321's longest deliverable address. */
 const MAX_EMAIL_LENGTH = 254;

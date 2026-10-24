@@ -27,6 +27,10 @@ import enIntensity from "./en/intensity.json";
 import enTargetStatus from "./en/targetStatus.json";
 import enTargetBasis from "./en/targetBasis.json";
 import enIntensityMetrics from "./en/intensityMetrics.json";
+import enSubsidiaryStatus from "./en/subsidiaryStatus.json";
+import enReview from "./en/review.json";
+import enAudit from "./en/audit.json";
+import enSubsidiaries from "./en/subsidiaries.json";
 import trAuth from "./tr/auth.json";
 import trBoundary from "./tr/boundary.json";
 import trCategories from "./tr/categories.json";
@@ -55,6 +59,10 @@ import trIntensity from "./tr/intensity.json";
 import trTargetStatus from "./tr/targetStatus.json";
 import trTargetBasis from "./tr/targetBasis.json";
 import trIntensityMetrics from "./tr/intensityMetrics.json";
+import trSubsidiaryStatus from "./tr/subsidiaryStatus.json";
+import trReview from "./tr/review.json";
+import trAudit from "./tr/audit.json";
+import trSubsidiaries from "./tr/subsidiaries.json";
 
 /**
  * The UI catalogues (LP3-01): one JSON file per namespace per locale, so two
@@ -94,6 +102,10 @@ import trIntensityMetrics from "./tr/intensityMetrics.json";
  *   targetStatus  a target's progress status, keyed by `TargetStatus` (`TARGET_STATUSES`, lib/vocabulary.ts)
  *   targetBasis   a target's basis, keyed by `TargetBasis` (`TARGET_BASES`)
  *   intensityMetrics  INTENSITY_METRIC_KEYS' labels, keyed by the metric (English = INTENSITY_METRIC_META's)
+ *   subsidiaryStatus  a subsidiary's reporting status, keyed by `SUBSIDIARY_STATUSES` (English lowercase, as the screens always printed it)
+ *   review      the review queue and its record sheet (LP4-04 slice 2 PR C)
+ *   audit       the audit trail; action and entity codes stay raw identifiers (M2)
+ *   subsidiaries  the Subsidiaries list and detail, locations and period locks (LP4-04 slice 2 PR C)
  *   emissions   the Emissions screen — its tabs, the record drawer and the withdrawal (`lib/void-view.ts`) (LP4-04)
  */
 const en = {
@@ -125,6 +137,10 @@ const en = {
   targetStatus: enTargetStatus,
   targetBasis: enTargetBasis,
   intensityMetrics: enIntensityMetrics,
+  subsidiaryStatus: enSubsidiaryStatus,
+  review: enReview,
+  audit: enAudit,
+  subsidiaries: enSubsidiaries,
 };
 
 export type Messages = typeof en;
@@ -158,6 +174,10 @@ const tr: Messages = {
   targetStatus: trTargetStatus,
   targetBasis: trTargetBasis,
   intensityMetrics: trIntensityMetrics,
+  subsidiaryStatus: trSubsidiaryStatus,
+  review: trReview,
+  audit: trAudit,
+  subsidiaries: trSubsidiaries,
 };
 
 export const MESSAGES: Readonly<Record<Locale, Messages>> = { en, tr };

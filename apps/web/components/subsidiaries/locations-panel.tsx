@@ -11,7 +11,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { geographyLabel, geographyOptions } from '@/lib/types';
+import { geographyOptions } from '@/lib/types';
+import { useTranslations } from 'use-intl';
+import { geographyLabel } from '@/lib/vocabulary';
+import { useErrorToast } from '@/lib/i18n/hooks';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -57,6 +60,10 @@ export function LocationsPanel({
   canManage,
   onChanged,
 }: LocationsPanelProps) {
+  const t = useTranslations('subsidiaries');
+  const tGeography = useTranslations('geography');
+  const tCommon = useTranslations('common');
+  const showError = useErrorToast();
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -111,13 +118,13 @@ export function LocationsPanel({
   async function persist() {
     if (!subsidiary) return;
     if (form.name.trim().length < 1) {
-      toast.error('Location name is required');
+      toast.error(t('locations.nameRequired'));
       return;
     }
     setSaving(true);
     try {
       if (!form.geographyCode) {
-        toast.error('Geography is required');
+        toast.error(t('locations.geographyRequired'));
         return;
       }
       if (editingId) {
@@ -127,7 +134,7 @@ export function LocationsPanel({
           address: form.address || null,
           authorizedPerson: form.authorizedPerson || null,
         });
-        toast.success('Location updated');
+        toast.success(t('locations.updated'));
       } else {
         await api.createLocation({
           subsidiaryId: subsidiary.id,
@@ -136,13 +143,13 @@ export function LocationsPanel({
           address: form.address || null,
           authorizedPerson: form.authorizedPerson || null,
         });
-        toast.success('Location added');
+        toast.success(t('locations.added'));
       }
       cancelEdit();
       setGeoConfirm(null);
       await onChanged();
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     } finally {
       setSaving(false);
     }
@@ -152,11 +159,11 @@ export function LocationsPanel({
     if (!deletingId) return;
     try {
       await api.deleteLocation(deletingId);
-      toast.success('Location deleted');
+      toast.success(t('locations.deleted'));
       if (editingId === deletingId) cancelEdit();
       await onChanged();
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     } finally {
       setDeletingId(null);
     }
@@ -167,7 +174,7 @@ export function LocationsPanel({
         {/* List */}
         {locations.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            No locations recorded for this subsidiary yet.
+            {t('locations.empty')}
           </p>
         ) : (
           <div className="space-y-2">
@@ -181,7 +188,7 @@ export function LocationsPanel({
                     {loc.name}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {loc.address ?? 'No address'}
+                    {loc.address ?? t('locations.noAddress')}
                     {loc.authorizedPerson ? ` · ${loc.authorizedPerson}` : ''}
                   </p>
                 </div>
@@ -192,7 +199,7 @@ export function LocationsPanel({
                       size="icon"
                       className="h-8 w-8"
                       onClick={() => startEdit(loc)}
-                      aria-label="Edit location"
+                      aria-label={t('locations.edit')}
                     >
                       <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
                     </Button>
@@ -201,7 +208,7 @@ export function LocationsPanel({
                       size="icon"
                       className="h-8 w-8"
                       onClick={() => setDeletingId(loc.id)}
-                      aria-label="Delete location"
+                      aria-label={t('locations.delete')}
                     >
                       <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
                     </Button>
@@ -217,7 +224,7 @@ export function LocationsPanel({
           <div className="space-y-4 border-t border-border pt-4">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium">
-                {editingId ? 'Edit location' : 'Add location'}
+                {editingId ? t('locations.editTitle') : t('locations.addTitle')}
               </h4>
               {editingId && (
                 <Button
@@ -227,26 +234,26 @@ export function LocationsPanel({
                   className="h-7 gap-1 px-2 text-xs"
                 >
                   <X className="h-3 w-3" />
-                  Cancel edit
+                  {t('locations.cancelEdit')}
                 </Button>
               )}
             </div>
             <div className="space-y-2">
-              <Label>Name *</Label>
+              <Label>{t('locations.name')}</Label>
               <Input
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Istanbul HQ"
+                placeholder={t('locations.namePlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label>Geography *</Label>
+              <Label>{t('locations.geography')}</Label>
               <Select
                 value={form.geographyCode}
                 onValueChange={(v) => setForm({ ...form, geographyCode: v })}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select geography" />
+                  <SelectValue placeholder={t('locations.geographyPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
                   {/* UK + Türkiye, plus this location's own value if it
@@ -258,41 +265,41 @@ export function LocationsPanel({
                     locations.find((l) => l.id === editingId)?.geographyCode,
                   ).map((g) => (
                     <SelectItem key={g} value={g}>
-                      {geographyLabel(g)}
+                      {geographyLabel(g, tGeography)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Drives the emission factor for records at this location.
+                {t('locations.geographyHint')}
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Address</Label>
+              <Label>{t('locations.address')}</Label>
               <Input
                 value={form.address}
                 onChange={(e) => setForm({ ...form, address: e.target.value })}
-                placeholder="Levent, Istanbul"
+                placeholder={t('locations.addressPlaceholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label>Authorized person</Label>
+              <Label>{t('locations.person')}</Label>
               <Input
                 value={form.authorizedPerson}
                 onChange={(e) =>
                   setForm({ ...form, authorizedPerson: e.target.value })
                 }
-                placeholder="Aylin Demir"
+                placeholder={t('locations.personPlaceholder')}
               />
             </div>
             <Button onClick={handleSave} disabled={saving} className="w-full gap-2">
               <Plus className="h-4 w-4" />
-              {saving ? 'Saving…' : editingId ? 'Save location' : 'Add location'}
+              {saving ? tCommon('saving') : editingId ? t('locations.save') : t('locations.add')}
             </Button>
           </div>
         ) : (
           <p className="border-t border-border pt-4 text-xs text-muted-foreground">
-            Only a super_admin can add or modify locations.
+            {t('locations.readOnly')}
           </p>
         )}
       </div>
@@ -306,25 +313,17 @@ export function LocationsPanel({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Change geography from {geoConfirm?.from} to {geoConfirm?.to}?
+              {t('geographyChange.title', { from: geoConfirm?.from ?? '', to: geoConfirm?.to ?? '' })}
             </AlertDialogTitle>
-            <AlertDialogDescription>
-              Warning: Changing the geography will change the configured factor
-              basis for geography dependent calculations. This may require
-              recalculation of affected Scope 2 records for selected reporting
-              periods. Do you want to continue?
-            </AlertDialogDescription>
+            <AlertDialogDescription>{t('geographyChange.body')}</AlertDialogDescription>
           </AlertDialogHeader>
           <div className="rounded-lg bg-muted/60 p-3 text-sm text-muted-foreground">
-            Records already committed at this location keep the emission factor
-            they were calculated with — those figures do not change. The new
-            geography applies to records created here from now on, and to any
-            draft or sent-back record the next time it is saved.
+            {t('geographyChange.locationNote')}
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{tCommon('cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={persist} disabled={saving}>
-              {saving ? 'Saving…' : 'Continue'}
+              {saving ? tCommon('saving') : t('geographyChange.continue')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -333,21 +332,16 @@ export function LocationsPanel({
       <AlertDialog open={!!deletingId} onOpenChange={() => setDeletingId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete location?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This permanently removes the location and is recorded in the audit
-              log. A location that activity records are attached to cannot be
-              removed — those records would end up showing a different geography
-              than the one they were calculated with.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{t('locations.deleteTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('locations.deleteBody')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{tCommon('cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Delete
+              {t('locations.deleteConfirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

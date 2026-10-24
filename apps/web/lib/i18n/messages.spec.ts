@@ -21,6 +21,7 @@ import {
   GEOGRAPHY_CODES,
   GEOGRAPHY_LABELS,
   INTENSITY_METRIC_KEYS,
+  SUBSIDIARY_STATUSES,
   INTENSITY_METRIC_META,
   UNNAMED_SITE_ENTITY_LABEL,
   WHOLE_COMPANY_ENTITY_LABEL,
@@ -131,6 +132,19 @@ describe("the catalogues", () => {
       'targets.tonnes',
       'intensity.perUnit',
       'intensity.formula',
+      // Formats with no words (LP4-04 slice 2 PR C).
+      'review.periodYear',
+      'review.tonnes',
+      'review.sheet.title',
+      'review.sheet.factorSource',
+      'audit.transition',
+      'audit.sheet.title',
+      'subsidiaries.detail.personPlaceholder',
+      'subsidiaries.detail.phonePlaceholder',
+      'subsidiaries.detail.titleLine',
+      'subsidiaries.locations.personPlaceholder',
+      'subsidiaries.locks.periodYear',
+      'subsidiaries.locks.granularity',
     ]);
     const other = leaves(MESSAGES[locale]);
     for (const [key, message] of en) {
@@ -271,6 +285,8 @@ describe("the dashboard and Emissions vocabularies (LP4-04 slice 2 PR B)", () =>
     expect(Object.keys(m.targetStatus).sort()).toEqual([...TARGET_STATUSES].sort());
     expect(Object.keys(m.targetBasis).sort()).toEqual([...TARGET_BASES].sort());
     expect(Object.keys(m.intensityMetrics).sort()).toEqual([...INTENSITY_METRIC_KEYS].sort());
+    // LP4-04 slice 2 PR C: a subsidiary's status, one word per SUBSIDIARY_STATUSES entry.
+    expect(Object.keys(m.subsidiaryStatus).sort()).toEqual([...SUBSIDIARY_STATUSES].sort());
   });
 
   it("English is the contract's own wording, unchanged (metric labels, the reporting entity's phrases)", () => {

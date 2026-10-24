@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { BulkImportAuditDiff, BulkSubmitAuditDiff } from '@tonyai/shared-types';
-import { actorLabel, summariseBatch } from './audit-view';
+import { actorLabel as actorLabelWith, summariseBatch as summariseBatchWith } from './audit-view';
+import { copyFor } from '@/lib/i18n/testing';
+import { MESSAGES } from '@/messages';
+import type { Locale } from '@/lib/types';
 
-const row = (over: Partial<Parameters<typeof actorLabel>[0]> = {}) => ({
+const words = (locale: Locale = 'en') => ({ system: MESSAGES[locale].audit.system, deleted: MESSAGES[locale].common.actor.deleted });
+const actorLabel = (r: Parameters<typeof actorLabelWith>[0]) => actorLabelWith(r, words());
+const summariseBatch = (diff: Record<string, unknown>, locale: Locale = 'en') => summariseBatchWith(diff, copyFor('audit', locale));
+
+const row = (over: Partial<Parameters<typeof actorLabelWith>[0]> = {}) => ({
   userId: 'user-1' as string | null,
   userFullName: 'Ada Lovelace' as string | null,
   userEmail: 'ada@tonyai.local' as string | null,
@@ -116,5 +123,25 @@ describe('summariseBatch', () => {
     // A row written while the retry-without-caller-text path existed has no file name.
     expect(summariseBatch({ bulk: true, dryRun: false, sizeBytes: 1, totalRows: 1, acceptedCount: 1, rejectedCount: 0, callerTextOmitted: true })).toBe('1 imported');
     expect(summariseBatch({ bulk: true })).toBeNull();
+  });
+
+  it('reads in Turkish, its counts grouped, the stored reason as stored', () => {
+    expect(summariseBatch({ ...imported, acceptedCount: 1200 }, 'tr')).toBe('q3.csv · 1.200 içe aktarıldı · 1 reddedildi');
+    expect(summariseBatch({ ...imported, dryRun: true, rejectedCount: 0 }, 'tr')).toBe('q3.csv · deneme · 3 içe aktarılacaktı');
+    expect(summariseBatch(submitted, 'tr')).toBe('3 kaydın 2 tanesi gönderildi');
+    expect(summariseBatch({ bulk: true, refused: true, reason: 'Your role may not submit activity records' }, 'tr')).toBe(
+      'reddedildi · Your role may not submit activity records',
+    );
+    expect(summariseBatch({ ...imported, acceptedCount: 1200 })).toBe('q3.csv · 1,200 imported · 1 refused');
+  });
+});
+
+describe('actorLabel in Turkish', () => {
+  it("says 'sistem' and the deleted-user words from the catalogue", () => {
+    expect(actorLabelWith(row({ userId: null }), words('tr'))).toEqual({ text: 'sistem', muted: true });
+    expect(actorLabelWith(row({ userFullName: null, userEmail: null }), words('tr'))).toEqual({
+      text: MESSAGES.tr.common.actor.deleted,
+      muted: true,
+    });
   });
 });

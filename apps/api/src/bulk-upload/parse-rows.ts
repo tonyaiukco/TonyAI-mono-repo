@@ -1,6 +1,7 @@
 import { checkParserDeadline } from '../common/work-deadline';
 import { isUtf8 } from 'node:buffer';
 import { BadRequestException } from '@nestjs/common';
+import { errorBody } from '../common/api-error';
 import Papa from 'papaparse';
 import {
   BULK_UPLOAD_ALLOWED_EXTENSIONS,
@@ -224,7 +225,11 @@ function emptyCells(): Record<BulkUploadColumn, string> {
 /** The row-cap refusal, naming the POPULATED rows — a count the user can check. */
 function tooManyRows(count: number): BadRequestException {
   return new BadRequestException(
-    `The file has ${count} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
+    errorBody(
+      'bulk_too_many_rows',
+      `The file has ${count} rows; the limit is ${BULK_UPLOAD_MAX_ROWS}. Split it and upload the parts.`,
+      { rows: count, max: BULK_UPLOAD_MAX_ROWS },
+    ),
   );
 }
 
@@ -257,7 +262,7 @@ export const FILE_NOT_UTF8 =
  * the remedy is the same sentence, so it is the same refusal.
  */
 function requireUtf8(buffer: Buffer): void {
-  if (!isUtf8(buffer) || buffer.includes(0)) throw new BadRequestException(FILE_NOT_UTF8);
+  if (!isUtf8(buffer) || buffer.includes(0)) throw new BadRequestException(errorBody('bulk_file_encoding', FILE_NOT_UTF8));
 }
 
 function parseCsv(buffer: Buffer): ParsedRow[] {
@@ -281,7 +286,7 @@ function parseCsv(buffer: Buffer): ParsedRow[] {
     skipEmptyLines: false,
   });
   const table = parsed.data;
-  if (table.length === 0) throw new BadRequestException('The file is empty.');
+  if (table.length === 0) throw new BadRequestException(errorBody('bulk_file_empty', 'The file is empty.'));
 
   const columns = mapHeader(table[0] ?? []);
   // Capped here as well as in the service: the service's check runs AFTER this
@@ -484,7 +489,7 @@ export async function parseRows(
   if (extension === '.xlsx') return parseXlsx(buffer);
   if (extension === '.csv') return parseCsv(buffer);
   throw new BadRequestException(
-    `Unsupported file type. Accepted: ${BULK_UPLOAD_ALLOWED_EXTENSIONS.join(', ')}.`,
+    errorBody('bulk_file_type', `Unsupported file type. Accepted: ${BULK_UPLOAD_ALLOWED_EXTENSIONS.join(', ')}.`),
   );
 }
 

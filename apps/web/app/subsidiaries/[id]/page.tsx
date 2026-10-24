@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useLocale, useTranslations } from "use-intl";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Sidebar } from "@/components/dashboard/sidebar";
@@ -32,33 +33,23 @@ import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
 import { LocationsPanel } from "@/components/subsidiaries/locations-panel";
 import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
-import { geographyLabel, geographyOptions } from "@/lib/types";
+import { geographyOptions, SUBSIDIARY_STATUSES } from "@/lib/types";
 import type {
   LocationDTO,
   SubsidiaryDTO,
+  SubsidiaryStatus,
   SubsidiarySummaryDTO,
 } from "@/lib/types";
-
-const STATUSES = ["pending", "active", "inactive"] as const;
+import { showErrorToast, useDescribeError } from "@/lib/i18n/hooks";
+import { formatNumber } from "@/lib/i18n/number";
+import { blockerLines, deletableNote, subsidiaryError } from "@/lib/subsidiaries-view";
+import { geographyLabel } from "@/lib/vocabulary";
 
 const statusClass: Record<string, string> = {
   active: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30",
   pending: "bg-amber-500/15 text-amber-600 border-amber-500/30",
   inactive: "bg-red-500/15 text-red-600 border-red-500/30",
 };
-
-/** Branch on the status, the way `/emissions` does. The register page still
- *  does a bare `toast.error(e.message)`, which turns an expired session into a
- *  cryptic 401 string. */
-function errMessage(e: unknown): string {
-  if (e instanceof ApiError) {
-    if (e.status === 401) return "Your session has expired — please sign in again.";
-    if (e.status === 403) return "You do not have access to this subsidiary.";
-    if (e.status >= 500) return "The service is unavailable right now.";
-    return e.message;
-  }
-  return (e as Error).message ?? "Something went wrong.";
-}
 
 type Form = {
   legalName: string;
@@ -67,7 +58,7 @@ type Form = {
   geographyCode: string;
   sector: string;
   businessArea: string;
-  reportingStatus: "pending" | "active" | "inactive";
+  reportingStatus: SubsidiaryStatus;
   designatedPerson: string;
   contactEmail: string;
   contactPhone: string;
@@ -98,13 +89,22 @@ export default function SubsidiaryDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const { user, setUser } = useAuthStore();
+  const t = useTranslations("subsidiaries");
+  const tStatus = useTranslations("subsidiaryStatus");
+  const tGeography = useTranslations("geography");
+  const tCommon = useTranslations("common");
+  const locale = useLocale();
+  const describe = useDescribeError();
+  // Branch on the status, the way `/emissions` does (`subsidiaryError`).
+  const errWords = useCallback((e: unknown) => subsidiaryError(e, { t, locale }, describe), [t, locale, describe]);
 
   const [subsidiary, setSubsidiary] = useState<SubsidiaryDTO | null>(null);
   const [locations, setLocations] = useState<LocationDTO[]>([]);
   const [summary, setSummary] = useState<SubsidiarySummaryDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // The cause, worded at render — so a language switch re-words it.
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [form, setForm] = useState<Form | null>(null);
   const [saving, setSaving] = useState(false);
   const [geoConfirm, setGeoConfirm] = useState<{ from: string; to: string } | null>(
@@ -135,14 +135,14 @@ export default function SubsidiaryDetailPage() {
           // Not just a toast: without this the render falls back to the
           // loading branch and an expired session looks like a spinner that
           // never resolves. The page has to say what happened.
-          setLoadError(errMessage(e));
-          toast.error(errMessage(e));
+          setLoadError(e ?? new Error("unknown"));
+          showErrorToast(errWords(e));
         }
       } finally {
         setLoading(false);
       }
     },
-    [id],
+    [id, errWords],
   );
 
   useEffect(() => {
@@ -157,7 +157,7 @@ export default function SubsidiaryDetailPage() {
     api
       .me()
       .then(setUser)
-      .catch((e) => toast.error(errMessage(e)));
+      .catch((e) => showErrorToast(errWords(e)));
     void load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -168,7 +168,7 @@ export default function SubsidiaryDetailPage() {
   async function handleSave() {
     if (!form || !subsidiary) return;
     if (form.legalName.trim().length < 2) {
-      toast.error("Legal name is required");
+      toast.error(t("fields.legalNameMissing"));
       return;
     }
     // Same reason as the register dialog: the geography decides which factor set
@@ -198,11 +198,11 @@ export default function SubsidiaryDetailPage() {
         contactPhone: orNull(form.contactPhone),
       });
       // The register page's exact wording — the same event, so the same words.
-      toast.success("Subsidiary settings updated successfully.");
+      toast.success(t("detail.saved"));
       setGeoConfirm(null);
       await load(true);
     } catch (e) {
-      toast.error(errMessage(e));
+      showErrorToast(errWords(e));
     } finally {
       setSaving(false);
     }
@@ -219,12 +219,12 @@ export default function SubsidiaryDetailPage() {
         <Sidebar />
         <main className="pl-[280px] transition-all duration-300">
           <div className="space-y-4 p-6">
-            <h1 className="text-2xl font-semibold">Subsidiary not found</h1>
+            <h1 className="text-2xl font-semibold">{t("detail.notFoundTitle")}</h1>
             <p className="text-sm text-muted-foreground">
-              This subsidiary does not exist, or you no longer have access to it.
+              {t("detail.notFoundBody")}
             </p>
             <Button variant="outline" onClick={() => router.push("/subsidiaries")}>
-              <ArrowLeft className="h-4 w-4" /> Back to subsidiaries
+              <ArrowLeft className="h-4 w-4" /> {t("detail.backToList")}
             </Button>
           </div>
         </main>
@@ -243,16 +243,17 @@ export default function SubsidiaryDetailPage() {
                 href="/subsidiaries"
                 className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
               >
-                <ArrowLeft className="h-4 w-4" /> Subsidiaries
+                <ArrowLeft className="h-4 w-4" /> {t("detail.back")}
               </Link>
               <h1 className="flex items-center gap-2 text-2xl font-semibold text-foreground">
                 <Building2 className="h-5 w-5 text-primary" />
-                {loading ? "Loading…" : (subsidiary?.legalName ?? "")}
+                {loading ? tCommon("loading") : (subsidiary?.legalName ?? "")}
               </h1>
               {subsidiary && (
                 <p className="text-sm text-muted-foreground">
-                  {geographyLabel(subsidiary.geographyCode)}
-                  {subsidiary.sector ? ` · ${subsidiary.sector}` : ""}
+                  {subsidiary.sector
+                    ? t("detail.titleLine", { geography: geographyLabel(subsidiary.geographyCode, tGeography), sector: subsidiary.sector })
+                    : geographyLabel(subsidiary.geographyCode, tGeography)}
                 </p>
               )}
             </div>
@@ -261,55 +262,55 @@ export default function SubsidiaryDetailPage() {
                 variant="outline"
                 className={statusClass[subsidiary.reportingStatus]}
               >
-                {subsidiary.reportingStatus}
+                {tStatus(subsidiary.reportingStatus)}
               </Badge>
             )}
           </div>
 
           {!canManage && !loading && (
             <p className="rounded-lg border border-border bg-muted/60 p-3 text-sm text-muted-foreground">
-              You can view this subsidiary, but only a super_admin can change it.
+              {t("detail.readOnly")}
             </p>
           )}
 
           {loadError ? (
             <div className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4">
               <p className="text-sm font-medium text-destructive">
-                This subsidiary could not be loaded.
+                {t("detail.loadFailed")}
               </p>
-              <p className="text-sm text-muted-foreground">{loadError}</p>
+              <p className="text-sm text-muted-foreground">{errWords(loadError).title}</p>
               <Button variant="outline" onClick={() => void load(true)}>
-                Try again
+                {t("detail.tryAgain")}
               </Button>
             </div>
           ) : loading || !form || !subsidiary ? (
-            <p className="text-sm text-muted-foreground">Loading subsidiary…</p>
+            <p className="text-sm text-muted-foreground">{t("detail.loading")}</p>
           ) : (
             <>
               <Card>
                 <CardHeader>
-                  <CardTitle>Details</CardTitle>
+                  <CardTitle>{t("detail.details")}</CardTitle>
                 </CardHeader>
                 <CardContent className="grid gap-4 md:grid-cols-2">
-                  <Field label="Legal name *">
+                  <Field label={t("fields.legalNameRequired")}>
                     <Input
-                      aria-label="Legal name"
+                      aria-label={t("fields.legalName")}
                       value={form.legalName}
                       disabled={!canManage}
                       onChange={(e) => setForm({ ...form, legalName: e.target.value })}
                     />
                   </Field>
-                  <Field label="Trading name">
+                  <Field label={t("fields.tradingName")}>
                     <Input
-                      aria-label="Trading name"
+                      aria-label={t("fields.tradingName")}
                       value={form.tradingName}
                       disabled={!canManage}
                       onChange={(e) => setForm({ ...form, tradingName: e.target.value })}
                     />
                   </Field>
-                  <Field label="Location">
+                  <Field label={t("fields.location")}>
                     <Input
-                      aria-label="Location"
+                      aria-label={t("fields.location")}
                       value={form.location}
                       disabled={!canManage}
                       onChange={(e) => setForm({ ...form, location: e.target.value })}
@@ -318,7 +319,7 @@ export default function SubsidiaryDetailPage() {
                   {/* Labelled "Reporting geography", not "Geography": the
                       locations panel below has its own `Geography *`, and a
                       label-scoped selector matching both would be ambiguous. */}
-                  <Field label="Reporting geography">
+                  <Field label={t("fields.reportingGeography")}>
                     <Select
                       value={form.geographyCode}
                       disabled={!canManage}
@@ -333,15 +334,15 @@ export default function SubsidiaryDetailPage() {
                           subsidiary.geographyCode,
                         ).map((code) => (
                           <SelectItem key={code} value={code}>
-                            {geographyLabel(code)}
+                            {geographyLabel(code, tGeography)}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field label="Sector">
+                  <Field label={t("fields.sector")}>
                     <Input
-                      aria-label="Sector"
+                      aria-label={t("fields.sector")}
                       value={form.sector}
                       disabled={!canManage}
                       onChange={(e) => setForm({ ...form, sector: e.target.value })}
@@ -349,15 +350,15 @@ export default function SubsidiaryDetailPage() {
                   </Field>
                   {/* Neither of these has ever had a UI, despite round-tripping
                       through the API since WP1. */}
-                  <Field label="Business area">
+                  <Field label={t("fields.businessArea")}>
                     <Input
-                      aria-label="Business area"
+                      aria-label={t("fields.businessArea")}
                       value={form.businessArea}
                       disabled={!canManage}
                       onChange={(e) => setForm({ ...form, businessArea: e.target.value })}
                     />
                   </Field>
-                  <Field label="Reporting status">
+                  <Field label={t("fields.reportingStatus")}>
                     <Select
                       value={form.reportingStatus}
                       disabled={!canManage}
@@ -369,15 +370,15 @@ export default function SubsidiaryDetailPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {STATUSES.map((s) => (
+                        {SUBSIDIARY_STATUSES.map((s) => (
                           <SelectItem key={s} value={s}>
-                            {s}
+                            {tStatus(s)}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field label="Scopes included">
+                  <Field label={t("fields.scopes")}>
                     <p className="pt-2 text-sm text-muted-foreground">
                       {subsidiary.includedScopes.join(", ")}
                     </p>
@@ -387,46 +388,42 @@ export default function SubsidiaryDetailPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Reporting contact</CardTitle>
+                  <CardTitle>{t("detail.contact")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <p className="text-sm text-muted-foreground">
-                    Who to reach about this subsidiary&apos;s data — the person who
-                    prepares or coordinates the inventory, not whoever signs it off.
-                    Visible to everyone in this organisation, including an external
-                    consultant, and kept in the audit trail, so prefer a{" "}
-                    <strong>role mailbox</strong> over a personal number.
+                    {t.rich("detail.contactHint", { strong: (chunks) => <strong>{chunks}</strong> })}
                   </p>
                   <div className="grid gap-4 md:grid-cols-3">
-                    <Field label="Responsible person">
+                    <Field label={t("detail.person")}>
                       <Input
-                        aria-label="Responsible person"
+                        aria-label={t("detail.person")}
                         value={form.designatedPerson}
                         disabled={!canManage}
-                        placeholder="Aylin Demir"
+                        placeholder={t("detail.personPlaceholder")}
                         onChange={(e) =>
                           setForm({ ...form, designatedPerson: e.target.value })
                         }
                       />
                     </Field>
-                    <Field label="Work email">
+                    <Field label={t("detail.email")}>
                       <Input
-                        aria-label="Work email"
+                        aria-label={t("detail.email")}
                         type="email"
                         value={form.contactEmail}
                         disabled={!canManage}
-                        placeholder="esg@company.com"
+                        placeholder={t("detail.emailPlaceholder")}
                         onChange={(e) =>
                           setForm({ ...form, contactEmail: e.target.value })
                         }
                       />
                     </Field>
-                    <Field label="Work phone">
+                    <Field label={t("detail.phone")}>
                       <Input
-                        aria-label="Work phone"
+                        aria-label={t("detail.phone")}
                         value={form.contactPhone}
                         disabled={!canManage}
-                        placeholder="+90 212 000 00 00"
+                        placeholder={t("detail.phonePlaceholder")}
                         onChange={(e) =>
                           setForm({ ...form, contactPhone: e.target.value })
                         }
@@ -439,7 +436,7 @@ export default function SubsidiaryDetailPage() {
               {canManage && (
                 <div className="flex items-center gap-3">
                   <Button onClick={handleSave} disabled={saving || !dirty}>
-                    {saving ? "Saving…" : "Save changes"}
+                    {saving ? tCommon("saving") : t("detail.save")}
                   </Button>
                   {/* A page has no Cancel-to-close, so discarding is explicit.
                       The register dialog's Cancel was the only way to prove a
@@ -449,11 +446,11 @@ export default function SubsidiaryDetailPage() {
                     onClick={discard}
                     disabled={saving || !dirty}
                   >
-                    Discard changes
+                    {t("detail.discard")}
                   </Button>
                   {dirty && (
                     <span className="text-xs text-muted-foreground">
-                      Unsaved changes
+                      {t("detail.unsaved")}
                     </span>
                   )}
                 </div>
@@ -463,10 +460,10 @@ export default function SubsidiaryDetailPage() {
                 <CardHeader className="flex flex-row items-center justify-between">
                   <CardTitle className="flex items-center gap-2">
                     <MapPin className="h-4 w-4 text-primary" />
-                    Operational locations
+                    {t("detail.locations")}
                   </CardTitle>
                   <Button variant="outline" size="sm" onClick={() => setLocksOpen(true)}>
-                    <Lock className="h-4 w-4" /> Reporting periods
+                    <Lock className="h-4 w-4" /> {t("detail.periods")}
                   </Button>
                 </CardHeader>
                 <CardContent>
@@ -501,23 +498,16 @@ export default function SubsidiaryDetailPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Change geography from {geoConfirm?.from} to {geoConfirm?.to}?
+              {t("geographyChange.title", { from: geoConfirm?.from ?? "", to: geoConfirm?.to ?? "" })}
             </AlertDialogTitle>
-            <AlertDialogDescription>
-              Warning: Changing the geography will change the configured factor
-              basis for geography dependent calculations. This may require
-              recalculation of affected Scope 2 records for selected reporting
-              periods. Do you want to continue?
-            </AlertDialogDescription>
+            <AlertDialogDescription>{t("geographyChange.body")}</AlertDialogDescription>
           </AlertDialogHeader>
           <div className="rounded-lg bg-muted/60 p-3 text-sm text-muted-foreground">
-            Records already committed keep the emission factor they were
-            calculated with — those figures do not change. The new geography
-            applies to records created from now on.
+            {t("geographyChange.subsidiaryNote")}
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={persist}>Continue</AlertDialogAction>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={persist}>{t("geographyChange.continue")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -533,30 +523,32 @@ export default function SubsidiaryDetailPage() {
  * extracted to prevent, one level up.
  */
 function DependentsCard({ summary }: { summary: SubsidiarySummaryDTO }) {
+  const t = useTranslations("subsidiaries");
+  const locale = useLocale();
   const rows: [string, number][] = [
-    ["Locations", summary.locations],
+    [t("dependents.locations"), summary.locations],
     // Matches the API's own refusal sentence. `terminalRecords` counts
     // everything that can never be deleted, and voided rows are in it — a
     // label naming only two of the three states put a mislabelled count
     // directly above a blocker sentence naming all three.
-    ["Approved, locked or voided records", summary.terminalRecords],
-    ["Records awaiting review", summary.reviewRecords],
-    ["Draft or rejected records", summary.openRecords],
-    ["Closed reporting periods", summary.periodLocks],
-    ["Reduction targets", summary.targets],
-    ["Intensity denominators", summary.denominators],
+    [t("dependents.terminalRecords"), summary.terminalRecords],
+    [t("dependents.reviewRecords"), summary.reviewRecords],
+    [t("dependents.openRecords"), summary.openRecords],
+    [t("dependents.periodLocks"), summary.periodLocks],
+    [t("dependents.targets"), summary.targets],
+    [t("dependents.denominators"), summary.denominators],
   ];
   return (
     <Card>
       <CardHeader>
-        <CardTitle>What depends on this subsidiary</CardTitle>
+        <CardTitle>{t("dependents.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <dl className="grid gap-x-6 gap-y-2 md:grid-cols-2">
           {rows.map(([label, n]) => (
             <div key={label} className="flex justify-between border-b border-border/60 py-1">
               <dt className="text-sm text-muted-foreground">{label}</dt>
-              <dd className="font-mono text-sm">{n}</dd>
+              <dd className="font-mono text-sm">{formatNumber(n, locale)}</dd>
             </div>
           ))}
         </dl>
@@ -564,19 +556,17 @@ function DependentsCard({ summary }: { summary: SubsidiarySummaryDTO }) {
           <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
             <p className="flex items-center gap-2 text-sm font-medium text-amber-700">
               <ShieldAlert className="h-4 w-4" />
-              This subsidiary cannot be deleted
+              {t("dependents.blocked")}
             </p>
             <ul className="list-inside list-disc space-y-1 text-sm text-muted-foreground">
-              {summary.blockers.map((b) => (
+              {blockerLines(summary, { t, locale }).map((b) => (
                 <li key={b}>{b}</li>
               ))}
             </ul>
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            {summary.locations > 0
-              ? `This subsidiary can be deleted from the register. Its ${summary.locations} location${summary.locations === 1 ? "" : "s"} would go with it, each recorded in the audit log.`
-              : "Nothing depends on this subsidiary, so it can be deleted from the register."}
+            {deletableNote(summary.locations, { t, locale })}
           </p>
         )}
       </CardContent>

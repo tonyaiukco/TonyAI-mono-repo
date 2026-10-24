@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { BULK_SUBMIT_ISSUE_CODES, BULK_SUBMIT_MAX_IDS } from '@/lib/types';
 import type {
   BulkSubmitIssue,
+  BulkSubmitIssueCode,
   BulkSubmitReportDTO,
   BulkUploadAcceptedRow,
 } from '@/lib/types';
@@ -25,7 +26,6 @@ import {
   submitBlockReason as submitBlockReasonIn,
   submitConfirmation as submitConfirmationIn,
   submitErrorMessage as submitErrorMessageIn,
-  SUBMIT_ISSUE_LABEL,
   submitIssueLabel,
   submitIssueMessage,
   summariseSubmit as summariseSubmitIn,
@@ -36,6 +36,11 @@ import type { Locale } from '@/lib/types';
 
 // The screens pass their language's copy; these specs assert the English
 // catalogue (the text the screens showed before LP4-04) unless they say so.
+
+/** What each refusal is called on screen — the English catalogue, typed
+ *  exhaustive, so a new code is a compile error here (follow-up (15)). */
+const SUBMIT_ISSUE_LABEL: Record<BulkSubmitIssueCode, string> = en.bulkIssues;
+
 const copy = (locale: Locale = 'en') => copyFor('bulkSubmit', locale);
 const eligibleForSubmit = (rows: BulkUploadAcceptedRow[], locale: Locale = 'en') => eligibleForSubmitIn(rows, copy(locale));
 const submitConfirmation = (n: number, locale: Locale = 'en') => submitConfirmationIn(n, copy(locale));

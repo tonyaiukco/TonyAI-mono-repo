@@ -132,7 +132,19 @@ describe('IntensityService', () => {
   it('createDenominator rejects a subsidiary outside the accessible set (404)', async () => {
     await expect(
       service.createDenominator(admin, { ...createInput, subsidiaryId: 'sub-999' }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toMatchObject({ response: { code: 'subsidiary_not_found' } });
+  });
+
+  it('update/remove answer one coded 404 for a foreign denominator and a missing one', async () => {
+    prisma.subsidiaryDenominator.findUnique.mockResolvedValue(makeDenominator({ subsidiaryId: 'sub-999' }));
+    const foreign = await service.removeDenominator(admin, 'den-1').catch((e: NotFoundException) => e.getResponse());
+    prisma.subsidiaryDenominator.findUnique.mockResolvedValue(null);
+    const missing = await service
+      .updateDenominator(admin, 'den-1', { value: 1 })
+      .catch((e: NotFoundException) => e.getResponse());
+    expect(foreign).toEqual({ statusCode: 404, error: 'Not Found', message: 'Denominator not found', code: 'denominator_not_found' });
+    expect(missing).toEqual(foreign);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('createDenominator maps a unique clash to 409', async () => {
@@ -145,6 +157,9 @@ describe('IntensityService', () => {
     await expect(
       service.createDenominator(admin, createInput),
     ).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.createDenominator(admin, createInput)).rejects.toMatchObject({
+      response: { code: 'denominator_duplicate' },
+    });
   });
 
   it('createDenominator writes the row and an audit row (entity denominator)', async () => {

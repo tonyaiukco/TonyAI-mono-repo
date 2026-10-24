@@ -24,12 +24,11 @@ import { appendById, isStaleCursor } from '@/lib/cursor-pages';
 import { LoadMoreButton } from '@/components/ui/load-more-button';
 import { DEFAULT_REPORTING_YEAR, PERIOD_VALUES, REPORTING_YEARS } from '@/lib/types';
 import type { PeriodLockDTO, ReportingPeriod, SubsidiaryDTO } from '@/lib/types';
+import { useTranslations } from 'use-intl';
+import { useErrorToast, useRecordWords } from '@/lib/i18n/hooks';
 
-const PERIODS: { value: ReportingPeriod; label: string }[] = [
-  { value: 'quarterly', label: 'Quarterly' },
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'annual', label: 'Annual' },
-];
+/** In the order the form offers them; named by `periods.granularity.*`. */
+const PERIODS: readonly ReportingPeriod[] = ['quarterly', 'monthly', 'annual'];
 // Same canonical vocabulary the entry form and the server use — a lock keyed
 // on a spelling no record carries would close nothing.
 
@@ -46,6 +45,16 @@ export function PeriodLocksDrawer({
   canManage,
   onClose,
 }: PeriodLocksDrawerProps) {
+  const t = useTranslations('subsidiaries');
+  const tPeriods = useTranslations('periods');
+  const tCommon = useTranslations('common');
+  const words = useRecordWords();
+  const showError = useErrorToast();
+  // The ref keeps `refresh` stable: a language switch re-words, never re-reads.
+  const showErrorRef = useRef(showError);
+  useEffect(() => {
+    showErrorRef.current = showError;
+  }, [showError]);
   // The loaded pages of this subsidiary's locks, newest first (LP4-05 PR C).
   const [locks, setLocks] = useState<PeriodLockDTO[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -72,7 +81,7 @@ export function PeriodLocksDrawer({
       setLocks(page.items);
       setNextCursor(page.nextCursor);
     } catch (e) {
-      if (mine === loadSeq.current) toast.error((e as Error).message);
+      if (mine === loadSeq.current) showErrorRef.current(e);
     } finally {
       if (mine === loadSeq.current) setLoading(false);
     }
@@ -89,7 +98,7 @@ export function PeriodLocksDrawer({
       setNextCursor(page.nextCursor);
     } catch (e) {
       if (mine !== loadSeq.current) return;
-      toast.error((e as Error).message);
+      showError(e);
       if (isStaleCursor(e)) void refresh();
     } finally {
       setLoadingMore(false);
@@ -110,10 +119,10 @@ export function PeriodLocksDrawer({
         reportingPeriod: period,
         periodValue,
       });
-      toast.success(`Locked ${periodValue} ${year} — records in this period are now frozen`);
+      toast.success(t('locks.locked', { period: words.period(periodValue), year }));
       await refresh();
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     } finally {
       setSaving(false);
     }
@@ -122,10 +131,10 @@ export function PeriodLocksDrawer({
   async function handleUnlock(lock: PeriodLockDTO) {
     try {
       await api.unlockPeriod(lock.id);
-      toast.success(`Unlocked ${lock.periodValue} ${lock.reportingYear}`);
+      toast.success(t('locks.unlocked', { period: words.period(lock.periodValue), year: lock.reportingYear }));
       await refresh();
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     }
   }
 
@@ -137,21 +146,20 @@ export function PeriodLocksDrawer({
             <SheetHeader>
               <SheetTitle className="flex items-center gap-2">
                 <Lock className="h-4 w-4 text-primary" />
-                Period locks
+                {t('locks.title')}
               </SheetTitle>
               <SheetDescription>
-                {subsidiary.tradingName ?? subsidiary.legalName} — a locked
-                period rejects any new, edited or submitted records (FR §4.2).
+                {t('locks.description', { name: subsidiary.tradingName ?? subsidiary.legalName })}
               </SheetDescription>
             </SheetHeader>
 
             <div className="mt-6 space-y-6">
               {/* Locked periods */}
               {loading ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
+                <p className="py-6 text-center text-sm text-muted-foreground">{tCommon('loading')}</p>
               ) : locks.length === 0 ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">
-                  No locked periods — all reporting periods are open.
+                  {t('locks.empty')}
                 </p>
               ) : (
                 <div className="space-y-2">
@@ -163,9 +171,15 @@ export function PeriodLocksDrawer({
                       <div className="flex items-center gap-2 text-sm">
                         <Lock className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="font-medium text-foreground">
-                          {l.periodValue} {l.reportingYear}
+                          {t('locks.periodYear', { period: words.period(l.periodValue), year: l.reportingYear })}
                         </span>
-                        <span className="text-xs text-muted-foreground">({l.reportingPeriod})</span>
+                        <span className="text-xs text-muted-foreground">
+                          {t('locks.granularity', {
+                            granularity: tPeriods.has(`granularityInline.${l.reportingPeriod}`)
+                              ? tPeriods(`granularityInline.${l.reportingPeriod as ReportingPeriod}`)
+                              : l.reportingPeriod,
+                          })}
+                        </span>
                       </div>
                       {canManage && (
                         <Button
@@ -175,7 +189,7 @@ export function PeriodLocksDrawer({
                           onClick={() => void handleUnlock(l)}
                         >
                           <LockOpen className="h-3.5 w-3.5" />
-                          Unlock
+                          {t('locks.unlock')}
                         </Button>
                       )}
                     </div>
@@ -184,7 +198,7 @@ export function PeriodLocksDrawer({
                     hasMore={nextCursor !== null}
                     loading={loadingMore}
                     onClick={() => void loadMore()}
-                    label="Load more locks"
+                    label={t('locks.loadMore')}
                     testId="period-locks-load-more"
                   />
                 </div>
@@ -193,10 +207,10 @@ export function PeriodLocksDrawer({
               {/* Lock a period — super_admin only */}
               {canManage ? (
                 <div className="space-y-4 border-t border-border pt-4">
-                  <h4 className="text-sm font-medium">Close a reporting period</h4>
+                  <h4 className="text-sm font-medium">{t('locks.closeTitle')}</h4>
                   <div className="grid grid-cols-3 gap-2">
                     <div className="space-y-1.5">
-                      <Label>Year</Label>
+                      <Label>{t('locks.year')}</Label>
                       <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
@@ -207,7 +221,7 @@ export function PeriodLocksDrawer({
                       </Select>
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Period</Label>
+                      <Label>{t('locks.period')}</Label>
                       <Select
                         value={period}
                         onValueChange={(v) => {
@@ -219,18 +233,18 @@ export function PeriodLocksDrawer({
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           {PERIODS.map((p) => (
-                            <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                            <SelectItem key={p} value={p}>{tPeriods(`granularity.${p}`)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Value</Label>
+                      <Label>{t('locks.value')}</Label>
                       <Select value={periodValue} onValueChange={setPeriodValue}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           {PERIOD_VALUES[period].map((v) => (
-                            <SelectItem key={v} value={v}>{v}</SelectItem>
+                            <SelectItem key={v} value={v}>{words.period(v)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -238,16 +252,15 @@ export function PeriodLocksDrawer({
                   </div>
                   <Button className="w-full gap-2" onClick={handleLock} disabled={saving}>
                     <Lock className="h-4 w-4" />
-                    {saving ? 'Locking…' : 'Lock period'}
+                    {saving ? t('locks.locking') : t('locks.lock')}
                   </Button>
                   <p className="text-xs text-muted-foreground">
-                    Committed records in the period flip to <em>locked</em>;
-                    unlocking reverts them to <em>approved</em>. Both actions are audited.
+                    {t.rich('locks.hint', { em: (chunks) => <em>{chunks}</em> })}
                   </p>
                 </div>
               ) : (
                 <p className="border-t border-border pt-4 text-xs text-muted-foreground">
-                  Only a super_admin can lock or unlock reporting periods.
+                  {t('locks.readOnly')}
                 </p>
               )}
             </div>

@@ -205,6 +205,7 @@ describe('ImportBatchesService — the source file', () => {
     storage.createSignedUrl.mockRejectedValue(new StorageObjectMissingError('import-sources', 'x'));
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     await expect(service.sourceUrl(user(), BATCH)).rejects.toThrow(/missing from storage/);
+    await expect(service.sourceUrl(user(), BATCH)).rejects.toMatchObject({ response: { code: 'import_source_missing' } });
     expect(logged).toHaveBeenCalled();
     const reported = vi.mocked(captureException).mock.calls.at(-1)![0] as Error;
     expect(reported.message).toContain(BATCH);
@@ -217,10 +218,15 @@ describe('ImportBatchesService — the source file', () => {
   it('404s a batch whose file is not kept, and signs nothing for an invisible one', async () => {
     const { prisma, storage, service } = build();
     prisma.importBatch.findUnique.mockResolvedValue(batch({ storagePath: null }));
-    await expect(service.sourceUrl(user(), BATCH)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.sourceUrl(user(), BATCH)).rejects.toMatchObject({
+      response: { code: 'import_source_not_retained' },
+    });
 
-    prisma.importBatch.findUnique.mockResolvedValue(batch({ uploadedBy: 'someone-else' }));
-    await expect(service.sourceUrl(user(), BATCH)).rejects.toBeInstanceOf(NotFoundException);
+    // Invisible: the batch's 404, before anything about its file is said.
+    prisma.importBatch.findUnique.mockResolvedValue(batch({ uploadedBy: 'someone-else', storagePath: null }));
+    await expect(service.sourceUrl(user(), BATCH)).rejects.toMatchObject({
+      response: { code: 'import_batch_not_found', message: 'Import not found' },
+    });
     expect(storage.createSignedUrl).not.toHaveBeenCalled();
   });
 });

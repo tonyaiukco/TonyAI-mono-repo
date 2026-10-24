@@ -45,11 +45,6 @@
       "geography": "Geography",
       "sector": "Sector",
       "status": "Status"
-    },
-    "status": {
-      "active": "active",
-      "pending": "pending",
-      "inactive": "inactive"
     }
   },
   "overview": {

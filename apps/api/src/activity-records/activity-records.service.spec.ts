@@ -2717,6 +2717,23 @@ describe('ActivityRecordsService — periodValue is canonicalised on write', () 
     ).rejects.toThrow(
       `"Ma<U+202E>r${'x'.repeat(36)}…" is not a valid period for a monthly record.`,
     );
+    // Coded with the canonical granularity only; the value never rides along.
+    const response = await service
+      .create(dataEntry(), monthly(`Ma${rlo}r`))
+      .catch((e: BadRequestException) => e.getResponse());
+    expect(response).toMatchObject({ code: 'record_period_invalid', params: { granularity: 'monthly' } });
+    expect(JSON.stringify((response as { params: unknown }).params)).not.toContain('Ma');
+  });
+
+  it('never echoes a non-canonical granularity in the params — a bulk row is caller text until checked', async () => {
+    // Called past the DTO, as an internal caller could: the guard, not the
+    // pipe, keeps the file's text out of `params` (security-rls P3-2).
+    const { service } = build(2);
+    const response = await service
+      .create(dataEntry(), { ...monthly('January'), reportingPeriod: 'weekly<b>' as never })
+      .catch((e: BadRequestException) => e.getResponse());
+    expect(response).toMatchObject({ code: 'record_period_invalid' });
+    expect((response as { params?: unknown }).params).toBeUndefined();
   });
 });
 
@@ -3560,6 +3577,33 @@ describe('ActivityRecordsService — the lifecycle protocol (LP1-01)', () => {
     await expect(service.startReview(consultant(), 'rec-r')).rejects.toThrow(
       /Only a submitted record can be taken into review/,
     );
+  });
+
+  // LP4-04 slice 2 PR C (M3): each transition refuses with its own code and
+  // the record's canonical status, so a screen words it; the English stays.
+  it.each([
+    ['update', 'record_not_editable', ActivityRecordStatus.approved, (s: ActivityRecordsService) =>
+      s.update(superAdmin(), 'rec-s', { activityValue: 1 })],
+    ['submit', 'record_not_submittable', ActivityRecordStatus.approved, (s: ActivityRecordsService) =>
+      s.submit(dataEntry(), 'rec-s')],
+    ['startReview', 'record_not_reviewable', ActivityRecordStatus.approved, (s: ActivityRecordsService) =>
+      s.startReview(consultant(), 'rec-s')],
+    ['approve', 'record_not_approvable', ActivityRecordStatus.draft, (s: ActivityRecordsService) =>
+      s.approve(superAdmin(), 'rec-s')],
+    ['void', 'record_not_voidable', ActivityRecordStatus.locked, (s: ActivityRecordsService) =>
+      s.void(superAdmin(), 'rec-s', 'reason')],
+    ['reject', 'record_not_rejectable', ActivityRecordStatus.draft, (s: ActivityRecordsService) =>
+      s.reject(consultant(), 'rec-s', 'reason')],
+  ] as const)('%s refuses a record in the wrong status as %s, naming the status', async (_name, code, status, call) => {
+    const { prisma, service } = build();
+    prisma.activityRecord.findUnique.mockResolvedValue(
+      makeRecord({ id: 'rec-s', status, createdBy: dataEntry().id }),
+    );
+    const response = await call(service).then(
+      () => { throw new Error('expected a refusal'); },
+      (e: BadRequestException) => e.getResponse(),
+    );
+    expect(response).toMatchObject({ statusCode: 400, code, params: { status } });
   });
 
   it('a gate the locked re-read still passes goes ahead from where the record now is', async () => {

@@ -76,6 +76,7 @@ function CarbonDashboardInner() {
   // LP3-02 N1: the one reporting selection, carried in the URL.
   const tContext = useTranslations('reportingContext');
   const tDashboard = useTranslations('dashboard');
+  const tSubsidiaryStatus = useTranslations('subsidiaryStatus');
   const tCategory = useTranslations('categories');
   const tCommon = useTranslations('common');
   const words = useRecordWords();
@@ -461,7 +462,7 @@ function CarbonDashboardInner() {
                             variant="outline"
                             className={statusClass[s.reportingStatus]}
                           >
-                            {tDashboard(`register.status.${s.reportingStatus}`)}
+                            {tSubsidiaryStatus(s.reportingStatus)}
                           </Badge>
                         </TableCell>
                       </TableRow>

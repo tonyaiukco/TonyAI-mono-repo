@@ -398,6 +398,10 @@ describe('SubsidiariesService', () => {
       await expect(
         service.update(user, 'sub-1', { trackingGranularity: 'location' }),
       ).rejects.toBeInstanceOf(BadRequestException);
+      // Pinned at the real throw site (qa-auditor P2: THROWERS builds its own body).
+      await expect(service.update(user, 'sub-1', { trackingGranularity: 'location' })).rejects.toMatchObject({
+        response: { code: 'subsidiary_location_required' },
+      });
       expect(prisma.txClient.subsidiary.update).not.toHaveBeenCalled();
     });
 
@@ -637,6 +641,8 @@ describe('SubsidiariesService', () => {
             'Those records cannot be deleted at any point, so a subsidiary that has ' +
             'reported data stays. Set its status to "inactive" to retire it instead.',
         ],
+        // The same refusal as facts (LP4-04 PR C): the terminal one stands alone.
+        blockerCounts: [{ kind: 'terminalRecords', count: 2 }],
       });
     });
 
@@ -739,8 +745,13 @@ describe('SubsidiariesService', () => {
       };
       byKey[key]();
 
-      expect((await service.summary(user, 'sub-1')).hasBlockingDependents).toBe(true);
+      const summary = await service.summary(user, 'sub-1');
+      expect(summary.hasBlockingDependents).toBe(true);
+      // The facts name the same dependent, with its count (LP4-04 PR C).
+      expect(summary.blockerCounts).toEqual([{ kind: key, count: 1 }]);
       await expect(service.remove(user, 'sub-1')).rejects.toBeInstanceOf(ConflictException);
+      // Coded, so a screen words it; the English sentence is unchanged.
+      await expect(service.remove(user, 'sub-1')).rejects.toMatchObject({ response: { code: 'subsidiary_in_use' } });
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
@@ -949,6 +960,30 @@ describe('SubsidiariesService', () => {
       );
     });
 
+  it('lists the removable dependents as facts in the order the sentence names them', async () => {
+      const user = makeSuperAdmin();
+      prisma.subsidiary.findUnique.mockResolvedValue(makeSubsidiary({ id: 'sub-1' }));
+      countRecords(prisma, ['submitted', 'draft', 'draft']);
+      countLocations(prisma, { total: 2, holdingForeign: 1 });
+      stubRead(prisma, (c) => c.periodLock.count, 3);
+      stubRead(prisma, (c) => c.target.count, 4);
+      stubRead(prisma, (c) => c.subsidiaryDenominator.count, 5);
+      countBoundaryVersions(prisma, { open: 6 });
+
+      const s = await service.summary(user, 'sub-1');
+      expect(s.blockerCounts).toEqual([
+        { kind: 'reviewRecords', count: 1 },
+        { kind: 'openRecords', count: 2 },
+        { kind: 'locationsHoldingForeignRecords', count: 1 },
+        { kind: 'periodLocks', count: 3 },
+        { kind: 'targets', count: 4 },
+        { kind: 'denominators', count: 5 },
+        { kind: 'openBoundaryVersions', count: 6 },
+      ]);
+      expect(s.blockers).toHaveLength(s.blockerCounts.length);
+      s.blockerCounts.forEach(({ count }, i) => expect(s.blockers[i].startsWith(`${count} `)).toBe(true));
+    });
+
   it('refuses to delete a subsidiary that still holds terminal records', async () => {
       // `ActivityRecord.subsidiary` is ON DELETE CASCADE, so a delete did not
       // detach those records — it DESTROYED them with their evidence, targets
@@ -980,6 +1015,8 @@ describe('SubsidiariesService', () => {
       const message = await refusal(service.remove(user, 'sub-1'));
       expect(message).toMatch(/declared in 2 confirmed or captured inventory boundary version\(s\)/);
       expect(message).toMatch(/"inactive"/);
+      // The same refusal as facts, standing alone as its sentence does.
+      expect((await service.summary(user, 'sub-1')).blockerCounts).toEqual([{ kind: 'frozenBoundaryVersions', count: 2 }]);
       expect(prisma.txClient.subsidiary.delete).not.toHaveBeenCalled();
     });
 
@@ -1004,8 +1041,9 @@ describe('SubsidiariesService', () => {
       const s = await service.summary(user, 'sub-1');
       expect(s.hasBlockingDependents).toBe(true);
       expect(s.blockers).toEqual(['1 open inventory boundary version(s) declaring it']);
+      expect(s.blockerCounts).toEqual([{ kind: 'openBoundaryVersions', count: 1 }]);
       expect(Object.keys(s).sort()).toEqual([
-        'blockers', 'denominators', 'hasBlockingDependents', 'locations', 'openRecords',
+        'blockerCounts', 'blockers', 'denominators', 'hasBlockingDependents', 'locations', 'openRecords',
         'periodLocks', 'reviewRecords', 'subsidiaryId', 'targets', 'terminalRecords',
       ]);
     });

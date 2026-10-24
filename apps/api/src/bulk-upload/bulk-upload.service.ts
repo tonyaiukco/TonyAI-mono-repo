@@ -59,7 +59,7 @@ import { StorageIntentsService, type ObjectRef } from '../storage/storage-intent
 import { IMPORT_SOURCES_BUCKET } from '../storage/buckets';
 import { BulkUploadOptionsDto } from './dto/bulk-upload-options.dto';
 import { InaccessibleEntityError } from './errors';
-import { QueryTooBroadError } from '../common/api-error';
+import { errorBody, QueryTooBroadError } from '../common/api-error';
 import { failureCode } from '../common/coded-validation.pipe';
 import {
   extensionOf,
@@ -212,7 +212,7 @@ export class BulkUploadService {
       const upload = file as Express.Multer.File;
       const parsed = await withParserDeadline(() => parseRows(upload.buffer, upload.originalname));
       if (parsed.length === 0) {
-        throw new BadRequestException('The file has no data rows.');
+        throw new BadRequestException(errorBody('bulk_no_rows', 'The file has no data rows.'));
       }
       // The row cap is `parseRows`'s: it counts populated rows and throws
       // before this line, so a second check here could never fire.
@@ -663,7 +663,7 @@ export class BulkUploadService {
   }
 
   private assertAcceptableFile(file: Express.Multer.File | undefined): void {
-    if (!file) throw new BadRequestException('No file was uploaded.');
+    if (!file) throw new BadRequestException(errorBody('bulk_file_missing', 'No file was uploaded.'));
     // Defence in depth, and unreachable over HTTP: multer's own
     // `limits.fileSize` fires first and Nest turns it into a 413. Kept because
     // this service is also called from the spec, and because a future caller
@@ -688,7 +688,7 @@ export class BulkUploadService {
     // spreadsheet.
     if (!extensionOk) {
       throw new BadRequestException(
-        `Upload a ${BULK_UPLOAD_ALLOWED_EXTENSIONS.join(' or ')} file.`,
+        errorBody('bulk_file_type', `Upload a ${BULK_UPLOAD_ALLOWED_EXTENSIONS.join(' or ')} file.`),
       );
     }
   }

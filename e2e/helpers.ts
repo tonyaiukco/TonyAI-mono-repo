@@ -16,6 +16,8 @@ export const CONSULTANT_EMAIL = 'review@tonyai.local';
 /** A second super_admin. The approver may not be the record's creator
  * (decision D01), so whatever ADMIN creates, APPROVER approves. */
 export const APPROVER_EMAIL = 'approver@tonyai.local';
+/** The read-only executive viewer (LP4-04 slice 2 PR C): org-wide reads, no writes. */
+export const VIEWER_EMAIL = 'viewer@tonyai.local';
 
 // NestJS API (versioned prefix). Absolute so it ignores the page baseURL.
 export const API_BASE = 'http://localhost:3001/api/v1';
@@ -81,7 +83,7 @@ export async function login(page: Page, email: string, password = PASSWORD): Pro
 
 /** Every seed user back to English (globalSetup), through the API as the user would. */
 export async function resetSeedLanguages(request: APIRequestContext): Promise<void> {
-  for (const email of [ADMIN_EMAIL, APPROVER_EMAIL, ENTRY_EMAIL, CONSULTANT_EMAIL]) {
+  for (const email of [ADMIN_EMAIL, APPROVER_EMAIL, ENTRY_EMAIL, CONSULTANT_EMAIL, VIEWER_EMAIL]) {
     const token = await getAccessToken(request, email);
     const res = await request.patch(`${API_BASE}/me/preferences`, { headers: bearer(token), data: { language: 'en' } });
     if (res.status() !== 200) throw new Error(`reset language of ${email}: ${res.status()}`);

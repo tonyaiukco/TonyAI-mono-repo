@@ -35,7 +35,7 @@ import {
 } from '../activity-records/errors';
 import { FactorLibraryConflictError, NoEmissionFactorError } from '../calculations/errors';
 import { InaccessibleEntityError } from './errors';
-import { QueryTooBroadError } from '../common/api-error';
+import { errorCodeOf, QueryTooBroadError } from '../common/api-error';
 import { AuditService } from '../audit/audit.service';
 import { blockedUnitReason } from '../calculations/normalization';
 import { PrismaService } from '../prisma/prisma.service';
@@ -451,9 +451,10 @@ describe('BulkUploadService — the batch pre-flight', () => {
   });
 
   it.each([
-    ['no file', undefined, /No file/],
-    ['a renamed executable', csvFile([row()], { originalname: 'x.exe' }), /csv or \.xlsx/],
-    ['an oversized file', csvFile([row()], { size: 99_000_000 }), /larger than/],
+    ['no file', undefined, /No file/, 'bulk_file_missing'],
+    ['a renamed executable', csvFile([row()], { originalname: 'x.exe' }), /csv or \.xlsx/, 'bulk_file_type'],
+    // Unreachable over HTTP (multer answers 413 first), so left uncoded.
+    ['an oversized file', csvFile([row()], { size: 99_000_000 }), /larger than/, undefined],
     // cp1254 bytes, which is Excel's plain "CSV" export on a Turkish Windows.
     // A whole-file refusal like the others: an encoding is a property of the
     // file, so there is no such thing as one bad row to report.
@@ -461,12 +462,16 @@ describe('BulkUploadService — the batch pre-flight', () => {
       'a file that is not UTF-8',
       nonUtf8File(),
       /not UTF-8 text/,
+      'bulk_file_encoding',
     ],
-  ])('refuses %s', async (_label, file, pattern) => {
+  ])('refuses %s', async (_label, file, pattern, code) => {
     const { service } = build();
-    await expect(
-      service.import(dataEntry(), file as Express.Multer.File | undefined, NOTHING),
-    ).rejects.toThrow(pattern);
+    const error = await service
+      .import(dataEntry(), file as Express.Multer.File | undefined, NOTHING)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as Error).message).toMatch(pattern);
+    expect(errorCodeOf(error)).toBe(code);
   });
 
   it('accepts the MIME type Windows sends for a .csv', async () => {
@@ -1453,6 +1458,9 @@ describe('BulkUploadService — the remaining refusals', () => {
     await expect(
       service.import(dataEntry(), csvFile([]), NOTHING),
     ).rejects.toThrow(/no data rows/);
+    await expect(service.import(dataEntry(), csvFile([]), NOTHING)).rejects.toMatchObject({
+      response: { code: 'bulk_no_rows' },
+    });
   });
 
   it('accepts a spreadsheet whatever type the browser claims it is', async () => {

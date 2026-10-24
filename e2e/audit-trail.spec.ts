@@ -43,8 +43,9 @@ test('super_admin reads the trail; the newest entry is the action just performed
   const firstRow = page.locator('table tbody tr').first();
   await expect(firstRow).toContainText('submit');
   await expect(firstRow).toContainText('activity record');
-  // The actor's role at the time, read from the row.
-  await expect(firstRow).toContainText('super_admin');
+  // The actor's role at the time, read from the row — by its name (LP4-04
+  // slice 2 PR C); the action and entity stay raw identifiers (M2).
+  await expect(firstRow).toContainText('Super admin');
 });
 
 test('the viewer paginates rather than loading the whole trail', async ({

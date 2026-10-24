@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "use-intl";
+import { useLocale, useTranslations } from "use-intl";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
@@ -49,15 +49,16 @@ import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/store";
 import { LocationsDrawer } from "@/components/subsidiaries/locations-drawer";
 import { PeriodLocksDrawer } from "@/components/subsidiaries/period-locks-drawer";
-import { geographyLabel, geographyOptions } from "@/lib/types";
-import { MAX_LOCATIONS_PER_CREATE } from "@/lib/types";
+import { geographyOptions, MAX_LOCATIONS_PER_CREATE, SUBSIDIARY_STATUSES } from "@/lib/types";
 import type {
   CreateSubsidiaryLocationInput,
   LocationDTO,
   SubsidiaryDTO,
+  SubsidiaryStatus,
 } from "@/lib/types";
-
-const STATUSES = ["pending", "active", "inactive"] as const;
+import { useErrorToast } from "@/lib/i18n/hooks";
+import { formatNumber } from "@/lib/i18n/number";
+import { geographyLabel } from "@/lib/vocabulary";
 
 const statusClass: Record<string, string> = {
   active: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30",
@@ -71,11 +72,17 @@ const emptyForm = {
   location: "",
   geographyCode: "TR",
   sector: "",
-  reportingStatus: "pending" as "pending" | "active" | "inactive",
+  reportingStatus: "pending" as SubsidiaryStatus,
 };
 
 export default function SubsidiariesPage() {
   const tRoles = useTranslations("users");
+  const t = useTranslations("subsidiaries");
+  const tStatus = useTranslations("subsidiaryStatus");
+  const tGeography = useTranslations("geography");
+  const tCommon = useTranslations("common");
+  const locale = useLocale();
+  const showError = useErrorToast();
   const router = useRouter();
   const { user, setUser } = useAuthStore();
   const [subsidiaries, setSubsidiaries] = useState<SubsidiaryDTO[]>([]);
@@ -112,7 +119,7 @@ export default function SubsidiariesPage() {
       setSubsidiaries(list);
       setLocations(locs);
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     } finally {
       setLoading(false);
     }
@@ -122,7 +129,7 @@ export default function SubsidiariesPage() {
     api
       .me()
       .then(setUser)
-      .catch((e) => toast.error((e as Error).message));
+      .catch(showError);
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -152,19 +159,17 @@ export default function SubsidiariesPage() {
   function addDraftLocation() {
     const name = draftName.trim();
     if (name.length === 0) {
-      toast.error("A location needs a name");
+      toast.error(t("create.draftNameRequired"));
       return;
     }
     if (draftLocations.some((l) => l.name.toLowerCase() === name.toLowerCase())) {
-      toast.error(`"${name}" is already in the list`);
+      toast.error(t("create.draftDuplicate", { name }));
       return;
     }
     // The same number the API enforces, from the same constant — a cap the
     // client cannot see is a 400 that arrives after the rows are typed.
     if (draftLocations.length >= MAX_LOCATIONS_PER_CREATE) {
-      toast.error(
-        `A subsidiary can be created with at most ${MAX_LOCATIONS_PER_CREATE} locations. Add the rest from its page.`,
-      );
+      toast.error(t("create.draftCap", { max: formatNumber(MAX_LOCATIONS_PER_CREATE, locale) }));
       return;
     }
     setDraftLocations([
@@ -177,7 +182,7 @@ export default function SubsidiariesPage() {
 
   async function handleSave() {
     if (form.legalName.trim().length < 2) {
-      toast.error("Legal name is required");
+      toast.error(t("fields.legalNameMissing"));
       return;
     }
     // Round-1 SUB-3: locations are the subsidiary's operational borders, and
@@ -185,7 +190,7 @@ export default function SubsidiariesPage() {
     // rather than letting a subsidiary start life with undefined borders. The
     // API stays permissive, deliberately (see CreateSubsidiaryDto).
     if (draftLocations.length === 0) {
-      toast.error("Add at least one operational location");
+      toast.error(t("create.locationRequired"));
       return;
     }
     await persist();
@@ -203,7 +208,7 @@ export default function SubsidiariesPage() {
         reportingStatus: form.reportingStatus,
       };
       const created = await api.createSubsidiary({ ...body, locations: draftLocations });
-      toast.success("Subsidiary created");
+      toast.success(t("list.created"));
       setAddOpen(false);
       setForm(emptyForm);
       setDraftLocations([]);
@@ -212,7 +217,7 @@ export default function SubsidiariesPage() {
       // register would mean finding the row you just made.
       router.push(`/subsidiaries/${created.id}`);
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     } finally {
       setSaving(false);
     }
@@ -222,10 +227,10 @@ export default function SubsidiariesPage() {
     if (!deletingId) return;
     try {
       await api.deleteSubsidiary(deletingId);
-      toast.success("Subsidiary deleted");
+      toast.success(t("list.deleted"));
       await refresh();
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     } finally {
       setDeletingId(null);
     }
@@ -244,17 +249,18 @@ export default function SubsidiariesPage() {
         <div className="space-y-6 p-6">
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-2xl font-semibold text-foreground">Subsidiaries</h1>
+              <h1 className="text-2xl font-semibold text-foreground">{t("list.title")}</h1>
               <p className="mt-1 text-muted-foreground">
-                Live data from the TonyAI API
-                {user ? ` · ${user.fullName} (${tRoles(`roles.${user.role}`)})` : ""}
+                {user
+                  ? t("list.subtitleUser", { name: user.fullName ?? "", role: tRoles(`roles.${user.role}`) })
+                  : t("list.subtitle")}
               </p>
             </div>
             <div className="flex items-center gap-2">
               {canManage && (
                 <Button onClick={openAdd} className="gap-2">
                   <Plus className="h-4 w-4" />
-                  Add Subsidiary
+                  {t("list.add")}
                 </Button>
               )}
               <SignOutButton onClick={handleLogout} />
@@ -262,34 +268,34 @@ export default function SubsidiariesPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <SummaryCard title="Total" value={total} icon={<Building2 className="h-4 w-4 text-primary" />} hint="Accessible to you" />
-            <SummaryCard title="Active" value={active} icon={<CheckCircle2 className="h-4 w-4 text-primary" />} hint="Reporting active" />
-            <SummaryCard title="Pending" value={pending} icon={<Clock className="h-4 w-4 text-primary" />} hint="Awaiting onboarding" />
-            <SummaryCard title="Geographies" value={geographies} icon={<Globe className="h-4 w-4 text-primary" />} hint="in use across the register" />
+            <SummaryCard title={t("list.cards.total")} value={formatNumber(total, locale)} icon={<Building2 className="h-4 w-4 text-primary" />} hint={t("list.cards.totalHint")} />
+            <SummaryCard title={t("list.cards.active")} value={formatNumber(active, locale)} icon={<CheckCircle2 className="h-4 w-4 text-primary" />} hint={t("list.cards.activeHint")} />
+            <SummaryCard title={t("list.cards.pending")} value={formatNumber(pending, locale)} icon={<Clock className="h-4 w-4 text-primary" />} hint={t("list.cards.pendingHint")} />
+            <SummaryCard title={t("list.cards.geographies")} value={formatNumber(geographies, locale)} icon={<Globe className="h-4 w-4 text-primary" />} hint={t("list.cards.geographiesHint")} />
           </div>
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Subsidiary register</CardTitle>
+              <CardTitle className="text-base">{t("list.register")}</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>
+                <p className="py-8 text-center text-sm text-muted-foreground">{tCommon("loading")}</p>
               ) : subsidiaries.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">
-                  No subsidiaries accessible to your account.
+                  {t("list.empty")}
                 </p>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Legal name</TableHead>
-                      <TableHead>Trading name</TableHead>
-                      <TableHead>Location</TableHead>
-                      <TableHead>Geo</TableHead>
-                      <TableHead>Sector</TableHead>
-                      <TableHead>Locations</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead>{t("list.columns.legalName")}</TableHead>
+                      <TableHead>{t("list.columns.tradingName")}</TableHead>
+                      <TableHead>{t("list.columns.location")}</TableHead>
+                      <TableHead>{t("list.columns.geo")}</TableHead>
+                      <TableHead>{t("list.columns.sector")}</TableHead>
+                      <TableHead>{t("list.columns.locations")}</TableHead>
+                      <TableHead>{t("list.columns.status")}</TableHead>
                       <TableHead className="w-10" />
                     </TableRow>
                   </TableHeader>
@@ -307,24 +313,24 @@ export default function SubsidiariesPage() {
                             size="sm"
                             onClick={() => setLocSubsidiaryId(s.id)}
                             className="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
-                            aria-label="Manage locations"
+                            aria-label={t("list.manageLocations")}
                           >
                             <MapPin className="h-3.5 w-3.5" />
-                            {locCount(s.id)}
+                            {formatNumber(locCount(s.id), locale)}
                           </Button>
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => setLockSubsidiaryId(s.id)}
                             className="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
-                            aria-label="Manage period locks"
+                            aria-label={t("list.manageLocks")}
                           >
                             <Lock className="h-3.5 w-3.5" />
                           </Button>
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={statusClass[s.reportingStatus]}>
-                            {s.reportingStatus}
+                            {tStatus(s.reportingStatus)}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -338,7 +344,7 @@ export default function SubsidiariesPage() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => router.push(`/subsidiaries/${s.id}`)}
-                                aria-label="Open subsidiary"
+                                aria-label={t("list.open")}
                               >
                                 <Pencil className="h-4 w-4 text-muted-foreground" />
                               </Button>
@@ -346,7 +352,7 @@ export default function SubsidiariesPage() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => setDeletingId(s.id)}
-                                aria-label="Delete subsidiary"
+                                aria-label={t("list.delete")}
                               >
                                 <Trash2 className="h-4 w-4 text-muted-foreground" />
                               </Button>
@@ -366,31 +372,31 @@ export default function SubsidiariesPage() {
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add subsidiary</DialogTitle>
+            <DialogTitle>{t("create.title")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <Field label="Legal name *">
+            <Field label={t("fields.legalNameRequired")}>
               <Input
                 value={form.legalName}
                 onChange={(e) => setForm({ ...form, legalName: e.target.value })}
-                placeholder="TonyAI Energy A.Ş."
+                placeholder={t("create.legalNamePlaceholder")}
               />
             </Field>
-            <Field label="Trading name">
+            <Field label={t("fields.tradingName")}>
               <Input
                 value={form.tradingName}
                 onChange={(e) => setForm({ ...form, tradingName: e.target.value })}
               />
             </Field>
-            <Field label="Location">
+            <Field label={t("fields.location")}>
               <Input
                 value={form.location}
                 onChange={(e) => setForm({ ...form, location: e.target.value })}
-                placeholder="Istanbul, Turkey"
+                placeholder={t("create.locationPlaceholder")}
               />
             </Field>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Geography">
+              <Field label={t("fields.geography")}>
                 <Select
                   value={form.geographyCode}
                   onValueChange={(v) => setForm({ ...form, geographyCode: v })}
@@ -405,13 +411,13 @@ export default function SubsidiariesPage() {
                         matching item and render a blank trigger. */}
                     {geographyOptions(form.geographyCode).map((g) => (
                       <SelectItem key={g} value={g}>
-                        {geographyLabel(g)}
+                        {geographyLabel(g, tGeography)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="Status">
+              <Field label={t("fields.status")}>
                 <Select
                   value={form.reportingStatus}
                   onValueChange={(v) =>
@@ -422,20 +428,20 @@ export default function SubsidiariesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {STATUSES.map((s) => (
+                    {SUBSIDIARY_STATUSES.map((s) => (
                       <SelectItem key={s} value={s}>
-                        {s}
+                        {tStatus(s)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </Field>
             </div>
-            <Field label="Sector">
+            <Field label={t("fields.sector")}>
               <Input
                 value={form.sector}
                 onChange={(e) => setForm({ ...form, sector: e.target.value })}
-                placeholder="Energy"
+                placeholder={t("create.sectorPlaceholder")}
               />
             </Field>
           </div>
@@ -448,11 +454,10 @@ export default function SubsidiariesPage() {
           <div className="space-y-3 rounded-lg border border-border p-3">
             <div className="flex items-center gap-2 text-sm font-medium">
               <MapPin className="h-4 w-4 text-primary" />
-              Operational locations
+              {t("create.locationsTitle")}
             </div>
             <p className="text-xs text-muted-foreground">
-              A subsidiary&apos;s locations are its reporting borders — add at
-              least one. You can add more later on its page.
+              {t("create.locationsHint")}
             </p>
 
             {draftLocations.length > 0 && (
@@ -465,13 +470,13 @@ export default function SubsidiariesPage() {
                     <span>
                       {l.name}{" "}
                       <span className="text-muted-foreground">
-                        · {geographyLabel(l.geographyCode)}
+                        · {geographyLabel(l.geographyCode, tGeography)}
                       </span>
                     </span>
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label={`Remove ${l.name}`}
+                      aria-label={t("create.removeDraft", { name: l.name })}
                       onClick={() =>
                         setDraftLocations(draftLocations.filter((_, j) => j !== i))
                       }
@@ -485,8 +490,8 @@ export default function SubsidiariesPage() {
 
             <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
               <Input
-                aria-label="Location name"
-                placeholder="Istanbul HQ"
+                aria-label={t("create.draftName")}
+                placeholder={t("create.draftNamePlaceholder")}
                 value={draftName}
                 onChange={(e) => setDraftName(e.target.value)}
               />
@@ -494,29 +499,29 @@ export default function SubsidiariesPage() {
                 value={draftGeo || form.geographyCode}
                 onValueChange={setDraftGeo}
               >
-                <SelectTrigger aria-label="Site geography" className="sm:w-[180px]">
+                <SelectTrigger aria-label={t("create.siteGeography")} className="sm:w-[180px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {geographyOptions(draftGeo || form.geographyCode).map((code) => (
                     <SelectItem key={code} value={code}>
-                      {geographyLabel(code)}
+                      {geographyLabel(code, tGeography)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <Button variant="outline" onClick={addDraftLocation}>
-                <Plus className="h-4 w-4" /> Add
+                <Plus className="h-4 w-4" /> {t("create.addDraft")}
               </Button>
             </div>
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>
-              Cancel
+              {tCommon("cancel")}
             </Button>
             <Button onClick={handleSave} disabled={saving}>
-              {saving ? "Saving…" : "Create"}
+              {saving ? tCommon("saving") : t("create.submit")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -539,21 +544,16 @@ export default function SubsidiariesPage() {
       <AlertDialog open={!!deletingId} onOpenChange={() => setDeletingId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete subsidiary?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This permanently removes the subsidiary and is recorded in the
-              audit log. A subsidiary that still holds activity records,
-              locations, targets or closed reporting periods cannot be removed —
-              deleting it would destroy them, and their evidence with them.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{t("list.deleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("list.deleteBody")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Delete
+              {t("list.deleteConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -569,7 +569,7 @@ function SummaryCard({
   hint,
 }: {
   title: string;
-  value: number;
+  value: string;
   icon: React.ReactNode;
   hint: string;
 }) {

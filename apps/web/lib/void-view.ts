@@ -1,4 +1,5 @@
-import { isCalculated, VOID_REASON_MAX_LENGTH, VOID_REASON_MIN_LENGTH } from '@/lib/types';
+import { entityLabel, isCalculated, VOID_REASON_MAX_LENGTH, VOID_REASON_MIN_LENGTH } from '@/lib/types';
+import type { EntityWords } from '@/lib/types';
 import type { ActivityRecordDTO } from '@/lib/types';
 import { formatNumber } from '@/lib/i18n/number';
 import type { ViewCopy } from '@/lib/i18n/view-translator';
@@ -36,14 +37,6 @@ export type VoidKey =
   | 'void.cannotUndo'
   | 'void.withdrawn'
   | 'void.withdrawnNoFigure';
-
-/** What the reporting entity is called when it is not a named site
- *  (`common.entity.*`; English = shared-types' `WHOLE_COMPANY_ENTITY_LABEL`
- *  and `UNNAMED_SITE_ENTITY_LABEL`, parity-tested). */
-export interface EntityWords {
-  wholeCompany: string;
-  unnamedSite: string;
-}
 
 /** The copy the void path is worded with: the screen's translator, the
  *  record's words (category, period) and the entity words. */
@@ -128,24 +121,6 @@ export interface VoidConsequence {
   headline: string;
   /** Everything else the withdrawal does, in the order the reader needs it. */
   effects: string[];
-}
-
-/**
- * The reporting entity in one phrase — the site's name, or the whole company.
- *
- * shared-types' `entityLabel` in the user's language: the same rule — keyed
- * on the PAIR, a trimmed name first, a site whose name did not come back
- * never called the whole company — with the two phrases from the catalogue.
- * The generated report (WP20) keeps shared-types' English phrases; this
- * dialog's English is the same words (`messages.spec.ts`).
- */
-export function entityLabel(
-  record: Pick<ActivityRecordDTO, 'locationId' | 'locationName'>,
-  words: EntityWords,
-): string {
-  const named = record.locationName?.trim();
-  if (named) return named;
-  return record.locationId ? words.unnamedSite : words.wholeCompany;
 }
 
 /**
