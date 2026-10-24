@@ -91,6 +91,9 @@ describe("the catalogues", () => {
     const SAME_IN_EVERY_LANGUAGE = new Set<string>([
       ...['lpg', 'cng', 'R-32', 'R-134a', 'R-404A', 'R-407C', 'R-407F',
         'R-410A', 'R-448A', 'R-449A', 'R-1234yf'].map((key) => `dataEntry.activityTypes.${key}`),
+      // A unit, a file kind, a format with no words (LP4-03 PR B).
+      ...['tonnes', 'columns.tco2e', 'coverage.gapCount', 'issued.downloadPdf', 'issued.downloadXlsx', 'issued.downloadCsv', 'issued.issuanceLine']
+        .map((key) => `reports.${key}`),
     ]);
     const other = leaves(MESSAGES[locale]);
     for (const [key, message] of en) {

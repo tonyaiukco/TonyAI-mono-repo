@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildKpiData, matrixToAlerts, matrixToSubsidiaries } from './dashboard-view';
+import { buildKpiData, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
 import type {
   EmissionsSummary,
   TrackingMatrixCell,
@@ -94,6 +94,19 @@ describe('matrixToSubsidiaries', () => {
     expect(view.categories[0].responsible).toBe('Aylin Demir');
   });
 
+  it('totals a subsidiary on Scope 1 + 2, as the headline does — never its Scope 3 cells', () => {
+    const r = row({
+      totalTCo2e: 1_012.4,
+      cells: [
+        cell({ category: 'Electricity', scope: 2, tCo2e: 12.4 }),
+        cell({ category: 'Natural Gas', scope: 1, tCo2e: null }),
+        cell({ category: 'Business Travel', scope: 3, tCo2e: 1_000 }),
+      ],
+    });
+    expect(scope12Total(r)).toBeCloseTo(12.4);
+    expect(matrixToSubsidiaries(matrix([r]))[0].totalEmissions).toBeCloseTo(12.4);
+  });
+
   it('falls back to an em dash rather than printing "null" as an owner', () => {
     const [view] = matrixToSubsidiaries(matrix([row({ designatedPerson: null })]));
     expect(view.categories[0].responsible).toBe('—');
@@ -142,6 +155,14 @@ describe('buildKpiData', () => {
     const kpi = buildKpiData(summary, matrix([], { complete: 0, incomplete: 0, missing: 0 }), null);
     expect(kpi.calculationCompletionRate).toBe(0);
     expect(Number.isNaN(kpi.calculationCompletionRate)).toBe(false);
+  });
+
+  it('totals Scope 1 + 2 as every report does — Scope 3 on its own card, outside the total (LP4-03 K4)', () => {
+    const withScope3 = { ...summary, totals: { scope1: 10, scope2: 20, scope3: 999, total: 1029 } };
+    const kpi = buildKpiData(withScope3, matrix([row()]), 0);
+    expect(kpi.emissions.total).toBe(30);
+    expect(kpi.totalEmissions).toBe(30);
+    expect(kpi.emissions.scope3).toBe(999);
   });
 
   it('keeps trends null rather than inventing a prior period', () => {

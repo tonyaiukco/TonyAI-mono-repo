@@ -1,0 +1,11 @@
+{
+  "entryProgress": "{rate}% data entry progress",
+  "entryNote": "Data entry progress counts categories whose data a reviewer has approved; anything still waiting for review counts as partial. It is not inventory coverage — the boundary's coverage is shown below.",
+  "scope3Description": "Not covered — outside the total",
+  "totalLabel": "Scope 1 + 2 total",
+  "totalDescription": "The inventory's total",
+  "overviewNote": "Committed activity records. The total is Scope 1 + 2; Scope 3 is recorded but not covered by the inventory. Year-over-year trends arrive once prior-year data exists.",
+  "notCovered": "Not covered",
+  "outsideSelection": "Outside this Scope 3 selection",
+  "totalScope3Only": "Scope 3 is not covered, so this selection has no inventory total"
+}

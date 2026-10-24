@@ -1,9 +1,16 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useTranslations } from 'use-intl';
-import { useRouter } from 'next/navigation';
+import { useLocale, useTranslations } from 'use-intl';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { withdrawalNotice } from '@/lib/report-view';
+import { formatNumber } from '@/lib/i18n/number';
+import { useErrorToast } from '@/lib/i18n/hooks';
+import { withPreviewRetry } from '@/lib/report-preview';
+import { scope3Lines, selectsScope3Only, STATUS_KEY } from '@/lib/report-coverage-view';
+import { CoverageCard } from '@/components/reports/coverage-card';
+import { IssuedReports } from '@/components/reports/issued-reports';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Sidebar } from '@/components/dashboard/sidebar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,6 +33,7 @@ import {
   Info,
   Leaf,
   LogOut,
+  Radio,
   Table2,
 } from 'lucide-react';
 import {
@@ -41,14 +49,16 @@ import {
   Tooltip as RechartsTooltip,
 } from 'recharts';
 import { toast } from 'sonner';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { useAuthStore } from '@/lib/store';
 import { useReportingContext } from '@/lib/use-reporting-context';
 import { reportingContextKey } from '@/lib/reporting-context-url';
 import { ReportingContextBar, ReportingContextInvalid, selectionAvailable } from '@/components/reporting-context/reporting-context-bar';
-import { REPORT_TEMPLATES } from '@/lib/types';
+import { CATEGORY_SCOPE_MAP, REPORT_TEMPLATES } from '@/lib/types';
 import type {
+  Category,
+  Locale,
   ReportInventorySummary,
   ReportExportType,
   ReportingContext,
@@ -61,13 +71,14 @@ import type {
 
 const SCOPE_COLORS = { scope1: '#34C759', scope2: '#007AFF', scope3: '#AF52DE' };
 
-const STATUS_BADGE: Record<ReportStatus, { label: string; className: string }> = {
-  approved: { label: 'Approved', className: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30' },
-  draft: { label: 'Draft — pending review', className: 'bg-blue-500/15 text-blue-600 border-blue-500/30' },
-  contains_incomplete_data: { label: 'Contains incomplete data', className: 'bg-amber-500/15 text-amber-600 border-amber-500/30' },
+// Review status, labelled as such (LP4-03 K3): the words are the catalogue's (`STATUS_KEY`).
+const STATUS_CLASS: Record<ReportStatus, string> = {
+  approved: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30',
+  draft: 'bg-blue-500/15 text-blue-600 border-blue-500/30',
+  contains_incomplete_data: 'bg-amber-500/15 text-amber-600 border-amber-500/30',
 };
 
-const fmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
+type ReportsTab = 'live' | 'issued';
 
 /** `useReportingContext` reads the URL (`useSearchParams`), which Next wants under a Suspense boundary. */
 export default function ReportsPage() {
@@ -83,6 +94,24 @@ function ReportsPageInner() {
   const { user, setUser } = useAuthStore();
   const tContext = useTranslations('reportingContext');
   const tCategory = useTranslations('categories');
+  const t = useTranslations('reports');
+  const tCommon = useTranslations('common');
+  const locale = useLocale() as Locale;
+  const showError = useErrorToast();
+  const fmt = (value: number) => formatNumber(value, locale, { maximumFractionDigits: 1 });
+  const tonnes = (value: number) => t('tonnes', { value: fmt(value) });
+
+  // LP4-03 K8: the live preview and the issued reports, the tab in the URL
+  // beside the reporting context (`reportingContextQuery` keeps a page's own keys).
+  const searchParams = useSearchParams();
+  const tab: ReportsTab = searchParams.get('tab') === 'issued' ? 'issued' : 'live';
+  const selectTab = (next: string) => {
+    const params = new URLSearchParams(window.location.search);
+    if (next === 'issued') params.set('tab', 'issued');
+    else params.delete('tab');
+    const query = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+  };
 
   // LP3-02 N1: year, subsidiary, scope and category come from the URL — the
   // same selection the dashboard and emissions screens carry.
@@ -131,12 +160,7 @@ function ReportsPageInner() {
     try {
       // The preview holds one snapshot connection per user (LP4-03): a second
       // one while the first still runs answers 429 with Retry-After — try once more.
-      const m = await api.reportingMeta(context).catch(async (e: unknown) => {
-        if (!(e instanceof ApiError) || e.status !== 429 || mine !== loadSeq.current) throw e;
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
-        if (mine !== loadSeq.current) throw e;
-        return api.reportingMeta(context);
-      });
+      const m = await withPreviewRetry(() => api.reportingMeta(context), () => mine === loadSeq.current);
       if (mine !== loadSeq.current) return;
       setSummary(m.data.summary);
       setMeta(m.data);
@@ -146,21 +170,21 @@ function ReportsPageInner() {
       setSummary(null);
       setMeta(null);
       setPreviewFailed(true);
-      toast.error((e as Error).message);
+      showError(e);
     } finally {
       if (mine === loadSeq.current) setLoading(false);
     }
-  }, [context]);
+  }, [context, showError]);
 
   useEffect(() => {
-    api.me().then(setUser).catch((e) => toast.error((e as Error).message));
+    api.me().then(setUser).catch(showError);
     api
       .listSubsidiaries()
       .then((list) => {
         setSubsidiaries(list);
         setSubsidiariesLoaded(true);
       })
-      .catch((e) => toast.error((e as Error).message));
+      .catch(showError);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -179,9 +203,9 @@ function ReportsPageInner() {
         includeMethodologyNotes: includeMethodology,
         includeEvidenceSummary: includeEvidence,
       });
-      toast.success(`${kind.toUpperCase()} report generated`);
+      toast.success(t('generated', { kind: kind.toUpperCase() }));
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     } finally {
       setDownloading(null);
     }
@@ -196,7 +220,10 @@ function ReportsPageInner() {
   const canGenerate = !!user && user.role !== 'data_entry'; // permissions §"Generate and export reports"
   const exportReady = !!shown && !!context && !loading && reportingContextKey(shown) === reportingContextKey(context);
   const totals = summary?.totals ?? { scope1: 0, scope2: 0, scope3: 0, total: 0 };
-  const templateName = REPORT_TEMPLATES.find((t) => t.id === template)?.name ?? template;
+  const templateName = REPORT_TEMPLATES.some((r) => r.id === template) ? t(`templates.${template}`) : template;
+  // A Scope 3 selection (`scope=3`, or a Scope 3 category) has no Scope 1/2 figure: its tiles read "Not covered" (K4).
+  const scope3Only = !!shown && selectsScope3Only(shown, (c) => CATEGORY_SCOPE_MAP[c as Category]);
+  const scopeTile = (value: number) => (scope3Only ? t('tiles.notCovered') : tonnes(value));
   const shownSubsidiary = shown?.subsidiaryId
     ? (subsidiaries.find((s) => s.id === shown.subsidiaryId) ?? null)
     : null;
@@ -217,16 +244,17 @@ function ReportsPageInner() {
         .filter(Boolean)
         .join(' · ')
     : '';
-  const badge = meta ? STATUS_BADGE[meta.status] : null;
+  const badge = meta ? { label: t(STATUS_KEY[meta.status] as never), className: STATUS_CLASS[meta.status] } : null;
+  const withdrawn = withdrawalNotice(meta);
 
   const pieData = useMemo(
     () =>
       [
-        { name: 'Scope 1', value: totals.scope1, color: SCOPE_COLORS.scope1 },
-        { name: 'Scope 2', value: totals.scope2, color: SCOPE_COLORS.scope2 },
-        { name: 'Scope 3', value: totals.scope3, color: SCOPE_COLORS.scope3 },
+        // Scope 1 and 2 only: a live report sums no Scope 3 record (K4).
+        { name: t('tiles.scope1'), value: totals.scope1, color: SCOPE_COLORS.scope1 },
+        { name: t('tiles.scope2'), value: totals.scope2, color: SCOPE_COLORS.scope2 },
       ].filter((d) => d.value > 0),
-    [totals],
+    [totals, t],
   );
 
   const topContributors = useMemo(
@@ -242,26 +270,42 @@ function ReportsPageInner() {
           {/* Header */}
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-2xl font-semibold text-foreground">Reports</h1>
+              <h1 className="text-2xl font-semibold text-foreground">{t('title')}</h1>
               <p className="mt-1 text-muted-foreground">
-                Audit-ready reports generated from committed activity records
-                {user ? ` · ${user.fullName} (${user.role})` : ''}
+                {user ? t('subtitleUser', { name: user.fullName, role: user.role }) : t('subtitle')}
               </p>
             </div>
             <Button variant="outline" onClick={handleLogout} className="gap-2">
               <LogOut className="h-4 w-4" />
-              Sign out
+              {tCommon('signOut')}
             </Button>
           </div>
 
           {/* Provenance banner */}
           <div className="flex items-start gap-2 rounded-lg border border-[#FEF3C7] bg-[#FFFBEB] px-4 py-3 text-sm text-[#92400E]">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              Reports are computed from committed activity records using{' '}
-              <strong>prototype demo emission factors</strong> — not authoritative DEFRA/AIB values.
-              Scope 3 is out of scope for Phase 1.
-            </span>
+            <span>{t.rich('provenance', { strong: (chunks) => <strong>{chunks}</strong> })}</span>
+          </div>
+
+          <Tabs value={tab} onValueChange={selectTab}>
+            <TabsList>
+              <TabsTrigger value="live">{t('tabs.live')}</TabsTrigger>
+              <TabsTrigger value="issued">{t('tabs.issued')}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="issued" className="mt-4">
+              {context ? (
+                <IssuedReports year={context.year} role={user?.role ?? null} language={user?.language ?? locale} />
+              ) : contextView.status === 'invalid' ? (
+                <ReportingContextInvalid invalid={contextView.invalid} onReset={contextView.reset} />
+              ) : null}
+            </TabsContent>
+            <TabsContent value="live" className="mt-4 space-y-6">
+          <div
+            className="flex items-start gap-2 rounded-lg border-2 border-dashed border-amber-400 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900"
+            data-testid="live-banner"
+          >
+            <Radio className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{t('liveBanner')}</span>
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -270,7 +314,7 @@ function ReportsPageInner() {
               {/* Config bar (report_page.md §3) */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Report configuration</CardTitle>
+                  <CardTitle className="text-base">{t('configuration')}</CardTitle>
                 </CardHeader>
                 <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <div className="sm:col-span-3">
@@ -287,12 +331,12 @@ function ReportsPageInner() {
                       )}
                     </Field>
                   </div>
-                  <Field label="Template">
+                  <Field label={t('template')}>
                     <Select value={template} onValueChange={(v) => setTemplate(v as ReportTemplate)}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {REPORT_TEMPLATES.map((t) => (
-                          <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                        {REPORT_TEMPLATES.map((r) => (
+                          <SelectItem key={r.id} value={r.id}>{t(`templates.${r.id}`)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -302,24 +346,24 @@ function ReportsPageInner() {
                       checked={includeMethodology}
                       onCheckedChange={(c) => setIncludeMethodology(c === true)}
                     />
-                    Methodology notes
+                    {t('methodologyNotes')}
                   </label>
                   <label className="flex items-center gap-2 text-sm sm:col-span-2">
                     <Checkbox
                       checked={includeEvidence}
                       onCheckedChange={(c) => setIncludeEvidence(c === true)}
                     />
-                    Evidence summary (file names + counts)
+                    {t('evidenceSummary')}
                   </label>
                 </CardContent>
               </Card>
 
               {/* Restatement disclosure — the same fact the exports carry, so a
                   user knows what the file will say before generating it. */}
-              {withdrawalNotice(meta) && (
+              {withdrawn && (
                 <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{withdrawalNotice(meta)}</span>
+                  <span>{withdrawn.count === 1 ? t('withdrawnOne') : t('withdrawnMany', { count: fmt(withdrawn.count) })}</span>
                 </div>
               )}
 
@@ -337,10 +381,7 @@ function ReportsPageInner() {
               {meta && meta.incompleteRatio > 0.15 && (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>
-                    {fmt.format(meta.incompleteRatio * 100)}% of this period&apos;s records are
-                    draft/rejected — this report is not suitable for final reporting.
-                  </span>
+                  <span>{t('draftWarning', { percent: fmt(meta.incompleteRatio * 100) })}</span>
                 </div>
               )}
 
@@ -368,28 +409,47 @@ function ReportsPageInner() {
                           <h2 className="text-xl font-bold text-primary">{meta?.organisationName ?? "—"}</h2>
                         </div>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          {templateName} · Reporting year {shown.year}
+                          {t('templateYear', { template: templateName, year: shown.year })}
                           {subsidiaryName ? ` · ${subsidiaryName}` : ''}
                           {filterLabel ? ` · ${filterLabel}` : ''}
                         </p>
                       </div>
                       {badge && (
-                        <Badge variant="outline" className={badge.className}>{badge.label}</Badge>
+                        <div className="flex max-w-[45%] flex-col items-end gap-1 text-right">
+                          <Badge variant="outline" className={badge.className}>{badge.label}</Badge>
+                          <p className="text-[11px] leading-snug text-muted-foreground" data-testid="status-note">{t('statusNote')}</p>
+                        </div>
                       )}
                     </div>
 
+                    {meta && <CoverageCard coverage={meta.coverage} year={shown.year} />}
+
                     {/* Metric tiles */}
                     <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-                      <Tile label="Scope 1" value={`${fmt.format(totals.scope1)} tCO₂e`} />
-                      <Tile label="Scope 2" value={`${fmt.format(totals.scope2)} tCO₂e`} />
-                      <Tile label="Scope 1 + 2 total" value={`${fmt.format(totals.total)} tCO₂e`} />
-                      <Tile label="Committed records" value={String(summary?.recordCount ?? 0)} />
+                      <Tile label={t('tiles.scope1')} value={scopeTile(totals.scope1)} />
+                      <Tile label={t('tiles.scope2')} value={scopeTile(totals.scope2)} />
+                      <Tile label={t('tiles.total')} value={scopeTile(totals.total)} />
+                      {/* Scope 3's committed records are the disclosure's count below, never a 0 here. */}
+                      <Tile label={t('tiles.committed')} value={scope3Only ? t('tiles.notCovered') : fmt(summary?.recordCount ?? 0)} />
                     </div>
+
+                    {meta && (
+                      <div className="space-y-1 text-xs text-muted-foreground" data-testid="scope3-disclosure">
+                        {scope3Lines(meta.scope3).map((line) => (
+                          <p key={line.key}>
+                            {t(
+                              line.key as never,
+                              Object.fromEntries(Object.entries(line.values ?? {}).map(([k, v]) => [k, typeof v === 'number' ? fmt(v) : v])) as never,
+                            )}
+                          </p>
+                        ))}
+                      </div>
+                    )}
 
                     {/* Charts */}
                     <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                       <div>
-                        <h3 className="mb-2 text-sm font-semibold text-foreground">Scope split</h3>
+                        <h3 className="mb-2 text-sm font-semibold text-foreground">{t('scopeSplit')}</h3>
                         <div className="h-52">
                           <ResponsiveContainer width="100%" height="100%">
                             <RechartsPieChart>
@@ -398,20 +458,20 @@ function ReportsPageInner() {
                                   <Cell key={d.name} fill={d.color} />
                                 ))}
                               </Pie>
-                              <RechartsTooltip formatter={(v: number) => `${fmt.format(v)} tCO₂e`} />
+                              <RechartsTooltip formatter={(v: number) => tonnes(v)} />
                             </RechartsPieChart>
                           </ResponsiveContainer>
                         </div>
                       </div>
                       <div>
-                        <h3 className="mb-2 text-sm font-semibold text-foreground">Top contributors</h3>
+                        <h3 className="mb-2 text-sm font-semibold text-foreground">{t('topContributors')}</h3>
                         <div className="h-52">
                           <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={topContributors} layout="vertical" margin={{ left: 24 }}>
                               <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                               <XAxis type="number" hide />
                               <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11 }} />
-                              <RechartsTooltip formatter={(v: number) => `${fmt.format(v)} tCO₂e`} />
+                              <RechartsTooltip formatter={(v: number) => tonnes(v)} />
                               <Bar dataKey="tCo2e" fill="#059669" radius={[0, 4, 4, 0]} />
                             </BarChart>
                           </ResponsiveContainer>
@@ -421,29 +481,29 @@ function ReportsPageInner() {
 
                     {/* Category breakdown (report_page.md §6) */}
                     <div>
-                      <h3 className="mb-2 text-sm font-semibold text-foreground">Emissions by category</h3>
+                      <h3 className="mb-2 text-sm font-semibold text-foreground">{t('byCategory')}</h3>
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                            <th className="py-2">Category</th>
-                            <th className="py-2">Scope</th>
-                            <th className="py-2 text-right">tCO₂e</th>
-                            <th className="py-2 text-right">% of total</th>
-                            <th className="py-2 text-right">Records</th>
+                            <th className="py-2">{t('columns.category')}</th>
+                            <th className="py-2">{t('columns.scope')}</th>
+                            <th className="py-2 text-right">{t('columns.tco2e')}</th>
+                            <th className="py-2 text-right">{t('columns.percent')}</th>
+                            <th className="py-2 text-right">{t('columns.records')}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {(summary?.byCategory ?? []).map((c) => (
                             <tr key={`${c.category}-${c.scope}`} className="border-b border-border/60">
-                              <td className="py-2 font-medium">{c.category}</td>
-                              <td className="py-2">Scope {c.scope}</td>
-                              <td className="py-2 text-right tabular-nums">{fmt.format(c.tCo2e)}</td>
-                              <td className="py-2 text-right tabular-nums">{fmt.format(c.percentOfTotal)}%</td>
-                              <td className="py-2 text-right tabular-nums">{c.recordCount}</td>
+                              <td className="py-2 font-medium">{tCategory(c.category)}</td>
+                              <td className="py-2">{t('scopeValue', { scope: c.scope })}</td>
+                              <td className="py-2 text-right tabular-nums">{fmt(c.tCo2e)}</td>
+                              <td className="py-2 text-right tabular-nums">{fmt(c.percentOfTotal)}%</td>
+                              <td className="py-2 text-right tabular-nums">{fmt(c.recordCount)}</td>
                             </tr>
                           ))}
                           {(summary?.byCategory ?? []).length === 0 && (
-                            <tr><td colSpan={5} className="py-6 text-center text-muted-foreground">No committed data for this selection.</td></tr>
+                            <tr><td colSpan={5} className="py-6 text-center text-muted-foreground">{scope3Only ? t('scope3.noInventoryFigures') : t('noCommittedData')}</td></tr>
                           )}
                         </tbody>
                       </table>
@@ -451,10 +511,7 @@ function ReportsPageInner() {
 
                     {includeMethodology && (
                       <p className="rounded-lg bg-secondary/50 p-3 text-xs text-muted-foreground">
-                        <strong>Methodology:</strong> every calculation stores an immutable snapshot of
-                        the emission factor it used (value, source, version) — the full factor appendix
-                        is included in the generated PDF/Excel. Boundary: operational control. Aligned
-                        with ISO 14064-1 / GHG Protocol.
+                        {t.rich('methodology', { strong: (chunks) => <strong>{chunks}</strong> })}
                       </p>
                     )}
                   </CardContent>
@@ -466,12 +523,12 @@ function ReportsPageInner() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Generate & download</CardTitle>
+                  <CardTitle className="text-base">{t('generate')}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {!canGenerate && (
                     <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-                      Your role can view report data but cannot generate or export reports.
+                      {t('cannotGenerate')}
                     </p>
                   )}
                   {canGenerate && (<>
@@ -481,7 +538,7 @@ function ReportsPageInner() {
                     disabled={downloading !== null || !exportReady}
                   >
                     <FileText className="h-4 w-4" />
-                    {downloading === 'pdf' ? 'Generating PDF…' : 'Download PDF'}
+                    {downloading === 'pdf' ? t('generatingPdf') : t('downloadPdf')}
                   </Button>
                   <Button
                     variant="outline"
@@ -490,7 +547,7 @@ function ReportsPageInner() {
                     disabled={downloading !== null || !exportReady}
                   >
                     <FileSpreadsheet className="h-4 w-4" />
-                    {downloading === 'excel' ? 'Generating Excel…' : 'Export Excel'}
+                    {downloading === 'excel' ? t('generatingExcel') : t('exportExcel')}
                   </Button>
                   <Button
                     variant="outline"
@@ -499,13 +556,10 @@ function ReportsPageInner() {
                     disabled={downloading !== null || !exportReady}
                   >
                     <Table2 className="h-4 w-4" />
-                    {downloading === 'csv' ? 'Generating CSV…' : 'Export CSV'}
+                    {downloading === 'csv' ? t('generatingCsv') : t('exportCsv')}
                   </Button>
                   </>)}
-                  <p className="text-xs text-muted-foreground">
-                    Excel contains Summary, Raw Activity Data, Withdrawn Records and Factors
-                    Used sheets. Every generation is recorded in the audit log.
-                  </p>
+                  <p className="text-xs text-muted-foreground">{t('excelNote')}</p>
                 </CardContent>
               </Card>
 
@@ -513,30 +567,30 @@ function ReportsPageInner() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Download className="h-4 w-4 text-muted-foreground" />
-                    Data completeness
+                    {t('recordsHeading')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2 text-sm">
                   {meta ? (
                     <>
-                      <Row label="Total records" value={String(meta.totalCount)} />
-                      <Row label="Committed" value={String(meta.committedCount)} />
-                      <Row label="Awaiting review" value={String(meta.pendingCount)} />
-                      <Row label="Draft / rejected" value={String(meta.incompleteCount)} />
+                      <Row label={t('rows.total')} value={fmt(meta.totalCount)} />
+                      <Row label={t('rows.committed')} value={fmt(meta.committedCount)} />
+                      <Row label={t('rows.pending')} value={fmt(meta.pendingCount)} />
+                      <Row label={t('rows.incomplete')} value={fmt(meta.incompleteCount)} />
                       {meta.voidedCount > 0 && (
-                        <Row label="Withdrawn" value={String(meta.voidedCount)} />
+                        <Row label={t('rows.withdrawn')} value={fmt(meta.voidedCount)} />
                       )}
                     </>
-                  ) : (
+                  ) : previewFailed ? null : (
                     <Skeleton className="h-20 w-full" />
                   )}
-                  <p className="pt-1 text-xs text-muted-foreground">
-                    Report sharing (link / email) arrives in a later phase.
-                  </p>
+                  <p className="pt-1 text-xs text-muted-foreground">{t('sharingNote')}</p>
                 </CardContent>
               </Card>
             </div>
           </div>
+            </TabsContent>
+          </Tabs>
         </div>
       </main>
     </div>

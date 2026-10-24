@@ -29,7 +29,7 @@ test('reports: live preview + PDF/Excel/CSV downloads', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Reports' })).toBeVisible();
   await expect(page.getByText('TonyAI Holding')).toBeVisible();
   await expect(
-    page.getByText(/^(Approved|Draft — pending review|Contains incomplete data)$/).first(),
+    page.getByText(/^(All records approved|Draft — pending review|Contains incomplete data)$/).first(),
   ).toBeVisible();
   await expect(page.getByText('Committed records', { exact: false })).toBeVisible();
 

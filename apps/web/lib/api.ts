@@ -1,5 +1,13 @@
 import type {
   ActivityRecordDTO,
+  CaptureReportDatasetRequest,
+  InventoryBoundaryVersionSummary,
+  IssueReportRequest,
+  ReportDatasetList,
+  ReportDatasetSummary,
+  ReportIssuance,
+  ReportIssuanceList,
+  ReportIssuancePreview,
   ApiErrorCode,
   ApiErrorParams,
   AuditLogDTO,
@@ -326,10 +334,14 @@ async function downloadReportingReport(kind: ReportExportType, params: Reporting
   }, [...REPORTING_CONTEXT_KEYS, "template", "includeMethodologyNotes", "includeEvidenceSummary"]);
   const res = await fetch(`${BASE_URL}${REPORTING_CONTEXT_API_PATHS[kind]}${query}`, { headers: await authHeaders() });
   if (!res.ok) throw await apiError(res);
+  await saveDownload(res, `tonyai-report-${context.year}.${kind === "excel" ? "xlsx" : kind}`);
+}
+
+/** Save a download under the name the server gave it (`Content-Disposition`), else `fallback`. */
+async function saveDownload(res: Response, fallback: string): Promise<void> {
   const blob = await res.blob();
   const disposition = res.headers.get("Content-Disposition") ?? "";
-  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ??
-    `tonyai-report-${context.year}.${kind === "excel" ? "xlsx" : kind}`;
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? fallback;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -338,7 +350,35 @@ async function downloadReportingReport(kind: ReportExportType, params: Reporting
   URL.revokeObjectURL(url);
 }
 
+/** An issued report's retained PDF, or its workbook or CSV written from its retained dataset (LP4-03 K5). */
+async function downloadIssuance(issuanceId: string, format: IssuedFileFormat): Promise<void> {
+  const res = await fetch(`${BASE_URL}/report-issuances/${encodeURIComponent(issuanceId)}/${format}`, { headers: await authHeaders() });
+  if (!res.ok) throw await apiError(res);
+  await saveDownload(res, `tonyai-report-${issuanceId.slice(0, 8)}.${format}`);
+}
+
+/** The issued report's three files: the retained PDF and its two projections. */
+export type IssuedFileFormat = "pdf" | "xlsx" | "csv";
+
 export const api = {
+  // LP4-03 PR B: the issued side of Reports — boundary versions, datasets,
+  // the issuance preview and issue, the issuance list and its files. Every
+  // write and every dataset-sized read takes the EXPORT quota (5 a minute):
+  // call them on a user's action, never per row.
+  listInventoryBoundaries: (reportingYear: number) =>
+    apiFetch<InventoryBoundaryVersionSummary[]>(`/inventory-boundaries${boundedQuery({ reportingYear }, ["reportingYear"])}`),
+  listReportDatasets: (year: number) =>
+    apiFetch<ReportDatasetList>(`/report-datasets${boundedQuery({ year }, ["year"])}`),
+  captureReportDataset: (body: CaptureReportDatasetRequest) =>
+    apiFetch<ReportDatasetSummary>("/report-datasets", { method: "POST", body: JSON.stringify(body) }),
+  previewIssuance: (datasetId: string) =>
+    apiFetch<ReportIssuancePreview>(`/report-datasets/${encodeURIComponent(datasetId)}/issuance-preview`),
+  issueReport: (body: IssueReportRequest) =>
+    apiFetch<ReportIssuance>("/report-issuances", { method: "POST", body: JSON.stringify(body) }),
+  listReportIssuances: (year: number, status?: "final" | "partial") =>
+    apiFetch<ReportIssuanceList>(`/report-issuances${boundedQuery({ year, status }, ["year", "status"])}`),
+  downloadIssuance,
+
   // LP3-02: the annual screens (dashboard, emissions, intensity, reports) read
   // and export through these, with the URL's one reporting context (N1).
   reportingSummary: (params: ReportingContext) =>
