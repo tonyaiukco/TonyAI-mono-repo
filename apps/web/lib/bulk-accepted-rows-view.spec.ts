@@ -50,6 +50,21 @@ describe('the amount read (LP4-04, D15)', () => {
     expect(html).toContain(MESSAGES.en.dataEntry.bulkPreview.readNote);
   });
 
+  it.each([
+    // The numbers the API reads from these CSV / XLSX-text cells (Number(cell),
+    // pinned in bulk-upload.service.spec.ts): a fraction-digit cap rounded
+    // them (Codex's B9 review of #208).
+    ['0.000000000000000000015', '0,000000000000000000015 kWh', '0.000000000000000000015 kWh'],
+    ['0.0000012345678901234567', '0,0000012345678901234567 kWh', '0.0000012345678901234567 kWh'],
+  ])('shows a file\'s %s with every digit, in Turkish and English', (cell, tr, en) => {
+    const small: BulkUploadAcceptedRow[] = [{ ...rows[0], activityValue: Number(cell), activityUnit: 'kWh' }];
+    const renderSmall = (locale: 'en' | 'tr') => renderToStaticMarkup(createElement(IntlProvider, {
+      locale, timeZone: 'UTC', messages: MESSAGES[locale], children: createElement(AcceptedRows, { rows: small }),
+    }));
+    expect(amounts(renderSmall('tr'))).toEqual([tr]);
+    expect(amounts(renderSmall('en'))).toEqual([en]);
+  });
+
   it('a language change changes how an amount is written, never the amount', () => {
     const read = (text: string, locale: 'en' | 'tr') =>
       Number(text.split(' ')[0].replaceAll(locale === 'tr' ? '.' : ',', '').replace(',', '.'));

@@ -329,8 +329,32 @@ describe("formatReadAmount — a bulk preview's amount (D15)", () => {
     [1e12, "1.000.000.000.000", "1,000,000,000,000"],
     [1e-7, "0,0000001", "0.0000001"],
     [1234.56789012345, "1.234,56789012345", "1,234.56789012345"],
+    // Codex's B9 review of #208: a 20-place cap showed these rounded.
+    [1.5e-20, "0,000000000000000000015", "0.000000000000000000015"],
+    [0.0000012345678901234567, "0,0000012345678901234567", "0.0000012345678901234567"],
+    [5e-324, `0,${"0".repeat(323)}5`, `0.${"0".repeat(323)}5`],
+    [123456789012, "123.456.789.012", "123,456,789,012"],
+    [0, "0", "0"],
+    [-1234.5, "-1.234,5", "-1,234.5"],
   ])("%s reads as %s in Turkish and %s in English, every digit kept", (value, tr, en) => {
     expect(formatReadAmount(value, "tr")).toBe(tr);
     expect(formatReadAmount(value, "en")).toBe(en);
+  });
+
+  it("round-trips: the digits shown are the number's own, never more or fewer", () => {
+    for (const value of [1.234, 0.1 + 0.2, 1.5e-20, 0.0000012345678901234567, 1e12, 987654.321, 5e-324]) {
+      const en = formatReadAmount(value, "en").replaceAll(",", "");
+      const tr = formatReadAmount(value, "tr").replaceAll(".", "").replace(",", ".");
+      expect(Number(en)).toBe(value);
+      expect(Number(tr)).toBe(value);
+    }
+  });
+
+  it("writes the same separators formatNumber does", () => {
+    for (const value of [1234567.891, 1000, 12.5]) {
+      for (const locale of ["en", "tr"] as const) {
+        expect(formatReadAmount(value, locale)).toBe(formatNumber(value, locale, { maximumFractionDigits: 3 }));
+      }
+    }
   });
 });

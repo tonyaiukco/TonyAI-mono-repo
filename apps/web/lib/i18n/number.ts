@@ -165,13 +165,20 @@ export function formatNumber(value: number, locale: Locale, options: Intl.Number
 
 /**
  * A quantity as the server read it (a bulk preview's amount, D15): grouped in
- * `locale`, every digit kept — Intl rounds to three places by default, which
- * would show a file's `1.2345` as the 1.235 nobody wrote. 20, not more:
- * browsers before Intl.NumberFormat v3 (Firefox ESR 115) throw a RangeError
- * above it, and 20 places hold every activity value down to 1e-20.
+ * `locale`, with exactly the digits of the number's shortest round-trip form —
+ * `String(value)`, the exponent moved into place. Not Intl: it rounds to three
+ * places by default (a file's `1.2345` would show as 1.235), any fraction-digit
+ * cap still rounds a small value (20 places show 1.5e-20 as 0.00…02, a third
+ * off), and above 20 browsers before Intl.NumberFormat v3 (Firefox ESR 115)
+ * throw a RangeError. The separators are the ones `formatNumber` writes.
  */
 export function formatReadAmount(value: number, locale: Locale): string {
-  return formatNumber(value, locale, { maximumFractionDigits: 20 });
+  if (!Number.isFinite(value)) return String(value);
+  const { decimal, group } = NUMBER_SEPARATORS[locale];
+  const plain = withoutExponent(String(Math.abs(value)));
+  const [int, frac] = plain.split(".");
+  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, group);
+  return `${value < 0 ? "-" : ""}${grouped}${frac === undefined ? "" : decimal + frac}`;
 }
 
 /** The range a field accepts, on top of the grammar. */

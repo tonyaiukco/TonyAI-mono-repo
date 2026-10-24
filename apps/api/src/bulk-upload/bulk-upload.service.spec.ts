@@ -3051,6 +3051,21 @@ describe('BulkUploadService — the figure the file is read as (LP4-04, D15, F09
     }
   });
 
+  it.each([
+    ['0.000000000000000000015', 'csv'],
+    ['0.000000000000000000015', 'xlsx-text'],
+    ['0.0000012345678901234567', 'csv'],
+    ['0.0000012345678901234567', 'xlsx-text'],
+  ])('reports a small figure %s from a %s cell as the exact number read (Codex B9, #208)', async (raw, kind) => {
+    const { service } = build();
+    const file = kind === 'csv' ? csvWith(raw) : await xlsxFile(raw);
+
+    const report = await service.import(dataEntry(), file, DRY);
+
+    expect(report.errors).toEqual([]);
+    expect(report.accepted[0].activityValue).toBe(Number(raw));
+  });
+
   it('never imports an unquoted comma figure — the CSV splits it into two cells, and the row is refused', async () => {
     // A hand-typed `…,1,5,kWh,`: the comma is the CSV's own separator. Safe
     // today because the shifted cells fail; pinned so no lenient parser joins
