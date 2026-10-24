@@ -91,6 +91,7 @@ export function BulkUploadPanel({
 }) {
   const tErrors = useTranslations("errors");
   const t = useTranslations("bulkUpload");
+  const tCommon = useTranslations("common");
   const locale = useLocale();
   const describe = useDescribeError();
   const copy = { t, locale };
@@ -487,7 +488,7 @@ export function BulkUploadPanel({
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmingSubmit(false)}>
-              {t("cancel")}
+              {tCommon("cancel")}
             </Button>
             <Button
               data-testid="bulk-submit-confirm"
@@ -510,7 +511,7 @@ export function BulkUploadPanel({
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirming(false)}>
-              {t("cancel")}
+              {tCommon("cancel")}
             </Button>
             <Button
               data-testid="bulk-import-confirm"

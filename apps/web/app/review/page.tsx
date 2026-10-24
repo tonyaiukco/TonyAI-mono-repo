@@ -57,14 +57,12 @@ import {
 import { appendById, isStaleCursor } from "@/lib/cursor-pages";
 import { entityLabel } from "@/lib/void-view";
 import { readEvidencePage, sharedWithNote } from "@/lib/evidence-view";
-import { useRecordWords } from "@/lib/i18n/hooks";
+import { useActorWords, useEntityWords, useRecordWords } from "@/lib/i18n/hooks";
 import { waitingLabel } from "@/lib/review-view";
 import { recordActorLabel } from "@/lib/record-actor";
 import {
   formatTCo2e,
   notCalculatedReason,
-  NOT_CALCULATED_LABEL,
-  NO_FACTOR_LABEL,
 } from "@/lib/calculation-display";
 import { cn } from "@/lib/utils";
 
@@ -93,6 +91,9 @@ export default function ReviewPage() {
   const tRoles = useTranslations("users");
   const tAnomaly = useTranslations("anomaly");
   const tEvidence = useTranslations("evidence");
+  const tCommon = useTranslations("common");
+  const entityWords = useEntityWords();
+  const actorWords = useActorWords();
   const recordWords = useRecordWords();
   const locale = useLocale();
   const router = useRouter();
@@ -527,6 +528,7 @@ export default function ReviewPage() {
                                 v.toLocaleString("en-GB", {
                                   maximumFractionDigits: 3,
                                 }),
+                                tCommon("notCalculated"),
                               )}
                             </TableCell>
                             <TableCell>
@@ -547,6 +549,7 @@ export default function ReviewPage() {
                                 const actor = recordActorLabel(
                                   row.createdBy,
                                   row.createdByName,
+                                  actorWords,
                                 );
                                 return (
                                   <span
@@ -623,7 +626,7 @@ export default function ReviewPage() {
                   {subsidiaryName(selected.subsidiaryId)}
                 </span>
                 <span className="text-muted-foreground">Reporting entity</span>
-                <span className="col-span-2">{entityLabel(selected)}</span>
+                <span className="col-span-2">{entityLabel(selected, entityWords)}</span>
                 <span className="text-muted-foreground">Activity</span>
                 <span className="col-span-2 font-mono">
                   {selected.activityValue.toLocaleString("en-GB")}{" "}
@@ -637,7 +640,7 @@ export default function ReviewPage() {
                     })} tCO₂e`
                   ) : (
                     <span className="font-sans text-muted-foreground">
-                      {NOT_CALCULATED_LABEL}
+                      {tCommon("notCalculated")}
                     </span>
                   )}
                 </span>
@@ -650,7 +653,7 @@ export default function ReviewPage() {
                       the inventory that carries no emissions figure at all. */}
                   {isCalculated(selected.calculation)
                     ? `${selected.calculation.source} v${selected.calculation.version}`
-                    : NO_FACTOR_LABEL}
+                    : tCommon("noFactor")}
                 </span>
                 {/* Both, because they answer different questions: when the
                     work was started, and when it reached this queue. They are
@@ -681,7 +684,7 @@ export default function ReviewPage() {
                     ["Reviewed by", selected.reviewedBy, selected.reviewedByName],
                   ] as const
                 ).map(([label, id, name]) => {
-                  const actor = recordActorLabel(id, name);
+                  const actor = recordActorLabel(id, name, actorWords);
                   return (
                     <Fragment key={label}>
                       <span className="text-muted-foreground">{label}</span>

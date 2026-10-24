@@ -5,7 +5,8 @@ import { api, ApiError } from '@/lib/api';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { useCompletenessCopy } from '@/lib/i18n/hooks';
+import { useCompletenessCopy, useDescribeError, useRecordWords } from '@/lib/i18n/hooks';
+import { useTranslations } from 'use-intl';
 import {
   duplicateNote,
   duplicatedMonths,
@@ -54,8 +55,12 @@ export function InvoiceCoverageGrid({
   onSlotClick,
 }: InvoiceCoverageGridProps) {
   const copy = useCompletenessCopy();
+  const t = useTranslations('dashboard');
+  const describe = useDescribeError();
+  const words = useRecordWords();
   const [data, setData] = useState<SubsidiaryCompletenessDTO | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // The failure itself, worded at render: a language switch re-words it.
+  const [error, setError] = useState<{ cause: unknown } | null>(null);
   const [selected, setSelected] = useState<Category | null>(null);
 
   useEffect(() => {
@@ -72,24 +77,22 @@ export function InvoiceCoverageGrid({
       // Not an empty grid. A failed fetch and "nothing is missing" look
       // identical rendered as zero rows, and on this panel that is the
       // difference between "you are done" and "we could not check".
-      .catch((e) =>
-        !cancelled &&
-        setError(
-          e instanceof ApiError
-            ? e.message
-            : 'Could not load the invoice breakdown.',
-        ),
-      );
+      .catch((e) => !cancelled && setError({ cause: e }));
     return () => {
       cancelled = true;
     };
   }, [subsidiaryId, reportingYear]);
 
   if (error) {
+    // The API's refusal in the user's words (its English beneath a generic
+    // one, K5); anything else is this panel's own sentence.
+    const { title, description } =
+      error.cause instanceof ApiError ? describe(error.cause) : { title: t('grid.loadFailed'), description: undefined };
     return (
-      <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-        {error}
-      </p>
+      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+        <p>{title}</p>
+        {description ? <p className="mt-1 opacity-80">{description}</p> : null}
+      </div>
     );
   }
 
@@ -110,8 +113,7 @@ export function InvoiceCoverageGrid({
   if (data.categories.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        {subsidiaryName} is measured as a whole company, so there is no
-        per-location invoice breakdown.
+        {t('grid.wholeCompany', { name: subsidiaryName })}
       </p>
     );
   }
@@ -161,7 +163,7 @@ export function InvoiceCoverageGrid({
                   : 'border-border text-muted-foreground hover:bg-secondary/60',
               )}
             >
-              {c.category}{' '}
+              {words.category(c.category)}{' '}
               <span className="font-mono tabular-nums">
                 {c.covered}/{c.required}
               </span>
@@ -181,7 +183,7 @@ export function InvoiceCoverageGrid({
                     key={m.month}
                     className="text-center text-[10px] font-medium text-muted-foreground"
                   >
-                    {SHORT_MONTH(m.month)}
+                    {SHORT_MONTH(words.period(m.month))}
                   </span>
                 ))}
               </div>
@@ -221,7 +223,7 @@ export function InvoiceCoverageGrid({
                             month: m.month,
                           })
                         }
-                        aria-label={`${loc.locationName} ${m.month}: ${description}`}
+                        aria-label={`${loc.locationName} ${words.period(m.month)}: ${description}`}
                         title={description}
                         className={cn(
                           'flex h-5 items-center justify-center rounded-[3px] border text-[9px] font-bold leading-none transition-colors',
@@ -253,20 +255,20 @@ export function InvoiceCoverageGrid({
               <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-complete-text/40 bg-status-complete-bg text-[8px] font-bold text-status-complete-text">
                 {SLOT_GLYPH.accepted}
               </span>
-              invoice attached and approved
+              {t('grid.accepted')}
             </span>
             <span className="flex items-center gap-1">
               <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-missing-text/40 bg-status-missing-bg text-[8px] font-bold text-status-missing-text">
                 {SLOT_GLYPH.open}
               </span>
-              missing
+              {t('grid.open')}
             </span>
             {hasAwaiting && (
               <span className="flex items-center gap-1">
                 <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-incomplete-text/40 bg-status-incomplete-bg text-[8px] font-bold text-status-incomplete-text">
                   {SLOT_GLYPH.awaiting}
                 </span>
-                waiting for review
+                {t('grid.awaiting')}
               </span>
             )}
             {hasCompanyLevel && (
@@ -274,16 +276,19 @@ export function InvoiceCoverageGrid({
                 <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-status-incomplete-text/40 bg-status-incomplete-bg text-[8px] font-bold text-status-incomplete-text">
                   {SLOT_GLYPH.company}
                 </span>
-                already recorded company-wide
+                {t('grid.company')}
               </span>
             )}
           </div>
 
           <p className="text-[11px] text-muted-foreground">
-            One invoice per site per month.
-            {canEnter && openSlots > 0 && ' Click a missing month to enter it.'}
-            {hasCompanyLevel &&
-              ' Months marked ◆ are already recorded for the whole company — entering them again per site would count that month twice.'}
+            {[
+              t('grid.oneInvoice'),
+              canEnter && openSlots > 0 ? t('grid.clickMissing') : null,
+              hasCompanyLevel ? t('grid.companyMarked') : null,
+            ]
+              .filter(Boolean)
+              .join(' ')}
           </p>
 
           {/* The counters, in words.

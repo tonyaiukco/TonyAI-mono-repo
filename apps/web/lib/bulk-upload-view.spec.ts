@@ -22,7 +22,7 @@ import {
   COLUMN_LABEL,
   bulkActivityLabel,
   fileAcceptAttribute,
-  groupIssues,
+  groupIssues as groupIssuesIn,
   ISSUE_CODE_LABEL,
   readAmountLabel,
   MAX_ISSUE_ROWS_PER_GROUP,
@@ -40,10 +40,16 @@ import { copyFor, describeFor } from '@/lib/i18n/testing';
 const up = () => copyFor('bulkUpload');
 const applyConfirmation = (r: BulkUploadReportDTO) => applyConfirmationIn(r, up());
 const applySuccessMessage = (r: BulkUploadReportDTO) => applySuccessMessageIn(r, up());
-const applyToast = (r: BulkUploadReportDTO, translate?: Parameters<typeof applyToastIn>[1]) => applyToastIn(r, translate, up());
+// The `errors` translator the panel passes for the deadline verdict and the issue labels.
+const errorsT = () => copyFor('errors').t;
+const applyToast = (r: BulkUploadReportDTO, translate?: Parameters<typeof applyToastIn>[1]) =>
+  applyToastIn(r, translate ?? (errorsT() as Parameters<typeof applyToastIn>[1]), up());
+const groupIssues = (issues: Parameters<typeof groupIssuesIn>[0], labelOf?: Parameters<typeof groupIssuesIn>[1]) =>
+  groupIssuesIn(issues, labelOf ?? ((code) => errorsT()(`bulkUploadIssues.${code}`)));
 const preflightFile = (f: { name: string; size: number }) => preflightFileIn(f, up());
 const sizeCapLabel = () => sizeCapLabelIn(up());
-const summarise = (r: BulkUploadReportDTO, translate?: Parameters<typeof summariseIn>[1]) => summariseIn(r, translate, up());
+const summarise = (r: BulkUploadReportDTO, translate?: Parameters<typeof summariseIn>[1]) =>
+  summariseIn(r, translate ?? (errorsT() as Parameters<typeof summariseIn>[1]), up());
 const templateErrorMessage = (e: unknown) => templateErrorMessageIn(e, up(), describeFor()).title;
 const tonnesLabel = (rows: BulkUploadAcceptedRow[]) => tonnesLabelIn(rows, up());
 const uploadErrorMessage = (e: unknown, translate: Parameters<typeof uploadErrorMessageIn>[1] = () => en.bulkQueryTooBroad) =>

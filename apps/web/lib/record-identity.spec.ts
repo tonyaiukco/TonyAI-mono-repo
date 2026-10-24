@@ -5,7 +5,6 @@ import { copyFor } from '@/lib/i18n/testing';
 // English: the notice the form showed before LP4-04.
 const describeMove = (...args: Parameters<typeof describeMoveIn> extends [...infer A, unknown] ? A : never) =>
   describeMoveIn(...args, copyFor('dataEntry'));
-import { NOT_CALCULATED_LABEL } from './calculation-display';
 
 /**
  * These two functions decide whether the next save edits a record or creates
@@ -96,7 +95,7 @@ describe('describeMove', () => {
       false,
     )!;
     expect(notice).toBe(
-      `Saving moves this record from the whole company to Ankara Power Plant. It is not copied — and no emission factor resolves for it today, so it stays "${NOT_CALCULATED_LABEL}".`,
+      `Saving moves this record from the whole company to Ankara Power Plant. It is not copied — and no emission factor resolves for it today, so it stays "${copyFor('common').t('notCalculated')}".`,
     );
   });
 

@@ -22,5 +22,17 @@
     "back": "Gösterge Paneline dön"
   },
   "notCalculated": "Hesaplanmadı",
-  "noFactor": "Faktör yok"
+  "noFactor": "Faktör yok",
+  "loading": "Yükleniyor…",
+  "tco2e": "tCO₂e",
+  "entity": {
+    "wholeCompany": "Şirket bütünü",
+    "unnamedSite": "Tesis (adı alınamadı)"
+  },
+  "actor": {
+    "deleted": "silinmiş kullanıcı",
+    "unnamed": "adsız kullanıcı"
+  },
+  "cancel": "İptal",
+  "saving": "Kaydediliyor…"
 }

@@ -7,5 +7,140 @@
   "overviewNote": "Sayılan faaliyet kayıtları. Toplam Kapsam 1 + 2'dir; Kapsam 3 kaydedilir ancak envanter tarafından kapsanmaz. Yıldan yıla eğilimler, önceki yılın verileri oluştuğunda gelir.",
   "notCovered": "Kapsanmıyor",
   "outsideSelection": "Bu Kapsam 3 seçiminin dışında",
-  "totalScope3Only": "Kapsam 3 kapsanmadığı için bu seçimin envanter toplamı yok"
+  "totalScope3Only": "Kapsam 3 kapsanmadığı için bu seçimin envanter toplamı yok",
+  "title": "Karbon Gösterge Paneli",
+  "searchPlaceholder": "Bağlı şirket ara...",
+  "live": "Canlı veri",
+  "stale": "Yenilenmiyor — yeniden denemek için sayfayı yenileyin",
+  "percent": "%{value}",
+  "tonnes": "{value} tCO₂e",
+  "compact": {
+    "thousand": "{value} bin",
+    "million": "{value} mn"
+  },
+  "status": {
+    "complete": "Tamamlandı",
+    "incomplete": "Kısmi",
+    "missing": "Eksik"
+  },
+  "strip": {
+    "totalSubsidiaries": "Toplam Bağlı Şirket",
+    "accessible": "Erişiminiz olanlar",
+    "active": "Aktif",
+    "activeHint": "Raporlaması aktif",
+    "pending": "Beklemede",
+    "pendingHint": "Katılım bekliyor",
+    "geographies": "Coğrafyalar",
+    "noData": "Veri yok",
+    "byRegion": "Bölgeye göre bağlı şirketler"
+  },
+  "register": {
+    "title": "Bağlı Şirket Kaydı",
+    "empty": "Hesabınızın erişebildiği bağlı şirket yok.",
+    "noMatch": "“{query}” ile eşleşen bağlı şirket yok.",
+    "columns": {
+      "legalName": "Ticari unvan",
+      "tradingName": "Marka adı",
+      "location": "Konum",
+      "geography": "Coğrafya",
+      "sector": "Sektör",
+      "status": "Durum"
+    },
+    "status": {
+      "active": "aktif",
+      "pending": "beklemede",
+      "inactive": "pasif"
+    }
+  },
+  "overview": {
+    "title": "Emisyonlara Genel Bakış",
+    "loadFailed": "Emisyon verileri yüklenemedi."
+  },
+  "kpi": {
+    "scope1": "Kapsam 1 Emisyonları",
+    "scope1Description": "Doğrudan emisyonlar",
+    "scope2": "Kapsam 2 Emisyonları",
+    "scope2Description": "Satın alınan enerji",
+    "scope3": "Kapsam 3 Emisyonları",
+    "trendPending": "Yıldan yıla eğilim için önceki yılın verileri gerekir",
+    "collection": "Veri Toplama Durumu",
+    "companies": "Şirketler",
+    "locations": "Konumlar",
+    "byLocationOne": "1 şirket konum bazında ölçülüyor: elektrik, doğal gaz ve su için her tesis ve her ay bir fatura gerekir; bu kategoriler ancak her ay girildiğinde tamamlanmış sayılır.",
+    "byLocationMany": "{count} şirket konum bazında ölçülüyor: elektrik, doğal gaz ve su için her tesis ve her ay bir fatura gerekir; bu kategoriler ancak her ay girildiğinde tamamlanmış sayılır."
+  },
+  "charts": {
+    "bySubsidiary": "Bağlı şirkete göre (tCO₂e)",
+    "dataStatus": "Veri Durumu",
+    "categories": "kategori"
+  },
+  "alerts": {
+    "title": "Yapılacaklar",
+    "critical": "{count} kritik",
+    "warnings": "{count} uyarı",
+    "viewAll": "Tümünü gör",
+    "empty": "Yapılacak bir şey yok — her şey yolunda.",
+    "anomaly": "{category} kayıtlarında anomali işareti — sapma gerekçesini inceleyin"
+  },
+  "matrix": {
+    "hint": "Bir kategoriye veri girmek ya da onu incelemek için hücreye tıklayın. Değerler hesaplanan emisyonları tCO₂e olarak gösterir.",
+    "allYears": "Tüm raporlama yılları birlikte gösteriliyor — bir hücre yılları karıştırır, bu yüzden durumu hiçbir yılı tanımlamaz.",
+    "subsidiary": "Bağlı şirket",
+    "perLocationOne": "konum bazında · {count} tesis",
+    "perLocationMany": "konum bazında · {count} tesis",
+    "short": {
+      "Electricity": "Elek",
+      "Natural Gas": "Gaz",
+      "Fuel": "Yakıt",
+      "Mobile Combustion": "Mobil",
+      "Refrigerants": "Soğut",
+      "Purchased Goods": "Mal",
+      "Waste": "Atık",
+      "Water": "Su",
+      "Business Travel": "Seyahat",
+      "Commuting": "İşe gidiş",
+      "Logistics": "Lojist"
+    }
+  },
+  "cell": {
+    "invoicesOf": "{required} faturanın {covered} tanesi",
+    "ariaTonnes": "{value} tCO2e",
+    "invoices": "Faturalar",
+    "ofRequired": "/ {required}",
+    "emissions": "Emisyonlar",
+    "entries": "Girişler (tüm durumlar)",
+    "withdrawnOne": "Geri çekildi (hiçbir şeye sayılmaz)",
+    "withdrawnMany": "Geri çekilen girişler (hiçbir şeye sayılmaz)",
+    "owner": "Sorumlu",
+    "updated": "Güncellendi",
+    "uncalculated": "Buradaki sayılan girişlerin {count} tanesi tCO₂e değeri üretmedi. Bu bugün, kategorinin henüz bir emisyon faktörü olmadığı anlamına gelir.",
+    "details": "Ayrıntılar için tıklayın"
+  },
+  "drawer": {
+    "perLocationOne": "Konum bazında ölçülüyor · {count} tesis",
+    "perLocationMany": "Konum bazında ölçülüyor · {count} tesis",
+    "wholeCompany": "Şirket bütünü olarak ölçülüyor",
+    "overall": "Genel Tamamlanma",
+    "calculated": "Hesaplanan",
+    "ofCategories": "/ {count} kategori",
+    "categoryStatus": "Kategori Durumu",
+    "invoices": "fatura",
+    "status": {
+      "complete": "Tamamlandı",
+      "incomplete": "Kısmi",
+      "missing": "Eksik"
+    },
+    "invoiceGrid": "Tesise ve aya göre faturalar"
+  },
+  "grid": {
+    "loadFailed": "Fatura dökümü yüklenemedi.",
+    "wholeCompany": "{name} şirket bütünü olarak ölçülüyor; bu yüzden konum bazında fatura dökümü yok.",
+    "accepted": "fatura eklendi ve onaylandı",
+    "open": "eksik",
+    "awaiting": "inceleme bekliyor",
+    "company": "şirket genelinde zaten kayıtlı",
+    "oneInvoice": "Her tesis için her ay bir fatura.",
+    "clickMissing": "Girmek için eksik bir aya tıklayın.",
+    "companyMarked": "◆ ile işaretli aylar şirket bütünü için zaten kayıtlı — bunları tesis bazında yeniden girmek o ayı iki kez sayar."
+  }
 }

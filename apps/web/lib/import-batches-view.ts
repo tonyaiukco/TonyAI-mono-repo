@@ -1,8 +1,7 @@
-import enErrors from '@/messages/en/errors.json';
+import type enErrors from '@/messages/en/errors.json';
 import type { BulkSubmitReportDTO, ImportBatchDTO, Locale } from '@/lib/types';
-import { deadlineSummary, type DeadlineTranslator, SUBMIT_ISSUE_LABEL, submitIssueLabel, type SubmitIssueTranslator } from '@/lib/bulk-submit-view';
+import { deadlineSummary, type DeadlineTranslator, submitIssueLabel, type SubmitIssueTranslator } from '@/lib/bulk-submit-view';
 import { ApiError } from '@/lib/api';
-import { formatNumber as formatGrouped } from '@/lib/utils';
 import { formatNumber } from '@/lib/i18n/number';
 import type { ViewCopy } from '@/lib/i18n/view-translator';
 import type { DescribeError, ErrorWords } from '@/lib/bulk-submit-view';
@@ -42,16 +41,18 @@ export function batchStateLabel(state: BatchState, { t }: ImportsCopy): string {
 
 /** `2 imported · 1 refused`, or what an interrupted batch can still say. */
 export function batchOutcome(batch: Pick<ImportBatchDTO, 'acceptedCount' | 'rejectedCount' | 'totalRows'>,
-  translate: (key: `bulkOutcomes.${keyof typeof enErrors.bulkOutcomes}`, values: { count: number }) => string
-    = (key, { count }) => enErrors.bulkOutcomes[key.replace('bulkOutcomes.', '') as keyof typeof enErrors.bulkOutcomes].replace('{count}', formatGrouped(count)),
+  // The screen's `errors` translator — no English default (LP4-04 slice 2 follow-up 2).
+  translate: (key: `bulkOutcomes.${keyof typeof enErrors.bulkOutcomes}`, values: { count: string }) => string,
+  locale: Locale,
 ): string {
+  const count = (n: number) => ({ count: formatNumber(n, locale) });
   if (batch.acceptedCount === null || batch.rejectedCount === null) {
-    return translate('bulkOutcomes.unknown', { count: batch.totalRows });
+    return translate('bulkOutcomes.unknown', count(batch.totalRows));
   }
-  const parts = [translate('bulkOutcomes.imported', { count: batch.acceptedCount })];
-  if (batch.rejectedCount) parts.push(translate('bulkOutcomes.refused', { count: batch.rejectedCount }));
+  const parts = [translate('bulkOutcomes.imported', count(batch.acceptedCount))];
+  if (batch.rejectedCount) parts.push(translate('bulkOutcomes.refused', count(batch.rejectedCount)));
   const unstarted = Math.max(0, batch.totalRows - batch.acceptedCount - batch.rejectedCount);
-  if (unstarted) parts.push(translate('bulkOutcomes.notProcessed', { count: unstarted }));
+  if (unstarted) parts.push(translate('bulkOutcomes.notProcessed', count(unstarted)));
   return parts.join(' · ');
 }
 
@@ -83,14 +84,13 @@ export function awaitingEvidenceNote(
 }
 
 /** Why records a batch submit sent were not moved: `Needs an evidence file · 2`, one line per reason. */
-export function submitFailureDetail(report: BulkSubmitReportDTO, deadlineLabel = enErrors.bulkIssues.not_processed_deadline, translate?: DeadlineTranslator, translateIssue?: SubmitIssueTranslator, locale: Locale = 'en'): string | null {
-  const deadline = deadlineSummary(report.submitted.length, report.failed, translate);
+export function submitFailureDetail(report: BulkSubmitReportDTO, translate: DeadlineTranslator, translateIssue: SubmitIssueTranslator, locale: Locale): string | null {
+  const deadline = deadlineSummary(report.submitted.length, report.failed, translate, locale);
   if (deadline) return deadline.detail;
   if (report.failed.length === 0) return null;
   const counts = new Map<string, number>();
   for (const issue of report.failed) {
-    const label = translateIssue ? submitIssueLabel(issue.code, translateIssue)
-      : issue.code === 'not_processed_deadline' ? deadlineLabel : SUBMIT_ISSUE_LABEL[issue.code];
+    const label = submitIssueLabel(issue.code, translateIssue);
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   return [...counts].map(([label, n]) => `${label} · ${formatNumber(n, locale)}`).join('\n');

@@ -39,8 +39,10 @@ import type { Locale } from '@/lib/types';
 const copy = (locale: Locale = 'en') => copyFor('bulkSubmit', locale);
 const eligibleForSubmit = (rows: BulkUploadAcceptedRow[], locale: Locale = 'en') => eligibleForSubmitIn(rows, copy(locale));
 const submitConfirmation = (n: number, locale: Locale = 'en') => submitConfirmationIn(n, copy(locale));
+// The `errors` translator the screens pass for the deadline verdict.
+const errorsT = (locale: Locale = 'en') => copyFor('errors', locale).t as Parameters<typeof summariseSubmitIn>[1];
 const summariseSubmit = (r: BulkSubmitReportDTO, translate?: Parameters<typeof summariseSubmitIn>[1], locale: Locale = 'en') =>
-  summariseSubmitIn(r, translate, copy(locale));
+  summariseSubmitIn(r, translate ?? errorsT(locale), copy(locale));
 const submitErrorMessage = (e: unknown, locale: Locale = 'en') => submitErrorMessageIn(e, copy(locale), describeFor(locale)).title;
 const submitBlockReason = (row: SubmittableRow, user: SubmittingUser, locale: Locale = 'en') =>
   submitBlockReasonIn(row, user, copy(locale), recordWordsFor(locale));

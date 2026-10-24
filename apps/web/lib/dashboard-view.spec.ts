@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildKpiData, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { axisThousands, buildKpiData, compactTonnes, matrixToAlerts, matrixToSubsidiaries, scope12Total } from './dashboard-view';
+import { copyFor } from '@/lib/i18n/testing';
 import type {
   EmissionsSummary,
   TrackingMatrixCell,
@@ -191,9 +192,38 @@ describe('matrixToAlerts', () => {
           ],
         }),
       ]),
+      (category) => copyFor('dashboard').t('alerts.anomaly', { category }),
     );
     expect(alerts).toHaveLength(1);
     expect(alerts[0].category).toBe('Electricity');
     expect(alerts[0].subsidiary).toBe('TonyAI Energy');
+    expect(alerts[0].message).toBe('Anomaly flag on Electricity records — review the variance reason');
+  });
+});
+
+describe('compactTonnes', () => {
+  const en = copyFor('dashboard', 'en');
+  const tr = copyFor('dashboard', 'tr');
+
+  it('reads as the cards always did in English', () => {
+    expect(compactTonnes(818, en)).toBe('818');
+    expect(compactTonnes(12_345, en)).toBe('12.3k');
+    expect(compactTonnes(1_250_000, en)).toBe('1.3M');
+    expect(compactTonnes(1000, en)).toBe('1.0k');
+    expect(axisThousands(12_000, en)).toBe('12k');
+    expect(axisThousands(0, en)).toBe('0k');
+    // The KPI cards pass raw float totals: a whole number below 1,000.
+    expect(compactTonnes(818.456, en)).toBe('818');
+    expect(compactTonnes(1_000_000, en)).toBe('1.0M');
+    expect(axisThousands(12_345, en)).toBe('12k');
+    // Never "-0" for a value that rounds to zero.
+    expect(compactTonnes(-0.3, en)).toBe('0');
+  });
+
+  it('writes the same quantity the Turkish way', () => {
+    expect(compactTonnes(818, tr)).toBe('818');
+    expect(compactTonnes(12_345, tr)).toBe('12,3 bin');
+    expect(compactTonnes(1_250_000, tr)).toBe('1,3 mn');
+    expect(axisThousands(12_000, tr)).toBe('12 bin');
   });
 });

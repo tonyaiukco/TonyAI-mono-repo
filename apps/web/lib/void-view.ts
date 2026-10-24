@@ -1,11 +1,8 @@
-import {
-  entityLabel as entityLabelFor,
-  isCalculated,
-  VOID_REASON_MAX_LENGTH,
-  VOID_REASON_MIN_LENGTH,
-} from '@/lib/types';
+import { isCalculated, VOID_REASON_MAX_LENGTH, VOID_REASON_MIN_LENGTH } from '@/lib/types';
 import type { ActivityRecordDTO } from '@/lib/types';
-import { formatNumber } from '@/lib/utils';
+import { formatNumber } from '@/lib/i18n/number';
+import type { ViewCopy } from '@/lib/i18n/view-translator';
+import type { RecordWords } from '@/lib/vocabulary';
 
 /**
  * The client half of the void path: who may be offered it, whether the reason
@@ -19,7 +16,46 @@ import { formatNumber } from '@/lib/utils';
  * The server remains the authority on every rule mirrored here (see
  * `void-activity-record.dto.ts` and `ActivityRecordsService.void`). These
  * functions decide what to *render*; they decide nothing about what is allowed.
+ *
+ * Every sentence comes from the Emissions screen's catalogue (`emissions.void.*`,
+ * LP4-04 slice 2); the figures are written in the user's language.
  */
+
+/** The `emissions` keys this module words its sentences with. */
+export type VoidKey =
+  | 'void.reasonRequired'
+  | 'void.reasonShort'
+  | 'void.reasonLong'
+  | 'void.removes'
+  | 'void.noFigure'
+  | 'void.subject'
+  | 'void.stopsCounting'
+  | 'void.reopens'
+  | 'void.staysOnRecord'
+  | 'void.printed'
+  | 'void.cannotUndo'
+  | 'void.withdrawn'
+  | 'void.withdrawnNoFigure';
+
+/** What the reporting entity is called when it is not a named site
+ *  (`common.entity.*`; English = shared-types' `WHOLE_COMPANY_ENTITY_LABEL`
+ *  and `UNNAMED_SITE_ENTITY_LABEL`, parity-tested). */
+export interface EntityWords {
+  wholeCompany: string;
+  unnamedSite: string;
+}
+
+/** The copy the void path is worded with: the screen's translator, the
+ *  record's words (category, period) and the entity words. */
+export interface VoidCopy extends ViewCopy<VoidKey> {
+  words: RecordWords;
+  entity: EntityWords;
+}
+
+/** A tonnage as the void path names it: three decimals, the user's separators. */
+function tonnes(value: number, copy: ViewCopy<VoidKey>): string {
+  return formatNumber(value, copy.locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+}
 
 /**
  * The same two numbers `VoidActivityRecordDto` validates with — not a copy of
@@ -38,16 +74,22 @@ export { VOID_REASON_MIN_LENGTH, VOID_REASON_MAX_LENGTH } from '@/lib/types';
  * disagreed with the server about that would let the user watch a request fail
  * for a rule the form said they had met.
  */
-export function voidReasonError(reason: string): string | null {
+export function voidReasonError(reason: string, { t, locale }: ViewCopy<VoidKey>): string | null {
   const length = reason.trim().length;
   if (length === 0) {
-    return 'A reason is required — a withdrawal has to say why.';
+    return t('void.reasonRequired');
   }
   if (length < VOID_REASON_MIN_LENGTH) {
-    return `Say why this figure is being withdrawn — at least ${VOID_REASON_MIN_LENGTH} characters (${length} so far).`;
+    return t('void.reasonShort', {
+      min: formatNumber(VOID_REASON_MIN_LENGTH, locale),
+      count: formatNumber(length, locale),
+    });
   }
   if (length > VOID_REASON_MAX_LENGTH) {
-    return `A reason cannot run past ${formatNumber(VOID_REASON_MAX_LENGTH)} characters (${formatNumber(length)} entered).`;
+    return t('void.reasonLong', {
+      max: formatNumber(VOID_REASON_MAX_LENGTH, locale),
+      count: formatNumber(length, locale),
+    });
   }
   return null;
 }
@@ -91,15 +133,19 @@ export interface VoidConsequence {
 /**
  * The reporting entity in one phrase — the site's name, or the whole company.
  *
- * The phrase itself now comes from `@tonyai/shared-types`, because the
- * generated report prints it too (WP20): this dialog and a PDF a reader keeps
- * must call the same row the same thing. This wrapper stays because callers
- * hold a record, not a field.
+ * shared-types' `entityLabel` in the user's language: the same rule — keyed
+ * on the PAIR, a trimmed name first, a site whose name did not come back
+ * never called the whole company — with the two phrases from the catalogue.
+ * The generated report (WP20) keeps shared-types' English phrases; this
+ * dialog's English is the same words (`messages.spec.ts`).
  */
 export function entityLabel(
   record: Pick<ActivityRecordDTO, 'locationId' | 'locationName'>,
+  words: EntityWords,
 ): string {
-  return entityLabelFor(record);
+  const named = record.locationName?.trim();
+  if (named) return named;
+  return record.locationId ? words.unnamedSite : words.wholeCompany;
 }
 
 /**
@@ -115,15 +161,20 @@ export function entityLabel(
 export function voidConsequence(
   record: ActivityRecordDTO,
   subsidiaryName: string,
+  copy: VoidCopy,
 ): VoidConsequence {
+  const { t, words } = copy;
   const calculation = record.calculation;
-  const entity = entityLabel(record);
+  const entity = entityLabel(record, copy.entity);
+  const category = words.category(record.category);
+  const period = words.period(record.periodValue);
+  const year = String(record.reportingYear);
   const headline = isCalculated(calculation)
-    ? `This removes ${formatNumber(calculation.tCo2e, 3)} tCO₂e from the inventory.`
+    ? t('void.removes', { tonnes: tonnes(calculation.tCo2e, copy) })
     : // No factor, so no tonnes ever entered a total — saying "removes 0 tCO₂e"
       // would read as a reassurance that nothing happens, when the entry is
       // still leaving the completeness counts.
-      'This entry produced no tCO₂e figure, so no emissions total changes.';
+      t('void.noFigure');
 
   return {
     // Named in full, because the whole reason this control exists is a pair of
@@ -131,19 +182,19 @@ export function voidConsequence(
     // the void endpoint withdrew the wrong half of exactly such a pair. A
     // dialog that says "this entity" gives the reader nothing to check the
     // click against; the four facts below are the record's identity.
-    subject: `${record.category} · ${subsidiaryName} · ${entity} · ${record.periodValue} ${record.reportingYear}`,
+    subject: t('void.subject', { category, subsidiary: subsidiaryName, entity, period, year }),
     headline,
     effects: [
-      'It stops counting towards totals, reports and invoice coverage.',
-      `${record.periodValue} ${record.reportingYear} then reopens for ${entity}, so a corrected ${record.category} figure can be entered in its place.`,
-      'The entry stays on record with your reason, and the withdrawal is written to the audit log.',
+      t('void.stopsCounting'),
+      t('void.reopens', { period, year, entity, category }),
+      t('void.staysOnRecord'),
       // Added with WP20, which is what made it true: until reports disclosed
       // withdrawals, this text stayed inside the product. It is now quoted
       // verbatim into every generated PDF, Excel and CSV — documents that go to
       // auditors and investors — and it cannot be edited afterwards. Someone
       // about to type a colleague's name into it deserves to know that first.
-      'Your reason is printed verbatim in every generated report — PDF, Excel and CSV — and cannot be edited afterwards.',
-      'It cannot be undone.',
+      t('void.printed'),
+      t('void.cannotUndo'),
     ],
   };
 }
@@ -154,9 +205,9 @@ export function voidConsequence(
  * Names the tonnage, because the number on screen is about to change and the
  * user should be told by how much rather than left to diff two screenshots.
  */
-export function voidSuccessMessage(record: ActivityRecordDTO): string {
+export function voidSuccessMessage(record: ActivityRecordDTO, copy: ViewCopy<VoidKey>): string {
   const calculation = record.calculation;
   return isCalculated(calculation)
-    ? `Withdrawn — ${formatNumber(calculation.tCo2e, 3)} tCO₂e left the inventory.`
-    : 'Withdrawn — the entry no longer counts towards any total.';
+    ? copy.t('void.withdrawn', { tonnes: tonnes(calculation.tCo2e, copy) })
+    : copy.t('void.withdrawnNoFigure');
 }

@@ -385,7 +385,7 @@ export function PreviousSubmissions({
             </span>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="ghost" onClick={stopAttach}>
-                {t("submissions.cancel")}
+                {tCommon("cancel")}
               </Button>
               <Button
                 size="sm"
@@ -676,7 +676,7 @@ export function PreviousSubmissions({
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setPendingFile(null)}>
-                {t("submissions.cancel")}
+                {tCommon("cancel")}
               </Button>
               <Button
                 data-testid="evidence-attach-confirm"
@@ -702,7 +702,7 @@ export function PreviousSubmissions({
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setConfirming(false)}>
-                {t("submissions.cancel")}
+                {tCommon("cancel")}
               </Button>
               <Button
                 data-testid="drafts-submit-confirm"

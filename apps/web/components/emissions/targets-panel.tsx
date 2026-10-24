@@ -28,7 +28,10 @@ import { DecimalNote } from '@/components/i18n/decimal-note';
 import { api } from '@/lib/api';
 import { appendById, isStaleCursor } from '@/lib/cursor-pages';
 import { LoadMoreButton } from '@/components/ui/load-more-button';
-import { checkDecimal, parseYearInput } from '@/lib/i18n/number';
+import { checkDecimal, formatNumber, parseYearInput } from '@/lib/i18n/number';
+import { useErrorToast, useStableErrorToast } from '@/lib/i18n/hooks';
+import { TARGET_BASES } from '@/lib/vocabulary';
+import { useLocale, useTranslations } from 'use-intl';
 import { useDecimalInput } from '@/lib/i18n/use-decimal-input';
 import type {
   EmissionsScope,
@@ -39,26 +42,16 @@ import type {
   TargetStatus,
 } from '@/lib/types';
 
-const BASIS_LABEL: Record<TargetBasis, string> = {
-  science_based: 'Science-based',
-  internal_annual: 'Internal annual',
-  baseline_reduction: 'Baseline reduction',
+/** The scopes a target can cover, in the order the form offers them. */
+const SCOPES: readonly EmissionsScope[] = ['all', 'scope1', 'scope2', 'scope3'];
+
+const STATUS_STYLE: Record<TargetStatus, { bar: string; badge: string }> = {
+  on_track: { bar: 'bg-emerald-500', badge: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30' },
+  at_risk: { bar: 'bg-amber-500', badge: 'bg-amber-500/15 text-amber-600 border-amber-500/30' },
+  off_track: { bar: 'bg-red-500', badge: 'bg-red-500/15 text-red-600 border-red-500/30' },
 };
 
-const SCOPE_LABEL: Record<EmissionsScope, string> = {
-  all: 'All scopes',
-  scope1: 'Scope 1',
-  scope2: 'Scope 2',
-  scope3: 'Scope 3',
-};
-
-const STATUS_STYLE: Record<TargetStatus, { label: string; bar: string; badge: string }> = {
-  on_track: { label: 'On track', bar: 'bg-emerald-500', badge: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30' },
-  at_risk: { label: 'At risk', bar: 'bg-amber-500', badge: 'bg-amber-500/15 text-amber-600 border-amber-500/30' },
-  off_track: { label: 'Off track', bar: 'bg-red-500', badge: 'bg-red-500/15 text-red-600 border-red-500/30' },
-};
-
-const numberFmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
+const ONE_DECIMAL = { maximumFractionDigits: 1 } as const;
 
 interface TargetsPanelProps {
   canManage: boolean;
@@ -80,6 +73,15 @@ const emptyForm = {
 
 /** Targets tab (WP5): live reduction targets + progress; super_admin CRUD. */
 export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }: TargetsPanelProps) {
+  const t = useTranslations('targets');
+  const tCommon = useTranslations('common');
+  const tStatus = useTranslations('targetStatus');
+  const tBasis = useTranslations('targetBasis');
+  const locale = useLocale();
+  const showError = useErrorToast();
+  // `refresh` is an effect's dependency: a language switch must not reload it.
+  const showLoadError = useStableErrorToast();
+  const figure = (value: number) => formatNumber(value, locale, ONE_DECIMAL);
   const [targets, setTargets] = useState<TargetDTO[]>([]);
   const [progress, setProgress] = useState<TargetProgressDTO[]>([]);
   // Loaded pages of targets (LP4-05 PR C); progress is read for each page's ids.
@@ -122,11 +124,11 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
       setTargets([]);
       setProgress([]);
       setNextCursor(null);
-      toast.error((e as Error).message);
+      showLoadError(e);
     } finally {
       if (mine === loadSeq.current) setLoading(false);
     }
-  }, [subsidiaryId]);
+  }, [subsidiaryId, showLoadError]);
 
   async function loadMore() {
     if (!nextCursor) return;
@@ -141,7 +143,7 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
       setNextCursor(page.nextCursor);
     } catch (e) {
       if (mine !== loadSeq.current) return;
-      toast.error((e as Error).message);
+      showError(e);
       if (isStaleCursor(e)) void refresh();
     } finally {
       setLoadingMore(false);
@@ -162,13 +164,13 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
 
   async function handleCreate() {
     if (!form.subsidiaryId || form.name.trim().length < 2) {
-      toast.error('Pick a subsidiary and enter a target name.');
+      toast.error(t('pickRequired'));
       return;
     }
     const baselineYear = parseYearInput(form.baselineYear);
     const targetYear = parseYearInput(form.targetYear);
     if (baselineYear === null || targetYear === null || !baselineCheck.ok || !targetCheck.ok) {
-      toast.error('Enter both years as four digits and both tCO₂e values as numbers.');
+      toast.error(t('invalidNumbers'));
       return;
     }
     const baselineTCo2e = baselineCheck.value;
@@ -185,26 +187,26 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
         targetYear,
         targetTCo2e,
       });
-      toast.success('Target created');
+      toast.success(t('created'));
       setAddOpen(false);
       setForm(emptyForm);
       baselineInput.setValue(null);
       targetInput.setValue(null);
       await refreshLatest.current();
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDelete(t: TargetDTO) {
+  async function handleDelete(target: TargetDTO) {
     try {
-      await api.deleteTarget(t.id);
-      toast.success('Target removed');
+      await api.deleteTarget(target.id);
+      toast.success(t('removed'));
       await refreshLatest.current();
     } catch (e) {
-      toast.error((e as Error).message);
+      showError(e);
     }
   }
 
@@ -221,24 +223,24 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Reduction targets with live progress against committed emissions.
+          {t('intro')}
         </p>
         {canManage && (
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">
                 <Plus className="h-4 w-4" />
-                Add target
+                {t('add')}
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Add reduction target</DialogTitle>
+                <DialogTitle>{t('dialogTitle')}</DialogTitle>
               </DialogHeader>
               <div className="grid gap-3 py-2">
-                <Field label="Subsidiary">
+                <Field label={t('subsidiary')}>
                   <Select value={form.subsidiaryId} onValueChange={(v) => setForm((f) => ({ ...f, subsidiaryId: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Select subsidiary" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder={t('subsidiaryPlaceholder')} /></SelectTrigger>
                     <SelectContent>
                       {subsidiaries.map((s) => (
                         <SelectItem key={s.id} value={s.id}>
@@ -248,51 +250,51 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label="Name">
-                  <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Net-zero pathway 2030" />
+                <Field label={t('name')}>
+                  <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder={t('namePlaceholder')} />
                 </Field>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Basis">
+                  <Field label={t('basis')}>
                     <Select value={form.basis} onValueChange={(v) => setForm((f) => ({ ...f, basis: v as TargetBasis }))}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {(Object.keys(BASIS_LABEL) as TargetBasis[]).map((b) => (
-                          <SelectItem key={b} value={b}>{BASIS_LABEL[b]}</SelectItem>
+                        {TARGET_BASES.map((b) => (
+                          <SelectItem key={b} value={b}>{tBasis(b)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field label="Scope">
+                  <Field label={t('scope')}>
                     <Select value={form.scope} onValueChange={(v) => setForm((f) => ({ ...f, scope: v as EmissionsScope }))}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {(Object.keys(SCOPE_LABEL) as EmissionsScope[]).map((s) => (
-                          <SelectItem key={s} value={s}>{SCOPE_LABEL[s]}</SelectItem>
+                        {SCOPES.map((s) => (
+                          <SelectItem key={s} value={s}>{t(`scopes.${s}`)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </Field>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Baseline year">
+                  <Field label={t('baselineYear')}>
                     <Input type="text" inputMode="numeric" autoComplete="off" value={form.baselineYear} onChange={(e) => setForm((f) => ({ ...f, baselineYear: e.target.value }))} />
                   </Field>
-                  <Field label="Baseline tCO₂e">
-                    <Input type="text" inputMode="decimal" autoComplete="off" value={baselineInput.text} onChange={(e) => baselineInput.setText(e.target.value)} placeholder="e.g. 1600" aria-describedby="target-baseline-note" aria-invalid={baselineInput.text.trim() !== '' && !baselineCheck.ok} />
+                  <Field label={t('baselineTonnes')}>
+                    <Input type="text" inputMode="decimal" autoComplete="off" value={baselineInput.text} onChange={(e) => baselineInput.setText(e.target.value)} placeholder={t('baselinePlaceholder')} aria-describedby="target-baseline-note" aria-invalid={baselineInput.text.trim() !== '' && !baselineCheck.ok} />
                     <DecimalNote id="target-baseline-note" check={baselineCheck} otherReading={baselineInput.otherReading} locale={baselineInput.locale} />
                   </Field>
-                  <Field label="Target year">
+                  <Field label={t('targetYear')}>
                     <Input type="text" inputMode="numeric" autoComplete="off" value={form.targetYear} onChange={(e) => setForm((f) => ({ ...f, targetYear: e.target.value }))} />
                   </Field>
-                  <Field label="Target tCO₂e">
-                    <Input type="text" inputMode="decimal" autoComplete="off" value={targetInput.text} onChange={(e) => targetInput.setText(e.target.value)} placeholder="e.g. 900" aria-describedby="target-target-note" aria-invalid={targetInput.text.trim() !== '' && !targetCheck.ok} />
+                  <Field label={t('targetTonnes')}>
+                    <Input type="text" inputMode="decimal" autoComplete="off" value={targetInput.text} onChange={(e) => targetInput.setText(e.target.value)} placeholder={t('targetPlaceholder')} aria-describedby="target-target-note" aria-invalid={targetInput.text.trim() !== '' && !targetCheck.ok} />
                     <DecimalNote id="target-target-note" check={targetCheck} otherReading={targetInput.otherReading} locale={targetInput.locale} />
                   </Field>
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setAddOpen(false)} disabled={saving}>Cancel</Button>
-                <Button onClick={handleCreate} disabled={saving}>{saving ? 'Saving…' : 'Create target'}</Button>
+                <Button variant="outline" onClick={() => setAddOpen(false)} disabled={saving}>{tCommon('cancel')}</Button>
+                <Button onClick={handleCreate} disabled={saving}>{saving ? tCommon('saving') : t('create')}</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -303,34 +305,35 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
             <TargetIcon className="h-8 w-8 text-muted-foreground" />
-            <p className="text-sm font-medium text-foreground">No reduction targets yet</p>
+            <p className="text-sm font-medium text-foreground">{t('empty')}</p>
             <p className="text-sm text-muted-foreground">
-              {canManage ? 'Add a target to track progress against committed emissions.' : 'A super_admin can define reduction targets.'}
+              {canManage ? t('emptyManage') : t('emptyView')}
             </p>
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {targets.map((t) => {
-            const p = progressById.get(t.id);
+          {targets.map((target) => {
+            const p = progressById.get(target.id);
             const naProgress = !p || p.progressPercent === null || p.status === null;
-            const style = !naProgress && p?.status ? STATUS_STYLE[p.status] : null;
+            const status = !naProgress && p?.status ? p.status : null;
+            const style = status ? STATUS_STYLE[status] : null;
             return (
-              <Card key={t.id}>
+              <Card key={target.id}>
                 <CardContent className="space-y-4 pt-6">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <h3 className="font-semibold text-foreground">{t.name}</h3>
-                      <p className="text-xs text-muted-foreground">{nameById.get(t.subsidiaryId) ?? t.subsidiaryId}</p>
+                      <h3 className="font-semibold text-foreground">{target.name}</h3>
+                      <p className="text-xs text-muted-foreground">{nameById.get(target.subsidiaryId) ?? target.subsidiaryId}</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      {style ? (
-                        <Badge variant="outline" className={style.badge}>{style.label}</Badge>
+                      {status && style ? (
+                        <Badge variant="outline" className={style.badge}>{tStatus(status)}</Badge>
                       ) : (
-                        <Badge variant="outline" className="bg-muted text-muted-foreground">Progress n/a</Badge>
+                        <Badge variant="outline" className="bg-muted text-muted-foreground">{t('progressNa')}</Badge>
                       )}
                       {canManage && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600" onClick={() => handleDelete(t)} aria-label="Delete target">
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600" onClick={() => handleDelete(target)} aria-label={t('delete')}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       )}
@@ -338,15 +341,15 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    <Badge variant="outline">{BASIS_LABEL[t.basis]}</Badge>
-                    <Badge variant="outline">{SCOPE_LABEL[t.scope]}</Badge>
-                    <Badge variant="outline">−{numberFmt.format(t.reductionPercent)}%</Badge>
+                    <Badge variant="outline">{tBasis(target.basis)}</Badge>
+                    <Badge variant="outline">{t(`scopes.${target.scope}`)}</Badge>
+                    <Badge variant="outline">{t('reduction', { value: figure(target.reductionPercent) })}</Badge>
                   </div>
 
                   {/* Progress bar or honest n/a */}
                   {naProgress ? (
                     <p className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-                      Progress is not yet available — no committed data for a year after the {t.baselineYear} baseline.
+                      {t('noProgress', { year: String(target.baselineYear) })}
                     </p>
                   ) : (
                     <div className="space-y-1.5">
@@ -354,20 +357,20 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
                         <div className={`h-full ${style!.bar}`} style={{ width: `${p!.progressPercent}%` }} />
                       </div>
                       <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>{numberFmt.format(p!.progressPercent!)}% of the way to target</span>
-                        <span>{p!.currentYear} current: {numberFmt.format(p!.currentTCo2e!)} tCO₂e</span>
+                        <span>{t('wayToTarget', { value: figure(p!.progressPercent!) })}</span>
+                        <span>{t('current', { year: String(p!.currentYear), value: figure(p!.currentTCo2e!) })}</span>
                       </div>
                     </div>
                   )}
 
                   <div className="flex justify-between text-sm">
                     <div>
-                      <p className="text-xs text-muted-foreground">Baseline {t.baselineYear}</p>
-                      <p className="font-medium text-foreground">{numberFmt.format(t.baselineTCo2e)} tCO₂e</p>
+                      <p className="text-xs text-muted-foreground">{t('baseline', { year: String(target.baselineYear) })}</p>
+                      <p className="font-medium text-foreground">{t('tonnes', { value: figure(target.baselineTCo2e) })}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-muted-foreground">Target {t.targetYear}</p>
-                      <p className="font-medium text-foreground">{numberFmt.format(t.targetTCo2e)} tCO₂e</p>
+                      <p className="text-xs text-muted-foreground">{t('target', { year: String(target.targetYear) })}</p>
+                      <p className="font-medium text-foreground">{t('tonnes', { value: figure(target.targetTCo2e) })}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -380,7 +383,7 @@ export function TargetsPanel({ canManage, subsidiaries, nameById, subsidiaryId }
         hasMore={!loading && nextCursor !== null}
         loading={loadingMore}
         onClick={() => void loadMore()}
-        label="Load more targets"
+        label={t('loadMore')}
         testId="targets-load-more"
       />
     </div>

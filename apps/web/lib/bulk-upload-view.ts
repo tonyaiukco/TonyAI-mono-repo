@@ -189,8 +189,9 @@ export interface IssueGroup {
  */
 export function groupIssues(
   issues: BulkUploadRowIssue[],
-  // The screen passes the catalogue's (`errors.bulkUploadIssues.<code>`, LP4-04).
-  labelOf: (code: BulkUploadIssueCode) => string = (code) => ISSUE_CODE_LABEL[code],
+  // The screen passes the catalogue's (`errors.bulkUploadIssues.<code>`, LP4-04);
+  // no English default (LP4-04 slice 2 follow-up 2).
+  labelOf: (code: BulkUploadIssueCode) => string,
 ): IssueGroup[] {
   const byCode = new Map<BulkUploadIssueCode, BulkUploadRowIssue[]>();
   for (const issue of issues) {
@@ -243,7 +244,7 @@ export interface BulkUploadSummary {
 }
 
 /** The one-glance verdict above the report. */
-export function summarise(report: BulkUploadReportDTO, translate: DeadlineTranslator | undefined, copy: BulkUploadCopy): BulkUploadSummary {
+export function summarise(report: BulkUploadReportDTO, translate: DeadlineTranslator, copy: BulkUploadCopy): BulkUploadSummary {
   const { t, locale } = copy;
   const acceptedCount = report.accepted.length;
   const affectedRows = new Set(report.errors.map((e) => e.row)).size;
@@ -257,7 +258,7 @@ export function summarise(report: BulkUploadReportDTO, translate: DeadlineTransl
     warnedRows,
   };
 
-  const deadline = deadlineSummary(acceptedCount, report.errors, translate, report.dryRun);
+  const deadline = deadlineSummary(acceptedCount, report.errors, translate, copy.locale, report.dryRun);
   if (deadline) return { ...counts, ...deadline };
 
   if (acceptedCount === 0) {
@@ -417,12 +418,12 @@ export function applySuccessMessage(report: BulkUploadReportDTO, { t, locale }: 
  * period locked between the dry run and the apply, say), and the success toast
  * used to fire for it anyway: "0 records imported as drafts".
  */
-export function applyToast(report: BulkUploadReportDTO, translate: DeadlineTranslator | undefined, copy: BulkUploadCopy): {
+export function applyToast(report: BulkUploadReportDTO, translate: DeadlineTranslator, copy: BulkUploadCopy): {
   kind: 'success' | 'warning';
   message: string;
   description?: string;
 } {
-  const deadline = deadlineSummary(report.accepted.length, report.errors, translate);
+  const deadline = deadlineSummary(report.accepted.length, report.errors, translate, copy.locale);
   if (deadline) return { kind: 'warning', message: deadline.headline, description: deadline.detail };
   return report.accepted.length > 0
     ? { kind: 'success', message: applySuccessMessage(report, copy) }

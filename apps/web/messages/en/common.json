@@ -22,5 +22,17 @@
     "back": "Back to dashboard"
   },
   "notCalculated": "Not calculated",
-  "noFactor": "No factor available"
+  "noFactor": "No factor available",
+  "loading": "Loading…",
+  "tco2e": "tCO₂e",
+  "entity": {
+    "wholeCompany": "Whole company",
+    "unnamedSite": "Site (name unavailable)"
+  },
+  "actor": {
+    "deleted": "deleted user",
+    "unnamed": "unnamed user"
+  },
+  "cancel": "Cancel",
+  "saving": "Saving…"
 }

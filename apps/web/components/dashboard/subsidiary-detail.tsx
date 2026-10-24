@@ -10,9 +10,11 @@ import {
 import type { Category, DataStatus, TrackingMatrixRow } from '@/lib/types';
 import { InvoiceCoverageGrid } from './invoice-coverage-grid';
 import { reviewBadge } from '@/lib/completeness-view';
-import { useCompletenessCopy } from '@/lib/i18n/hooks';
+import { useCompletenessCopy, useRecordWords } from '@/lib/i18n/hooks';
+import { formatNumber } from '@/lib/i18n/number';
+import { formatTimeAgo } from '@/lib/i18n/relative-time';
 import { scope12Total } from '@/lib/dashboard-view';
-import { useTranslations } from 'use-intl';
+import { useLocale, useTranslations } from 'use-intl';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -28,7 +30,6 @@ import {
   FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatDistanceToNow } from 'date-fns';
 
 interface SubsidiaryDetailProps {
   /** The matrix row, not the mock view model — the invoice grid needs
@@ -73,31 +74,31 @@ const STATUS_COLORS = {
 const statusConfig: Record<DataStatus, { 
   icon: React.ElementType; 
   color: string;
-  label: string;
   bgClass: string;
 }> = {
   complete: { 
     icon: CheckCircle2, 
     color: STATUS_COLORS.complete.text, 
-    label: 'Complete',
     bgClass: STATUS_COLORS.complete.bgLight,
   },
   incomplete: { 
     icon: AlertCircle, 
     color: STATUS_COLORS.incomplete.text, 
-    label: 'Incomplete',
     bgClass: STATUS_COLORS.incomplete.bgLight,
   },
   missing: { 
     icon: XCircle, 
     color: STATUS_COLORS.missing.text, 
-    label: 'Missing',
     bgClass: STATUS_COLORS.missing.bgLight,
   },
 };
 
 export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter = false, onSlotClick }: SubsidiaryDetailProps) {
   const tDashboard = useTranslations('dashboard');
+  const tCommon = useTranslations('common');
+  const locale = useLocale();
+  const words = useRecordWords();
+  const count = (n: number) => formatNumber(n, locale);
   const completenessCopy = useCompletenessCopy();
   if (!row) return null;
 
@@ -127,9 +128,11 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                 <span>{row.sector ?? '—'}</span>
                 <span>•</span>
                 <span>
-                  {byLocation
-                    ? `Measured per location · ${row.locationCount} ${row.locationCount === 1 ? 'site' : 'sites'}`
-                    : 'Measured as a whole company'}
+                  {!byLocation
+                    ? tDashboard('drawer.wholeCompany')
+                    : row.locationCount === 1
+                      ? tDashboard('drawer.perLocationOne', { count: count(1) })
+                      : tDashboard('drawer.perLocationMany', { count: count(row.locationCount) })}
                 </span>
               </SheetDescription>
             </div>
@@ -141,12 +144,12 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
             {/* Overall Progress */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-foreground">Overall Completion</span>
+                <span className="text-sm font-medium text-foreground">{tDashboard('drawer.overall')}</span>
                 <span 
                   className="text-sm font-semibold font-mono"
                   style={{ color: getCompletionColor(completionRate) }}
                 >
-                  {completionRate}%
+                  {tDashboard('percent', { value: completionRate })}
                 </span>
               </div>
               <Progress value={completionRate} className="h-2.5" />
@@ -157,7 +160,7 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
               <div className="rounded-xl border border-border bg-secondary/50 p-4">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Factory className="h-4 w-4" />
-                  <span className="text-xs">Scope 1 + 2 total</span>
+                  <span className="text-xs">{tDashboard('totalLabel')}</span>
                 </div>
                 {total === null ? (
                   <p className="mt-1.5 text-lg font-semibold text-muted-foreground" data-testid="drawer-not-covered">
@@ -165,20 +168,20 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                   </p>
                 ) : (
                   <p className="mt-1.5 text-lg font-semibold text-foreground font-mono">
-                    {total.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                    <span className="ml-1 text-xs font-normal text-muted-foreground font-sans">tCO₂e</span>
+                    {formatNumber(total, locale, { maximumFractionDigits: 0 })}
+                    <span className="ml-1 text-xs font-normal text-muted-foreground font-sans">{tCommon('tco2e')}</span>
                   </p>
                 )}
               </div>
               <div className="rounded-xl border border-border bg-secondary/50 p-4">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <CheckCircle2 className="h-4 w-4" />
-                  <span className="text-xs">Calculated</span>
+                  <span className="text-xs">{tDashboard('drawer.calculated')}</span>
                 </div>
                 <p className="mt-1.5 text-lg font-semibold text-foreground font-mono">
-                  {totalCalculated}
+                  {count(totalCalculated)}
                   <span className="ml-1 text-xs font-normal text-muted-foreground font-sans">
-                    / {row.categoryCount} categories
+                    {tDashboard('drawer.ofCategories', { count: count(row.categoryCount) })}
                   </span>
                 </p>
               </div>
@@ -190,7 +193,7 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
             <div className="space-y-3">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <FileText className="h-4 w-4" />
-                Category Status
+                {tDashboard('drawer.categoryStatus')}
               </h3>
               <div className="space-y-2">
                 {row.cells.map((cat) => {
@@ -210,7 +213,7 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                       <div className="flex items-center gap-3">
                         <Icon className="h-4 w-4" style={{ color: config.color }} />
                         <div>
-                          <p className="text-sm font-medium text-foreground">{cat.category}</p>
+                          <p className="text-sm font-medium text-foreground">{words.category(cat.category)}</p>
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <User className="h-3 w-3" />
                             <span>{row.designatedPerson ?? '—'}</span>
@@ -219,7 +222,7 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                                 <span>•</span>
                                 <Clock className="h-3 w-3" />
                                 <span>
-                                  {formatDistanceToNow(new Date(cat.lastUpdate), { addSuffix: true })}
+                                  {formatTimeAgo(cat.lastUpdate, locale)}
                                 </span>
                               </>
                             )}
@@ -230,16 +233,16 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                         {cat.coverage ? (
                           <div>
                             <p className="text-sm font-semibold text-foreground font-mono tabular-nums">
-                              {cat.coverage.covered}/{cat.coverage.required}
+                              {count(cat.coverage.covered)}/{count(cat.coverage.required)}
                             </p>
-                            <p className="text-[10px] text-muted-foreground">invoices</p>
+                            <p className="text-[10px] text-muted-foreground">{tDashboard('drawer.invoices')}</p>
                           </div>
                         ) : cat.tCo2e !== null ? (
                           <div>
                             <p className="text-sm font-semibold text-primary font-mono">
-                              {Math.round(cat.tCo2e).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                              {formatNumber(Math.round(cat.tCo2e), locale)}
                             </p>
-                            <p className="text-[10px] text-muted-foreground">tCO₂e</p>
+                            <p className="text-[10px] text-muted-foreground">{tCommon('tco2e')}</p>
                           </div>
                         ) : (
                           <Badge 
@@ -247,7 +250,7 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                             className={cn('text-[10px] rounded-lg border-0', config.bgClass)}
                             style={{ color: config.color }}
                           >
-                            {config.label}
+                            {tDashboard(`drawer.status.${cat.status}`)}
                           </Badge>
                         )}
                         {/* The verdict beside it may read Partial for a
@@ -280,7 +283,7 @@ export function SubsidiaryDetail({ row, reportingYear, open, onClose, canEnter =
                     className="h-4 w-4"
                     style={{ color: STATUS_COLORS.incomplete.text }}
                   />
-                  Invoices by site and month
+                  {tDashboard('drawer.invoiceGrid')}
                 </h3>
                 <InvoiceCoverageGrid
                   subsidiaryId={row.subsidiaryId}

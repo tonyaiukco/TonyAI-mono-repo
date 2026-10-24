@@ -86,7 +86,11 @@ form (`apps/web/app/data-entry/page.tsx`) and its error toasts. README
    `describe(error).title`, a non-Error value the module's own "failed" sentence.
 5. Numbers: `formatNumber(value, locale, options)`; dates:
    `Intl.DateTimeFormat(LOCALE_FORMAT_TAGS[locale], …)` in the viewer's time
-   zone. Never `"en-GB"` hard-coded on a localised screen.
+   zone; "3 days ago": `formatTimeAgo(date, locale)` (`lib/i18n/relative-time.ts`).
+   Never `"en-GB"` hard-coded on a localised screen. A unit symbol on its own
+   is `common.tco2e`; a format with no words (`{value} tCO₂e`) goes on
+   `messages.spec.ts`' `SAME_IN_EVERY_LANGUAGE` list. Shared words (`cancel`,
+   `saving`, `loading`) live in `common`; a count pair is `xxxOne`/`xxxMany`.
 6. A quantity input is `type="text" inputMode="decimal"` driven by
    `useDecimalInput()` (`lib/i18n/use-decimal-input.ts`: the text and its
    locale in one state, re-written on a language switch), checked with
@@ -150,8 +154,13 @@ second source of truth that goes stale after `PATCH /me/preferences`).
 Done: Data Entry and every panel on it (LP4-04 slice 2 PR A), the app shell
 (sidebar, every header's Sign out — `SignOutButton`, test id `sign-out` — and
 role), the error and 404 pages, the tab title, Reports, Users, the boundary
-editor. Left: the dashboard and its components, Emissions, targets and
-intensity (PR B — `lib/void-view.ts`, `calculation-display`'s constants, the
-remaining `en-GB` and `lib/utils.formatNumber`); Subsidiaries (list, detail,
-locations, period locks), Review and Audit (PR C); the server's per-row bulk
-sentences; about 60 API refusals that still carry only a generic code (PR C).
+editor, the dashboard and its components, Emissions, targets and intensity
+(PR B — `lib/void-view.ts`, `lib/record-actor.ts` and `entityLabel` take their
+words; `calculation-display`'s English constants and `lib/utils.formatNumber`
+are gone; the Data Entry modules' English fallbacks are required arguments).
+Left: Subsidiaries (list, detail, locations, period locks), Review (beyond the
+words PR B passes it) and Audit (PR C); the server's per-row bulk sentences;
+a calculation refusal's reason (`calculation.reason`, K5); the trend and grid
+labels the API builds are re-worded on the web (`trendLabel`,
+`lib/emissions-view.ts`); about 60 API refusals that still carry only a
+generic code (PR C).

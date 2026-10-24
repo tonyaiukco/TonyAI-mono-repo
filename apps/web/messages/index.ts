@@ -21,6 +21,12 @@ import enImports from "./en/imports.json";
 import enEvidence from "./en/evidence.json";
 import enBulkUpload from "./en/bulkUpload.json";
 import enCompleteness from "./en/completeness.json";
+import enEmissions from "./en/emissions.json";
+import enTargets from "./en/targets.json";
+import enIntensity from "./en/intensity.json";
+import enTargetStatus from "./en/targetStatus.json";
+import enTargetBasis from "./en/targetBasis.json";
+import enIntensityMetrics from "./en/intensityMetrics.json";
 import trAuth from "./tr/auth.json";
 import trBoundary from "./tr/boundary.json";
 import trCategories from "./tr/categories.json";
@@ -43,6 +49,12 @@ import trImports from "./tr/imports.json";
 import trEvidence from "./tr/evidence.json";
 import trBulkUpload from "./tr/bulkUpload.json";
 import trCompleteness from "./tr/completeness.json";
+import trEmissions from "./tr/emissions.json";
+import trTargets from "./tr/targets.json";
+import trIntensity from "./tr/intensity.json";
+import trTargetStatus from "./tr/targetStatus.json";
+import trTargetBasis from "./tr/targetBasis.json";
+import trIntensityMetrics from "./tr/intensityMetrics.json";
 
 /**
  * The UI catalogues (LP3-01): one JSON file per namespace per locale, so two
@@ -52,7 +64,8 @@ import trCompleteness from "./tr/completeness.json";
  * arguments. Conventions: README "Localisation and error codes" and the
  * `localise-ui` skill.
  *
- *   common      words every screen shares (Sign out, …)
+ *   common      words every screen shares — Sign out, loading/saving/cancel, the not-calculated and
+ *               no-factor labels, the tCO₂e symbol, a reporting entity's and an actor's words
  *   nav         the app shell
  *   errors      `codes.<ApiErrorCode>` — one sentence per registered code — plus
  *               network/unexpected
@@ -63,7 +76,7 @@ import trCompleteness from "./tr/completeness.json";
  *   auth        sign-in, forgot password, the email-link and set-password screens (LP4-01)
  *   users       user and access management (LP4-01)
  *   reportingContext  the annual screens' year/subsidiary/scope/category selection (LP3-02 N1)
- *   dashboard   the dashboard's KPI words LP4-03 PR B changed (the rest is LP4-04's)
+ *   dashboard   the dashboard — its header, register, KPI cards, charts, matrix, cells, drawer and invoice grid (LP4-04)
  *   reports     the Reports screen — live preview and issued reports — and the
  *               boundary coverage card the dashboard and Data Entry share (LP4-03 PR B)
  *   boundary    the inventory boundary editor, and the coverage card's link to it (LP4-03 PR C)
@@ -76,6 +89,12 @@ import trCompleteness from "./tr/completeness.json";
  *   evidence    evidence files — the record's vault, attaching one file to several records, the review sheet's shared note (LP4-04)
  *   bulkUpload  Data Entry's bulk upload panel and its verdicts (LP4-04)
  *   completeness  invoice coverage — Data Entry's coverage panel and the dashboard's cells and grid (LP4-04)
+ *   targets     the Emissions screen's Targets tab (LP4-04)
+ *   intensity   the Emissions screen's intensity view (LP4-04)
+ *   targetStatus  a target's progress status, keyed by `TargetStatus` (`TARGET_STATUSES`, lib/vocabulary.ts)
+ *   targetBasis   a target's basis, keyed by `TargetBasis` (`TARGET_BASES`)
+ *   intensityMetrics  INTENSITY_METRIC_KEYS' labels, keyed by the metric (English = INTENSITY_METRIC_META's)
+ *   emissions   the Emissions screen — its tabs, the record drawer and the withdrawal (`lib/void-view.ts`) (LP4-04)
  */
 const en = {
   common: enCommon,
@@ -100,6 +119,12 @@ const en = {
   evidence: enEvidence,
   bulkUpload: enBulkUpload,
   completeness: enCompleteness,
+  emissions: enEmissions,
+  targets: enTargets,
+  intensity: enIntensity,
+  targetStatus: enTargetStatus,
+  targetBasis: enTargetBasis,
+  intensityMetrics: enIntensityMetrics,
 };
 
 export type Messages = typeof en;
@@ -127,6 +152,12 @@ const tr: Messages = {
   evidence: trEvidence,
   bulkUpload: trBulkUpload,
   completeness: trCompleteness,
+  emissions: trEmissions,
+  targets: trTargets,
+  intensity: trIntensity,
+  targetStatus: trTargetStatus,
+  targetBasis: trTargetBasis,
+  intensityMetrics: trIntensityMetrics,
 };
 
 export const MESSAGES: Readonly<Record<Locale, Messages>> = { en, tr };

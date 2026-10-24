@@ -2,7 +2,11 @@
 
 import type { DataStatus, TrackingMatrixCell } from '@/lib/types';
 import { cn } from '@/lib/utils';
-import { useCompletenessCopy } from '@/lib/i18n/hooks';
+import { useCompletenessCopy, useRecordWords } from '@/lib/i18n/hooks';
+import { useLocale, useTranslations } from 'use-intl';
+import { formatNumber } from '@/lib/i18n/number';
+import { formatTimeAgo } from '@/lib/i18n/relative-time';
+import { compactTonnes } from '@/lib/dashboard-view';
 import type { CompletenessCopy } from '@/lib/completeness-view';
 import {
   reviewBadge,
@@ -15,7 +19,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { formatDistanceToNow } from 'date-fns';
 
 interface StatusCellProps {
   /**
@@ -48,7 +51,6 @@ const statusConfig: Record<DataStatus, {
   bg: string;
   hoverBg: string;
   text: string;
-  label: string;
   dotColor: string;
   badgeBg: string;
   badgeText: string;
@@ -57,7 +59,6 @@ const statusConfig: Record<DataStatus, {
     bg: 'bg-[#D1F2EB]',
     hoverBg: 'hover:bg-[#B8E9DD]',
     text: 'text-[#1D7A5F]',
-    label: 'Complete',
     dotColor: 'bg-[#34C759]',
     badgeBg: 'bg-[#D1F2EB]',
     badgeText: 'text-[#1D7A5F]',
@@ -66,7 +67,6 @@ const statusConfig: Record<DataStatus, {
     bg: 'bg-[#FEF3C7]',
     hoverBg: 'hover:bg-[#FDE68A]',
     text: 'text-[#92400E]',
-    label: 'Partial',
     dotColor: 'bg-[#FF9500]',
     badgeBg: 'bg-[#FEF3C7]',
     badgeText: 'text-[#92400E]',
@@ -75,22 +75,11 @@ const statusConfig: Record<DataStatus, {
     bg: 'bg-[#FEE2E2]',
     hoverBg: 'hover:bg-[#FECACA]',
     text: 'text-[#B91C1C]',
-    label: 'Missing',
     dotColor: 'bg-[#FF3B30]',
     badgeBg: 'bg-[#FEE2E2]',
     badgeText: 'text-[#B91C1C]',
   },
 };
-
-function formatEmission(value: number): string {
-  if (value >= 1000000) {
-    return `${(value / 1000000).toFixed(1)}M`;
-  }
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(1)}k`;
-  }
-  return value.toString();
-}
 
 /**
  * Why an invoice-tracked cell is short, in the user's terms.
@@ -137,7 +126,13 @@ export function StatusCell({
   label,
 }: StatusCellProps) {
   const completenessCopy = useCompletenessCopy();
+  const t = useTranslations('dashboard');
+  const tCommon = useTranslations('common');
+  const locale = useLocale();
+  const words = useRecordWords();
+  const count = (n: number) => formatNumber(n, locale);
   const config = statusConfig[cell.status];
+  const statusLabel = t(`status.${cell.status}`);
   const hasEmission = cell.tCo2e !== null;
   const emission = cell.tCo2e === null ? null : Math.round(cell.tCo2e);
   const coverage = cell.coverage;
@@ -153,11 +148,20 @@ export function StatusCell({
   // On an invoice-tracked cell the fraction IS the status, so it takes the
   // cell face and the tonnage moves into the tooltip. A cell showing "818"
   // where the answer is "3 of 24 invoices" answers a question nobody asked.
+  const tonnes = hasEmission ? compactTonnes(emission!, { t, locale }) : null;
   const faceText = coverage
-    ? `${coverage.covered}/${coverage.required}`
-    : hasEmission
-      ? formatEmission(emission!)
-      : null;
+    ? `${count(coverage.covered)}/${count(coverage.required)}`
+    : tonnes;
+  // Status, then the face's figure in words, then the review badge.
+  const announced = [
+    statusLabel,
+    coverage
+      ? t('cell.invoicesOf', { covered: count(coverage.covered), required: count(coverage.required) })
+      : tonnes !== null
+        ? t('cell.ariaTonnes', { value: tonnes })
+        : null,
+    badge,
+  ].filter(Boolean).join(', ');
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -168,17 +172,7 @@ export function StatusCell({
             // The identity stays the PREFIX. Three E2E selectors match this by
             // substring (`getByRole('button', {name: 'TonyAI Energy Fuel'})`),
             // so anything appended is safe and anything prepended is not.
-            aria-label={
-              label
-                ? `${label}: ${config.label}${
-                    coverage
-                      ? `, ${coverage.covered} of ${coverage.required} invoices`
-                      : hasEmission
-                        ? `, ${formatEmission(emission!)} tCO2e`
-                        : ''
-                  }${badge ? `, ${badge}` : ''}`
-                : undefined
-            }
+            aria-label={label ? `${label}: ${announced}` : undefined}
             className={cn(
               'relative flex items-center justify-center rounded-lg transition-all duration-200',
               'focus:outline-none focus:ring-2 focus:ring-[#007AFF]/40 focus:ring-offset-2',
@@ -214,13 +208,13 @@ export function StatusCell({
             config.bg
           )}>
             <div className="flex items-center justify-between gap-4">
-              <span className="font-bold text-[#1D1D1F]">{cell.category}</span>
+              <span className="font-bold text-[#1D1D1F]">{words.category(cell.category)}</span>
               <span className={cn(
                 'text-xs font-bold px-2.5 py-1 rounded-full',
                 config.badgeBg,
                 config.badgeText
               )}>
-                {config.label}
+                {statusLabel}
               </span>
             </div>
           </div>
@@ -228,11 +222,11 @@ export function StatusCell({
           <div className="p-4 space-y-3 text-sm bg-white">
             {coverage && (
               <div className="flex items-baseline justify-between">
-                <span className="font-medium text-[#6E6E73]">Invoices</span>
+                <span className="font-medium text-[#6E6E73]">{t('cell.invoices')}</span>
                 <span className="font-bold text-[#1D1D1F] font-mono text-base">
-                  {coverage.covered}
+                  {count(coverage.covered)}
                   <span className="text-[#6E6E73] text-xs font-medium">
-                    {' '}of {coverage.required}
+                    {' '}{t('cell.ofRequired', { required: count(coverage.required) })}
                   </span>
                 </span>
               </div>
@@ -240,9 +234,9 @@ export function StatusCell({
 
             {hasEmission && (
               <div className="flex items-baseline justify-between">
-                <span className="font-medium text-[#6E6E73]">Emissions</span>
+                <span className="font-medium text-[#6E6E73]">{t('cell.emissions')}</span>
                 <span className="font-bold text-[#1D1D1F] font-mono text-base">
-                  {emission!.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} <span className="text-[#6E6E73] text-xs font-medium">tCO₂e</span>
+                  {formatNumber(emission!, locale, { maximumFractionDigits: 0 })} <span className="text-[#6E6E73] text-xs font-medium">{tCommon('tco2e')}</span>
                 </span>
               </div>
             )}
@@ -256,8 +250,8 @@ export function StatusCell({
                     drafts, while the reasons below explain committed entries
                     only. "Entries" alone invited the reader to subtract one
                     from the other and find a discrepancy that is not there. */}
-                <span className="font-medium text-[#6E6E73]">Entries (all statuses)</span>
-                <span className="font-semibold text-[#1D1D1F]">{cell.recordCount}</span>
+                <span className="font-medium text-[#6E6E73]">{t('cell.entries')}</span>
+                <span className="font-semibold text-[#1D1D1F]">{count(cell.recordCount)}</span>
               </div>
             )}
 
@@ -269,26 +263,24 @@ export function StatusCell({
             {cell.voidedRecordCount > 0 && (
               <div className="flex justify-between">
                 <span className="font-medium text-[#6E6E73]">
-                  {cell.voidedRecordCount === 1
-                    ? 'Withdrawn (counts towards nothing)'
-                    : 'Withdrawn entries (count towards nothing)'}
+                  {cell.voidedRecordCount === 1 ? t('cell.withdrawnOne') : t('cell.withdrawnMany')}
                 </span>
                 <span className="font-semibold text-[#1D1D1F]">
-                  {cell.voidedRecordCount}
+                  {count(cell.voidedRecordCount)}
                 </span>
               </div>
             )}
 
             <div className="flex justify-between">
-              <span className="font-medium text-[#6E6E73]">Owner</span>
+              <span className="font-medium text-[#6E6E73]">{t('cell.owner')}</span>
               <span className="font-semibold text-[#1D1D1F]">{responsible}</span>
             </div>
 
             {cell.lastUpdate && (
               <div className="flex justify-between">
-                <span className="font-medium text-[#6E6E73]">Updated</span>
+                <span className="font-medium text-[#6E6E73]">{t('cell.updated')}</span>
                 <span className="font-semibold text-[#1D1D1F]">
-                  {formatDistanceToNow(new Date(cell.lastUpdate), { addSuffix: true })}
+                  {formatTimeAgo(cell.lastUpdate, locale)}
                 </span>
               </div>
             )}
@@ -307,13 +299,11 @@ export function StatusCell({
                 a gap in the factor library, and the two must not read alike. */}
             {cell.uncalculatedRecordCount > 0 && (
               <p className="text-xs text-[#6E6E73]">
-                {cell.uncalculatedRecordCount}{' '}
-                of the committed entries here produced no tCO₂e figure. Today
-                that means the category has no emission factor yet.
+                {t('cell.uncalculated', { count: count(cell.uncalculatedRecordCount) })}
               </p>
             )}
 
-            <p className="text-sm text-[#007AFF] font-medium pt-1">Click to view details</p>
+            <p className="text-sm text-[#007AFF] font-medium pt-1">{t('cell.details')}</p>
           </div>
         </TooltipContent>
       </Tooltip>

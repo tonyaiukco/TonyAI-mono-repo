@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { recordActorLabel } from './record-actor';
+import { recordActorLabel as recordActorLabelWith } from './record-actor';
+import { copyFor } from '@/lib/i18n/testing';
+
+/** The English words the screens pass (`common.actor.*`). */
+const common = copyFor('common');
+const words = { deleted: common.t('actor.deleted'), unnamed: common.t('actor.unnamed') };
+const recordActorLabel = (id: string | null, name: string | null) => recordActorLabelWith(id, name, words);
 
 /**
  * The four states an actor column has to keep apart. Two of them are a person

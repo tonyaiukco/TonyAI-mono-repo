@@ -1,5 +1,5 @@
 import type { ViewTranslator } from "@/lib/i18n/view-translator";
-import { GEOGRAPHY_CODES, type GeographyCode } from "@/lib/types";
+import { GEOGRAPHY_CODES, type GeographyCode, type TargetBasis, type TargetStatus } from "@/lib/types";
 
 /**
  * Canonical values a screen shows by name (LP4-04, M2). The value stays what
@@ -57,3 +57,16 @@ export function recordWordsOf(t: RootTranslator, messages: Record<string, unknow
     category: (category) => word(["categories", category], category),
   };
 }
+
+/** Every `TargetStatus`, in display order — shared-types declares the type
+ *  only, so the list lives here and the line below fails the build if the
+ *  union grows a value this list (and so the `targetStatus` catalogue the
+ *  spec checks against it) does not name. */
+export const TARGET_STATUSES = ["on_track", "at_risk", "off_track"] as const satisfies readonly TargetStatus[];
+const everyTargetStatus: Exclude<TargetStatus, (typeof TARGET_STATUSES)[number]> extends never ? true : false = true;
+
+/** Every `TargetBasis`, in the order the form offers them (as `TARGET_STATUSES`). */
+export const TARGET_BASES = ["science_based", "internal_annual", "baseline_reduction"] as const satisfies readonly TargetBasis[];
+const everyTargetBasis: Exclude<TargetBasis, (typeof TARGET_BASES)[number]> extends never ? true : false = true;
+void everyTargetStatus;
+void everyTargetBasis;
